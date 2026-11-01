@@ -7,9 +7,12 @@ clone's common git dir so every worktree sees the same evidence. This module
 imports nothing from the other scripts; they import it.
 """
 
+import contextlib
+import fcntl
 import os
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,13 +145,57 @@ def dirt_refusals(state: TreeState, roots: "list[str]") -> "list[str]":
     return why
 
 
-def write_atomically(path: Path, text: str) -> None:
-    """Write *text* to *path* through a temp file and a rename, creating the parents."""
+LOCK_FILE = ".lock"
+"""The flock file at a store's root (:func:`store_lock`)."""
+
+
+@contextlib.contextmanager
+def store_lock(
+    root: Path, *, shared: bool = False, dir_mode: int | None = None, file_mode: int | None = None
+) -> Iterator[None]:
+    """Hold the store's lock (flock on ``<root>/.lock``): exclusive, or *shared* for readers.
+
+    A writer (exclusive) creates the store and the lock file if missing, and waits for every
+    other holder. A reader (shared) waits only for a writer; with no store there is nothing
+    to read, so it takes no lock and creates nothing. Only for short store steps, never
+    while a lane runs, and never nested: two flocks of one process on two open files of the
+    same lock can deadlock. *dir_mode* and *file_mode* are set on the root and the lock
+    file when THIS call creates them (a store shared across users, such as the bed
+    lease's), never on one
+    that already exists: another user's file is not ours to chmod, and need not be.
+    """
+    if shared and not root.is_dir():
+        yield
+        return
+    created_root = not root.exists()
+    root.mkdir(parents=True, exist_ok=True)
+    if created_root and dir_mode is not None:
+        root.chmod(dir_mode)
+    lock = root / LOCK_FILE
+    created_lock = not lock.exists()
+    with lock.open("a") as handle:
+        if created_lock and file_mode is not None:
+            os.fchmod(handle.fileno(), file_mode)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def write_atomically(path: Path, text: str, *, mode: int | None = None) -> None:
+    """Write *text* to *path* through a temp file and a rename, creating the parents.
+
+    *mode* is set on the file before the rename (``mkstemp`` creates it ``0o600``
+    whatever the umask), for a file other users must be able to replace.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(text)
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
         Path(tmp).replace(path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -169,9 +216,14 @@ tests/unit/scripts/test_gate_tip.py pins the three equal.
 """
 
 
+def utc_iso(when: datetime) -> str:
+    """Render *when* as the stamps and the bed lease write times (ISO 8601, seconds)."""
+    return when.isoformat(timespec="seconds")
+
+
 def utc_now() -> str:
     """Return the current UTC time as the stamps write it (ISO 8601, seconds)."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return utc_iso(datetime.now(timezone.utc))
 
 
 def nproc() -> int:

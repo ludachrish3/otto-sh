@@ -12,9 +12,13 @@ import os
 import signal
 from pathlib import Path
 
-# Fields of /proc/<pid>/stat after the `pid (comm) ` prefix: state is 0, pgrp is 2.
+# Fields of /proc/<pid>/stat after the `pid (comm) ` prefix: state is 0, ppid is
+# 1, pgrp is 2, starttime (clock ticks since boot, the kernel's own stamp of the
+# process, so a reused pid is told apart) is 19.
 _STATE = 0
+_PPID = 1
 _PGRP = 2
+_STARTTIME = 19
 
 
 def proc_stat(pid: int) -> list[str] | None:
@@ -29,13 +33,43 @@ def proc_stat(pid: int) -> list[str] | None:
     except (FileNotFoundError, ProcessLookupError):
         return None
     fields = stat[stat.rfind(")") + 2 :].split()
-    return fields if len(fields) > _PGRP else None
+    return fields if len(fields) > _STARTTIME else None
 
 
 def process_state(pid: int) -> str | None:
     """Return *pid*'s one-letter state (``S`` sleeping, ``Z`` zombie, ...); None once it is gone."""
     fields = proc_stat(pid)
     return None if fields is None else fields[_STATE]
+
+
+def process_start(pid: int) -> int | None:
+    """Return *pid*'s kernel start time (ticks since boot); None once it is gone.
+
+    With the pid it names a process uniquely for the life of the machine:
+    a record that holds both tells a reused pid from the one it recorded.
+    """
+    fields = proc_stat(pid)
+    return None if fields is None else int(fields[_STARTTIME])
+
+
+def ancestors(pid: int) -> list[int]:
+    """Return *pid*'s parent, grandparent, ... up to (not including) pid 0.
+
+    Read from ``/proc`` at call time: a process reparented by its parent's
+    death answers with its new parent. *pid* itself is not in the list; a
+    *pid* that is gone answers ``[]``.
+    """
+    chain: list[int] = []
+    current = pid
+    while True:
+        fields = proc_stat(current)
+        if fields is None:
+            return chain
+        parent = int(fields[_PPID])
+        if parent <= 0 or parent in chain:
+            return chain
+        chain.append(parent)
+        current = parent
 
 
 def group_members(pgid: int) -> list[int]:

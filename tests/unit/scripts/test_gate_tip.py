@@ -80,7 +80,7 @@ def _peer_write(root: Path, write, deferred: list) -> None:
     import fcntl
 
     root.mkdir(parents=True, exist_ok=True)
-    with (root / gt.LOCK_FILE).open("a") as handle:
+    with (root / gate_stamp_common.LOCK_FILE).open("a") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -735,7 +735,7 @@ def _probe(root: Path, mode: int) -> bool:
     """Return whether a fresh open of the lock file gets *mode* without waiting."""
     import fcntl
 
-    with (root / gt.LOCK_FILE).open("a") as handle:
+    with (root / gate_stamp_common.LOCK_FILE).open("a") as handle:
         try:
             fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -768,9 +768,9 @@ class TestStoreLock:
             "import fcntl, sys\n"
             f"sys.path.insert(0, {str(CHECKOUT_ROOT)!r})\n"
             "from pathlib import Path\n"
-            "from scripts import gate_tip as gt\n"
+            "from scripts import gate_stamp_common, gate_tip as gt\n"
             f"root = Path({str(root)!r})\n"
-            "with open(root / gt.LOCK_FILE, 'a') as h:\n"
+            "with open(root / gate_stamp_common.LOCK_FILE, 'a') as h:\n"
             "    try:\n"
             "        fcntl.flock(h.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
             "        print('free', flush=True)\n"
@@ -780,7 +780,7 @@ class TestStoreLock:
             "    print('held', flush=True)\n"
         )
         with gt.store_lock(root):
-            assert (root / gt.LOCK_FILE).is_file(), "created if missing"
+            assert (root / gate_stamp_common.LOCK_FILE).is_file(), "created if missing"
             proc = subprocess.Popen(
                 [sys.executable, "-c", child], stdout=subprocess.PIPE, text=True
             )

@@ -15,6 +15,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,8 +53,12 @@ def _run_make(stub: Path, *args: str) -> "subprocess.CompletedProcess[str]":
     # MFLAGS and MAKELEVEL; dropped so its flags cannot leak into the recipe.
     # OTTO_CONFORMANCE_CELLS is a declared ambient opt-in the conftest leaves
     # alone; dropped so the campaign's `cells=all` can only come from the recipe.
+    # The leased targets (stability, release-campaign) take the bed lease: in a root
+    # beside the stub, never the real cell's, and in a session of their own so the
+    # lease's process group is the make's, not this test's.
     dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "OTTO_CONFORMANCE_CELLS"}
     env = {k: v for k, v in os.environ.items() if k not in dropped}
+    env["BED_LEASE_ROOT"] = str(stub.parent / "bed-lease")
     return subprocess.run(
         ["make", "--no-print-directory", *args, f"MAKE={stub}"],
         cwd=CHECKOUT_ROOT,
@@ -62,6 +67,7 @@ def _run_make(stub: Path, *args: str) -> "subprocess.CompletedProcess[str]":
         timeout=120,
         check=False,
         env=env,
+        start_new_session=True,
     )
 
 
@@ -231,6 +237,9 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
     )
     assert recipe == ["@$(COVERAGE_STAMP) mark coverage-ts", "@$(COVERAGE_STAMP) finish"], recipe
     _, legs = _rule(text, "coverage-python")
+    assert legs[0] == "$(call bed_acquire,coverage-python)", legs[0]
+    assert legs[-1] == "$(call bed_release)", legs[-1]
+    legs = legs[1:-1]  # inside the bed lease (test_lane_invariants pins the lease lines)
     marks = [line for line in legs if "$(COVERAGE_STAMP) mark" in line]
     assert marks == [
         "@$(COVERAGE_STAMP) mark dashboard",
@@ -543,8 +552,10 @@ def _recipe(target: str) -> str:
 
 def test_the_gate_tip_recipe_and_its_overrides_are_the_declared_wiring():
     assert _recipe("gate-tip") == (
-        '@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,'
-        '$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)'
+        "$(call bed_acquire,gate-tip)\n"
+        '\t@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,'
+        '$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)\n'
+        "\t$(call bed_release)"
     )
     text = (CHECKOUT_ROOT / "Makefile").read_text()
     assert (
@@ -559,12 +570,11 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     argv = tmp_path / "argv.txt"
-    uv = bin_dir / "uv"
-    uv.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$@" > "{argv}"\n')
-    uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+    _uv_stub(bin_dir / "uv", f'printf \'%s\\n\' "$@" > "{argv}"')
     dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
     env = {k: v for k, v in os.environ.items() if k not in dropped}
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["BED_LEASE_ROOT"] = str(tmp_path / "bed-lease")
     completed = subprocess.run(
         ["make", "--no-print-directory", "gate-tip", *args],
         cwd=CHECKOUT_ROOT,
@@ -573,6 +583,7 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
         timeout=120,
         check=False,
         env=env,
+        start_new_session=True,
     )
     assert completed.returncode == 0, completed.stderr
     return argv.read_text().splitlines()
@@ -629,6 +640,24 @@ def _stub_stamp(tmp_path: Path, code: int) -> Path:
     return stub
 
 
+def _uv_stub(path: Path, body: str) -> None:
+    """Write a `uv` stand-in that runs *body* for every call but the bed lease's.
+
+    The lease macro runs through `uv run python scripts/bed_lease.py`; a stub
+    that swallowed it would end the lane on the lease (or record the lease's
+    argv instead of the lane's), so that one call runs on this interpreter,
+    against the root the caller's `BED_LEASE_ROOT` names.
+    """
+    path.write_text(
+        "#!/bin/sh\n"
+        'case "$1 $2 $3" in "run python scripts/bed_lease.py") shift 2; '
+        f'exec "{sys.executable}" "$@" ;; esac\n'
+        f"{body}\n",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
 def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.CompletedProcess[str]":
     """Run the real `release` recipe with `$(MAKE)` and the stamp check stubbed.
 
@@ -641,9 +670,7 @@ def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.Complete
     guard.mkdir()
     guard_log = _guard_log(tmp_path)
     for tool in ("uv", "git-cliff", "bump-my-version"):
-        path = guard / tool
-        path.write_text(f'#!/bin/sh\necho {tool} >> "{guard_log}"\nexit 97\n', encoding="utf-8")
-        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        _uv_stub(guard / tool, f'echo {tool} >> "{guard_log}"\nexit 97')
     return _run_make(
         stub,
         "release",

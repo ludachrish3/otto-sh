@@ -197,6 +197,9 @@ MAINTAINER_TARGETS = frozenset(
     {
         "api-snapshot",
         "api-surface-report",
+        "bed-lease",
+        "bed-release",
+        "bed-status",
         "browsers",
         "budget-delta",
         "busybox",

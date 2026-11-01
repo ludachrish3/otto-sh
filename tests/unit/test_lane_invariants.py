@@ -2382,3 +2382,212 @@ def test_the_family_runs_on_the_primary_interpreter_only_in_the_release_rows(
     assert not not_on_primary, not_on_primary[:10]
     selected_elsewhere = [n for n in family if n not in other_gaps]
     assert not selected_elsewhere, selected_elsewhere[:10]
+
+
+# ---------------------------------------------------------------------------
+# The bed lease: every bed target takes it first and releases it last
+# ---------------------------------------------------------------------------
+#
+# scripts/bed_lease.py (spec 2026-11-01 bed-lease-design). The scanner reads the
+# RAW recipe text: `makefile_live_recipe` expands nothing, so the pins match the
+# literal `$(call bed_acquire,<target>)` and `$(call bed_release)` a recipe
+# spells, and the macro definitions are pinned beside them (a macro emptied to
+# nothing would otherwise satisfy the literal scan).
+
+BED_TARGETS_DIRECT = [
+    "coverage-python",
+    "coverage-integration",
+    "coverage-unix",
+    "coverage-embedded",
+    "conformance-bed",
+    "kmodcov",
+    "stability-unix",
+    "stability-tunnel",
+    "stability-embedded",
+    "chaos",
+    "chaos-embedded",
+    "nox-integration",
+    "nox-unix",
+    "nox-embedded",
+    "nox",
+    "nox-release",
+    "nox-full",
+    "repeat",
+    "docs-captures",
+    "docs-captures-check",
+    "vm-health",
+    "qemu-restart",
+    "console-logout",
+]
+"""Targets whose recipe touches the bed itself: a suite, or a probe of the consoles and guests."""
+BED_TARGETS_AGGREGATORS = [
+    "gate-tip",
+    "release",
+    "release-campaign",
+    "release-matrix",
+    "release-kmodcov-matrix",
+    "stability",
+    "all",
+]
+"""Targets that run bed targets with `$(MAKE)`: they hold the lease across them."""
+LEASE_TOOLS = ["bed-status", "bed-lease", "bed-release"]
+"""The lease's own verbs: they read or hold the lease, they do not take it around a lane."""
+HOSTLESS_TARGETS = [
+    # the pinned and hostless suites and gates
+    "coverage",
+    "validate-python",
+    "coverage-unit",
+    "coverage-hostless",
+    "coverage-stamp-start",
+    "coverage-gate-args",
+    "coverage-ts",
+    "coverage-ts-unit",
+    "unit-outliers",
+    "nox-unit",
+    "nox-hostless",
+    "nox-unit-repeat",
+    "quick-guards",
+    "collect-check",
+    "conformance",
+    "busybox",
+    "busybox-cache",
+    "busybox-drift",
+    "busybox-preflight",
+    "dashboard",
+    "dashboard-all",
+    "dashboard-soak",
+    "stability-unit",
+    "ci",
+    "check-breaking",
+    "check-python",
+    "check-ts",
+    "check",
+    "check-api-snapshot",
+    "check-api-teaching",
+    "api-snapshot",
+    "api-surface-report",
+    "gate-fresh",
+    "gate-scope",
+    "lint",
+    "lint-arch",
+    "lint-python",
+    "lint-ts",
+    "format",
+    "format-python",
+    "format-ts",
+    "typecheck",
+    "typecheck-python",
+    "typecheck-ts",
+    "validate",
+    "validate-ts",
+    "test-ts",
+    "profile",
+    "import-snapshot",
+    "budget-delta",
+    # docs: built from the tree and the committed captures; the media capture runs a
+    # fake collector, the captures' bed refresh is docs-captures (leased, above)
+    "docs",
+    "docs-html",
+    "docs-lint",
+    "docs-inventories",
+    "docs-media",
+    "doctest",
+    "doctest-src",
+    # build, release bookkeeping and the web app
+    "build",
+    "clean",
+    "clean-dist",
+    "dev",
+    "help",
+    "changelog",
+    "release-preflight",
+    "wheel-check",
+    "wheel-smoke",
+    "kmodcov-matrix",
+    "support-matrix",
+    "schema",
+    "monitor-fixtures",
+    "browsers",
+    "web",
+    "web-clean",
+    "web-dev",
+    "web-install",
+    # a ping sweep of the lab's addresses: it logs into nothing
+    "lab-reachability",
+]
+"""Targets that never touch the bed: no lease line, pinned so a copy-paste cannot add one.
+
+Every Makefile target is in exactly one of the four lists (a test below), so a new
+target must be classified before it exists: an unclassified one fails the census.
+"""
+QUICK_CLASSIFIER = " --unless-all-under tests/unit -- $(PATHS)"
+"""`make quick` leases only when PATHS names a bed tree: the script's one classifier."""
+
+
+def _bed_lines(target: str) -> "list[str]":
+    return [line.strip() for line in makefile_live_recipe(_MAKEFILE_TEXT, target)]
+
+
+_MAKEFILE_TEXT = (CHECKOUT_ROOT / "Makefile").read_text()
+
+
+@pytest.mark.parametrize("target", BED_TARGETS_DIRECT + BED_TARGETS_AGGREGATORS)
+def test_every_bed_target_takes_the_lease_first_and_releases_it_last(target: str) -> None:
+    lines = _bed_lines(target)
+    assert lines, f"{target} has no live recipe line"
+    assert lines[0] == f"$(call bed_acquire,{target})", (target, lines[0])
+    assert lines[-1] == "$(call bed_release)", (target, lines[-1])
+    assert len(lines) > 2, f"{target} leases nothing: only the lease lines are left"
+
+
+@pytest.mark.parametrize("target", HOSTLESS_TARGETS + LEASE_TOOLS)
+def test_no_hostless_target_takes_the_lease(target: str) -> None:
+    lines = _bed_lines(target)
+    assert not [line for line in lines if "bed_" in line], (target, lines)
+
+
+def test_quick_leases_only_for_a_bed_path() -> None:
+    """The guard line first (a missing PATHS is an error before any lease), then the lease."""
+    lines = _bed_lines("quick")
+    assert "$(error quick: PATHS is required" in lines[0], lines[0]
+    assert lines[1] == f"$(call bed_acquire,quick){QUICK_CLASSIFIER}", lines[1]
+    assert lines[-1] == f"$(call bed_release){QUICK_CLASSIFIER}", lines[-1]
+
+
+def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
+    """The literal scan above is only as good as the macros it names."""
+    text = _MAKEFILE_TEXT
+    assert "\nLAB_FILE := tests/_fixtures/lab_data/tech1/lab.json\n" in text
+    assert "\nBED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)\n" in text
+    assert '\nbed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"\n' in text
+    assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID\n" in text
+    assert "tests/_fixtures/lab_data/tech1/lab.json" not in text.replace(
+        "LAB_FILE := tests/_fixtures/lab_data/tech1/lab.json", ""
+    ), "the lab file is spelled once, as LAB_FILE"
+
+
+def test_the_oracle_names_no_bed_lane_the_makefile_does_not_lease() -> None:
+    """Every target gate_scope hands a full tip as a bed lane carries the lease."""
+    from scripts import gate_scope as gs
+
+    named = {line.split()[1] for lanes in gs.BED_LANES.values() for line in lanes}
+    named |= {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
+    leased = set(BED_TARGETS_DIRECT + BED_TARGETS_AGGREGATORS)
+    unleased = sorted(t for t in named if t not in leased and t not in HOSTLESS_TARGETS)
+    assert not unleased, f"oracle lanes neither leased nor pinned hostless: {unleased}"
+
+
+def test_every_makefile_target_is_classified_exactly_once() -> None:
+    """The census is exhaustive: a target the lists do not name fails here, before it runs."""
+    every = [
+        *BED_TARGETS_DIRECT,
+        *BED_TARGETS_AGGREGATORS,
+        *HOSTLESS_TARGETS,
+        *LEASE_TOOLS,
+        "quick",
+    ]
+    assert len(every) == len(set(every)), "a target in two lists"
+    # a rule's name, not a variable's (`X := ...`) nor make's own dot-targets
+    targets = set(re.findall(r"^([A-Za-z0-9_-]+)\s*:(?!=)", _MAKEFILE_TEXT, re.MULTILINE))
+    assert sorted(targets - set(every)) == [], "Makefile targets the census does not classify"
+    assert sorted(set(every) - targets) == [], "census entries that are not Makefile targets"

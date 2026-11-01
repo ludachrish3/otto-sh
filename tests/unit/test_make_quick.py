@@ -137,6 +137,10 @@ def _make(tmp_path: Path, *args: str, env_extra: "dict[str, str] | None" = None)
     its own session so a timeout kills make AND the pytest it spawned.
     """
     env = _child_env(env_extra or {})
+    # A bed path in PATHS makes `make quick` take the bed lease: in a root of this
+    # test's own, never the real cell's and never one the environment names (a leased
+    # parent run would otherwise find this child registering itself in its lease).
+    env["BED_LEASE_ROOT"] = str(tmp_path / "bed-lease")
     argv = [
         "make",
         "--no-print-directory",

@@ -2273,8 +2273,10 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
     assert re.search(first, release), (
         "the release must check the stamp first, keep its status, and stop on anything but 0/1"
     )
-    assert release.lstrip().startswith("@{ $(COVERAGE_STAMP) check"), (
-        "the stamp check must be the release's very first command"
+    lines = release.lstrip().split("\n")
+    assert lines[0] == "$(call bed_acquire,release)", "the release holds the bed lease throughout"
+    assert lines[1].lstrip().startswith("@{ $(COVERAGE_STAMP) check"), (
+        "the stamp check must be the release's first command inside the lease"
     )
     fallback = (
         r"\{ \[ \$\$stamp -eq 0 \] \|\| \{ \$\(MAKE\) coverage && \$\(COVERAGE_STAMP\) check "

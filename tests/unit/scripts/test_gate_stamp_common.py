@@ -94,3 +94,42 @@ def test_both_stamps_share_the_leaf():
     assert coverage_stamp.tree_hash is common.tree_hash
     assert coverage_stamp.dirt_refusals is common.dirt_refusals
     assert coverage_stamp.test_roots is common.test_roots
+
+
+def test_write_atomically_sets_the_mode_it_is_given(tmp_path: Path):
+    """mkstemp creates 0o600 whatever the umask; the mode is set before the rename."""
+    target = tmp_path / "shared.json"
+    common.write_atomically(target, "{}\n", mode=0o666)
+    assert target.stat().st_mode & 0o777 == 0o666
+    common.write_atomically(target, "{}\n")
+    assert target.stat().st_mode & 0o777 == 0o600, "no mode: mkstemp's, the rename replaces"
+
+
+def test_store_lock_sets_modes_only_on_what_it_created(tmp_path: Path):
+    root = tmp_path / "store"
+    with common.store_lock(root, dir_mode=0o777, file_mode=0o666):
+        pass
+    assert root.stat().st_mode & 0o777 == 0o777
+    assert (root / common.LOCK_FILE).stat().st_mode & 0o777 == 0o666
+    # An existing root and lock are left alone: another user's objects.
+    root.chmod(0o755)
+    (root / common.LOCK_FILE).chmod(0o644)
+    with common.store_lock(root, dir_mode=0o777, file_mode=0o666):
+        pass
+    assert root.stat().st_mode & 0o777 == 0o755
+    assert (root / common.LOCK_FILE).stat().st_mode & 0o777 == 0o644
+
+
+def test_store_lock_is_the_one_lock_both_scripts_use():
+    from scripts import gate_tip
+
+    assert gate_tip.store_lock is common.store_lock
+
+
+def test_utc_now_renders_through_utc_iso():
+    """One rendering of a UTC time: the stamps' and the bed lease's."""
+    from datetime import datetime, timezone
+
+    when = datetime(2026, 11, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+    assert common.utc_iso(when) == "2026-11-01T12:00:00+00:00"
+    assert len(common.utc_now()) == len(common.utc_iso(when))

@@ -542,7 +542,7 @@ inside the dashboard tree is a plain leaf and runs under `quick` like any other.
 a row, and an oracle census proves that every item pytest collects in every
 test module, changed alone, is selected by a lane the oracle emits.
 
-`make gate-fresh` is the full gate's last command (a full tip column appends the bed and lane commands after it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
+The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. `make gate-fresh` is the full gate's last static lane (the two test suites follow it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
 
 It runs the lanes that catch what a clean checkout sees and your dev tree
 hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
@@ -896,6 +896,83 @@ own setting, described under
 `@pytest.mark.timeout`: a test that trips one of those on your machine is worth
 an issue. The unit tests of the readiness default ignore `OTTO_INIT_TIMEOUT`,
 so they still check the 10 s otto ships with.
+
+(bed-lease)=
+
+### The bed lease
+
+The lab bed is single-tenant, and the bed lease is what enforces it. Every
+`make` target that touches the bed (a suite that needs the lab, the console and
+guest probes, and `quick` when its `PATHS` name a tree outside `tests/unit`)
+takes the cell's lease as its first step and releases it as its last; the
+targets that run bed lanes with `$(MAKE)` (`gate-tip`, `release`, `stability`,
+`all` and the release matrices) hold it across every lane they run, so a
+landing's gate is one hold. The census in `tests/unit/test_lane_invariants.py`
+classifies every Makefile target as leased, holding, or hostless, and refuses
+one it does not know. A second run on the same cell fails fast:
+
+```text
+bed-lease: tech1 is held by vagrant@otto ('gate-tip', pid 4242, since 2026-11-01T12:00:00+00:00, expires 2026-11-01T16:00:00+00:00): holder running
+```
+
+Set `BED_LEASE_WAIT=<seconds>` to queue behind it instead (the lane polls every
+5 s and starts the moment the bed frees). `make bed-status` shows the same
+record, `free` when nobody holds it.
+
+The lease belongs to the **run**: the `make` running the lane and every
+process group it starts. A lane that dies mid-run (SIGKILL, a lost VM, a
+closed terminal) keeps the bed only while something of it still runs; once
+its workers are gone the next acquirer takes the lease over, saying whose it
+was and that it was dead. A red lane ends the same way: `make` stops at the
+failing step, so the release never runs and the next lane on the cell prints
+`taken over from ... dead`, which is that red lane's lease being collected,
+not a second failure. A green lane's release first waits (`BED_LEASE_DRAIN`,
+default 30 s) for the run's own processes to exit, and keeps the lease if any
+remain, naming them: a lane cannot free a bed its own workers are still on.
+A lane that merely overran its budget
+(`BED_LEASE_TTL`, default four hours, in seconds; raise it in the environment
+of a longer soak) is reported as overdue but is never taken from under a live
+run: the eviction of a run you *know* is dead is `make bed-release`, which
+names what it evicted. Launch an unattended lane under `setsid` so its process
+group is the run's own rather than the launcher's; a lease whose group is a
+long-lived launcher's shell is held until that shell exits or you release it.
+
+`make bed-lease PURPOSE="..."` holds the bed from an interactive shell for as
+long as that shell lives (a hold to keep peers off the bed while you work by
+hand); the lanes you then run from it re-enter the hold. `make bed-release`
+frees it. The holder is the shell that ran `make`, so from a launcher that
+exits at once (an agent's command tool, a one-shot `sh -c`) the hold is dead
+the moment it is taken: hold the bed from a shell that stays open.
+
+The lease lives under `/tmp/otto-bed-lease/` on the machine the lanes run
+from (`BED_LEASE_ROOT` moves it), as `<cell>.json` and, beside it,
+`<cell>.reservations.json` in otto's own [JSON reservation
+format](cli/reservation/json-backend.md): the holder is the owner of every
+resource the cell's labs declare, so otto can read the lease without knowing
+the script. From a project whose settings name the cell's lab directory and
+that file,
+
+```toml
+libs = ["/home/vagrant/otto-sh/tests/custom_hosts"]
+init = ["custom_hosts"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["/home/vagrant/otto-sh/tests/_fixtures/lab_data/tech1"]
+
+[reservations]
+backend = "json"
+
+[reservations.json]
+path = "/tmp/otto-bed-lease/tech1.reservations.json"
+```
+
+(`libs` and `init` load the test suite's `custom_hosts` package, which
+registers the frame the cell's embedded hosts name; without it the embedded
+lab does not load.) `otto --lab unix+busybox+embedded reservation check` reports every bed
+resource `held: yes` to the holder and refuses anyone else, naming the holder.
+otto only reads the file; the lease script (`scripts/bed_lease.py`) is the
+scheduler.
 
 ### The scoped lanes
 

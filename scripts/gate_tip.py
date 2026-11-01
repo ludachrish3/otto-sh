@@ -29,8 +29,6 @@ and no holder takes the other in the same process.
 """
 
 import argparse
-import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -40,7 +38,7 @@ import shlex
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -60,6 +58,7 @@ from scripts.gate_stamp_common import (  # noqa: E402
     junit_written,
     nproc,
     stamps_root,
+    store_lock,
     test_roots,
     tree_hash,
     tree_state,
@@ -94,8 +93,6 @@ STAMPED_GOALS = [
 MEASURED_OUTPUTS = ["schemas/support_matrix.json", "schemas/kmodcov_matrix.json"]
 """Files a lane rewrites with what it measured; the Makefile says review and commit the diff."""
 STORE = "otto-gate-stamps"
-LOCK_FILE = ".lock"
-"""The store lock's file under the store root (a dotfile, never a tree directory)."""
 FORMAT = 1
 _STR_FIELDS = ("tree", "command", "base", "written_at", "checkout")
 _RED_FIELDS = ("tree", "command", "written_at", "checkout")
@@ -292,28 +289,6 @@ def read_entry(path: Path) -> "Stamp | Red | None":
     """Read *path* once and return the stamp or the red marker it holds, or None."""
     data = _read_record(path)
     return _stamp_from(data, path) or _red_from(data, path)
-
-
-@contextlib.contextmanager
-def store_lock(root: Path, *, shared: bool = False) -> Iterator[None]:
-    """Hold the store's lock (flock on ``<root>/.lock``): exclusive, or *shared* for readers.
-
-    A writer (exclusive) creates the store and the lock file if missing, and waits for every
-    other holder. A reader (shared) waits only for a writer; with no store there is nothing
-    to read, so it takes no lock and creates nothing. Only for short store steps, never
-    while a lane runs, and never nested: two flocks of one process on two open files of the
-    same lock can deadlock.
-    """
-    if shared and not root.is_dir():
-        yield
-        return
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / LOCK_FILE).open("a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def write_red(

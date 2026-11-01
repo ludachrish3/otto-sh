@@ -80,3 +80,27 @@ def test_an_entry_proc_will_not_show_is_skipped(monkeypatch: pytest.MonkeyPatch)
 def test_a_stat_line_cut_short_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(process_group.Path, "read_text", lambda self: "1 (x) S")
     assert process_state(os.getpid()) is None
+
+
+def test_process_start_is_the_kernel_stamp_and_none_once_gone() -> None:
+    """The start time is the 22nd stat field; a pid that is gone has none."""
+    stat = Path(f"/proc/{os.getpid()}/stat").read_text()
+    fields = stat[stat.rfind(")") + 2 :].split()
+    assert process_group.process_start(os.getpid()) == int(fields[19])
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    assert process_group.process_start(proc.pid) is None
+
+
+def test_ancestors_walks_the_ppid_chain_without_self() -> None:
+    chain = process_group.ancestors(os.getpid())
+    assert chain[0] == os.getppid()
+    assert os.getpid() not in chain
+    assert chain == list(dict.fromkeys(chain)), "no cycle, no repeat"
+    assert 1 in chain or chain[-1] > 1, chain
+
+
+def test_ancestors_of_a_gone_pid_is_empty() -> None:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    assert process_group.ancestors(proc.pid) == []
