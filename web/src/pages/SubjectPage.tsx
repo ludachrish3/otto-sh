@@ -182,7 +182,7 @@ export function SubjectPage() {
   // null then), and made the "N series · M samples in range" summary below
   // report total-ever instead of the window it claims to describe.
   const metrics = metricsForSubject(session, id, window_);
-  const labels = [...new Set(metrics.map((m) => m.label))].sort();
+  const labelCount = new Set(metrics.map((m) => m.label)).size;
 
   // Brush-select sweep: the chart hands back the raw dragged
   // range, unclamped — a brush drag can only ever select within the axis
@@ -275,7 +275,7 @@ export function SubjectPage() {
       </h1>
       <EventsPanel isOpen={eventsOpen} onClose={() => setEventsOpen(false)} />
       <p data-testid="series-summary" className="text-sm text-tertiary">
-        {labels.length} series · {metrics.length} samples in range
+        {labelCount} series · {metrics.length} samples in range
       </p>
       <div className="flex gap-4">
         <SeriesPanel

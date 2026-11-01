@@ -444,12 +444,16 @@ export function buildTopoGraph(
     for (const [src, fed] of feeds) {
       const srcNode = nodeOf(src);
       if (!srcNode) continue;
-      const targets = new Set([...fed].map((h) => nodeOf(h)).filter((t) => t && t !== srcNode));
+      const targets = new Set<string>();
+      for (const h of fed) {
+        const t = nodeOf(h);
+        if (t && t !== srcNode) targets.add(t);
+      }
       for (const target of targets) {
         edges.push({
           id: `reports:${src}~${target}`,
           source: srcNode,
-          target: target as string,
+          target,
           provenance: "reports-for",
           impair: null,
           parallelIndex: 0,

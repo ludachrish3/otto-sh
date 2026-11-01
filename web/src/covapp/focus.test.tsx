@@ -258,13 +258,15 @@ describe("navigateHash", () => {
   });
 });
 
+/** A consumer with no FocusProvider above it; module-level so React sees one stable component. */
+function Bare() {
+  useFocus();
+  return null;
+}
+
 describe("useFocus / FocusProvider", () => {
   it("throws when used without a FocusProvider ancestor", () => {
     allowConsoleOutput(); // React logs the render-time throw to console.error
-    function Bare() {
-      useFocus();
-      return null;
-    }
     expect(() => render(<Bare />)).toThrow(/FocusProvider/);
   });
 

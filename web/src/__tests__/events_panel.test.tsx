@@ -330,12 +330,10 @@ describe("EventsPanel compose row", () => {
     const { session } = load();
     await user.click(screen.getByTestId("events-compose-add"));
     const target = useUiStore.getState().eventEditor;
-    expect(target?.kind).toBe("draft");
-    if (target?.kind === "draft") {
-      expect(target.draft.sessionId).toBe(session.id);
-      expect(target.draft.timestampMs).toBe(session.endMs);
-      expect(target.draft.label).toBe("");
-    }
+    if (target?.kind !== "draft") throw new Error(`expected a draft editor, got ${target?.kind}`);
+    expect(target.draft.sessionId).toBe(session.id);
+    expect(target.draft.timestampMs).toBe(session.endMs);
+    expect(target.draft.label).toBe("");
   });
 });
 

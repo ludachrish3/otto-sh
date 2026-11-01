@@ -270,6 +270,6 @@ describe("testid integrity", () => {
         }
       }
     }
-    expect([...violations.values()].sort()).toEqual([]);
+    expect([...violations.values()].sort((a, b) => a.localeCompare(b))).toEqual([]);
   });
 });

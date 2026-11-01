@@ -43,7 +43,7 @@ result against this tree (`scripts/check_untitledui_drift.sh`,
 **byte-identical** to what the CLI emits — a single hand-edit (e.g. renaming a
 class, reformatting) destroys that property permanently: the drift check is a
 one-directional content diff, so it cannot tell "upstream changed" from "we
-edited it", and your edit is reported as *upstream* drift on every run
+edited it", and your edit is reported as _upstream_ drift on every run
 thereafter (that is what issue #177 was).
 
 Because that failure is both silent and misattributed, the rule is enforced
@@ -51,7 +51,7 @@ rather than merely documented. `scripts/check_untitledui_hash.sh` recomputes
 this tree's `contentHash` and compares it to the value recorded in
 `untitledui.lock.json`; it needs no network and runs on every push as a leg of
 `make check-ts`, so a hand-edit fails at the commit that introduces it instead
-of surfacing days later in the weekly drift workflow. If you *deliberately*
+of surfacing days later in the weekly drift workflow. If you _deliberately_
 re-vendor, update `contentHash.value` (and `vendoredAt`) in the same commit —
 that is the supported way to move this tree, and the only thing the gate asks.
 

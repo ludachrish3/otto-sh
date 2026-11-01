@@ -85,7 +85,7 @@ function boxesUnder(path: string, endpoints: string[]): string[] {
       if (inside(p, r)) hit.add(name);
     }
   }
-  return [...hit].sort();
+  return [...hit].sort((a, b) => a.localeCompare(b));
 }
 
 describe("routeEdge — same column", () => {

@@ -151,7 +151,7 @@ export function sourcesIn(tree: ChartNode[]): string[] {
   for (const chart of tree) {
     for (const s of chart.series) if (s.source !== null) set.add(s.source);
   }
-  return [...set].sort();
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 /** In-range [ms, value] point arrays for the checked series keys — sliced

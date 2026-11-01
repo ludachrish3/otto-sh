@@ -13,8 +13,12 @@ describe("buildIndex", () => {
       rec("a", "mem", "2026-07-12T10:00:05Z", 3),
       rec("b", "cpu", "2026-07-12T10:00:10Z", 4),
     ]);
-    expect([...idx.recs.keys()].sort()).toEqual(["a/cpu", "a/mem", "b/cpu"]);
-    expect(idx.keysByHost.get("a")?.sort()).toEqual(["a/cpu", "a/mem"]);
+    expect([...idx.recs.keys()].sort((a, b) => a.localeCompare(b))).toEqual([
+      "a/cpu",
+      "a/mem",
+      "b/cpu",
+    ]);
+    expect(idx.keysByHost.get("a")?.sort((a, b) => a.localeCompare(b))).toEqual(["a/cpu", "a/mem"]);
     expect(idx.tsMs.get("a/cpu")).toEqual([
       Date.parse("2026-07-12T10:00:00Z"),
       Date.parse("2026-07-12T10:00:05Z"),

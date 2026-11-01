@@ -179,7 +179,9 @@ describe("covapp ticket + callback contract (shared with the Python emitter)", (
   });
 
   it("sentinel ticket ids match the Python constants", () => {
-    expect([...SENTINEL_TICKET_IDS].sort()).toEqual([...contract.sentinel_ticket_ids].sort());
+    expect([...SENTINEL_TICKET_IDS].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...contract.sentinel_ticket_ids].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it("registers the contract's chunk callbacks on window", async () => {
