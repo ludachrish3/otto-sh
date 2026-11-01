@@ -13,6 +13,7 @@ import os
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -20,6 +21,7 @@ from scripts import bed_lease, bed_reap
 from tests._fixtures import bed_hygiene
 from tests._fixtures.bed_hygiene import HygieneSnapshot, QdiscReads
 from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.lease_env import lease_free_environ
 from tests.unit.link.test_manage_impair import FILTER_SCOPED_ONE, QDISC_SCOPED_ONE
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -518,15 +520,9 @@ def test_run_lab_health_runs_the_makefiles_console_targets_in_order(monkeypatch)
 
 
 def _main(root: Path, *argv: str) -> int:
-    saved = os.environ.get(bed_lease.ROOT_ENV)
-    os.environ[bed_lease.ROOT_ENV] = str(root)
-    try:
+    """Run the reap in-process against *root*, in a lease-free environment (#819)."""
+    with mock.patch.dict(os.environ, lease_free_environ(BED_LEASE_ROOT=str(root)), clear=True):
         return bed_reap.main(["--lab", str(LAB), *argv])
-    finally:
-        if saved is None:
-            del os.environ[bed_lease.ROOT_ENV]
-        else:
-            os.environ[bed_lease.ROOT_ENV] = saved
 
 
 def test_a_unit_only_quick_reaps_nothing(tmp_path, doubles, lab, capsys):

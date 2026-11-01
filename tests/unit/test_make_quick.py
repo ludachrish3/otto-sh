@@ -5,7 +5,6 @@ The recipe text is pinned by a reader; the behaviours the text cannot show
 failure aborting) are pinned by running make for real on tiny selections.
 """
 
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -13,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from scripts.process_group import signal_group
+from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_lane_invariants import (
     LANE_LEG_TIMEOUT_S,
@@ -120,7 +120,7 @@ def _child_env(env_extra: "dict[str, str]") -> "dict[str, str]":
     passes is appended after it.
     """
     dropped = ("PYTEST_", "COV_CORE_", "MAKEFLAGS", "MFLAGS", "MAKELEVEL")
-    env = {k: v for k, v in os.environ.items() if not k.startswith(dropped)}
+    env = {k: v for k, v in lease_free_environ().items() if not k.startswith(dropped)}
     env.update(env_extra)
     env["PYTEST_ADDOPTS"] = " ".join(
         part for part in ("-p no:cacheprovider", env_extra.get("PYTEST_ADDOPTS")) if part
@@ -136,11 +136,10 @@ def _make(tmp_path: Path, *args: str, env_extra: "dict[str, str] | None" = None)
     outer make's flags (this suite runs under `make coverage`). The child is
     its own session so a timeout kills make AND the pytest it spawned.
     """
-    env = _child_env(env_extra or {})
     # A bed path in PATHS makes `make quick` take the bed lease: in a root of this
     # test's own, never the real cell's and never one the environment names (a leased
     # parent run would otherwise find this child registering itself in its lease).
-    env["BED_LEASE_ROOT"] = str(tmp_path / "bed-lease")
+    env = _child_env({"BED_LEASE_ROOT": str(tmp_path / "bed-lease"), **(env_extra or {})})
     argv = [
         "make",
         "--no-print-directory",

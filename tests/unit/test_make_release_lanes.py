@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from scripts import gate_tip as gt
+from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -57,8 +58,8 @@ def _run_make(stub: Path, *args: str) -> "subprocess.CompletedProcess[str]":
     # beside the stub, never the real cell's, and in a session of their own so the
     # lease's process group is the make's, not this test's.
     dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "OTTO_CONFORMANCE_CELLS"}
-    env = {k: v for k, v in os.environ.items() if k not in dropped}
-    env["BED_LEASE_ROOT"] = str(stub.parent / "bed-lease")
+    lease_free = lease_free_environ(BED_LEASE_ROOT=str(stub.parent / "bed-lease"))
+    env = {k: v for k, v in lease_free.items() if k not in dropped}
     return subprocess.run(
         ["make", "--no-print-directory", *args, f"MAKE={stub}"],
         cwd=CHECKOUT_ROOT,
@@ -574,9 +575,9 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
     argv = tmp_path / "argv.txt"
     _uv_stub(bin_dir / "uv", f'printf \'%s\\n\' "$@" > "{argv}"')
     dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
-    env = {k: v for k, v in os.environ.items() if k not in dropped}
+    lease_free = lease_free_environ(BED_LEASE_ROOT=str(tmp_path / "bed-lease"))
+    env = {k: v for k, v in lease_free.items() if k not in dropped}
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
-    env["BED_LEASE_ROOT"] = str(tmp_path / "bed-lease")
     completed = subprocess.run(
         ["make", "--no-print-directory", "gate-tip", *args],
         cwd=CHECKOUT_ROOT,
