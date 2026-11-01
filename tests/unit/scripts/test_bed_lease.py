@@ -6,13 +6,16 @@ child of this process would be a descendant of a holder that is this
 process, which is the re-entrant case, tested on its own.
 """
 
+import ast
 import json
 import os
 import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -22,6 +25,7 @@ from otto.utils import wait_for
 from scripts import bed_lease
 from scripts.process_group import process_state, signal_group
 from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.lease_env import LEASE_ENV_PREFIX, lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 
@@ -32,18 +36,15 @@ ME = os.getpid()
 
 
 def _run(root: Path, *argv: str, env: "dict[str, str] | None" = None) -> int:
-    """Call the script's ``main`` in-process against *root*; return its exit status."""
+    """Call the script's ``main`` in-process against *root*; return its exit status.
+
+    The process environment is the script's, so for the call it is the lease-free one
+    (:mod:`tests._fixtures.lease_env`) plus the root, the drain and *env*; the original
+    is restored afterwards.
+    """
     full = {"BED_LEASE_ROOT": str(root), "BED_LEASE_DRAIN": "1", **(env or {})}
-    saved = {k: os.environ.get(k) for k in full}
-    os.environ.update(full)
-    try:
+    with mock.patch.dict(os.environ, lease_free_environ(**full), clear=True):
         return bed_lease.main(["--lab", str(LAB), *argv])
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
 
 
 def _record(root: Path) -> dict:
@@ -203,7 +204,7 @@ def _run_shell(root: Path, body: str) -> "subprocess.CompletedProcess[str]":
     The recipe shape: the lease script runs as a descendant of the holder, so the
     holder's group holds nothing but the script's own ancestry once the lane is done.
     """
-    env = {**os.environ, "BED_LEASE_ROOT": str(root), "BED_LEASE_DRAIN": "1"}
+    env = lease_free_environ(BED_LEASE_ROOT=str(root), BED_LEASE_DRAIN="1")
     return subprocess.run(
         ["sh", "-c", body],
         start_new_session=True,
@@ -317,6 +318,69 @@ def test_a_waiting_acquire_gives_up_at_its_budget_and_says_held_once(
     assert _run(root, "acquire", "--pid", str(ME), env={"BED_LEASE_WAIT": "1"}) == 1
     out = capsys.readouterr().out
     assert out.count("is held by") == 1, out
+
+
+def test_the_runners_wait_budget_never_reaches_the_script_under_test(root, holder, monkeypatch):
+    """#819: a gate launched with BED_LEASE_WAIT queues behind another lease, and the lease
+    tests ran under that variable, so a refused second acquire waited and succeeded instead.
+    Both runners hand the script a lease-free environment: the in-process one and the shell."""
+    monkeypatch.setenv("BED_LEASE_WAIT", "7200")
+    monkeypatch.setenv("BED_LEASE_TTL", "1")
+    _run(root, "acquire", "--pid", str(holder.pid))
+    record = _record(root)
+    held_for = datetime.fromisoformat(record["expires"]) - datetime.fromisoformat(record["since"])
+    assert held_for == timedelta(seconds=bed_lease.DEFAULT_TTL_S), "the runner's TTL never arrived"
+    started = time.monotonic()
+    assert _run(root, "acquire", "--pid", str(ME)) == 1, "refused at once, no wait inherited"
+    assert _run_shell(root, f"{SCRIPT} acquire --pid $$").returncode == 1, "the shell runner too"
+    assert time.monotonic() - started < 15, "two refusals, not a wait for the 30 s holder"
+    assert os.environ["BED_LEASE_WAIT"] == "7200", "the process environment is restored"
+    assert _record(root)["pid"] == holder.pid
+
+
+def test_every_variable_the_script_reads_is_in_the_scrubbed_namespace():
+    """Every ``os.environ`` read in the script names a ``*_ENV`` constant inside the prefix
+    (``seconds_from_env`` reads the one its caller passes), so the fixture's scrub and the
+    script's reads cannot drift apart."""
+    source = (CHECKOUT_ROOT / "scripts" / "bed_lease.py").read_text()
+    tree = ast.parse(source)
+    constants = {
+        node.targets[0].id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.endswith("_ENV")
+        and isinstance(node.value, ast.Constant)
+    }
+    assert constants, "no *_ENV constants: the guard reads nothing"
+    assert all(v.startswith(LEASE_ENV_PREFIX) for v in constants.values()), constants
+    assert not any(
+        isinstance(node, ast.ImportFrom) and node.module == "os" for node in tree.body
+    ), "an `from os import …` would hide a read from this walk"
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    reader = next(node for node in functions if node.name == "seconds_from_env")
+    parameter = reader.args.args[0].arg
+    exempt = {id(node) for node in ast.walk(reader)}  # the one body that reads its parameter
+    reads = []
+    for node in ast.walk(tree):
+        key = None
+        if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "os.environ":
+            key = node.slice
+        elif isinstance(node, ast.Call) and ast.unparse(node.func) in {
+            "os.environ.get",
+            "os.getenv",
+            "seconds_from_env",
+        }:
+            key = node.args[0]
+        elif isinstance(node, ast.Compare) and any(
+            ast.unparse(c) == "os.environ" for c in node.comparators
+        ):
+            key = node.left
+        if key is not None and not (id(node) in exempt and ast.unparse(key) == parameter):
+            reads.append(ast.unparse(key))
+    assert reads, "the script reads nothing from the environment"
+    stray = sorted(set(reads) - set(constants))
+    assert not stray, f"environment reads outside the *_ENV constants: {stray}"
 
 
 def test_a_bad_wait_or_ttl_is_a_usage_error(root):

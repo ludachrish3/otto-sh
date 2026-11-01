@@ -16,6 +16,7 @@ import pytest
 
 from otto.utils import wait_for
 from scripts.process_group import group_alive, signal_group
+from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -24,10 +25,18 @@ _DROPPED = ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")
 
 
 def _env(root: Path) -> "dict[str, str]":
-    env = {k: v for k, v in os.environ.items() if k not in _DROPPED}
-    env["BED_LEASE_ROOT"] = str(root)
-    env["BED_LEASE_DRAIN"] = "1"
-    return env
+    """The lane's environment: make's own variables and every ``BED_LEASE_*`` key dropped (#819)."""
+    env = lease_free_environ(BED_LEASE_ROOT=str(root), BED_LEASE_DRAIN="1")
+    return {k: v for k, v in env.items() if k not in _DROPPED}
+
+
+def test_the_lanes_environment_carries_no_inherited_wait_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("BED_LEASE_WAIT", "7200")
+    monkeypatch.setenv("MAKEFLAGS", "-j4")
+    env = _env(tmp_path)
+    assert "BED_LEASE_WAIT" not in env
+    assert "MAKEFLAGS" not in env
+    assert env["BED_LEASE_ROOT"] == str(tmp_path)
 
 
 def _make(root: Path, *args: str, extra: "Path | None" = None, **kw):
