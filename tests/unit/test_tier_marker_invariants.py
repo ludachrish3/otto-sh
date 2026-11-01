@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _pytest.mark.expression import Expression
 
 from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
@@ -388,8 +389,17 @@ def test_resource_slice_legs_exclude_stability_and_chaos():
 
 
 def _makefile_marker_variables(text: str) -> "dict[str, str]":
-    """The ``M_* := ...`` marker-expression variables the Makefile's lanes share."""
-    return dict(re.findall(r"^(M_[A-Z_]+) := (.+)$", text, re.MULTILINE))
+    """The ``M_* := ...`` marker-expression variables the Makefile's lanes share, expanded.
+
+    A variable may name an earlier one (``M_COVERAGE_BED`` is built on
+    ``M_COVERAGE``); its value is returned with that reference expanded, as
+    make's ``:=`` expands it, so a single pass of
+    :func:`_expand_makefile_variables` resolves any leg.
+    """
+    variables: "dict[str, str]" = {}
+    for name, value in re.findall(r"^(M_[A-Z_]+) := (.+)$", text, re.MULTILINE):
+        variables[name] = _expand_makefile_variables(value, variables)
+    return variables
 
 
 def _expand_makefile_variables(expr: str, variables: "dict[str, str]") -> str:
@@ -400,16 +410,38 @@ def _expand_makefile_variables(expr: str, variables: "dict[str, str]") -> str:
 
 
 def _makefile_marker_expressions(text: str) -> list[str]:
-    """Every ``-m`` expression in the Makefile, with ``M_*`` variables expanded.
+    """Every pytest ``-m`` expression in the Makefile, with ``M_*`` variables expanded.
 
-    Comment lines are dropped first: the marker-policy prose above ``M_UNIX``
-    quotes real expressions, and a scanner that reads documentation as
-    configuration fails on the wrong thing.
+    Read from :func:`_makefile_pytest_invocations`, the one reader of the Makefile's
+    pytest argv (it joins backslash continuations, the soak lanes' shape, and drops
+    comment lines: the marker-policy prose above ``M_UNIX`` quotes real expressions).
+    Only a pytest invocation's ``-m`` counts: the release's ``git commit -m
+    "chore(matrix): …"`` lines carry a ``-m`` too, and a message is not a marker
+    expression.
     """
     variables = _makefile_marker_variables(text)
-    live = "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
     return [
-        _expand_makefile_variables(raw, variables) for raw in re.findall(r'-m\s+"([^"]+)"', live)
+        _expand_makefile_variables(value, variables)
+        for argv in _makefile_pytest_invocations(text)
+        for flag, value in pairwise(argv[argv.index("pytest") :])
+        if flag == "-m"
+    ]
+
+
+def test_makefile_marker_expressions_read_continued_pytest_lines_and_no_commit_message():
+    makefile = (
+        "M_X := not stability\n"
+        "a:\n"
+        "\t@uv run pytest \\\n"
+        '\t  -m "$(M_X) and not serial_timing" tests/unit\n'
+        "b:\n"
+        '\t@git commit -q -m "chore(matrix): re-measure" && uv run pytest -m "$(M_X)"\n'
+        "c:\n"
+        '\t@$(SAY) "pytest: -m is in a message here"\n'
+    )
+    assert _makefile_marker_expressions(makefile) == [
+        "not stability and not serial_timing",
+        "not stability",
     ]
 
 
@@ -525,12 +557,43 @@ def _marker_sets_of_modules_carrying(marker: str) -> "list[set[str]]":
     return sets
 
 
+def _marker_matcher(markers: "frozenset[str] | set[str]"):
+    """A pytest ``ExpressionMatcher`` over one collected item's marker names.
+
+    Refuses the ``marker(kwarg=...)`` expression form loudly instead of
+    guessing: no lane spells one today, and a gate that quietly answered
+    "matches nothing" for a shape it does not model would report a live leg
+    as empty (or, worse for the next reader, be believed).
+    """
+
+    def matches(name: str, /, **kwargs: object) -> bool:
+        if kwargs:
+            raise pytest.UsageError(
+                f"marker expression uses the kwargs form `{name}(...)`, which this "
+                "gate does not model — teach it the form rather than dropping the leg"
+            )
+        return name in markers
+
+    return matches
+
+
 def _can_select(expr: str, markers: "set[str]") -> bool:
-    """Whether the ``-m`` conjunction *expr* selects a test carrying *markers*."""
-    terms = [term.strip() for term in expr.split(" and ")]
-    positive = {term for term in terms if not term.startswith("not ")}
-    negative = {term[len("not ") :].strip() for term in terms if term.startswith("not ")}
-    return positive <= markers and not (negative & markers)
+    """Whether the ``-m`` expression *expr* selects a test carrying *markers*.
+
+    Evaluated by pytest's own expression compiler, so every shape a lane can
+    spell is read as pytest reads it — a parenthesised disjunction included
+    (``coverage-bed``'s ``(integration or embedded)``, #797), which a reader
+    that split on ``and`` took for a positive marker no item carries.
+    """
+    return Expression.compile(expr).evaluate(_marker_matcher(markers))
+
+
+def test_can_select_reads_a_grouped_disjunction_as_pytest_does() -> None:
+    assert _can_select("(integration or embedded) and not busybox", {"embedded"})
+    assert not _can_select("(integration or embedded) and not busybox", {"embedded", "busybox"})
+    assert not _can_select("(integration or embedded) and not busybox", {"unit"})
+    assert _can_select("not busybox and not conformance", {"integration"})
+    assert not _can_select("busybox and not conformance", {"integration"})
 
 
 def test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier():

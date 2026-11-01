@@ -1103,6 +1103,7 @@ what you want to exercise:
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
 | No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on 3.10, coverage-gated; minus the `interpreter_agnostic` family on every other Python — see [the cross-Python matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
+| The bed half of that gate (tests/integration plus the e2e tests marked `integration` or `embedded`), uninstrumented, pass/fail: a `src-leaf` tip's lane, never a floor | `make coverage-bed` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |

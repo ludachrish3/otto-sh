@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -117,8 +117,9 @@ COVERAGE_THRESHOLD := 95.5
 # and the pair is held equal by the same test.
 CI_COVERAGE_THRESHOLD := 94.75
 
-# Worker count for `make coverage`'s main pytest leg (coverage-python): one more
-# than the CPU count, where pytest's `-n auto` would use exactly the CPU count.
+# Worker count for `make coverage`'s main pytest leg (coverage-python) and for
+# `coverage-bed`'s parallel leg (#797): one more than the CPU count, where
+# pytest's `-n auto` would use exactly the CPU count.
 # Much of that leg's e2e and integration time is spent waiting on lab-VM I/O, so
 # the extra worker overlaps that wait. Measured on a 4-CPU, 7 GB VM, main-leg
 # wall time over two runs per count: 4 workers 806 s (792/819), 5 workers 763 s
@@ -194,6 +195,12 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # selection the legs did not run. The serial twin is `serial_timing and
 # $(M_COVERAGE)`; the parallel leg appends `and not serial_timing`.
 M_COVERAGE := not stability and not browser and not busybox and not conformance and not kmodcov
+# The bed half of that selection (#797): tests/integration, whose conftest
+# marks every item, plus the e2e tests that declare integration or embedded.
+# Built on M_COVERAGE so the two cannot drift apart; M_HOSTLESS is the other
+# half by its own spelling and tests/unit/test_lane_invariants.py pins the
+# partition.
+M_COVERAGE_BED := (integration or embedded) and $(M_COVERAGE)
 
 # The scoped per-commit lane (#566). Tier exclusions only: the legs spell
 # `serial_timing` like every other lane (parallel leg excludes it, the -n0
@@ -1108,6 +1115,30 @@ WEB_SRCS := $(shell find web/src -type f) \
 
 $(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	@$(MAKE) web
+
+# The bed half of `make coverage`'s selection, $(M_COVERAGE_BED) (#797; the
+# partition note is at the variable). Uninstrumented like `quick` (`--no-cov` stops pytest-cov before the tracer
+# starts, so pyproject's --cov addopts are inert; the otto subprocesses the
+# e2e tests launch still start coverage through the shared bootstrap, as under
+# `quick`, and nothing reads their fragments): this lane is a pass/fail gate
+# for a src-leaf tip, never a floor, and it writes no coverage stamp — `make
+# coverage` stays the release certificate. $(COVAPP_DIST) is a prerequisite
+# because tests/e2e/cov's integration-marked SPA test asserts on the copied
+# covapp bundle only when it is built: without it the test passes vacuously,
+# and `make coverage` builds it (coverage-stamp-start). Make skips the build
+# when the bundle is current, so it costs nothing on a built tree. The rule
+# sits below the dist variables on purpose: Make expands a rule's
+# prerequisites when it reads the rule, so a variable defined later is empty
+# there (tests/unit/test_lane_invariants.py pins the order for every rule).
+coverage-bed: $(COVAPP_DIST) ## Run the bed half of `make coverage`'s selection (tests/integration and the e2e tests marked integration or embedded), uninstrumented, pass/fail: no floor, no stamp. Requires lab VMs. JUnit XML in reports/junit/coverage-bed/ and reports/junit/coverage-bed-serial/.
+	$(call bed_acquire,coverage-bed)
+	$(call bed_reap)
+	@$(SAY) "pytest: the bed half of the coverage selection (-n $(COVERAGE_WORKERS), no coverage)"
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_COVERAGE_BED) and not serial_timing" -n $(COVERAGE_WORKERS) --no-cov $(call junitxml,coverage-bed)
+	@$(SAY) "pytest: serial_timing twin, -n0"
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_COVERAGE_BED)" -n0 --no-cov $(call junitxml,coverage-bed-serial)
+	$(call bed_reap)
+	$(call bed_release)
 
 # The stamp's prologue runs after the dist rules (its prerequisites) so the
 # assets digest it records is the one the Python legs import; `coverage`
@@ -2123,7 +2154,7 @@ clean: web-clean ## (Dev) Remove all generated artifacts
 help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'
 	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
-	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 96, + coverage-ts merged; hostless gated 95)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 95.5, + coverage-ts merged; hostless gated 94.75; coverage-bed = the bed half, uninstrumented pass/fail)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full on primary + hostless on rest; nox-full = full matrix)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'chaos / chaos-embedded' 'tier-3 chaos lane (opt-in, bed-hostile; unix legs · zephyr console)'

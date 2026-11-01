@@ -79,12 +79,14 @@ from pathlib import Path
 import pytest
 from _pytest.mark.expression import Expression
 
+from scripts import gate_scope as gs
 from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _expand_makefile_variables,
     _makefile_marker_variables,
     _makefile_pytest_invocations,
+    _marker_matcher,
     _python_pytest_invocations,
     _selected_roots,
 )
@@ -850,26 +852,6 @@ def lane_legs() -> "list[_Leg]":
     return legs
 
 
-def _marker_matcher(markers: "frozenset[str]"):
-    """A pytest ``ExpressionMatcher`` over one collected item's marker names.
-
-    Refuses the ``marker(kwarg=...)`` expression form loudly instead of
-    guessing: no lane spells one today, and a gate that quietly answered
-    "matches nothing" for a shape it does not model would report a live leg
-    as empty (or, worse for the next reader, be believed).
-    """
-
-    def matches(name: str, /, **kwargs: object) -> bool:
-        if kwargs:
-            raise pytest.UsageError(
-                f"marker expression uses the kwargs form `{name}(...)`, which this "
-                "gate does not model — teach it the form rather than dropping the leg"
-            )
-        return name in markers
-
-    return matches
-
-
 @dataclasses.dataclass(frozen=True)
 class _Item:
     """One collected item: pytest's node id and the marker names it resolved."""
@@ -1481,23 +1463,80 @@ def test_the_marker_expression_compiler_is_pytests_own() -> None:
 # neither leg of a lane that claims to run it.
 
 
-def _conjunction_clauses(expr: str) -> "frozenset[str]":
-    """The `[not] marker` clauses of a pure conjunction; loud on any other shape.
+_MARKER_NAME = r"(?!not\b)[A-Za-z_][A-Za-z0-9_]*"
+_DISJUNCTION_GROUP = re.compile(rf"\(\s*({_MARKER_NAME}(?:\s+or\s+{_MARKER_NAME})+)\s*\)")
+"""A parenthesised disjunction of bare markers, `(a or b …)`: the grouped shape a leg carries."""
 
-    Every paired leg in the tree is a flat `and` chain. A pair that grows an
-    `or` or a parenthesis needs modelling, not a scanner that quietly
-    compares the wrong thing, so that shape is a refusal rather than a skip.
+
+def _conjunction_clauses(expr: str) -> "frozenset[str]":
+    """The clauses of a conjunction: `[not] marker`, or `(a or b …)` groups; loud otherwise.
+
+    Every paired leg in the tree is an `and` chain whose clauses are bare
+    markers, except the bed half of the coverage selection (`coverage-bed`,
+    #797), whose first clause is `(integration or embedded)`. That group is
+    one clause, compared as its sorted alternatives. Any other `or` or
+    parenthesis needs modelling, not a scanner that quietly compares the wrong
+    thing, so that shape is a refusal rather than a skip.
     """
-    if "(" in expr or " or " in f" {expr} ":
+    groups = [
+        "(" + " or ".join(sorted(t for t in m.group(1).split() if t != "or")) + ")"
+        for m in _DISJUNCTION_GROUP.finditer(expr)
+    ]
+    rest = _DISJUNCTION_GROUP.sub("\x00", expr)
+    if "(" in rest or ")" in rest or " or " in f" {rest} ":
         raise pytest.UsageError(
-            f"not a pure conjunction — teach this pin the shape rather than dropping the pair: "
-            f"{expr!r}"
+            f"not a conjunction of markers and `(a or b)` groups — teach this pin the shape "
+            f"rather than dropping the pair: {expr!r}"
         )
-    clauses = frozenset(" ".join(clause.split()) for clause in expr.split(" and "))
-    malformed = [c for c in clauses if not re.fullmatch(r"(not )?[A-Za-z_][A-Za-z0-9_]*", c)]
+    clauses = []
+    for raw in rest.split(" and "):
+        clause = " ".join(raw.split())
+        clauses.append(groups.pop(0) if clause == "\x00" else clause)
+    malformed = [c for c in clauses if not re.fullmatch(r"(not )?[A-Za-z_][A-Za-z0-9_]*|\(.*\)", c)]
     if malformed:
         raise pytest.UsageError(f"unreadable clause(s) {malformed} in {expr!r}")
-    return clauses
+    return frozenset(clauses)
+
+
+class TestConjunctionClauses:
+    def test_a_grouped_disjunction_is_one_clause_compared_by_its_alternatives(self) -> None:
+        assert _conjunction_clauses("(integration or embedded) and not stability") == {
+            "(embedded or integration)",
+            "not stability",
+        }
+        assert _conjunction_clauses("(embedded or integration) and not stability") == (
+            _conjunction_clauses("(integration or embedded) and not stability")
+        )
+
+    def test_a_twin_whose_group_differs_is_an_offender(self) -> None:
+        """Through the pairing itself: a serial twin whose group differs is named, and a
+        twin spelling the same group in another order is faithful."""
+        parallel = _Leg(
+            "x", "(integration or embedded) and not stability and not serial_timing", ()
+        )
+        unfaithful = _Leg("x", "serial_timing and (integration or hostless) and not stability", ())
+        pairs, offenders = serial_twin_offenders([parallel, unfaithful])
+        assert pairs == 1
+        assert len(offenders) == 1
+        assert "(embedded or integration)" in offenders[0]
+        assert "(hostless or integration)" in offenders[0]
+        reordered = _Leg("x", "serial_timing and (embedded or integration) and not stability", ())
+        assert serial_twin_offenders([parallel, reordered]) == (1, [])
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            "((integration or embedded)) and not stability",
+            "integration or embedded",
+            "(integration and embedded) and not stability",
+            "(not integration or embedded) and not stability",
+            "(integration or embedded and not stability)",
+            "not (integration or embedded) and not stability",
+        ],
+    )
+    def test_every_other_grouped_or_shape_refuses(self, expr: str) -> None:
+        with pytest.raises(pytest.UsageError):
+            _conjunction_clauses(expr)
 
 
 def serial_twin_offenders(legs: "list[_Leg]") -> "tuple[int, list[str]]":
@@ -1569,8 +1608,8 @@ def test_the_serial_twin_scanner_reddens_on_a_dropped_exclusion() -> None:
 
 def test_the_serial_twin_scanner_refuses_a_shape_it_cannot_read() -> None:
     parallel = _Leg("x", "not stability and not serial_timing", ())
-    serial = _Leg("x", "serial_timing and (stability or browser)", ())
-    with pytest.raises(pytest.UsageError, match="pure conjunction"):
+    serial = _Leg("x", "serial_timing and (stability and browser)", ())
+    with pytest.raises(pytest.UsageError, match="teach this pin the shape"):
         serial_twin_offenders([parallel, serial])
 
 
@@ -2026,9 +2065,8 @@ def _manifest_diff(
 
 
 def _within(path: str, roots: "tuple[str, ...]") -> bool:
-    return not roots or any(
-        path == root or path.startswith(root.rstrip("/") + "/") for root in roots
-    )
+    """Whether a leg over `roots` reaches `path`; `()` is pyproject's testpaths, so every path."""
+    return not roots or gs._within(path, roots)
 
 
 def _release_census_gaps(rows: "tuple[_Leg, ...]", collect) -> "list[str]":
@@ -2401,6 +2439,7 @@ BED_TARGETS_DIRECT = [
     "coverage-integration",
     "coverage-unix",
     "coverage-embedded",
+    "coverage-bed",
     "conformance-bed",
     "kmodcov",
     "stability-unix",
@@ -2602,10 +2641,115 @@ def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     ), "the lab file is spelled once, as LAB_FILE"
 
 
+_MAKE_BUILTIN_VARIABLES = frozenset({"MAKE", "CURDIR", "MAKEFILE_LIST", "MAKECMDGOALS"})
+_MAKE_DIRECTIVES = (
+    "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif", "include", "-include",
+    "define", "endef", "export", "unexport", ".",
+)  # fmt: skip
+
+
+def makefile_rules_naming_an_undefined_variable(text: str) -> "list[str]":
+    """Rule lines whose targets or prerequisites name a `$(VAR)` no earlier line defines.
+
+    Make expands a rule's targets and prerequisites when it reads the rule, so a
+    variable assigned further down is empty there and the prerequisite silently
+    vanishes: `coverage-bed: $(COVAPP_DIST)` written above `COVAPP_DIST :=` built
+    no bundle (#797, found in review). Recipe lines (a leading tab) expand at run
+    time and are not read; a target-specific variable assignment (`target: VAR :=`)
+    is not a prerequisite list.
+    """
+    defined = set(_MAKE_BUILTIN_VARIABLES)
+    offenders: "list[str]" = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if line.startswith(("\t", "#")) or not line.strip():
+            continue
+        assigned = re.match(
+            r"^(?:export\s+)?(?:override\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?::::?|:|\?|\+)?=", line
+        )
+        if assigned:
+            defined.add(assigned.group(1))
+            continue
+        if line.startswith(_MAKE_DIRECTIVES):
+            continue
+        rule = re.match(r"^([^:=]+?)\s*&?::?(?!=)\s*([^#]*)", line)
+        if not rule:
+            continue
+        targets, prereqs = rule.groups()
+        if "=" in prereqs:
+            continue
+        for var in re.findall(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)", f"{targets} {prereqs}"):
+            if var not in defined:
+                offenders.append(
+                    f"Makefile:{lineno}: $({var}) is not yet defined in {line.strip()!r}"
+                )
+    return offenders
+
+
+def test_every_rule_names_only_variables_defined_above_it() -> None:
+    assert makefile_rules_naming_an_undefined_variable(_MAKEFILE_TEXT) == []
+
+
+def test_the_prerequisite_order_guard_sees_the_defect_it_was_written_for() -> None:
+    late = "lane: $(DIST) ## help\n\t@echo\nDIST := x/index.html\nother: $(DIST)\n"
+    assert makefile_rules_naming_an_undefined_variable(late) == [
+        "Makefile:1: $(DIST) is not yet defined in 'lane: $(DIST) ## help'"
+    ]
+    early = "DIST := x/index.html\nlane: $(DIST)\n\t@echo $(LATER)\nlane: export X := 1\n"
+    assert makefile_rules_naming_an_undefined_variable(early) == []
+
+
+def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> None:
+    """`coverage-bed` and the hostless CI slice partition `M_COVERAGE`, textually (#797).
+
+    The bed lane selects `M_COVERAGE_BED` = `(integration or embedded) and
+    $(M_COVERAGE)`; the hostless slice selects `not integration and not
+    embedded and` the same body, in two spellings: the Makefile's `M_HOSTLESS`
+    and the noxfile's hand-kept `HOSTLESS_TEST_ARGS`, which is what the pull
+    request's `tests_hostless` job runs on the primary Python. Together they
+    are the coverage selection and they share no item, so a src-leaf tip that
+    runs the bed lane and lets the PR's CI run the hostless slice has run every
+    test `make coverage` would, once. The roots differ — the bed lane runs over
+    `testpaths`, the hostless slice over `tests/unit tests/e2e` — and the
+    partition still holds because every `tests/integration` item is
+    integration-marked by its conftest (the bed's) and `tests/busybox` and
+    `tests/conformance` are excluded by marker on both sides. The bed lane is
+    uninstrumented on both legs (`--no-cov`: a floor-less pass/fail lane that
+    leaves no coverage stamp) and its twin is the `-n0` leg. The collected-set
+    check was run once at the landing (the spec's measurement); this is the
+    standing proof, over the spellings.
+    """
+    variables = _makefile_marker_variables(_MAKEFILE_TEXT)
+    body = variables["M_COVERAGE"]
+    hostless = f"not integration and not embedded and {body}"
+    assert variables["M_HOSTLESS"] == hostless
+    assert variables["M_COVERAGE_BED"] == f"(integration or embedded) and {body}"
+    ci = _legs_including_markerless(
+        "noxfile.py:tests_hostless@3.10",
+        _python_pytest_invocations(
+            _REPO / "noxfile.py", resolve_names=True, scope="tests_hostless", python="3.10"
+        ),
+    )
+    assert [leg.expr for leg in ci] == [
+        f"{hostless} and not serial_timing",
+        f"serial_timing and {hostless}",
+    ], ci
+    assert all(leg.roots == ("tests/unit", "tests/e2e") for leg in ci), ci
+    legs = make_legs("coverage-bed")
+    assert [leg.expr for leg in legs] == [
+        f"(integration or embedded) and {body} and not serial_timing",
+        f"serial_timing and (integration or embedded) and {body}",
+    ], legs
+    assert all(leg.roots == () for leg in legs), "marker-selected over the whole tree"
+    live = makefile_live_recipe(_MAKEFILE_TEXT, "coverage-bed")
+    recipe = _makefile_pytest_invocations("\n".join(live))
+    assert len(recipe) == 2, recipe
+    assert all("--no-cov" in argv for argv in recipe), recipe
+    assert "-n0" in recipe[1], recipe
+    assert "-n0" not in recipe[0], recipe
+
+
 def test_the_oracle_names_no_bed_lane_the_makefile_does_not_lease() -> None:
     """Every target gate_scope hands a full tip as a bed lane carries the lease."""
-    from scripts import gate_scope as gs
-
     named = {line.split()[1] for lanes in gs.BED_LANES.values() for line in lanes}
     named |= {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
     leased = set(BED_TARGETS_DIRECT + BED_TARGETS_AGGREGATORS)

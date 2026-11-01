@@ -222,6 +222,7 @@ MAINTAINER_TARGETS = frozenset(
         "conformance-bed",
         "console-logout",
         "coverage",
+        "coverage-bed",
         "coverage-embedded",
         "coverage-gate-args",
         "coverage-hostless",
