@@ -82,6 +82,9 @@ GIT_SENSE: dict[str, list[str]] = {
     # scripts/docs_build_stamp.py's build_stamp(repo=...) keyword: the git
     # checkout the stamp reads its tags from.
     "tests/unit/test_docs_build_stamp.py": ["repo=_make_git_repo(", "repo=tmp_path"],
+    # scripts/local_gate_status.py's --repo-slug flag: the GitHub repository the
+    # admission job reads the local-gate status from.
+    "tests/unit/test_ci_gate_admission.py": ['--repo-slug "$GITHUB_REPOSITORY"'],
 }
 
 KEPT_WORDS: dict[str, list[str]] = {
@@ -90,6 +93,8 @@ KEPT_WORDS: dict[str, list[str]] = {
     # Same shape and stale-entry check as GIT_SENSE.
     # yum's own repository file, which the CentOS 7 image edits in place.
     "tests/project2/docker/oldos/Dockerfile": ["/etc/yum.repos.d/CentOS-Base.repo"],
+    # GitHub's REST path for a repository and its rulesets, which the live pin reads.
+    "tests/unit/test_landing_ruleset.py": ['f"repos/{_slug()}'],
     # the Makefile's gate-tip recipe, asserted byte for byte: it passes
     # scripts/gate_tip.py's own --repo flag (scripts/ is out of scope).
     "tests/unit/test_make_release_lanes.py": ["scripts/gate_tip.py --repo ."],

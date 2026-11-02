@@ -782,8 +782,8 @@ def lint(session: nox.Session) -> None:
     monitor boundary canary runs the monitor boundary test's fixtures through
     it and fails if the test no longer counts every import tach counts. Both
     need tach, so they ride here and in lint-arch, not in a pytest lane.
-    `make lint-arch`'s `check-breaking` leg (scripts/check_breaking_marks.py)
-    is deliberately NOT run here — it needs a resolved commit range, which
+    `check-breaking` (scripts/check_breaking_marks.py) is a live goal of its
+    own, not part of `make lint-arch`: it needs a resolved commit range, which
     this session has no opinion about; CI's lint-python job runs it as its
     own step, after this session, with the range computed from the
     workflow's push/pull_request event. Its parse-only pytest legs — the
@@ -801,10 +801,13 @@ def lint(session: nox.Session) -> None:
     session.run("python", "scripts/check_duplicate_code.py")
 
 
-@nox_uv.session(uv_groups=["dev"])
+@nox.session(venv_backend="none")
 def typecheck(session: nox.Session) -> None:
-    """Run ty type checker on src/."""
-    session.run("ty", "check")
+    """Run `make typecheck-python`.
+
+    The Makefile target, so CI checks the registry typing fixtures as the local gate does.
+    """
+    session.run("make", "typecheck-python", external=True)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_no_install_project=True)

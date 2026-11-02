@@ -273,3 +273,74 @@ def test_more_interrupts_during_the_kill_drain_are_waited_out(tmp_path: Path, mo
         )
     assert len(polls) > 1, "the drain went on after the interrupt"
     assert _gone(int(pid_file.read_text()))
+
+
+_SPAWNER_THEN_EXIT = (
+    "import subprocess, pathlib, sys, os; p = subprocess.Popen(['sleep', '30']); "
+    "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); os._exit(0)"
+)
+
+
+@pytest.mark.timeout(30)
+def test_an_interrupt_during_the_lingering_wait_is_relayed_too(tmp_path: Path, monkeypatch):
+    """The direct child is gone, its descendants alive, the runner polling the group: a
+    Ctrl-C there reaches the group as well, and the runner still waits it out.
+
+    Injected on the first poll of the post-child wait: the spawner ``os._exit``s right after
+    recording its grandchild's pid. A relay that wrapped only the child's own wait would
+    propagate here with the grandchild alive.
+    """
+    pid_file = tmp_path / "grandchild.pid"
+    real_sleep = process_group.time.sleep
+    raised: list[bool] = []
+
+    def sleep_then_interrupt(seconds: float) -> None:
+        if not raised:
+            raised.append(True)
+            raise KeyboardInterrupt
+        real_sleep(seconds)
+
+    monkeypatch.setattr(process_group.time, "sleep", sleep_then_interrupt)  # the group poll
+    with pytest.raises(KeyboardInterrupt):
+        process_group.run_awaiting_descendants(
+            [sys.executable, "-c", _SPAWNER_THEN_EXIT, str(pid_file)], cwd=tmp_path
+        )
+    assert raised, "the interrupt was never injected: the wait loop did not poll"
+    assert _gone(int(pid_file.read_text()))
+
+
+def test_alive_is_the_same_process_still_running() -> None:
+    """A pid is alive only with the start time it was recorded with; a missing pid is not."""
+    me = os.getpid()
+    started = process_group.process_start(me)
+    assert started is not None
+    assert process_group.alive(me, started)
+    assert not process_group.alive(me, started + 1)
+    assert not process_group.alive(2**22 - 1, started)
+
+
+def test_the_lease_s_holder_alive_is_the_shared_predicate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``holder_alive`` asks ``process_group.alive`` and nothing else."""
+    from scripts import bed_lease
+
+    seen: list[tuple[int, int]] = []
+
+    def fake(pid: int, started: int) -> bool:
+        seen.append((pid, started))
+        return True
+
+    monkeypatch.setattr(process_group, "alive", fake)
+    rec = bed_lease.Record(
+        owner="o",
+        user="u",
+        pid=4242,
+        pid_started=7,
+        groups=[],
+        checkout="",
+        since="",
+        expires="",
+        purpose="",
+        resources=[],
+    )
+    assert bed_lease.holder_alive(rec) is True
+    assert seen == [(4242, 7)]

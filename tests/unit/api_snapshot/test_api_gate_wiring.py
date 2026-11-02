@@ -2,7 +2,7 @@
 
 Spec ``docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`` §6 (the
 docs validator gates) and dump spec §6 (the version-invariance lane). The
-pre-push lane list is pinned in ``tests/unit/scripts/test_gate_fresh.py``.
+pre-push hook is pinned in ``tests/unit/scripts/test_gate_tip.py``.
 """
 
 import ast

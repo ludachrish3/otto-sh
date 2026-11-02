@@ -1,0 +1,22 @@
+[
+  "tests_hostless-3.10",
+  "tests_hostless-3.11",
+  "tests_hostless-3.12",
+  "tests_hostless-3.13",
+  "tests_hostless-3.14",
+  "dashboard-e2e (chromium)",
+  "dashboard-e2e (firefox)",
+  "dashboard-e2e (webkit)",
+  "check-ts",
+  "lint-python",
+  "typecheck-python",
+  "docs",
+  "wheel-smoke",
+  "api-dump-invariance-3.10",
+  "api-dump-invariance-3.11",
+  "api-dump-invariance-3.12",
+  "api-dump-invariance-3.13",
+  "api-dump-invariance-3.14",
+  "local-gate",
+  "gate-admission"
+]

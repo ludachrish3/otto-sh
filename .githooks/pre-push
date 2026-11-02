@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # pre-push
 #
-# Runs `gate-fresh` when a push would update refs/heads/main: CI's
-# assets-absent Python lanes, against the sha being pushed, in a throwaway
-# pristine worktree. The dev tree carries gitignored build artifacts CI never
-# has, so a green local run can certify an environment CI will not reproduce
-# (issue #196).
-# Before that, it refuses a tip whose landing lanes are not stamped
-# (scripts/gate_tip.py, `make gate-tip`), and it runs the history checks
-# over the pushed range (RANGE=<remote main>..HEAD).
+# Judges every branch a push updates (scripts/gate_tip.py --pre-push):
 #
-# The push's remote name (the hook's $1) reaches the refusal and the remedy.
+# - a push to `main` is refused outright: a pull request lands it;
+# - every other branch's tip must carry the stamps of its landing's lanes
+#   (`make gate-tip`, planned over merge-base(<remote>/main, tip)..tip, the
+#   remote's main fetched first); an unstamped tip is refused with the remedy;
+# - for the branch at the checked-out HEAD, the plan's history check
+#   (`make check-breaking` over the landing range) runs here, over a working
+#   tree that must speak for its commit; another branch's history is CI's
+#   `lint-python` to check, over the pull request's range.
 #
-# Skipped for every other ref, and for deletes. Escape hatch: `git push
-# --no-verify` — unlike prepare-commit-msg, pre-push honours it.
+# Tags and deletes pass without a fetch. The push's remote name (the hook's $1)
+# is the remote whose main the landing is planned against.
+#
+# Escape hatch: `git push --no-verify` (a mirror, an emergency); the local-gate
+# status then stays absent and the pull request's gate-admission holds its CI.
 #
 # Installed by `make dev` via: git config core.hooksPath .githooks
 set -euo pipefail
@@ -23,9 +26,9 @@ set -euo pipefail
 # "exec: uv: not found" / exit 127, which blocks the push (the safe
 # direction) but gives no hint that --no-verify exists.
 if ! command -v uv >/dev/null 2>&1; then
-    echo "pre-push: 'uv' not found on PATH — cannot run gate-fresh, blocking this push." >&2
+    echo "pre-push: 'uv' not found on PATH — cannot run the gate-tip push check, blocking this push." >&2
     echo "pre-push: install uv, or bypass this hook with: git push --no-verify" >&2
     exit 1
 fi
 
-exec uv run python scripts/gate_fresh.py --pre-push --remote "$1"
+exec uv run --locked python scripts/gate_tip.py --pre-push --remote "$1"

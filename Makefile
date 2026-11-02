@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -455,7 +455,9 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # backslash-continued line containing $(MAKE), so GNU make executes it under
 # -n; the $(MAKE) sub-calls inherit -n and no-op, but the plain
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
-# CHANGELOG staged). Never dry-run this target. The stamp check runs for real
+# CHANGELOG staged), and so do the release record's writes, the branch push
+# and `gh pr create` (the `$(MAKE) gate-tip` before them no-ops green under
+# -n). Never dry-run this target. The stamp check runs for real
 # under -n too (it only reads). When no valid stamp exists its
 # `$(MAKE) coverage` fallback inherits -n and no-ops, so the re-check fails
 # and the dry run stops there; when a valid stamp DOES exist, nothing stops
@@ -480,11 +482,22 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # are told the command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp
 # vouches for the declared gate, not for a release whose later stages a
 # `PYTEST_ADDOPTS=-k …` would narrow.
+#
+# A recertification's CHANGELOG commit runs with the repo's hooks off
+# (`git -c core.hooksPath=/dev/null commit`), as the matrix commits of
+# release-matrix and release-kmodcov-matrix do: it is a tooling commit the
+# release itself certifies. bump-my-version's commit (a new release) runs them.
+#
+# Whether to open a pull request is `release_record.py landing`: it prints
+# tip-certified when HEAD is the fetched main (a recertification with nothing
+# to merge) and pull-request otherwise, and a fetch it cannot make exits 1, so
+# the chain stops with the record certified instead of guessing.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses main, a detached HEAD, a branch that is not main's tip, unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump (no tag), wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused), then it certifies the head in reports/release/record.json and lands through a pull request: gate-tip, push the branch, gate-status, gh pr create (a recertification whose branch holds no commit certifies main's tip instead and opens nothing). Runs on a release branch at main's tip, never on main. After the merge, `make release-tag` tags main's tip
 	$(call bed_acquire,release)
 	@{ $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) >/dev/null 2>&1; stamp=$$?; [ $$stamp -ne 1 ] || echo "release: HEAD's tree has no valid coverage stamp, so make coverage runs after the cheap stages"; [ $$stamp -le 1 ] || $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || exit $$?; } \
 		&& $(MAKE) release-preflight \
+		&& uv run python scripts/release_record.py pending --pid $$PPID \
 		&& $(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) docs \
@@ -500,27 +513,23 @@ release: ## (Build & Release) The cheap stages first, so a cheap failure costs m
 		&& $(MAKE) release-campaign \
 		&& $(MAKE) docs \
 		&& NEW_VERSION="$$(uv run python scripts/release_bump.py)" \
-		&& $(SAY) "targeting v$$NEW_VERSION" \
-		&& $(SAY) "git-cliff → CHANGELOG.md (tagged v$$NEW_VERSION)" \
+		&& MODE="$$(uv run python scripts/release_record.py mode --remote origin --census "$$NEW_VERSION")" \
+		&& $(SAY) "targeting v$$NEW_VERSION ($$MODE)" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
-		&& git add CHANGELOG.md \
-		&& $(SAY) "bump-my-version → v$$NEW_VERSION" \
-		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" \
+		&& if [ "$$MODE" = recertify ]; then git diff --quiet -- CHANGELOG.md || git -c core.hooksPath=/dev/null commit -q -m "docs(changelog): regenerate for v$$NEW_VERSION" -- CHANGELOG.md; else git add CHANGELOG.md && bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION"; fi \
 		&& $(MAKE) wheel-check \
-		&& echo \
-		&& echo "Regenerated CHANGELOG.md, bumped version, tagged, and built dist/." \
-		&& echo "Pushing the tag fires .github/workflows/release.yml, which builds," \
-		&& echo "publishes to PyPI via OIDC (gated by the 'pypi' environment), and" \
-		&& echo "creates the GitHub Release." \
-		&& echo "Push with:" \
-		&& echo "    git push --follow-tags" \
-		&& echo \
-		&& echo "To rehearse first, dispatch release-testpypi.yml from the Actions tab."
+		&& uv run python scripts/release_record.py certify --pid $$PPID --version "$$NEW_VERSION" \
+		&& NEXT="$$(uv run python scripts/release_record.py landing --remote origin)" \
+		&& if [ "$$NEXT" = tip-certified ]; then uv run python scripts/release_record.py tip-certified --pid $$PPID --version "$$NEW_VERSION" && echo "main's tip is certified; run: make release-tag"; else $(MAKE) gate-tip && git push -u origin "$$(git branch --show-current)" && $(MAKE) gate-status && body="$$(git-cliff --tag "v$$NEW_VERSION" --unreleased --strip header)" && url="$$(printf '%s\n' "$$body" | gh pr create --title "chore(release): v$$NEW_VERSION" --body-file -)" && uv run python scripts/release_record.py landed --pid $$PPID --url "$$url" && echo "opened $$url: rebase-merge it, then run: make release-tag"; fi
 	$(call bed_release)
 
-release-preflight: ## (Build & Release) The release's first stage: refuse commits not pushed to the branch's upstream (the push gate excuses only the release's own commits), refuse untracked files under docs/, src/, tests/ and schemas/ (the release would build and test them though no commit carries them), then clear the gitignored run output it regenerates anyway (reports/*-observations, tests/project5/build, a src/otto/ package holding only __pycache__). Safe to run by hand before a release.
+release-preflight: ## (Build & Release) The release's first stage: refuse main and a detached HEAD (the release runs on a release branch and lands through a pull request), refuse commits not pushed to the branch's upstream and a branch that is not origin/main's tip, refuse untracked files under docs/, src/, tests/ and schemas/ (the release would build and test them though no commit carries them), then clear the gitignored run output it regenerates anyway (reports/*-observations, tests/project5/build, a src/otto/ package holding only __pycache__), then pin the live main ruleset and the repository's merge settings (needs `gh` auth and the network). Safe to run by hand before a release.
 	@$(SAY) "release preflight: untracked sources and stale run output"
-	@uv run python scripts/release_preflight.py
+	@uv run python scripts/release_preflight.py --remote origin
+	@OTTO_RULESET_CHECK=1 uv run pytest tests/unit/test_landing_ruleset.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+
+release-tag: ## (Build & Release) After the release pull request merged: tag main's tip when the record is certified, main's tree and version are the record's, main's CI is green (the shared verdict reader) and main did not move during the wait; pushes the tag, which fires release.yml
+	@uv run --locked python scripts/release_tag.py --remote origin
 
 nox-unit: ## Run the unit suite across all supported Pythons (no VMs; the `interpreter_agnostic` family runs on 3.10 only). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
 	@$(SAY) "nox: unit suite, all Pythons (x$(NOX_COUNT))"
@@ -1040,7 +1049,7 @@ coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) 
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-hostless-serial)
 
-collect-check: ## (Quality) Import every test module without running anything — the cheap half of what gate-fresh exists to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). `--doctest-modules` is what makes collection IMPORT the non-test helpers under testpaths. No VMs.
+collect-check: ## (Quality) Import every test module without running anything — the cheap half of what the pristine-runner lanes exist to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). `--doctest-modules` is what makes collection IMPORT the non-test helpers under testpaths. No VMs.
 	@$(SAY) "pytest: collect-only over the whole tree (imports, no execution)"
 	@uv run pytest --collect-only -q -p no:randomly --no-cov --doctest-modules
 
@@ -1758,12 +1767,12 @@ lint: lint-python lint-ts ## (Quality) Lint ALL code (Python + TS): sub-targets 
 # ruff only until 2026-08-10, so the make target and the CI job of the same
 # name disagreed, and a file could pass `make lint`, `make format` and every
 # coverage lane while still carrying an architecture violation. Two did, and
-# the pre-push `gate-fresh` hook is what stopped them.
+# the pre-push hook is what stopped them.
 #
 # The arch rules mostly police TEST code (deadline polls, path arithmetic,
 # module-scope env writes), so "it's only a test" is the case that needs this
-# most. Make remakes a target once per invocation, so `check-python` and
-# `gate-fresh` naming `lint-arch` alongside `lint-python` costs nothing.
+# most. `check-python` therefore names `lint-python` alone: it already carries
+# `lint-arch`.
 lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architecture gates — local twin of CI's lint-python job (`nox -s lint`)
 	@$(SAY) "ruff: lint + format check"
 	@uv run ruff check .
@@ -1777,12 +1786,8 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # scope-sensitive pattern rules. Policy background:
 # todo/churn-and-design-review-2026-08-03.md §5.
 #
-# check-breaking is a PREREQUISITE here, the same way lint-arch is one of
-# lint-python's above: it is the same shape of rule as tach/ast-grep (a
-# structural gate no single-file lint rule can express) and, like them, is a
-# no-op success when RANGE has nothing to scan — true on `main` itself only
-# once a local `main` is caught up with `origin/main` (a `main` that is
-# ahead, or an `origin/main` a fetch would move, still has commits in range).
+# check-breaking is a live goal of its own (the hook and CI run it over the
+# landing range), so lint-arch depends on the tree alone.
 #
 # The import rules are the one architecture rule ast-grep cannot express: a
 # name's lazy-export status lives in its package's `_LAZY_ATTRS` /
@@ -1801,7 +1806,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # count every import tach counts is about tach's behaviour, so
 # scripts/monitor_boundary_tach_canary.py re-checks it against the installed
 # tach beside the layer canary.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the layer and import-string audits + ast-grep (pattern rules) + the duplicate-code ratchet (pylint similarities against scripts/duplicate_code_baseline.txt) + the lazy-export import rules + check-breaking (public-API golden marking)
+lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the layer and import-string audits + ast-grep (pattern rules) + the duplicate-code ratchet (pylint similarities against scripts/duplicate_code_baseline.txt) + the lazy-export import rules
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
 	@$(SAY) "tach: the installed tach still enforces the layer switch"
@@ -1887,44 +1892,14 @@ typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit
 
 check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
 
-check-python: lint-python typecheck-python lint-arch ## (Quality) All Python static analysis: ruff (lint+format) + ty + architecture gates (lint-arch)
+lock-check: ## (Quality) The lock file matches pyproject.toml (uv lock --check); the first step of check-python and of CI's lint-python
+	@$(SAY) "uv lock --check"
+	@uv lock --check
 
-# REF reaches the shell through the environment, not Make's text
-# substitution, and only when given explicitly on the command line — two
-# separate Make footguns, both closed below:
-#
-# 1. `$(REF)` re-expands whatever `$`-sequences are IN the value (Make
-#    evaluates the value, not the shell): `feature/$(build)` silently
-#    truncates to `feature/` (calls undefined variable/function "build"),
-#    `my $HOME ref` eats the "H" (`$H` is Make's one-letter-name reference
-#    syntax), and `$(shell touch x)` actually runs `touch` the moment this
-#    text is expanded — even under `make -n`, since a dry run still expands
-#    recipe text to print it. `$(value REF)` sidesteps all of this: it
-#    yields REF's stored text WITHOUT expanding it, so a `$` inside the
-#    value is never re-interpreted as a Make reference. Assigning that
-#    through `:=` (immediate, simple) rather than `=` means the result
-#    isn't re-expanded again later either.
-# 2. GNU Make auto-imports the invoking shell's environment as Make
-#    variables, so a developer with an unrelated `REF` exported would
-#    otherwise have it silently picked up. `$(origin REF)` reports where a
-#    variable's current value came from; gating on `command line` (the same
-#    convention `COUNT` already uses above) accepts an explicit
-#    `make gate-fresh REF=...` while ignoring an ambient-only one.
-#
-# The value is exported under its own name (GATE_FRESH_REF) rather than
-# reassigning REF itself. GNU Make's command-line precedence means this
-# isn't a correctness fix — a target-specific `REF :=` here would itself be
-# a no-op whenever REF came from the command line, and `$(origin REF)`
-# would keep reporting `command line` regardless (verified empirically).
-# The separate name earns its keep on clarity instead: it reads at the call
-# site as "the ref this recipe resolved to use", keeps the recipe from
-# depending on Make's override precedence to stay correct if this logic is
-# ever refactored, and avoids a plain `REF` in the child process's
-# environment shadowing anyone else's expectations of that name.
-gate-fresh: export GATE_FRESH_REF := $(if $(filter command line,$(origin REF)),$(value REF),)
-gate-fresh: ## (Quality) Run the pre-push lanes (lint-python + lint-arch + check-api-snapshot + check-api-teaching + typecheck-python + collect-check + docs) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
-	@$(SAY) "gate-fresh: pristine worktree, assets-absent CI lanes"
-	@uv run python scripts/gate_fresh.py $(if $(filter command line,$(origin REF)),--ref "$$GATE_FRESH_REF",)
+check-python: ## (Quality) All Python static analysis, tree-pure: lock-check, then ruff with the architecture gates (lint-python), then ty (recipe lines, so the lock is checked first even under -j)
+	@$(MAKE) lock-check
+	@$(MAKE) lint-python
+	@$(MAKE) typecheck-python
 
 # The vendored-source leg is deliberately part of check-ts rather than a
 # post-build gate like check_airgap.sh / check_brand_tokens.sh: it reads the
@@ -1990,23 +1965,30 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 	@$(SAY) "check-breaking-marks: $(RANGE)"
 	@uv run python scripts/check_breaking_marks.py $(RANGE)
 
-# BASE is honoured from the command line only (the `$(origin REF)` idiom gate-fresh uses):
-# one exported by a shell or an outer tool must not silently move the landing base.
+# BASE is honoured from the command line only (`$(origin BASE)` is `command line`):
+# GNU Make imports the invoking shell's environment as variables, and one exported by a
+# shell or an outer tool must not silently move the landing base.
 gate-scope: ## (Quality) Classify the diff and print the exact gates for THIS commit and for the landing tip (BASE=origin/main). Refuses a dirty tracked tree: commit first.
 	@uv run python scripts/gate_scope.py --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)"
 
-# gate-tip refuses ANY command-line variable: no harmless set here. BASE is the
+# gate-tip refuses ANY command-line variable except the release's own knobs
+# (COVERAGE_STAMP_HARMLESS: the release's own knobs, not a lane's behaviour). BASE is the
 # runner's own control (the landing base), honoured from the command line like
-# gate-scope's, and never a lane knob — the runner strips it from lane envs.
-GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
+# gate-scope's, and never a lane knob; the runner strips it from lane envs.
+GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE $(COVERAGE_STAMP_HARMLESS),$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
 
-gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes (make gate-scope, BASE=origin/main) and stamp the committed tree per lane on green; the push to main refuses a tip whose lanes are not stamped. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists, `--timings [REV]` prints the stored lane timings of a rev's tree (the run ends with a table of the same shape).
-	$(call bed_acquire,gate-tip)
-	@uv run python scripts/gate_tip.py --repo . --lab $(LAB_FILE) --pid $$PPID --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)
-	$(call bed_release)
+gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes over merge-base(base, HEAD)..HEAD, the base being origin's main, fetched, unless BASE= names one, and stamp the committed tree per lane on green, then post the local-gate status. The pre-push hook refuses an unstamped tip on every branch push, and any push to main; `make land` chains gate-tip, the push, the pull request and gate-status. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists, `--timings [REV]` prints the stored lane timings of a rev's tree (the run ends with a table of the same shape).
+	@uv run --locked python scripts/gate_tip.py --repo . --lab $(LAB_FILE) --remote origin --base "$(if $(filter command line,$(origin BASE)),$(BASE),)" $(GATE_TIP_OVERRIDES)
 
-coverage-gate-args: ## (internal) Print the declared coverage gate, one argv element per line, for scripts/gate_tip.py's own call of the coverage stamp's check
-	@printf '%s\n' $(COVERAGE_STAMP_GATE)
+gate-status: ## (Quality) Post the local-gate status for HEAD (every stamped lane green for its tree; no pull request needed) and, when a pull request run exists, wait out or re-run its gate-admission job
+	@uv run --locked python scripts/gate_tip.py --repo . --status --remote origin
+
+land: ## (Quality) The landing in one command, from a feature branch: gate-tip, push the branch, a DRAFT pull request (an existing pull request for the branch is left alone), then gate-status
+	@b="$$(git branch --show-current)"; [ -n "$$b" ] && [ "$$b" != main ] || { echo "land: run on a feature branch (main takes no direct push)" >&2; exit 1; }
+	@$(MAKE) gate-tip
+	@git push -u origin "$$(git branch --show-current)"
+	@gh pr view --json url -q .url >/dev/null 2>&1 || gh pr create --draft --fill
+	@$(MAKE) gate-status
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 

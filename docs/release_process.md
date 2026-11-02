@@ -1,7 +1,7 @@
 # Release Process
 
 This is the runbook for cutting an otto release. The mechanics are driven by
-`make release` locally and the `release.yml` workflow on GitHub — you should
+`make release` and `make release-tag` locally and the `release.yml` workflow on GitHub — you should
 not need to edit version strings or upload artifacts by hand.
 
 ## Overview
@@ -17,19 +17,32 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
 
 ## Cutting a release
 
-1. **Land all changes on `main` and push them.** Releases are cut from a
-   clean `main` that matches `origin/main`. The push gate excuses only the
-   release's own commits (step 3), so a commit left unpushed here would need
-   its lanes stamped again on the released tree before the push.
-   `release-preflight` refuses to start while any commit is unpushed.
-   Commit messages should follow Conventional Commits so git-cliff can
-   classify them in the changelog. Landings leave no coverage stamp unless
-   their tip ran `make coverage` (a scoped `src-leaf` tip runs `make
-   coverage-bed` instead), so run `make coverage` on the release tip now if you would
-   rather it not run inside `make release`
+`main` takes no direct push, so a release lands like any change: through a
+pull request ([Gating a branch before it
+lands](contributing.md#gating-a-branch-before-it-lands)). It takes four steps
+and, end to end, about two hours: `make release` (about an hour), the release
+pull request's CI (about 25 minutes) and the merge, then `make release-tag`,
+which waits the 25 minutes of `main`'s own CI run before it tags.
+
+1. **Branch from `main`'s tip and push the branch.**
+
+   ```bash
+   git fetch origin main
+   git checkout -b release/next FETCH_HEAD
+   git push -u origin release/next
+   ```
+
+   The version is not known yet, so the branch name does not carry it. The
+   push is a tree identical to `main`'s, which the pre-push hook passes with
+   an empty range. `release-preflight` refuses to start anywhere else (see
+   below). Commit messages since the last tag should follow Conventional
+   Commits so git-cliff can classify them in the changelog. A landing never
+   writes a coverage stamp, so run `make coverage` on this tip now if you
+   would rather it not run inside `make release`
    ([the coverage stamp](contributing.md#the-coverage-stamp)).
 
-2. **Run `make release`.** This validates and prepares everything locally:
+2. **Run `make release`.** This validates and prepares everything locally,
+   then opens the release pull request:
 
    ```bash
    make release              # git-cliff's conventional-commit census decides the version
@@ -49,8 +62,8 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    `cliff.toml`'s `[bump]` section flips to standard semver (a breaking
    change becomes a MAJOR bump).
 
-   The census is cross-checked against `scripts/release_events.py`, the
-   release event model `make check-breaking` also reads. A census that is
+   The census is cross-checked against the release event model in
+   `scripts/release_events.py`. A census that is
    only a patch bump while a breaking commit exists since the last tag is
    refused (git-cliff and the model disagree), and so is a correction since
    the last tag that does not validate (see
@@ -65,19 +78,28 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
      stage. A dirty tree, a non-primary venv, or a command-line variable
      other than `BUMP=`/`NEW_VERSION=`/`BUDGET_APPROVE=` stops the release
      here.
-   - **`release-preflight`** refuses commits not yet pushed to the branch's
-     upstream (or a branch with no upstream) and names each one; push, then
-     run the release again. It also refuses untracked files under `docs/`, `src/`,
-     `tests/` and `schemas/` and names each one (an untracked file under
-     `src/` or a test root is usually refused one step earlier, by the
-     stamp check, in its own words; the remedy is the same). The release builds and
-     tests the primary checkout in place, so it would read them even though
-     no commit carries them, and neither CI nor `make gate-fresh` ever sees
-     them. Commit, ignore or move each one, then run the release again. The
-     preflight then clears the gitignored run output the release regenerates
-     anyway: `reports/*-observations`, `tests/project5/build`,
-     `tests/project_ctr/build`, and any `src/otto/` directory left holding
-     only `__pycache__` (it would import as a namespace package). You can run `make release-preflight` by hand.
+   - **`release-preflight`** refuses four things, naming what it found:
+     `main` or a detached `HEAD` (the release lands through a pull request,
+     so it needs a branch); commits not yet pushed to the branch's upstream,
+     or a branch with no upstream; a branch that is not `main`'s tip, fetched
+     (the release certifies the tree `main` will carry once its pull request
+     merges, so it starts from `main` exactly); and untracked files under
+     `docs/`, `src/`, `tests/` and `schemas/` (an untracked file under
+     `src/` or a test root is usually refused one step earlier, by the stamp
+     check, in its own words; the remedy is the same). The release builds and
+     tests the checkout in place, so it would read them even though no commit
+     carries them, and CI never sees them. Commit, ignore or move each one,
+     then run the release again. The preflight then clears the gitignored
+     run output the release regenerates anyway: `reports/*-observations`,
+     `tests/project5/build`, `tests/project_ctr/build`, and any `src/otto/`
+     directory left holding only `__pycache__` (it would import as a
+     namespace package). Last, it pins the live `main` ruleset (15843311)
+     and the repository's merge settings against the committed expectation
+     (`tests/unit/test_landing_ruleset.py`), so it needs `gh` auth and the
+     network. You can run `make release-preflight` by hand.
+   - The run then writes its **release record**,
+     `reports/release/record.json`, as `pending`: a run that fails anywhere
+     leaves a pending record, never an older certificate.
    - `clean-dist`, `web-install`, a first **docs** build (its prerequisites
      build the web assets, so a broken web build also surfaces here), the
      Python static checks and `budget-delta`.
@@ -96,26 +118,84 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    and the docs again (this build renders the matrices the release just
    re-measured, so it must come after them); only then does it regenerate
    `CHANGELOG.md` at the new version, bump the version in `pyproject.toml`
-   and `uv.lock`, commit, tag `vX.Y.Z`, and build `dist/`. It needs the dev
+   and `uv.lock` and commit (no tag: the tag waits for the merge), and build
+   `dist/` (`wheel-check`). It needs the dev
    VM with the lab VMs and the Zephyr guests up and **exclusive use of the
    bed** (the campaign holds it), and the campaign adds about 9 minutes
    (the chaos lanes are not in it — they are on-demand only); a
-   red lane anywhere stops the release before any version commit (the two
-   matrix stages may already have committed a refreshed matrix; that commit
-   is correct and stays). Push it with `git push` before running the
-   release again, since `release-preflight` refuses unpushed commits; the
-   push gate asks no stamp for a matrix re-date (step 3).
+   red lane before the bump stops the release before any version commit (the
+   two matrix stages may already have committed a refreshed matrix on the
+   branch; that commit is correct, but `release-preflight` refuses a branch
+   that is not `main`'s tip, so land it through its own pull request and
+   start the release again from the new tip). `wheel-check` is the one stage
+   after the bump: a red `wheel-check` leaves the bump committed on the
+   release branch, unpushed, with the record `pending`. That bump never
+   reached `main`, so it is not a case for [the recertification
+   run](#release-recertification), which recovers a bump `main`
+   already carries: reset the branch to `main`'s tip (`git reset --hard
+   origin/main`), land the fix for what `wheel-check` reported through its
+   own pull request, and start the release again; the census bumps to the
+   same version.
 
-3. **Push the tag:**
+   On green the run certifies its head in the record (the commit, its tree
+   and the version) and lands the branch like any branch: `make gate-tip`
+   (usually `make check-breaking` alone, since the re-dated matrices and the
+   bump stamp nothing; a matrix whose verdicts improved earns the static
+   lanes), `git push -u origin <branch>`, `make gate-status`, and `gh pr
+   create --title "chore(release): vX.Y.Z"` with the changelog section as its
+   body. It records the pull request's URL (the record's `landed` state) and
+   prints `opened <url>: rebase-merge it, then run: make release-tag`.
 
-   ```bash
-   git push --follow-tags
-   ```
+3. **Merge the release pull request.** The maintainer reviews the diff (the
+   changelog, the bump, the re-measured matrices) and presses **Rebase and
+   merge** once its CI and the `local-gate` status are green. Nothing else
+   should land while the release pull request is open, and until the tag is
+   pushed: `make release-tag` tags only the tree the run certified.
 
-   The pre-push gate asks no stamp for the release's own commits (the matrix
-   re-dates and the version bump), as long as nothing else on `main` is
-   unpushed; see
-   [the landing's gate is stamped](contributing.md#the-landings-gate-is-stamped).
+4. **Run `make release-tag`** from the same checkout. It tags `main`'s tip
+   and pushes the tag, which fires the release workflow (below). It
+   refuses, in this order, unless:
+
+   - the record is `certified`, `landed` or `tip-certified` (a missing
+     record, or a `pending` one, which is a run that never finished, is
+     refused before anything touches the remote);
+   - `main`'s tip tree is the record's tree (a rebase-merge changes the
+     commits, never the tree, so another tree means something else landed)
+     and its `pyproject.toml` carries the record's version;
+   - `main`'s CI on that tip is green, judged by the same verdict the release
+     workflow's guard reads; it waits while the run is pending, up to 70
+     minutes, and refuses naming the run's URL on expiry;
+   - `main` did not move during the wait: CI certifies a commit, not a tree,
+     so a new tip with the same tree is still an unchecked commit.
+
+   The tag's name and message are `[tool.bumpversion]`'s `tag_name` and
+   `tag_message` in `pyproject.toml`. When an earlier run tagged and then
+   failed to push, the local tag is pushed again if it names `main`'s tip
+   with that message; a local tag of that name on anything else is refused,
+   with `git tag -d` as the remedy.
+
+(release-recertification)=
+
+**Recovery: the recertification run.** If something else landed between
+`make release` and the merge, `main`'s tip tree is not the record's and
+`make release-tag` refuses. The bump is already in `main`'s history,
+untagged, so the release cannot simply be repeated. Branch from `main`'s tip
+again (step 1, under another name such as `release/recert`) and run `make
+release`: it sees that the remote has no tag for the current version and that
+the census names that same version, and runs in **recertification mode**:
+every validation stage as usual, the matrices re-measured and committed when
+they changed, the changelog regenerated for the same version and committed
+when it changed, and **no bump**. When the run committed nothing, there is
+nothing to merge: it certifies `main`'s tip itself (`tip-certified`) and
+prints `main's tip is certified; run: make release-tag`. When it committed,
+the branch lands through its pull request as in step 2, and `make
+release-tag` follows the merge. A census above the current version (a
+breaking change landed between the bump and the merge) runs an ordinary
+release that bumps again; a census below it is refused.
+
+A [hotfix](contributing.md#hotfix) that leaves `main`'s CI red blocks the
+release until its follow-up lands: `make release-tag` and the release
+workflow's guard both require green CI on the commit they tag.
 
 ## What the tag push triggers
 
@@ -123,7 +203,14 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
 
 - A **guard** job inspects the tag. Only final-version tags (`vX.Y.Z`)
   proceed to PyPI. Prerelease tags (`v0.4.0rc1`, `a2`, `b1`, `.dev0`) are
-  skipped here — those are for the TestPyPI dry-run workflow instead.
+  skipped here — those are for the TestPyPI dry-run workflow instead. For a
+  final tag it then checks the landing: the tag's commit must be on `main`
+  (an ancestor of `origin/main`), and `main`'s CI on that commit must be
+  green by the same verdict `make release-tag` waits for
+  (`scripts/local_gate_status.py ci-verdict`: every job
+  `.github/required_contexts.json` lists, less `local-gate` and
+  `gate-admission`, which judge pull requests). A tag made by hand off `main`, or on a
+  commit whose CI is red or pending, publishes nothing.
 - **build** produces the sdist and wheel via `make wheel-check`: it builds
   the web frontends first (they ship inside the wheel for air-gapped labs),
   runs the air-gap/brand gates, then `uv build` plus embed assertions —

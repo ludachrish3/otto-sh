@@ -12,6 +12,11 @@ jobs:
   guard:
     name: Gate prereleases
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
     steps:
@@ -25,6 +30,18 @@ jobs:
             echo "Skipping: $REF is not a final-version tag (expected vX.Y.Z)."
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
+      - uses: actions/checkout@v7.0.1
+        if: steps.check.outputs.is_release == 'true'
+        with:
+          fetch-depth: 0
+      # A release publishes only a commit that reached main with green CI.
+      # ci-verdict is stdlib, so this job needs no uv.
+      - name: The tag's commit is on main and its CI is green
+        if: steps.check.outputs.is_release == 'true'
+        run: |
+          commit="$(git rev-parse "${{ github.ref_name }}^{commit}")"
+          git merge-base --is-ancestor "$commit" origin/main || { echo "::error::$commit is not on main"; exit 1; }
+          python3 scripts/local_gate_status.py ci-verdict --repo-slug "$GITHUB_REPOSITORY" --sha "$commit"
 
   build:
     name: Build distribution

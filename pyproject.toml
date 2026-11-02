@@ -428,7 +428,9 @@ markers = [
 [tool.bumpversion]
 current_version = "0.18.0"
 commit = true
-tag = true
+# No tag at the bump: the release lands through a pull request, and `make release-tag`
+# tags main's tip after the merge (scripts/release_tag.py reads tag_name and tag_message).
+tag = false
 tag_name = "v{new_version}"
 tag_message = "Release v{new_version}"
 message = "chore(release): bump version {current_version} -> {new_version}"

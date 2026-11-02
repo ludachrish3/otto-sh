@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from scripts import process_group  # noqa: E402
 from scripts.gate_stamp_common import _git, store_lock, utc_iso, write_atomically  # noqa: E402
 from scripts.process_group import (  # noqa: E402
     ancestors,
@@ -288,7 +289,7 @@ def running_members(pgid: int) -> list[int]:
 
 def holder_alive(record: Record) -> bool:
     """Whether the holder is that very process, still running."""
-    return process_start(record.pid) == record.pid_started and process_state(record.pid) != "Z"
+    return process_group.alive(record.pid, record.pid_started)
 
 
 def liveness(record: Record) -> Liveness:
