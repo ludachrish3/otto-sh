@@ -17,6 +17,7 @@
   "api-dump-invariance-3.12",
   "api-dump-invariance-3.13",
   "api-dump-invariance-3.14",
+  "uv-floor",
   "local-gate",
   "gate-admission"
 ]

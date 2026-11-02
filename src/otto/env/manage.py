@@ -6,9 +6,9 @@ re-derives that key.
 
 Its metadata lives INSIDE the venv, at ``env/.otto-env.json``. That placement
 is the contract: ``create --force`` removes ``env/`` wholesale, so the metadata
-goes with it and a rebuild can never inherit the previous run's backend. Stored
-beside the venv instead, it would survive the rebuild and silently pin what the
-operator was trying to escape.
+goes with it and a rebuild can never inherit the previous build's record. Stored
+beside the venv instead, it would survive the rebuild and describe an env that
+no longer exists.
 
 Reads are TOTAL: absent, corrupt, and half-written metadata all read as None
 rather than raising, because the caller most likely to meet a broken env is
@@ -18,8 +18,10 @@ if merely looking at the env throws.
 
 import dataclasses
 import json
+import os
 import shutil
 import subprocess
+import sys
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,7 +30,6 @@ from urllib.request import url2pathname
 
 from ..errors import OttoError
 from ..version import get_version
-from .backends import BackendUnavailableError
 
 if TYPE_CHECKING:
     from ..config.project import Project
@@ -40,7 +41,8 @@ _LIST_DISTS = (
     "print('\\n'.join(d.metadata['Name'] or '' for d in m.distributions()))"
 )
 """One-liner run INSIDE the env to enumerate what it holds. Asking the env's
-own interpreter is the only answer that stays true across uv and pip layouts."""
+own interpreter answers from the installed dist-info itself, not from what otto
+believes it asked uv to install."""
 
 _ATTRIBUTABLE = 2
 """How many project names a resolver message must implicate before otto adds its
@@ -50,13 +52,14 @@ guess would send the operator to edit the wrong pyproject."""
 
 @dataclasses.dataclass(frozen=True)
 class EnvMeta:
-    """What an existing orchestration venv records about how it was built."""
+    """What an existing orchestration venv records about its last ``create``/``sync``."""
 
-    backend: str
-    """``"uv"`` or ``"pip"`` -- re-used by ``sync`` so an env stays self-consistent."""
+    uv_version: str
+    """The version of the uv that the last successful ``create`` or ``sync`` ran,
+    measured at the start of that operation."""
 
     otto_version: str
-    """The otto version installed into it, for ``env show``'s staleness line."""
+    """The otto version installed into it by that same ``create`` or ``sync``."""
 
 
 def env_path(roots: "list[Path] | None" = None) -> Path:
@@ -78,7 +81,7 @@ def read_meta(env: Path) -> "EnvMeta | None":
     """
     try:
         raw = json.loads(meta_path(env).read_text())
-        return EnvMeta(backend=raw["backend"], otto_version=raw["otto_version"])
+        return EnvMeta(uv_version=raw["uv_version"], otto_version=raw["otto_version"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -92,6 +95,10 @@ class EnvExistsError(OttoError, RuntimeError):
     """``env create`` found an environment already built for this workspace."""
 
 
+class EnvSelfRebuildError(OttoError, RuntimeError):
+    """otto is running from inside the environment it was asked to rebuild or sync."""
+
+
 def _installable(projects: "list[Project]") -> "tuple[list[Project], list[Project]]":
     """Split discovered projects into (installable, skipped).
 
@@ -103,27 +110,6 @@ def _installable(projects: "list[Project]") -> "tuple[list[Project], list[Projec
     installable = [r for r in projects if (r.root / "pyproject.toml").is_file()]
     skipped = [r for r in projects if r not in installable]
     return installable, skipped
-
-
-def _settings_backend(projects: "list[Project]") -> "str | None":
-    """Return the ``[env] backend`` the projects agree on, or None if none declares one.
-
-    A workspace is several projects by definition, so two of them CAN declare
-    different installers. Picking one silently would bind the wrong answer
-    with no indication it happened; this refuses instead, naming both, the
-    same way ``[monitor]`` TLS disagreement is refused in ``otto.monitor.tls``.
-    """
-    declaring = [(r.name, r.env_backend) for r in projects if r.env_backend]
-    if not declaring:
-        return None
-    chosen = {value for _, value in declaring}
-    if len(chosen) > 1:
-        names = ", ".join(sorted(name for name, _ in declaring))
-        raise BackendUnavailableError(
-            f"[env] backend disagrees across projects ({names}) — make them identical, "
-            "declare it in only one settings.toml, or pass --backend for this run"
-        )
-    return declaring[0][1]
 
 
 def _otto_target() -> "list[str]":
@@ -216,8 +202,53 @@ def _relay(
     raise EnvBuildError(f"{what} failed:\n{text}" + (f"\n{attribution}" if attribution else ""))
 
 
+def _inside(path: Path, env: Path) -> bool:
+    """Whether *path* lies inside *env*, as spelled OR as resolved.
+
+    Both forms matter: ``rmtree`` deletes an entry under *env* even when it is a
+    symlink whose target lives elsewhere, and a path spelled outside *env* can
+    still resolve into it. The spelling is normalized without following links,
+    so ``<env>/../x/uv`` reads as the sibling it names.
+    """
+
+    def spelled(p: Path) -> Path:
+        return Path(os.path.normpath(p.absolute()))
+
+    return spelled(path).is_relative_to(spelled(env)) or path.resolve().is_relative_to(
+        env.resolve()
+    )
+
+
+def _acquire_uv(env: Path) -> "tuple[Path, str]":
+    """Return the uv this operation runs and its version, or refuse before anything changes.
+
+    Called ONCE per ``create``/``sync``, before the env is touched: every uv call
+    of the operation gets this path, and the version recorded is the version of
+    the binary that ran.
+
+    Refuses when otto is running from the env it is about to replace: when the
+    uv it would call lies inside *env* (an entry there, even a symlink pointing
+    out to the uv cache, or a path that resolves there), or when otto's own
+    interpreter prefix does (``find_uv_bin`` can fall back to a uv elsewhere when
+    the env's own is missing). ``create --force`` would delete the otto and uv it
+    then needs, and a sync could replace them mid-run. Refused here, so both
+    verbs share the guard.
+    """
+    from .backends import uv_bin, uv_version
+
+    uv = uv_bin()
+    version = uv_version(uv)
+    if _inside(uv, env) or _inside(Path(sys.prefix), env):
+        raise EnvSelfRebuildError(
+            f"otto is running from inside the environment it would replace ({env}) — "
+            "run otto from an installation outside that env (for example, the "
+            "project's own .venv)"
+        )
+    return uv, version
+
+
 def _fill(
-    env: Path, backend: str, projects: "list[Project]", passthrough: "list[str]"
+    env: Path, uv: Path, version: str, projects: "list[Project]", passthrough: "list[str]"
 ) -> "EnvBuild":
     """Install every installable project plus otto itself into the venv at *env*."""
     from .backends import install
@@ -227,9 +258,9 @@ def _fill(
         targets: "list[str]" = []
         for project in installable:
             targets += ["-e", str(project.root)]
-        _relay(install(backend, env, targets, passthrough), projects, "installing projects")
-    _relay(install(backend, env, _otto_target(), passthrough), projects, "installing otto")
-    meta = EnvMeta(backend=backend, otto_version=get_version())
+        _relay(install(uv, env, targets, passthrough), projects, "installing projects")
+    _relay(install(uv, env, _otto_target(), passthrough), projects, "installing otto")
+    meta = EnvMeta(uv_version=version, otto_version=get_version())
     write_meta(env, meta)
     return EnvBuild(
         env=env,
@@ -239,24 +270,18 @@ def _fill(
     )
 
 
-def create_env(
+def _create(
+    env: Path,
+    projects: "list[Project]",
+    uv: Path,
+    version: str,
     *,
-    force: bool = False,
-    backend_flag: "str | None" = None,
-    passthrough: "list[str] | None" = None,
+    force: bool,
+    passthrough: "list[str]",
 ) -> "EnvBuild":
-    """Build this workspace's orchestration venv from scratch.
+    """Build the venv at *env* from scratch with the already-acquired *uv*."""
+    from .backends import create_venv
 
-    Refuses an existing env naming ``--force``; ``--force`` removes it first,
-    which is the recovery story for a wedged env. The recorded backend is read
-    AFTER that removal on purpose (F6): a rebuild must not inherit the backend
-    the operator is trying to escape, and the metadata living inside the venv
-    is what makes that automatic rather than remembered.
-    """
-    from .backends import create_venv, select_backend
-
-    projects = _discovered_projects()
-    env = env_path()
     if env.exists():
         if not force:
             raise EnvExistsError(
@@ -264,37 +289,46 @@ def create_env(
                 "rebuild it, or run `otto env sync` to update it in place"
             )
         shutil.rmtree(env)
-    recorded = read_meta(env)
-    backend = select_backend(
-        backend_flag, _settings_backend(projects), recorded.backend if recorded else None
-    )
-    _relay(create_venv(backend, env), projects, "creating the venv")
-    return _fill(env, backend, projects, passthrough or [])
+    _relay(create_venv(uv, env), projects, "creating the venv")
+    return _fill(env, uv, version, projects, passthrough)
 
 
-def sync_env(
+def create_env(
     *,
-    backend_flag: "str | None" = None,
+    force: bool = False,
     passthrough: "list[str] | None" = None,
 ) -> "EnvBuild":
+    """Build this workspace's orchestration venv from scratch.
+
+    Refuses an existing env naming ``--force``; ``--force`` removes it first,
+    which is the recovery story for a wedged env. otto's uv is acquired BEFORE
+    that removal, so a missing uv or a self-rebuild is refused with the old env
+    still standing.
+    """
+    projects = _discovered_projects()
+    env = env_path()
+    uv, version = _acquire_uv(env)
+    return _create(env, projects, uv, version, force=force, passthrough=passthrough or [])
+
+
+def sync_env(*, passthrough: "list[str] | None" = None) -> "EnvBuild":
     """Bring this workspace's orchestration venv up to date, creating it if absent.
 
     NEVER destroys anything. It is the verb every error message names, so it
     has to stay safe to suggest -- including when the thing it is suggested
-    for is that there is no env at all, which is why a missing env delegates
-    to :func:`create_env` rather than refusing.
-    """
-    from .backends import select_backend
+    for is that there is no env at all, which is why a missing env is built
+    rather than refused. Either way uv is acquired once, so the build shares
+    :func:`create_env`'s core rather than calling it.
 
-    env = env_path()
-    if not env.exists():
-        return create_env(force=False, backend_flag=backend_flag, passthrough=passthrough)
+    Nothing is read from the existing metadata: a record from an older otto,
+    or none at all, is simply re-stamped when the installs succeed.
+    """
     projects = _discovered_projects()
-    recorded = read_meta(env)
-    backend = select_backend(
-        backend_flag, _settings_backend(projects), recorded.backend if recorded else None
-    )
-    return _fill(env, backend, projects, passthrough or [])
+    env = env_path()
+    uv, version = _acquire_uv(env)
+    if not env.exists():
+        return _create(env, projects, uv, version, force=False, passthrough=passthrough or [])
+    return _fill(env, uv, version, projects, passthrough or [])
 
 
 def _discovered_projects() -> "list[Project]":

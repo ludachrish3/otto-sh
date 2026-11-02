@@ -326,6 +326,17 @@ def test_removed_lab_spellings_fail_with_migration_message(extra, match):
         SettingsModel.model_validate(data)
 
 
+@pytest.mark.parametrize("env", [{"backend": "pip"}, {}])
+def test_env_table_is_refused_with_a_pointer(env):
+    data = {"name": "r", "version": "1.0.0", "env": env}
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match=re.escape("[env] was removed: `otto env` always uses the uv installed with otto.")
+        + r" \[type=value_error",
+    ):
+        SettingsModel.model_validate(data)
+
+
 def test_lab_subtable_kwargs_are_rejected():
     data = {
         "name": "r",

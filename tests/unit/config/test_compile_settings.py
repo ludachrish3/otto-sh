@@ -126,7 +126,6 @@ def test_compile_settings_matches_what_the_loader_assigns(
         "logging_levels",
         "docker_settings",
         "monitor_settings",
-        "env_backend",
         "declared_products",
         "declared_dev_tools",
     ):

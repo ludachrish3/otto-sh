@@ -1,98 +1,25 @@
-"""Backend selection: flag > settings > recorded > auto-detect, and the argv each builds.
+"""The uv otto runs: where it is, what version it is, and the argv otto hands it.
 
-The order is the contract. Every arm is tested from BOTH directions -- the
-value it picks and the value it declines to pick -- so no arm can pass by
-always returning the same answer.
+Every exec goes through the ``exec_seam`` fake (``conftest.py``), so no test
+here runs a real installer.
 """
 
-import subprocess
-from types import SimpleNamespace
+import sys
+import types
+from pathlib import Path
 
 import pytest
 
-from otto.env import backends
-from otto.env.backends import BackendUnavailableError, install, select_backend, venv_python
+from otto.env.backends import (
+    UvNotFoundError,
+    create_venv,
+    install,
+    uv_bin,
+    uv_version,
+    venv_python,
+)
 
-
-class TestOverrideOrder:
-    def test_flag_beats_everything(self, monkeypatch):
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: True)
-        assert select_backend("pip", "uv", "uv") == "pip"
-        assert select_backend("uv", "pip", "pip") == "uv"
-
-    def test_settings_beats_recorded_and_autodetect(self, monkeypatch):
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: True)
-        assert select_backend(None, "pip", "uv") == "pip"
-
-    def test_recorded_beats_autodetect(self, monkeypatch):
-        """An existing env keeps its backend; switching is a create --force matter."""
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: True)
-        assert select_backend(None, None, "pip") == "pip"
-
-    def test_autodetect_prefers_uv_when_present(self, monkeypatch):
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: True)
-        assert select_backend(None, None, None) == "uv"
-
-    def test_autodetect_falls_back_to_pip(self, monkeypatch):
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: False)
-        assert select_backend(None, None, None) == "pip"
-
-
-class TestRefusals:
-    def test_an_unknown_name_is_refused_naming_both_valid_ones(self):
-        with pytest.raises(BackendUnavailableError) as exc:
-            select_backend("conda", None, None)
-        assert "conda" in str(exc.value)
-        assert "uv" in str(exc.value)
-        assert "pip" in str(exc.value)
-
-    def test_asking_for_uv_without_uv_is_refused_not_silently_downgraded(self, monkeypatch):
-        """The whole point of an explicit flag is that it does not get ignored."""
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: False)
-        with pytest.raises(BackendUnavailableError) as exc:
-            select_backend("uv", None, None)
-        assert "not on PATH" in str(exc.value)
-
-    def test_pip_is_always_available(self, monkeypatch):
-        monkeypatch.setattr("otto.env.backends._uv_on_path", lambda: False)
-        assert select_backend("pip", None, None) == "pip"
-
-
-@pytest.fixture
-def exec_seam(monkeypatch):
-    """Record the installer argv at the seam the exec lives at, and seal every other.
-
-    ``backends._run`` is left alone deliberately: the thing worth pinning is
-    the argv that reaches ``subprocess.run``, so the fake sits there. Every
-    other exec entry point reachable from that module is replaced by a raiser,
-    so a probe that ever escapes the fake fails loudly on EVERY machine instead
-    of quietly running a real installer on the one that has an index.
-
-    THE WHOLE MODULE REFERENCE IS SWAPPED, not an attribute on it:
-    ``backends.subprocess`` IS the stdlib module object, so setting ``run`` on
-    it would replace the real ``subprocess.run`` process-wide for the duration
-    of the test. Binding a stand-in namespace to the name ``backends`` looks up
-    confines the fake to the module under test.
-    """
-    calls: "list[list[str]]" = []
-
-    def _record(argv, *args, **kwargs):
-        calls.append(list(argv))
-        return subprocess.CompletedProcess(list(argv), 0, "", "")
-
-    def _escaped(*args, **kwargs):
-        raise AssertionError(f"a real subprocess escaped the fake: {args!r}")
-
-    monkeypatch.setattr(
-        backends,
-        "subprocess",
-        SimpleNamespace(
-            run=_record,
-            Popen=_escaped,
-            CompletedProcess=subprocess.CompletedProcess,
-        ),
-    )
-    return calls
+_UV = Path("/o/uv")
 
 
 class TestInstallerArgv:
@@ -100,38 +27,23 @@ class TestInstallerArgv:
 
     The e2e contrast in ``tests/e2e/cli/test_env_e2e.py`` proves a REAL
     resolver honours the tokens after ``--``, and pays a real venv plus a real
-    editable install for that proof -- so it buys it once, on the cheap
-    backend. Whether the tokens reach pip's argv is otto's code, not pip's, and
-    that is what these pin: no venv, no index, no network, milliseconds, so the
-    assertion can never turn into a measurement of the machine (#402).
+    editable install for that proof. Whether the tokens reach uv's argv is
+    otto's code, not uv's, and that is what these pin: no venv, no index, no
+    network, milliseconds, so the assertion can never turn into a measurement
+    of the machine (#402).
     """
 
-    def test_pip_appends_the_passthrough_verbatim_and_last(self, exec_seam, tmp_path):
+    def test_install_runs_the_given_uv_with_the_passthrough_verbatim_and_last(
+        self, exec_seam, tmp_path
+    ):
         """Last is the contract: the operator's tokens must be able to override otto's."""
         env = tmp_path / "env"
-        result = install("pip", env, ["-e", "/project4"], ["--find-links", "/wheels"])
+        result = install(_UV, env, ["-e", "/project4"], ["--find-links", "/wheels"])
 
         assert len(exec_seam) == 1, exec_seam
         argv = exec_seam[0]
         assert argv == [
-            str(venv_python(env)),
-            "-m",
-            "pip",
-            "install",
-            "-e",
-            "/project4",
-            "--find-links",
-            "/wheels",
-        ]
-        assert result.args == argv
-
-    def test_uv_appends_the_passthrough_verbatim_and_last(self, exec_seam, tmp_path):
-        env = tmp_path / "env"
-        install("uv", env, ["-e", "/project4"], ["--find-links", "/wheels"])
-
-        assert len(exec_seam) == 1, exec_seam
-        assert exec_seam[0] == [
-            "uv",
+            "/o/uv",
             "pip",
             "install",
             "--python",
@@ -141,11 +53,91 @@ class TestInstallerArgv:
             "--find-links",
             "/wheels",
         ]
+        assert result.args == argv
 
-    @pytest.mark.parametrize("backend", ["uv", "pip"])
-    def test_no_passthrough_adds_nothing(self, exec_seam, tmp_path, backend):
+    def test_create_venv_runs_the_given_uv(self, exec_seam, tmp_path):
+        env = tmp_path / "env"
+        create_venv(_UV, env)
+
+        assert exec_seam == [["/o/uv", "venv", str(env)]]
+
+    def test_no_passthrough_adds_nothing(self, exec_seam, tmp_path):
         """An empty passthrough must not leave a stray token in the argv."""
-        install(backend, tmp_path / "env", ["-e", "/project4"], [])
+        install(_UV, tmp_path / "env", ["-e", "/project4"], [])
 
         assert len(exec_seam) == 1, exec_seam
         assert exec_seam[0][-2:] == ["-e", "/project4"]
+
+
+_LOCATE_MESSAGE = "Reinstall otto with its dependencies"
+
+
+class TestLocateUv:
+    def test_uv_bin_returns_the_located_binary(self, monkeypatch):
+        monkeypatch.setattr("uv.find_uv_bin", lambda: "/x/uv")
+        assert uv_bin() == Path("/x/uv")
+
+    def test_uv_bin_package_without_binary_raises(self, monkeypatch):
+        def _missing():
+            raise FileNotFoundError("no uv")
+
+        monkeypatch.setattr("uv.find_uv_bin", _missing)
+        with pytest.raises(UvNotFoundError, match=_LOCATE_MESSAGE) as exc:
+            uv_bin()
+        assert isinstance(exc.value.__cause__, FileNotFoundError)
+
+    def test_the_remedy_installs_only_what_is_missing(self, monkeypatch):
+        """``pip install otto-sh`` on an installed otto adds the missing uv alone;
+        ``--force-reinstall`` would re-download otto's whole closure."""
+        monkeypatch.setitem(sys.modules, "uv", None)
+        with pytest.raises(UvNotFoundError) as exc:
+            uv_bin()
+        assert "`pip install otto-sh`" in str(exc.value)
+        assert "--force-reinstall" not in str(exc.value)
+
+    def test_uv_bin_package_absent_raises(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "uv", None)
+        with pytest.raises(UvNotFoundError, match=_LOCATE_MESSAGE):
+            uv_bin()
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [ImportError("boom"), ModuleNotFoundError("x", name="some_uv_dependency")],
+    )
+    def test_uv_bin_unrelated_import_error_propagates(self, monkeypatch, sentinel):
+        fake = types.ModuleType("uv")
+
+        def _getattr(name):
+            raise sentinel
+
+        fake.__getattr__ = _getattr
+        monkeypatch.setitem(sys.modules, "uv", fake)
+        with pytest.raises(type(sentinel)) as exc:
+            uv_bin()
+        assert exc.value is sentinel
+
+
+class TestUvVersion:
+    def test_uv_version_parses_the_second_token(self, exec_seam):
+        exec_seam.stdout = "uv 0.13.6 (1a2b3c 2026-10-01)\n"
+        path = Path("/x/uv")
+        assert uv_version(path) == "0.13.6"
+        assert exec_seam == [[str(path), "--version"]]
+
+    def test_uv_version_nonzero_exit_raises(self, exec_seam):
+        exec_seam.stdout = "uv 0.13.6\n"
+        exec_seam.returncode = 2
+        with pytest.raises(UvNotFoundError, match=r"/x/uv --version` exited 2"):
+            uv_version(Path("/x/uv"))
+
+    @pytest.mark.parametrize("stdout", ["", "foo 1.2", "uv", "uv garbage"])
+    def test_uv_version_unparseable_output_raises(self, exec_seam, stdout):
+        exec_seam.stdout = stdout
+        with pytest.raises(UvNotFoundError, match="/x/uv"):
+            uv_version(Path("/x/uv"))
+
+    @pytest.mark.parametrize("error", [FileNotFoundError("nope"), PermissionError("denied")])
+    def test_uv_version_unrunnable_executable_raises(self, exec_seam, error):
+        exec_seam.raises = error
+        with pytest.raises(UvNotFoundError, match="/x/uv"):
+            uv_version(Path("/x/uv"))

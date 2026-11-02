@@ -14,7 +14,9 @@ It reads three committed sources of truth and cross-checks four claims:
 2. Every package in the runtime closure that ships binary wheels appears in
    the "Native-extension dependencies" table, and nothing else does.
 3. Each such row's "Wheel matrix" cell matches what the lock's wheel filenames
-   actually say (``abi3`` spans versions; ``per-version`` does not).
+   actually say (``abi3`` spans versions; ``any Python`` is a platform wheel
+   tagged ``py3-none-<platform>``, which serves every version; ``per-version``
+   does not).
 4. Each such package really has an installable wheel for every supported minor
    on the documented Linux target.
 
@@ -42,6 +44,7 @@ TARGET_ARCH = "x86_64"
 
 PURE = "pure"
 ABI3 = "abi3"
+ANY_PYTHON = "any Python"
 PER_VERSION = "per-version"
 PER_VERSION_PURE_FALLBACK = "per-version + pure fallback"
 
@@ -67,6 +70,11 @@ class Tag:
     def is_pure(self) -> bool:
         """True when this tag names a platform-independent, ABI-free wheel."""
         return self.abi == "none" and self.platform == "any"
+
+    @property
+    def is_any_python(self) -> bool:
+        """True for a platform wheel tagged ``py3-none-<platform>``: binary, any CPython."""
+        return self.abi == "none" and self.interpreter == "py3" and self.platform != "any"
 
 
 def wheel_filename(wheel: dict) -> str:
@@ -98,13 +106,15 @@ def wheel_tags(filename: str) -> list[Tag]:
 
 
 def classify(wheels: list[dict]) -> str:
-    """Describe the wheel matrix a package ships: pure, abi3, or per-version."""
+    """Describe the wheel matrix a package ships: pure, abi3, any Python, or per-version."""
     tags = [tag for wheel in wheels for tag in wheel_tags(wheel_filename(wheel))]
     binary = [tag for tag in tags if not tag.is_pure]
     if not binary:
         return PURE
     if any(tag.abi == "abi3" for tag in binary):
         return ABI3
+    if all(tag.is_any_python for tag in binary):
+        return ANY_PYTHON
     return PER_VERSION_PURE_FALLBACK if len(binary) != len(tags) else PER_VERSION
 
 
@@ -176,8 +186,12 @@ def _tag_supports(tag: Tag, minor: tuple[int, int], arch: str) -> bool:
         return True
     if arch not in tag.platform or "linux" not in tag.platform:
         return False
+    if tag.is_any_python:
+        # A platform wheel with no interpreter or ABI dependence (`uv` ships
+        # `py3-none-<platform>`) installs on every CPython of this platform.
+        return True
     match = CPYTHON_TAG.match(tag.interpreter)
-    if match is None:  # pypy / graalpy / py3-tagged binary wheels
+    if match is None:  # pypy / graalpy / other non-CPython binary wheels
         return False
     wheel_version = (int(match.group(1)), int(match.group(2)))
     if tag.abi == "abi3":

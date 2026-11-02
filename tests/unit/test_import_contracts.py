@@ -92,6 +92,9 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.cli.inventory": ["rich.table"],
     "import otto.cli.link": ["otto.fleet", "rich.table"],
     "import otto.cli.tunnel": ["otto.fleet", "rich.table"],
+    # --- The env package: uv is located lazily, never by importing otto.env. ---
+    "import otto.env.preflight": ["uv"],
+    "import otto.env\notto.env.UvNotFoundError\notto.env.create_env": ["uv"],
     # --- Shared modules every command imports. ---
     # The command tree imports otto.config for every `--help`; none reads a project.
     "import otto.config": ["otto.config.project", "otto.config.version"],

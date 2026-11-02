@@ -15,8 +15,8 @@ environment is the one that must satisfy all of them at once.
 ## Synopsis
 
 ```text
-otto env create [--backend uv|pip] [--force] [-- INSTALLER_ARGS...]
-otto env sync   [--backend uv|pip] [-- INSTALLER_ARGS...]
+otto env create [--force] [-- INSTALLER_ARGS...]
+otto env sync   [-- INSTALLER_ARGS...]
 otto env show
 ```
 
@@ -61,7 +61,7 @@ $ otto env create
 created ~/.otto/134b91c0-project1-project4/env
   installed (editable): project4
   skipped, no pyproject.toml: project1
-  backend: uv
+  last sync:   otto %OTTO_VERSION%, uv 0.13.6
 
 Activate it with:
   source ~/.otto/134b91c0-project1-project4/env/bin/activate
@@ -139,34 +139,28 @@ always satisfied. A project whose dependencies are dynamic and which is not
 installed here cannot be checked at all; otto says so in one line and checks
 nothing rather than guessing.
 
-## Backends
+## The uv it runs
 
-uv when it is on `PATH`, otherwise the standard library's `venv` plus the
-environment's own pip. The fallback adds no dependency of its own.
+`otto env` builds and fills the environment with the uv installed with otto.
+How that uv relates to the uv you run yourself is explained under
+{ref}`Which uv runs what <which-uv-runs-what>`. The `last sync:` line that
+`create`, `sync` and {doc}`show` print names the otto and the uv that the last
+successful create or sync ran.
 
-The choice is resolved in this order:
+Two failures come from this, before anything is built or changed:
 
-| Source | Meaning |
-| ------ | ------- |
-| `--backend` | This invocation's decision |
-| `[env] backend` in `settings.toml` | The project's standing decision |
-| Recorded in the environment | Keeps an existing environment self-consistent |
-| Auto-detect | What happens when nobody has said anything |
+- **otto cannot run its uv** (`otto.env.UvNotFoundError`): otto's installation
+  is missing it, for example after an install that skipped otto's dependencies,
+  or the uv it has fails to run or to report its version. The message names the
+  cause; reinstall otto with its dependencies.
+- **otto is running from inside the environment it would replace**
+  (`otto.env.EnvSelfRebuildError`). See {ref}`env-self-rebuild`.
 
-An explicit backend that cannot be honoured is **refused, not downgraded**:
-`--backend uv` on a host without uv is an error naming `--backend pip`.
+## Passing arguments to uv
 
-Switching backends under an existing environment is a `create --force` matter,
-not a silent migration — the recorded value lives *inside* the venv, so
-`--force` takes it with the rebuild.
-
-If two projects in one workspace declare different `[env] backend` values, that is
-a hard error naming both.
-
-## Passing arguments to the installer
-
-Everything after a literal `--` goes to uv or pip verbatim, appended last so it
-can override anything otto chose:
+Everything after a literal `--` goes verbatim to
+{ref}`the uv otto runs <which-uv-runs-what>`, appended last so it can override
+anything otto chose:
 
 ```console
 $ otto env sync -- --find-links ../wheels
@@ -179,7 +173,7 @@ an air-gapped run has to supply those wheels too.
 ## Resolver failures
 
 otto never resolves and never rewrites the resolver's message. A conflict comes
-back in the installer's own words:
+back in uv's own words:
 
 ```console
 $ otto env create

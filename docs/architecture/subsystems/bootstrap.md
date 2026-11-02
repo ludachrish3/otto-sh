@@ -100,15 +100,12 @@ builds it. Its choices:
   whose `host_patterns` match no host is inactive, and would refuse the run
   instead of warning. It is metadata only — no network, no imports — which is
   what makes it affordable on every invocation.
-- **The command line outranks the settings file.** `--backend` beats a project's
-  `[env] backend`, because the operator at the terminal knows things the file
-  does not — that uv is not installed on this particular host, say.
-- **Backend choices are never silently changed.** An explicit backend that
-  cannot be honoured is refused rather than downgraded, since the user asked
-  for it precisely to avoid the fallback; two projects declaring different
-  backends is an error, since picking one would bind an installer nobody
-  chose; and the recorded backend lives *inside* the venv, so `create --force`
-  cannot inherit the backend it was run to escape.
+- **otto runs the uv installed with it, never one from `PATH`.** uv is a
+  runtime dependency, so `otto env` has one installer path and the uv it runs
+  is a version otto's dependency range admits. The env records that uv's
+  version beside otto's, as of the last create or sync. A uv found inside the
+  env being replaced is refused before anything changes, since `create --force`
+  would delete the executable it then runs.
 - **The verbs otto's own messages name stay safe to follow.** `sync` never
   removes anything and builds a missing environment rather than refusing — a
   refusal would answer "your environment is out of date" with a second error —

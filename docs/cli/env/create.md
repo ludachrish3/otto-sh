@@ -3,21 +3,20 @@
 Build this workspace's orchestration environment from scratch.
 
 ```text
-otto env create [--backend uv|pip] [--force] [-- INSTALLER_ARGS...]
+otto env create [--force] [-- INSTALLER_ARGS...]
 ```
 
 | Option | Description |
 | ------ | ----------- |
-| `--backend` | `uv` or `pip`. Outranks `[env] backend` in `settings.toml` |
 | `--force` | Remove an existing environment and rebuild it |
-| `-- ...` | Everything after `--` is passed to the installer verbatim |
+| `-- ...` | Everything after `--` is passed to uv verbatim |
 
 ```console
 $ otto env create
 created ~/.otto/134b91c0-project1-project4/env
   installed (editable): project4
   skipped, no pyproject.toml: project1
-  backend: uv
+  last sync:   otto %OTTO_VERSION%, uv 0.13.6
 
 Activate it with:
   source ~/.otto/134b91c0-project1-project4/env/bin/activate
@@ -36,21 +35,43 @@ away and builds a new one, while {doc}`sync` updates the one you have.
 
 ## `--force` is the recovery story
 
-A wedged environment — a half-finished install, a backend you want to leave
-behind — is what `--force` is for. It removes the directory outright rather
-than installing over the top, so nothing from the previous build survives.
-
-That includes the recorded backend: the metadata file lives *inside* the
-venv, so removing the venv removes it, and a rebuild cannot inherit the backend
-you were trying to escape.
+A wedged environment, such as a half-finished install, is what `--force` is for.
+It removes the directory outright rather than installing over the top, so
+nothing from the previous build survives. That includes the metadata file, which
+lives *inside* the venv: the `last sync:` line afterwards describes the new build
+only.
 
 ```console
-$ otto env create --force --backend pip
+$ otto env create --force
 created ~/.otto/134b91c0-project1-project4/env
   installed (editable): project4
   skipped, no pyproject.toml: project1
-  backend: pip
+  last sync:   otto %OTTO_VERSION%, uv 0.13.6
 ```
+
+(env-self-rebuild)=
+
+## It refuses to replace the environment otto is running from
+
+`create` runs {ref}`the uv installed with otto <which-uv-runs-what>`. If that otto
+is installed *inside* the environment being built, as it is once you activate the
+environment and run otto from it, `--force` would delete the very otto and uv it
+is about to run. So `create`, with or without `--force`, refuses before deleting or
+installing anything:
+
+```console
+$ source ~/.otto/134b91c0-project1-project4/env/bin/activate
+$ otto env create --force
+error: otto is running from inside the environment it would replace
+(~/.otto/134b91c0-project1-project4/env) — run otto from an installation outside
+that env (for example, the project's own .venv)
+```
+
+Exit code 1. Run the command with an otto installed somewhere else, for example
+your project's own `.venv/` from the
+[recommended setup](../../installation.md#with-uv-recommended).
+{doc}`sync` refuses the same way, for the same reason. The error is
+`otto.env.EnvSelfRebuildError`.
 
 ## `--dry-run` builds nothing
 
@@ -65,5 +86,5 @@ Each discovered project with a `pyproject.toml`, editable; then otto itself. Pro
 without a `pyproject.toml` are named in the output and passed over — they are
 not installable, and their `libs` reach `sys.path` at bootstrap regardless.
 
-See {doc}`index` for the backend order, the `--` passthrough, and how resolver
+See {doc}`index` for the uv it runs, the `--` passthrough, and how resolver
 failures are reported.

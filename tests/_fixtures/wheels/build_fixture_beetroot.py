@@ -3,9 +3,8 @@
 A PEP-427 wheel is a zip holding the package plus a ``.dist-info`` directory
 with METADATA, WHEEL and RECORD. Building it by hand here rather than with
 ``build``/``setuptools`` keeps the fixture free of a build-backend dependency,
-and the result installs offline under both otto env backends (verified with
-``pip install --no-index --find-links`` and ``uv pip install --no-index
---find-links``).
+and the result installs offline (verified with ``pip install --no-index
+--find-links`` and ``uv pip install --no-index --find-links``).
 
 THE NAME IS LOAD-BEARING AND WAS WRONG ONCE. This fixture exists to be a
 requirement that CANNOT be satisfied from an index, so the name must be one no

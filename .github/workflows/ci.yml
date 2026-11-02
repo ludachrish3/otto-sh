@@ -583,13 +583,32 @@ jobs:
       - name: Regenerate the dump under Python ${{ matrix.python }} and compare it with the golden
         run: uv run nox -s api_dump_invariance-${{ matrix.python }}
 
+  # The uv dependency's floor: otto's env code and the `otto env` e2e run
+  # against the declared minimum uv (package and binary), so a minor otto
+  # claims to support is one it tests.
+  uv-floor:
+    name: uv-floor
+    needs: [gate-admission]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+      - name: Run otto env against the floor uv
+        run: uv run nox -s tests_uv_floor
+
   # If any job above fails on a push to main, open (or update) a tracking
   # issue so a broken main surfaces without anyone having to watch the
   # Actions tab. Skipped for pull_request — PR failures are already visible
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [gate-admission, lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
+    needs: [gate-admission, lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -603,7 +622,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of gate-admission / lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
+            echo "Check the job logs to see which of gate-admission / lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
           } > issue-body.md
 
       - name: Create issue from file

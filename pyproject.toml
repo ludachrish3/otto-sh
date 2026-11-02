@@ -101,6 +101,10 @@ dependencies = [
     # so it is imported from typing_extensions. Already resolved transitively
     # (pydantic/typer); declared directly because we now import it directly.
     "typing-extensions>=4.12.0",
+    # `otto env` runs the uv installed with otto (`otto.env.backends`), never
+    # a PATH uv. The cap exists because each uv minor is a compatibility claim
+    # otto tests (the floor lane); Dependabot widens it one minor at a time.
+    "uv>=0.11,<0.14",
     "uvicorn>=0.42.0",
 ]
 

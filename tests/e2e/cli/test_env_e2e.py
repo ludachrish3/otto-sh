@@ -1,19 +1,12 @@
-"""``otto env create`` / ``sync`` through the real binary, building real venvs.
+"""``otto env create`` / ``sync`` / ``show`` through the real binary, building real venvs.
 
-Parametrized over both backends only where the backend is actually the thing
-under test. ``--backend pip`` forces the stdlib fallback on a uv-equipped host,
-which is the only way that arm is ever exercised here; measured cost is ~1s per
-uv build and ~13s per pip build uncontended (venv bootstrap 1.7s, the project's
-editable install 2.2s, otto's editable install 8.8s — pip's isolated build env
-plus an index round-trip per dependency; 20-30s under coverage and xdist), so
-the cases that exercise otto's own control flow (refusal, delegation, the
-dry-run seam, ``--force``) deliberately do NOT build twice -- and the refusal
-case does not build at all, because "an environment already exists" is a
-question about a path, not about a venv. The pip arm is exercised exactly
-ONCE: one create, which also checks the recorded backend. Pip's own argv path
--- the passthrough after ``--`` -- is pinned offline and in milliseconds by
-``tests/unit/env/test_backends.py::TestInstallerArgv`` rather than by a second
-real pip build, whose wall time belongs to pip and the index (#402).
+Every build runs the uv installed with otto, the only installer ``otto env``
+has, so each case builds once, and only where a venv is the thing under test:
+the refusal case builds nothing, because "an environment already exists" is a
+question about a path, not about a venv. That the tokens after ``--`` reach
+uv's argv verbatim and last is pinned offline and in milliseconds by
+``tests/unit/env/test_backends.py::TestInstallerArgv``; the contrast case here
+buys only what uv owns, that a real resolver honours them (#402).
 
 Every case pins OTTO_HOME at a tmp_path: without it these would build into the
 developer's real ~/.otto.
@@ -26,6 +19,8 @@ import subprocess
 import pytest
 
 from otto.config.home import workspace_key
+from otto.env.backends import uv_bin, uv_version, venv_python
+from otto.version import get_version
 from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
 from tests._fixtures.project_scaffold import copy_sample_project
 from tests.e2e._otto_subprocess import PROJECT1, run_otto
@@ -34,14 +29,12 @@ pytestmark = pytest.mark.hostless
 
 PROJECT4 = CHECKOUT_ROOT / "tests" / "project4"
 
-# A real installer run, not otto's own logic: pip needs room (measured 9.5s
-# warm, and a cold wheel cache on CI is slower). MUST STAY UNDER pyproject's
+# A real installer run, not otto's own logic: it needs room (a cold wheel cache
+# on CI is slower than a warm one). MUST STAY UNDER pyproject's
 # per-item `timeout = 180`: at 300 the item's own budget always fired first, so
 # a stalled installer arrived as pytest-timeout's blunt signal kill instead of
 # the subprocess's own TimeoutExpired, which names the command and its output.
 BUILD_TIMEOUT = 150
-
-BACKENDS = ("uv", "pip")
 
 
 def _run(argv, *, home, roots=PROJECT1, timeout=60):
@@ -96,11 +89,24 @@ def project4(tmp_path):
     return copy_sample_project(PROJECT4, tmp_path / "project4")
 
 
+def _uninstall(env, dist):
+    """Remove *dist* from *env* underneath otto, with the same uv otto runs."""
+    removed = subprocess.run(
+        [str(uv_bin()), "pip", "uninstall", "--python", str(venv_python(env)), dist],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert removed.returncode == 0, removed.stderr
+
+
+def _otto_uv_version():
+    """The version of the uv the child otto runs: same interpreter, same scripts dir."""
+    return uv_version(uv_bin())
+
+
 class TestCreate:
-    @pytest.mark.parametrize("backend", BACKENDS)
-    def test_it_builds_an_env_holding_otto_and_the_installable_project(
-        self, tmp_path, backend, project4
-    ):
+    def test_it_builds_an_env_holding_otto_and_the_installable_project(self, tmp_path, project4):
         """project4's dependency lives on no index, so the find-links is required.
 
         That is the fixture working as intended, not a workaround: project4 exists
@@ -108,7 +114,7 @@ class TestCreate:
         """
         home = tmp_path / "home"
         result = _run(
-            ["env", "create", "--backend", backend, "--", "--find-links", str(WHEELS_DIR)],
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
             roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
@@ -117,15 +123,14 @@ class TestCreate:
 
         env = _the_env(home)
         assert env is not None, f"no env built under {home}"
-        assert (env / "bin" / "python").is_file(), sorted(q.name for q in env.iterdir())
+        assert venv_python(env).is_file(), sorted(q.name for q in env.iterdir())
         # project4 has a pyproject and is installed; project1 has none and is skipped.
         assert "installed (editable): project4" in result.stdout, result.stdout
         assert "skipped, no pyproject.toml: project1" in result.stdout, result.stdout
         assert f"source {env / 'bin' / 'activate'}" in result.stdout, result.stdout
-        # The metadata names the backend that built it — checked here, on the
-        # one create each backend pays for, rather than in a second pip build.
+        # The metadata names the uv that actually ran, measured from the binary.
         meta = json.loads((env / ".otto-env.json").read_text())
-        assert meta["backend"] == backend, meta
+        assert meta["uv_version"] == _otto_uv_version(), meta
 
     def test_a_second_create_refuses_and_names_force(self, tmp_path):
         """NO VENV IS BUILT HERE: the refusal is about a path existing.
@@ -145,24 +150,16 @@ class TestCreate:
         assert "--force" in (result.stdout + result.stderr)
 
     def test_force_rebuilds(self, tmp_path):
-        """``--force`` replaces the env; otto's own control flow, so the cheap backend.
-
-        Measured 2026-09-11: the pip arm of this test was two pip builds,
-        32-60 s per hostless leg, to re-prove a removal that happens before
-        either installer runs. The backend's own contract — that a pip create
-        builds and records itself — is ``test_it_builds_...[pip]``'s.
-        """
+        """``--force`` replaces the env rather than merging into it."""
         home = tmp_path / "home"
-        first = _run(["env", "create", "--backend", "uv"], home=home, timeout=BUILD_TIMEOUT)
+        first = _run(["env", "create"], home=home, timeout=BUILD_TIMEOUT)
         assert first.returncode == 0, first.stderr
 
         env = _the_env(home)
         scar = env / "left-behind.txt"
         scar.write_text("from the first build")
 
-        again = _run(
-            ["env", "create", "--force", "--backend", "uv"], home=home, timeout=BUILD_TIMEOUT
-        )
+        again = _run(["env", "create", "--force"], home=home, timeout=BUILD_TIMEOUT)
         assert again.returncode == 0, again.stderr
         assert not scar.exists(), "--force must remove the old env, not merge into it"
 
@@ -181,7 +178,7 @@ class TestCreate:
 
 class TestSync:
     def test_sync_with_no_env_behaves_as_create(self, tmp_path):
-        """Backend-agnostic delegation, so it runs on the cheap backend only."""
+        """A missing env is built, not refused: ``sync`` is the verb every error names."""
         home = tmp_path / "home"
         result = _run(["env", "sync"], home=home, timeout=BUILD_TIMEOUT)
         assert result.returncode == 0, result.stderr
@@ -189,6 +186,52 @@ class TestSync:
         env = _the_env(home)
         assert env is not None, f"sync built nothing under {home}"
         assert (env / ".otto-env.json").is_file()
+
+    def test_sync_updates_an_existing_env(self, tmp_path, project4):
+        """The in-place branch: an existing env is filled again, never rebuilt.
+
+        Each half of the assertion is INJECTED rather than inherited: project4
+        is uninstalled underneath otto (so "installed again" cannot pass on a
+        sync that did nothing), a marker sits in the env (so a rebuild would
+        lose it), and the metadata is overwritten with versions no real run
+        records (so the re-stamp has to happen).
+        """
+        home = tmp_path / "home"
+        roots = f"{PROJECT1}{os.pathsep}{project4}"
+        built = _run(
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
+            home=home,
+            roots=roots,
+            timeout=BUILD_TIMEOUT,
+        )
+        assert built.returncode == 0, built.stdout + built.stderr
+
+        env = _the_env(home)
+        marker = env / "left-by-the-operator.txt"
+        marker.write_text("sync must not remove this")
+        _uninstall(env, "otto-sample-project4")
+        gone = _run(["env", "show"], home=home, roots=roots)
+        assert _cell(gone.stdout, "otto-sample-project4", 2) == "no", gone.stdout
+        stamp = env / ".otto-env.json"
+        stamp.write_text(json.dumps({"uv_version": "0.0.0", "otto_version": "0.0.0"}))
+
+        synced = _run(
+            ["env", "sync", "--", "--find-links", str(WHEELS_DIR)],
+            home=home,
+            roots=roots,
+            timeout=BUILD_TIMEOUT,
+        )
+        assert synced.returncode == 0, synced.stdout + synced.stderr
+        assert f"synced {env}" in synced.stdout, synced.stdout
+        assert "last sync:   otto " in synced.stdout, synced.stdout
+        assert f", uv {_otto_uv_version()}" in synced.stdout, synced.stdout
+
+        assert marker.exists(), "sync must update the env in place, not rebuild it"
+        meta = json.loads(stamp.read_text())
+        assert meta["uv_version"] == _otto_uv_version(), meta
+        assert meta["otto_version"] == get_version(), meta
+        shown = _run(["env", "show"], home=home, roots=roots)
+        assert _cell(shown.stdout, "otto-sample-project4", 2) == "yes", shown.stdout
 
     def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, project4):
         """The contrast IS the assertion: same command, only the passthrough differs.
@@ -199,24 +242,10 @@ class TestSync:
         the same create with ``-- --find-links`` must succeed -- which is proof
         the arguments after ``--`` travelled all the way to the resolver, not
         merely that otto parsed them.
-
-        THE CHEAP BACKEND ONLY, deliberately (#402). This case buys one thing
-        the installer owns -- that a real resolver honours the tokens -- and the
-        successful arm pays for it twice over, because a create that succeeds
-        also installs otto itself with its whole dependency closure. Measured
-        2026-09-20 with a warm cache on an idle machine: uv 2.65 s, pip 13.70 s
-        (the failing arm 4.0 s, the succeeding arm 9.5 s, both dominated by
-        index round-trips); the issue reports 156 s for the pair on a cold CI
-        cache and a timeout past 180 s under the coverage gate. That budget was
-        measuring pip and the network, never otto. What is otto's -- that the
-        tokens reach PIP'S argv, verbatim and last -- is pinned offline and in
-        milliseconds by ``tests/unit/env/test_backends.py::TestInstallerArgv``,
-        and pip's end-to-end build contract stays with
-        ``test_it_builds_an_env_holding_otto_and_the_installable_project[pip]``.
         """
         home = tmp_path / "home"
         without = _run(
-            ["env", "create", "--backend", "uv"],
+            ["env", "create"],
             home=home,
             roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
@@ -233,8 +262,6 @@ class TestSync:
                 "env",
                 "create",
                 "--force",
-                "--backend",
-                "uv",
                 "--",
                 "--find-links",
                 str(WHEELS_DIR),
@@ -248,7 +275,7 @@ class TestSync:
         env = _the_env(home)
         probe = subprocess.run(
             [
-                str(env / "bin" / "python"),
+                str(venv_python(env)),
                 "-c",
                 "import otto_fixture_beetroot as b; print(b.__version__)",
             ],
@@ -293,7 +320,7 @@ class TestShow:
         assert "no environment for this workspace" in result.stdout
         assert "otto env create" in result.stdout
 
-    def test_it_reports_the_backend_the_version_and_each_project(self, tmp_path, project4):
+    def test_it_reports_the_last_sync_and_each_project(self, tmp_path, project4):
         """Both arms of the installed column, because one arm cannot fail.
 
         Asserting only that an installed project reads "yes" passes just as well
@@ -303,7 +330,7 @@ class TestShow:
         """
         home = tmp_path / "home"
         built = _run(
-            ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
             roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
@@ -317,26 +344,13 @@ class TestShow:
             timeout=BUILD_TIMEOUT,
         )
         assert shown.returncode == 0, shown.stderr
-        assert "backend:     uv" in shown.stdout, shown.stdout
+        assert "last sync:   otto " in shown.stdout, shown.stdout
+        assert f", uv {_otto_uv_version()}" in shown.stdout, shown.stdout
         # project1 has no pyproject at all, so it is not installable and says so.
         assert "no pyproject" in shown.stdout, shown.stdout
         assert _cell(shown.stdout, "otto-sample-project4", 2) == "yes", shown.stdout
 
-        env = _the_env(home)
-        removed = subprocess.run(
-            [
-                "uv",
-                "pip",
-                "uninstall",
-                "--python",
-                str(env / "bin" / "python"),
-                "otto-sample-project4",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert removed.returncode == 0, removed.stderr
+        _uninstall(_the_env(home), "otto-sample-project4")
 
         after = _run(
             ["env", "show"],
@@ -356,7 +370,7 @@ class TestShow:
         """
         home = tmp_path / "home"
         built = _run(
-            ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
             roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
@@ -378,3 +392,29 @@ class TestShow:
         stale = _run(["env", "show"], home=home, roots=f"{PROJECT1}{os.pathsep}{project4}")
         assert "stale" in stale.stdout, stale.stdout
         assert "otto env sync" in stale.stdout, stale.stdout
+
+    def test_an_old_record_reads_as_unreadable(self, tmp_path):
+        """Metadata from before otto ran its own uv has no ``uv_version``.
+
+        ``show`` names it unreadable and names ``sync`` first, since ``sync``
+        needs nothing from it and re-stamps it rather than refusing;
+        ``create --force`` comes second, for an env that is actually broken.
+        """
+        home = tmp_path / "home"
+        built = _run(["env", "create"], home=home, timeout=BUILD_TIMEOUT)
+        assert built.returncode == 0, built.stdout + built.stderr
+
+        stamp = _the_env(home) / ".otto-env.json"
+        stamp.write_text(json.dumps({"backend": "uv", "otto_version": "0.0.0"}))
+
+        old = _run(["env", "show"], home=home)
+        assert old.returncode == 0, old.stderr
+        line = next(ln for ln in old.stdout.splitlines() if "metadata:    unreadable" in ln)
+        assert "otto env sync" in line, line
+        assert line.index("otto env sync") < line.index("otto env create --force"), line
+
+        synced = _run(["env", "sync"], home=home, timeout=BUILD_TIMEOUT)
+        assert synced.returncode == 0, synced.stdout + synced.stderr
+
+        restamped = _run(["env", "show"], home=home)
+        assert "last sync:   otto " in restamped.stdout, restamped.stdout

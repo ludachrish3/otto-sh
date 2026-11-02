@@ -915,18 +915,6 @@ class CoverageSettingsSpec(OttoModel):
     overrides: CoverageOverridesSpec | None = None
 
 
-class EnvSettingsSpec(OttoModel):
-    """``[env]`` — this project's standing preference for the orchestration venv.
-
-    One key today. It is a PREFERENCE, not a requirement: ``--backend`` on the
-    command line outranks it, because the operator in front of the terminal
-    knows things the file does not (uv not installed on this host, say).
-    """
-
-    backend: str | None = None
-    """``"uv"`` or ``"pip"``; None means auto-detect."""
-
-
 class DependenciesSpec(OttoModel):
     """``[dependencies]`` — inter-project dependencies on other ``OTTOPATH`` projects.
 
@@ -1096,7 +1084,6 @@ class SettingsModel(OttoModel):
     two homes and the same override rule as ``inventory``; resolved
     independently of it."""
     dependencies: DependenciesSpec = DependenciesSpec()
-    env: EnvSettingsSpec = EnvSettingsSpec()
     project: ProjectScopeSpec | None = None
     products: list[DeclaredEntrySpec] = Field(default_factory=list)
     """``[[products]]`` — settings-declared products (spec 2026-09-01
@@ -1123,6 +1110,10 @@ class SettingsModel(OttoModel):
                 raise ValueError(
                     "`lab_data_type` was removed; host-data sources are declared "
                     "as [[lab.sources]] entries."
+                )
+            if "env" in data:
+                raise ValueError(
+                    "[env] was removed: `otto env` always uses the uv installed with otto."
                 )
         return data
 

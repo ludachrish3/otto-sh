@@ -124,7 +124,6 @@ member	otto.config:Project.declared_products	field
 member	otto.config:Project.dependencies	field
 member	otto.config:Project.dependencies_summary	method	sync	-
 member	otto.config:Project.docker_settings	field
-member	otto.config:Project.env_backend	field
 member	otto.config:Project.get_instructions_panel	method	sync	-
 member	otto.config:Project.get_lab_panel	method	sync	-
 member	otto.config:Project.get_markers_panel	method	sync	PK:markers:-
@@ -4316,7 +4315,6 @@ input	otto.models:SettingsModel	S:"creds"	optional	N	S:"creds"
 input	otto.models:SettingsModel	S:"dependencies"	optional	O	S:"dependencies"
 input	otto.models:SettingsModel	S:"dev_tools"	optional	O	S:"dev_tools"
 input	otto.models:SettingsModel	S:"docker"	optional	O	S:"docker"
-input	otto.models:SettingsModel	S:"env"	optional	O	S:"env"
 input	otto.models:SettingsModel	S:"host_preferences"	optional	O	S:"host_preferences"
 input	otto.models:SettingsModel	S:"init"	optional	O	S:"init"
 input	otto.models:SettingsModel	S:"inventory"	optional	N	S:"inventory"
@@ -4336,7 +4334,6 @@ member	otto.models:SettingsModel.creds	field
 member	otto.models:SettingsModel.dependencies	field
 member	otto.models:SettingsModel.dev_tools	field
 member	otto.models:SettingsModel.docker	field
-member	otto.models:SettingsModel.env	field
 member	otto.models:SettingsModel.host_preferences	field
 member	otto.models:SettingsModel.init	field
 member	otto.models:SettingsModel.inventory	field

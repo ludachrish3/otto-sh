@@ -1,8 +1,8 @@
 """The per-workspace orchestration venv behind ``otto env``.
 
 :mod:`otto.env.manage` locates, builds, syncs and describes the venv and the
-metadata it records; :mod:`otto.env.backends` is the installer that fills it
-(uv, or stdlib ``venv`` plus pip); :mod:`otto.env.preflight` checks each
+metadata it records; :mod:`otto.env.backends` runs the uv installed with otto,
+which builds and fills it; :mod:`otto.env.preflight` checks each
 project's declared requirements against the running environment.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
@@ -15,12 +15,13 @@ resolver does not write a resolved name back into the module dict; see
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .backends import BackendUnavailableError as BackendUnavailableError
+    from .backends import UvNotFoundError as UvNotFoundError
     from .manage import META_FILENAME as META_FILENAME
     from .manage import EnvBuild as EnvBuild
     from .manage import EnvBuildError as EnvBuildError
     from .manage import EnvExistsError as EnvExistsError
     from .manage import EnvMeta as EnvMeta
+    from .manage import EnvSelfRebuildError as EnvSelfRebuildError
     from .manage import EnvStatus as EnvStatus
     from .manage import ProjectState as ProjectState
     from .manage import create_env as create_env
@@ -33,14 +34,15 @@ if TYPE_CHECKING:
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
-    "BackendUnavailableError": "otto.env.backends",
     "EnvBuild": "otto.env.manage",
     "EnvBuildError": "otto.env.manage",
     "EnvExistsError": "otto.env.manage",
     "EnvMeta": "otto.env.manage",
+    "EnvSelfRebuildError": "otto.env.manage",
     "EnvStatus": "otto.env.manage",
     "META_FILENAME": "otto.env.manage",
     "ProjectState": "otto.env.manage",
+    "UvNotFoundError": "otto.env.backends",
     "create_env": "otto.env.manage",
     "env_path": "otto.env.manage",
     "env_status": "otto.env.manage",
@@ -67,13 +69,14 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "META_FILENAME",
-    "BackendUnavailableError",
     "EnvBuild",
     "EnvBuildError",
     "EnvExistsError",
     "EnvMeta",
+    "EnvSelfRebuildError",
     "EnvStatus",
     "ProjectState",
+    "UvNotFoundError",
     "create_env",
     "env_path",
     "env_status",
