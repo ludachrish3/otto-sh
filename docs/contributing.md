@@ -476,7 +476,8 @@ A landing is a pull request, and its checks are split by who can run them.
 `3.14` jobs: `tests/unit` and the no-VM e2e on every supported Python), the
 docs build and the TypeScript gates among them; the CI column of [the
 quality-gates table](architecture/quality-gates.md#what-binds-each-gate) names
-them, and only the issue-filing job waits for a failed push to `main`. **The
+them, and only the issue-filing job waits for a failed run on `main`, as
+nightly's does: a failed pull request never files an issue. **The
 local tip adds what CI cannot run, and the cheap static lanes beside it**:
 `make check-breaking` over the landing range; `make check-python` and `make
 collect-check` for any diff that touches Python; and the bed lanes the diff

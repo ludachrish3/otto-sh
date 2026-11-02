@@ -87,10 +87,19 @@ def test_every_validation_job_needs_the_admission_job():
         assert "gate-admission" in job["needs"], job_id
 
 
-def test_report_failure_keeps_its_push_only_condition():
-    job = CI["jobs"]["report-failure"]
-    assert job["if"] == "failure() && github.event_name == 'push'"
-    assert "gate-admission" in job["needs"]
+MAIN_ONLY_REPORT = "failure() && github.ref == 'refs/heads/main'"
+
+
+@pytest.mark.parametrize("workflow", [CI, NIGHTLY], ids=["ci", "nightly"])
+def test_an_issue_is_filed_only_for_a_failed_run_on_main(workflow):
+    """A pull request's checks run on ``refs/pull/<n>/merge`` and a hand-dispatched run on
+    its own branch; only a red ``main`` is worth an issue, in every workflow that files one.
+    """
+    assert workflow["jobs"]["report-failure"]["if"] == MAIN_ONLY_REPORT
+
+
+def test_report_failure_waits_for_the_admission_job():
+    assert "gate-admission" in CI["jobs"]["report-failure"]["needs"]
 
 
 def test_every_required_context_but_the_status_is_a_declared_job():

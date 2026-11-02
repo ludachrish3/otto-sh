@@ -436,8 +436,6 @@ jobs:
           path: reports/junit/conformance/
           retention-days: 30
 
-  # If any matrix cell fails, open (or update) a tracking issue so a flaky
-  # nightly surfaces without anyone having to watch the Actions tab.
   # UPSTREAM DRIFT DETECTION. The one place in this repo that reads
   # busybox.net's own bytes rather than the `ci-assets-busybox-1` mirror.
   #
@@ -751,6 +749,8 @@ jobs:
       - name: Dashboard soak
         run: make dashboard-soak
 
+  # If any job fails, open (or update) a tracking issue so a flaky nightly
+  # surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
     needs:
@@ -766,7 +766,10 @@ jobs:
         busybox-upstream-drift,
         python-canary,
       ]
-    if: failure()
+    # Only a run on main files an issue, the same condition as ci.yml's
+    # reporter: a workflow_dispatch on a branch is someone's experiment, and its
+    # result is in the run they started.
+    if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       issues: write
