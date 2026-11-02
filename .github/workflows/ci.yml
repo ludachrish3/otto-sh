@@ -602,14 +602,15 @@ jobs:
       - name: Run otto env against the floor uv
         run: uv run nox -s tests_uv_floor
 
-  # If any job above fails on a push to main, open (or update) a tracking
-  # issue so a broken main surfaces without anyone having to watch the
-  # Actions tab. Skipped for pull_request — PR failures are already visible
-  # to the PR author in the checks UI.
+  # If any job above fails on main, open (or update) a tracking issue so a
+  # broken main surfaces without anyone having to watch the Actions tab. Keyed
+  # on the ref, as nightly.yml's reporter is: a pull request runs on
+  # refs/pull/<n>/merge, and its failures are already visible to the author in
+  # the checks UI.
   report-failure:
     name: Open issue on failure
     needs: [gate-admission, lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
-    if: failure() && github.event_name == 'push'
+    if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       issues: write
