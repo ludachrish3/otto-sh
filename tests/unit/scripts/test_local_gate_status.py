@@ -481,9 +481,10 @@ def test_the_cli_post_uses_gh_on_path(tmp_path):
 
 def test_required_contexts_is_the_committed_list():
     got = lgs.required_contexts(CHECKOUT_ROOT / ".github/required_contexts.json")
-    assert len(got) == 20
+    assert len(got) == 21
     assert "local-gate" in got
     assert "gate-admission" in got
+    assert "uv-floor" in got
     assert "busybox-artifacts (x86_64)" not in got
     assert "report-failure" not in got
 

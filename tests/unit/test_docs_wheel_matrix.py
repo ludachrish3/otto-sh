@@ -62,6 +62,38 @@ def test_classify_per_version_with_pure_fallback():
     assert mod.classify(wheels) == mod.PER_VERSION_PURE_FALLBACK
 
 
+def test_classify_py3_none_platform_wheels_as_any_python():
+    mod = _load_gate()
+    wheels = _wheels(
+        "uv-0.13.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "uv-0.13.6-py3-none-macosx_11_0_arm64.whl",
+    )
+    assert mod.classify(wheels) == mod.ANY_PYTHON
+
+
+def test_classify_mixed_per_version_and_py3_none_stays_per_version():
+    mod = _load_gate()
+    wheels = _wheels(
+        "example-1.0-cp312-cp312-manylinux_2_17_x86_64.whl",
+        "example-1.0-py3-none-manylinux_2_17_x86_64.whl",
+    )
+    assert mod.classify(wheels) == mod.PER_VERSION
+
+
+def test_classify_only_exact_py3_none_counts_as_any_python():
+    # py2.py3 / py30 are not "py3": they must not be read as serving any Python.
+    mod = _load_gate()
+    names = (
+        "example-1.0-py2.py3-none-manylinux_2_17_x86_64.whl",
+        "example-1.0-py30-none-manylinux_2_17_x86_64.whl",
+    )
+    for name in names:
+        assert mod.classify(_wheels(name)) != mod.ANY_PYTHON
+    # The py2 half of a py2.py3 set is not any-python; neither is py30.
+    assert not any(t.is_any_python for t in mod.wheel_tags(names[1]))
+    assert not [t for t in mod.wheel_tags(names[0]) if t.interpreter == "py2" and t.is_any_python]
+
+
 # --------------------------------------------------------------------------
 # runtime_closure(): dev dependencies must never reach the air-gap claims
 # --------------------------------------------------------------------------
@@ -174,6 +206,18 @@ def test_wheel_gaps_ignores_free_threaded_only_builds():
     mod = _load_gate()
     wheels = _wheels("cryptography-49.0.0-cp314-cp314t-manylinux_2_34_x86_64.whl")
     assert mod.wheel_gaps("cryptography", wheels, [(3, 14)], "x86_64") != []
+
+
+def test_wheel_gaps_accepts_a_py3_none_linux_wheel_for_every_minor():
+    mod = _load_gate()
+    wheels = _wheels("uv-0.13.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl")
+    assert mod.wheel_gaps("uv", wheels, MINORS, "x86_64") == []
+
+
+def test_wheel_gaps_rejects_a_py3_none_wheel_for_another_arch():
+    mod = _load_gate()
+    wheels = _wheels("uv-0.13.6-py3-none-manylinux_2_17_aarch64.whl")
+    assert len(mod.wheel_gaps("uv", wheels, MINORS, "x86_64")) == len(MINORS)
 
 
 # --------------------------------------------------------------------------

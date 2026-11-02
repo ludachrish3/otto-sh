@@ -38,6 +38,10 @@ Verify the result:
 otto --version
 ```
 
+The environment also holds uv, which otto depends on, at a version otto supports;
+activating the environment puts that uv on your `PATH` (see
+{ref}`Which uv runs what <which-uv-runs-what>`).
+
 (enabling-tab-completion)=
 ## Enabling tab completion
 
@@ -83,7 +87,9 @@ the rig needs, and one tool makes it so.
 
 [uv](https://docs.astral.sh/uv/) is a single static binary — no Python needed to
 install it, which matters on C/C++ build hosts. The settings below need **uv 0.11 or
-newer** (`uv --version`). Setting up inside an air gap? Read
+newer** (`uv --version`); an older one {ref}`ignores them with a warning
+<old-uv-warning>`. No uv on the machine yet? {ref}`Bootstrap it with pip
+<bootstrap-uv-with-pip>`. Setting up inside an air gap? Read
 [Creating the project inside the gap](#air-gap-create-project) before you run
 `uv add`.
 
@@ -161,34 +167,88 @@ every teammate); add `.venv/` to `.gitignore`. Day-to-day, either prefix command
 `uv run` or activate the environment once per shell (`source .venv/bin/activate`) and
 call `otto` directly.
 
-### With pip and venv
+(bootstrap-uv-with-pip)=
 
-pip cannot install a project's dependencies from `pyproject.toml` without turning the
-project into a buildable Python package, which a C/C++ project should not be. The pip
-equivalent is a `requirements.txt` (the same shape as a `conanfile.txt`):
+### No uv yet: bootstrap it with pip
 
-```text
-otto-sh==%OTTO_VERSION%
-# Python packages your instructions/tests import go here, e.g.:
-# pyserial>=3.5
-```
+You do not need uv on the machine before you start. otto depends on uv, so
+installing otto with pip brings a uv with it. Put this bootstrap venv somewhere of
+its own, outside your project, so it never collides with the project's `.venv/`:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv ~/.venvs/otto-bootstrap
+~/.venvs/otto-bootstrap/bin/pip install otto-sh   # brings uv
 ```
 
-Commit `requirements.txt`; add `.venv/` to `.gitignore`, exactly as on the uv path.
+Do not activate it. Run the [recommended setup](#with-uv-recommended) above with
+that uv, called by its path, from the project root:
 
-Both layouts are fully supported; pick one per repository rather than mixing them.
+```bash
+~/.venvs/otto-bootstrap/bin/uv init --bare --python 3.10
+# append the [tool.uv] table as shown above, then:
+~/.venvs/otto-bootstrap/bin/uv add otto-sh
+```
+
+Called by path, the bootstrap venv never becomes `VIRTUAL_ENV`; activated, it
+would make uv warn on every project command that it does not match the project's
+`.venv`. `uv add` builds the project's own
+`.venv/`, which holds otto and its uv too, so from then on you work there:
+
+```bash
+source .venv/bin/activate     # from the project root
+```
+
+The bootstrap venv has done its job; keep it for setting up other projects, or
+delete it. A venv made by any other means still *runs* otto: the layout above is
+about managing the project, not a condition for running otto.
+
+(which-uv-runs-what)=
+
+### Which uv runs what
+
+uv plays two roles around otto, and they may or may not be the same executable.
+One is the uv **you** run on your project (`uv init`, `uv add`, `uv sync`):
+whichever `uv` your shell finds. The other is the uv **otto** runs for
+{doc}`otto env <cli/env/index>`: the one installed beside otto as its dependency,
+never one looked up on `PATH`; `otto env show` prints its version as of the last
+create or sync. The uv you run must be 0.11 or newer; otto's is, by its
+dependency range. They need not match. Inside an
+activated environment that holds otto, the `uv` on `PATH` is otto's.
+
+(old-uv-warning)=
+
+### An older uv ignores `[tool.uv]`
+
+The uv you run must be 0.11 or newer. An older one cannot read the `system-certs`
+key, which first appeared in 0.11, and warns on every command. uv 0.9.0, for
+example, prints:
+
+```text
+warning: Failed to parse `pyproject.toml` during settings discovery:
+  TOML parse error at line 10, column 1
+     |
+  10 | system-certs = true
+     | ^^^^^^^^^^^^
+  unknown field `system-certs`, expected one of `required-version`, `native-tls`, `offline`,
+```
+
+The last line goes on to list every key that uv version knows, cut short here. The
+line number, the column and the caret follow where `system-certs` sits in your file,
+so yours will differ.
+
+The warning means your uv is older than 0.11 and has ignored the **whole**
+`[tool.uv]` table, not just that key, and the command carries on without it. What
+follows depends on your setup. Behind an internal CA or a TLS-inspecting proxy,
+downloads can fail certificate verification, because `system-certs` no longer
+applies. Inside an air gap, `uv add` and `uv lock` can fail with the
+{ref}`unavailable-platform-dependency error <air-gap-create-project>`, because
+`environments` no longer applies. Either way the fix is a uv 0.11 or newer.
 
 ### Choosing a Python interpreter
 
 Use the **system Python** when it is 3.10+ — uv discovers and uses system interpreters
-automatically, and pip's venv flow above uses whatever `python3` is. On air-gapped
-hosts this is usually the answer: your OS package mirror already serves a modern
-Python.
+automatically. On air-gapped hosts this is usually the answer: your OS package mirror
+already serves a modern Python.
 
 If the OS Python is too old, uv can install interpreters itself. Offline, point
 `UV_PYTHON_INSTALL_MIRROR` at a directory of
@@ -227,7 +287,7 @@ $ otto env create
 created ~/.otto/134b91c0-project-a-project-b/env
   installed (editable): project-b
   skipped, no pyproject.toml: project-a
-  backend: uv
+  last sync:   otto %OTTO_VERSION%, uv 0.13.6
 
 Activate it with:
   source ~/.otto/134b91c0-project-a-project-b/env/bin/activate
@@ -289,18 +349,24 @@ it to the isolated hosts, and **install** from that source.
 OS package repositories generally do not carry uv (or carry versions far too old), so
 bring it across the gap explicitly, either way:
 
+- **From otto's wheel set (recommended):** otto depends on uv, so the wheel directory
+  you download in {ref}`Step 1 <air-gap-download>` already holds a uv wheel for each
+  platform you download for. Run the {ref}`pip bootstrap <bootstrap-uv-with-pip>`,
+  with its venv outside the project as that section says, but point pip at the
+  wheel directory instead of the index:
+  `~/.venvs/otto-bootstrap/bin/pip install --no-index --find-links <wheel-dir> otto-sh`.
+  Its uv is a version otto supports, with no extra download.
 - **Standalone binary:** download the archive for your platform (plus its published
   `sha256` checksum) from [uv's releases](https://github.com/astral-sh/uv/releases),
   transfer it like the wheels below, and unpack it onto `PATH`. The `curl | sh`
   installer is only a fetcher for these same artifacts, so nothing is lost offline.
-- **As a wheel:** uv is also published on PyPI, so `pip download uv` alongside otto
-  (next step) places it in the same wheel directory, installable with the system pip.
 
-Transfer uv **0.11 or newer**, and pin it — `uv self update` cannot work offline.
-Older releases do not know the `system-certs` and `environments` settings this page
-puts in `pyproject.toml`; they warn once and then ignore the **whole** `[tool.uv]`
-table, so the index and platform settings below silently stop applying. The current
-artifact list lives in
+Either way, transfer uv **0.11 or newer**, and pin it — `uv self update` cannot work
+offline. An older uv [ignores the whole `[tool.uv]` table](#old-uv-warning) this
+page puts in `pyproject.toml`. The wheel route makes the uv you run the very uv otto
+runs. With the standalone binary, the {ref}`two <which-uv-runs-what>` are the same
+version only if you deliberately pick the version your wheel directory holds;
+otherwise each need only be 0.11 or newer. The current artifact list lives in
 [uv's installation docs](https://docs.astral.sh/uv/getting-started/installation/).
 
 (air-gap-download)=
@@ -347,15 +413,13 @@ Trim the list to the versions you actually deploy — every extra version costs 
 handful of wheels unique to it. One shared `./wheels` directory is correct and
 intended: wheel filenames encode their own compatibility, identical files collapse, and
 `--find-links` serves the whole set to every interpreter. For the five versions above
-otto resolves to roughly 55 wheels, of which `pydantic-core`, `cffi`, and `tomli`
-contribute five each.
+otto resolves to roughly 56 wheels, of which `pydantic-core`, `cffi`, and `tomli`
+contribute five each and `uv` one, since its wheel serves every Python.
 
 Without uv on the staging machine, run the same `pip download` under each interpreter
 directly (`python3.12 -m pip download …`); the rule is the interpreter, not the tool.
 
-To pin an exact otto version, use `pip download otto-sh==%OTTO_VERSION%`. To bring uv
-itself across, add `pip download uv --dest ./wheels` with the same flags — its wheels
-are platform-native.
+To pin an exact otto version, use `pip download otto-sh==%OTTO_VERSION%`.
 
 ```{note}
 **Platform-specific** and **Python-version-specific** are separate axes, and otto's
@@ -646,6 +710,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `truststore` | 0.10 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
 | `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
 | `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
+| `uv` | 0.11 | Installs and syncs the `otto env` orchestration venv; otto runs the uv installed with it |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
 
 (native-extension-dependencies)=
@@ -654,9 +719,10 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 
 The direct dependencies above pull in further packages of their own — about 50 in a
 complete Linux runtime install. Most are pure Python and ship a single
-`py3-none-any` wheel that works everywhere. These six do not: they carry **native
-(C/Rust) extensions**, so their wheels are platform-specific, and the "Wheel matrix"
-column says whether they are *also* Python-version-specific.
+`py3-none-any` wheel that works everywhere. These seven do not: six carry **native
+(C/Rust) extensions** and `uv` bundles a Rust executable, so their wheels are
+platform-specific, and the "Wheel matrix" column says whether they are *also*
+Python-version-specific.
 
 | Package | Pulled in by | Wheel matrix | Notes |
 | ------- | ------------ | ------------ | ----- |
@@ -666,8 +732,14 @@ column says whether they are *also* Python-version-specific.
 | `pydantic-core` | pydantic | per-version | Rust-based data validation |
 | `pyyaml` | otto (direct) | per-version | LibYAML-backed C parser; no pure wheel is published |
 | `tomli` | otto (direct) | per-version + pure fallback | TOML parsing |
+| `uv` | otto (direct) | any Python | A bundled Rust executable, not an extension module |
 
 Reading the matrix column:
+
+`any Python`
+: A platform-specific wheel that is **not** Python-version-specific: it holds no
+  extension module, so one wheel per platform serves every interpreter. `uv`
+  ships a compiled executable this way.
 
 `abi3`
 : Built against CPython's stable ABI, so **one wheel covers a range** of versions —

@@ -455,21 +455,6 @@ Inspect the outcome at runtime via {func}`otto.bootstrap.get_projects` — each 
 carries a `dependencies` list with per-dependency status and the provider's
 version.
 
-### `[env]` — which installer builds the orchestration venv
-
-```toml
-[env]
-backend = "uv"   # or "pip"; omit to auto-detect
-```
-
-This project's standing choice of installer for the environment
-{doc}`../cli/env/index` builds. It is a **preference, not a requirement**:
-`--backend` on the command line outranks it. Omit it to auto-detect: uv when it
-is on `PATH`, otherwise the standard library's `venv` plus pip.
-
-Two projects in one workspace declaring different values is a hard error naming
-both.
-
 ### `[dependencies]` names projects; `pyproject.toml` names packages
 
 The two are easy to confuse and never overlap:

@@ -215,12 +215,6 @@ path = "lab_data/creds.json"
 #[monitor]
 #tls_cert = "~/.otto/tls/monitor-cert.pem"
 #tls_key = "~/.otto/tls/monitor-key.pem"
-
-# --- [env] — orchestration-venv preference (optional) -----------------------
-# This project's standing choice of installer for `otto env`; --backend wins over
-# it. Omit to auto-detect (uv when on PATH, else stdlib venv + pip).
-#[env]
-#backend = "uv"
 """
 
 EXAMPLE_LAB_NAME = "example_lab"

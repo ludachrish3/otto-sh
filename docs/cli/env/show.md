@@ -9,8 +9,7 @@ otto env show
 ```console
 $ otto env show
 environment: ~/.otto/134b91c0-project1-project4/env
-  backend:     uv
-  otto:        0.8.6
+  last sync:   otto %OTTO_VERSION%, uv 0.13.6
 ╭──────────┬──────────────────────┬───────────┬───────────────────────────────────╮
 │ project  │ distribution         │ installed │ state                             │
 ├──────────┼──────────────────────┼───────────┼───────────────────────────────────┤
@@ -26,6 +25,10 @@ environment: ~/.otto/134b91c0-project1-project4/env
 | `installed` | Whether that distribution is actually present in the environment |
 | `state` | `current`, `stale`, or why the project is not installable |
 
+The `last sync:` line names the otto and the
+{ref}`uv otto runs <which-uv-runs-what>` as of the last successful
+{doc}`create` or {doc}`sync`; the `installed` column is checked live.
+
 ## It never fails on a broken environment
 
 ```console
@@ -36,7 +39,9 @@ build one with:
 ```
 
 Exit code 0. An environment whose metadata is unreadable degrades the same
-way — it says so and names `otto env create --force`.
+way — it says so and names `otto env sync`, then `otto env create --force` for an
+environment that is actually broken. An environment built by an earlier otto
+reads this way too, and {doc}`sync` writes the record afresh without a rebuild.
 
 ## `stale` is an mtime comparison
 
@@ -57,9 +62,8 @@ case.
 
 ## `installed` asks the environment itself
 
-The check runs one query inside the environment's own interpreter, so it
-answers the same way across uv and pip layouts. If the environment's
-interpreter cannot answer, the column reads `?`.
+The check runs one query inside the environment's own interpreter. If the
+environment's interpreter cannot answer, the column reads `?`.
 
 A project showing `no` after a successful build usually means its install failed
 and the failure was reported at the time — see the resolver output in

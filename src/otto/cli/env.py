@@ -5,8 +5,8 @@ the Typer surface plus the presentation. The one thing it owns outright is the
 ``--`` passthrough, which is otto's FIRST: ``ignore_unknown_options`` on the
 sub-app plus a ``list[str] | None`` Argument is what turns
 ``otto env sync -- --no-index --find-links ../wheels`` into three verbatim
-installer arguments, and it composes with a ``--backend`` before the ``--``.
-There is no other site in otto to copy this from.
+arguments for the uv installed with otto. There is no other site in otto to
+copy this from.
 
 Both verbs are LAB-FREE and act on the DISCOVERED project set rather than the
 active one: an environment is workspace-scoped, so which labs today's command
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 if TYPE_CHECKING:
-    from ..env.manage import EnvBuild
+    from ..env.manage import EnvBuild, EnvMeta
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,15 @@ env_app = typer.Typer(
     help="Create and maintain this workspace's orchestration environment.",
 )
 
-_BACKEND = Annotated[
-    str | None,
-    typer.Option("--backend", help="Installer to use: uv or pip. Overrides \\[env] backend."),
-]
 _INSTALLER_ARGS = Annotated[
     list[str] | None,
-    typer.Argument(help="After `--`, arguments passed verbatim to the installer."),
+    typer.Argument(help="After `--`, arguments passed verbatim to uv."),
 ]
+
+
+def _last_sync(meta: "EnvMeta") -> str:
+    """Return the line naming the otto and the uv the last create/sync ran."""
+    return f"  last sync:   otto {meta.otto_version}, uv {meta.uv_version}"
 
 
 def _report(build: "EnvBuild", *, verb: str) -> None:
@@ -50,13 +51,12 @@ def _report(build: "EnvBuild", *, verb: str) -> None:
         typer.echo(f"  installed (editable): {name}")
     for name in build.skipped:
         typer.echo(f"  skipped, no pyproject.toml: {name}")
-    typer.echo(f"  backend: {build.meta.backend}")
+    typer.echo(_last_sync(build.meta))
     typer.echo(f"\nActivate it with:\n  {activation_line(build.env)}")
 
 
 @env_app.command("create")
 def create(
-    backend: _BACKEND = None,
     force: Annotated[
         bool, typer.Option("--force", help="Remove an existing environment and rebuild it.")
     ] = False,
@@ -65,19 +65,16 @@ def create(
     """Build this workspace's orchestration environment from scratch."""
     from ..env.manage import create_env
 
-    build = create_env(force=force, backend_flag=backend, passthrough=list(installer_args or []))
+    build = create_env(force=force, passthrough=list(installer_args or []))
     _report(build, verb="created")
 
 
 @env_app.command("sync")
-def sync(
-    backend: _BACKEND = None,
-    installer_args: _INSTALLER_ARGS = None,
-) -> None:
+def sync(installer_args: _INSTALLER_ARGS = None) -> None:
     """Bring this workspace's orchestration environment up to date."""
     from ..env.manage import sync_env
 
-    build = sync_env(backend_flag=backend, passthrough=list(installer_args or []))
+    build = sync_env(passthrough=list(installer_args or []))
     _report(build, verb="synced")
 
 
@@ -100,10 +97,12 @@ def show() -> None:
 
     typer.echo(f"environment: {status.env}")
     if status.meta is None:
-        typer.echo("  metadata:    unreadable — `otto env create --force` rebuilds it")
+        typer.echo(
+            "  metadata:    unreadable — `otto env sync` writes it afresh; "
+            "`otto env create --force` rebuilds a broken env"
+        )
     else:
-        typer.echo(f"  backend:     {status.meta.backend}")
-        typer.echo(f"  otto:        {status.meta.otto_version}")
+        typer.echo(_last_sync(status.meta))
 
     table = Table(box=box.ROUNDED)
     table.add_column("project")

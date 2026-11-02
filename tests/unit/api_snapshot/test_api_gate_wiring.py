@@ -1,8 +1,9 @@
 """The public-surface gates run where the specs put them: CI and the invariance lane.
 
 Spec ``docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`` §6 (the
-docs validator gates) and dump spec §6 (the version-invariance lane). The
-pre-push hook is pinned in ``tests/unit/scripts/test_gate_tip.py``.
+docs validator gates) and dump spec §6 (the version-invariance lane), plus the
+``uv-floor`` lane of the uv runtime-dependency spec. The pre-push hook is pinned
+in ``tests/unit/scripts/test_gate_tip.py``.
 """
 
 import ast
@@ -89,6 +90,20 @@ def test_the_invariance_lane_regenerates_the_dump_on_every_matrix_python():
     nox = re.compile(r"\bnox -s api_dump_invariance-")
     assert _blocking(_step(job, nox))
     assert "api-dump-invariance" in _reported(jobs)
+
+
+def test_the_uv_floor_lane_runs_its_session_in_a_blocking_reported_job():
+    """The ``uv-floor`` job runs ``tests_uv_floor``, the only check of otto against
+    the oldest uv its dependency range admits, and a failure on main is reported."""
+    jobs = _jobs()
+    job = jobs["uv-floor"]
+    nox = re.compile(r"\buv run nox -s tests_uv_floor\b(?![-\w])")
+    assert "continue-on-error" not in job
+    assert "if" not in job
+    assert _blocking(_step(job, nox))
+    assert "uv-floor" in _reported(jobs)
+    _, tree = _noxfile()
+    assert any(isinstance(n, ast.FunctionDef) and n.name == "tests_uv_floor" for n in tree.body)
 
 
 def _invariance_session() -> "tuple[str, ast.FunctionDef]":

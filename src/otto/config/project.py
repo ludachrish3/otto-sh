@@ -151,7 +151,6 @@ class CompiledSettings:
     os_profiles: dict[str, "OsProfileSpec"]
     docker_settings: DockerSettings
     monitor_settings: MonitorSettings
-    env_backend: str | None
     declared_products: list["DeclaredEntry"]
     declared_dev_tools: list["DeclaredEntry"]
 
@@ -207,7 +206,6 @@ def compile_settings(data: dict[str, Any], root: Path) -> CompiledSettings:
         os_profiles=dict(model.os_profiles),
         docker_settings=model.docker.to_runtime(),
         monitor_settings=model.monitor.to_runtime(),
-        env_backend=model.env.backend,
         declared_products=[
             e.to_runtime(owner=model.name, base_dir=root, seam="products") for e in model.products
         ],
@@ -410,12 +408,6 @@ class Project:
     )
     """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
-    env_backend: "str | None" = field(default=None, init=False)
-    """Parsed `[env] backend` — this project's standing choice of installer for the
-    orchestration venv, or None to auto-detect. Read through the validated model
-    rather than the raw settings dict, so ``EnvSettingsSpec`` stays the one place
-    the key is spelled."""
-
     def __post_init__(self) -> None:
         # ``anchor_path`` needs an absolute root to anchor relative settings
         # paths against, so ``root`` is made absolute here, before
@@ -579,7 +571,6 @@ class Project:
         self.os_profiles = compiled.os_profiles
         self.docker_settings = compiled.docker_settings
         self.monitor_settings = compiled.monitor_settings
-        self.env_backend = compiled.env_backend
         self.declared_products = compiled.declared_products
         self.declared_dev_tools = compiled.declared_dev_tools
 

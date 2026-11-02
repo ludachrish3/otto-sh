@@ -22,16 +22,16 @@ class TestEnvPath:
 
 class TestMeta:
     def test_metadata_lives_inside_the_env_so_force_takes_it(self, tmp_path):
-        """F6: recorded beside env/ would survive --force and pin the old backend."""
+        """F6: recorded beside env/ would survive --force and describe the old build."""
         env = tmp_path / "env"
         assert meta_path(env).parent == env
 
     def test_round_trip(self, tmp_path):
         env = tmp_path / "env"
         env.mkdir()
-        write_meta(env, EnvMeta(backend="uv", otto_version="9.9.9"))
+        write_meta(env, EnvMeta(uv_version="0.13.6", otto_version="9.9.9"))
         got = read_meta(env)
-        assert got == EnvMeta(backend="uv", otto_version="9.9.9")
+        assert got == EnvMeta(uv_version="0.13.6", otto_version="9.9.9")
 
     def test_absent_metadata_reads_as_none_not_an_error(self, tmp_path):
         env = tmp_path / "env"
@@ -50,5 +50,15 @@ class TestMeta:
     def test_metadata_missing_a_key_reads_as_none(self, tmp_path):
         env = tmp_path / "env"
         env.mkdir()
-        meta_path(env).write_text(json.dumps({"backend": "uv"}))
+        meta_path(env).write_text(json.dumps({"uv_version": "0.13.6"}))
+        assert read_meta(env) is None
+
+    def test_old_record_reads_as_none(self, tmp_path):
+        """A complete record from before otto ran its own uv has no ``uv_version``.
+
+        It reads as unreadable, which ``env show`` reports and ``sync`` re-stamps.
+        """
+        env = tmp_path / "env"
+        env.mkdir()
+        meta_path(env).write_text(json.dumps({"backend": "uv", "otto_version": "9.9.9"}))
         assert read_meta(env) is None

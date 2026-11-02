@@ -107,3 +107,41 @@ def test_main_reports_missing_section(tmp_path, capsys):
     doc.write_text(TABLE_DOC.replace("### Direct runtime dependencies", "### Renamed"))
     assert mod.main([str(py), str(doc)]) == 1
     assert "no rows found" in capsys.readouterr().out
+
+
+def test_floor_prints_one_dependencys_floor(tmp_path, capsys):
+    mod = _load()
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\nname = "otto-sh"\ndependencies = ["uv>=0.11,<0.14", "rich>=15.0.0"]\n'
+    )
+    assert mod.main(["--floor", "uv", str(py)]) == 0
+    assert capsys.readouterr().out == "0.11\n"
+
+
+def test_floor_of_an_unknown_dependency_fails(tmp_path, capsys):
+    mod = _load()
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[project]\nname = "otto-sh"\ndependencies = ["rich>=15.0.0"]\n')
+    assert mod.main(["--floor", "uv", str(py)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "uv: not a direct dependency in" in captured.err
+
+
+def test_floor_without_a_name_is_a_usage_error(capsys):
+    mod = _load()
+    assert mod.main(["--floor"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
+
+
+def test_floor_with_extra_arguments_is_a_usage_error(tmp_path, capsys):
+    mod = _load()
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[project]\nname = "otto-sh"\ndependencies = ["uv>=0.11,<0.14"]\n')
+    assert mod.main(["--floor", "uv", str(py), "extra"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err

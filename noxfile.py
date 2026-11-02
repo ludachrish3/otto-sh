@@ -832,6 +832,59 @@ def api_dump_invariance(session: nox.Session) -> None:
     )
 
 
+# Run by `tests_uv_floor` under the pinned interpreter: the package metadata, the
+# floor the script printed and the binary `uv_bin()` locates must all agree.
+UV_FLOOR_CHECK = """
+import importlib.metadata
+import sys
+
+from packaging.version import Version
+
+from otto.env.backends import uv_bin, uv_version
+
+floor = Version(sys.argv[1])
+package = Version(importlib.metadata.version("uv"))
+binary = Version(uv_version(uv_bin()))
+print(f"floor {floor}, uv package {package}, uv binary {binary}")
+assert package == floor == binary, "the pinned uv is not the declared floor"
+"""
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def tests_uv_floor(session: nox.Session) -> None:
+    """Run otto's env tests against the oldest uv otto declares support for.
+
+    ``uv`` is a runtime dependency, so the declared uv floor in pyproject.toml
+    is an obligation: the Python package API, both missing-installation legs, the
+    version probe and the argv otto builds must all hold at the minimum, not
+    only at whatever the lock resolved. The floor is read from
+    ``scripts/check_docs_dependency_table.py --floor uv``, its one owner, and
+    pinned with ``--no-deps``. The check then proves the package and the binary
+    ``uv_bin()`` finds both report it (``0.11`` equals ``0.11.0``).
+
+    The tests run through ``pytest`` directly, never ``uv run pytest``: that
+    would re-sync the project and undo the pin. ``-p no:tach`` stays in force
+    from pyproject's addopts; ``--no-cov`` only drops instrumentation.
+    """
+    # run_install, so the floor is also read under `--install-only`; it returns
+    # None under `--no-install`/`-R`, where `run` reads it instead.
+    floor_argv = ("python", "scripts/check_docs_dependency_table.py", "--floor", "uv")
+    floor = session.run_install(*floor_argv, silent=True) or session.run(*floor_argv, silent=True)
+    if not isinstance(floor, str) or not floor.strip():
+        session.error("scripts/check_docs_dependency_table.py --floor uv printed no floor")
+    floor = floor.strip()
+    session.install("--no-deps", f"uv=={floor}")
+    session.run("python", "-c", UV_FLOOR_CHECK, floor)
+    session.run(
+        "pytest",
+        "tests/unit/env",
+        "tests/e2e/cli/test_env_e2e.py",
+        "--no-cov",
+        _junitxml(session, "nox-uv-floor"),
+        *session.posargs,
+    )
+
+
 @nox_uv.session(uv_groups=["dev"])
 def docs(session: nox.Session) -> None:
     """Build HTML docs (warnings as errors) and run Sphinx doctests."""
