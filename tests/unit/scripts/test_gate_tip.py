@@ -1,8 +1,10 @@
 """Pins for scripts/gate_tip.py — the landing's gate: lane stamps, the runner and the push check."""
 
 import dataclasses
+import fcntl
 import fnmatch
 import functools
+import inspect
 import io
 import json
 import os
@@ -14,26 +16,24 @@ from pathlib import Path
 
 import pytest
 
-from scripts import gate_fresh, gate_stamp_common
 from scripts import gate_scope as gs
+from scripts import gate_stamp_common
 from scripts import gate_tip as gt
+from scripts import local_gate_status as lgs
 from scripts.gate_stamp_common import tree_hash
+from scripts.local_gate_status import GhRunner
+from scripts.process_group import UndrainedError
+from tests._fixtures import fake_gh as fg
 from tests._fixtures.gitrepo import git_env
+from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.scripts.test_gate_fresh import _bare, _commit_file, _published, _stamp_tip
-from tests.unit.scripts.test_gate_fresh import _repo as _fresh_repo
+from tests.unit.scripts._gate_repos import _bare, _commit_file, _git, _published, _stamp_tip
+from tests.unit.scripts._gate_repos import _repo as _fresh_repo
 from tests.unit.scripts.test_gate_scope import _head_paths
-from tests.unit.test_tier_marker_invariants import _makefile_recipes
 
 pytestmark = pytest.mark.interpreter_agnostic
 
 MAKEFILE = (CHECKOUT_ROOT / "Makefile").read_text()
-
-
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, env=git_env(repo)
-    ).stdout
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -46,7 +46,29 @@ def _repo(tmp_path: Path) -> Path:
     (repo / "tests" / "unit" / "test_a.py").write_text("def test_a():\n    pass\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "base")
+    _git(repo, "remote", "add", "origin", "https://github.com/o/r.git")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     return repo
+
+
+@pytest.fixture(autouse=True)
+def _default_lease(monkeypatch):
+    """Every runner test gets a lease backend that never touches a lab file or the bed.
+
+    ``bed_lease.load_cell`` refuses a missing lab file and ``_repo`` writes none; the reap
+    is stubbed too, so an interrupted bed lane never reaches a real bed. A test that spies
+    on the lease (``_lease_spy``) installs its own doubles over these.
+    """
+
+    def acquire(ctx):
+        ctx.lease = gt.Lease(cell=None, pid=os.getpid())
+
+    def release(ctx):
+        ctx.lease = None
+
+    monkeypatch.setattr(gt, "_acquire_lease", acquire)
+    monkeypatch.setattr(gt, "_release_lease", release)
+    monkeypatch.setattr("scripts.bed_reap.reap", lambda cell, pid: 0)
 
 
 def _store(tmp_path: Path) -> Path:
@@ -102,8 +124,8 @@ class TestGoals:
     @pytest.mark.parametrize(
         ("line", "expected"),
         [
-            ("make coverage", ["coverage"]),
-            ("make check-ts coverage-ts", ["check-ts", "coverage-ts"]),
+            ("make coverage-bed", ["coverage-bed"]),
+            ("make check-ts test-ts", ["check-ts", "test-ts"]),
             ('make quick PATHS="tests/unit/x.py tests/unit/y.py"', ["quick"]),
             ("make check-breaking RANGE=abc..HEAD", ["check-breaking"]),
             (gs.STABILITY_UNIX, ["stability-unix"]),
@@ -114,9 +136,10 @@ class TestGoals:
     def test_goals_of_each_shape(self, line, expected):
         assert gt.goals(line) == expected
 
-    def test_a_commit_only_goal_line_is_an_unknown_goal(self):
-        with pytest.raises(gt.UnknownGoalError, match="test-ts"):
-            gt.goals("make test-ts")
+    @pytest.mark.parametrize("goal", ["coverage", "coverage-ts", "gate-fresh"])
+    def test_a_retired_goal_line_is_an_unknown_goal(self, goal):
+        with pytest.raises(gt.UnknownGoalError, match=goal):
+            gt.goals(f"make {goal}")
 
     def test_an_unknown_shape_or_goal_is_refused(self):
         with pytest.raises(gt.UnknownGoalError):
@@ -124,11 +147,33 @@ class TestGoals:
         with pytest.raises(gt.UnknownGoalError):
             gt.is_live("make frobnicate")
 
-    def test_live_lanes_are_range_targets_plus_docs(self):
-        assert set(gt.LIVE_GOALS) == set(gs.RANGE_TARGETS) | {"docs"}
+    def test_live_lanes_are_the_range_targets(self):
+        assert gt.LIVE_GOALS == gs.RANGE_TARGETS == ["check-breaking"]
         assert not set(gt.LIVE_GOALS) & set(gt.STAMPED_GOALS)
-        assert gt.is_live("make check-python RANGE=abc..HEAD")
-        assert not gt.is_live("make coverage")
+        assert gt.is_live("make check-breaking RANGE=abc..HEAD")
+        assert not gt.is_live("make check-python")
+        assert not gt.is_live("make coverage-bed")
+
+    def test_a_stored_stamp_for_a_retired_goal_is_not_evidence(self, tmp_path):
+        """A `make coverage` stamp written before the goal retired reads as unreadable."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        tree = tree_hash(repo)
+        path = gt.stamp_path(root, tree, "make coverage")
+        path.parent.mkdir(parents=True)
+        stored = {
+            "format": 1,
+            "tree": tree,
+            "command": "make coverage",
+            "base": "b" * 40,
+            "measured": {},
+            "written_at": "now",
+            "checkout": str(repo),
+        }
+        path.write_text(json.dumps(stored))
+        assert gt.read_stamp(path) is None
+        assert gt.lookup(repo, root, tree, "make coverage").reason == "unreadable stamp"
+        path.write_text(json.dumps({**stored, "command": "make coverage-bed"}))
+        assert gt.read_stamp(path) is not None, "the control: a known goal reads"
 
 
 class TestKeysAndFiles:
@@ -172,12 +217,12 @@ class TestKeysAndFiles:
 
     def test_a_malformed_stamp_is_unreadable_not_evidence(self, tmp_path):
         root = _store(tmp_path)
-        path = gt.stamp_path(root, "t" * 40, "make coverage")
+        path = gt.stamp_path(root, "t" * 40, "make coverage-bed")
         path.parent.mkdir(parents=True)
         good = {
             "format": 1,
             "tree": "t" * 40,
-            "command": "make coverage",
+            "command": "make coverage-bed",
             "base": "b" * 40,
             "measured": {},
             "written_at": "now",
@@ -201,23 +246,25 @@ class TestKeysAndFiles:
             path.write_text(bad)
             assert gt.read_stamp(path) is None, bad
         repo = _repo(tmp_path)
-        assert gt.lookup(repo, root, "t" * 40, "make coverage").reason == "unreadable stamp"
+        assert gt.lookup(repo, root, "t" * 40, "make coverage-bed").reason == "unreadable stamp"
         store = gt.load_store(root)
         assert store.stamps == []
         assert store.unreadable == [path]
 
     def test_an_unreadable_file_under_another_tree_is_named_not_no_stamp(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        other = gt.stamp_path(root, "o" * 40, "make coverage")
+        other = gt.stamp_path(root, "o" * 40, "make coverage-bed")
         other.parent.mkdir(parents=True)
         other.write_text("{not json")
-        assert gt.lookup(repo, root, tree_hash(repo), "make coverage").reason == "unreadable stamp"
+        assert (
+            gt.lookup(repo, root, tree_hash(repo), "make coverage-bed").reason == "unreadable stamp"
+        )
 
     def test_a_corrupt_exact_file_does_not_hide_valid_promoted_evidence(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
         gt.write_stamp(
@@ -230,10 +277,10 @@ class TestKeysAndFiles:
         )
         _git(repo, "commit", "-qam", "measured")
         t_tree = tree_hash(repo)
-        exact = gt.stamp_path(root, t_tree, "make coverage")
+        exact = gt.stamp_path(root, t_tree, "make coverage-bed")
         exact.parent.mkdir(parents=True)
         exact.write_text("{crashed mid-write")
-        found = gt.lookup(repo, root, t_tree, "make coverage")
+        found = gt.lookup(repo, root, t_tree, "make coverage-bed")
         assert found.stamp is not None
         assert found.stamp.tree == s_tree
 
@@ -255,23 +302,23 @@ class TestKeysAndFiles:
         t_tree = tree_hash(repo)
         # a coverage "stamp" filed under <T>/ but claiming S: with S's witness it would promote
         path = gt.write_stamp(
-            root, tree=t_tree, key="make coverage", base="b", measured={}, checkout="/x"
+            root, tree=t_tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
         )
         data = json.loads(path.read_text())
         data["tree"] = s_tree
         path.write_text(json.dumps(data))
-        assert gt.find_stamp(repo, root, t_tree, "make coverage") is None
+        assert gt.find_stamp(repo, root, t_tree, "make coverage-bed") is None
         assert path in gt.load_store(root).unreadable
 
     def test_a_stamp_whose_command_is_not_the_key_is_a_mismatch(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         path = gt.write_stamp(
-            root, tree="t" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+            root, tree="t" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
         )
         data = json.loads(path.read_text())
         data["command"] = "make kmodcov"  # a digest collision, or a hand edit
         path.write_text(json.dumps(data))
-        found = gt.lookup(repo, root, "t" * 40, "make coverage")
+        found = gt.lookup(repo, root, "t" * 40, "make coverage-bed")
         assert found.stamp is None
         assert found.reason.startswith("command mismatch")
         store = gt.load_store(root)
@@ -280,7 +327,7 @@ class TestKeysAndFiles:
         assert gt.find_stamp(repo, root, "t" * 40, "make kmodcov") is None, (
             "never evidence for the claimed key either"
         )
-        assert gt.invalidate(repo, root, "make coverage", tree="t" * 40) == [path]
+        assert gt.invalidate(repo, root, "make coverage-bed", tree="t" * 40) == [path]
         assert not path.exists()
 
     def test_a_misnamed_file_is_neither_candidate_nor_witness_at_another_tree(self, tmp_path):
@@ -300,12 +347,12 @@ class TestKeysAndFiles:
         data["command"] = "make kmodcov"
         path.write_text(json.dumps(data))
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         _git(repo, "commit", "-qam", "measured")
         t_tree = tree_hash(repo)
         assert gt.find_stamp(repo, root, t_tree, "make kmodcov") is None
-        assert gt.find_stamp(repo, root, t_tree, "make coverage") is None, (
+        assert gt.find_stamp(repo, root, t_tree, "make coverage-bed") is None, (
             "the misnamed file's blob is no witness"
         )
 
@@ -314,7 +361,7 @@ class TestKeysAndFiles:
         s_tree = tree_hash(repo)
         # a REAL promotable candidate: S's coverage stamp plus S's measurement witness for T
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout="/elsewhere"
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout="/elsewhere"
         )
         blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
         gt.write_stamp(
@@ -327,21 +374,21 @@ class TestKeysAndFiles:
         )
         _git(repo, "commit", "-qam", "measured")
         t_tree = tree_hash(repo)
-        assert gt.find_stamp(repo, root, t_tree, "make coverage").checkout == "/elsewhere", (
+        assert gt.find_stamp(repo, root, t_tree, "make coverage-bed").checkout == "/elsewhere", (
             "promotable on its own"
         )
         gt.write_stamp(
-            root, tree=t_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=t_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         reads = []
         real = gt._read_record
         monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
-        found = gt.lookup(repo, root, t_tree, "make coverage")
+        found = gt.lookup(repo, root, t_tree, "make coverage-bed")
         assert found.stamp is not None
         assert found.stamp.tree == t_tree
         assert found.stamp.checkout == str(repo)
         assert found.store is None, "no store was loaded"
-        assert reads == [gt.stamp_path(root, t_tree, "make coverage")], "one read, no scan"
+        assert reads == [gt.stamp_path(root, t_tree, "make coverage-bed")], "one read, no scan"
 
     def test_a_genuine_file_name_collision_is_a_command_mismatch(self, tmp_path, monkeypatch):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -350,7 +397,7 @@ class TestKeysAndFiles:
         gt.write_stamp(
             root, tree=tree, key="make kmodcov", base="b", measured={}, checkout=str(repo)
         )
-        found = gt.lookup(repo, root, tree, "make coverage")
+        found = gt.lookup(repo, root, tree, "make coverage-bed")
         assert found.stamp is None
         assert (
             found.reason == "command mismatch (the file at the key's path records 'make kmodcov')"
@@ -362,12 +409,12 @@ class TestKeysAndFiles:
     def test_an_exact_path_stamp_that_claims_another_tree_is_not_evidence(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         path = gt.write_stamp(
-            root, tree="t" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+            root, tree="t" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
         )
         data = json.loads(path.read_text())
         data["tree"] = "u" * 40
         path.write_text(json.dumps(data))
-        assert gt.find_stamp(repo, root, "t" * 40, "make coverage") is None
+        assert gt.find_stamp(repo, root, "t" * 40, "make coverage-bed") is None
 
 
 class TestSatisfies:
@@ -375,15 +422,15 @@ class TestSatisfies:
         repo, root = _repo(tmp_path), _store(tmp_path)
         tree = tree_hash(repo)
         gt.write_stamp(
-            root, tree=tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
-        assert gt.find_stamp(repo, root, tree, "make coverage") is not None
+        assert gt.find_stamp(repo, root, tree, "make coverage-bed") is not None
 
     def test_a_tree_that_differs_only_by_a_recorded_measured_blob(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
         gt.write_stamp(
@@ -396,7 +443,7 @@ class TestSatisfies:
         )
         _git(repo, "commit", "-qam", "measured")
         t_tree = tree_hash(repo)
-        coverage = gt.find_stamp(repo, root, t_tree, "make coverage")
+        coverage = gt.find_stamp(repo, root, t_tree, "make coverage-bed")
         assert coverage is not None, "promoted through the measuring stamp"
         assert coverage.tree == s_tree
         assert gt.find_stamp(repo, root, t_tree, "make conformance-bed") is not None
@@ -405,7 +452,7 @@ class TestSatisfies:
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
         gt.write_stamp(
@@ -418,7 +465,7 @@ class TestSatisfies:
         )
         _measure(repo, '{"as_of": "2026-10-16", "hand": "edited"}\n')
         _git(repo, "commit", "-qam", "edited after the measurement")
-        found = gt.lookup(repo, root, tree_hash(repo), "make coverage")
+        found = gt.lookup(repo, root, tree_hash(repo), "make coverage-bed")
         assert found.stamp is None
         assert "beyond the measured outputs" in found.reason
         assert s_tree[:12] in found.reason
@@ -428,14 +475,14 @@ class TestSatisfies:
         gt.write_stamp(
             root,
             tree=tree_hash(repo),
-            key="make coverage",
+            key="make coverage-bed",
             base="b",
             measured={},
             checkout=str(repo),
         )
         _measure(repo, '{"as_of": "hand-edited"}\n')
         _git(repo, "commit", "-qam", "edit")
-        assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage") is None
+        assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage-bed") is None
 
     def test_any_witnessed_blob_for_the_path_counts(self, tmp_path):
         """Two lanes under one tree may record different blobs for the same matrix."""
@@ -470,7 +517,7 @@ class TestSatisfies:
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
         gt.write_stamp(
-            root, tree=s_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
         gt.write_stamp(
             root,
@@ -482,7 +529,7 @@ class TestSatisfies:
         )
         (repo / "tests" / "unit" / "test_a.py").write_text("def test_a():\n    assert True\n")
         _git(repo, "commit", "-qam", "code")
-        assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage") is None
+        assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage-bed") is None
 
     def test_diff_tree_is_recursive(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -514,9 +561,11 @@ class TestSatisfies:
         assert found.reason == "unreadable stamp"
         # the same with NO witness under the pruned tree: still unreadable, never "differs beyond"
         gt.write_stamp(
-            root, tree="e" * 40, key="make coverage", base="b", measured={}, checkout=str(repo)
+            root, tree="e" * 40, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
         )
-        assert gt.lookup(repo, root, tree_hash(repo), "make coverage").reason == "unreadable stamp"
+        assert (
+            gt.lookup(repo, root, tree_hash(repo), "make coverage-bed").reason == "unreadable stamp"
+        )
 
     def test_a_different_path_list_names_both_bases(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -555,7 +604,7 @@ class TestSatisfies:
     def test_a_miss_hands_back_the_store_it_was_given(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         given = gt.load_store(root)
-        found = gt.lookup(repo, root, tree_hash(repo), "make coverage", store=given)
+        found = gt.lookup(repo, root, tree_hash(repo), "make coverage-bed", store=given)
         assert found.stamp is None
         assert found.store is given
 
@@ -571,30 +620,30 @@ class TestSatisfies:
                 checkout="/x",
             )
             gt.write_stamp(
-                root, tree=tree, key="make coverage", base="b", measured={}, checkout="/x"
+                root, tree=tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
             )
         reads = []
         real = gt._read_record
         monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
-        gt.lookup(repo, root, tree_hash(repo), "make coverage")
+        gt.lookup(repo, root, tree_hash(repo), "make coverage-bed")
         assert len(reads) == 1 + 6, "the exact probe, then one read per stamp file, no re-reads"
 
     def test_lookup_reads_each_non_stamp_file_once(self, tmp_path, monkeypatch):
         repo, root = _repo(tmp_path), _store(tmp_path)
         tree = tree_hash(repo)
-        gt.write_red(root, tree="a" * 40, key="make coverage", checkout="/x")
-        bad = gt.stamp_path(root, "b" * 40, "make coverage")
+        gt.write_red(root, tree="a" * 40, key="make coverage-bed", checkout="/x")
+        bad = gt.stamp_path(root, "b" * 40, "make coverage-bed")
         bad.parent.mkdir(parents=True)
         bad.write_text("{bad")
         reads = []
         real = gt._read_record
         monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
-        gt.lookup(repo, root, tree, "make coverage")
+        gt.lookup(repo, root, tree, "make coverage-bed")
         assert sorted(reads) == sorted(
             [
-                gt.stamp_path(root, tree, "make coverage"),
+                gt.stamp_path(root, tree, "make coverage-bed"),
                 bad,
-                gt.stamp_path(root, "a" * 40, "make coverage"),
+                gt.stamp_path(root, "a" * 40, "make coverage-bed"),
             ]
         ), "the exact probe once, then each file once"
 
@@ -604,10 +653,10 @@ class TestInvalidate:
 
     def test_an_unreadable_file_at_the_keys_name_goes_too(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        path = gt.stamp_path(root, "z" * 40, "make coverage")
+        path = gt.stamp_path(root, "z" * 40, "make coverage-bed")
         path.parent.mkdir(parents=True)
         path.write_text("{bad")
-        assert gt.invalidate(repo, root, "make coverage", tree="z" * 40) == [path]
+        assert gt.invalidate(repo, root, "make coverage-bed", tree="z" * 40) == [path]
         assert not path.exists()
 
     def test_a_pruned_trees_stamps_and_markers_for_the_key_go_whoever_wrote_them(self, tmp_path):
@@ -615,17 +664,17 @@ class TestInvalidate:
         gated = tree_hash(repo)
         gone = [
             gt.write_stamp(
-                root, tree="a" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+                root, tree="a" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
             ),
             gt.write_stamp(
-                root, tree="b" * 40, key="make coverage", base="b", measured={}, checkout="/y"
+                root, tree="b" * 40, key="make coverage-bed", base="b", measured={}, checkout="/y"
             ),
-            gt.write_red(root, tree="c" * 40, key="make coverage", checkout="/y"),
+            gt.write_red(root, tree="c" * 40, key="make coverage-bed", checkout="/y"),
         ]
         kept = gt.write_stamp(
             root, tree="a" * 40, key="make kmodcov", base="b", measured={}, checkout="/x"
         )
-        assert sorted(gt.invalidate(repo, root, "make coverage", tree=gated)) == sorted(gone)
+        assert sorted(gt.invalidate(repo, root, "make coverage-bed", tree=gated)) == sorted(gone)
         assert not any(p.exists() for p in gone)
         assert gt.read_stamp(kept) is not None, "another key is never touched"
 
@@ -667,9 +716,9 @@ class TestInvalidate:
         repo, root = _repo(tmp_path), _store(tmp_path)
         a_tree, b_tree = tree_hash(repo), _live_tree(repo, "b")
         peer = gt.write_stamp(
-            root, tree=b_tree, key="make coverage", base="b", measured={}, checkout="/y"
+            root, tree=b_tree, key="make coverage-bed", base="b", measured={}, checkout="/y"
         )
-        assert gt.invalidate(repo, root, "make coverage", tree=a_tree) == []
+        assert gt.invalidate(repo, root, "make coverage-bed", tree=a_tree) == []
         assert gt.read_stamp(peer) is not None
 
     def test_gating_landing_c_keeps_landing_as_stamps_from_this_checkout(self, tmp_path):
@@ -677,32 +726,32 @@ class TestInvalidate:
         repo, root = _repo(tmp_path), _store(tmp_path)
         a_tree, c_tree = _live_tree(repo, "a"), tree_hash(repo)
         a_stamp = gt.write_stamp(
-            root, tree=a_tree, key="make coverage", base="b", measured={}, checkout="/x"
+            root, tree=a_tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
         )
-        assert gt.invalidate(repo, root, "make coverage", tree=c_tree) == []
+        assert gt.invalidate(repo, root, "make coverage-bed", tree=c_tree) == []
         assert gt.read_stamp(a_stamp) is not None
 
     def test_the_gated_trees_own_stamp_stays_for_the_lanes_outcome_to_replace(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         u_tree = tree_hash(repo)
         own = gt.write_stamp(
-            root, tree=u_tree, key="make coverage", base="b", measured={}, checkout="/y"
+            root, tree=u_tree, key="make coverage-bed", base="b", measured={}, checkout="/y"
         )
-        assert gt.invalidate(repo, root, "make coverage", tree=u_tree) == []
+        assert gt.invalidate(repo, root, "make coverage-bed", tree=u_tree) == []
         assert gt.read_stamp(own) is not None
 
     def test_an_unreadable_or_mismatched_file_under_another_tree_is_left_alone(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        unreadable = gt.stamp_path(root, "b" * 40, "make coverage")
+        unreadable = gt.stamp_path(root, "b" * 40, "make coverage-bed")
         unreadable.parent.mkdir(parents=True)
         unreadable.write_text("{bad")
         mismatched = gt.write_stamp(
-            root, tree="c" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+            root, tree="c" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
         )
         data = json.loads(mismatched.read_text())
         data["command"] = "make kmodcov"
         mismatched.write_text(json.dumps(data))
-        assert gt.invalidate(repo, root, "make coverage", tree=tree_hash(repo)) == []
+        assert gt.invalidate(repo, root, "make coverage-bed", tree=tree_hash(repo)) == []
         assert unreadable.exists()
         assert mismatched.exists()
 
@@ -800,14 +849,14 @@ class TestRedMarker:
     def test_a_red_marker_is_neither_a_stamp_nor_unreadable(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         tree = tree_hash(repo)
-        path = gt.write_red(root, tree=tree, key="make coverage", checkout="/x")
-        assert path == gt.stamp_path(root, tree, "make coverage")
+        path = gt.write_red(root, tree=tree, key="make coverage-bed", checkout="/x")
+        assert path == gt.stamp_path(root, tree, "make coverage-bed")
         assert gt.read_stamp(path) is None
-        assert gt.exact_stamp(root, tree, "make coverage") is None
+        assert gt.exact_stamp(root, tree, "make coverage-bed") is None
         store = gt.load_store(root)
         assert (store.stamps, store.unreadable, store.mismatched) == ([], [], [])
         assert [(r.tree, r.command, r.checkout) for r in store.red] == [
-            (tree, "make coverage", "/x")
+            (tree, "make coverage-bed", "/x")
         ]
 
     def test_a_red_marker_never_promotes_to_another_tree(self, tmp_path):
@@ -839,12 +888,11 @@ class TestRedMarker:
 class FakeRunner:
     """Records every (cmd, cwd, env); answers from a table; runs side effects for a lane."""
 
-    def __init__(self, statuses=None, outputs=None, effects=None, checker_statuses=None):
+    def __init__(self, statuses=None, outputs=None, effects=None):
         self.calls = []  # (cmd as given, cwd, env)
         self.statuses = dict(statuses or {})  # str key -> status; default 0
         self.outputs = dict(outputs or {})  # str key -> output text (argv calls)
         self.effects = dict(effects or {})  # str key -> callable() run before answering
-        self.checker_statuses = list(checker_statuses or [])  # queue for the coverage checker
 
     @staticmethod
     def key(cmd):
@@ -855,11 +903,6 @@ class FakeRunner:
         self.calls.append((cmd, cwd, dict(env)))
         if key in self.effects:
             self.effects[key]()
-        if (
-            key.startswith("uv run python scripts/coverage_stamp.py check")
-            and self.checker_statuses
-        ):
-            return gt.RunOutcome(self.checker_statuses.pop(0), self.outputs.get("checker", ""))
         return gt.RunOutcome(self.statuses.get(key, 0), self.outputs.get(key, ""))
 
     @property
@@ -867,38 +910,29 @@ class FakeRunner:
         return [self.key(c) for c, _, _ in self.calls]
 
 
-GATE_LINES = (
-    "--threshold\n95.5\n--selection\nnot stability and not browser\n"
-    "--browsers\nchromium\n--primary\n3.10\n"
-)
-CHECKER = [
-    "uv",
-    "run",
-    "python",
-    "scripts/coverage_stamp.py",
-    "check",
-    "--threshold",
-    "95.5",
-    "--selection",
-    "not stability and not browser",
-    "--browsers",
-    "chromium",
-    "--primary",
-    "3.10",
-]
-GATE_ARGS = "make -s coverage-gate-args"
 LANE = gs.STABILITY_UNIX
 SUPPORT = "schemas/support_matrix.json"
 
 
 def _options(repo, runner, **kw):
+    kw.setdefault("gh", fg.scripted_gh([fg.GhReply([], stdout="{}")]))
+    kw.setdefault("lab", Path("lab.json"))
     return gt.Options(repo=repo, runner=runner, out=io.StringIO(), **kw)
 
 
 def _oracle(monkeypatch, repo, lines):
-    base = _git(repo, "rev-parse", "HEAD").strip()
-    monkeypatch.setattr(gt, "_tip_list", lambda _repo, _base: (base, list(lines)))
-    return base
+    """Make *lines* the oracle's tip for HEAD: a Plan whose base and tip are HEAD itself."""
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    plan = gs.Plan(
+        base_sha=head,
+        tip_sha=head,
+        tree=tree_hash(repo),
+        live=[line for line in lines if gs.is_live(line)],
+        stamped=[gs.lane_key(line) for line in lines if not gs.is_live(line)],
+        bed=any(gs.is_bed(line) for line in lines),
+    )
+    monkeypatch.setattr(gt, "_plan", lambda _opts: plan)
+    return head
 
 
 def _stamp(repo, key, tree=None, **kw):
@@ -924,6 +958,81 @@ def _go(monkeypatch, repo, lines, runner, **kw):
     return gt.run(opts), opts.out.getvalue(), opts
 
 
+@dataclasses.dataclass
+class _Spy:
+    """The order the run touched the lanes, the lease, the reap and ``gh`` in."""
+
+    events: "list[str]"
+    runner: object
+    gh: object
+
+
+class _SpiedGh:
+    """A ``gh`` that logs ``gh api`` into the spy's events, then answers from *gh*."""
+
+    def __init__(self, events: "list[str]", gh) -> None:
+        self._events = events
+        self._gh = gh
+        self.calls = gh.calls  # what the scripted runner recorded
+
+    def __call__(self, args):
+        self._events.append("gh api")
+        return self._gh(args)
+
+
+def _lease_spy(monkeypatch, runner: FakeRunner, gh: GhRunner) -> _Spy:
+    """Record every lane run, lease step, reap and gh call, in order, into one list."""
+    events: "list[str]" = []
+
+    def spied_runner(cmd, cwd, env):
+        events.append(f"run {FakeRunner.key(cmd)}")
+        return runner(cmd, cwd, env)
+
+    def acquire(ctx):
+        events.append("acquire")
+        ctx.lease = gt.Lease(cell=None, pid=os.getpid())
+
+    def release(ctx):
+        events.append("release")
+        ctx.lease = None
+
+    monkeypatch.setattr(gt, "_acquire_lease", acquire)
+    monkeypatch.setattr(gt, "_release_lease", release)
+    # by module path: gate_tip imports bed_reap lazily, inside the interrupt arm
+    monkeypatch.setattr("scripts.bed_reap.reap", lambda cell, pid: events.append("reap") or 0)
+    return _Spy(events, spied_runner, _SpiedGh(events, gh))
+
+
+def _success_body(monkeypatch, repo, lines) -> str:
+    """Return the commit-status JSON of HEAD carrying the success a green gate of *lines* posts."""
+    _oracle(monkeypatch, repo, lines)
+    desc = lgs.format_description(lgs.expected(gt._plan(_options(repo, FakeRunner()))))
+    status = {"context": "local-gate", "state": "success", "description": desc}
+    return json.dumps({"statuses": [status]})
+
+
+PEER_PROBE = (
+    "import fcntl, sys\n"
+    "h = open(sys.argv[1], 'a')\n"
+    "try:\n"
+    "    fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+    "    print('free')\n"
+    "except BlockingIOError:\n"
+    "    print('busy')\n"
+)
+"""A peer process asking for the store lock exclusively, without waiting: free or busy."""
+
+
+def _peer_probe(lock: Path) -> str:
+    return subprocess.run(
+        [sys.executable, "-c", PEER_PROBE, str(lock)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    ).stdout.strip()
+
+
 class TestRunner:
     def test_the_runner_executes_the_stamped_lines_in_order_and_never_a_live_one(
         self, tmp_path, monkeypatch
@@ -931,29 +1040,16 @@ class TestRunner:
         repo = _repo(tmp_path)
         for name in ("MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE"):
             monkeypatch.setenv(name, "x")
-        lines = [
-            "make check-breaking RANGE=x..HEAD",
-            "make coverage",
-            LANE,
-            "make docs",
-            "make gate-fresh RANGE=x..HEAD",
-        ]
-        runner = FakeRunner(outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[1, 0])
+        lines = ["make check-breaking RANGE=x..HEAD", "make coverage-bed", LANE]
+        runner = FakeRunner()
         status, out, _ = _go(monkeypatch, repo, lines, runner)
-        assert runner.keys == [
-            GATE_ARGS,
-            " ".join(CHECKER),
-            "make coverage",
-            " ".join(CHECKER),
-            LANE,
-        ]
-        assert runner.calls[1][0] == CHECKER, "the argv as a list, no --overridden"
+        assert runner.keys == ["make coverage-bed", LANE]
         for _cmd, _cwd, env in runner.calls:
             assert not {"MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE"} & set(env)
         root, tree = gt.stamps_root(repo, gt.STORE), tree_hash(repo)
-        assert gt.exact_stamp(root, tree, "make coverage") is not None
+        assert gt.exact_stamp(root, tree, "make coverage-bed") is not None
         assert gt.exact_stamp(root, tree, LANE) is not None
-        assert "\ngate-tip: 2 stamped, 0 already stamped, 3 live at push, 0 red\n" in out
+        assert "\ngate-tip: 2 stamped, 0 already stamped, 1 live at push, 0 red\n" in out
         assert status == 0
 
     def test_an_overridden_variable_refuses_before_any_lane(self, tmp_path, monkeypatch):
@@ -1009,20 +1105,18 @@ class TestRunner:
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         p_tree = _live_tree(repo, "peer")
-        _stamp(repo, "make coverage", tree="a" * 40)  # a and b: trees no object store holds
-        _stamp(repo, "make coverage", tree="b" * 40, promoted_from="a" * 40)
-        _stamp(repo, "make coverage", tree=p_tree, checkout="/peer")
-        lines = [LANE, "make coverage", "make quick-guards"]
-        runner = FakeRunner(
-            outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0], statuses={"make coverage": 1}
-        )
+        _stamp(repo, "make coverage-bed", tree="a" * 40)  # a and b: trees no object store holds
+        _stamp(repo, "make coverage-bed", tree="b" * 40, promoted_from="a" * 40)
+        _stamp(repo, "make coverage-bed", tree=p_tree, checkout="/peer")
+        lines = [LANE, "make coverage-bed", "make quick-guards"]
+        runner = FakeRunner(statuses={"make coverage-bed": 1})
         status, out, _ = _go(monkeypatch, repo, lines, runner, force=True)
         assert status == 1
         store = gt.load_store(root)
-        assert [(s.tree, s.checkout) for s in store.stamps if s.command == "make coverage"] == [
+        assert [(s.tree, s.checkout) for s in store.stamps if s.command == "make coverage-bed"] == [
             (p_tree, "/peer")
         ], "the pruned trees' stamps go; the peer's stays"
-        assert [(r.tree, r.command) for r in store.red] == [(tree_hash(repo), "make coverage")]
+        assert [(r.tree, r.command) for r in store.red] == [(tree_hash(repo), "make coverage-bed")]
         assert "make quick-guards" not in runner.keys
         assert gt.exact_stamp(root, tree_hash(repo), LANE) is not None
         assert "RED (exit 1" in out
@@ -1033,8 +1127,7 @@ class TestRunner:
 
         runner = FakeRunner(effects={LANE: interrupt})
         _oracle(monkeypatch, repo, [LANE])
-        with pytest.raises(KeyboardInterrupt):
-            gt.run(_options(repo, runner, force=True))
+        assert gt.run(_options(repo, runner, force=True)) == gt.EXIT_INTERRUPTED
         assert gt.exact_stamp(root, tree_hash(repo), LANE) is not None, (
             "an interrupted forced re-run keeps the tree's earlier green stamp: still true"
         )
@@ -1102,8 +1195,8 @@ class TestRunner:
         def interrupt():
             raise KeyboardInterrupt
 
-        with pytest.raises(KeyboardInterrupt):
-            _go(monkeypatch, repo, [LANE], FakeRunner(effects={LANE: interrupt}))
+        status, _out, _ = _go(monkeypatch, repo, [LANE], FakeRunner(effects={LANE: interrupt}))
+        assert status == gt.EXIT_INTERRUPTED
         assert gt.find_stamp(repo, root, u_tree, LANE) is None, "U never passed"
         assert gt.lookup(repo, root, u_tree, LANE).reason.startswith("the lane went red")
         assert gt.exact_stamp(root, s_tree, LANE) is not None, "the peer's stamp stays"
@@ -1198,106 +1291,27 @@ class TestRunner:
         assert runner.keys == [b]
         assert "1 stamped, 1 already stamped" in out
 
-    def test_force_runs_coverage_even_with_a_valid_lane_stamp_and_a_valid_coverage_stamp(
-        self, tmp_path, monkeypatch
-    ):
+    def test_force_runs_the_bed_half_even_with_a_valid_lane_stamp(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
-        _stamp(repo, "make coverage", checkout="/old")
-        runner = FakeRunner(outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0, 0])
-        status, _out, _ = _go(monkeypatch, repo, ["make coverage"], runner, force=True)
+        _stamp(repo, "make coverage-bed", checkout="/old")
+        runner = FakeRunner()
+        status, _out, _ = _go(monkeypatch, repo, ["make coverage-bed"], runner, force=True)
         assert status == 0
-        assert runner.keys == [GATE_ARGS, " ".join(CHECKER), "make coverage", " ".join(CHECKER)]
-        stamp = gt.exact_stamp(root, tree_hash(repo), "make coverage")
+        assert runner.keys == ["make coverage-bed"]
+        stamp = gt.exact_stamp(root, tree_hash(repo), "make coverage-bed")
         assert stamp is not None
         assert stamp.checkout == str(repo)
         runner = FakeRunner()
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
+        status, out, _ = _go(monkeypatch, repo, ["make coverage-bed"], runner)
         assert (status, runner.calls) == (0, [])
         assert "already stamped" in out
-
-    def test_a_valid_coverage_stamp_stamps_the_lane_without_running_coverage(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0])
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert runner.keys == [GATE_ARGS, " ".join(CHECKER)]
-        root = gt.stamps_root(repo, gt.STORE)
-        assert gt.exact_stamp(root, tree_hash(repo), "make coverage") is not None
-        assert "1 stamped," in out
-        assert status == 0
-
-    def test_a_checker_2_is_red_before_coverage_runs(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[2])
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert "make coverage" not in runner.keys
-        assert "RED (exit 2" in out
-        assert status == 1
-
-    def test_a_green_coverage_with_a_failing_check_is_red_with_the_output_shown(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(
-            outputs={GATE_ARGS: GATE_LINES, "checker": "coverage-stamp: no stamp for tree ...\n"},
-            checker_statuses=[1, 1],
-        )
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 1
-        assert "coverage-stamp: no stamp for tree" in out
-        assert runner.keys[-1] == " ".join(CHECKER)
 
     def test_the_real_runner_returns_merged_stderr(self, tmp_path):
         code = "import sys; sys.stderr.write('only stderr')"
         result = gt._default_runner([sys.executable, "-c", code], tmp_path, dict(os.environ))
         assert result == gt.RunOutcome(0, "only stderr")
         assert gt._default_runner("exit 3", tmp_path, dict(os.environ)) == gt.RunOutcome(3, "")
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            (
-                "--threshold\n95.5\n--selection\nnot stability\nand not browser\n"
-                "--browsers\nchromium\n--primary\n3.10\n"
-            ),
-            (
-                "--threshold\n95.5\n--selection\nnot stability\n--threshold\n0\n"
-                "--browsers\nchromium\n--primary\n3.10\n"
-            ),
-            "",
-            "--selection\nx\n--threshold\n1\n--browsers\nc\n--primary\n3\n",
-        ],
-    )
-    def test_coverage_gate_framing_rejects_what_is_not_the_declared_sequence(
-        self, tmp_path, monkeypatch, text
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(outputs={GATE_ARGS: text}, checker_statuses=[0])
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 1
-        assert "cannot frame" in out
-        assert runner.keys == [GATE_ARGS]
-
-    def test_a_failing_gate_args_query_counts_red_and_the_summary_prints(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(statuses={GATE_ARGS: 1}, outputs={GATE_ARGS: "boom"})
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 1
-        assert "make -s coverage-gate-args failed" in out
-        assert "0 stamped, 0 already stamped, 0 live at push, 1 red" in out
-        assert runner.keys == [GATE_ARGS]
-
-    def test_an_empty_value_frames_fine(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        text = "--threshold\n95.5\n--selection\nsel\n--browsers\n\n--primary\n3.10\n"
-        runner = FakeRunner(outputs={GATE_ARGS: text}, checker_statuses=[0])
-        status, _out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 0
-        assert runner.calls[1][0][-4:] == ["--browsers", "", "--primary", "3.10"]
 
     def test_a_measuring_lane_stamps_with_the_blob_and_prints_the_review_note(
         self, tmp_path, monkeypatch
@@ -1375,11 +1389,14 @@ class TestRunner:
 
     def test_an_unknown_goal_refuses_the_whole_run(self, tmp_path, monkeypatch):
         repo, runner = _repo(tmp_path), FakeRunner()
-        base = _git(repo, "rev-parse", "HEAD").strip()
-        monkeypatch.setattr(gt, "_tip_list", lambda _r, _b: (base, [LANE, "make frobnicate"]))
-        opts = _options(repo, runner)
+        # the real plan: the oracle emitting an unknown goal refuses as it classifies its lines
+        monkeypatch.setattr(gs, "commands", lambda *a, **k: [LANE, "make frobnicate"])
+        opts = _options(repo, runner, base="HEAD")
         assert gt.run(opts) == 2
         assert runner.calls == []
+        assert (
+            "the oracle emitted a lane it does not classify: make frobnicate" in opts.out.getvalue()
+        )
 
     def test_a_stamp_written_in_one_worktree_is_honoured_from_another(self, tmp_path):
         repo = _repo(tmp_path)
@@ -1392,7 +1409,6 @@ class TestRunner:
 
     def test_the_cli_runs_main(self, tmp_path):
         repo = _repo(tmp_path)
-        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         completed = subprocess.run(
             [
                 sys.executable,
@@ -1477,71 +1493,33 @@ def _census():
     for name, scope in _census_scopes():
         for base in ("origin/main", "0123456789abcdef0123456789abcdef01234567"):
             for line in gs.commands(scope, tip=True, base=base):
-                for goal in gt.goals(line):
-                    assert (goal in gt.LIVE_GOALS) != (goal in gt.STAMPED_GOALS), (name, line)
+                for goal in gs.goals(line):
+                    assert (goal in gs.LIVE_GOALS) != (goal in gs.STAMPED_GOALS), (name, line)
                     seen.add(goal)
-                gt.is_live(line)
+                gs.is_live(line)
     return seen
 
 
 class TestCensus:
     def test_every_tip_line_the_oracle_can_emit_has_exactly_one_kind(self):
         seen = _census()
-        assert {"coverage", "conformance-bed", "kmodcov", "dashboard", "quick-guards"} <= seen
-        assert {"coverage-bed", "ty"} <= seen, "the src-leaf tip's own lines (#797)"
-        assert "check-breaking" in seen
-        assert seen - set(gt.LIVE_GOALS) == set(gt.STAMPED_GOALS)
-        assert not any("hostless" in g for g in gt.STAMPED_GOALS), "the PR's CI owns them (#795)"
+        assert seen == set(gs.STATIC_GOALS + gs.BED_GOALS + gs.LIVE_GOALS)
+        assert gt.STAMPED_GOALS == gs.STATIC_GOALS + gs.BED_GOALS, "the runner reads the oracle's"
+        assert not any("hostless" in g for g in gs.STAMPED_GOALS), "the PR's CI owns them (#795)"
 
     @pytest.mark.parametrize(
         "goal",
-        [
-            "conformance-bed",
-            "kmodcov",
-            "dashboard",
-            "quick-guards",
-            "docs-captures-check",
-            "coverage-bed",
-            "ty",
-        ],
+        ["check-python", "conformance-bed", "kmodcov", "docs-captures-check", "coverage-bed"],
     )
     def test_a_stamped_goal_dropped_from_the_set_fails_the_census(self, monkeypatch, goal):
-        monkeypatch.setattr(gt, "STAMPED_GOALS", [g for g in gt.STAMPED_GOALS if g != goal])
-        with pytest.raises(gt.UnknownGoalError):
+        monkeypatch.setattr(gs, "STAMPED_GOALS", [g for g in gs.STAMPED_GOALS if g != goal])
+        with pytest.raises(gs.UnknownGoalError):
             _census()
 
     def test_a_live_goal_dropped_from_the_set_fails_the_census(self, monkeypatch):
-        monkeypatch.setattr(gt, "LIVE_GOALS", [g for g in gt.LIVE_GOALS if g != "check-breaking"])
-        with pytest.raises(gt.UnknownGoalError):
+        monkeypatch.setattr(gs, "LIVE_GOALS", [g for g in gs.LIVE_GOALS if g != "check-breaking"])
+        with pytest.raises(gs.UnknownGoalError):
             _census()
-
-    def test_every_live_goal_is_reachable_from_gate_fresh(self):
-        prerequisites: "dict[str, list[str]]" = {}
-        for match in re.finditer(r"^([a-z][a-z0-9-]*):\s*([^#\n]*)", MAKEFILE, re.MULTILINE):
-            if "=" in match.group(2):
-                continue
-            prerequisites.setdefault(match.group(1), []).extend(
-                w for w in match.group(2).split() if re.fullmatch(r"[a-z][a-z0-9-]*", w)
-            )
-        assert "check-breaking" in _makefile_recipes(), "the reader must see the recipes"
-        gated = {"gate-fresh", *gate_fresh.GATED_TARGETS}
-
-        def below(target, seen=None):
-            seen = set() if seen is None else seen
-            for dep in prerequisites.get(target, []):
-                if dep not in seen:
-                    seen.add(dep)
-                    below(dep, seen)
-            return seen
-
-        def covered(goal):
-            if goal in gated or any(goal in below(g) for g in gated):
-                return True
-            deps = prerequisites.get(goal, [])
-            return bool(deps) and all(covered(dep) for dep in deps)
-
-        unreachable = [g for g in gt.LIVE_GOALS if not covered(g)]
-        assert not unreachable, f"live goals the push does not run: {unreachable}"
 
 
 class TestPushCheck:
@@ -1565,13 +1543,13 @@ class TestPushCheck:
             return real(path)
 
         monkeypatch.setattr(gt, "_read_record", counting)
-        assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing == []
+        assert gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip)) == []
         assert sorted(reads) == sorted(gt.stamp_path(root, tree, key) for key in lanes)
 
         reads.clear()
         for key in (lanes[0], lanes[-1]):
             gt.stamp_path(root, tree, key).unlink()
-        assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing
+        assert gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip))
         in_store = len(list(root.glob("*/*.json")))
         assert len(reads) == len(lanes) + in_store
         assert max(reads.count(path) for path in set(reads)) <= 2
@@ -1586,9 +1564,10 @@ class TestPushCheck:
         )
         root = gt.stamps_root(repo, gt.STORE)
         gt.write_red(root, tree=tree_hash(repo, tip), key=key, checkout="/x")
-        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
-        assert [gt.lane_key(m.lane) for m in verdict.missing] == [key]
-        assert any("went red on this tree" in line and "/x" in line for line in verdict.lines)
+        missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip))
+        assert [m.lane for m in missing] == [key]
+        assert "went red on this tree" in missing[0].reason
+        assert "/x" in missing[0].reason
 
     def test_a_red_marker_only_the_scan_holds_still_refuses(self, tmp_path, monkeypatch):
         """lookup heeds a red in the scanned store even when its exact read missed it.
@@ -1681,32 +1660,103 @@ class TestPushCheck:
             return real(*args)
 
         monkeypatch.setattr(gt, "_pruned", spawn_then_peer)
-        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
+        plan = gs.plan(repo, remote_sha, tip)
+        refusal = gt.stamp_refusal(repo, plan, ref="refs/heads/x", who="gate-tip")
         monkeypatch.undo()
         assert len(deferred) == 1, "the peer's write waited for the check"
-        assert verdict.missing == [], "the check saw one state: S promotes, no red yet"
+        assert refusal == [], "the check saw one state: S promotes, no red yet"
         for write in deferred:
             write()
-        after = gt.missing_stamps(repo, "origin", remote_sha, tip)
-        assert [m.reason.startswith("the lane went red") for m in after.missing] == [True]
+        after = gt.stamp_refusal(repo, plan, ref="refs/heads/x", who="gate-tip")
+        assert [line for line in after if "the lane went red" in line] == after[1:2]
 
     def test_the_check_creates_nothing_without_a_store(self, tmp_path):
         repo, _bare_repo, remote_sha, tip = _published(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
-        assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing
+        assert gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip))
         assert not root.exists()
 
-    def test_the_check_cli_prints_the_hooks_text(self, tmp_path, capsys):
+
+def _stamped_lanes(repo: Path, remote_sha: str, tip_sha: str) -> "list[str]":
+    return gs.plan(repo, remote_sha, tip_sha).stamped
+
+
+class TestTheOraclesLanes:
+    """What the store is asked for: the plan's stamped lanes, never a live one."""
+
+    def test_live_goals_are_never_demanded(self, tmp_path):
         repo, _bare_repo, remote_sha, tip = _published(tmp_path)
-        argv = ["--repo", str(repo), "--check", remote_sha, tip, "--remote", "origin"]
-        assert gt.main(argv) == 1
-        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
-        assert capsys.readouterr().err == "\n".join(verdict.lines) + "\n"
         _stamp_tip(repo, remote_sha, tip)
-        assert gt.main(argv) == 0
-        assert (
-            capsys.readouterr().out == f"gate-tip: every stamped lane for {tip[:12]} is stamped\n"
+        plan = gs.plan(repo, remote_sha, tip)
+        assert plan.live, "the range owes live lines too"
+        assert gt.missing_stamps(repo, plan) == []
+
+    def test_a_lane_the_oracle_started_requiring_is_no_stamp(self, tmp_path, monkeypatch):
+        repo, _bare_repo, remote_sha, base_tip = _published(tmp_path)
+        tip = _commit_file(repo, "schemas/unrowed.json", "{}\n", "unrowed")
+        assert "make coverage-bed" in gs.plan(repo, remote_sha, tip).stamped
+        _stamp_tip(repo, remote_sha, tip)
+        assert base_tip != tip
+        monkeypatch.setattr(gs, "TEST_SUITE_LANES", [*gs.TEST_SUITE_LANES, "make chaos"])
+        missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip))
+        assert missing == [gt.Missing("make chaos", "no stamp")]
+
+
+class TestMeasuredOutputsThroughTheCheck:
+    """A tip differing from a stamped tree by a recorded blob is honoured; any other is not."""
+
+    MATRIX = "schemas/support_matrix.json"
+
+    def _stamped_s(self, tmp_path: Path, measured_text: str):
+        """Return (repo, remote sha, S sha, the blob a lane recorded for measured_text)."""
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        s_sha = _commit_file(repo, self.MATRIX, '{"as_of": "2026-10-01"}\n', "matrix")
+        _stamp_tip(repo, remote_sha, s_sha)
+        (repo / self.MATRIX).write_text(measured_text)
+        blob = _git(repo, "hash-object", self.MATRIX).strip()
+        _git(repo, "checkout", "--", self.MATRIX)
+        assert "make coverage-bed" in gs.tip_commands(repo, remote_sha, s_sha, git_env(repo))
+        key = gs.plan(repo, remote_sha, s_sha).stamped[0]
+        gt.write_stamp(
+            gt.stamps_root(repo, gt.STORE),
+            tree=gt.tree_hash(repo, s_sha),
+            key=key,
+            base=remote_sha,
+            measured={self.MATRIX: blob},
+            checkout=str(repo),
         )
+        return repo, remote_sha, s_sha
+
+    def test_a_tip_that_differs_only_by_a_recorded_measured_blob_is_honoured(self, tmp_path):
+        text = '{"as_of": "2026-10-16"}\n'
+        repo, remote_sha, s_sha = self._stamped_s(tmp_path, text)
+        t_sha = _commit_file(repo, self.MATRIX, text, "measured")
+        # the same stamped lanes; only the live line's range names the other tip
+        assert _stamped_lanes(repo, remote_sha, s_sha) == _stamped_lanes(repo, remote_sha, t_sha)
+        assert gt.missing_stamps(repo, gs.plan(repo, remote_sha, t_sha)) == []
+
+    def test_a_tip_whose_matrix_bytes_differ_from_the_recorded_blob_is_refused(self, tmp_path):
+        repo, remote_sha, s_sha = self._stamped_s(tmp_path, '{"as_of": "2026-10-16"}\n')
+        t_sha = _commit_file(repo, self.MATRIX, '{"as_of": "hand edited"}\n', "edited")
+        missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, t_sha))
+        assert [m.lane for m in missing] == _stamped_lanes(repo, remote_sha, t_sha)
+        reason = (
+            f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
+            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
+        )
+        assert {m.reason for m in missing} == {reason}
+
+    def test_one_that_differs_elsewhere_names_the_stamp_checkout_and_base(self, tmp_path):
+        repo, _bare_repo, remote_sha, s_sha = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, s_sha)
+        t_sha = _commit_file(repo, "tests/unit/cli/test_b.py", "def test_b(): assert 1\n", "edit")
+        missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, t_sha))
+        assert [m.lane for m in missing] == _stamped_lanes(repo, remote_sha, t_sha)
+        reason = (
+            f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
+            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
+        )
+        assert {m.reason for m in missing} == {reason}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1760,12 +1810,14 @@ class TestReleaseCommits:
         r = self._released(tmp_path)
         root = gt.stamps_root(r.repo, gt.STORE)
         assert not root.exists() or not any(root.iterdir()), "the store must start empty"
-        assert gt.missing_stamps(r.repo, "origin", r.remote_sha, r.tip).missing == []
+        assert gt.missing_stamps(r.repo, gs.plan(r.repo, r.remote_sha, r.tip)) == []
 
     def test_a_bump_that_also_edits_another_pyproject_key_still_needs_the_full_gate(self, tmp_path):
         r = self._released(tmp_path, pyproject_extra="allow_dirty = true\n")
-        lanes = [m.lane for m in gt.missing_stamps(r.repo, "origin", r.remote_sha, r.tip).missing]
-        assert "make coverage" in lanes
+        plan = gs.plan(r.repo, r.remote_sha, r.tip)
+        lanes = [m.lane for m in gt.missing_stamps(r.repo, plan)]
+        assert "make check-python" in lanes
+        assert "make coverage-bed" in lanes
 
 
 # ── Lane timings: what a gate costs, recorded in the stamp and printed as a table ───────
@@ -1869,19 +1921,6 @@ class TestTimings:
         assert red.timing is not None
         assert red.timing["elapsed_s"] >= 0
 
-    def test_a_coverage_lane_the_coverage_stamp_satisfies_records_no_timing(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0])
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 0
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), "make coverage")
-        assert stamp is not None
-        assert stamp.timing is None
-        assert "make coverage" not in runner.keys
-        assert "stamped (the coverage stamp holds)" in out
-
     def test_the_run_ends_with_a_timing_table(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         _stamp(repo, "make quick-guards")
@@ -1931,7 +1970,7 @@ class TestTimings:
         repo = _repo(tmp_path)
         assert gt.main(["--timings", "--repo", str(repo)]) == 0
         assert "no stamps" in capsys.readouterr().out
-        with pytest.raises(gate_stamp_common.GateFreshError):
+        with pytest.raises(gate_stamp_common.GateError):
             gt.timings(repo, gt.stamps_root(repo, gt.STORE), "nonsense")
 
     def test_the_gate_tip_help_names_the_timings_switch(self):
@@ -2034,20 +2073,6 @@ class TestTimings:
         monkeypatch.delattr(os, "sched_getaffinity")
         assert gate_stamp_common.nproc() == 8
 
-    def test_a_lane_that_could_not_be_framed_leaves_a_red_marker_without_timing(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        runner = FakeRunner(outputs={GATE_ARGS: "--threshold\n95.5\n"})
-        status, out, _ = _go(monkeypatch, repo, ["make coverage"], runner)
-        assert status == 1
-        red = gt.read_entry(
-            gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), "make coverage")
-        )
-        assert isinstance(red, gt.Red)
-        assert red.timing is None
-        assert re.search(r"\n\s+red\s+make coverage\n", out), "a red row with no elapsed"
-
     def test_a_lane_that_changes_the_tree_gets_a_not_stamped_row_with_its_elapsed(
         self, tmp_path, monkeypatch
     ):
@@ -2115,7 +2140,7 @@ class TestTimings:
 
     def test_the_timings_switch_excludes_the_other_modes(self, tmp_path, capsys):
         repo = _repo(tmp_path)
-        for argv in (["--timings", "--dry-run"], ["--timings", "--check", "a", "b"]):
+        for argv in (["--timings", "--dry-run"], ["--timings", "--pre-push"]):
             with pytest.raises(SystemExit) as exc:
                 gt.main([*argv, "--repo", str(repo)])
             assert exc.value.code == 2
@@ -2138,67 +2163,631 @@ class TestTimings:
         assert 'JUNIT_DIR="$REPO/reports/junit"' in watcher
 
 
-class TestInterrupt:
-    """An interrupted run reaps the bed and releases the lease; an undrained one keeps it.
+BED = ["make check-breaking", "make check-python", "make coverage-bed", gs.STABILITY_UNIX]
+STATIC = ["make check-breaking", "make check-python", "make collect-check"]
 
-    The policy is :func:`gate_tip.main`'s docstring; the runner's part of it (the
-    interrupt relayed to the lane's group and waited out, the second one killing
-    it) is :mod:`scripts.process_group`'s, pinned in its own tests.
+
+def _spied(monkeypatch, tmp_path, runner=None, replies=None):
+    repo = _repo(tmp_path)
+    gh = fg.scripted_gh([fg.GhReply([], stdout="{}")] if replies is None else replies)
+    return repo, _lease_spy(monkeypatch, runner or FakeRunner(), gh)
+
+
+def _raise(exc):
+    def effect():
+        raise exc
+
+    return effect
+
+
+class TestLease:
+    """The runner takes the bed lease itself, only before the first bed lane it runs.
+
+    One owner for the lease's cleanup, ``run()``: a walk that returns releases it before
+    any publication; an interrupt whose lanes are gone reaps, then releases; an undrained
+    one keeps it (the bed is not idle).
     """
 
-    @staticmethod
-    def _stub_reap(monkeypatch):
-        seen = []
-        monkeypatch.setattr(gt, "reap_and_release", lambda lab, pid, out: seen.append((lab, pid)))
-        return seen
+    def test_a_static_tip_takes_no_lease(self, monkeypatch, tmp_path):
+        repo, spy = _spied(monkeypatch, tmp_path)
+        status, _out, _ = _go(monkeypatch, repo, STATIC, spy.runner, gh=spy.gh)
+        assert status == 0
+        assert spy.events == ["run make check-python", "run make collect-check", "gh api"]
 
-    def test_an_interrupted_run_reaps_releases_and_exits_130(self, tmp_path, monkeypatch):
+    def test_the_lease_is_taken_before_the_first_missing_bed_lane_and_released_before_the_post(
+        self, monkeypatch, tmp_path
+    ):
+        repo, spy = _spied(monkeypatch, tmp_path)
+        status, _out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == 0
+        assert spy.events == [
+            "run make check-python",
+            "acquire",
+            "run make coverage-bed",
+            f"run {gs.STABILITY_UNIX}",
+            "release",
+            "gh api",
+        ]
+
+    def test_a_bed_tip_whose_bed_lanes_are_stamped_never_calls_acquire(self, monkeypatch, tmp_path):
+        repo, spy = _spied(monkeypatch, tmp_path)
+        for key in ("make coverage-bed", gs.STABILITY_UNIX):
+            _stamp(repo, key)
+        status, _out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == 0
+        assert "acquire" not in spy.events
+
+    def test_a_dry_run_takes_no_lease_and_calls_gh_never(self, monkeypatch, tmp_path):
+        repo, spy = _spied(monkeypatch, tmp_path, replies=[])
+        status, _out, _ = _go(monkeypatch, repo, BED, spy.runner, dry_run=True, gh=spy.gh)
+        assert status == 1
+        assert spy.events == []
+        assert spy.gh.calls == []
+
+    def test_a_red_bed_lane_releases_the_lease_once_before_the_head_status_is_read(
+        self, monkeypatch, tmp_path
+    ):
+        runner = FakeRunner(statuses={gs.STABILITY_UNIX: 1})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        status, _out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == 1
+        assert spy.events[-2:] == ["release", "gh api"]
+        assert spy.events.count("release") == 1
+        assert "reap" not in spy.events
+
+    def test_an_interrupt_inside_a_bed_lane_reaps_then_releases_and_posts_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: _raise(KeyboardInterrupt())})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        status, out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == gt.EXIT_INTERRUPTED
+        assert spy.events[-3:] == [f"run {gs.STABILITY_UNIX}", "reap", "release"]
+        assert "gh api" not in spy.events
+        assert "reaping the bed and releasing the lease" in out
+
+    def test_an_interrupt_before_any_bed_lane_reaps_nothing(self, monkeypatch, tmp_path):
+        runner = FakeRunner(effects={"make check-python": _raise(KeyboardInterrupt())})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        status, out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == gt.EXIT_INTERRUPTED
+        assert spy.events == ["run make check-python"]
+        assert "no lease was taken, nothing to reap" in out
+
+    def test_an_undrained_interrupt_keeps_the_lease(self, monkeypatch, tmp_path):
+        # (pgid, pids), as the runner's own UndrainedError carries them
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: _raise(UndrainedError(4242, [4243]))})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        with pytest.raises(UndrainedError):
+            _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert "acquire" in spy.events
+        assert "release" not in spy.events
+        assert "reap" not in spy.events
+
+    def test_a_bed_lane_a_dirty_tree_refuses_takes_no_lease(self, monkeypatch, tmp_path):
         repo = _repo(tmp_path)
-        seen = self._stub_reap(monkeypatch)
+        # the static lane rewrites a measured output: stamped, but the bed lane after it
+        # finds tracked dirt and never runs
+        runner = FakeRunner(effects={"make check-python": lambda: _measure(repo, '{"x": 1}\n')})
+        spy = _lease_spy(monkeypatch, runner, fg.scripted_gh([]))
+        status, out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == 1
+        assert "commit the measured outputs" in out
+        assert spy.events == ["run make check-python"]
+
+    def test_a_reap_that_raises_keeps_the_lease(self, monkeypatch, tmp_path):
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: _raise(KeyboardInterrupt())})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+
+        def failing_reap(cell, pid):
+            spy.events.append("reap")
+            raise RuntimeError("console busy")
+
+        monkeypatch.setattr("scripts.bed_reap.reap", failing_reap)
+        status, out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert status == gt.EXIT_INTERRUPTED
+        assert spy.events[-2:] == [f"run {gs.STABILITY_UNIX}", "reap"]
+        assert "release" not in spy.events
+        assert (
+            "gate-tip: the reap failed (console busy); the lease is kept — run make bed-reap" in out
+        )
+
+    def test_a_second_interrupt_during_the_reap_keeps_the_lease(self, monkeypatch, tmp_path):
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: _raise(KeyboardInterrupt())})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+
+        def interrupted_reap(cell, pid):
+            spy.events.append("reap")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("scripts.bed_reap.reap", interrupted_reap)
+        _oracle(monkeypatch, repo, BED)
+        opts = _options(repo, spy.runner, gh=spy.gh)
+        with pytest.raises(KeyboardInterrupt):
+            gt.run(opts)
+        assert spy.events[-2:] == [f"run {gs.STABILITY_UNIX}", "reap"]
+        assert "release" not in spy.events
+        assert (
+            "gate-tip: interrupted during the reap; the lease is kept and the bed is not "
+            "reaped — run make bed-reap" in opts.out.getvalue()
+        )
+        # the CLI's unwind exits 130 and does not then claim nothing was held
+        opts = _options(repo, spy.runner, gh=spy.gh)
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert "release" not in spy.events
+        assert "no lease is held" not in opts.out.getvalue()
+        assert "the lease is kept" in opts.out.getvalue()
+
+    def test_a_lane_that_raises_releases_the_lease(self, monkeypatch, tmp_path):
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: _raise(RuntimeError("boom"))})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        with pytest.raises(RuntimeError):
+            _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
+        assert spy.events[-2:] == [f"run {gs.STABILITY_UNIX}", "release"]
+
+    def test_acquire_lease_loads_the_lab_and_holds_it_for_this_pid(self, monkeypatch, tmp_path):
+        monkeypatch.undo()  # the real _acquire_lease, not the autouse double
+        lab = tmp_path / "cell" / "lab.json"
+        lab.parent.mkdir()
+        lab.write_text(json.dumps({"labs": {"l": {}}}))
+        monkeypatch.setattr("scripts.bed_lease.cell_resources", lambda *a: [])
+        monkeypatch.setenv("BED_LEASE_ROOT", str(tmp_path / "lease"))
+        seen = []
+        monkeypatch.setattr(
+            "scripts.bed_lease.acquire",
+            lambda cell, pid, purpose: seen.append((cell, pid, purpose)) or 0,
+        )
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, BED)
+        opts = _options(repo, FakeRunner(), lab=lab)
+        ctx = gt._new_run(opts, gt._plan(opts))
+        gt._acquire_lease(ctx)
+        [(cell, pid, purpose)] = seen
+        assert (cell.lab_file, pid, purpose) == (lab, os.getpid(), "gate-tip")
+        assert cell.root == tmp_path / "lease", "the isolated root BED_LEASE_ROOT names"
+        assert ctx.lease == gt.Lease(cell, os.getpid())
+
+        monkeypatch.setattr("scripts.bed_lease.acquire", lambda cell, pid, purpose: 1)
+        ctx = gt._new_run(opts, gt._plan(opts))
+        with pytest.raises(gt.GateError, match="the bed lease was not acquired"):
+            gt._acquire_lease(ctx)
+        assert ctx.lease is None
+
+        opts = _options(repo, FakeRunner(), lab=None)
+        with pytest.raises(gt.GateError, match="--lab is required to run a bed lane"):
+            gt._acquire_lease(gt._new_run(opts, gt._plan(opts)))
+
+    def test_a_lab_file_the_lease_refuses_is_a_gate_error(self, monkeypatch, tmp_path):
+        monkeypatch.undo()
+        monkeypatch.setenv("BED_LEASE_ROOT", str(tmp_path / "lease"))
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, BED)
+        opts = _options(repo, FakeRunner(), lab=tmp_path / "absent.json")
+        with pytest.raises(gt.GateError, match="no lab file at"):
+            gt._acquire_lease(gt._new_run(opts, gt._plan(opts)))
+
+    def test_release_lease_releases_this_pid_and_clears_the_lease(self, monkeypatch, tmp_path):
+        monkeypatch.undo()
+        seen = []
+        monkeypatch.setattr(
+            "scripts.bed_lease.release",
+            lambda cell, pid, *, force: seen.append((cell, pid, force)) or 0,
+        )
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, BED)
+        opts = _options(repo, FakeRunner())
+        ctx = gt._new_run(opts, gt._plan(opts))
+        cell = object()
+        ctx.lease = gt.Lease(cell, 4242)
+        gt._release_lease(ctx)
+        assert seen == [(cell, 4242, False)]
+        assert ctx.lease is None
+
+    def test_the_runner_is_the_lease_taker_the_census_names(self, monkeypatch, tmp_path):
+        from tests.unit.test_lane_invariants import LEASE_INSIDE
+
+        assert LEASE_INSIDE == ["gate-tip", "land"]
+        monkeypatch.undo()
+        purposes = []
+        monkeypatch.setattr("scripts.bed_lease.load_cell", lambda lab, root: object())
+        monkeypatch.setattr(
+            "scripts.bed_lease.acquire", lambda cell, pid, purpose: purposes.append(purpose) or 0
+        )
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, BED)
+        opts = _options(repo, FakeRunner())
+        gt._acquire_lease(gt._new_run(opts, gt._plan(opts)))
+        assert purposes == ["gate-tip"]
+
+    def test_an_ignored_source_planted_during_a_lane_blocks_its_stamp(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        (repo / ".git/info/exclude").write_text("src/otto/gone/\n")
+
+        def plant():
+            (repo / "src/otto/gone").mkdir(parents=True)
+            (repo / "src/otto/gone/__init__.py").write_text("")
+
+        runner = FakeRunner(effects={"make check-python": plant})
+        status, out, _ = _go(monkeypatch, repo, STATIC, runner)
+        assert status == 1
+        assert "NOT STAMPED (the tree changed under the lane: src/otto/gone/__init__.py)" in out
+
+
+class TestStatus:
+    """A green gate posts ``local-gate``; a red one flips a success HEAD already carries."""
+
+    def test_a_green_gate_posts_the_status_with_the_plan_s_description(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        gh = fg.scripted_gh([fg.GhReply([], stdout="{}")])
+        status, out, opts = _go(monkeypatch, repo, STATIC, FakeRunner(), gh=gh)
+        plan = gt._plan(opts)
+        assert status == 0
+        assert gh.calls[0][:4] == ["api", "-X", "POST", f"repos/o/r/statuses/{plan.tip_sha}"]
+        assert f"description={lgs.format_description(lgs.expected(plan))}" in gh.calls[0]
+        assert "state=success" in gh.calls[0]
+        assert f"gate-tip: posted local-gate on {plan.tip_sha[:12]}" in out
+
+    def test_a_failed_post_does_not_fail_a_green_gate(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        gh = fg.scripted_gh([fg.GhReply([], status=1, stderr="HTTP 422: No commit found for SHA")])
+        status, out, _ = _go(monkeypatch, repo, STATIC, FakeRunner(), gh=gh)
+        assert status == 0
+        assert "local-gate not posted: push the branch, then make gate-status" in out
+
+    def test_a_remote_that_is_not_github_does_not_fail_a_green_gate(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        _git(repo, "remote", "set-url", "origin", str(tmp_path / "bare.git"))
+        status, out, opts = _go(monkeypatch, repo, STATIC, FakeRunner())
+        assert status == 0
+        assert "local-gate not posted: origin (" in out
+        assert opts.gh.calls == []
+
+    def test_a_red_lane_posts_a_failure_only_when_head_already_carries_a_success(
+        self, monkeypatch, tmp_path
+    ):
+        repo = _repo(tmp_path)
+        gh = fg.scripted_gh(
+            [
+                fg.GhReply(["commits/"], stdout=_success_body(monkeypatch, repo, STATIC)),
+                fg.GhReply(["statuses/"], stdout="{}"),
+            ]
+        )
+        runner = FakeRunner(statuses={"make collect-check": 1})
+        status, _out, _ = _go(monkeypatch, repo, STATIC, runner, gh=gh)
+        assert status == 1
+        assert gh.calls[-1][:3] == ["api", "-X", "POST"]
+        assert "state=failure" in gh.calls[-1]
+        gh = fg.scripted_gh([fg.GhReply(["commits/"], stdout=json.dumps({"statuses": []}))])
+        runner = FakeRunner(statuses={"make collect-check": 1})
+        status, _out, _ = _go(monkeypatch, repo, STATIC, runner, gh=gh)
+        assert status == 1
+        assert all(c[:3] != ["api", "-X", "POST"] for c in gh.calls)
+
+    def test_publish_failure_says_when_the_status_cannot_be_read(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        gh = fg.scripted_gh([fg.GhReply(["commits/"], status=1, stderr="HTTP 403: Forbidden")])
+        runner = FakeRunner(statuses={"make collect-check": 1})
+        status, out, _ = _go(monkeypatch, repo, STATIC, runner, gh=gh)
+        assert status == 1
+        assert "local-gate not read: " in out
+        assert "HTTP 403" in out
+        assert all(c[:3] != ["api", "-X", "POST"] for c in gh.calls)
+
+    def test_a_lane_that_is_only_not_stamped_reads_no_head_status(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+
+        def untracked():
+            (repo / "tests" / "unit" / "test_new.py").write_text("def test_n():\n    pass\n")
+
+        runner = FakeRunner(effects={"make check-python": untracked})
+        status, _out, opts = _go(monkeypatch, repo, STATIC, runner)
+        assert status == 1
+        assert opts.gh.calls == [], "no red marker: nothing a failure could name"
+
+    def test_the_post_runs_under_the_exclusive_store_lock(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        seen = []
+
+        def gh(args):
+            # a reader cannot get in while the publisher holds the lock
+            seen.append(_probe(root, fcntl.LOCK_SH))
+            return lgs.GhResult(0, "{}", "")
+
+        status, _out, _ = _go(monkeypatch, repo, STATIC, FakeRunner(), gh=gh)
+        assert status == 0
+        assert seen == [False]
+
+    def test_a_peer_publisher_or_red_writer_waits_behind_a_stalled_post(
+        self, monkeypatch, tmp_path
+    ):
+        # the POST is in flight: a second `gate-status` (exclusive, to re-validate) and a
+        # peer's `_mark_red` (exclusive, to write) both block, out of process
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, STATIC)
+        _stamp(repo, "make check-python")
+        _stamp(repo, "make collect-check")
+        lock = gt.stamps_root(repo, gt.STORE) / gate_stamp_common.LOCK_FILE
+        peer = []
+
+        def stalled_gh(args):
+            peer.append(_peer_probe(lock))
+            return lgs.GhResult(0, "{}", "")
+
+        opts = _options(repo, FakeRunner(), gh=stalled_gh)
+        assert gt.publish(opts, gt._plan(opts), state="success", slug="o/r").posted
+        assert peer == ["busy"]
+        assert _peer_probe(lock) == "free", "released after the post"
+
+    def test_a_post_that_times_out_releases_the_lock_and_is_reported_not_posted(
+        self, monkeypatch, tmp_path
+    ):
+        # a hung gh holds the store lock for run_gh's timeout at most; afterwards a peer gets
+        # in and the gate's exit status is untouched
+        repo = _repo(tmp_path)
+        lock = gt.stamps_root(repo, gt.STORE) / gate_stamp_common.LOCK_FILE
+        # what run_gh returns after its bound (pinned in test_local_gate_status)
+        timed_out = fg.scripted_gh([fg.GhReply([], status=124, stderr="gh timed out after 30s")])
+        status, out, _ = _go(monkeypatch, repo, STATIC, FakeRunner(), gh=timed_out)
+        assert status == 0
+        assert "local-gate not posted: gh timed out after 30s" in out
+        assert _peer_probe(lock) == "free"
+
+    def test_a_red_marker_that_landed_before_the_lock_refuses_a_success(
+        self, monkeypatch, tmp_path
+    ):
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, STATIC)
+        _stamp(repo, "make check-python")
+        _stamp(repo, "make collect-check")
+        opts = _options(repo, FakeRunner())
+        plan = gt._plan(opts)
+        # the peer's evidence arrived between the walk and the post
+        root = gt.stamps_root(repo, gt.STORE)
+        gt.write_red(root, tree=plan.tree, key="make collect-check", checkout="/peer")
+        out = gt.publish(opts, plan, state="success", slug="o/r")
+        assert not out.posted
+        assert "make collect-check" in out.message
+        assert opts.gh.calls == []
+
+    def test_a_failure_that_a_later_green_superseded_is_not_published(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        opts = _options(repo, FakeRunner(), gh=fg.scripted_gh([fg.GhReply([], stdout="{}")]))
+        _oracle(monkeypatch, repo, STATIC)
+        plan = gt._plan(opts)
+        root = gt.stamps_root(repo, gt.STORE)
+        gt.write_red(root, tree=plan.tree, key="make collect-check", checkout=str(repo))
+        _stamp(repo, "make collect-check")  # the green re-run wrote over the red
+        _stamp(repo, "make check-python")
+        out = gt.publish(opts, plan, state="failure", slug="o/r", red_keys=["make collect-check"])
+        assert not out.posted
+        assert "no longer red" in out.message
+        assert opts.gh.calls == []
+
+    def test_a_failure_whose_lanes_are_still_red_is_published(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        opts = _options(repo, FakeRunner())
+        _oracle(monkeypatch, repo, STATIC)
+        plan = gt._plan(opts)
+        root = gt.stamps_root(repo, gt.STORE)
+        gt.write_red(root, tree=plan.tree, key="make collect-check", checkout=str(repo))
+        out = gt.publish(opts, plan, state="failure", slug="o/r", red_keys=["make collect-check"])
+        assert out == gt.PublishOutcome(True, "")
+        assert "state=failure" in opts.gh.calls[0]
+
+    def test_a_failure_that_names_no_red_lane_is_not_published(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        opts = _options(repo, FakeRunner())
+        _oracle(monkeypatch, repo, STATIC)
+        for red_keys in (None, []):
+            out = gt.publish(opts, gt._plan(opts), state="failure", slug="o/r", red_keys=red_keys)
+            assert out == gt.PublishOutcome(False, "a failure post names the red lanes")
+        assert opts.gh.calls == []
+
+    def test_the_default_gh_runner_is_run_gh_bounded_by_gh_timeout(self):
+        assert gt.Options(repo=Path()).gh is lgs.run_gh
+        assert lgs.GH_TIMEOUT == 30.0
+        assert inspect.signature(lgs.run_gh).parameters["timeout"].default == lgs.GH_TIMEOUT
+
+    def test_the_remedy_names_the_ref_the_lane_and_the_one_command(self, tmp_path):
+        plan = gs.Plan("c" * 40, "d" * 40, "e" * 40, [], ["make coverage-bed"], True)
+        lines = gt.refusal_lines(
+            plan, [gt.Missing("make coverage-bed", "no stamp")], ref="refs/heads/x", who="gate-tip"
+        )
+        assert lines[0] == (
+            "gate-tip: refusing refs/heads/x (dddddddddddd) — its gate is not stamped on tree "
+            "eeeeeeeeeeee (range cccccccccccc..dddddddddddd):"
+        )
+        assert lines[1] == "  make coverage-bed: no stamp"
+        assert lines[2] == "run: make gate-tip   (on commit dddddddddddd), then push again."
+        assert lines[3] == (
+            "git push --no-verify skips this check; the local-gate status then stays absent "
+            "and gate-admission holds the pull request's CI."
+        )
+        assert "to main" not in "\n".join(lines)
+        assert "never make coverage" not in "\n".join(lines)
+
+    def test_gate_status_refuses_an_unstamped_tree_posts_a_stamped_one_and_then_admits(
+        self, monkeypatch, tmp_path
+    ):
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, STATIC)
+        gh = fg.scripted_gh(
+            [fg.GhReply(["statuses/"], stdout="{}"), fg.GhReply(["run", "list"], stdout="[]")]
+        )
+        opts = _options(repo, FakeRunner(), gh=gh)
+        err = io.StringIO()
+        monkeypatch.setattr(sys, "stderr", err)
+        assert gt.status_command(opts) == 1
+        assert "gate-status: refusing HEAD" in err.getvalue()
+        assert gh.calls == []
+        _stamp(repo, "make check-python")
+        _stamp(repo, "make collect-check")
+        assert gt.status_command(opts) == 0
+        assert [c[:2] for c in gh.calls] == [["api", "-X"], ["run", "list"]]
+
+    def test_gate_status_refuses_a_red_marker(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, STATIC)
+        opts = _options(repo, FakeRunner())
+        _stamp(repo, "make check-python")
+        plan = gt._plan(opts)
+        root = gt.stamps_root(repo, gt.STORE)
+        gt.write_red(root, tree=plan.tree, key="make collect-check", checkout=str(repo))
+        assert gt.status_command(opts) == 1
+        assert opts.gh.calls == []
+
+    def test_gate_status_reports_a_post_it_could_not_make(self, monkeypatch, tmp_path, capsys):
+        repo = _repo(tmp_path)
+        _oracle(monkeypatch, repo, STATIC)
+        _stamp(repo, "make check-python")
+        _stamp(repo, "make collect-check")
+        gh = fg.scripted_gh([fg.GhReply([], status=1, stderr="HTTP 422: No commit found")])
+        assert gt.status_command(_options(repo, FakeRunner(), gh=gh)) == 1
+        assert (
+            "gate-status: local-gate not posted: push the branch, then make gate-status"
+            in capsys.readouterr().err
+        )
+
+    def test_the_status_cli_runs_status_command(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        seen = []
+        monkeypatch.setattr(gt, "status_command", lambda opts: seen.append(opts) or 0)
+        assert gt.main(["--repo", str(repo), "--status", "--remote", "origin"]) == 0
+        assert (seen[0].repo, seen[0].remote, seen[0].base) == (repo, "origin", None)
+        with pytest.raises(SystemExit):
+            gt.main(["--repo", str(repo), "--status", "--dry-run"])
+
+    def test_an_interrupted_status_exits_130_without_a_traceback(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        import signal
+
+        repo = _repo(tmp_path)
+        before = signal.getsignal(signal.SIGTERM)
 
         def interrupted(_opts):
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(gt, "run", interrupted)
-        opts = _options(repo, FakeRunner(), lab=Path("lab.json"), pid=4242)
-        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
-        assert seen == [(Path("lab.json"), 4242)], "the run the recipe named, never our parent"
-        assert "interrupted; the lanes are gone: reaping the bed" in opts.out.getvalue()
+        monkeypatch.setattr(gt, "status_command", interrupted)
+        assert gt.main(["--repo", str(repo), "--status"]) == gt.EXIT_INTERRUPTED
+        assert "gate-tip: interrupted; no lease is held" in capsys.readouterr().out
+        assert signal.getsignal(signal.SIGTERM) is before
+
+
+class TestBase:
+    """The base is the fetched main unless one is given; a dry run never fetches."""
+
+    def test_the_default_base_is_the_fetched_main(self, monkeypatch, tmp_path):
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        seen = []
+        monkeypatch.setattr(
+            gt, "fetch_main", lambda r, remote: (seen.append(remote), remote_sha)[1]
+        )
+        plan = gt._plan(gt.Options(repo=repo, remote="origin"))
+        assert seen == ["origin"]
+        assert plan.base_sha == remote_sha
+
+    def test_a_dry_run_with_no_base_reads_origin_main_without_fetching(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        monkeypatch.setattr(gt, "fetch_main", lambda *a: pytest.fail("fetched"))
+        plan = gt._plan(gt.Options(repo=repo, dry_run=True))
+        assert plan.base_sha == _git(repo, "rev-parse", "origin/main").strip()
+
+    def test_a_given_base_is_used_as_given(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        monkeypatch.setattr(gt, "fetch_main", lambda *a: pytest.fail("fetched"))
+        head = _git(repo, "rev-parse", "HEAD").strip()
+        assert gt.resolve_base(gt.Options(repo=repo, base="HEAD")) == "HEAD"
+        assert gt._plan(gt.Options(repo=repo, base="HEAD")).base_sha == head
+
+    def test_an_empty_base_on_the_command_line_means_the_fetched_main(self, monkeypatch, tmp_path):
+        repo = _repo(tmp_path)
+        seen = []
+        monkeypatch.setattr(gt, "_run_interruptible", lambda opts: seen.append(opts) or 0)
+        assert gt.main(["--repo", str(repo), "--base", ""]) == 0
+        assert seen[0].base is None
+
+    def test_the_recipe_s_argument_shape_plans_without_an_argument_error(self, tmp_path):
+        """What `make gate-tip` passes: --lab with no --pid, an empty --base, --remote origin."""
+        repo = _repo(tmp_path)
+        lab = tmp_path / "cell" / "lab.json"  # never read: a dry run takes no lease
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKOUT_ROOT / "scripts/gate_tip.py"),
+                "--repo",
+                str(repo),
+                "--lab",
+                str(lab),
+                "--remote",
+                "origin",
+                "--base",
+                "",
+                "--dry-run",
+            ],
+            cwd=repo,
+            env=lease_free_environ(**git_env(repo)),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert "error:" not in completed.stderr
+        assert "gate-tip: merge-base " in completed.stdout
+
+
+class TestInterrupt:
+    """``_run_interruptible``: SIGTERM is an interrupt; an undrained run keeps the lease.
+
+    The lease's own cleanup belongs to ``run()`` (:class:`TestLease`); the runner's part of
+    the policy (the interrupt relayed to the lane's group and waited out, the second one
+    killing it) is :mod:`scripts.process_group`'s, pinned in its own tests.
+    """
 
     def test_an_undrained_run_keeps_the_lease_and_names_the_hand_reap(self, tmp_path, monkeypatch):
-        from scripts.process_group import UndrainedError
-
         repo = _repo(tmp_path)
-        seen = self._stub_reap(monkeypatch)
 
         def undrained(_opts):
             raise UndrainedError(4242, [4243])
 
         monkeypatch.setattr(gt, "run", undrained)
-        opts = _options(repo, FakeRunner(), lab=Path("lab.json"))
+        opts = _options(repo, FakeRunner())
         assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
-        assert seen == []
         out = opts.out.getvalue()
         assert "interrupted twice and" in out
         assert "pids 4243" in out
         assert "run `make bed-reap` once they are gone" in out
 
+    def test_an_interrupt_outside_the_walk_exits_130_with_nothing_to_reap(
+        self, tmp_path, monkeypatch
+    ):
+        repo = _repo(tmp_path)
+
+        def interrupted(_opts):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(gt, "run", interrupted)
+        opts = _options(repo, FakeRunner())
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert "no lease is held, nothing to reap" in opts.out.getvalue()
+
     def test_sigterm_is_the_same_unwind_as_an_interrupt(self, tmp_path, monkeypatch):
         import signal
 
-        repo = _repo(tmp_path)
-        seen = self._stub_reap(monkeypatch)
-
-        def terminated(_opts):
+        def terminated():
             os.kill(os.getpid(), signal.SIGTERM)
             time.sleep(5)
-            pytest.fail("SIGTERM did not unwind the run")
+            pytest.fail("SIGTERM did not unwind the lane")
 
-        monkeypatch.setattr(gt, "run", terminated)
+        runner = FakeRunner(effects={gs.STABILITY_UNIX: terminated})
+        repo, spy = _spied(monkeypatch, tmp_path, runner=runner)
+        _oracle(monkeypatch, repo, BED)
         before = signal.getsignal(signal.SIGTERM)
-        opts = _options(repo, FakeRunner(), lab=Path("lab.json"))
+        opts = _options(repo, spy.runner, gh=spy.gh)
         assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
-        assert len(seen) == 1
+        assert spy.events[-2:] == ["reap", "release"]
         assert signal.getsignal(signal.SIGTERM) is before, "the handler is restored"
 
     @pytest.mark.timeout(60)
@@ -2211,9 +2800,8 @@ class TestInterrupt:
         pid_file = tmp_path / "grandchild.pid"
         order = []
         monkeypatch.setattr(
-            gt,
-            "reap_and_release",
-            lambda lab, pid, out: order.append(_gone(int(pid_file.read_text()))),
+            "scripts.bed_reap.reap",
+            lambda cell, pid: order.append(_gone(int(pid_file.read_text()))) or 0,
         )
         lane = f"{sys.executable} -c {json.dumps(_SPAWNER)} {pid_file}"
         real_wait = subprocess.Popen.wait
@@ -2234,54 +2822,436 @@ class TestInterrupt:
             # The oracle's known lane, run as the spawner through the real runner.
             return gt._default_runner(lane if cmd == LANE else cmd, cwd, env)
 
-        opts = _options(repo, runner, lab=Path("lab.json"))
+        opts = _options(repo, runner)
         assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
         assert order == [True], "the grandchild was gone when the reap ran"
         assert gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE) is None
-
-    def test_reap_and_release_without_a_lab_only_points_at_the_hand_reap(self, monkeypatch):
-        out = io.StringIO()
-        from scripts import bed_reap
-
-        monkeypatch.setattr(bed_reap, "reap", lambda *a, **k: pytest.fail("reaped without a lab"))
-        gt.reap_and_release(None, None, out)
-        assert out.getvalue() == "gate-tip: no --lab and --pid, so no reap: run `make bed-reap`\n"
-
-    def test_reap_and_release_runs_the_scripts_own_functions_in_order(self, tmp_path, monkeypatch):
-        from scripts import bed_lease, bed_reap
-
-        calls = []
-        cell = object()
-        monkeypatch.setattr(bed_lease, "root_from", lambda arg: tmp_path / "root")
-        monkeypatch.setattr(
-            bed_lease, "load_cell", lambda lab, root: calls.append(("cell", lab, root)) or cell
-        )
-        monkeypatch.setattr(
-            bed_reap, "reap", lambda c, pid, **kw: calls.append(("reap", c, pid, kw)) or 1
-        )
-        monkeypatch.setattr(
-            bed_lease,
-            "release",
-            lambda c, pid, *, force: calls.append(("release", c, pid, force)) or 0,
-        )
-        gt.reap_and_release(Path("lab.json"), 4242, io.StringIO())
-        assert calls == [
-            ("cell", Path("lab.json"), tmp_path / "root"),
-            ("reap", cell, 4242, {}),
-            ("release", cell, 4242, False),
-        ]
 
     def test_the_lab_option_reaches_the_run(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         seen = []
         monkeypatch.setattr(gt, "_run_interruptible", lambda opts: seen.append(opts) or 0)
-        argv = ["--repo", str(repo), "--lab", "tests/lab.json", "--pid", "4242", "--dry-run"]
+        argv = ["--repo", str(repo), "--lab", "tests/lab.json", "--dry-run"]
         assert gt.main(argv) == 0
-        assert (seen[0].lab, seen[0].pid) == (Path("tests/lab.json"), 4242)
+        assert seen[0].lab == Path("tests/lab.json")
         assert seen[0].dry_run
+        assert not hasattr(seen[0], "pid")
         seen.clear()
         assert gt.main(["--repo", str(repo)]) == 0
-        assert (seen[0].lab, seen[0].pid) == (None, None)
-        for half in (["--lab", "x"], ["--pid", "1"]):
-            with pytest.raises(SystemExit):
-                gt.main(["--repo", str(repo), *half])
+        assert seen[0].lab is None
+        with pytest.raises(SystemExit):
+            gt.main(["--repo", str(repo), "--lab", "x", "--pid", "1"])
+
+
+# ── The pre-push hook: stamps for every branch push, main refused, the live check at HEAD ──
+
+ZERO = "0" * 40
+A = "a" * 40
+B = "b" * 40
+
+
+def _branch(ref: str, sha: str, remote_sha: str = ZERO) -> str:
+    """One line of git's pre-push stdin pushing *sha* to *ref*."""
+    return f"{ref} {sha} {ref} {remote_sha}\n"
+
+
+def test_pushed_refs_keeps_branch_updates_and_skips_tags_and_deletes():
+    text = (
+        f"refs/heads/x {A} refs/heads/x {B}\n"
+        f"refs/tags/v1 {A} refs/tags/v1 {ZERO}\n"
+        f"(delete) {ZERO} refs/heads/old {B}\n"
+    )
+    assert gt.pushed_refs(text) == [gt.PushedRef("refs/heads/x", A, B)]
+    assert gt.pushed_refs("") == []
+
+
+def test_the_remote_ref_decides_not_the_local_one():
+    """`git push origin feature:main` updates main from a branch of another name."""
+    refs = gt.pushed_refs(f"refs/heads/feature {A} refs/heads/main {B}\n")
+    assert refs == [gt.PushedRef(gt.MAIN_REF, A, B)]
+
+
+def test_a_tag_only_or_delete_only_push_fetches_nothing(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    fetched = []
+    monkeypatch.setattr(gt, "fetch_main", lambda *a: fetched.append(a))
+    text = f"refs/tags/v1 {A} refs/tags/v1 {ZERO}\n(delete) {ZERO} refs/heads/old {B}\n"
+    assert gt.pre_push(gt.Options(repo=repo), text) == 0
+    assert fetched == []
+
+
+def test_a_push_to_main_is_refused_before_any_fetch_even_beside_another_ref(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    fetched = []
+    monkeypatch.setattr(gt, "fetch_main", lambda *a: fetched.append(a))
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    text = f"refs/heads/x {A} refs/heads/x {B}\nrefs/heads/main {A} refs/heads/main {B}\n"
+    assert gt.pre_push(gt.Options(repo=repo), text) == 1
+    assert fetched == []
+    assert err.getvalue() == (
+        "gate-tip: main takes no direct push; open a pull request (a non-canonical remote such "
+        "as a mirror takes --no-verify: the ruleset, not this hook, protects the canonical main)\n"
+    )
+
+
+def test_a_remote_without_main_is_a_refusal_with_the_remedy(monkeypatch, tmp_path):
+    repo, _bare_repo, _remote_sha, tip = _published(tmp_path)
+    empty = _bare(tmp_path, "empty")
+    _git(repo, "remote", "add", "empty", str(empty))
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = gt.Options(repo=repo, remote="empty", runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 1
+    assert "has no main" in err.getvalue()
+    assert "git fetch empty main failed" in err.getvalue()
+
+
+def test_an_unstamped_branch_tip_is_refused_with_the_remedy(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 1
+    plan = gs.plan(repo, remote_sha, tip)
+    assert plan.stamped, "a tests-leaf tip owes stamped lanes"
+    assert err.getvalue().startswith(f"gate-tip: refusing refs/heads/x ({tip[:12]})")
+    expected = gt.refusal_lines(
+        plan, gt.missing_stamps(repo, plan), ref="refs/heads/x", who="gate-tip"
+    )
+    assert err.getvalue() == "\n".join(expected) + "\n", "origin's push names no other remote"
+    assert f"run: make gate-tip   (on commit {tip[:12]}), then push again." in err.getvalue()
+    assert runner.calls == [], "no live check runs for a refused push"
+
+
+def test_a_push_to_another_remote_names_the_remote_the_remedy_does_not_plan_against(
+    monkeypatch, tmp_path
+):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path, "upstream")
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = gt.Options(repo=repo, remote="upstream", runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 1
+    lines = err.getvalue().rstrip("\n").splitlines()
+    assert lines[0].startswith(f"gate-tip: refusing refs/heads/x ({tip[:12]})")
+    assert f"(range {remote_sha[:12]}..{tip[:12]})" in lines[0], "the hook plans upstream's main"
+    assert lines[-1] == "the push targets upstream; make gate-tip planned against origin/main"
+
+
+def test_a_url_push_to_the_canonical_remote_names_no_other_remote(monkeypatch, tmp_path):
+    """git hands the hook the URL for `git push <url>`; origin's own URL is origin."""
+    repo, bare, _remote_sha, tip = _published(tmp_path)
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = gt.Options(repo=repo, remote=str(bare), runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 1
+    assert err.getvalue().startswith(f"gate-tip: refusing refs/heads/x ({tip[:12]})")
+    assert "the push targets" not in err.getvalue()
+
+
+def test_a_url_push_elsewhere_names_the_url(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    mirror = _bare(tmp_path, "mirror")
+    _git(repo, "push", "-q", str(mirror), f"{remote_sha}:refs/heads/main")
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = gt.Options(repo=repo, remote=str(mirror), runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 1
+    assert err.getvalue().splitlines()[-1] == (
+        f"the push targets {mirror}; make gate-tip planned against origin/main"
+    )
+
+
+def test_a_stamped_head_runs_the_plan_s_live_line_through_the_runner(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    runner = FakeRunner()
+    monkeypatch.setenv("MAKEFLAGS", "-j9")
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 0
+    assert [c[0] for c in runner.calls] == [f"make check-breaking RANGE={remote_sha}..{tip}"]
+    _cmd, cwd, env = runner.calls[0]
+    assert cwd == repo
+    assert "MAKEFLAGS" not in env, "the live line runs in the lane environment"
+
+
+def test_a_red_live_check_is_the_hook_s_status(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    runner = FakeRunner(statuses={f"make check-breaking RANGE={remote_sha}..{tip}": 2})
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 2
+
+
+def test_a_stamped_tip_that_is_not_head_passes_with_the_ci_note(monkeypatch, tmp_path, capsys):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    other = _commit_file(repo, "peer.txt", "p", "peer commit")
+    _git(repo, "checkout", "-q", tip)  # HEAD is tip; push the peer's sha
+    _stamp_tip(repo, remote_sha, other)
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/peer", other)) == 0
+    assert runner.calls == []
+    assert capsys.readouterr().out == (
+        f"gate-tip: refs/heads/peer ({other[:12]}) is not the checked-out tip; CI's lint-python "
+        "runs check-breaking-marks over the pull request's range\n"
+    )
+
+
+def test_a_two_ref_push_checks_both_and_runs_the_history_check_for_head(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    other = _commit_file(repo, "peer.txt", "p", "peer")
+    _git(repo, "checkout", "-q", tip)
+    _stamp_tip(repo, remote_sha, tip)
+    _stamp_tip(repo, remote_sha, other)
+    runner = FakeRunner()
+    text = _branch("refs/heads/peer", other) + _branch("refs/heads/x", tip)
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), text) == 0
+    assert [c[0] for c in runner.calls] == [f"make check-breaking RANGE={remote_sha}..{tip}"]
+
+
+def test_a_two_ref_push_with_one_unstamped_ref_is_refused_before_any_live_check(
+    monkeypatch, tmp_path
+):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    other = _commit_file(repo, "tests/unit/cli/test_p.py", "def test_p(): pass\n", "peer")
+    _git(repo, "checkout", "-q", tip)
+    _stamp_tip(repo, remote_sha, tip)
+    runner = FakeRunner()
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    text = _branch("refs/heads/x", tip) + _branch("refs/heads/peer", other)
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), text) == 1
+    assert err.getvalue().startswith(f"gate-tip: refusing refs/heads/peer ({other[:12]})")
+    assert runner.calls == []
+
+
+def test_two_refs_at_head_run_the_history_check_once(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    runner = FakeRunner()
+    text = _branch("refs/heads/x", tip) + _branch("refs/heads/y", tip)
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), text) == 0
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("plant", ["tracked", "untracked-src", "ignored-src"])
+def test_dirt_that_the_history_check_would_read_refuses_before_it_runs(
+    monkeypatch, tmp_path, plant
+):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    if plant == "tracked":
+        (repo / "tracked.txt").write_text("dirty")
+    elif plant == "untracked-src":
+        (repo / "src/otto").mkdir(parents=True, exist_ok=True)
+        (repo / "src/otto/restored.py").write_text("")
+    else:
+        (repo / ".git/info/exclude").write_text("src/otto/gone/\n")
+        (repo / "src/otto/gone").mkdir(parents=True)
+        (repo / "src/otto/gone/__init__.py").write_text("")
+    runner = FakeRunner()
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 1
+    assert runner.calls == []
+    assert err.getvalue().startswith("gate-tip: refusing — ")
+    assert "(the check reads the tree on disk)" in err.getvalue()
+
+
+def test_dirt_does_not_refuse_a_push_of_a_tip_that_is_not_head(tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    other = _commit_file(repo, "peer.txt", "p", "peer")
+    _git(repo, "checkout", "-q", tip)
+    _stamp_tip(repo, remote_sha, other)
+    (repo / "tracked.txt").write_text("dirty")
+    opts = gt.Options(repo=repo, runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/p", other)) == 0
+
+
+def test_an_identical_tree_first_push_passes_on_the_live_line_alone(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "release/next", remote_sha)
+    runner = FakeRunner()
+    text = _branch("refs/heads/release/next", remote_sha)
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), text) == 0
+    assert runner.calls[0][0] == f"make check-breaking RANGE={remote_sha}..{remote_sha}"
+
+
+def test_the_base_is_fetch_head_on_a_path_remote(tmp_path):
+    repo, bare, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    runner = FakeRunner()
+    # no refs/remotes/<path>/main exists; FETCH_HEAD is what resolves
+    opts = gt.Options(repo=repo, remote=str(bare), runner=runner)
+    assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 0
+    assert runner.calls[0][0] == f"make check-breaking RANGE={remote_sha}..{tip}"
+
+
+def test_the_base_is_the_remote_s_main_now_not_the_tracking_ref(monkeypatch, tmp_path):
+    """A remote main reset behind the clone's tracking ref: the hook fetches, so the
+    larger range's lanes are demanded."""
+    repo, bare, a_sha, _tip0 = _published(tmp_path)
+    b_sha = _commit_file(repo, "schemas/unrowed.json", "{}\n", "measure")
+    c_sha = _commit_file(repo, "tests/unit/cli/test_c.py", "def test_c(): pass\n", "tip")
+    _git(repo, "push", "-q", "origin", f"{b_sha}:refs/heads/main")
+    _stamp_tip(repo, b_sha, c_sha)
+    _git(repo, "--git-dir", str(bare), "update-ref", "refs/heads/main", a_sha)
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = gt.Options(repo=repo, runner=FakeRunner())
+    assert gt.pre_push(opts, _branch("refs/heads/x", c_sha)) == 1
+    assert f"(range {a_sha[:12]}..{c_sha[:12]}):" in err.getvalue()
+    assert "  make coverage-bed: no stamp" in err.getvalue()
+
+
+def test_a_multi_commit_push_demands_the_last_tree_only(tmp_path):
+    repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+    _commit_file(repo, "tests/unit/cli/test_c.py", "def test_c(): pass\n", "second")
+    last = _commit_file(repo, "tests/unit/cli/test_d.py", "def test_d(): pass\n", "third")
+    _stamp_tip(repo, remote_sha, last)
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", last)) == 0
+    assert len(runner.calls) == 1
+
+
+def test_a_stamped_tree_is_honoured_by_a_squash_and_a_message_amend(tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    _stamp_tip(repo, remote_sha, tip)
+    squash = _git(repo, "commit-tree", tree_hash(repo, tip), "-p", remote_sha, "-m", "s").strip()
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/s", squash)) == 0
+    _git(repo, "commit", "--amend", "-qm", "tip, reworded")
+    amended = _git(repo, "rev-parse", "HEAD").strip()
+    assert amended != tip
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", amended)) == 0
+    assert [c[0] for c in runner.calls] == [f"make check-breaking RANGE={remote_sha}..{amended}"]
+
+
+def test_an_oracle_failure_names_the_ref_and_range(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+
+    def boom(*_a, **_k):
+        raise gs.GateScopeError("boom")
+
+    monkeypatch.setattr(gs, "plan", boom)
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 1
+    assert err.getvalue() == f"gate-tip: refs/heads/x ({remote_sha[:12]}..{tip[:12]}): boom\n"
+    assert runner.calls == []
+
+
+def test_a_lane_this_runner_does_not_know_refuses_with_one_line(monkeypatch, tmp_path):
+    repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+    # the real plan: the oracle emitting an unknown goal refuses as it classifies its lines
+    monkeypatch.setattr(
+        gs, "commands", lambda *a, **k: [LANE, "make a-goal-this-runner-never-knew"]
+    )
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    runner = FakeRunner()
+    assert gt.pre_push(gt.Options(repo=repo, runner=runner), _branch("refs/heads/x", tip)) == 1
+    (line,) = err.getvalue().splitlines()
+    assert line.startswith(f"gate-tip: refs/heads/x ({remote_sha[:12]}..{tip[:12]}): ")
+    assert line.endswith(
+        "the oracle emitted a lane it does not classify: make a-goal-this-runner-never-knew"
+    )
+    assert runner.calls == []
+
+
+def test_the_pre_push_cli_reads_stdin(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    seen = []
+    monkeypatch.setattr(gt, "pre_push", lambda opts, text: seen.append((opts, text)) or 7)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("refs/heads/x a refs/heads/x b\n"))
+    assert gt.main(["--repo", str(repo), "--pre-push", "--remote", "up"]) == 7
+    ((opts, text),) = seen
+    assert (opts.repo, opts.remote, text) == (repo, "up", "refs/heads/x a refs/heads/x b\n")
+
+
+@pytest.mark.parametrize("mode", ["--dry-run", "--status", "--timings"])
+def test_the_pre_push_switch_excludes_the_other_modes(tmp_path, capsys, mode):
+    with pytest.raises(SystemExit) as exc:
+        gt.main(["--repo", str(tmp_path), "--pre-push", mode])
+    assert exc.value.code == 2
+    assert "not allowed with argument --pre-push" in capsys.readouterr().err
+
+
+def test_the_check_flag_is_gone(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        gt.main(["--repo", str(tmp_path), "--check", A, B])
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --check" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("raised", "says"),
+    [
+        (KeyboardInterrupt(), "gate-tip: interrupted; no lease is held, nothing to reap\n"),
+        (UndrainedError(4242, [4243]), "pids 4243"),
+    ],
+)
+def test_an_interrupted_hook_exits_130_with_one_line(monkeypatch, tmp_path, capsys, raised, says):
+    repo, _bare_repo, _remote_sha, tip = _published(tmp_path)
+
+    def interrupted(*_a):
+        raise raised
+
+    monkeypatch.setattr(gt, "fetch_main", interrupted)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_branch("refs/heads/x", tip)))
+    assert gt.main(["--repo", str(repo), "--pre-push"]) == gt.EXIT_INTERRUPTED
+    out, err = capsys.readouterr()
+    assert says in out
+    assert len(out.splitlines()) == 1
+    assert "Traceback" not in out + err
+
+
+def test_the_hook_file_is_executable_and_runs_the_locked_pre_push():
+    hook = CHECKOUT_ROOT / ".githooks/pre-push"
+    assert hook.stat().st_mode & 0o111
+    assert (
+        hook.read_text()
+        .rstrip()
+        .endswith('exec uv run --locked python scripts/gate_tip.py --pre-push --remote "$1"')
+    )
+
+
+def test_the_hook_is_committed_executable(tmp_path):
+    """git never runs a non-executable hook; the committed mode is what every clone gets."""
+    output = subprocess.run(
+        ["git", "ls-files", "-s", ".githooks/pre-push"],
+        cwd=CHECKOUT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        env=git_env(tmp_path),
+    ).stdout
+    assert output.split()[0] == "100755", output
+
+
+def test_gate_fresh_is_gone():
+    assert not (CHECKOUT_ROOT / "scripts/gate_fresh.py").exists()
+    assert "gate-fresh:" not in (CHECKOUT_ROOT / "Makefile").read_text()
+    assert not hasattr(gt, "_ancestry_refusal")
+
+
+def test_gate_status_refuses_an_unstamped_tree_before_it_reads_the_remote(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere.git"
+    _git(repo, "remote", "set-url", "origin", str(elsewhere))
+    _oracle(monkeypatch, repo, STATIC)
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    opts = _options(repo, FakeRunner())
+    assert gt.status_command(opts) == 1
+    assert err.getvalue().startswith("gate-status: refusing HEAD")
+    _stamp(repo, "make check-python")
+    _stamp(repo, "make collect-check")
+    err.truncate(0)
+    err.seek(0)
+    assert gt.status_command(opts) == 1
+    assert err.getvalue() == (
+        f"gate-status: local-gate not posted: origin ({elsewhere}) is not a GitHub remote; "
+        "the status needs owner/repo\n"
+    )
+    assert opts.gh.calls == []

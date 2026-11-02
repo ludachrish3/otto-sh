@@ -25,6 +25,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "repo"
     (root / "src" / "otto" / "real").mkdir(parents=True)
     (root / "src" / "otto" / "real" / "__init__.py").write_text("")
+    (root / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
     (root / "docs").mkdir()
     (root / "docs" / "index.md").write_text("# otto\n")
     (root / ".gitignore").write_text(
@@ -37,6 +38,9 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _git(tmp_path, "init", "-q", "--bare", str(remote))
     _git(root, "remote", "add", "origin", str(remote))
     _git(root, "push", "-q", "-u", "origin", "main")
+    # A release runs on a pushed branch at main's tip: the state the preflight admits.
+    _git(root, "checkout", "-q", "-b", "release/next")
+    _git(root, "push", "-q", "-u", "origin", "release/next")
     # The script spawns git with the inherited environment, as `make release` does.
     for name, value in git_env(root).items():
         monkeypatch.setenv(name, value)
@@ -165,13 +169,56 @@ def test_an_unpushed_commit_is_refused_and_named_before_anything_is_cleared(repo
     assert stale.exists(), "a refusal clears nothing"
 
 
-def test_once_pushed_the_same_commit_passes(repo):
-    _write(repo / "docs" / "new.md")
+def test_a_release_from_main_is_refused(repo, capsys):
+    _git(repo, "checkout", "-q", "main")
+
+    assert rp.preflight(repo) == 1
+
+    assert "refusing to release from main" in capsys.readouterr().err
+
+
+def test_a_detached_head_is_refused(repo, capsys):
+    _git(repo, "checkout", "-q", "--detach")
+
+    assert rp.preflight(repo) == 1
+
+    assert "detached HEAD" in capsys.readouterr().err
+
+
+def test_a_release_branch_at_main_s_tip_passes(repo):
+    assert rp.preflight(repo) == 0  # the fixture's state
+
+
+def _commit_pushed(repo: Path, name: str) -> None:
+    _write(repo / name)
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "feat: pushed")
+    _git(repo, "commit", "-qm", f"feat: {name}")
     _git(repo, "push", "-q")
 
-    assert rp.preflight(repo) == 0
+
+@pytest.mark.parametrize("where", ["ahead", "behind"])
+def test_a_branch_that_is_not_main_s_tip_is_refused(repo, capsys, where):
+    if where == "ahead":
+        _commit_pushed(repo, "f")  # release/next is one commit past main
+    else:
+        _git(repo, "checkout", "-q", "main")
+        _commit_pushed(repo, "g")  # main moved on
+        _git(repo, "checkout", "-q", "release/next")
+
+    assert rp.preflight(repo) == 1
+
+    assert "is not origin/main's tip" in capsys.readouterr().err
+
+
+def test_a_git_failure_is_a_refusal_not_a_traceback(repo, capsys, monkeypatch):
+    def broken(*args, **kwargs):
+        raise rp.GateError("git broke")
+
+    monkeypatch.setattr(rp, "_git", broken)
+
+    assert rp.preflight(repo) == 1
+
+    assert "release-preflight: refusing to release: git broke" in capsys.readouterr().err
 
 
 def test_a_branch_with_no_upstream_is_refused(repo, capsys):

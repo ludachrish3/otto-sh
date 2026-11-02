@@ -1,5 +1,7 @@
 # The coverage-bed tip (#797) — design
 
+Superseded in part by `2026-11-02-landing-enforcement-design.md`: the full-gate goal and the consumer scan are gone; `coverage-bed` is every `BED_REACH` tip's lane.
+
 ## Why
 
 A `src-leaf` change (one or two `src/otto/` packages) runs the full gate at

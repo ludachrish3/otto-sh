@@ -56,6 +56,16 @@ def process_start(pid: int) -> int | None:
     return None if fields is None else int(fields[_STARTTIME])
 
 
+def alive(pid: int, started: int) -> bool:
+    """Whether *pid* is still the very process that began at *started*, and running.
+
+    The one reading of "the same process, still alive" the gate scripts share: the
+    start time tells a reused pid from the process a record named, and a zombie
+    has run its course. A pid that is gone answers False.
+    """
+    return process_start(pid) == started and process_state(pid) != "Z"
+
+
 def ancestors(pid: int) -> list[int]:
     """Return *pid*'s parent, grandparent, ... up to (not including) pid 0.
 

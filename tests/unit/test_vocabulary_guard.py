@@ -51,6 +51,7 @@ EXEMPT_PREFIXES = [
 WORD_ONLY_EXEMPT = [
     "tests/unit/scripts/",  # tests of scripts/, which is out of scope: git's "repo", as there
     "tests/unit/import_budget/measurements/",  # dated measurement records
+    "tests/unit/test_make_release_lanes.py",  # the release recipe in scratch checkouts: git's word
     "tests/_fixtures/vocabulary.py",  # the guard's own pattern and tables
 ]
 """Paths exempt from the word scan only; ``OTTO_SUT_DIRS`` is still refused in them."""

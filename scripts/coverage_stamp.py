@@ -19,7 +19,7 @@ compares every one to the tree and environment it runs in, and names each
 mismatch — the `tree` field included, so a stamp file that holds another
 tree's record is not evidence for the tree its name claims.
 
-It is a COMMITTED-tree contract, the same one `scripts/gate_fresh.py` makes:
+It is a COMMITTED-tree contract, the same one the lane stamps of `scripts/gate_tip.py` make:
 a tree hash names what is committed, so a run over a modified or staged
 tracked file, or over an untracked file under `src/` or a test root (the
 live checkout imports it; the committed tree has no such file), proves
@@ -91,7 +91,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
-    GateFreshError,
+    GateError,
     TreeState,
     blocking_untracked,
     dirt_refusals,
@@ -220,13 +220,14 @@ def start(repo: Path, gate: Gate, overridden: "list[str]") -> int:
     python = platform.python_version()
     roots = test_roots(repo)
     why = refusals(state, roots, overridden) + python_refusal(python, gate.primary)
-    blocking = blocking_untracked(state.untracked, roots)
+    blocking = blocking_untracked(state, roots)
     listed = [p for p in state.untracked if p not in blocking]
     pending = {
         "format": FORMAT,
         "tree": tree,
         "tracked_dirty": state.tracked_dirty,
         "untracked": state.untracked,
+        "ignored_sources": state.ignored_sources,
         "python": python,
         "assets": assets_digest(repo),
         "refusals": why,
@@ -318,14 +319,15 @@ def finish(repo: Path) -> int:
         return 0
     tree = tree_hash(repo)
     state = tree_state(repo)
-    if (tree, state.tracked_dirty, state.untracked) != (
+    if (tree, state.tracked_dirty, state.untracked, state.ignored_sources) != (
         pending["tree"],
         pending["tracked_dirty"],
         pending["untracked"],
+        pending["ignored_sources"],
     ):
         _say(
             f"the tree changed during the run (start {pending['tree'][:12]}, now {tree[:12]}, "
-            f"dirt {state.tracked_dirty + state.untracked}); not stamped"
+            f"dirt {state.tracked_dirty + state.untracked + state.ignored_sources}); not stamped"
         )
         return 0
     python = platform.python_version()
@@ -490,7 +492,7 @@ def main(argv: "list[str] | None" = None) -> int:
             return finish(repo)
         gate = Gate(args.threshold, args.selection, args.browsers, args.primary)
         return check(repo, gate, args.overridden)
-    except (StampError, GateFreshError) as exc:
+    except (StampError, GateError) as exc:
         print(f"coverage-stamp: {exc}", file=sys.stderr)
         return 1
 

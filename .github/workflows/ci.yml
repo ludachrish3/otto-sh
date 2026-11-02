@@ -41,7 +41,45 @@ env:
   CLICOLOR: ""
 
 jobs:
+  # CI's first job, and every other job needs it. It runs on every event so
+  # that `needs:` is satisfiable everywhere, but only a pull request polls: the
+  # local gate posts the `local-gate` status for the head it gated, and a head
+  # nobody gated is refused here before any validation job spends a runner. A
+  # push to main has no pull request to admit (the ruleset judged its PR).
+  gate-admission:
+    name: gate-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      statuses: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: A push to main needs no admission (the ruleset judged its pull request)
+        if: github.event_name != 'pull_request'
+        run: echo "push event — nothing to verify"
+      - uses: actions/checkout@v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Set up uv
+        if: github.event_name == 'pull_request'
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - name: Set up Python 3.10
+        if: github.event_name == 'pull_request'
+        run: uv python install 3.10
+      - name: Wait for the local-gate status that matches this head
+        if: github.event_name == 'pull_request'
+        run: |
+          base="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
+          uv run --no-project --with tomli python scripts/local_gate_status.py await --repo-slug "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha }}" --base "$base"
+
   tests:
+    needs: [gate-admission]
     name: tests_hostless-${{ matrix.python }}
     runs-on: ubuntu-latest
     # A healthy lane finishes in 15-22 minutes (3.10 also runs tests/e2e). Without
@@ -125,6 +163,7 @@ jobs:
   # is @only_browser("webkit"), so it runs only in the webkit leg and skips on
   # the others.
   dashboard:
+    needs: [gate-admission]
     name: dashboard-e2e (${{ matrix.browser }})
     runs-on: ubuntu-latest
     strategy:
@@ -266,6 +305,7 @@ jobs:
   # behaviour tier; the two-leg matrix stays, because "does this depend on
   # being emulated" is a question about every future artifact assertion.)
   busybox:
+    needs: [gate-admission]
     name: busybox-artifacts (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     # ABOVE the Makefile's LANE_TIMEOUT wrap (2400s), plus the minutes of
@@ -367,6 +407,7 @@ jobs:
   # `tests/unit/test_ci_web_gate.py` pins this. (The job is named `check-ts`
   # after its headline gate; it also runs the vitest unit floor.)
   check-ts:
+    needs: [gate-admission]
     name: check-ts
     runs-on: ubuntu-latest
     steps:
@@ -381,6 +422,7 @@ jobs:
   # Python static gates. Named -python because they run Python-only nox
   # sessions (ruff / ty); the TS analogues live in the `check-ts` job above.
   lint-python:
+    needs: [gate-admission]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -390,7 +432,15 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.10
+      # Before the first command that syncs an environment: a stale lock is
+      # refused before anything is resolved from it.
+      - name: lock-check — uv.lock matches pyproject.toml
+        run: make lock-check
       - run: uv run nox -s lint
+      # This job never runs `make web`, so the web assets are absent exactly as
+      # the hostless lanes see them.
+      - name: collect-check — every test module imports with the web assets absent
+        run: make collect-check
       # Every otto name the docs and shipped examples teach must be declared in
       # api/public.toml, and the declaration must agree with the runtime
       # (scripts/api_teaching.py). It runs before the marking step, which may
@@ -436,6 +486,7 @@ jobs:
           uv run python scripts/check_breaking_marks.py "$RANGE"
 
   typecheck-python:
+    needs: [gate-admission]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -446,6 +497,7 @@ jobs:
       - run: uv run nox -s typecheck
 
   docs:
+    needs: [gate-admission]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -492,6 +544,7 @@ jobs:
   # needs the web assets (the build backend refuses an asset-less one), and
   # `make wheel-smoke` builds them, checks the wheel, then runs the session.
   wheel-smoke:
+    needs: [gate-admission]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -511,6 +564,7 @@ jobs:
   # the committed golden. A declared enum whose records differ across minors
   # fails here, on the minor that disagrees.
   api-dump-invariance:
+    needs: [gate-admission]
     name: api-dump-invariance-${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -535,7 +589,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
+    needs: [gate-admission, lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -549,7 +603,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
+            echo "Check the job logs to see which of gate-admission / lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
           } > issue-body.md
 
       - name: Create issue from file

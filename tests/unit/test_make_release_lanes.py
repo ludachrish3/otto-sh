@@ -16,11 +16,17 @@ import re
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import tomli
 
+import scripts.release_record as rr
+import scripts.release_tag
 from scripts import gate_tip as gt
+from tests._fixtures.fake_gh import GhReply, gh_calls, install_fake_gh
+from tests._fixtures.gitrepo import TmpGitRepo, git_env
 from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -49,17 +55,19 @@ def _stub_make(tmp_path: Path, failing: "dict[str, int]") -> "tuple[Path, Path]"
     return stub, log
 
 
-def _run_make(stub: Path, *args: str) -> "subprocess.CompletedProcess[str]":
+def _run_make(
+    stub: Path, *args: str, env: "dict[str, str] | None" = None
+) -> "subprocess.CompletedProcess[str]":
     # An outer make (this suite under `make coverage`) exports MAKEFLAGS,
     # MFLAGS and MAKELEVEL; dropped so its flags cannot leak into the recipe.
     # OTTO_CONFORMANCE_CELLS is a declared ambient opt-in the conftest leaves
     # alone; dropped so the campaign's `cells=all` can only come from the recipe.
     # The leased targets (stability, release-campaign) take the bed lease: in a root
     # beside the stub, never the real cell's, and in a session of their own so the
-    # lease's process group is the make's, not this test's.
+    # lease's process group is the make's, not this test's. *env* is laid over the rest.
     dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "OTTO_CONFORMANCE_CELLS"}
     lease_free = lease_free_environ(BED_LEASE_ROOT=str(stub.parent / "bed-lease"))
-    env = {k: v for k, v in lease_free.items() if k not in dropped}
+    env = {**{k: v for k, v in lease_free.items() if k not in dropped}, **(env or {})}
     return subprocess.run(
         ["make", "--no-print-directory", *args, f"MAKE={stub}"],
         cwd=CHECKOUT_ROOT,
@@ -542,7 +550,7 @@ def test_budget_delta_is_phony():
 
 def test_gate_tip_targets_are_phony():
     phony = _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
-    assert {"gate-tip", "coverage-gate-args"} <= phony
+    assert {"gate-tip", "gate-status", "land"} <= phony
 
 
 def _recipe(target: str) -> str:
@@ -554,18 +562,23 @@ def _recipe(target: str) -> str:
 
 def test_the_gate_tip_recipe_and_its_overrides_are_the_declared_wiring():
     assert _recipe("gate-tip") == (
-        "$(call bed_acquire,gate-tip)\n"
-        "\t@uv run python scripts/gate_tip.py --repo . --lab $(LAB_FILE) --pid $$PPID "
-        '--base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" '
-        "$(GATE_TIP_OVERRIDES)\n"
-        "\t$(call bed_release)"
+        "@uv run --locked python scripts/gate_tip.py --repo . --lab $(LAB_FILE) "
+        f"--remote {gt.CANONICAL_REMOTE} "
+        '--base "$(if $(filter command line,$(origin BASE)),$(BASE),)" '
+        "$(GATE_TIP_OVERRIDES)"
     )
     text = (CHECKOUT_ROOT / "Makefile").read_text()
     assert (
-        "GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,"
+        "GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE $(COVERAGE_STAMP_HARMLESS),"
         "$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))\n"
     ) in text
-    assert _recipe("coverage-gate-args") == "@printf '%s\\n' $(COVERAGE_STAMP_GATE)"
+
+
+@pytest.mark.parametrize("target", ["gate-tip", "gate-status"])
+def test_the_gate_entry_points_pass_the_canonical_remote(target):
+    """The Makefile names the remote the runner's default and the hook's note call canonical."""
+    assert f" --remote {gt.CANONICAL_REMOTE} " in f"{_recipe(target)} "
+    assert _recipe(target).count("--remote") == 1
 
 
 def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
@@ -594,16 +607,17 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
 
 def test_gate_tip_hands_every_command_line_variable_to_the_runner_as_overridden(tmp_path: Path):
     lines = _make_with_uv_stub(tmp_path, "X=1")
-    assert lines[:3] == ["run", "python", "scripts/gate_tip.py"]
+    assert lines[:4] == ["run", "--locked", "python", "scripts/gate_tip.py"]
+    assert "--pid" not in lines
+    assert lines[lines.index("--remote") + 1] == "origin"
     assert lines[lines.index("--lab") + 1] == "tests/_fixtures/lab_data/tech1/lab.json"
-    assert lines[lines.index("--pid") + 1].isdigit(), "make's own pid, the lease holder's"
     assert lines[lines.index("--overridden") + 1] == "X"
-    assert lines[lines.index("--base") + 1] == "origin/main"
+    assert lines[lines.index("--base") + 1] == "", "the empty default: the runner fetches main"
 
 
-def test_gate_tip_hands_a_release_knob_over_too(tmp_path: Path):
+def test_the_release_s_knobs_do_not_reach_gate_tip_as_overrides(tmp_path: Path):
     lines = _make_with_uv_stub(tmp_path, "BUMP=minor")
-    assert lines[lines.index("--overridden") + 1] == "BUMP"
+    assert "--overridden" not in lines
 
 
 def test_gate_tip_honours_base_from_the_command_line_and_does_not_call_it_an_override(
@@ -612,26 +626,6 @@ def test_gate_tip_honours_base_from_the_command_line_and_does_not_call_it_an_ove
     lines = _make_with_uv_stub(tmp_path, "BASE=upstream/main")
     assert lines[lines.index("--base") + 1] == "upstream/main"
     assert "--overridden" not in lines
-
-
-def test_the_declared_coverage_gate_frames_as_four_option_value_lines():
-    dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
-    env = {k: v for k, v in os.environ.items() if k not in dropped}
-    completed = subprocess.run(
-        ["make", "-s", "coverage-gate-args"],
-        cwd=CHECKOUT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-        env=env,
-    )
-    assert completed.returncode == 0, completed.stderr
-    lines = completed.stdout.split("\n")
-    assert lines.pop() == ""
-    assert len(lines) == 8, "a value holding a newline would break the shape"
-    assert lines[0::2] == gt.COVERAGE_GATE_OPTIONS
-    assert " " in lines[lines.index("--selection") + 1]
 
 
 # --- the release's order: cheap stages first (#660, #661) -------------------
@@ -651,16 +645,21 @@ def _uv_stub(path: Path, body: str) -> None:
     The lease macro runs through `uv run python scripts/bed_lease.py`; a stub
     that swallowed it would end the lane on the lease (or record the lease's
     argv instead of the lane's), so that one call runs on this interpreter,
-    against the root the caller's `BED_LEASE_ROOT` names.
+    against the root the caller's `BED_LEASE_ROOT` names. The script is this
+    checkout's, whatever directory the recipe runs in.
     """
     path.write_text(
         "#!/bin/sh\n"
-        'case "$1 $2 $3" in "run python scripts/bed_lease.py") shift 2; '
-        f'exec "{sys.executable}" "$@" ;; esac\n'
+        'case "$1 $2 $3" in "run python scripts/bed_lease.py") shift 3; '
+        f'exec "{sys.executable}" "{CHECKOUT_ROOT}/scripts/bed_lease.py" "$@" ;; esac\n'
         f"{body}\n",
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+_RECORD_CALL = '"run python scripts/release_record.py"'
+"""The `case` word of a `uv` stub's dispatch on the release record's calls."""
 
 
 def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.CompletedProcess[str]":
@@ -669,13 +668,22 @@ def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.Complete
     `VENV_BIN` is the recipe's own PATH prefix, so the guard stubs here shadow
     the real `uv`, `git-cliff` and `bump-my-version`: even a regressed recipe
     that ran past every stub could not bump, commit or tag this checkout. Each
-    guard logs its name to :func:`_guard_log` and fails.
+    guard logs its name to :func:`_guard_log` and fails. The release record's
+    calls are the exception: `uv` appends `release_record-<verb>` to the make
+    stub's log, so they read as stages, and succeeds (this checkout's
+    `reports/` is not a test's to write).
     """
     guard = tmp_path / "guard"
     guard.mkdir()
     guard_log = _guard_log(tmp_path)
+    calls_log = stub.parent / "calls.log"
+    record = (
+        f'case "$1 $2 $3" in {_RECORD_CALL}) '
+        f'echo "release_record-$4" >> "{calls_log}"; exit 0 ;; esac\n'
+    )
     for tool in ("uv", "git-cliff", "bump-my-version"):
-        _uv_stub(guard / tool, f'echo {tool} >> "{guard_log}"\nexit 97')
+        prefix = record if tool == "uv" else ""
+        _uv_stub(guard / tool, f'{prefix}echo {tool} >> "{guard_log}"\nexit 97')
     return _run_make(
         stub,
         "release",
@@ -716,6 +724,7 @@ def test_the_cheap_stages_run_before_coverage_and_a_red_coverage_stops_the_rest(
     assert completed.returncode != 0
     assert _calls(log) == [
         "release-preflight",
+        "release_record-pending",
         "clean-dist",
         "web-install",
         "docs",
@@ -772,3 +781,320 @@ def test_the_release_builds_the_docs_again_after_it_re_measures_the_matrices():
     last_docs = len(stages) - 1 - stages[::-1].index("docs")
     assert stages.index("release-kmodcov-matrix") < last_docs, stages
     assert stages.index("release-campaign") < last_docs, stages
+
+
+# --- the release's landing: a certified record and a pull request ------------
+
+
+@dataclass
+class _Tail:
+    """One run of the real `release` recipe in a scratch repo (:func:`_run_release_tail`)."""
+
+    completed: "subprocess.CompletedProcess[str]"
+    calls: "list[str]"
+    """The `$(MAKE)` goals, in order."""
+    repo: TmpGitRepo
+    start_sha: str
+    """`origin/release/next` before the run."""
+    gh_calls: "list[list[str]]"
+    guard_log: str
+    """What the `uv`, `git-cliff` and `bump-my-version` stand-ins were asked, one line each."""
+
+
+def _remote_sha(repo: TmpGitRepo, branch: str) -> str:
+    return repo.git("ls-remote", "origin", f"refs/heads/{branch}").split()[0]
+
+
+def _scratch_release_repo(root: Path) -> TmpGitRepo:
+    """`release/next` at main's tip, both pushed to a bare `origin`; 0.18.1, untagged."""
+    repo = TmpGitRepo(root / "scratch")
+    repo.write("pyproject.toml", '[tool.bumpversion]\ncurrent_version = "0.18.1"\ntag = false\n')
+    repo.write("CHANGELOG.md", "# unchanged\n")
+    repo.commit("base")
+    bare = root / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env=git_env(root))
+    repo.git("remote", "add", "origin", str(bare))
+    repo.git("push", "-q", "origin", "main")
+    repo.git("checkout", "-q", "-b", "release/next")
+    repo.git("push", "-q", "-u", "origin", "release/next")
+    return repo
+
+
+def _script(path: Path, body: str) -> None:
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def _tail_guard(
+    guard: Path,
+    *,
+    census: str,
+    changelog: Path,
+    guard_log: Path,
+    red_body: bool = False,
+    lose_origin: "Path | None" = None,
+) -> None:
+    """The tail's tools: the real record script, a fixed census, and stand-ins for the rest.
+
+    `git-cliff` writes *changelog* to its `-o` path (or prints it; with *red_body*, its
+    `--unreleased` call, the pull request's body, prints half and fails); `bump-my-version`
+    rewrites `current_version` and commits, never tagging, as `tag = false` says. With
+    *lose_origin*, that bare repository is deleted just before the record's `landing`
+    call, so the real script's fetch of main fails there.
+    """
+    lose = f'if [ "$4" = landing ]; then rm -rf "{lose_origin}"; fi; ' if lose_origin else ""
+    _uv_stub(
+        guard / "uv",
+        'case "$1 $2 $3" in\n'
+        f'  "run python scripts/release_bump.py") echo "{census}"; exit 0 ;;\n'
+        f'  {_RECORD_CALL}) {lose}shift 3; PYTHONPATH="{CHECKOUT_ROOT}" exec "{sys.executable}" '
+        f'"{CHECKOUT_ROOT}/scripts/release_record.py" "$@" ;;\n'
+        "esac\n"
+        f'echo "uv $*" >> "{guard_log}"\n'
+        "exit 97",
+    )
+    _script(
+        guard / "git-cliff",
+        f'echo "git-cliff $*" >> "{guard_log}"\n'
+        + (
+            'case " $* " in *" --unreleased "*) echo "# half a body"; exit 1 ;; esac\n'
+            if red_body
+            else ""
+        )
+        + 'out=""\n'
+        'while [ $# -gt 0 ]; do if [ "$1" = -o ]; then out="$2"; fi; shift; done\n'
+        f'if [ -n "$out" ]; then cp "{changelog}" "$out"; else cat "{changelog}"; fi',
+    )
+    _script(
+        guard / "bump-my-version",
+        f'echo "bump-my-version $*" >> "{guard_log}"\n'
+        'new=""\n'
+        'while [ $# -gt 0 ]; do if [ "$1" = --new-version ]; then new="$2"; fi; shift; done\n'
+        'sed -i "s/^current_version = .*/current_version = \\"$new\\"/" pyproject.toml\n'
+        'git commit -qam "bump: v$new"',
+    )
+    install_fake_gh(guard, [GhReply(["pr", "create"], stdout="https://x/pull/1\n")])
+
+
+def _run_release_tail(
+    tmp_path: Path,
+    *,
+    census: str,
+    changelog: str,
+    make_statuses: "dict[str, int] | None" = None,
+    repo: "TmpGitRepo | None" = None,
+    red_body: bool = False,
+    lose_origin: bool = False,
+) -> _Tail:
+    """Run the real `release` recipe in a scratch repo, every `$(MAKE)` goal stubbed.
+
+    `-C <scratch>` makes every `git`, `reports/` and `pyproject.toml` the recipe
+    touches the scratch repo's; the lease root is the stub's, so the real cell is
+    never touched. *repo* reuses an earlier call's scratch repo for a second run;
+    *red_body* fails the `git-cliff` call that renders the pull request's body;
+    *lose_origin* deletes the scratch origin just before the `landing` probe.
+    """
+    run_dir = tmp_path / f"run-{len(list(tmp_path.glob('run-*')))}"
+    run_dir.mkdir()
+    repo = repo or _scratch_release_repo(tmp_path)
+    start_sha = _remote_sha(repo, "release/next")
+    stub, log = _stub_make(run_dir, make_statuses or {})
+    guard = run_dir / "guard"
+    guard.mkdir()
+    source = run_dir / "changelog.md"
+    source.write_text(changelog, encoding="utf-8")
+    guard_log = _guard_log(run_dir)
+    _tail_guard(
+        guard,
+        census=census,
+        changelog=source,
+        guard_log=guard_log,
+        red_body=red_body,
+        lose_origin=tmp_path / "origin.git" if lose_origin else None,
+    )
+    completed = _run_make(
+        stub,
+        "-C",
+        str(repo.root),
+        "-f",
+        str(CHECKOUT_ROOT / "Makefile"),
+        "release",
+        f"LAB_FILE={CHECKOUT_ROOT}/tests/_fixtures/lab_data/tech1/lab.json",
+        f"COVERAGE_STAMP={_stub_stamp(run_dir, 0)}",
+        f"VENV_BIN={guard}",
+        # Merged, not verbatim: the recipe's Python children need the session's PATH and HOME.
+        env={k: v for k, v in git_env(repo.root).items() if k not in {"PATH", "HOME"}},
+    )
+    return _Tail(
+        completed=completed,
+        calls=_calls(log),
+        repo=repo,
+        start_sha=start_sha,
+        gh_calls=gh_calls(guard),
+        guard_log=guard_log.read_text() if guard_log.exists() else "",
+    )
+
+
+def _state(repo: TmpGitRepo) -> str:
+    record = rr.read(repo.root)
+    assert record is not None
+    return record.state
+
+
+def test_a_recertification_with_an_unchanged_changelog_certifies_the_tip_and_merges_nothing(
+    tmp_path: Path,
+):
+    t = _run_release_tail(tmp_path, census="0.18.1", changelog="# unchanged\n")
+    assert t.completed.returncode == 0, t.completed.stdout + t.completed.stderr
+    assert _state(t.repo) == "tip-certified"
+    assert "run: make release-tag" in t.completed.stdout
+    assert "gate-tip" not in t.calls
+    assert t.gh_calls == []
+    assert t.repo.git("tag", "--list") == ""
+    assert _remote_sha(t.repo, "release/next") == t.start_sha
+
+
+def test_a_recertification_with_a_regenerated_changelog_commits_it_and_lands_through_a_pull_request(
+    tmp_path: Path,
+):
+    t = _run_release_tail(tmp_path, census="0.18.1", changelog="# regenerated\n")
+    assert t.completed.returncode == 0, t.completed.stdout + t.completed.stderr
+    assert t.calls[-2:] == ["gate-tip", "gate-status"]
+    assert t.gh_calls[0][:3] == ["pr", "create", "--title"]
+    assert t.gh_calls[0][-2:] == ["--body-file", "-"], "the body arrives on stdin: no temp file"
+    assert "chore(release): v0.18.1" in t.gh_calls[0]
+    record = rr.read(t.repo.root)
+    assert record is not None
+    assert (record.state, record.url) == ("landed", "https://x/pull/1")
+    subject = t.repo.git("log", "-1", "--format=%s").strip()
+    assert subject == "docs(changelog): regenerate for v0.18.1"
+    assert _remote_sha(t.repo, "release/next") == t.repo.git("rev-parse", "HEAD").strip()
+
+
+def test_a_higher_census_bumps_without_a_tag_and_lands_through_a_pull_request(tmp_path: Path):
+    t = _run_release_tail(tmp_path, census="0.18.2", changelog="# 0.18.2\n")
+    assert t.completed.returncode == 0, t.completed.stdout + t.completed.stderr
+    assert 'current_version = "0.18.2"' in (t.repo.root / "pyproject.toml").read_text()
+    assert t.repo.git("tag", "--list") == ""
+    assert _state(t.repo) == "landed"
+    assert "chore(release): v0.18.2" in t.gh_calls[0]
+    assert t.calls[-2:] == ["gate-tip", "gate-status"]
+
+
+def test_a_census_below_the_untagged_bump_stops_before_the_changelog(tmp_path: Path):
+    t = _run_release_tail(tmp_path, census="0.18.0", changelog="x")
+    assert t.completed.returncode != 0
+    assert _state(t.repo) == "pending"
+    assert "git-cliff" not in t.guard_log
+    assert "already carries the untagged bump" in t.completed.stderr
+
+
+def test_a_red_wheel_check_leaves_the_record_pending_and_pushes_nothing(tmp_path: Path):
+    t = _run_release_tail(
+        tmp_path, census="0.18.2", changelog="x", make_statuses={"wheel-check": 1}
+    )
+    assert t.completed.returncode != 0
+    assert _state(t.repo) == "pending"
+    assert t.gh_calls == []
+    assert "gate-tip" not in t.calls
+    assert _remote_sha(t.repo, "release/next") == t.start_sha
+
+
+def test_a_failed_recertification_invalidates_the_earlier_certificate(tmp_path: Path, capsys):
+    # spec: a run that starts writes `pending` over whatever stood; a run that dies early
+    # leaves it there, and release-tag refuses it
+    t = _run_release_tail(tmp_path, census="0.18.1", changelog="# unchanged\n")  # certified
+    assert _state(t.repo) == "tip-certified"
+    again = _run_release_tail(
+        tmp_path,
+        census="0.18.1",
+        changelog="# unchanged\n",
+        make_statuses={"wheel-check": 1},
+        repo=t.repo,
+    )  # a second run in the same scratch repo
+    assert again.completed.returncode != 0
+    assert _state(t.repo) == "pending"
+    rc = scripts.release_tag.release_tag(
+        t.repo.root,
+        remote="origin",
+        required=[],
+        wait_s=0,
+        interval=1,
+        gh=lambda args: pytest.fail(f"gh called: {args}"),
+    )
+    # judged before the remote: the filesystem origin is never resolved
+    assert rc == 1
+    assert "the record is pending; the last make release did not finish" in capsys.readouterr().err
+
+
+def test_a_red_pull_request_body_leaves_the_record_certified_and_opens_nothing(tmp_path: Path):
+    """A failing git-cliff for the body stops the chain: no pull request with half a body."""
+    t = _run_release_tail(tmp_path, census="0.18.2", changelog="x", red_body=True)
+    assert t.completed.returncode != 0
+    assert "--unreleased" in t.guard_log, "the body's git-cliff call is the one that failed"
+    assert _state(t.repo) == "certified"
+    assert t.gh_calls == []
+
+
+def test_a_red_gate_tip_after_certification_leaves_the_record_certified_and_opens_nothing(
+    tmp_path: Path,
+):
+    t = _run_release_tail(tmp_path, census="0.18.2", changelog="x", make_statuses={"gate-tip": 1})
+    assert t.completed.returncode != 0
+    assert _state(t.repo) == "certified"
+    assert t.gh_calls == []
+    assert _remote_sha(t.repo, "release/next") == t.start_sha
+
+
+def test_a_landing_probe_that_cannot_fetch_main_stops_with_the_record_certified(tmp_path: Path):
+    """A failed fetch is not "something to merge": the chain stops, nothing is pushed."""
+    t = _run_release_tail(tmp_path, census="0.18.1", changelog="# unchanged\n", lose_origin=True)
+    assert t.completed.returncode != 0
+    assert _state(t.repo) == "certified"
+    assert "gate-tip" not in t.calls
+    assert t.gh_calls == []
+    assert "release-record: origin has no main" in t.completed.stderr
+
+
+_TAIL_SEQUENCE = [
+    "release_bump.py",
+    "release_record.py mode",
+    "git-cliff --tag",
+    "bump-my-version bump",
+    "$(MAKE) wheel-check",
+    "release_record.py certify",
+    "release_record.py landing --remote origin",
+    '[ "$$NEXT" = tip-certified ]',
+    "release_record.py tip-certified",
+    "$(MAKE) gate-tip",
+    "git push -u origin",
+    "$(MAKE) gate-status",
+    "--unreleased --strip header",
+    'gh pr create --title "chore(release): v$$NEW_VERSION" --body-file',
+    "release_record.py landed",
+]
+
+
+def test_the_release_tail_is_the_declared_landing_sequence():
+    recipe = _recipe("release")
+    second_docs = recipe.index("$(MAKE) docs", recipe.index("$(MAKE) docs") + 1)
+    tail = recipe[second_docs:]
+    at = [tail.find(step) for step in _TAIL_SEQUENCE]
+    assert -1 not in at, [s for s, i in zip(_TAIL_SEQUENCE, at, strict=True) if i == -1]
+    assert at == sorted(at), sorted(zip(at, _TAIL_SEQUENCE, strict=True))
+    assert recipe.index("release_record.py pending") < recipe.index("clean-dist")
+    assert "--follow-tags" not in recipe
+    assert "git tag" not in recipe
+    assert recipe.splitlines()[-1].strip() == "$(call bed_release)"
+
+
+def test_bump_my_version_does_not_tag():
+    with (CHECKOUT_ROOT / "pyproject.toml").open("rb") as handle:
+        assert tomli.load(handle)["tool"]["bumpversion"]["tag"] is False
+
+
+def test_release_tag_is_phony_and_locked():
+    assert "release-tag" in _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
+    assert (
+        _recipe("release-tag") == "@uv run --locked python scripts/release_tag.py --remote origin"
+    )

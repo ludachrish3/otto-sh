@@ -75,6 +75,11 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "opts tier-2 chaos onto a leased bed host instead of the loopback "
         "sshd (tests/integration/chaos/_target.py); set by hand on the lab"
     ),
+    "OTTO_RULESET_CHECK": (
+        "arms the live-ruleset pin (tests/unit/test_landing_ruleset.py, read at "
+        "collection by its skipif); set by `make release-preflight`. Stripped, "
+        "the pin skips and the release certifies a ruleset nobody read"
+    ),
     "OTTO_CONFORMANCE_BED": (
         "selects the bed venue for the host-contract conformance suite "
         "instead of the default hermetic one (tests/conformance/_venue.py); "

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Make the primary checkout safe for ``make release`` to build in place.
+"""Make the checkout safe for ``make release`` to build in place, on a release branch.
 
-``make release`` must run in the primary checkout, and it builds and tests
-that checkout where it stands. So it reads local state that CI and
-``make gate-fresh`` (a pristine worktree of the committed tree) never have.
+``make release`` runs on a release branch at ``main``'s tip, pushed to its
+upstream, and lands through a pull request: ``main`` takes no direct push.
+It builds and tests that checkout where it stands. So it reads local state that CI (a pristine
+checkout of the committed tree) never has.
 The 0.17.0 release (2026-10-18) stopped three times on such state, and no
 push gate had seen any of it (#661):
 
@@ -17,12 +18,19 @@ push gate had seen any of it (#661):
 - an untracked source the clean Sphinx build reads: a generated docs page
   whose ignore line the rename had re-pointed.
 
-This step runs first, before anything is built. It does three things:
+This step runs first, before anything is built. It does five things:
 
-- It REFUSES commits not yet pushed to the branch's upstream
-  (:func:`unpushed_commits`). The push gate excuses only the release's own
-  commits, so an unpushed commit would need its lanes stamped again on the
-  released tree; pushing first costs a maintainer one command (#660).
+- It REFUSES to run anywhere but a release branch: on ``main`` (which takes
+  no direct push, so the release could not land from it) and on a detached
+  HEAD (no branch to push and open the pull request from).
+- It REFUSES commits not yet pushed to the branch's upstream, and a branch
+  with no upstream (:func:`unpushed_commits`): the release is gated and
+  landed as a pull request of that branch, so what it certifies must be
+  what the remote holds (#660).
+- It REFUSES a branch that is not ``main``'s tip
+  (``gate_stamp_common.at_main_tip``, the one predicate): the release
+  certifies the tree ``main`` will carry once its pull request merges, so
+  it starts from ``main`` exactly, neither ahead nor behind.
 - It REFUSES untracked files under the paths the release builds and tests
   read (:data:`READ_ROOTS`), naming each one. Whether such a file belongs
   in the repo is the author's call, so nothing here deletes it.
@@ -32,7 +40,7 @@ This step runs first, before anything is built. It does three things:
 
 Usage, from the repo root, as the Makefile's ``release`` recipe runs it::
 
-    uv run python scripts/release_preflight.py
+    uv run python scripts/release_preflight.py --remote origin
 """
 
 import argparse
@@ -42,6 +50,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))  # run by path, only scripts/ is on sys.path
+from scripts.gate_stamp_common import GateError, _git, at_main_tip  # noqa: E402
+
+_START_BRANCH = "git checkout -b release/next && git push -u origin release/next"
+"""How a maintainer starts a release branch, named in the refusals that need one."""
 
 READ_ROOTS = ["docs/", "src/", "tests/", "schemas/"]
 """Untracked files under these roots are refused: the release's builds and suites read them."""
@@ -136,27 +149,59 @@ def _remove(path: Path) -> None:
         path.unlink()
 
 
-def preflight(repo: Path) -> int:
-    """Refuse unpushed commits and untracked sources, otherwise clear stale output."""
+def _refuse(message: str) -> int:
+    print(f"release-preflight: {message}", file=sys.stderr)
+    return 1
+
+
+def preflight(repo: Path, *, remote: str = "origin") -> int:
+    """Refuse anything but a pushed release branch at main's tip, and untracked sources.
+
+    Otherwise clear the stale output the release regenerates. A git failure on
+    the way is a refusal, not a traceback.
+    """
+    try:
+        return _preflight(repo, remote)
+    except GateError as exc:
+        return _refuse(f"refusing to release: {exc}")
+
+
+def _preflight(repo: Path, remote: str) -> int:
+    branch = _git(repo, "branch", "--show-current").strip()
+    if not branch:
+        return _refuse(
+            "refusing to release from a detached HEAD: make release runs on a release "
+            f"branch ({_START_BRANCH})"
+        )
+    if branch == "main":
+        return _refuse(
+            "refusing to release from main: main takes no direct push; run make release "
+            f"on a release branch ({_START_BRANCH})"
+        )
     unpushed = unpushed_commits(repo)
     if unpushed is None:
-        print(
-            "release-preflight: refusing to release: the branch has no upstream, so there "
-            "is no way to tell whether every commit is pushed. Release from main tracking "
-            "origin/main.",
-            file=sys.stderr,
+        return _refuse(
+            "refusing to release: there is no way to tell whether every commit is pushed, "
+            f"because the branch has no upstream: push -u first (git push -u {remote} {branch})"
         )
-        return 1
     if unpushed:
         print(
             "release-preflight: refusing to release: these commits are not pushed, and the "
-            "push gate after a release excuses only the release's own commits:",
+            "release certifies and lands what the remote branch holds:",
             file=sys.stderr,
         )
         for line in unpushed:
             print(f"  {line}", file=sys.stderr)
         print("Push them (git push), then run make release again.", file=sys.stderr)
         return 1
+    if not at_main_tip(repo, remote):
+        head = _git(repo, "rev-parse", "HEAD").strip()
+        main_sha = _git(repo, "rev-parse", "FETCH_HEAD").strip()
+        return _refuse(
+            f"refusing to release: HEAD ({head[:12]}) is not {remote}/main's tip "
+            f"({main_sha[:12]}); a release branch starts at main's tip "
+            f"(git fetch {remote} main && git checkout -B {branch} FETCH_HEAD)"
+        )
     untracked = untracked_in_read_roots(repo)
     if untracked:
         print(
@@ -184,8 +229,9 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=REPO_ROOT, help="the checkout to prepare")
+    parser.add_argument("--remote", default="origin", help="the remote whose main is the base")
     args = parser.parse_args(argv)
-    return preflight(args.repo.resolve())
+    return preflight(args.repo.resolve(), remote=args.remote)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ imports nothing from the other scripts; they import it.
 import contextlib
 import fcntl
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -23,7 +24,7 @@ ZERO_SHA = "0" * 40
 """The all-zero sha a pre-push hook is handed for a ref that does not exist."""
 
 
-class GateFreshError(RuntimeError):
+class GateError(RuntimeError):
     """Something about RUNNING a gate failed — never a pass/fail verdict.
 
     Covers both ends of a run: an unmet precondition before it starts (not a
@@ -32,6 +33,9 @@ class GateFreshError(RuntimeError):
     failing to clean up a completed run).
     """
 
+    stderr: str = ""
+    """The failed git command's stderr, when the error wraps one (:func:`_git`)."""
+
 
 @dataclass(frozen=True)
 class TreeState:
@@ -39,6 +43,8 @@ class TreeState:
 
     tracked_dirty: "list[str]"
     untracked: "list[str]"
+    ignored_sources: "list[str]"
+    """Ignored ``.py`` files under ``src/`` or a test root: imported live, not committed."""
 
 
 def _git(repo: Path, *args: str, stdin: "str | None" = None) -> str:
@@ -53,19 +59,25 @@ def _git(repo: Path, *args: str, stdin: "str | None" = None) -> str:
             check=False,
         )
     except OSError as exc:  # FileNotFoundError included: no git on PATH
-        raise GateFreshError(f"git is not available: {exc}") from exc
+        raise GateError(f"git is not available: {exc}") from exc
     if result.returncode != 0:
-        raise GateFreshError(f"git {' '.join(args)} failed in {repo}: {result.stderr.strip()}")
+        error = GateError(f"git {' '.join(args)} failed in {repo}: {result.stderr.strip()}")
+        error.stderr = result.stderr.strip()
+        raise error
     return result.stdout
 
 
 def tree_state(repo: Path) -> TreeState:
     """Split the working tree's dirt into blocking and informational halves.
 
-    Tracked modifications block: the worktree is built from a commit and cannot
-    see them, so proceeding would gate different content than the developer is
-    looking at. Untracked files do not block — the gate failing because one was
-    needed is precisely the forgotten-``git add`` case being caught.
+    Three kinds of dirt come back, because a stamp speaks for the COMMITTED tree and the live
+    checkout can differ from it in three ways. ``tracked_dirty``: modified or staged tracked
+    files, which the commit does not hold. ``untracked``: files git does not know. And
+    ``ignored_sources``: ignored ``.py`` files under ``src/`` or a test root, which
+    ``git status`` never lists yet the checkout imports. Tracked dirt always blocks; untracked
+    files and ignored sources block only under ``src/`` or a test root (a stray note or build
+    output elsewhere is harmless), which :func:`blocking_untracked` decides and
+    :func:`dirt_refusals` renders.
 
     Parsed from ``git status --porcelain -z`` rather than the human-readable
     (newline-delimited) form. Three prior attempts at parsing the newline form
@@ -83,9 +95,9 @@ def tree_state(repo: Path) -> TreeState:
     file that exists in the tree now); the origin field only needs skipping.
     """
     try:
-        _git(repo, "rev-parse", "--show-toplevel")
-    except GateFreshError as e:
-        raise GateFreshError(f"not a git repository: {repo}") from e
+        top = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
+    except GateError as e:
+        raise GateError(f"not a git repository: {repo}") from e
     tracked_dirty: "list[str]" = []
     untracked: "list[str]" = []
     raw = _git(repo, "status", "--porcelain", "--untracked-files=normal", "-z")
@@ -103,7 +115,15 @@ def tree_state(repo: Path) -> TreeState:
             untracked.append(path)
         else:
             tracked_dirty.append(path)
-    return TreeState(tracked_dirty=sorted(tracked_dirty), untracked=sorted(untracked))
+    ignored = _git(
+        top, "ls-files", "-o", "-i", "--exclude-standard", "-z", "--", "src/", *test_roots(top)
+    )
+    ignored_sources = sorted(path for path in ignored.split("\0") if path.endswith(".py"))
+    return TreeState(
+        tracked_dirty=sorted(tracked_dirty),
+        untracked=sorted(untracked),
+        ignored_sources=ignored_sources,
+    )
 
 
 def tree_hash(repo: Path, rev: str = "HEAD") -> str:
@@ -118,14 +138,23 @@ def blob_sha(repo: Path, path: str) -> str:
 
 def test_roots(repo: Path) -> "list[str]":
     """Return pyproject's ``testpaths``: the roots the live checkout collects from."""
-    data = tomli.loads((repo / "pyproject.toml").read_text())
-    return list(data["tool"]["pytest"]["ini_options"]["testpaths"])
+    try:
+        data = tomli.loads((repo / "pyproject.toml").read_text())
+        return list(data["tool"]["pytest"]["ini_options"]["testpaths"])
+    except (OSError, KeyError, tomli.TOMLDecodeError) as exc:
+        raise GateError(f"no pytest testpaths in {repo / 'pyproject.toml'}: {exc!r}") from exc
 
 
-def blocking_untracked(untracked: "list[str]", roots: "list[str]") -> "list[str]":
-    """Select the untracked paths the live checkout would import: under ``src/`` or a test root."""
+def blocking_untracked(state: TreeState, roots: "list[str]") -> "list[str]":
+    """Select the files the live checkout would import that the commit lacks.
+
+    The untracked paths under ``src/`` or a test root, plus every ignored source
+    (:attr:`TreeState.ignored_sources`): the one decision :func:`dirt_refusals` and the
+    runner's post-lane check both make.
+    """
     prefixes = tuple(f"{root.rstrip('/')}/" for root in ("src", *roots))
-    return [path for path in untracked if path.startswith(prefixes)]
+    under = [path for path in state.untracked if path.startswith(prefixes)]
+    return sorted({*under, *state.ignored_sources})
 
 
 def dirt_refusals(state: TreeState, roots: "list[str]") -> "list[str]":
@@ -136,13 +165,53 @@ def dirt_refusals(state: TreeState, roots: "list[str]") -> "list[str]":
             "tracked files are modified or staged (the committed tree does not hold them): "
             + ", ".join(state.tracked_dirty)
         )
-    blocking = blocking_untracked(state.untracked, roots)
-    if blocking:
+    blocking = blocking_untracked(state, roots)
+    # Deliberate: blocking_untracked is the one decision; split its result back only to word it.
+    ignored = set(state.ignored_sources)
+    untracked = [path for path in blocking if path not in ignored]
+    if untracked:
         why.append(
             "untracked files under src/ or a test root (the live checkout imports them; "
-            "the committed tree has no such file): " + ", ".join(blocking)
+            "the committed tree has no such file): " + ", ".join(untracked)
         )
+    why.extend(
+        f"ignored source the check would import: {path} "
+        "(git ls-files -o -i names it; move it out or un-ignore and commit it)"
+        for path in blocking
+        if path in ignored
+    )
     return why
+
+
+def fetch_main(repo: Path, remote: str) -> str:
+    """Fetch *remote*'s ``main`` and return the commit it names: the one base resolver."""
+    try:
+        _git(repo, "fetch", remote, "main")
+    except GateError as exc:
+        raise GateError(
+            f"{remote} has no main (git fetch {remote} main failed): {exc.stderr}"
+        ) from exc
+    return _git(repo, "rev-parse", "FETCH_HEAD").strip()
+
+
+def at_main_tip(repo: Path, remote: str) -> bool:
+    """Whether HEAD is exactly *remote*'s freshly fetched ``main``; a failed fetch raises."""
+    return fetch_main(repo, remote) == _git(repo, "rev-parse", "HEAD").strip()
+
+
+_GITHUB_URL = re.compile(
+    r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"(?P<slug>[^/\s]+/[^/\s]+?)(?:\.git)?"
+)
+
+
+def remote_slug(repo: Path, remote: str) -> str:
+    """Return ``owner/repo`` for *remote*'s GitHub URL; anything else is refused."""
+    url = _git(repo, "remote", "get-url", remote).strip()
+    match = _GITHUB_URL.fullmatch(url)
+    if match is None:
+        raise GateError(f"{remote} ({url}) is not a GitHub remote; the status needs owner/repo")
+    return match["slug"]
 
 
 LOCK_FILE = ".lock"

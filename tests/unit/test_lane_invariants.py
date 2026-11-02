@@ -1946,6 +1946,9 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     # check-python → lint-arch: the import-rule and layer-audit pytest files, no `-m`.
     _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_IMPORT_RULES),
     _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_LAYER_AUDITS),
+    # release-preflight → the live-ruleset pin (skipped unless OTTO_RULESET_CHECK=1,
+    # which the recipe sets).
+    _Leg("Makefile:release-preflight", _ANY_MARKER, ("tests/unit/test_landing_ruleset.py",)),
     # release-matrix → conformance-bed: the whole conformance tree, BED venue.
     _Leg("Makefile:conformance-bed", "conformance", ()),
     # release-kmodcov-matrix → kmodcov: the toolchain proofs on the bed.
@@ -2462,7 +2465,6 @@ BED_TARGETS_DIRECT = [
 ]
 """Targets whose recipe touches the bed itself: a suite, or a probe of the consoles and guests."""
 BED_TARGETS_AGGREGATORS = [
-    "gate-tip",
     "release",
     "release-campaign",
     "release-matrix",
@@ -2471,6 +2473,11 @@ BED_TARGETS_AGGREGATORS = [
     "all",
 ]
 """Targets that run bed targets with `$(MAKE)`: they hold the lease across them."""
+LEASE_INSIDE = ["gate-tip", "land"]
+"""Targets whose script takes the lease itself, for the bed lanes it runs.
+
+Pinned in test_gate_tip.py.
+"""
 LEASE_TOOLS = ["bed-status", "bed-lease", "bed-release"]
 """The lease's own verbs: they read or hold the lease, they do not take it around a lane."""
 REAPED_TARGETS = [t for t in BED_TARGETS_DIRECT if t not in LAB_TOOLS]
@@ -2482,7 +2489,6 @@ HOSTLESS_TARGETS = [
     "coverage-unit",
     "coverage-hostless",
     "coverage-stamp-start",
-    "coverage-gate-args",
     "coverage-ts",
     "coverage-ts-unit",
     "unit-outliers",
@@ -2509,8 +2515,9 @@ HOSTLESS_TARGETS = [
     "check-api-teaching",
     "api-snapshot",
     "api-surface-report",
-    "gate-fresh",
     "gate-scope",
+    "gate-status",
+    "lock-check",
     "lint",
     "lint-arch",
     "lint-python",
@@ -2544,6 +2551,7 @@ HOSTLESS_TARGETS = [
     "help",
     "changelog",
     "release-preflight",
+    "release-tag",
     "wheel-check",
     "wheel-smoke",
     "kmodcov-matrix",
@@ -2749,13 +2757,19 @@ def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> No
 
 
 def test_the_oracle_names_no_bed_lane_the_makefile_does_not_lease() -> None:
-    """Every target gate_scope hands a full tip as a bed lane carries the lease."""
+    """Every target gate_scope hands a tip or a full commit column carries the lease or is
+    pinned hostless; every bed goal leases, and the static goals take no lease."""
     named = {line.split()[1] for lanes in gs.BED_LANES.values() for line in lanes}
     named |= {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
-    named |= {line.split()[1] for line in gs.SRC_LEAF_TIP_LANES}
+    named |= {line.split()[1] for line in gs.TEST_SUITE_LANES}
+    named |= set(gs.BED_GOALS)
     leased = set(BED_TARGETS_DIRECT + BED_TARGETS_AGGREGATORS)
     unleased = sorted(t for t in named if t not in leased and t not in HOSTLESS_TARGETS)
     assert not unleased, f"oracle lanes neither leased nor pinned hostless: {unleased}"
+    assert set(gs.BED_GOALS) <= leased, sorted(set(gs.BED_GOALS) - leased)
+    assert set(gs.STATIC_GOALS) <= set(HOSTLESS_TARGETS), sorted(
+        set(gs.STATIC_GOALS) - set(HOSTLESS_TARGETS)
+    )
 
 
 def test_every_makefile_target_is_classified_exactly_once() -> None:
@@ -2763,6 +2777,7 @@ def test_every_makefile_target_is_classified_exactly_once() -> None:
     every = [
         *BED_TARGETS_DIRECT,
         *BED_TARGETS_AGGREGATORS,
+        *LEASE_INSIDE,
         *HOSTLESS_TARGETS,
         *LEASE_TOOLS,
         "quick",

@@ -717,6 +717,40 @@ jobs:
           fi
           echo "Python $CANARY_PYTHON still stops at rung $reached, as expected."
 
+  # The dashboard soak is a stability lane, so it is never a gate lane
+  # (docs/contributing.md's stability-lanes rule); nightly runs it once, in a
+  # browser, so a regression surfaces without waiting for a release campaign.
+  dashboard-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
+        run: make web
+
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Dashboard soak
+        run: make dashboard-soak
+
   report-failure:
     name: Open issue on failure
     needs:
@@ -725,6 +759,7 @@ jobs:
         unit-matrix,
         unit-repeat,
         dashboard,
+        dashboard-soak,
         chaos-tier2,
         chaos-docker,
         conformance-hermetic,
@@ -739,13 +774,13 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
+            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the dashboard soak, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability-matrix /"
-            echo "unit-matrix / unit-repeat / dashboard / chaos-tier2 / chaos-docker /"
+            echo "unit-matrix / unit-repeat / dashboard / dashboard-soak / chaos-tier2 / chaos-docker /"
             echo "conformance-hermetic / busybox-upstream-drift / python-canary),"
             echo "the Python version or browser, and the pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"

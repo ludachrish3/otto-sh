@@ -162,6 +162,17 @@ def test_a_tree_that_changes_under_the_run_is_not_stamped(tmp_path: Path, capsys
     assert _run(repo, *CHECK) == 1
 
 
+def test_an_ignored_source_planted_under_the_run_is_not_stamped(tmp_path: Path, capsys):
+    repo = _repo(tmp_path)
+    repo.write(".gitignore", "src/otto/_webassets/*/\nreports/\n*.local.py\n")
+    repo.commit("ignore local sources")
+    assert _run(repo, *START) == 0
+    repo.write("src/otto/x.local.py", "x = 1\n")
+    assert _run(repo, "finish") == 0
+    assert not _stamp(repo).exists()
+    assert "changed during the run" in capsys.readouterr().out
+
+
 def test_assets_rebuilt_under_the_run_are_not_stamped(tmp_path: Path, capsys):
     """The digest is taken at start (after the dist rules ran) and must hold at finish."""
     repo = _repo(tmp_path)
@@ -412,22 +423,25 @@ def test_repo_is_an_option_of_every_verb(tmp_path: Path, monkeypatch):
 
 
 def test_refusals_name_every_reason_at_once():
-    from scripts.gate_fresh import TreeState
+    from scripts.gate_stamp_common import TreeState
 
-    state = TreeState(tracked_dirty=["Makefile"], untracked=["src/otto/new.py", "notes.txt"])
+    state = TreeState(
+        tracked_dirty=["Makefile"], untracked=["src/otto/new.py", "notes.txt"], ignored_sources=[]
+    )
     why = coverage_stamp.refusals(state, ["tests/unit"], ["COVERAGE_THRESHOLD"])
     assert len(why) == 3
     assert "Makefile" in why[0]
     assert "src/otto/new.py" in why[1]
     assert "COVERAGE_THRESHOLD" in why[2]
     assert "notes.txt" not in " ".join(why)
-    assert coverage_stamp.refusals(TreeState([], ["notes.txt"]), ["tests/unit"], []) == []
+    assert coverage_stamp.refusals(TreeState([], ["notes.txt"], []), ["tests/unit"], []) == []
     assert (
-        coverage_stamp.refusals(TreeState([], ["tests/unit/test_y.py"]), ["tests/unit"], []) != []
+        coverage_stamp.refusals(TreeState([], ["tests/unit/test_y.py"], []), ["tests/unit"], [])
+        != []
     )
-    assert coverage_stamp.refusals(TreeState([], ["tests/unity.py"]), ["tests/unit"], []) == [], (
-        "a root is a directory prefix, not a string prefix"
-    )
+    assert (
+        coverage_stamp.refusals(TreeState([], ["tests/unity.py"], []), ["tests/unit"], []) == []
+    ), "a root is a directory prefix, not a string prefix"
 
 
 # ── Per-leg timing: what each leg of `make coverage` cost, recorded in the stamp ─────────

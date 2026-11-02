@@ -13,7 +13,7 @@
 #
 #     STAGE: <target>        the chain advanced to a new gate
 #     LANE green|RED: <f>    a junit file landed, with its parsed counts
-#     SUCCESS:|FAILED:       the release exited, with or without a NEW tag
+#     SUCCESS:|FAILED:       the release exited, judged by its release record
 #
 # Two traps shaped the implementation, and both produce a *confidently wrong*
 # reading rather than an obvious failure, so don't "simplify" them back:
@@ -35,9 +35,12 @@
 # A junit file is written when a lane ENDS, so LANE lines are completions, not
 # starts; a lane that hangs or is killed produces no file at all. That gap is
 # covered by the stage poll and by the exit branch, which always emits a final
-# SUCCESS/FAILED line -- silence never means success. "New" tag means HEAD moved
-# AND is tagged: a HEAD that was already tagged when the watch began is the
-# previous release, not this one. Nothing in the exit branch may fail under
+# SUCCESS/FAILED line -- silence never means success. The run is judged by its
+# identity (pid + start time, read once at attach) and reports/release/record.json:
+# success is a `landed` or `tip-certified` record that carries THIS run's identity,
+# so a record an earlier run left behind, or a pid the OS reused, is never a
+# success. Liveness is process_group.alive through the repo's own interpreter, the
+# one predicate the release itself uses. Nothing in the exit branch may fail under
 # `set -e` -- `clean-dist` has usually removed `dist/`, and a bare `find dist/`
 # once killed the watcher silently at exactly the moment its line was needed.
 set -euo pipefail
@@ -45,12 +48,13 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JUNIT_DIR="$REPO/reports/junit"
 POLL_SECONDS="${POLL_SECONDS:-20}"
+PY="$REPO/.venv/bin/python"
 
 # The gates of the `release` target, in the order the recipe chains them
 # (its `$(MAKE) <goal>` words; pinned by tests/unit/scripts/test_watch_release.py).
 STAGES=(release-preflight clean-dist web-install docs check-python budget-delta coverage nox-release \
         web dashboard-all validate-ts release-matrix release-kmodcov-matrix release-campaign docs \
-        wheel-check)
+        wheel-check gate-tip gate-status)
 
 usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
@@ -65,14 +69,30 @@ if [ -z "$REL_PID" ]; then
     REL_PID="$(ps -eo pid=,args= \
         | sed -n 's/^ *\([0-9]\+\) \+make release$/\1/p' | head -1)"
 fi
-if [ -z "$REL_PID" ] || ! kill -0 "$REL_PID" 2>/dev/null; then
+if [ -z "$REL_PID" ]; then
+    echo "watch_release: no running \`make release\` found -- pass its PID explicitly." >&2
+    exit 1
+fi
+
+# The run's identity (pid + start time), captured once: pid reuse is a different
+# start time, so a recycled pid is never mistaken for the release.
+STARTED="$(cd "$REPO" && "$PY" -c 'import sys; from scripts.process_group import process_start; print(process_start(int(sys.argv[1])) or "")' "$REL_PID" 2>/dev/null)" || STARTED=""
+if [ -z "$STARTED" ]; then
+    echo "watch_release: cannot read pid $REL_PID" >&2
+    exit 1
+fi
+
+alive() {
+    (cd "$REPO" && "$PY" -c 'import sys; from scripts.process_group import alive; sys.exit(0 if alive(int(sys.argv[1]), int(sys.argv[2])) else 1)' "$REL_PID" "$STARTED")
+}
+
+# A zombie or exited pid still has a readable start time only briefly; refuse it here.
+if ! alive; then
     echo "watch_release: no running \`make release\` found -- pass its PID explicitly." >&2
     exit 1
 fi
 
 echo "watch_release: watching pid $REL_PID (poll ${POLL_SECONDS}s)"
-
-START_HEAD="$(git -C "$REPO" rev-parse -q --verify HEAD || true)"
 
 # Pull one attribute off an XML element line. Anchored on a non-name character
 # so `tests=` cannot be matched inside another attribute's name.
@@ -131,6 +151,7 @@ current_stage() {
     fi
     if grep -qE "^[^ ]*/?git-cliff " <<<"$procs"; then found="git-cliff"; fi
     if grep -qE "^[^ ]*/?bump-my-version " <<<"$procs"; then found="bump-my-version"; fi
+    if grep -qE "^[^ ]*/?gh pr create" <<<"$procs"; then found="gh pr create"; fi
     printf '%s' "$found"
 }
 
@@ -138,20 +159,25 @@ prev=""
 while true; do
     emit_new_lanes
 
-    if ! kill -0 "$REL_PID" 2>/dev/null; then
+    if ! alive; then
         cd "$REPO"
-        head="$(git rev-parse -q --verify HEAD || true)"
-        tag=""
-        if [ "$head" != "$START_HEAD" ]; then
-            tag="$(git tag --points-at HEAD 2>/dev/null | head -1 || true)"
-        fi
+        # state, pid, pid_started, url of the release record, from its one owner, one
+        # per line so an empty field cannot shift the rest; all empty when absent or
+        # unreadable (the read then fails, and `|| true` keeps the exit branch alive)
+        rec=()
+        mapfile -t rec < <("$PY" scripts/release_record.py read --fields state,run.pid,run.pid_started,url 2>/dev/null || true)
+        rstate="${rec[0]:-}" rpid="${rec[1]:-}" rstarted="${rec[2]:-}" rurl="${rec[3]:-}"
         dist="$(find dist/ -maxdepth 1 -type f ! -name '.*' -printf '%f ' 2>/dev/null || true)"
-        if [ -n "$tag" ]; then
-            echo "SUCCESS: release finished -- tagged $tag; dist: ${dist:-<empty>}"
+        mine=no
+        if [ "${rpid:-}" = "$REL_PID" ] && [ "${rstarted:-}" = "$STARTED" ]; then mine=yes; fi
+        if [ "$mine" = yes ] && { [ "${rstate:-}" = landed ] || [ "${rstate:-}" = tip-certified ]; }; then
+            echo "SUCCESS: release landed -- $rstate; ${rurl:-the tip of main is certified}; dist: ${dist:-<empty>}"
         else
-            echo "FAILED: \`make release\` exited with no new tag" \
-                 "(last stage: ${prev:-unknown}; red lanes: ${red_lanes:-none};" \
-                 "dist: ${dist:-<empty>}) -- its own terminal has the reason"
+            other=no
+            if [ -n "${rstate:-}" ] && [ "$mine" = no ]; then other=yes; fi
+            echo "FAILED: \`make release\` exited with the record ${rstate:-absent}" \
+                 "(another run's record: $other; last stage: ${prev:-unknown};" \
+                 "red lanes: ${red_lanes:-none}; dist: ${dist:-<empty>}) -- its own terminal has the reason"
         fi
         exit 0
     fi

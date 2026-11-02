@@ -461,8 +461,8 @@ prints two command lists: one for **this commit** (`HEAD^1..HEAD`, the first
 parent, so a merge counts only what it brought in) and one for the **tip**
 (the merge base with `BASE`, default `origin/main`, to `HEAD`: what lands as a
 whole). Only the **tip** of a landing is gated: whatever reaches `main` in one
-push, whether one squash or several commits that persist one by one, runs the
-tip list once, on its final tip. Every commit before the tip runs only the
+landing, whether one commit or several that persist one by one, runs the tip
+list once, on its final tip. Every commit before the tip runs only the
 tests in its likely breakage areas plus ruff on the files it changed, never a
 gate. The commit list is a quick check you may run while working on a commit;
 it is not a landing gate. It refuses a dirty tracked tree (commit first) and a `HEAD` with no
@@ -473,53 +473,94 @@ only, never from the environment.
 A landing is a pull request, and its checks are split by who can run them.
 **The PR's CI runs everything that needs no lab**: every validation job in
 `.github/workflows/ci.yml`, the hostless matrix (the `tests_hostless-3.10` …
-`3.14` jobs: `tests/unit` and the no-VM e2e on every supported Python) among
-them; the CI column of [the quality-gates
-table](architecture/quality-gates.md#what-binds-each-gate) names them, and only
-the issue-filing job waits for a failed push to `main`. **The local tip adds
-what CI cannot run**, which needs the lab: for a `src-leaf` diff, `make
-coverage-bed`, the bed half of `make coverage`'s selection, beside a `make
-quick` over the package's unit and e2e trees and the unit modules that import
-the package, and the package's bed lane; for an `escalate`, `scripts` or
-`full` diff, `make coverage` and the diff's bed lanes ([the class
-table](#gate-class-table) below has every column). The full gate also stamps
-`make check-ts`, so a Biome, knip or tsc failure costs a minute, and names
-the other static lanes, `make check-python`, `make docs` and `make
-gate-fresh`, "live at push": they run at the push itself, by the pre-push
-hook (`.githooks/pre-push`; [the landing's gate is
-stamped](#the-landings-gate-is-stamped) says what it checks). A scoped
-`src-leaf` tip's live lines are `make check-breaking`, `make lint-arch` and
-`make gate-fresh`, which runs the same lint, type and docs checks. The hostless matrix is not a local tip lane in
-either case: `make nox-hostless` stays for running it by hand. The author
-runs steps 1 to 4 and hands the maintainer the head sha; only the maintainer
-pushes to `main` (step 5):
+`3.14` jobs: `tests/unit` and the no-VM e2e on every supported Python), the
+docs build and the TypeScript gates among them; the CI column of [the
+quality-gates table](architecture/quality-gates.md#what-binds-each-gate) names
+them, and only the issue-filing job waits for a failed push to `main`. **The
+local tip adds what CI cannot run, and the cheap static lanes beside it**:
+`make check-breaking` over the landing range; `make check-python` and `make
+collect-check` for any diff that touches Python; and the bed lanes the diff
+reaches, `make coverage-bed` (the bed half of `make coverage`'s selection) and
+the diff's own bed lanes ([the class table](#gate-class-table) below has every
+column). The hostless matrix, `make docs` and `make check-ts` are not local
+tip lanes: CI runs them before anything lands, and `make nox-hostless` stays
+for running the matrix by hand. A tip that reaches no bed lane costs about
+50 s, most of it `make check-python` (36 s on the dev VM with a warm cache,
+about 70 s cold).
 
-1. `git fetch origin main` and rebase the branch onto it: the head that lands
-   must be a fast-forward of the current `main` (the hook refuses anything
-   else), and `make gate-tip` compares against `origin/main`. Squash on the
-   branch now if you squash at all.
-2. Push the branch (the hook fires for `main` only, so this push is free) and
-   open the PR.
-3. Run `make gate-tip` on that head. It need not wait for CI: its
-   [stamps](#the-landings-gate-is-stamped) are keyed by tree, so the two halves
-   run in parallel.
-4. Wait for the PR's CI to be green on that sha, and for whatever review the
-   change calls for. If `main` moved meanwhile, go back to step 1: a rebase
-   that changes the tree needs new stamps, one that does not keeps them, and CI
-   runs again either way.
-5. The maintainer, with that head checked out and nothing committed since the
-   push, lands it as a fast-forward push of the same sha:
+The flow, from a branch whose commits are ready:
 
-   ```bash
-   git push origin HEAD:main
-   ```
+1. `make gate-scope` prints what the tip will run for your diff (commit
+   first: it refuses a dirty tree).
+2. `make gate-tip` runs the tip over `merge-base(main, HEAD)..HEAD`, `main`
+   being `origin`'s, fetched (`BASE=` names another): the static lanes for a
+   Python diff and the bed lanes it reaches ([the lease only while a bed
+   lane runs](#the-landings-gate-is-stamped)). Each green lane is
+   [stamped](#the-landings-gate-is-stamped) for the committed tree. On green it
+   posts the `local-gate` status on `HEAD` when the branch is already pushed;
+   on a branch's first gate GitHub does not have the commit yet, so the run
+   says `local-gate not posted: push the branch, then make gate-status` and
+   still exits 0: the gate passed.
+3. `git push -u origin <branch>`. The pre-push hook (`.githooks/pre-push`)
+   checks every branch push: it refuses a tip whose lanes are not stamped,
+   runs `make check-breaking` over `merge-base..HEAD` for the checked-out
+   branch, and refuses any push to `main`. Before its live check it refuses a
+   dirty tracked tree or an untracked source, because that check reads the
+   tree on disk, not the commit: commit or stash the edit, then push again.
+   On a stamped tree it takes about 20 s: the fetch of `main` and `make
+   check-breaking` over the landing range (18 s for a 13-commit landing).
+4. `make gate-status` posts the `local-gate` status on `HEAD` after
+   re-checking that every stamped lane is green for its tree. When the pull
+   request's CI run already exists it waits for that run's `gate-admission`
+   job and re-runs it if it failed, because a late status starts no run by
+   itself. Posting twice is harmless: GitHub keeps the latest state.
+5. `gh pr create` (see [Pull requests](#pull-requests)), then wait for CI.
+   Its first job, `gate-admission`, verifies [the `local-gate`
+   status](#the-landings-gate-is-stamped) against the head, and every
+   validation job waits for it. A missing or mismatched status fails it
+   with the remedy: `make gate-tip` on this head, then `make gate-status`.
+   A branch forked before this flow landed does not carry the admission
+   script at its head, so `gate-admission` fails with a Python error until
+   the branch is rebased onto `main`.
+6. The maintainer reviews the pull request and presses **Rebase and merge**
+   once CI and the `local-gate` status are green. `main`'s ruleset requires
+   both, keeps the history linear and allows rebase-merge alone (squash and
+   merge commits are off), so the landing commits keep their messages and
+   the breaking marks the changelog reads.
 
-The pushed sha is the PR's head, so the PR closes as merged, and the hook
-still refuses a tip whose lanes are not stamped and still runs `gate-fresh`.
-`main`'s ruleset refuses the push when any of those CI jobs is not green on
-that sha, so step 4 is enforced, not only asked. Never land with GitHub's
-merge button: a squash or merge commit is a new sha nothing has gated, and
-the hook never sees it.
+`make land` runs steps 2 to 5 in one command from a feature branch: it gates,
+pushes, opens the pull request as a draft (an existing one is left alone) and
+runs `make gate-status`.
+
+**The behind-`main` gap.** The ruleset does not require a branch to be up to
+date with `main`, so a rebase-merge of a branch behind `main` lands a tree no
+gate ran on: the head's commits replayed onto changes they never saw. CI on
+`main` runs after the landing and catches it there (a red run files a "CI
+failed on main" issue); the gap is documented rather than closed by a merge
+queue because landings are rare, and the dedicated bed runner (#801) is the
+structural fix. `gate-admission` compares the status's base with the merge
+base it computes, never with `main`'s tip, so a branch behind `main` is still
+admitted. When `main` has moved in an area your change touches, rebase onto
+it and gate again before asking for the merge.
+
+**The status is an attestation, not a proof.** Anyone with push access can
+post a `local-gate` status with `gh api`, as `git push --no-verify` skips the
+hook. The trust model is author honesty plus CI: the status makes the honest
+path checkable, it does not prove a bed run. Posting needs write access to
+the repository. The author posts it from the dev VM, where every contributor
+works today under the maintainer's `gh` login; for a pull request from a
+fork, the maintainer fetches the head, runs `make gate-tip` and `make
+gate-status` on it, and the status lands on the head's sha whoever posts it.
+CI's `gate-admission` runs the admission script from the pull request's own
+head, so a fork can edit that script; what it cannot do is post the status,
+which the ruleset requires on its own, so the edit buys a fork nothing but a
+CI run.
+
+`main` takes no direct push, from anyone: the pre-push hook refuses it, and
+`main`'s ruleset refuses it too through its `pull_request` rule, which no
+actor may bypass for a push. Nothing reaches `main` but a merged pull
+request, [the release](release_process.md)'s included. The one escape is
+[the hotfix](#hotfix), which is still a pull request.
 
 (gate-class-table)=
 
@@ -527,26 +568,49 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 
 | Class | Paths | This commit | Tip |
 | --- | --- | --- | --- |
-| `none` | `docs/superpowers/specs/`, `todo/`, `AGENTS.md` | `make check-breaking` only | the same |
-| `docs` | `README.md`, `docs/` (not `conf.py`, `_ext/`, `examples/`) | `make docs` | `make gate-fresh` (it runs `docs`) |
-| `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts`, `make test-ts` | `make check-ts`, `make coverage-ts`, `make gate-fresh` |
-| `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark), and the two measured matrices, over their reader modules | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | those, `make quick-guards`, `make gate-fresh` |
+| `none` | `docs/superpowers/specs/`, `todo/`, `AGENTS.md` | `make check-breaking` only | `make check-breaking` |
+| `docs` | `README.md`, `docs/` (not `conf.py`, `_ext/`, `examples/`) | `make docs` | `make check-breaking` (plus `make docs-captures-check` for a capture input) |
+| `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts`, `make test-ts` | `make check-breaking` |
+| `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark), and the two measured matrices, over their reader modules | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | `make check-breaking`, `make check-python`, `make collect-check`, and `make coverage-bed` when a changed module is in the bed half (`BED_REACH`) |
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
-| `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | the commit lines with `make quick` over the package's unit and e2e trees, [its import consumers](#src-leaf-tip) and the guards, then `make coverage-bed`, the package's bed lane and `make gate-fresh`; a package whose unit tree is `tests/unit` whole runs the full gate and its bed lane instead ([the `src-leaf` tip](#src-leaf-tip)) |
-| `scripts` | `scripts/` | `make quick-guards`, ty, ruff | the full gate |
-| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | the full gate and the bed lanes |
-| `full` | any path with no row | the full gate | the full gate |
+| `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | `make check-breaking` and the static lanes, `make coverage-bed`, the package's bed lane |
+| `scripts` | `scripts/` | `make quick-guards`, ty, ruff | `make check-breaking` and the static lanes, `make coverage-bed` |
+| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | `make check-breaking` and the static lanes, `make coverage-bed` and the bed lanes |
+| `full` | any path with no row | the full gate | as `escalate` |
 
-The full gate is `make check-python`, `make check-ts` (together, `make
-check`), `make docs`, `make gate-fresh` and `make coverage`, in that order:
-the static lanes first, so that run by hand a lint, type or docs failure costs
-minutes rather than the twenty `make coverage` takes to reach it. `make
-gate-tip` stamps `make check-ts`, the suite (`make coverage`, or a `src-leaf`
-tip's `make coverage-bed`) and the bed lanes, and names the other static
-lanes "live at push": `check-python` carries a history check, so
-the pre-push hook runs them, through `gate-fresh`, on the tip it is pushing.
-Every line names one goal, so a `web` diff beside the full gate adds `make
-coverage-ts` alone: the full gate's `make check-ts` is not run twice. Beyond the `escalate`
+The static lanes are `make check-python` and `make collect-check`: every
+diff that touches Python (a Python class above, or any `.py` path, a Python
+file under `docs/examples/` included) runs them after `make check-breaking`. `make check-python` is `make lock-check` (the lock
+matches `pyproject.toml`), `make lint-python` (ruff and the architecture
+gates of `make lint-arch`) and `make typecheck-python`, as recipe lines in that
+order; `make collect-check` imports every module under the test roots without
+running one. `check-breaking` is the one live goal: it reads the landing
+range, so the hook runs it at the push and CI's `lint-python` runs it over the
+pull request's range. Every other tip lane is a function of the tree and is
+stamped. A tip whose diff touches `src/` or a docs capture input (the
+example captures and the two capture scripts) also runs `make
+docs-captures-check`, a bed lane.
+
+**`BED_REACH`** (`bed_reach()` in `scripts/gate_scope.py`) decides whether
+the tip runs `make coverage-bed`. It holds
+when the diff's classes include `src-leaf`, `scripts`, `escalate` or `full`;
+when a changed `tests-leaf` or `tests-structural` module is in the bed half,
+that is, it lives under `tests/integration` or any of its tests carries an
+`integration` or `embedded` mark (module, class, function and parameter marks
+all count, so a module mixing hostless and bed tests is in the bed half); and
+when the oracle recorded a reason for the diff (an unreadable `pytestmark` or
+mark decorator, no surviving root, a package's test trees gone), the
+conservative fallback, printed under the tip as `(bed half: <reason>)`. A
+hostless unit-test change therefore takes no lease. A bed test module's tip
+runs the whole bed half, not a `make quick` over the module: coarser and
+longer, the price of one lane.
+
+The full gate is the commit column of an `escalate` or `full` commit: `make
+check-python`, `make check-ts` (together, `make check`), `make docs` and `make
+coverage-bed`, in that order, plus the diff's bed lanes. The lint, type and
+docs checks run first, so that run by hand a lint, type or docs failure costs minutes rather
+than the seven minutes the bed half takes to reach it. The tip never runs the full
+gate. Beyond the `escalate`
 and `full` classes, the commit column is the full gate when a test module
 carries a `stability` or `chaos` mark outside every lane's files, carries a
 `pytestmark` (or a mark decorator) the oracle cannot read, or leaves no
@@ -555,59 +619,17 @@ trees are all gone; each reason is printed above the commands. The roots
 `make quick` receives for `src/otto/` packages include integration and e2e
 bed trees, which need the lab VMs: run them on the dev VM.
 
-(src-leaf-tip)=
-
-**The `src-leaf` tip runs the bed half, not `make coverage`.** What `make
-coverage` runs splits by venue ([where the test suite's time
-goes](#where-the-test-suites-time-goes) has the numbers): only the
-`tests/integration` tree and the e2e tests marked `integration` or
-`embedded` need the lab, and the pull request's CI runs everything else
-before anything lands (the whole hostless half on the primary interpreter,
-the reduced selections of [the cross-Python
-matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)
-on the other four). So a tip whose only source change
-is one or two `src/otto/` packages runs `make coverage-bed` (`(integration
-or embedded) and` the coverage selection, pass/fail, under the bed lease,
-uninstrumented in the pytest processes as `make quick` is) in place of
-`make coverage`, and its `make quick` runs the
-package's unit and e2e trees plus the **import consumers**: every
-`tests/unit` test module outside the package's trees whose source imports
-the package directly (`import otto.<pkg>`, `from otto.<pkg> import`, `from
-otto import <pkg>`, at any depth, read from the committed head), less two
-sets that need no second run: the guard-rider modules every `src-leaf`
-`quick` already carries, and the modules whose every test carries
-`interpreter_agnostic`, which `quick-guards` runs. The e2e trees stay in
-`quick` because their hostless items are `make coverage`'s and no bed lane
-selects them; every root inside `tests/integration` leaves it because the
-integration conftest marks every item there, so `coverage-bed` runs them.
-The tip census in `test_gate_scope.py` proves, for every scoped row, that
-each item of the package's trees and consumers that `make coverage` would
-select is selected by one of those tip lanes. What the tip gives up is the
-hostless modules outside the package's trees that reach it only
-transitively, and the hostless e2e modules outside them that import it
-directly (consumers are read in `tests/unit` only); the PR's CI runs all of
-them, and a landing is CI-green by [the
-ruleset](#gating-a-branch-before-it-lands) before it is pushed. Two `src-leaf` diffs keep the full gate instead: a
-package whose unit tree is `tests/unit` whole (`utils`, `result`, `params`,
-`errors`, `layout`, `console`, the other top-level modules) gains nothing
-from the scoping, its `quick` being the whole unit tree, about as long as
-`make coverage` uninstrumented; and a `scripts/` change beside the package,
-because the scripts drive the bed lanes. A scoped `src-leaf` landing
-therefore leaves no coverage stamp: see [the coverage
-stamp](#the-coverage-stamp) for what that means for a release.
-
 (gate-stability-lanes)=
 
 **Stability lanes and the test-isolation guard (`nox-unit-repeat`).**
-A package's bed lane rides every tip the diff earns, a src leaf's scoped tip or the full gate: `make conformance-bed`
+A package's bed lane rides every tip whose diff touches the package, beside `make coverage-bed`: `make conformance-bed`
 for `src/otto/host/`, and a stability tier for `src/otto/link/`
 (`stability-unix`), `src/otto/tunnel/` (`stability-tunnel`) and
 `src/otto/console.py` (`stability-embedded`). The stability tiers have two more
 areas, the stability test files (the files the `stability-*` Makefile targets
 run) and the tunnel-stability tree, which name their lanes in both columns. So a
 commit that changes only a src leaf under `src/otto/link/` runs no stability
-lane before the tip, and the landing's tip, whose bed lanes ride a src
-leaf's scoped tip as they ride the full gate, runs it. Whichever area selects it, a
+lane before the tip, and the landing's tip runs it. Whichever area selects it, a
 stability lane runs **once**: `make stability-<tier> COUNT=1`, and for the tunnel
 tier, whose tests loop internally, `make stability-tunnel COUNT=1 CYCLES=2`, its
 smoke depth. It never runs at the Makefile's soak count or depth, and a diff
@@ -632,10 +654,11 @@ the tunnel-stability tree and the chaos tree by marker (`conformance`,
 `busybox`, `stability`), and browser modules, which route to `make dashboard`
 by their `browser` mark, by `not browser`. `tests/integration/busybox_bed/` is
 different: its items carry only `integration`, which `quick` and `make coverage`
-do not exclude, so its row (`make coverage-unix` at the commit, the full gate at
-the tip) is what keeps it out of `quick`. A lane row names the lanes in both
+do not exclude, so its row (`make coverage-unix` at the commit) is what keeps
+it out of `quick`; at the tip it names nothing, because `make coverage-bed`
+runs its `integration`-marked items. A lane row names the lanes in both
 columns, even when the column is the full gate, because `make coverage`
-excludes those tiers; a conftest or helper inside one of those trees keeps its
+excludes those tiers, and at the tip only its bed lanes survive; a conftest or helper inside one of those trees keeps its
 own class (a conftest escalates) and adds the tree's lanes as well. A *mixed* file (a stability file that also holds
 unmarked tests) runs its lane for the marked tests and `quick` over its
 package for the rest, when there is a rest. A module carrying `kmodcov`,
@@ -646,87 +669,111 @@ inside the dashboard tree is a plain leaf and runs under `quick` like any other.
 a row, and an oracle census proves that every item pytest collects in every
 test module, changed alone, is selected by a lane the oracle emits.
 
-The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)). `make gate-fresh` is the full gate's last static lane (`make coverage` follows it, and a docs, web, test-only or `src-leaf` tip ends with it). Run it before handing a branch back or pushing the head its PR will land.
+The bed lanes take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first ([`make gate-tip` only while a bed lane runs](#the-landings-gate-is-stamped)). A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then, when it holds the lease, reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)).
 
-It runs the lanes that catch what a clean checkout sees and your dev tree
-hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
-golden), `check-api-teaching` (the otto names the docs teach),
-`typecheck-python`, `collect-check` and `docs`. It runs them against
-your **committed** tree inside a throwaway pristine worktree, then removes it
-(or keeps it, if the gate went red, so you have somewhere to debug). It does
-not run the test suites: they take longer than a push can wait, and CI runs
-them. `scripts/gate_fresh.py` says why each lane is in the list.
+A stamp is keyed by the committed tree, so a rebase or an amend that keeps the
+tree (a reworded message, commits squashed on the branch) keeps the stamps:
+`make gate-tip` on the new head finds every lane stamped and re-posts the
+`local-gate` status for the new sha in seconds. A rebase onto a `main` that
+moved changes the tree, and the lanes run again. Either way, run `make
+gate-status` after the push: the status belongs to a sha, and the old head's
+does not carry over.
 
-The reason it uses a separate worktree is that your checkout is a *superset* of
-CI's environment. It accumulates gitignored build outputs — above all
-`src/otto/_webassets/*/`, which only `make web` produces and which `pytest`
-never builds — and a superset certifies nothing about a subset. A run that is
-green only because an artifact happens to be lying around is not evidence about
-CI, which starts from a clean checkout. That is how issue #196 reached `main`.
+### Hotfix
 
-A worktree is free of every gitignored artifact by construction, so there is no
-allowlist to write and none to keep in sync. It also catches two things nothing
-else does: an unsynced `uv.lock`, and a test that only passes because of a file
-that was never `git add`ed.
+A hotfix is a pull request like any other; only its checks are skipped. It is
+for extreme cases: `main` is broken for users or a release is wedged, and the
+gate or CI cannot be made green in the time the fix can wait.
 
-The general rule, of which this is one instance: **each gate should reproduce
-its own CI twin's environment — matched, not maximal.** The hostless lanes are
-the ones that run *without* a frontend build, so gating them with the frontend
-present would be just as wrong as gating the browser lanes without it.
-
-`git push` to `main` runs this automatically via `.githooks/pre-push`; use
-`git push --no-verify` to skip it deliberately.
-
-A pass stamps the gated tree, under `<git common dir>/otto-gate-fresh-stamps/`,
-with the list of targets it ran. When the push finds a stamp for the pushed
-tree and today's target list, it runs only the history check (`check-breaking`
-over the pushed range) in the pristine worktree, a few seconds instead of the
-full gate's three and a half minutes: every other target is a function of the
-tree, and a tree that passed once passes again. The history check still runs
-because an amend or a squash changes the commit messages without changing the
-tree. That keeps the hook well inside the time GitHub holds an idle push
-connection open, which a full run can outlast; running `make gate-fresh` before
-you push is what earns the stamp.
+1. Push the branch with `git push --no-verify` (the hook's escape hatch) and
+   open the pull request with `hotfix:` at the start of its title and the
+   `hotfix` label.
+2. The maintainer merges it with the button's "merge without waiting for
+   requirements" option, which `main`'s ruleset grants the repository's
+   admin role for a pull request and for nothing else (the repository's
+   merge settings still make it a rebase-merge). GitHub records every bypass
+   in the ruleset's rule insights, which is where the skips are counted, and
+   `gh pr list --label hotfix --state merged` lists them. The push to `main`
+   then runs CI as any landing does, and a red run files the "CI failed on
+   main" issue.
+3. Afterwards, run the ordinary gate on `main`'s tip (`make gate-tip
+   BASE=<the hotfix's base>` on a branch at that tip) to learn whether the bed
+   lanes pass on the hotfixed tree; the status it would post is
+   informational, since the ruleset judges pull-request heads. The follow-up
+   that makes the checks green lands through the normal flow. The release
+   workflow's guard requires green CI on the commit it tags, so a hotfix that
+   leaves `main` red blocks releases until that follow-up lands.
 
 ### The landing's gate is stamped
 
-`make gate-tip` is how a branch earns its push to `main`. It asks the oracle
-for the tip list (`make gate-scope`, over `BASE..HEAD`), runs every **stamped**
-lane on it in order, and on green writes a stamp for that lane, keyed by the
-committed tree. A lane that already has a stamp for this tree is skipped, so a
-re-run after a red lane repeats only what is missing. A lane that goes red
-writes a red marker where its stamp would be. Until the lane passes on that
-tree, nothing counts for it there, not even a stamp promoted from another tree.
-`make gate-tip` deletes only evidence that cannot still be true: before a lane
-runs, a corrupt or misnamed file at that lane's path for the gated tree, and
-that lane's stamps and red markers for trees git no longer holds. Every other
-stamp stays, whichever worktree wrote it, so two worktrees can gate at once and
-you can gate a second landing before you push the first. A lock on
-`otto-gate-stamps/.lock` keeps two runs from interleaving their writes, and the
-pre-push check holds it shared while it reads, so it judges one state of the
-store and never sees a write half done. It skips the **live**
-lanes: the history checks, `lint-arch`, `check-python`, `docs` and
-`make gate-fresh` depend on the pushed range or are run by the push itself
-(`.githooks/pre-push`), so a stamp for them would certify the wrong thing.
-Coverage is one stamped lane among the others; it runs through
-[the coverage stamp](#the-coverage-stamp)'s own check. A `src-leaf` tip stamps
-`make coverage-bed` in its place ([the `src-leaf` tip](#src-leaf-tip)), a
-pass/fail lane that leaves no coverage stamp. `uv run python
-scripts/gate_tip.py --dry-run` lists the lanes without running them and
-`--force` re-runs lanes that are already stamped. Every run ends with a
-timing table, and each stamp records what its lane cost: see
-[What a gate costs](#what-a-gate-costs).
+`make gate-tip` is how a branch earns its `local-gate` status. It fetches
+`origin`'s `main` (`BASE=` names another base), asks the oracle for the tip
+list over `merge-base(main, HEAD)..HEAD` (what `make gate-scope` prints), runs
+every **stamped** lane on it in order, and on green writes a stamp for that
+lane, keyed by the committed tree. A lane that already has a stamp for this
+tree is skipped, so a re-run after a red lane repeats only what is missing. A
+lane that goes red writes a red marker where its stamp would be. Until the
+lane passes on that tree, nothing counts for it there, not even a stamp
+promoted from another tree. `make gate-tip` deletes only evidence that cannot
+still be true: before a lane runs, a corrupt or misnamed file at that lane's
+path for the gated tree, and that lane's stamps and red markers for trees git
+no longer holds. Every other stamp stays, whichever worktree wrote it, so two
+worktrees can gate at once and you can gate a second landing before you push
+the first. A lock on `otto-gate-stamps/.lock` keeps two runs from
+interleaving their writes, and the pre-push check holds it shared while it
+reads, so it judges one state of the store and never sees a write half done.
+The static lanes (`make check-python`, `make collect-check`) and the bed lanes
+are stamped. It skips the one **live** lane, `make check-breaking`: it depends
+on the pushed range and the push runs it (`.githooks/pre-push`), so a stamp
+for it would certify the wrong thing. `make coverage-bed` is the suite lane of
+every `BED_REACH` tip, a pass/fail lane that leaves no coverage stamp; `make
+coverage` is never a tip lane. `uv run python scripts/gate_tip.py --dry-run`
+lists the lanes without running them and `--force` re-runs lanes that are
+already stamped. Every run ends with a timing table, and each stamp records
+what its lane cost: see [What a gate costs](#what-a-gate-costs).
+
+`make gate-tip` takes [the bed lease](#bed-lease) itself, immediately before
+the first bed lane that will actually run, keeps it through the last, and
+releases it before anything is posted. A tip with no bed lane, or one whose
+bed lanes are all stamped already, takes no lease and goes green while
+another landing holds the bed; `--dry-run` takes none either.
+
+**The `local-gate` status.** On green, `make gate-tip` posts a commit status
+named `local-gate` on `HEAD`; `make gate-status` posts it for a tree gated
+earlier (`scripts/local_gate_status.py` is its one writer and reader). Its
+description, `v1 tree=<40 hex> base=<40 hex> lanes=<12 hex>`, is 113
+characters (GitHub caps a description at 140) and binds the committed tree
+that was gated, the merge base the tip was planned over, and a digest of the
+plan's stamped lane keys. CI's `gate-admission` checks out the pull
+request's head, plans the tip over `merge-base(base, head)..head` with the
+head's own oracle, and waits up to five minutes for a `local-gate` success
+whose tree, base and lane digest match; a missing or mismatched status
+fails it. A post is re-checked under the stamp store's
+exclusive lock, refused unless every stamped lane is green for the tree, so
+a status never outruns its evidence. A tip with no stamped lane (a `none`,
+`docs` or `web` diff) earns its status too. `make gate-tip` exits 0 on a
+green gate whose post did not land (the gate passed, and the run says
+`local-gate not posted: <why>`); `make gate-status` exits 1, since posting was
+its job. When a lane goes red on a tree whose `HEAD` already carries a
+`local-gate` success, `make gate-tip` posts a failure over it, so the remote
+evidence follows the red marker. The failure path looks at `HEAD`'s sha
+only: a success posted on another sha of the same tree (a message amended
+after `make gate-status`) is not flipped, though the red marker still
+refuses the hook and `make gate-status` for that tree.
 
 Stamps live under `<git common dir>/otto-gate-stamps/<tree>/`, so every
 worktree of the clone shares them. They are keyed by the tree hash and not the
-commit because the tree is what a squash inherits: the squash of a gated tip
-has the same tree, so the gate you ran on the branch is the gate the landing
-shows. Squash on the branch before its final push, though: the PR's CI runs
-on a sha, and the head that lands must be the head it went green on. Like the
+commit because the tree is what an amend, a squash on the branch or a rebase
+that changes nothing inherits, so the gate you ran stays valid for it. The
+PR's CI and the `local-gate` status are per sha, though: push the final head,
+then `make gate-status`, and the head that lands is the one they are green on. Like the
 coverage stamp, a stamp is a committed-tree contract: a dirty
 tracked tree, or an untracked file the lanes would import, is refused, and so
-is any command-line variable other than `BASE=` (`make gate-tip X=...` is
-refused). `BASE=` is the one control. The runner shares the coverage stamp's
+is any command-line variable other than `BASE=` and the release's own knobs,
+`BUMP=`, `NEW_VERSION=` and `BUDGET_APPROVE=` (the Makefile's
+`COVERAGE_STAMP_HARMLESS`, which the release's nested `make gate-tip`
+inherits); `make gate-tip X=...` is refused. `BASE=` is the one control a
+landing passes. The runner shares the coverage stamp's
 boundary for the environment, too: `PYTEST_ADDOPTS`, `MAKEFLAGS`, `MFLAGS` and an
 environment `BASE` are cleared before a lane runs. Everything else in your
 environment reaches the lanes undetected (`CONFORMANCE_CELLS=1 make gate-tip`
@@ -760,37 +807,40 @@ alone (`RELEASE_OWNED` in `scripts/gate_scope.py`):
 - `uv.lock` may move only otto-sh's own `version` line.
 - A matrix may change only its `as_of` dates, each still a date.
 
-Such a change is classed `none` and adds no lane, so a pushed range made of
-nothing else needs only the live lanes (`CHANGELOG.md` is on the docs row,
-which is live too). Any other edit to these files, such as a dependency, a tool
-setting or a changed verdict, is classified as before.
+Such a change is classed `none` and adds no lane, so a release branch made of
+nothing else needs only `make check-breaking` (`CHANGELOG.md` is on the docs
+row, which stamps nothing either). Any other edit to these files, such as a
+dependency, a tool setting or a changed verdict, is classified as before: a
+matrix whose verdicts improved is a `tests-leaf` change, and the release's own
+`make gate-tip` runs its static lanes.
 
-The exemption covers only those files. A commit on `main` that was not pushed
-before the release still owes its own lanes, and they must be stamped on the
-released tree: a stamp taken before the release names a different tree. So
-push your work first, then run `make release`.
+The exemption covers only those files. The release starts from `main`'s tip
+exactly (`make release-preflight` refuses anything else), so no other commit
+rides its range.
 
 When the pre-push hook finds a stamped lane without a satisfying stamp it
 refuses and says which, as in:
 
 ```text
-gate-tip: refusing to push 3f9a1c2d4e5b to main — its gate is not stamped on tree 7b0c91ae2d44 (range 9e1d4b7a0c33..3f9a1c2d4e5b):
-  make coverage: no stamp
-run: git fetch origin main && make gate-tip BASE=FETCH_HEAD   (on commit 3f9a1c2d4e5b), then push again.
-git push --no-verify skips this check; CI then runs only its own lanes — never make coverage or the beds.
+gate-tip: refusing refs/heads/ssh-retry (3f9a1c2d4e5b) — its gate is not stamped on tree 7b0c91ae2d44 (range 9e1d4b7a0c33..3f9a1c2d4e5b):
+  make coverage-bed: no stamp
+run: make gate-tip   (on commit 3f9a1c2d4e5b), then push again.
+git push --no-verify skips this check; the local-gate status then stays absent and gate-admission holds the pull request's CI.
 ```
 
-Each lane's reason is one of `no stamp`, `the lane went red on this tree (…)`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the stale-fetch case below.
+Each lane's reason is one of `no stamp`, `the lane went red on this tree (…)`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the moved-`main` case below. `make gate-status` refuses with the same lines, `gate-status: refusing HEAD …`.
 
-The check recomputes the tip list over the range the push really carries, so
-a stale `origin/main` (someone else landed after your last fetch) can make the
-list longer than the one you stamped. The remedy in the message is the
-fetch-then-restamp: `git fetch <remote> main && make gate-tip BASE=FETCH_HEAD`.
+The check fetches the remote's `main` and recomputes the tip list over the
+range the push really carries, so a `main` that moved after your gate
+(someone else landed) can make the list longer than the one you stamped.
+`make gate-tip` fetches the same `main`, so the remedy is to run it again.
 
 There are two ways out of a refusal: stamp the tip, or `git push --no-verify`.
-The second is honest only about what it skips: CI never runs `make coverage`
-or the beds, so a push that bypasses the hook lands without either having run.
-(The test-isolation guard is not on that list: nightly's `unit-repeat` job runs it.)
+The second is honest about what it skips: `make gate-status` posts no
+`local-gate` status for an unstamped tip, so the pull request's
+`gate-admission` fails and holds its CI, and the pull
+request cannot land without [the hotfix](#hotfix)'s bypass. (The
+test-isolation guard is not on that list: nightly's `unit-repeat` job runs it.)
 
 `scripts/coverage_stamp.py check` stays exact-tree, and `make release` still
 uses it that way. A release after a matrix commit therefore re-runs coverage
@@ -811,7 +861,7 @@ commits, and checks again; its own matrix
 (`make nox-release`) then covers 3.11–3.14 only, because the primary's
 session is what the stamp proves.
 
-The stamp is a committed-tree contract, like `make gate-fresh`: a run over
+The stamp is a committed-tree contract, like a lane stamp: a run over
 modified or staged tracked files, over an untracked file under `src/` or a
 `testpaths` root in `pyproject.toml` (the live checkout would import it),
 under a venv on anything but the primary interpreter, or with ANY variable
@@ -823,11 +873,13 @@ block the stamp; the run lists it, and you should add it before you gate,
 because the legs may import it while the committed tree lacks it. Only
 `make coverage` stamps: `make all` and `make validate` run the same coverage
 legs but leave no stamp. Commit, then `make coverage`, and the release will
-find the stamp. A scoped `src-leaf` landing stamps `make coverage-bed`,
-not `make coverage` ([the `src-leaf` tip](#src-leaf-tip)), so a release tip
-usually has no coverage stamp: run `make coverage` on it before `make
-release` when you want the suite's twenty minutes to be yours and not the
-release's; either way the floor is enforced on the released tree.
+find the stamp. A landing never writes a coverage stamp: its suite lane is
+`make coverage-bed` ([gating a branch](#gating-a-branch-before-it-lands)), and
+`make coverage` is the release's certificate (and the by-hand working check
+before `make release`). So a release tip usually has no coverage stamp: run
+`make coverage` on it before `make release` when you want the suite's twenty
+minutes to be yours and not the release's; either way the floor is enforced
+on the released tree.
 
 The landing's own gate is stamped lane by lane, which is a different contract:
 see [The landing's gate is stamped](#the-landings-gate-is-stamped).
@@ -881,9 +933,10 @@ once its CI is green:
 gh pr create --draft --base main --title "feat: add SSH retry logic"
 ```
 
-The PR lands by the steps in [Gating a branch before it
-lands](#gating-a-branch-before-it-lands), never by GitHub's merge button. It
-then closes as merged; delete the branch and pull `main`:
+The PR follows the steps in [Gating a branch before it
+lands](#gating-a-branch-before-it-lands) and lands by the maintainer's
+**Rebase and merge** once CI and the `local-gate` status are green. It then
+closes as merged; delete the branch and pull `main`:
 
 ```bash
 git checkout main
@@ -895,6 +948,7 @@ git branch -d <your-branch>
 
 - [ ] Commits follow the conventional commit format
 - [ ] `make gate-tip` has stamped the PR's head, and its CI is green on that sha
+- [ ] `make gate-status` posted the `local-gate` status for this head
 - [ ] Branch is rebased on the latest `main`
 - [ ] Related issue linked (`Closes #N`)
 - [ ] Commit subject reads as the changelog entry it will become (see below)
@@ -1018,9 +1072,11 @@ The lab bed is single-tenant, and the bed lease is what enforces it. Every
 `make` target that touches the bed (a suite that needs the lab, the console and
 guest probes, and `quick` when its `PATHS` name a tree outside `tests/unit`)
 takes the cell's lease as its first step and releases it as its last; the
-targets that run bed lanes with `$(MAKE)` (`gate-tip`, `release`, `stability`,
-`all` and the release matrices) hold it across every lane they run, so a
-landing's gate is one hold. The census in `tests/unit/test_lane_invariants.py`
+targets that run bed lanes with `$(MAKE)` (`release`, `stability`, `all` and
+the release matrices) hold it across every lane they run. `gate-tip` holds it
+only while its bed lanes run: it takes the lease immediately before the first
+bed lane that will actually run and releases it after the last, so a landing's
+bed lanes are one hold and its static lanes need none. The census in `tests/unit/test_lane_invariants.py`
 classifies every Makefile target as leased, holding, or hostless, and refuses
 one it does not know. A second run on the same cell fails fast:
 
@@ -1174,7 +1230,7 @@ what you want to exercise:
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
 | No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on 3.10, coverage-gated; minus the `interpreter_agnostic` family on every other Python — see [the cross-Python matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
-| The bed half of that gate (tests/integration plus the e2e tests marked `integration` or `embedded`), uninstrumented, pass/fail: a `src-leaf` tip's lane, never a floor | `make coverage-bed` | lab VMs |
+| The bed half of that gate (tests/integration plus the e2e tests marked `integration` or `embedded`), uninstrumented, pass/fail: every `BED_REACH` tip's lane, never a floor | `make coverage-bed` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
@@ -1879,8 +1935,10 @@ uv run python scripts/junit_durations.py --by-file reports/junit/coverage-python
 uv run python scripts/junit_durations.py --top 40 reports/junit/coverage-python/*.xml   # slowest cases
 ```
 
-The suite's time splits by venue, and the split is what [the `src-leaf`
-tip](#src-leaf-tip) is built on: of `make coverage`'s 5,721 test-seconds on
+The suite's time splits by venue, and the split is what [the landing's
+tip](#gating-a-branch-before-it-lands) is built on: the pull request's CI runs
+the hostless half, and the tip runs the bed half (`make coverage-bed`). Of
+`make coverage`'s 5,721 test-seconds on
 2026-11-01 (22,887 tests), `tests/unit` held 3,542 and everything outside it
 about 2,180, nearly all of it the bed half (the `tests/integration` tree and
 the e2e tests marked `integration` or `embedded`; the hostless e2e items are
@@ -1888,7 +1946,9 @@ the small remainder): docker e2e 381, console e2e 344, integration/host 292,
 cov e2e 251, cli e2e 215, tunnel e2e 125, busybox_bed 101, link impair 97,
 host e2e 92, the rest under 70 each. `make coverage-bed`'s reports
 (`reports/junit/coverage-bed/` and `coverage-bed-serial/`) measure the bed
-half alone.
+half alone. An escalating commit therefore has no local hostless run either:
+its full gate ends with `make coverage-bed`, `make coverage-hostless` is the
+by-hand working check when you want one, and CI owns the hostless half.
 
 `make unit-outliers` reads the two reports `make coverage` (or `make
 coverage-python`) last wrote, one for the parallel leg and one for the
@@ -1942,9 +2002,7 @@ lane may run on, what `nproc(1)` prints and what `COVERAGE_WORKERS` reads)
 and `junit` (the reports under `reports/junit/` the lane wrote: those new or
 rewritten between the lane's start and its end). A red marker carries the
 same object. A promoted stamp carries none: the lane did not run on that
-tree. The coverage lane's stamp carries none either when the
-[coverage stamp](#the-coverage-stamp) already held, since nothing ran; the
-run then says `stamped (the coverage stamp holds)`. Timing is a report and
+tree. Timing is a report and
 never evidence: the pre-push check does not read it, a stamp without it (or
 with a malformed one) is evidence all the same, and a failure while
 measuring leaves the lane's verdict and stamp untouched.
@@ -1964,8 +2022,12 @@ is never a leg's verdict.
 
 `make gate-tip` ends with the table for the run — elapsed, outcome
 (`stamped`, `already stamped`, `red`, `not stamped`, `live at push`, or
-`missing` in a dry run) and lane — and the stored table for any tree is one
-command away:
+`missing` in a dry run) and lane — then says what publishing did: `posted
+local-gate on <sha>`, `local-gate not posted: <why>`, or, when a red run
+flipped a success `HEAD` carried, `posted local-gate failure on <sha>`. On
+the dev VM a tip that reaches no bed lane costs about 50 s, one that
+reaches the bed half about 8 minutes (`make coverage-bed` is 405 s of it),
+and the pre-push hook about 20 s on a stamped tree. The stored table for any tree is one command away:
 
 ```bash
 uv run python scripts/gate_tip.py --timings          # HEAD's tree

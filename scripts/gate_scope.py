@@ -17,6 +17,7 @@ import copy
 import fnmatch
 import json
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Iterator
@@ -26,7 +27,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-from scripts.gate_fresh import GateFreshError, tree_state  # noqa: E402 -- path set up above
+from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
+    GateError,
+    tree_hash,
+    tree_state,
+)
 
 
 @dataclass(frozen=True)
@@ -59,22 +64,17 @@ class Scope:
     special: "list[str]"
     # the same rows' tip-time commands
     special_tip: "list[str]"
-    # the bed lane lines a changed src package adds to any full gate this diff earns (sorted)
+    # the sorted bed lane lines a changed src package adds to the tip and to a full commit
+    # column
     bed_lanes: "list[str]"
     # paths no row matched (each makes the class `full`)
     unknown: "list[str]"
     # reasons the commit column is the full gate (a FULL row, > 2 packages, unknown path,
-    # no surviving root)
+    # no surviving root); any one also sends the tip to the bed half (`bed_reach`)
     full_at_commit: "list[str]"
-    # reasons the tip column is the full gate beyond the class rule (a FULL tip row)
-    full_at_tip: "list[str]"
-    # PATHS for `make quick` at the tip. For a scoped src-leaf tip: the commit's minus every
-    # root inside tests/integration (every item there is bed-marked; the tip's
-    # `make coverage-bed` runs them) plus the changed packages' import consumers (#797); the
-    # rows' e2e trees stay, their hostless items being `make coverage`'s and no bed lane's.
-    # Otherwise the commit's quick: [] when a full column cleared it, and when `classify`
-    # was asked for the commit column only (`tip=False`).
-    quick_tip: "list[str]"
+    # the sorted changed test modules in the bed half (`in_bed_half`): each sends the tip
+    # to the bed half of the coverage selection
+    bed_modules: "list[str]"
 
 
 Reader = Callable[[str, str], "str | None"]
@@ -312,12 +312,9 @@ BED_LANES = {
     "tunnel": [STABILITY_TUNNEL],
     "console": [STABILITY_EMBEDDED],
 }
-"""The lane lines every full gate this diff earns adds for these sources: the full gate
-excludes the bed tiers, and a change to these packages is what the beds exercise."""
-SRC_LEAF_TIP_LANES = ["make coverage-bed"]
-"""The lane lines a `src-leaf` tip runs in place of the full gate (#797): the bed half of the
-coverage selection. One place: `commands()` emits them, the lane census proves them leased,
-the runner's goal census stamps them."""
+"""The lane lines a change to these sources adds to the tip and to a full commit column:
+`make coverage-bed` selects by tier, and a change to these packages is what the beds'
+own lanes exercise."""
 GUARD_RIDERS = [
     "tests/unit/test_error_base.py",
     "tests/unit/test_declared_additions.py",
@@ -325,7 +322,7 @@ GUARD_RIDERS = [
     "tests/unit/import_budget",
     "tests/unit/api_snapshot",
 ]
-"""Tree-wide guards no package path selects; they ride every src-leaf `quick`."""
+"""Tree-wide guards no package path selects; they ride every src-leaf commit's `quick`."""
 MATRIX_READERS = [
     "tests/unit/test_collate_kmodcov_matrix.py",
     "tests/unit/test_kmodcov_matrix.py",
@@ -443,8 +440,7 @@ def _imported_names(module: "ast.Module") -> "Iterator[str]":
 
     `import a.b [as c]` yields `a.b`; `from a.b import c` yields `a.b` and `a.b.c` (the
     second so `from otto import host` names `otto.host`, as `import otto.host` does). A
-    relative import names nothing: the two readers below ask about absolute modules. The
-    one import walk :func:`_imports_a_gate_pin` and :func:`imports_package` share.
+    relative import names nothing: :func:`_imports_a_gate_pin` asks about absolute modules.
     """
     for node in ast.walk(module):
         if isinstance(node, ast.Import):
@@ -480,8 +476,9 @@ def matrix_readers(sources: "dict[str, str]") -> "list[str]":
 
 
 # (glob, commit-time commands, tip-time commands): a directory-stamped tree — every item is
-# a lane's, so `quick` is never added. First match wins. [FULL] = that column is full.
-# A row may name several lanes; each column is named even when it is the full gate.
+# a lane's, so `quick` is never added. First match wins. [FULL] = the commit column is full.
+# A row may name several lanes; each column is named even when it is the full gate. Only a
+# tip line whose goals are all BED_GOALS reaches the tip (`commands`).
 SPECIAL_TREES = [
     # The bed-opener witness carries `conformance_bed`, which `make conformance` excludes
     # (`make conformance`'s selector): the bed lane is its only lane, at the commit too.
@@ -492,7 +489,8 @@ SPECIAL_TREES = [
     ),
     ("tests/conformance/*", ["make conformance"], ["make conformance-bed"]),
     ("tests/busybox/*", ["make busybox"], ["make busybox"]),
-    ("tests/integration/busybox_bed/*", ["make coverage-unix"], [FULL]),
+    # its items are integration-marked: the tip's `make coverage-bed` runs them
+    ("tests/integration/busybox_bed/*", ["make coverage-unix"], []),
     (
         "tests/e2e/monitor/dashboard/test_replay_soak.py",
         ["make dashboard-soak"],
@@ -544,24 +542,105 @@ QUICK_EXCLUDED = frozenset(
     {"stability", "busybox", "conformance", "kmodcov", "browser", "interpreter_agnostic"}
 )
 """The marks both `make quick` legs deselect (M_QUICK; pinned against the Makefile)."""
-STATIC_LANES = ["make check-python", "make check-ts", "make docs", "make gate-fresh"]
-"""The full gate's lanes that run no test suite: lint, types (Python, then TypeScript), docs,
-the fresh-tree checks. Together the first two are `make check`; they are spelled apart
-because `check-python` carries a history check and runs at the push (`gate_tip.LIVE_GOALS`)
-while `check-ts` is stamped by tree."""
-TEST_SUITE_LANES = ["make coverage"]
-"""The full gate's lanes that run test suites; every static lane precedes them.
+STATIC_LANES = ["make check-python", "make check-ts", "make docs"]
+"""The full commit column's lanes that run no test suite: lint and types (Python, then
+TypeScript), then docs. Together the first two are `make check`; they are spelled apart
+because the tip stamps `check-python` and runs no TypeScript lane (CI's `check-ts` job does)."""
+TEST_SUITE_LANES = ["make coverage-bed"]
+"""The full commit column's lanes that run test suites; every static lane precedes them.
 
-The hostless matrix (`tests_hostless-3.10` … `3.14`) is not here: it is the pull
-request's CI, which runs before the landing (#795). The local tip owns what CI
-cannot run: `make coverage` and the diff's bed lanes."""
+The hostless half (`tests_hostless-3.10` … `3.14`) is not here: it is the pull request's
+CI, which runs before the landing (#795). The local gate owns what CI cannot run: the bed
+half of the coverage selection and the diff's bed lanes."""
 FULL_GATE = STATIC_LANES + TEST_SUITE_LANES
-"""The full gate, cheapest first: the static lanes (minutes) before the test suite
-(`make coverage`, ~20 min on the bed), so that run by hand a lint, type or docs failure
-costs minutes, never the twenty the suite takes to reach it. `gate_tip` walks the list
-in this order, stamping the suite lane and leaving the static lanes (`LIVE_GOALS`) to
-the push; `test_gate_scope` pins it. The `escalate`, `scripts` and `full` tips run it;
-a `src-leaf` tip runs its commit lines and `SRC_LEAF_TIP_LANES` instead (#797)."""
+"""The full commit column, cheapest first: the static lanes (minutes) before the bed half,
+so that run by hand a lint, type or docs failure costs minutes, never the bed run's. An
+`escalate` or `full` commit, or one with a `full_at_commit` reason, runs it; the tip never
+does (`commands` composes the tip from `STATIC_GOALS`, `BED_GOALS` and the live line)."""
+
+PYTHON_CLASSES = [TESTS_LEAF, TESTS_STRUCTURAL, SRC_LEAF, SCRIPTS, ESCALATE, FULL]
+"""The classes whose tip earns the static lanes (`static_reach`)."""
+STATIC_GOALS = ["check-python", "collect-check"]
+"""Tree-pure, hostless, stamped: the tip runs them for any Python-touching diff."""
+BED_GOALS = [
+    "coverage-bed",
+    "conformance-bed",
+    "stability-unix",
+    "stability-tunnel",
+    "stability-embedded",
+    "docs-captures-check",
+    "kmodcov",
+    "chaos",
+    "chaos-embedded",
+]
+"""The lanes that take the bed lease, stamped: the tip runs the bed half (`coverage-bed`)
+when the diff reaches it (`bed_reach`), plus the diff's bed lanes and bed special rows."""
+COMMIT_ONLY_GOALS = [
+    "quick",
+    "quick-guards",
+    "check-ts",
+    "test-ts",
+    "docs",
+    "lint-arch",
+    "ruff",
+    "ty",
+    "conformance",
+    "busybox",
+    "coverage-unix",
+    "dashboard",
+    "dashboard-soak",
+    "stability-unit",
+]
+"""What the commit column may emit beyond the tip's goals: a working check, never stamped,
+never in a tip. Their landing venues are CI's jobs and nightly's."""
+RANGE_TARGETS = ["check-breaking"]
+"""The emitted targets that run a history check, whose RANGE defaults to origin/main..HEAD."""
+LIVE_GOALS = RANGE_TARGETS
+"""History-dependent goals: run by the push itself over the pushed range, never stamped."""
+STAMPED_GOALS = STATIC_GOALS + BED_GOALS
+"""Every goal a tip can emit that the runner stamps by tree."""
+
+
+class UnknownGoalError(ValueError):
+    """The oracle met a line whose goals it does not classify."""
+
+
+def goals(line: str) -> "list[str]":
+    """Return the goals of one oracle line: make targets, or the uv tool (ruff, ty).
+
+    The commit column emits ruff and ty lines per file; every goal must be one the oracle
+    classifies (stamped, live or commit-only), or the line is refused.
+    """
+    words = shlex.split(line)
+    if words[:1] == ["make"]:
+        found = [w for w in words[1:] if "=" not in w]
+    elif words[:2] == ["uv", "run"] and words[2:3] in (["ruff"], ["ty"]):
+        found = [words[2]]
+    else:
+        raise UnknownGoalError(f"the oracle emitted a lane it does not classify: {line}")
+    known = STAMPED_GOALS + LIVE_GOALS + COMMIT_ONLY_GOALS
+    unknown = [g for g in found if g not in known]
+    if not found or unknown:
+        raise UnknownGoalError(f"the oracle emitted a lane it does not classify: {line}")
+    return found
+
+
+def is_live(line: str) -> bool:
+    """Return whether any goal of *line* is live (run by the push, never stamped)."""
+    return any(g in LIVE_GOALS for g in goals(line))
+
+
+def is_bed(line: str) -> bool:
+    """Return whether any goal of *line* takes the bed lease (a goal in BED_GOALS)."""
+    return any(g in BED_GOALS for g in goals(line))
+
+
+_RANGE = re.compile(r"\s+RANGE=\S+$")
+
+
+def lane_key(line: str) -> str:
+    """Return the oracle line minus its RANGE decoration: base-independent by construction."""
+    return _RANGE.sub("", line)
 
 
 def _match(path: str, globs: "tuple[str, ...]") -> bool:
@@ -1006,56 +1085,6 @@ class _QuickRoots:
         return any(self._selected_from(p) for p in self._modules if _within(p, [root]))
 
 
-def imports_package(source: "str | None", package: str) -> bool:
-    """Report whether `source` imports `otto.<package>` directly, in any of three forms.
-
-    `import otto.<package>[.x] [as y]`, `from otto.<package>[.x] import …` and
-    `from otto import <package> [as y]`, at any depth (a function-local import is a direct
-    import). The dotted name is matched whole, so `otto.lab` is not `otto.labs`. Attribute
-    access through a bare `import otto` is not read: it is the transitive case, and the
-    pull request's CI runs it.
-    """
-    module = _parse(source)
-    if module is None:
-        return False
-    dotted = f"otto.{package}"
-    return any(n == dotted or n.startswith(dotted + ".") for n in _imported_names(module))
-
-
-def consumers(
-    read: Reader, head_rev: str, head_paths: "set[str]", packages: "Iterable[str]"
-) -> "list[str]":
-    """Return the unit test modules outside `packages`' rows that import one of them (#797).
-
-    The hostless cross-package consumers a `src-leaf` tip's `quick` adds to the package's
-    trees: every `tests/unit` test module at head, less those inside any changed package's
-    `UNIT_TREES` row (its trees already run), less `GUARD_RIDERS` (already on every
-    src-leaf quick), less a module whose every test carries `interpreter_agnostic`
-    (`quick-guards`'s; its root would add a leg that selects nothing), whose source
-    :func:`imports_package` one of `packages`. Each module is read through the reader once,
-    at `head_rev` (about a thousand reads, a few seconds); a module whose text never names
-    a package is dropped before any parse, so only the importers (a few hundred for `host`,
-    a handful for `monitor`) are parsed, the family check last of all.
-    """
-    wanted = sorted(packages)
-    excluded = [t for pkg in wanted for t in UNIT_TREES.get(pkg, [])] + list(GUARD_RIDERS)
-    found: "list[str]" = []
-    for path in sorted(head_paths):
-        if not path.startswith("tests/unit/") or not _is_test_module(path):
-            continue
-        if _within(path, excluded):
-            continue
-        source = read(head_rev, path)
-        if source is None or not any(pkg in source for pkg in wanted):
-            continue
-        if not any(imports_package(source, pkg) for pkg in wanted):
-            continue
-        if carries_family_mark(source):
-            continue
-        found.append(path)
-    return found
-
-
 def _surviving_root(path: str, runnable: "Callable[[str], bool]") -> "str | None":
     """Return the nearest enclosing root (package, tree, `tests`) quick can run, else None."""
     parts = path.split("/")
@@ -1081,6 +1110,9 @@ def _is_src(path: str) -> bool:
 def _special_lane(path: str, source: "str | None") -> "list[Any] | None":
     """[commit commands, tip commands, covered marks, rule kind] for a file a lane owns, else None.
 
+    A [FULL] commit column is a `full_at_commit` reason, which also sends the tip to the
+    bed half (`bed_reach`); the tip column then names nothing of its own.
+
     Kind: "tree" (SPECIAL_TREES — never quick), "file" (STABILITY_FILES), "unreadable" (a
     pytestmark or decorator the walker cannot read → full), "mark" (LANE_MARKERS), "stray"
     (a stability/chaos mark outside every lane's roots → full).
@@ -1102,12 +1134,12 @@ def _special_lane(path: str, source: "str | None") -> "list[Any] | None":
     if _UNPARSABLE in marks and _parse(source) is not None:
         # a pytestmark or decorator the walker cannot read may hold a lane mark that quick
         # deselects; a module that does not parse is left to quick, whose collection fails
-        return [[FULL], [FULL], set(), "unreadable"]
+        return [[FULL], [], set(), "unreadable"]
     lanes = [lane for mark, lane in LANE_MARKERS.items() if mark in marks]
     if lanes:
         return [lanes, list(lanes), set().union(*(LANE_COVERS[lane] for lane in lanes)), "mark"]
     if marks & {"stability", "chaos"}:
-        return [[FULL], [FULL], set(), "stray"]
+        return [[FULL], [], set(), "stray"]
     return None
 
 
@@ -1116,9 +1148,10 @@ def _owning_tree_lanes(path: str) -> "list[list[Any]]":
 
     Each directory row (`<root>/*`) whose root holds `path` gives a "tree" lane row, as a
     test module there would: the path keeps its own class (a conftest escalates), and the
-    tree's lanes join both columns because the full gate excludes that tier. File rows name
-    one module only and feed nothing else. A docs-harness script feeds the docs lane at the
-    commit (the tip's full gate already runs it).
+    tree's lanes join both columns because the full gate excludes that tier; at the tip only
+    the lanes whose goals are all bed goals survive (`commands`). File rows name one module
+    only and feed nothing else. A docs-harness script feeds the docs lane at the commit (the
+    docs build is CI's at the tip).
     """
     if path in DOCS_HARNESS:
         return [[["make docs"], [], set(), "tree"]]
@@ -1143,7 +1176,6 @@ def _route_lane(
     special: "set[str]",
     special_tip: "set[str]",
     full_commit: "list[str]",
-    full_tip: "list[str]",
 ) -> bool:
     """Record a lane row's commands and full-gate reasons; return True when quick must run too."""
     at_commit, at_tip, covered, kind = lane
@@ -1155,10 +1187,7 @@ def _route_lane(
         full_commit.append(f"{path}: {reason}")
     else:
         special.update(at_commit)
-    if at_tip == [FULL]:
-        full_tip.append(f"{path}: full at the tip")
-    else:
-        special_tip.update(at_tip)
+    special_tip.update(at_tip)
     return kind in {"file", "mark"} and _has_tests_outside(source, covered)
 
 
@@ -1192,56 +1221,49 @@ def _route_measured(
             add_root(reader)
 
 
-def whole_tree_row(trees: "list[str]") -> bool:
-    """Report whether a `UNIT_TREES` row's unit root is the whole unit tree (#797).
+def full_gate(classes: "set[str]", full_at_commit: "list[str]") -> bool:
+    """Decide whether the commit column is the full gate (:data:`FULL_GATE`).
 
-    Such a row (`utils`, `result`, the other top-level modules) gains nothing from a scoped
-    tip: its quick would be the whole unit tree, about as long as `make coverage`
-    uninstrumented, so the full gate runs as before; the tip census skips these rows.
+    `escalate` and `full`, or any `full_at_commit` reason. The tip has no full gate: it is
+    composed from :func:`static_reach` and :func:`bed_reach` (`commands`).
     """
-    return "tests/unit" in trees
+    return bool(classes & {ESCALATE, FULL}) or bool(full_at_commit)
 
 
-def _whole_tree_row(path: str, trees: "list[str]") -> "list[str]":
-    """Return the full-at-tip reason for a src row :func:`whole_tree_row` names."""
-    return [f"{path}: its row is the whole unit tree"] if whole_tree_row(trees) else []
+def in_bed_half(path: str, source: "str | None") -> bool:
+    """Report whether a test module is in the bed half of the coverage selection.
 
-
-def _tip_quick(
-    quick: "set[str]",
-    packages: "set[str]",
-    read: Reader,
-    head_rev: str,
-    head_paths: "set[str]",
-    runnable: "Callable[[str], bool]",
-) -> "set[str]":
-    """Return the src-leaf tip's quick roots: the commit's minus the bed trees, plus consumers.
-
-    Every quick root inside `tests/integration` (a row's tree, a tests-leaf module there, the
-    tree itself as a fallback root) is `make coverage-bed`'s at the tip: the integration
-    conftest marks every item there, and `M_QUICK` excludes neither mark, so leaving one in
-    would run it twice. The rows' e2e trees stay: their hostless items are `make coverage`'s
-    and no bed lane selects them (the bed-marked few run twice, as they do in the commit
-    column). The packages' import :func:`consumers` ride (#797).
+    Under `tests/integration` (its conftest marks every item there), or any of its tests
+    carries an `integration` or `embedded` mark in the routing view (module, class,
+    function and parameter marks): a module mixing hostless and bed tests is in the bed half.
     """
-    bed_trees = {t for t in quick if _within(t, ["tests/integration"])}
-    riders = {p for p in consumers(read, head_rev, head_paths, packages) if runnable(p)}
-    return (quick - bed_trees) | riders
+    return _within(path, ["tests/integration"]) or bool(
+        {"integration", "embedded"} & _all_marks(source)
+    )
 
 
-def full_gate(
-    classes: "set[str]", full_at_commit: "list[str]", full_at_tip: "list[str]", *, tip: bool
-) -> bool:
-    """Decide whether a column is the full gate: the one place `classify` and `commands` share.
+def static_reach(scope: Scope) -> bool:
+    """Report whether the tip earns the static lanes: a Python class or any `.py` path.
 
-    `escalate` and `full` in both columns; a `full_at_commit` reason in both; at the tip,
-    `scripts` (the scripts drive the bed lanes) and a `full_at_tip` reason. Its complement
-    at the tip is the scoped `src-leaf` tip (#797).
+    A Python file under `docs/examples/` is classed `docs` for its bed selection and still
+    gets the cheap static lanes.
+    """
+    return bool(set(scope.classes) & set(PYTHON_CLASSES)) or any(
+        p.endswith(".py") for p in scope.changed_paths
+    )
+
+
+def bed_reach(scope: Scope) -> bool:
+    """Report whether the tip earns the bed half (`make coverage-bed`).
+
+    A source, script or escalating change; a changed test module in the bed half; or any
+    `full_at_commit` reason (an unreadable mark, no surviving root), the conservative
+    fallback. A hostless test change takes no lease.
     """
     return (
-        bool(classes & {ESCALATE, FULL})
-        or bool(full_at_commit)
-        or (tip and (SCRIPTS in classes or bool(full_at_tip)))
+        bool(set(scope.classes) & {SRC_LEAF, SCRIPTS, ESCALATE, FULL})
+        or bool(scope.bed_modules)
+        or bool(scope.full_at_commit)
     )
 
 
@@ -1251,14 +1273,11 @@ def classify(
     base_rev: str,
     head_rev: str,
     head_paths: "set[str]",
-    *,
-    tip: bool = True,
 ) -> Scope:
     """Classify `changes` between `base_rev` and `head_rev`; `head_paths` are the files at head.
 
     A release's own non-code edits (:data:`RELEASE_OWNED`) are classed ``none``
-    and take no further part. `tip=False` asks for the commit column alone and skips the
-    tip's consumer scan (`Scope.quick_tip` is then the commit's quick).
+    and take no further part. One Scope serves both columns: `commands` composes each.
     """
     kept = [c for c in changes if not release_owned(c, read, base_rev, head_rev)]
     classes: "set[str]" = {NONE} if len(kept) < len(changes) else set()
@@ -1272,7 +1291,7 @@ def classify(
     bed: "set[str]" = set()
     unknown: "list[str]" = []
     full_commit: "list[str]" = []
-    full_tip: "list[str]" = []
+    test_sources: "dict[str, str | None]" = {}
 
     runnable = _QuickRoots(read, head_rev, head_paths).runnable
 
@@ -1291,7 +1310,7 @@ def classify(
         special_tip.update(_captures_lane(path))
         cls = classify_path(path)
         for lane in _owning_tree_lanes(path):
-            _route_lane(path, None, lane, special, special_tip, full_commit, full_tip)
+            _route_lane(path, None, lane, special, special_tip, full_commit)
         if cls is None:
             unknown.append(path)
             full_commit.append(f"no row: {path}")
@@ -1307,9 +1326,10 @@ def classify(
             if is_structural(base, head):
                 cls = TESTS_STRUCTURAL
             source = head if head is not None else base
+            test_sources[path] = source
             lane = _special_lane(path, source)
             if lane is not None:
-                if _route_lane(path, source, lane, special, special_tip, full_commit, full_tip):
+                if _route_lane(path, source, lane, special, special_tip, full_commit):
                     add_root(path)
                 classes.add(cls)
                 continue
@@ -1329,7 +1349,6 @@ def classify(
             alive = [t for t in trees if runnable(t)]
             if not alive:
                 full_commit.append(f"{path}: none of its test trees survives at head")
-            full_tip += _whole_tree_row(path, trees)
             quick.update(alive)
             quick.update(r for r in GUARD_RIDERS if runnable(r))
         elif cls == ESCALATE and _is_src(path) and "/" in path[len("src/otto/") :]:
@@ -1341,14 +1360,8 @@ def classify(
         full_commit.append(f"{len(packages)} src packages (> {MAX_SRC_PACKAGES})")
     if TESTS_STRUCTURAL in classes:
         classes.discard(TESTS_LEAF)  # structural runs every leaf line and more
-    if classes & {ESCALATE, FULL} or full_commit:
+    if full_gate(classes, full_commit):
         quick.clear()
-    scoped_tip = (
-        tip and SRC_LEAF in classes and not full_gate(classes, full_commit, full_tip, tip=True)
-    )
-    quick_tip = (
-        _tip_quick(quick, packages, read, head_rev, head_paths, runnable) if scoped_tip else quick
-    )
     return Scope(
         sorted(classes),
         _outermost(quick),
@@ -1361,8 +1374,7 @@ def classify(
         sorted(bed),
         sorted(unknown),
         full_commit,
-        full_tip,
-        _outermost(quick_tip),
+        sorted(p for p, source in test_sources.items() if in_bed_half(p, source)),
     )
 
 
@@ -1378,66 +1390,36 @@ def _ty_line(path: str) -> str:
     return f"uv run ty check {path}"
 
 
-RANGE_TARGETS = ["check-breaking", "lint-arch", "check-python", "gate-fresh"]
-"""The emitted targets that run check-breaking, whose RANGE defaults to origin/main..HEAD.
+def _with_range(line: str, base: str, tip_rev: str) -> str:
+    """Carry the range to a `make` line whose target runs a history check.
 
-lint-arch (and check-python through it) has it as a prerequisite; gate-fresh runs lint-arch
-in its throwaway worktree through a nested make, which inherits a command-line RANGE through
-MAKEFLAGS. So check-breaking runs again inside lint-arch: the separate line stays, because
-the policy is check-breaking on every column, lint-arch or not.
-"""
-
-
-def _with_range(line: str, base: str) -> str:
-    """Carry a non-default base to a `make` line whose target runs check-breaking."""
+    The default display pair (`base` origin/main, `tip_rev` HEAD) stays bare, the target's
+    own default; any other pair is spelled exactly, so a `plan`'s live line names its shas.
+    """
     target = line.split()[1] if line.startswith("make ") else None
-    if base == "origin/main" or target not in RANGE_TARGETS:
+    if target not in RANGE_TARGETS or (base == "origin/main" and tip_rev == "HEAD"):
         return line
-    return f"{line} RANGE={base}..HEAD"
+    return f"{line} RANGE={base}..{tip_rev}"
 
 
 def _dedupe(lines: "list[str]") -> "list[str]":
     return list(dict.fromkeys(lines))
 
 
-def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
-    """Return the exact lines to run, in order: every class's column composed, then deduplicated.
-
-    Per commit — none: check-breaking only; docs: `make docs`; web: check-ts + test-ts;
-    tests-leaf: quick over the surviving roots + ruff + lint-arch (a family module runs
-    quick-guards instead); tests-structural: the same + quick-guards; src-leaf: quick
-    (trees + riders) + ty + ruff + lint-arch + quick-guards; scripts: quick-guards + ty +
-    ruff; escalate / full: the full gate + bed lanes, + quick-guards when a build file
-    changed. At the tip — none: check-breaking; docs: gate-fresh; web: check-ts +
-    coverage-ts + gate-fresh (one goal per line: beside the full gate, which runs check-ts,
-    the dedupe leaves coverage-ts alone); tests-*: the commit lines + quick-guards +
-    gate-fresh; src-leaf: the commit lines with `quick` over `Scope.quick_tip` (the row's
-    unit and e2e roots, the packages' import consumers, the guards), then SRC_LEAF_TIP_LANES (the
-    bed half of the coverage selection, #797), the bed lanes and gate-fresh — unless a row
-    is the whole unit tree (`full_at_tip`), when the full gate runs as before;
-    scripts / escalate / full: the full gate + bed lanes (quick-guards is
-    commit-only: `make coverage` runs it). Special rows add their column's lanes in both
-    forms, full column or not (`make coverage` excludes those tiers); a full column
-    replaces quick/ty/ruff/lint-arch but never a web or docs line (check-python is Python
-    only; the full gate already runs docs). Every stability line is one pass
-    (:func:`stability_once`), and the test-isolation guard (`nox-unit-repeat`) is never
-    emitted: nightly's unit-repeat job runs it.
-    """
+def _commit_lines(scope: Scope) -> "list[str]":
+    """Return the commit column's lines after the live one, before deduplication."""
     classes = set(scope.classes)
     python = [p for p in scope.changed_files if p.endswith(".py")]
-    changed = set(scope.changed_paths)
     running = classes & {TESTS_LEAF, TESTS_STRUCTURAL, SRC_LEAF}
-    full = full_gate(classes, scope.full_at_commit, scope.full_at_tip, tip=tip)
-    out: "list[str]" = ["make check-breaking"]
-    if full:
+    out: "list[str]" = []
+    if full_gate(classes, scope.full_at_commit):
         out += FULL_GATE
         out += scope.bed_lanes
-        if not tip and changed & BUILD_FILES:
-            out.append("make quick-guards")  # the tip's `make coverage` runs the family
+        if set(scope.changed_paths) & BUILD_FILES:
+            out.append("make quick-guards")  # the bed half does not run the family
     else:
-        quick_paths = scope.quick_tip if tip else scope.quick_paths
-        if running and quick_paths:
-            out.append(f'make quick PATHS="{" ".join(quick_paths)}"')
+        if running and scope.quick_paths:
+            out.append(f'make quick PATHS="{" ".join(scope.quick_paths)}"')
         if SCRIPTS in classes and not running:
             out.append("make quick-guards")
         if classes & {SRC_LEAF, SCRIPTS}:
@@ -1446,24 +1428,49 @@ def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
             out += [f"uv run ruff check {p}" for p in python]
         if running:
             out.append("make lint-arch")
-        if (
-            (tip and running)
-            or scope.guard_files
-            or classes & {TESTS_STRUCTURAL, SRC_LEAF, SCRIPTS}
-        ):
+        if scope.guard_files or classes & {TESTS_STRUCTURAL, SRC_LEAF, SCRIPTS}:
             out.append("make quick-guards")
-        if tip and SRC_LEAF in classes:
-            out += SRC_LEAF_TIP_LANES
-            out += scope.bed_lanes
-    if DOCS in classes and not tip:
+    if DOCS in classes:
         out.append("make docs")
     if WEB in classes:
         # One goal per line, so `_dedupe` drops `make check-ts` beside a full gate.
-        out += ["make check-ts", "make coverage-ts" if tip else "make test-ts"]
-    out += scope.special_tip if tip else scope.special
-    if tip and not full and classes & {DOCS, WEB, TESTS_LEAF, TESTS_STRUCTURAL, SRC_LEAF}:
-        out.append("make gate-fresh")
-    return _dedupe([_with_range(line, base) for line in out])
+        out += ["make check-ts", "make test-ts"]
+    return out + scope.special
+
+
+def _tip_lines(scope: Scope) -> "list[str]":
+    """Return the tip's lines after the live one, before deduplication."""
+    out: "list[str]" = []
+    if static_reach(scope):
+        out += [f"make {goal}" for goal in STATIC_GOALS]
+    if bed_reach(scope):
+        out += TEST_SUITE_LANES
+    out += scope.bed_lanes
+    out += [line for line in scope.special_tip if all(g in BED_GOALS for g in goals(line))]
+    return out
+
+
+def commands(scope: Scope, *, tip: bool, base: str, tip_rev: str = "HEAD") -> "list[str]":
+    """Return the exact lines to run, in order, deduplicated; `make check-breaking` first.
+
+    The tip: `make check-python` and `make collect-check` when :func:`static_reach` holds,
+    `make coverage-bed` when :func:`bed_reach` holds, the diff's bed lanes, and the special
+    rows' tip lines whose every goal is a bed goal. Nothing else runs locally at the tip:
+    the hostless matrix, docs and TypeScript are the pull request's CI.
+
+    Per commit (a working check, never a landing gate) — none: check-breaking only; docs:
+    `make docs`; web: check-ts + test-ts; tests-leaf: quick over the surviving roots +
+    ruff + lint-arch (a family module runs quick-guards instead); tests-structural: the
+    same + quick-guards; src-leaf: quick (trees + riders) + ty + ruff + lint-arch +
+    quick-guards; scripts: quick-guards + ty + ruff; escalate / full, or a `full_at_commit`
+    reason: the full gate (:data:`FULL_GATE`) + bed lanes, + quick-guards when a build file
+    changed. Special rows add their commit lines, full column or not; a full column
+    replaces quick/ty/ruff/lint-arch but never a web or docs line. Every stability line is
+    one pass (:func:`stability_once`), and the test-isolation guard (`nox-unit-repeat`) is
+    never emitted: nightly's unit-repeat job runs it.
+    """
+    rest = _tip_lines(scope) if tip else _commit_lines(scope)
+    return _dedupe([_with_range(line, base, tip_rev) for line in ["make check-breaking", *rest]])
 
 
 class GateScopeError(Exception):
@@ -1522,10 +1529,24 @@ def _reader(repo: Path, env: "dict[str, str] | None") -> Reader:
     return read
 
 
-def tip_commands(
-    repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None
-) -> "list[str]":
-    """Return the tip list for ``base_sha..tip_sha``, reading sources at *tip_sha*, never HEAD."""
+@dataclass(frozen=True)
+class Plan:
+    """The landing's tip, decided once for every consumer (the runner, the hook, CI)."""
+
+    base_sha: str
+    tip_sha: str
+    # the tip's committed tree: what every stamped lane is keyed by
+    tree: str
+    # the lines the push runs itself over `base_sha..tip_sha`, ranged exactly
+    live: "list[str]"
+    # the lane keys stamped by tree, in run order
+    stamped: "list[str]"
+    # whether a stamped lane takes the bed lease
+    bed: bool
+
+
+def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None) -> Plan:
+    """Return the tip for ``base_sha..tip_sha``, reading sources at *tip_sha*, never HEAD."""
     scope = classify(
         changes_between(repo, f"{base_sha}..{tip_sha}", env),
         _reader(repo, env),
@@ -1533,7 +1554,24 @@ def tip_commands(
         tip_sha,
         head_tree(repo, env, tip_sha),
     )
-    return commands(scope, tip=True, base=base_sha)
+    cmds = commands(scope, tip=True, base=base_sha, tip_rev=tip_sha)
+    stamped = [lane_key(line) for line in cmds if not is_live(line)]
+    return Plan(
+        base_sha=base_sha,
+        tip_sha=tip_sha,
+        tree=tree_hash(repo, tip_sha),  # takes no env: the ambient git, as the runner keys stamps
+        live=[line for line in cmds if is_live(line)],
+        stamped=stamped,
+        bed=any(is_bed(key) for key in stamped),
+    )
+
+
+def tip_commands(
+    repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None
+) -> "list[str]":
+    """Return the tip list for ``base_sha..tip_sha``: :func:`plan`'s live lines, then its keys."""
+    p = plan(repo, base_sha, tip_sha, env)
+    return p.live + p.stamped
 
 
 def render(
@@ -1557,8 +1595,8 @@ def render(
             continue
         files = len(scope.changed_files)
         lines.append(f"{label} ({rng}): {', '.join(scope.classes)} — {files} file(s) at head")
-        reasons = scope.full_at_tip if tip else scope.full_at_commit
-        lines += [f"  (full gate: {reason})" for reason in reasons]
+        label_reason = "bed half" if tip else "full gate"
+        lines += [f"  ({label_reason}: {reason})" for reason in scope.full_at_commit]
         lines += [f"  {cmd}" for cmd in commands(scope, tip=tip, base=base)]
     if tip_scope is not None:
         lines.append("run them and stamp the tree: make gate-tip")
@@ -1589,7 +1627,7 @@ def main(argv: "list[str] | None" = None, *, env: "dict[str, str] | None" = None
         read = _reader(args.repo, env)
         tree = head_tree(args.repo, env)
         commit_scope = classify(
-            changes_between(args.repo, "HEAD^1..HEAD", env), read, "HEAD^1", "HEAD", tree, tip=False
+            changes_between(args.repo, "HEAD^1..HEAD", env), read, "HEAD^1", "HEAD", tree
         )
         tip_scope = (
             None
@@ -1614,7 +1652,7 @@ def main(argv: "list[str] | None" = None, *, env: "dict[str, str] | None" = None
             ),
             end="",
         )
-    except (GateScopeError, GateFreshError) as exc:
+    except (GateScopeError, GateError) as exc:
         print(f"gate-scope: {exc}", file=sys.stderr)
         return 1
     else:

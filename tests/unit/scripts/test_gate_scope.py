@@ -1,6 +1,5 @@
 """Pins for scripts/gate_scope.py — the diff classifier behind `make gate-scope` (#566)."""
 
-import itertools
 import json
 import os
 import re
@@ -12,9 +11,9 @@ from pathlib import Path
 import pytest
 from _pytest.mark.expression import Expression
 
+from scripts import check_breaking_marks
 from scripts import gate_scope as gs
 from scripts import gate_tip as gt
-from scripts.gate_fresh import GATED_TARGETS
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit import test_lane_invariants as _lane_invariants
@@ -32,6 +31,7 @@ from tests.unit.test_lane_invariants import (
 from tests.unit.test_tier_marker_invariants import (
     _makefile_marker_variables,
     _makefile_pytest_invocations,
+    _python_pytest_invocations,
 )
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -79,7 +79,7 @@ collect_marker_sets = _lane_invariants.collect_marker_sets
         ("src/otto/host/survey/__init__.py", gs.ESCALATE),
         ("src/otto/registry.py", gs.ESCALATE),
         ("src/otto/_shim_complete.py", gs.ESCALATE),
-        ("scripts/gate_fresh.py", gs.SCRIPTS),
+        ("scripts/gate_tip.py", gs.SCRIPTS),
         ("pyproject.toml", gs.ESCALATE),
         ("Makefile", gs.ESCALATE),
         ("noxfile.py", gs.ESCALATE),
@@ -224,7 +224,7 @@ def test_a_leaf_test_change_runs_its_package():
     assert scope.guard_files == []
     assert scope.unknown == []
     assert scope.full_at_commit == []
-    assert scope.full_at_tip == []
+    assert scope.bed_modules == []
 
 
 def test_the_vendoring_core_routes_to_both_exports_that_run_on_it():
@@ -521,7 +521,7 @@ def test_three_src_packages_escalate():
 
 def test_a_scripts_change_has_no_quick_paths():
     scope = _scope(
-        [gs.Change("scripts/gate_fresh.py", "M")], {("head", "scripts/gate_fresh.py"): "x = 1\n"}
+        [gs.Change("scripts/gate_tip.py", "M")], {("head", "scripts/gate_tip.py"): "x = 1\n"}
     )
     assert scope.classes == [gs.SCRIPTS]
     assert scope.quick_paths == []
@@ -568,9 +568,19 @@ def test_special_trees_route_to_their_lanes_and_never_to_quick():
         "make dashboard",
         "make dashboard-soak",
     ]
-    assert scope.full_at_tip == ["tests/integration/busybox_bed/test_x.py: full at the tip"]
+    assert scope.bed_modules == ["tests/integration/busybox_bed/test_x.py"]
     assert scope.full_at_commit == []
     assert scope.quick_paths == []
+    # only the bed goals reach the tip; the busybox bed module reaches the bed half
+    assert gs.commands(scope, tip=True, base="origin/main") == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+        "make chaos",
+        "make chaos-embedded",
+        "make conformance-bed",
+    ]
 
 
 def test_a_mixed_stability_file_runs_both_lanes():
@@ -639,8 +649,9 @@ _UNIT_ONCE = "make stability-unit COUNT=1"
 _UNIX_ONCE = "make stability-unix COUNT=1"
 _TUNNEL_ONCE = "make stability-tunnel COUNT=1 CYCLES=2"
 _EMBEDDED_ONCE = "make stability-embedded COUNT=1"
-# (path, stability lines at the commit, at the tip). A src leaf's bed lane rides the full
-# gate it earns, which is the tip's for a lone leaf; a test-side area runs it in both columns.
+# (path, stability lines at the commit, at the tip). A src leaf's bed lane rides the tip (and
+# a full commit column); a test-side area runs its lane at the commit, and at the tip only
+# when the lane is a bed goal (`stability-unit` is hostless: nightly's).
 _STABILITY_AREAS = [
     ("src/otto/link/model.py", [], [_UNIX_ONCE]),
     ("src/otto/tunnel/model.py", [], [_TUNNEL_ONCE]),
@@ -648,10 +659,10 @@ _STABILITY_AREAS = [
     ("src/otto/link/__init__.py", [_UNIX_ONCE], [_UNIX_ONCE]),
     ("tests/e2e/tunnel_stability/test_churn.py", [_TUNNEL_ONCE], [_TUNNEL_ONCE]),
     ("tests/e2e/tunnel_stability/_harness.py", [_TUNNEL_ONCE], [_TUNNEL_ONCE]),
-    ("tests/unit/host/test_app_shell_concurrency.py", [_UNIT_ONCE], [_UNIT_ONCE]),
-    ("tests/unit/host/test_session_concurrency.py", [_UNIT_ONCE], [_UNIT_ONCE]),
-    ("tests/unit/host/test_unix_host.py", [_UNIT_ONCE], [_UNIT_ONCE]),
-    ("tests/unit/monitor/test_collector_tunnel_soak.py", [_UNIT_ONCE], [_UNIT_ONCE]),
+    ("tests/unit/host/test_app_shell_concurrency.py", [_UNIT_ONCE], []),
+    ("tests/unit/host/test_session_concurrency.py", [_UNIT_ONCE], []),
+    ("tests/unit/host/test_unix_host.py", [_UNIT_ONCE], []),
+    ("tests/unit/monitor/test_collector_tunnel_soak.py", [_UNIT_ONCE], []),
     ("tests/integration/host/test_app_shell_stability_integration.py", [_UNIX_ONCE], [_UNIX_ONCE]),
     (
         "tests/integration/host/test_host_stability_contract.py",
@@ -1154,6 +1165,7 @@ def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
     (repo / "docs").mkdir()
     (repo / "tests/unit/cli").mkdir(parents=True)
     (repo / "src/otto/cli").mkdir(parents=True)
@@ -1182,7 +1194,7 @@ def _closed_environ(monkeypatch: pytest.MonkeyPatch, repo: Path) -> "dict[str, s
 
     `git_env` is complete and must never be merged over os.environ (gitrepo.py:39-40):
     an ambient GIT_DIR, GIT_WORK_TREE or GIT_CONFIG_* would otherwise reach every git the
-    script — and gate_fresh's `tree_state`, which takes no env — spawns in-process.
+    script — and `gate_stamp_common.tree_state`, which takes no env — spawns in-process.
     """
     closed = git_env(repo)
     for key in list(os.environ):
@@ -1201,7 +1213,7 @@ def _main(monkeypatch: pytest.MonkeyPatch, repo: Path, *args: str) -> int:
 
 _SCOPE_FIELDS = [
     "quick", "guards", "packages", "files", "paths", "special", "special_tip", "bed",
-    "unknown", "full_commit", "full_tip", "quick_tip",
+    "unknown", "full_commit", "bed_modules",
 ]  # fmt: skip
 
 
@@ -1213,8 +1225,6 @@ def _s(classes, **fields):
     given = {name: list(fields.get(name, [])) for name in _SCOPE_FIELDS}
     if "paths" not in fields:
         given["paths"] = list(given["files"])
-    if "quick_tip" not in fields:
-        given["quick_tip"] = list(given["quick"])
     return gs.Scope(list(classes), *(given[name] for name in _SCOPE_FIELDS))
 
 
@@ -1228,15 +1238,11 @@ def test_commands_for_each_class():
     ]
     docs = _s([gs.DOCS], files=["docs/a.md"])
     assert gs.commands(docs, tip=False, base=base) == [cb, "make docs"]
-    assert gs.commands(docs, tip=True, base=base) == [cb, "make gate-fresh"]
+    assert gs.commands(docs, tip=True, base=base) == [cb], "the docs build is CI's"
     web = _s([gs.WEB], files=["web/src/App.tsx"])
     assert gs.commands(web, tip=False, base=base) == [cb, "make check-ts", "make test-ts"]
-    assert gs.commands(web, tip=True, base=base) == [
-        cb,
-        "make check-ts",
-        "make coverage-ts",
-        "make gate-fresh",
-    ]
+    assert gs.commands(web, tip=True, base=base) == [cb], "TypeScript is CI's"
+    static = ["make check-python", "make collect-check"]
     leaf = _s([gs.TESTS_LEAF], quick=["tests/unit/cli"], files=["tests/unit/cli/test_a.py"])
     assert gs.commands(leaf, tip=False, base=base) == [
         cb,
@@ -1244,14 +1250,14 @@ def test_commands_for_each_class():
         "uv run ruff check tests/unit/cli/test_a.py",
         "make lint-arch",
     ]
-    assert gs.commands(leaf, tip=True, base=base) == [
-        cb,
-        'make quick PATHS="tests/unit/cli"',
-        "uv run ruff check tests/unit/cli/test_a.py",
-        "make lint-arch",
-        "make quick-guards",
-        "make gate-fresh",
-    ]
+    assert gs.commands(leaf, tip=True, base=base) == [cb, *static]
+    bed_leaf = _s(
+        [gs.TESTS_LEAF],
+        quick=["tests/integration/cli"],
+        files=["tests/integration/cli/test_a.py"],
+        bed_modules=["tests/integration/cli/test_a.py"],
+    )
+    assert gs.commands(bed_leaf, tip=True, base=base) == [cb, *static, "make coverage-bed"]
     structural = _s(
         [gs.TESTS_STRUCTURAL], quick=["tests/unit/cli"], files=["tests/unit/cli/test_a.py"]
     )
@@ -1290,46 +1296,22 @@ def test_commands_for_each_class():
     ]
     assert gs.commands(src, tip=True, base=base) == [
         cb,
-        f'make quick PATHS="{" ".join(["tests/unit/host", *gs.GUARD_RIDERS])}"',
-        "uv run ty check src/otto/host/unix.py",
-        "uv run ruff check src/otto/host/unix.py",
-        "make lint-arch",
-        "make quick-guards",
-        *gs.SRC_LEAF_TIP_LANES,
+        *static,
+        "make coverage-bed",
         "make conformance-bed",
-        "make gate-fresh",
-    ], "a src-leaf tip: the commit lines, the bed half of coverage, its bed lane, gate-fresh"
-    wide = _s(
-        [gs.SRC_LEAF],
-        quick=["tests/unit/host", "tests/e2e/host"],
-        quick_tip=["tests/unit/cli/test_host.py", "tests/unit/host"],
-        packages=["host"],
-        files=["src/otto/host/unix.py"],
+    ], "a src-leaf tip: the static lanes, the bed half of coverage, its bed lane"
+    whole = _s([gs.SRC_LEAF], quick=["tests/unit"], packages=["utils"], files=["src/otto/utils.py"])
+    assert gs.commands(whole, tip=True, base=base) == [cb, *static, "make coverage-bed"], (
+        "a whole-unit-tree row is a src-leaf tip like any other"
     )
-    assert 'make quick PATHS="tests/unit/cli/test_host.py tests/unit/host"' in gs.commands(
-        wide, tip=True, base=base
-    ), "the tip's quick is Scope.quick_tip: the bed trees out, the consumers in"
-    assert 'make quick PATHS="tests/unit/host tests/e2e/host"' in gs.commands(
-        wide, tip=False, base=base
-    )
-    whole = _s(
-        [gs.SRC_LEAF],
-        quick=["tests/unit"],
-        packages=["utils"],
-        files=["src/otto/utils.py"],
-        full_tip=["src/otto/utils.py: its row is the whole unit tree"],
-    )
-    assert gs.commands(whole, tip=True, base=base) == [cb, *gs.FULL_GATE], (
-        "a whole-unit-tree row keeps the full gate at the tip"
-    )
-    scripts = _s([gs.SCRIPTS], files=["scripts/gate_fresh.py"])
+    scripts = _s([gs.SCRIPTS], files=["scripts/gate_tip.py"])
     assert gs.commands(scripts, tip=False, base=base) == [
         cb,
         "make quick-guards",
-        "uv run ty check --extra-search-path . scripts/gate_fresh.py",
-        "uv run ruff check scripts/gate_fresh.py",
+        "uv run ty check --extra-search-path . scripts/gate_tip.py",
+        "uv run ruff check scripts/gate_tip.py",
     ]
-    assert gs.commands(scripts, tip=True, base=base) == [cb, *gs.FULL_GATE]
+    assert gs.commands(scripts, tip=True, base=base) == [cb, *static, "make coverage-bed"]
     esc = _s([gs.ESCALATE], files=["Makefile"], bed=["make stability-unix COUNT=1"])
     assert gs.commands(esc, tip=False, base=base) == [
         cb,
@@ -1339,7 +1321,8 @@ def test_commands_for_each_class():
     ]
     assert gs.commands(esc, tip=True, base=base) == [
         cb,
-        *gs.FULL_GATE,
+        *static,
+        "make coverage-bed",
         "make stability-unix COUNT=1",
     ]
     # the isolation guard is nightly's unit-repeat job: a conftest, a fixture or
@@ -1353,7 +1336,11 @@ def test_commands_for_each_class():
         for files in (paths, []):
             rider = _s([gs.ESCALATE], files=files, paths=paths)
             assert gs.commands(rider, tip=False, base=base) == [cb, *gs.FULL_GATE], paths
-            assert gs.commands(rider, tip=True, base=base) == [cb, *gs.FULL_GATE], paths
+            assert gs.commands(rider, tip=True, base=base) == [
+                cb,
+                *static,
+                "make coverage-bed",
+            ], paths
     full = _s(
         [gs.DOCS, gs.FULL],
         files=["docs/a.md", "uv.lock"],
@@ -1375,32 +1362,22 @@ def test_commands_for_each_class():
         "make lint-arch",
         "make conformance",
     ]
-    assert gs.commands(special, tip=True, base=base) == [
-        cb,
-        "uv run ruff check tests/conformance/test_x.py",
-        "make lint-arch",
-        "make quick-guards",
-        "make conformance-bed",
-        "make gate-fresh",
-    ]
-    tip_full = _s(
+    assert gs.commands(special, tip=True, base=base) == [cb, *static, "make conformance-bed"]
+    hostless_special = _s(
         [gs.TESTS_LEAF],
-        files=["tests/integration/busybox_bed/test_x.py"],
-        special=["make coverage-unix"],
-        full_tip=["tests/integration/busybox_bed/test_x.py: full at the tip"],
+        files=["tests/busybox/test_x.py"],
+        special=["make busybox"],
+        special_tip=["make busybox"],
     )
-    assert gs.commands(tip_full, tip=False, base=base) == [
-        cb,
-        "uv run ruff check tests/integration/busybox_bed/test_x.py",
-        "make lint-arch",
-        "make coverage-unix",
-    ]
-    assert gs.commands(tip_full, tip=True, base=base) == [cb, *gs.FULL_GATE]
+    assert gs.commands(hostless_special, tip=True, base=base) == [cb, *static], (
+        "a special row whose goal is not a bed goal stays at the commit"
+    )
 
 
 def test_a_full_column_keeps_the_special_lanes():
-    """`make coverage` excludes the busybox/conformance/stability tiers (M_COVERAGE):
-    a Makefile change beside a conformance test change still owes `make conformance`."""
+    """`make coverage-bed` selects the bed half only (integration and embedded items within
+    M_COVERAGE, which excludes conformance): a Makefile change beside a conformance test
+    change still owes `make conformance`."""
     base = "origin/main"
     both = _s(
         [gs.ESCALATE, gs.TESTS_LEAF],
@@ -1414,7 +1391,13 @@ def test_a_full_column_keeps_the_special_lanes():
         "make quick-guards",
         "make conformance",
     ]
-    assert gs.commands(both, tip=True, base=base) == [cb, *gs.FULL_GATE, "make conformance-bed"]
+    assert gs.commands(both, tip=True, base=base) == [
+        cb,
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+        "make conformance-bed",
+    ]
 
 
 def test_the_union_composes_every_class_before_deduplication():
@@ -1428,15 +1411,9 @@ def test_the_union_composes_every_class_before_deduplication():
     at_tip = gs.commands(mixed, tip=True, base=base)
     assert at_tip == [
         "make check-breaking",
-        'make quick PATHS="tests/unit/cli"',
-        "uv run ty check src/otto/cli/x.py",
-        "uv run ruff check src/otto/cli/x.py",
-        "make lint-arch",
-        "make quick-guards",
-        *gs.SRC_LEAF_TIP_LANES,
-        "make check-ts",
-        "make coverage-ts",
-        "make gate-fresh",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
     ], at_tip
     at_commit = gs.commands(mixed, tip=False, base=base)
     assert at_commit == [
@@ -1459,16 +1436,17 @@ def test_the_union_composes_every_class_before_deduplication():
     ], "the full gate's own `make check-ts` is not run a second time"
     assert gs.commands(escalated, tip=True, base=base) == [
         "make check-breaking",
-        *gs.FULL_GATE,
-        "make coverage-ts",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
     ]
 
 
-# Lines outside the census's scope: check-breaking, docs, gate-fresh and check-ts run no
-# Python test leg this census reads (gate-fresh re-runs CI's lanes in a throwaway worktree;
-# check-ts is the TypeScript gate). `check-python` and `lint-arch` DO reach pytest (the
-# ast-grep rule tests, `lint-arch`) and are walked like any lane.
-_OUT_OF_SCOPE_LINES = frozenset({"check-breaking", "docs", "gate-fresh", "check-ts"})
+# Lines outside the census's scope: check-breaking, docs, check-ts and collect-check run no
+# Python test leg this census reads (check-ts is the TypeScript gate; collect-check only
+# collects). `check-python` and `lint-arch` DO reach pytest (the ast-grep rule tests,
+# `lint-arch`) and are walked like any lane.
+_OUT_OF_SCOPE_LINES = frozenset({"check-breaking", "docs", "check-ts", "collect-check"})
 # The emitted lines that run no pytest: the type checker and the linter over changed files.
 _NO_PYTEST_PREFIXES = ("uv run ty check ", "uv run ruff check ")
 
@@ -1517,9 +1495,27 @@ def _oracle_legs(lines: "list[str]", makefile: str) -> "list[_Leg]":
     return legs
 
 
-def _uncovered(path: str, lines: "list[str]", collect, makefile: str) -> "list[str]":
-    """Node ids collected in *path* that no emitted leg selects — full gate or not."""
-    compiled = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
+def _ci_hostless_legs() -> "list[_Leg]":
+    """The pull request's `tests_hostless` legs on the primary Python, read from the noxfile
+    as the partition pin (`test_lane_invariants`) reads them."""
+    return _legs_including_markerless(
+        "noxfile.py:tests_hostless@3.10",
+        _python_pytest_invocations(
+            CHECKOUT_ROOT / "noxfile.py", resolve_names=True, scope="tests_hostless", python="3.10"
+        ),
+    )
+
+
+def _uncovered(
+    path: str, lines: "list[str]", collect, makefile: str, *, ci: "list[_Leg] | None" = None
+) -> "list[str]":
+    """Node ids collected in *path* that no emitted leg selects — full gate or not.
+
+    *ci* adds the pull request's hostless legs as a venue: the commit's full column runs no
+    hostless suite locally, CI does.
+    """
+    legs = [*_oracle_legs(lines, makefile), *(ci or [])]
+    compiled = [(leg, Expression.compile(leg.expr)) for leg in legs]
     gaps = []
     for item in collect(()):
         item_path = item.path
@@ -1537,9 +1533,12 @@ def _uncovered(path: str, lines: "list[str]", collect, makefile: str) -> "list[s
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_every_collected_item_is_selected_by_the_oracles_commit_lanes(collect_marker_sets):
     """THE CENSUS. For every tracked test module changed alone, the commit column's
-    legs — the full gate's included — select every item pytest collects in it."""
+    legs — the full gate's included — or the pull request's hostless CI legs (the venue of
+    the hostless half a full column no longer runs locally) select every item pytest
+    collects in it."""
     head = _head_paths()
     makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    ci = _ci_hostless_legs()
     gaps = []
     for path in _tracked("tests"):
         if not gs._is_test_module(path):
@@ -1549,7 +1548,7 @@ def test_every_collected_item_is_selected_by_the_oracles_commit_lanes(collect_ma
         lines = gs.commands(scope, tip=False, base="origin/main")
         gaps += [
             f"{nodeid}  ← {lines}"
-            for nodeid in _uncovered(path, lines, collect_marker_sets, makefile)
+            for nodeid in _uncovered(path, lines, collect_marker_sets, makefile, ci=ci)
         ]
     assert gaps == [], f"{len(gaps)} item(s) no emitted lane selects:\n  " + "\n  ".join(gaps[:60])
 
@@ -1574,7 +1573,7 @@ def test_the_census_reddens_when_a_lane_row_is_removed(collect_marker_sets, monk
     lines = gs.commands(scope, tip=False, base="origin/main")
     assert any(line.startswith("make quick PATHS") for line in lines)
     assert "make busybox" not in lines
-    gaps = _uncovered(path, lines, collect_marker_sets, makefile)
+    gaps = _uncovered(path, lines, collect_marker_sets, makefile, ci=_ci_hostless_legs())
     assert gaps, "the control removed the row but the census saw no gap — it proves nothing"
 
 
@@ -1603,8 +1602,9 @@ def test_the_busybox_tree_row_and_the_mark_route_are_redundant_on_purpose(
 def test_the_census_reddens_when_a_full_column_hides_a_lane(collect_marker_sets, monkeypatch):
     """Second control: without the chaos row a chaos module is a stray mark → the FULL
     column. The console chaos module carries `stability` (test_console_chaos.py:90-93), which
-    M_COVERAGE and M_HOSTLESS exclude (M_COVERAGE, M_HOSTLESS), so the full gate's own legs select
-    none of its items: the census must report them. A full column is never a vacuous pass."""
+    M_COVERAGE and M_HOSTLESS exclude (M_COVERAGE, M_HOSTLESS), so neither the full column's
+    own legs nor CI's hostless legs select its items: the census must report them. A full
+    column is never a vacuous pass."""
     monkeypatch.setattr(
         gs,
         "SPECIAL_TREES",
@@ -1616,9 +1616,9 @@ def test_the_census_reddens_when_a_full_column_hides_a_lane(collect_marker_sets,
     text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
     scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
     lines = gs.commands(scope, tip=False, base="origin/main")
-    assert "make coverage" in lines, lines
+    assert "make coverage-bed" in lines, lines
     assert "make chaos" not in lines, lines
-    gaps = _uncovered(path, lines, collect_marker_sets, makefile)
+    gaps = _uncovered(path, lines, collect_marker_sets, makefile, ci=_ci_hostless_legs())
     assert gaps, "the full column hid the chaos lane and the census saw no gap — it proves nothing"
 
 
@@ -1664,209 +1664,103 @@ def test_the_census_refuses_a_line_it_cannot_read():
 
 def test_the_full_gate_is_pinned_literally():
     """Written out, not derived: dropping a line from the production constant reddens this."""
-    assert gs.FULL_GATE == [
-        "make check-python",
-        "make check-ts",
-        "make docs",
-        "make gate-fresh",
-        "make coverage",
-    ]
+    assert gs.FULL_GATE == ["make check-python", "make check-ts", "make docs", "make coverage-bed"]
     full = _s([gs.FULL], files=["uv.lock"], unknown=["uv.lock"], full_commit=["no row: uv.lock"])
     assert gs.commands(full, tip=False, base="origin/main") == [
         "make check-breaking",
         "make check-python",
         "make check-ts",
         "make docs",
-        "make gate-fresh",
-        "make coverage",
+        "make coverage-bed",
     ]
 
 
-class TestConsumers:
-    """The import consumers a src-leaf tip's quick adds to the package's trees (#797)."""
-
-    @pytest.mark.parametrize(
-        "source",
-        [
-            "import otto.host\n",
-            "import otto.host.unix as u\n",
-            "from otto.host import Host\n",
-            "from otto.host.unix import UnixHost\n",
-            "from otto import host\n",
-            "from otto import config, host as h\n",
-            "def test_a():\n    from otto.host import Host\n",
-        ],
-    )
-    def test_every_direct_import_form_is_read(self, source):
-        assert gs.imports_package(source, "host")
-
-    @pytest.mark.parametrize(
-        "source",
-        [
-            "import otto.labs\n",
-            "from otto.labs import Lab\n",
-            "from otto import labs\n",
-            "import otto\n\nx = otto.lab\n",
-            "from otto.hostile import x\n",
-        ],
-    )
-    def test_a_dotted_prefix_and_attribute_access_are_not_imports_of_the_package(self, source):
-        assert not gs.imports_package(source, "lab")
-        assert not gs.imports_package(source, "host")
-
-    def test_a_submodule_import_is_an_import_of_its_package_and_of_no_prefix(self):
-        assert gs.imports_package("import otto.lab.thing\n", "lab")
-        assert not gs.imports_package("import otto.lab.thing\n", "la")
-        assert not gs.imports_package("import otto.labs.thing\n", "lab")
-
-    def test_a_relative_import_names_no_package(self):
-        assert not gs.imports_package("from . import host\nfrom .host import Host\n", "host")
-
-    def test_the_gate_pin_reader_shares_the_import_walk(self):
-        """`_imports_a_gate_pin` and `imports_package` read the same three forms."""
-        assert gs._imports_a_gate_pin("from scripts import gate_scope as gs\n")
-        assert gs._imports_a_gate_pin("import scripts.gate_tip\n")
-        assert gs._imports_a_gate_pin("from scripts.gate_scope import classify\n")
-        assert not gs._imports_a_gate_pin("from scripts import gate_fresh\n")
-        assert not gs._imports_a_gate_pin("from . import gate_scope\n")
-
-    def test_unparseable_or_absent_source_is_no_consumer(self):
-        assert not gs.imports_package(None, "host")
-        assert not gs.imports_package("def (\n", "host")
-
-    def test_consumers_are_unit_modules_outside_the_rows_that_import_the_package(self):
-        texts = {
-            "tests/unit/cli/test_uses_host.py": "from otto.host import Host\ndef test_a(): pass\n",
-            "tests/unit/cli/test_other.py": "from otto.cli import main\ndef test_a(): pass\n",
-            "tests/unit/host/test_inside.py": "from otto.host import Host\ndef test_a(): pass\n",
-            "tests/unit/test_host_pool_lease.py": "import otto.host\ndef test_a(): pass\n",
-            "tests/unit/test_error_base.py": "import otto.host\ndef test_a(): pass\n",
-            "tests/unit/test_family.py": (
-                "import pytest\nimport otto.host\n"
-                "pytestmark = pytest.mark.interpreter_agnostic\ndef test_a(): pass\n"
-            ),
-            "tests/e2e/cli/test_e2e.py": "import otto.host\ndef test_a(): pass\n",
-            "tests/unit/cli/helper.py": "import otto.host\n",
-        }
-        head = set(texts)
-        found = gs.consumers(lambda rev, p: texts.get(p), "head", head, ["host"])
-        assert found == ["tests/unit/cli/test_uses_host.py"], (
-            "inside the row (tests/unit/host, test_host_pool_lease), a guard rider, a family "
-            "module, an e2e module and a non-test module are not consumers"
-        )
-        assert gs.consumers(lambda rev, p: texts.get(p), "head", head, ["cli"]) == []
-
-    def test_two_packages_take_the_union_minus_both_rows(self):
-        texts = {
-            "tests/unit/a/test_a.py": "import otto.host\ndef test_a(): pass\n",
-            "tests/unit/b/test_b.py": "import otto.docker\ndef test_a(): pass\n",
-            "tests/unit/docker/test_d.py": "import otto.host\ndef test_a(): pass\n",
-            "tests/unit/host/test_h.py": "import otto.docker\ndef test_a(): pass\n",
-        }
-        found = gs.consumers(lambda rev, p: texts.get(p), "head", set(texts), ["docker", "host"])
-        assert found == ["tests/unit/a/test_a.py", "tests/unit/b/test_b.py"]
-
-    def test_a_real_consumer_rides_a_host_tip(self):
-        """tests/unit/cli/test_host.py imports otto.host from outside host's row (the issue's
-        example); the tip's quick carries it and drops the row's integration trees, keeping
-        the e2e trees whose hostless items no bed lane selects."""
-        head = _head_paths()
-        path = "src/otto/host/unix.py"
-        scope = gs.classify([gs.Change(path, "M")], _at_head(path, None), "base", "head", head)
-        assert "tests/unit/cli/test_host.py" in scope.quick_tip
-        assert "tests/unit/host" in scope.quick_tip
-        assert "tests/e2e/host" in scope.quick_tip
-        assert not any(p.startswith("tests/integration/") for p in scope.quick_tip)
-        assert "tests/integration/host" in scope.quick_paths, "the commit column keeps them"
-        lines = gs.commands(scope, tip=True, base="origin/main")
-        assert "make coverage-bed" in lines
-        assert "make conformance-bed" in lines
-        assert not any(line == "make coverage" for line in lines)
-
-    def test_a_whole_unit_tree_row_keeps_the_full_gate_at_the_tip(self):
-        head = _head_paths()
-        path = "src/otto/utils.py"
-        scope = gs.classify([gs.Change(path, "M")], _at_head(path, None), "base", "head", head)
-        assert scope.full_at_tip == [f"{path}: its row is the whole unit tree"]
-        assert gs.commands(scope, tip=True, base="origin/main")[1:6] == gs.FULL_GATE
-
-    def test_three_packages_escalate_and_carry_no_tip_quick(self):
-        head = _head_paths()
-        changes = [gs.Change(f"src/otto/{p}/x.py", "M") for p in ("host", "monitor", "docker")]
-        scope = gs.classify(changes, _at_head("", ""), "base", "head", head)
-        assert gs.ESCALATE in scope.classes
-        assert scope.quick_paths == []
-        assert scope.quick_tip == []
-        assert gs.commands(scope, tip=True, base="origin/main")[1:6] == gs.FULL_GATE
-
-    def test_a_scripts_change_beside_the_package_keeps_the_full_gate_at_the_tip(self):
-        head = _head_paths()
-        changes = [gs.Change("src/otto/host/unix.py", "M"), gs.Change("scripts/gate_tip.py", "M")]
-        scope = gs.classify(changes, _at_head("", ""), "base", "head", head)
-        assert {gs.SRC_LEAF, gs.SCRIPTS} <= set(scope.classes)
-        assert scope.quick_tip == scope.quick_paths, "no consumer scan when the tip is full"
-        lines = gs.commands(scope, tip=True, base="origin/main")
-        assert lines[1:6] == gs.FULL_GATE
-        assert "make coverage-bed" not in lines
-
-    def test_the_commit_column_alone_skips_the_consumer_scan(self):
-        head = _head_paths()
-        path = "src/otto/host/unix.py"
-        scope = gs.classify(
-            [gs.Change(path, "M")], _at_head(path, None), "base", "head", head, tip=False
-        )
-        assert scope.quick_tip == scope.quick_paths
-        assert "tests/unit/cli/test_host.py" not in scope.quick_tip
+def test_the_gate_pin_reader_reads_the_three_absolute_import_forms():
+    """`_imports_a_gate_pin` reads `import`, `from … import` and `from pkg import mod`."""
+    assert gs._imports_a_gate_pin("from scripts import gate_scope as gs\n")
+    assert gs._imports_a_gate_pin("import scripts.gate_tip\n")
+    assert gs._imports_a_gate_pin("from scripts.gate_scope import classify\n")
+    assert not gs._imports_a_gate_pin("from scripts import gate_stamp_common\n")
+    assert not gs._imports_a_gate_pin("from . import gate_scope\n")
 
 
-_SCOPED_SRC_ROWS = sorted(k for k, trees in gs.UNIT_TREES.items() if not gs.whole_tree_row(trees))
-"""Every src package whose tip is scoped: the rows that are not the whole unit tree."""
+_SRC_ROWS = sorted(gs.UNIT_TREES)
+"""Every src package row."""
+
+
+def _src_row_tip(package: str) -> "list[str]":
+    """The tip for a change to one file of *package*, read against the real tree."""
+    path = f"src/otto/{package}/x.py"
+    head = _head_paths() | {path}
+    scope = gs.classify([gs.Change(path, "M")], _at_head(path, ""), "base", "head", head)
+    return gs.commands(scope, tip=True, base="origin/main")
+
+
+@pytest.mark.parametrize("package", _SRC_ROWS)
+def test_every_bed_reaching_tip_emits_coverage_bed(package):
+    """A src change reaches the bed half: its tip runs `make coverage-bed`, never `make
+    coverage` and never a scoped `quick`."""
+    lines = _src_row_tip(package)
+    assert "make coverage-bed" in lines, lines
+    assert "make coverage" not in lines, lines
+    assert not [line for line in lines if line.startswith("make quick")], lines
 
 
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
-@pytest.mark.parametrize("package", _SCOPED_SRC_ROWS)
-def test_every_item_in_a_src_rows_universe_is_selected_by_its_tip_lanes(
+@pytest.mark.parametrize("package", _SRC_ROWS)
+def test_every_row_item_the_tip_does_not_run_is_in_ci_s_hostless_selection(
     collect_marker_sets, package
 ):
-    """THE TIP CENSUS (#797). For a src-leaf change in any scoped row, every item under the
-    row's trees and its consumers that `make coverage` would select (M_COVERAGE) is selected
-    by a tip leg: quick, quick-guards or coverage-bed. The tip replaces `make coverage` for
-    the row, so parity with its selection is the claim; the tiers M_COVERAGE excludes
-    (stability, browser, busybox, conformance, kmodcov) keep their own lanes, special rows
-    or nightly. Over the whole tree it would be red by design — hostless non-consumers are
-    CI's."""
-    head = _head_paths()
+    """THE TIP CENSUS. For a src change in any row, every item under the row's unit trees
+    that `make coverage` would select (M_COVERAGE) and no tip leg selects is in the pull
+    request's `tests_hostless` selection: the tip and CI together run what `make coverage`
+    would. The tiers M_COVERAGE excludes (stability, browser, busybox, conformance, kmodcov)
+    keep their own lanes, special rows or nightly."""
     makefile = (CHECKOUT_ROOT / "Makefile").read_text()
-    path = f"src/otto/{package}/x.py"
-    scope = gs.classify([gs.Change(path, "M")], _at_head(path, ""), "base", "head", head | {path})
-    lines = gs.commands(scope, tip=True, base="origin/main")
-    assert "make coverage" not in lines, lines
-    assert "make coverage-bed" in lines, lines
-    universe = [*gs.UNIT_TREES[package], *scope.quick_tip]
-    compiled = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
+    lines = _src_row_tip(package)
+    tip = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
+    ci = [(leg, Expression.compile(leg.expr)) for leg in _ci_hostless_legs()]
     coverage = Expression.compile(
         _lane_invariants._makefile_marker_variables(makefile)["M_COVERAGE"]
     )
     gaps = []
     for item in collect_marker_sets(()):
-        if not gs._within(item.path, universe):
+        if not gs._within(item.path, gs.UNIT_TREES[package]):
             continue
         matcher = _marker_matcher(item.markers)
         if not coverage.evaluate(matcher):
             continue
-        if not any(
-            _within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in compiled
-        ):
+        if any(_within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in tip):
+            continue
+        if not any(_within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in ci):
             gaps.append(item.nodeid)
-    assert gaps == [], f"{len(gaps)} item(s) no tip lane selects:\n  " + "\n  ".join(gaps[:40])
+    assert gaps == [], f"{len(gaps)} item(s) neither the tip nor CI selects:\n  " + "\n  ".join(
+        gaps[:40]
+    )
 
 
 def test_no_tip_list_runs_the_hostless_matrix_locally():
-    """The hostless sessions are the pull request's CI (#795): no oracle line names one
-    (`test_gate_tip`'s census then keeps the stamped goals equal to what the oracle emits)."""
-    every = [*gs.FULL_GATE, *itertools.chain.from_iterable(gs.BED_LANES.values())]
-    assert not [line for line in every if line.startswith("nox") or "hostless" in line]
+    """The hostless sessions, docs and TypeScript are the pull request's CI (#795): every
+    tip line over the real tracked modules names only static, bed or live goals. (The commit
+    column is not checked here: `goals()` validates it against the same union plus the
+    commit-only goals, so such a check could only fail by raising.)"""
+    tip_goals = set(gs.STATIC_GOALS + gs.BED_GOALS + gs.LIVE_GOALS)
+    head = _head_paths()
+    stray = []
+    paths = [p for p in _tracked("tests") if gs._is_test_module(p)]
+    paths += [f"src/otto/{package}/x.py" for package in _SRC_ROWS]
+    paths += ["scripts/gate_tip.py", "Makefile", "uv.lock", "docs/index.md", "web/src/App.tsx"]
+    for path in paths:
+        on_disk = CHECKOUT_ROOT / path
+        text = on_disk.read_text(encoding="utf-8") if on_disk.is_file() else ""
+        scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
+        stray += [
+            f"{path}: {line}"
+            for line in gs.commands(scope, tip=True, base="origin/main")
+            if not set(gs.goals(line)) <= tip_goals
+        ]
+    assert stray == [], "\n".join(stray[:40])
 
 
 def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
@@ -1931,11 +1825,11 @@ def test_a_scripts_path_gets_the_repo_root_on_its_ty_line_and_tests_get_none():
         [gs.SRC_LEAF, gs.SCRIPTS, gs.TESTS_LEAF],
         quick=["tests/unit/cli"],
         packages=["cli"],
-        files=["src/otto/cli/x.py", "scripts/gate_fresh.py", "tests/unit/cli/test_a.py"],
+        files=["src/otto/cli/x.py", "scripts/gate_tip.py", "tests/unit/cli/test_a.py"],
     )
     lines = gs.commands(mixed, tip=False, base=base)
     assert "uv run ty check src/otto/cli/x.py" in lines
-    assert "uv run ty check --extra-search-path . scripts/gate_fresh.py" in lines
+    assert "uv run ty check --extra-search-path . scripts/gate_tip.py" in lines
     assert not [line for line in lines if "ty check" in line and "tests/" in line]
 
 
@@ -1986,7 +1880,7 @@ def test_main_classifies_the_commit_and_the_tip(tmp_path: Path, capsys, monkeypa
     assert "tests/e2e/cli" in quick[0], out
     assert "tip (" in out
     assert "docs, src-leaf, tests-leaf" in out
-    assert "make coverage" in out.split("tip (")[1]
+    assert "make coverage-bed" in out.split("tip (")[1]
 
 
 def test_main_refuses_a_dirty_tracked_tree(tmp_path: Path, capsys, monkeypatch):
@@ -2048,47 +1942,39 @@ def test_a_head_at_the_merge_base_has_an_empty_tip(tmp_path: Path, capsys, monke
 def test_a_non_default_base_reaches_every_line_that_runs_check_breaking(
     tmp_path: Path, capsys, monkeypatch
 ):
-    """Without origin/main, `--base main` must govern the nested check-breaking runs too:
-    lint-arch reaches it as a prerequisite, gate-fresh through its nested make (check-python
-    is the full gate's line, which this src-leaf + tests-leaf diff no longer runs at its tip;
-    `_with_range` is one function over every RANGE_TARGETS line). The default base adds
-    nothing, so the common case's lines are unchanged."""
+    """Without origin/main, `--base main` must govern the check-breaking line in both
+    columns (`_with_range` is one function over every RANGE_TARGETS line). The default base
+    adds nothing, so the common case's lines are unchanged."""
     repo = _repo(tmp_path)
     _git(repo, "update-ref", "-d", "refs/remotes/origin/main")
     assert _main(monkeypatch, repo, "--base", "main") == 0
     lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
-    ranged = [line for line in lines if line.split()[:2] in _RANGED_TARGET_LINES]
-    assert {line.split()[1] for line in ranged} == {"check-breaking", "lint-arch", "gate-fresh"}
+    ranged = [line for line in lines if " RANGE=" in line]
+    assert {line.split()[1] for line in ranged} == {"check-breaking"}, lines
+    assert len(ranged) == 2, "one live line per column"
     assert all(line.endswith(" RANGE=main..HEAD") for line in ranged), ranged
+    assert "make lint-arch" in lines, "a tree-pure lane takes no range"
     (tmp_path / "default").mkdir()
     default = _repo(tmp_path / "default")
     assert _main(monkeypatch, default) == 0
     assert "RANGE=" not in capsys.readouterr().out
 
 
-_RANGED_TARGET_LINES = [
-    ["make", "check-breaking"],
-    ["make", "lint-arch"],
-    ["make", "check-python"],
-    ["make", "gate-fresh"],
-]
-
-
 def test_the_ranged_targets_are_the_ones_that_reach_check_breaking():
-    """`gate-fresh` reaches lint-arch through scripts/gate_fresh.py's own make, which inherits
-    a command-line RANGE through MAKEFLAGS; the rest reach check-breaking as a prerequisite."""
+    """Only `check-breaking` reads history: the static lanes are tree-pure (no target the
+    oracle emits reaches check-breaking as a prerequisite), so RANGE rides one line."""
     makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     emitted = {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
-    emitted |= {"check-breaking", "lint-arch", "quick", "quick-guards"}
+    emitted |= {"check-breaking", "lint-arch", "quick", "quick-guards", "collect-check"}
     reaching = {t for t in emitted if "check-breaking" in make_reachable(t, makefile)}
-    assert reaching | {"gate-fresh"} == set(gs.RANGE_TARGETS)
-    assert "lint-arch" in GATED_TARGETS
+    assert reaching == set(gs.RANGE_TARGETS)
 
 
 def test_a_head_without_a_parent_is_refused(tmp_path: Path, capsys, monkeypatch):
     repo = tmp_path / "root"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
     (repo / "README.md").write_text("r\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "root")
@@ -2101,7 +1987,7 @@ def test_a_head_without_a_parent_is_refused(tmp_path: Path, capsys, monkeypatch)
 def test_the_script_runs_as_a_file_from_the_repo_root(tmp_path: Path):
     """`python scripts/gate_scope.py` (what `uv run python …` in the Makefile executes) puts
     scripts/ first on sys.path; the script must establish the repo root itself to import
-    scripts.gate_fresh. The interpreter is this venv's own (`sys.executable`, absolute) and
+    scripts.gate_stamp_common. The interpreter is this venv's own (`sys.executable`, absolute) and
     the environment is the closed `git_env(repo)` verbatim — `uv` itself is not under test:
     with HOME confined it would rebuild its cache."""
     repo = _repo(tmp_path)
@@ -2138,14 +2024,13 @@ def test_a_measured_matrix_routes_its_readers_as_tests_leaf_changes():
     assert scope.quick_paths == [p for p in gs.MATRIX_READERS if p not in family]
     assert scope.full_at_commit == []
     assert scope.unknown == []
-    tip = gs.commands(scope, tip=True, base="origin/main")
-    assert tip[0] == "make check-breaking"
-    assert "make quick-guards" in tip
+    commit = gs.commands(scope, tip=False, base="origin/main")
+    assert "make quick-guards" in commit
     assert any(
-        line.startswith('make quick PATHS="tests/unit/test_matrix_downgrades.py') for line in tip
+        line.startswith('make quick PATHS="tests/unit/test_matrix_downgrades.py') for line in commit
     )
-    assert "make gate-fresh" in tip
-    assert "make coverage" not in tip
+    tip = gs.commands(scope, tip=True, base="origin/main")
+    assert tip == ["make check-breaking", "make check-python", "make collect-check"]
 
 
 def test_a_measured_matrix_whose_readers_are_gone_is_a_full_gate():
@@ -2167,7 +2052,7 @@ def test_the_matrix_reader_census_separates_readers_from_gate_pins():
         "tests/unit/scripts/test_gate_pin.py": "from scripts import gate_scope\n" + support,
         "tests/unit/scripts/test_runner_pin.py": "from scripts.gate_tip import goals\n" + support,
         "tests/unit/scripts/test_both_pin.py": (
-            "from scripts import gate_fresh, gate_scope as gs, gate_tip as gt\n" + support
+            "from scripts import gate_stamp_common, gate_scope as gs, gate_tip as gt\n" + support
         ),
         "tests/unit/scripts/test_dotted_pin.py": "import scripts.gate_tip\n" + kmodcov,
         "tests/unit/test_unparsable.py": 'def test_a(:\n    "schemas/support_matrix.json"\n',
@@ -2190,17 +2075,15 @@ def test_the_matrix_readers_row_is_every_reader_in_the_test_tree():
     assert gs.matrix_readers(sources) == gs.MATRIX_READERS
 
 
-FAMILY_MODULE = (
-    "import pytest\npytestmark = pytest.mark.interpreter_agnostic\n\n\ndef test_b(): pass\n"
-)
+BED_MODULE = "import pytest\npytestmark = pytest.mark.integration\n\n\ndef test_b(): pass\n"
 
 
 def _tests_only_repo(tmp_path: Path) -> "tuple[Path, str, str]":
     """Build base, tip and HEAD commits; return (repo, base_sha, tip_sha).
 
-    base: one unit module; tip: adds a plain second module; HEAD: the SAME module, now wholly
-    interpreter_agnostic — so the oracle routes test_b.py to `make quick` when read at the tip and
-    to `make quick-guards` when read at HEAD.
+    base: one unit module; tip: adds a plain second module; HEAD: the SAME module, now
+    integration-marked — so the oracle leaves the bed alone when it reads test_b.py at the
+    tip and sends the tip to the bed half when it reads it at HEAD.
     """
     repo = tmp_path / "trepo"
     (repo / "tests/unit/cli").mkdir(parents=True)
@@ -2213,11 +2096,11 @@ def _tests_only_repo(tmp_path: Path) -> "tuple[Path, str, str]":
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "tip")
     tip = _git(repo, "rev-parse", "HEAD").strip()
-    (repo / "tests/unit/cli/test_b.py").write_text(FAMILY_MODULE)
+    (repo / "tests/unit/cli/test_b.py").write_text(BED_MODULE)
     (repo / "tests/unit/other").mkdir()
     (repo / "tests/unit/other/test_c.py").write_text("def test_c(): pass\n")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "after the tip: test_b joins the family, test_c appears elsewhere")
+    _git(repo, "commit", "-qm", "after the tip: test_b joins the bed, test_c appears elsewhere")
     return repo, base, tip
 
 
@@ -2226,26 +2109,19 @@ def test_head_tree_and_tip_commands_read_the_given_revision(tmp_path):
     env = git_env(repo)
     assert "tests/unit/other/test_c.py" not in gs.head_tree(repo, env, tip)
     assert "tests/unit/other/test_c.py" in gs.head_tree(repo, env, "HEAD")
-    # the oracle's tests-leaf tip shape: check-breaking, quick over the surviving roots, ruff per
-    # module, lint-arch, quick-guards (every tests-leaf tip), gate-fresh — see commands()
+    # a hostless tests-leaf tip: the live line ranged to the tip's sha, the static lanes
     assert gs.tip_commands(repo, base, tip, env) == [
-        f"make check-breaking RANGE={base}..HEAD",
-        'make quick PATHS="tests/unit/cli"',
-        "uv run ruff check tests/unit/cli/test_b.py",
-        f"make lint-arch RANGE={base}..HEAD",
-        "make quick-guards",
-        f"make gate-fresh RANGE={base}..HEAD",
+        f"make check-breaking RANGE={base}..{tip}",
+        "make check-python",
+        "make collect-check",
     ]
-    # at HEAD, test_b.py is a family module (guards, no quick root of its own) and the only
-    # quick root is test_c.py's package: reading sources at the tip is what keeps tests/unit/cli
+    # at HEAD, test_b.py is integration-marked: the bed half joins. Reading sources at the
+    # tip is what keeps the tip off the bed
     assert gs.tip_commands(repo, base, "HEAD", env) == [
         f"make check-breaking RANGE={base}..HEAD",
-        'make quick PATHS="tests/unit/other"',
-        "uv run ruff check tests/unit/cli/test_b.py",
-        "uv run ruff check tests/unit/other/test_c.py",
-        f"make lint-arch RANGE={base}..HEAD",
-        "make quick-guards",
-        f"make gate-fresh RANGE={base}..HEAD",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
     ]
 
 
@@ -2270,22 +2146,19 @@ def test_tip_commands_read_the_tree_at_the_given_revision(tmp_path):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "after the tip: the only reader goes")
     env = git_env(repo)
-    # at the tip the reader exists: a tests-leaf route over it
+    # at the tip the reader exists: a hostless tests-leaf route over it
     assert gs.tip_commands(repo, base, tip, env) == [
-        f"make check-breaking RANGE={base}..HEAD",
-        'make quick PATHS="tests/unit/test_support_matrix.py"',
-        f"make lint-arch RANGE={base}..HEAD",
-        "make quick-guards",
-        f"make gate-fresh RANGE={base}..HEAD",
+        f"make check-breaking RANGE={base}..{tip}",
+        "make check-python",
+        "make collect-check",
     ]
-    # at HEAD it is gone: the measured matrix has no surviving reader, so the full gate
+    # at HEAD it is gone: the measured matrix has no surviving reader, a `full_at_commit`
+    # reason, so the tip falls back to the bed half
     assert gs.tip_commands(repo, base, "HEAD", env) == [
         f"make check-breaking RANGE={base}..HEAD",
-        f"make check-python RANGE={base}..HEAD",
-        "make check-ts",
-        "make docs",
-        f"make gate-fresh RANGE={base}..HEAD",
-        "make coverage",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
     ]
 
 
@@ -2311,6 +2184,25 @@ def test_the_report_ends_with_the_gate_tip_remedy_only_when_something_lands():
         count=0,
     )
     assert "gate-tip" not in text
+
+
+def test_the_report_names_why_the_tip_reaches_the_bed_half():
+    path = "tests/unit/cov/test_u.py"
+    source = "import pytest\n_M=[pytest.mark.kmodcov]\npytestmark=[*_M]\ndef test_a(): pass\n"
+    scope = _scope([gs.Change(path, "M")], {("head", path): source})
+    text = gs.render(
+        scope,
+        scope,
+        base="origin/main",
+        merge_base="abc",
+        commit_range="a..b",
+        tip_range="a..b",
+        count=1,
+    )
+    tip = text.split("\ntip (")[1]
+    assert f"  (bed half: {path}: unreadable pytestmark)" in tip
+    assert "  make coverage-bed" in tip
+    assert f"  (full gate: {path}: unreadable pytestmark)" in text.split("\ntip (")[0]
 
 
 # --- a release's own non-code edits (#660) ---------------------------------
@@ -2357,7 +2249,7 @@ def test_a_bump_with_any_other_pyproject_edit_is_classified_as_before(extra):
     scope = _one("pyproject.toml", _PYPROJECT, extra(_bump(_PYPROJECT)))
     assert gs.NONE not in scope.classes
     assert gs.ESCALATE in scope.classes
-    assert "make coverage" in gs.commands(scope, tip=True, base="origin/main")
+    assert "make coverage-bed" in gs.commands(scope, tip=True, base="origin/main")
 
 
 def test_a_pyproject_edit_that_moves_no_version_is_not_a_release_edit():
@@ -2375,14 +2267,18 @@ def test_otto_s_own_lock_version_bump_needs_no_lane_but_any_other_lock_edit_does
     assert scope.classes == [gs.FULL]
 
 
+_MATRIX_BASE = json.dumps(
+    {"format": 1, "cells": {"s": {"p": {"verdict": "measured-ok", "as_of": "2026-10-18"}}}}
+)
+_MATRIX_REDATED = _MATRIX_BASE.replace("2026-10-18", "2026-10-19")
+_MATRIX_IMPROVED = _MATRIX_REDATED.replace("measured-ok", "measured-broken")
+
+
 def test_a_matrix_re_dated_and_nothing_else_needs_no_lane():
-    base = json.dumps(
-        {"format": 1, "cells": {"s": {"p": {"verdict": "measured-ok", "as_of": "2026-10-18"}}}}
-    )
-    redated = base.replace("2026-10-18", "2026-10-19")
-    scope = _one("schemas/support_matrix.json", base, redated)
+    base = _MATRIX_BASE
+    scope = _one("schemas/support_matrix.json", base, _MATRIX_REDATED)
     assert scope.classes == [gs.NONE]
-    changed_verdict = redated.replace("measured-ok", "measured-broken")
+    changed_verdict = _MATRIX_IMPROVED
     scope = _scope(
         [gs.Change("schemas/support_matrix.json", "M")],
         {
@@ -2445,7 +2341,7 @@ def test_a_whole_release_range_needs_only_live_lanes():
     }
     changes = [gs.Change(path, "M") for (rev, path) in files if rev == "head"]
     tip = gs.commands(_scope(changes, files), tip=True, base="origin/main")
-    assert tip == ["make check-breaking", "make gate-fresh"]
+    assert tip == ["make check-breaking"]
     assert all(gt.is_live(line) for line in tip)
 
 
@@ -2510,3 +2406,242 @@ def test_a_change_the_docs_captures_read_runs_their_drift_check_at_the_tip(path)
 def test_a_docs_page_change_does_not_run_the_captures_drift_check():
     scope = _scope([gs.Change("docs/configuration/settings.md", "M")])
     assert "make docs-captures-check" not in gs.commands(scope, tip=True, base="origin/main")
+
+
+# ── the slim tip: goal classes, the static and bed reach, one plan() for every consumer ──
+
+
+def test_goal_classification_lives_in_the_oracle():
+    assert gs.STATIC_GOALS == ["check-python", "collect-check"]
+    assert gs.BED_GOALS == [
+        "coverage-bed",
+        "conformance-bed",
+        "stability-unix",
+        "stability-tunnel",
+        "stability-embedded",
+        "docs-captures-check",
+        "kmodcov",
+        "chaos",
+        "chaos-embedded",
+    ]
+    assert gs.LIVE_GOALS == gs.RANGE_TARGETS == ["check-breaking"]
+    assert gs.STAMPED_GOALS == gs.STATIC_GOALS + gs.BED_GOALS
+    assert gs.goals("make check-breaking RANGE=a..b") == ["check-breaking"]
+    assert gs.is_live("make check-breaking RANGE=a..b")
+    assert gs.lane_key("make check-breaking RANGE=a..b") == "make check-breaking"
+    with pytest.raises(gs.UnknownGoalError):
+        gs.goals("make gate-fresh")
+    assert not hasattr(gs, "SRC_LEAF_TIP_LANES")
+    assert not hasattr(gs, "consumers")
+
+
+TIP = {"tip": True, "base": "origin/main"}
+_BED_MARKED = "import pytest\npytestmark = pytest.mark.integration\ndef test_a(): pass\n"
+_HOSTLESS = "def test_a(): pass\n"
+
+
+def test_a_docs_tip_is_the_live_line_alone():
+    assert gs.commands(_scope([gs.Change("docs/a.md", "M")]), **TIP) == ["make check-breaking"]
+
+
+def test_a_hostless_test_change_earns_the_static_lanes_and_no_bed_lane():
+    path = "tests/unit/cli/test_a.py"
+    s = _scope([gs.Change(path, "M")], {("head", path): _HOSTLESS})
+    assert gs.commands(s, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+    ]
+    assert s.bed_modules == []
+    assert not gs.bed_reach(s)
+
+
+@pytest.mark.parametrize(
+    ("path", "source"),
+    [
+        ("tests/unit/cli/test_a.py", _BED_MARKED),
+        (
+            "tests/e2e/x/test_b.py",
+            (
+                "import pytest\n"
+                "@pytest.mark.parametrize('v', [pytest.param(1, marks=pytest.mark.embedded)])\n"
+                "def test_b(v): pass\n"
+            ),
+        ),
+        ("tests/integration/x/test_c.py", "def test_c(): pass\n"),
+    ],
+)
+def test_a_bed_half_test_change_adds_coverage_bed(path, source):
+    s = _scope([gs.Change(path, "M")], {("head", path): source})
+    assert s.bed_modules == [path]
+    assert gs.commands(s, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+    ]
+
+
+def test_the_one_mixed_module_in_the_tree_is_in_the_bed_half():
+    path = "tests/e2e/host/test_app_shell_e2e.py"
+    assert gs.in_bed_half(path, (CHECKOUT_ROOT / path).read_text())
+
+
+def test_an_unreadable_mark_falls_back_to_the_bed_half():
+    path = "tests/unit/cov/test_u.py"
+    source = "import pytest\n_M=[pytest.mark.kmodcov]\npytestmark=[*_M]\ndef test_a(): pass\n"
+    s = _scope([gs.Change(path, "M")], {("head", path): source})
+    assert s.full_at_commit == [f"{path}: unreadable pytestmark"]
+    assert "make coverage-bed" in gs.commands(s, **TIP)
+
+
+def test_a_src_leaf_tip_is_static_plus_the_bed_half_plus_its_bed_lane():
+    path = "src/otto/host/x.py"
+    s = _scope([gs.Change(path, "M")], {("head", path): "x = 1\n"})
+    assert gs.commands(s, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+        "make conformance-bed",
+        "make docs-captures-check",  # every src change can move a docs capture
+    ]
+
+
+def test_an_escalating_tip_runs_no_quick_no_ty_and_no_docs():
+    path = "src/otto/__init__.py"
+    lines = gs.commands(_scope([gs.Change(path, "M")], {("head", path): ""}), **TIP)
+    assert lines[:4] == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+    ]
+    banned = ("make quick", "uv run", "make docs ", "make gate-fresh", "make coverage ")
+    assert not any(line.startswith(banned) or line == "make docs" for line in lines)
+
+
+def test_a_python_file_classed_docs_still_earns_the_static_lanes():
+    path = "docs/examples/quickstart-x/run.py"
+    s = _scope([gs.Change(path, "M")], {("head", path): "x=1\n"})
+    assert gs.DOCS in s.classes
+    assert gs.static_reach(s)
+    assert gs.commands(s, **TIP)[:3] == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+    ]
+
+
+def test_a_web_tip_is_the_live_line_and_the_commit_column_keeps_check_ts():
+    s = _scope([gs.Change("web/src/a.ts", "M")], {("head", "web/src/a.ts"): ""})
+    assert gs.commands(s, **TIP) == ["make check-breaking"]
+    assert "make check-ts" in gs.commands(s, tip=False, base="origin/main")
+
+
+def test_a_special_row_reaches_the_tip_only_through_a_bed_goal():
+    soak = "tests/e2e/monitor/dashboard/test_replay_soak.py"
+    soak_source = (
+        "import pytest\npytestmark=[pytest.mark.browser, pytest.mark.soak]\ndef test_a(): pass\n"
+    )
+    s = _scope([gs.Change(soak, "M")], {("head", soak): soak_source})
+    assert "make dashboard-soak" in gs.commands(s, tip=False, base="origin/main")
+    assert "make dashboard-soak" not in gs.commands(s, **TIP)
+    chaos = "tests/e2e/chaos/test_c.py"
+    chaos_scope = _scope([gs.Change(chaos, "M")], {("head", chaos): _HOSTLESS})
+    assert "make chaos" in gs.commands(chaos_scope, **TIP)
+
+
+def test_the_busybox_bed_row_has_no_full_tip_any_more():
+    path = "tests/integration/busybox_bed/test_x.py"
+    s = _scope([gs.Change(path, "M")], {("head", path): _HOSTLESS})
+    assert not hasattr(s, "full_at_tip")
+    assert gs.commands(s, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+    ]
+
+
+def test_the_commit_full_column_is_static_lanes_then_the_bed_half():
+    s = _scope([gs.Change("uv.lock", "M")], {("head", "uv.lock"): "x"})
+    assert gs.commands(s, tip=False, base="origin/main") == ["make check-breaking", *gs.FULL_GATE]
+
+
+def test_an_improving_matrix_is_a_tests_leaf_change_that_earns_the_static_lanes():
+    # a re-dated matrix is release-owned (class none, the live line alone); a changed verdict
+    # is an ordinary tests-leaf change whose readers are hostless unit tests
+    path = "schemas/support_matrix.json"
+    redated = _one(path, _MATRIX_BASE, _MATRIX_REDATED)
+    assert redated.classes == [gs.NONE]
+    # TIP's base is "origin/main": the display pair, a bare live line
+    assert gs.commands(redated, **TIP) == ["make check-breaking"]
+    improved = _scope(
+        [gs.Change(path, "M")],
+        {("base", path): _MATRIX_BASE, ("head", path): _MATRIX_IMPROVED, **_real_reader_sources()},
+        head_paths=set(gs.MATRIX_READERS) | {path},
+    )
+    assert improved.classes == [gs.TESTS_LEAF]
+    # the whole tip: no bed fallback for readers outside the bed half
+    assert gs.commands(improved, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+    ]
+
+
+def test_plan_names_the_tip_in_the_live_line_and_the_stamped_keys(tmp_path):
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "main").strip()
+    tip = _git(repo, "rev-parse", "feature").strip()
+    p = gs.plan(repo, base, tip, git_env(repo))
+    assert (p.base_sha, p.tip_sha, p.tree) == (
+        base,
+        tip,
+        _git(repo, "rev-parse", f"{tip}^{{tree}}").strip(),
+    )
+    assert p.live == [f"make check-breaking RANGE={base}..{tip}"]
+    # cli has no BED_LANES row; its src change can move a docs capture
+    assert p.stamped == [
+        "make check-python",
+        "make collect-check",
+        "make coverage-bed",
+        "make docs-captures-check",
+    ]
+    assert p.bed is True
+
+
+def test_an_empty_range_is_a_plan_of_the_live_line_alone(tmp_path):
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "main").strip()
+    p = gs.plan(repo, base, base, git_env(repo))
+    assert p.live == [f"make check-breaking RANGE={base}..{base}"]
+    assert p.stamped == []
+    assert p.bed is False
+
+
+def test_check_breaking_accepts_a_range_ending_at_the_sha_head_resolves_to(tmp_path):
+    # the plan's live line names the tip by sha; check-breaking must take that for HEAD
+    repo = _repo(tmp_path)  # HEAD is the feature tip
+    base = _git(repo, "rev-parse", "main").strip()
+    tip = _git(repo, "rev-parse", "HEAD").strip()
+    live = gs.plan(repo, base, tip, git_env(repo)).live
+    assert live == [f"make check-breaking RANGE={base}..{tip}"]
+    check_breaking_marks.require_range_ends_at_head(repo, live[0].partition("RANGE=")[2])
+
+
+def test_the_admission_imports_need_only_the_stdlib_and_tomli():
+    """CI's admission runs under ``uv run --no-project --with tomli``: no otto, no packaging."""
+    code = (
+        "import sys; "
+        f"sys.path.insert(0, {str(CHECKOUT_ROOT)!r}); "
+        "import scripts.gate_scope, scripts.gate_stamp_common, scripts.local_gate_status; "
+        "bad = [m for m in sys.modules if m == 'otto' or m.startswith('otto.') "
+        "or m == 'packaging' or m.startswith('packaging.')]; "
+        "print(bad); sys.exit(1 if bad else 0)"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stdout + done.stderr

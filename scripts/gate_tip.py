@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
-"""The landing's gate: stamp each lane the oracle names, and refuse a push without the stamps.
+"""The landing's gate: run the oracle's plan, stamp each lane by tree, publish the status.
 
-`make gate-tip` asks the oracle (scripts/gate_scope.py) for the tip list over
-origin/main..HEAD, runs every STAMPED lane in order and writes a stamp per lane
-keyed by the committed tree; the pre-push check (``missing_stamps``) recomputes
-the tip list for the real pushed range and names every stamped lane without a
-satisfying stamp. LIVE lanes — the history checks and docs — are never stamped:
-the push runs them itself over the pushed range (scripts/gate_fresh.py).
+`make gate-tip` asks the oracle (``gate_scope.plan``) for the landing's tip over
+merge-base(base, HEAD)..HEAD, where the base is the remote's main, fetched, unless
+``--base`` names one. It runs every STAMPED lane in order and writes a stamp per lane
+keyed by the committed tree; lanes some stamp already satisfies are skipped. LIVE lanes
+(the history checks) are never stamped: the pre-push hook (``--pre-push``) runs them over
+the landing range, after it finds every pushed branch's lanes stamped and refuses any push
+to main.
+
+The bed lease: the runner takes it itself, for its own pid, immediately before the first
+bed lane (a goal in ``gate_scope.BED_GOALS``) it has to run. A tip of static lanes only,
+or one whose bed lanes are all stamped already, never touches the bed. ``run`` is the
+lease's one owner: a walk that ends, green or red, releases it before anything is
+published; an interrupt whose lanes are gone reaps the bed, then releases; an interrupt
+whose lanes would not drain keeps it (the bed is not idle: ``make bed-reap`` once it is).
+
+The status: a green run posts the ``local-gate`` commit status on HEAD, whose
+description (``local_gate_status.expected``) names the tree, the base and the stamped
+lanes; a red run flips a success HEAD already carries to failure. Neither ever changes
+the exit status. ``--status`` (``make gate-status``) posts it for a tree gated earlier
+and then admits the pull request's run (its ``gate-admission`` job).
 
 The store: ``<git common dir>/otto-gate-stamps/<tree>/<slug>-<8 hex>.json``,
 one file per (tree, lane key). A measured matrix (MEASURED_OUTPUTS) committed
@@ -21,11 +35,12 @@ evidence, and the lookup stops there, so no stamp of another tree is promoted to
 a tree that went red. Only the lane's next outcome on that tree replaces it.
 
 The store lock (a flock on ``<store>/.lock``) serializes peers. Writers hold it
-exclusively: every stamp or marker write, invalidate's load-then-delete, and
-promotion's lookup-then-write. The pre-push check holds it shared from its first
-read to its verdict, so it judges one state of the store: no peer's marker or
-stamp lands while it reads, spawns git, and promotes. No lane runs under either,
-and no holder takes the other in the same process.
+exclusively: every stamp or marker write, invalidate's load-then-delete,
+promotion's lookup-then-write, and a status post from its re-validation to the
+post's return (``gh``'s timeout bounds that hold). A check that judges the store
+(the push check, ``--status``) holds it shared from its first read to its verdict,
+so it judges one state of the store. No lane runs under either, and no holder takes
+the other in the same process.
 """
 
 import argparse
@@ -34,29 +49,39 @@ import json
 import os
 import platform
 import re
-import shlex
 import signal
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts import gate_scope  # noqa: E402
+from scripts.gate_scope import (  # noqa: E402
+    LIVE_GOALS,  # noqa: F401 -- the runner's goal census reads the classes through this module
+    STAMPED_GOALS,  # noqa: F401 -- likewise
+    UnknownGoalError,
+    goals,
+    is_bed,
+    is_live,  # noqa: F401 -- the stamp tests classify the oracle's lines through this module
+    lane_key,
+)
 from scripts.gate_stamp_common import (  # noqa: E402
     ZERO_SHA,
-    GateFreshError,
+    GateError,
     TreeState,
     _git,
     blob_sha,
     blocking_untracked,
     dirt_refusals,
+    fetch_main,
     junit_snapshot_or_none,
     junit_written,
     nproc,
+    remote_slug,
     stamps_root,
     store_lock,
     test_roots,
@@ -65,75 +90,22 @@ from scripts.gate_stamp_common import (  # noqa: E402
     utc_now,
     write_atomically,
 )
+from scripts.local_gate_status import (  # noqa: E402
+    GhRunner,
+    admit_pr_run,
+    expected,
+    head_status,
+    post_status,
+    run_gh,
+)
 from scripts.process_group import UndrainedError, run_awaiting_descendants  # noqa: E402
 
-LIVE_GOALS = ["check-breaking", "lint-arch", "check-python", "docs", "gate-fresh"]
-"""History-dependent (RANGE_TARGETS) or run by the push itself; never stamped."""
-STAMPED_GOALS = [
-    "coverage",
-    "coverage-bed",
-    "conformance-bed",
-    "docs-captures-check",
-    "stability-unit",
-    "stability-unix",
-    "stability-tunnel",
-    "stability-embedded",
-    "kmodcov",
-    "dashboard",
-    "dashboard-soak",
-    "busybox",
-    "chaos",
-    "chaos-embedded",
-    "quick",
-    "quick-guards",
-    "check-ts",
-    "coverage-ts",
-    "ruff",
-    "ty",
-]
-"""Every goal the oracle can emit for a tip that the runner stamps (the census pins the set)."""
 MEASURED_OUTPUTS = ["schemas/support_matrix.json", "schemas/kmodcov_matrix.json"]
 """Files a lane rewrites with what it measured; the Makefile says review and commit the diff."""
 STORE = "otto-gate-stamps"
 FORMAT = 1
 _STR_FIELDS = ("tree", "command", "base", "written_at", "checkout")
 _RED_FIELDS = ("tree", "command", "written_at", "checkout")
-
-
-class UnknownGoalError(ValueError):
-    """The oracle emitted a line this runner does not know how to classify."""
-
-
-def goals(line: str) -> "list[str]":
-    """Return the goals of one oracle line: make targets, or the uv tool (ruff, ty).
-
-    A tests-leaf tip emits ruff lines; a src-leaf tip emits ty lines too (#797). Both are
-    stamped per line, the file path included.
-    """
-    words = shlex.split(line)
-    if words[:1] == ["make"]:
-        found = [w for w in words[1:] if "=" not in w]
-    elif words[:2] == ["uv", "run"] and words[2:3] in (["ruff"], ["ty"]):
-        found = [words[2]]
-    else:
-        raise UnknownGoalError(f"the oracle emitted a lane this runner does not know: {line}")
-    unknown = [g for g in found if g not in LIVE_GOALS and g not in STAMPED_GOALS]
-    if not found or unknown:
-        raise UnknownGoalError(f"the oracle emitted a lane this runner does not know: {line}")
-    return found
-
-
-def is_live(line: str) -> bool:
-    """Return whether any goal of *line* is live (run by the push, never stamped)."""
-    return any(g in LIVE_GOALS for g in goals(line))
-
-
-_RANGE = re.compile(r"\s+RANGE=\S+$")
-
-
-def lane_key(line: str) -> str:
-    """Return the oracle line minus its RANGE decoration: base-independent by construction."""
-    return _RANGE.sub("", line)
 
 
 def slug(key: str) -> str:
@@ -407,7 +379,7 @@ def satisfies(repo: Path, stamp: Stamp, tree: str, witnessed: "dict[str, set[str
         return True
     try:
         raw = _git(repo, "diff-tree", "-r", "-z", "--name-only", stamp.tree, tree)
-    except GateFreshError:
+    except GateError:
         return False
     changed = [p for p in raw.split("\0") if p]
     for path in changed:
@@ -415,7 +387,7 @@ def satisfies(repo: Path, stamp: Stamp, tree: str, witnessed: "dict[str, set[str
             return False
         try:
             blob = _git(repo, "rev-parse", f"{tree}:{path}").strip()
-        except GateFreshError:
+        except GateError:
             return False
         if blob not in witnessed[path]:
             return False
@@ -438,7 +410,7 @@ class Lookup:
 def _pruned(repo: Path, tree: str) -> bool:
     try:
         _git(repo, "cat-file", "-e", f"{tree}^{{tree}}")
-    except GateFreshError:
+    except GateError:
         return True
     return False
 
@@ -461,13 +433,19 @@ def _pruned_trees(repo: Path, trees: "list[str]") -> "set[str]":
     out = _git(repo, "cat-file", "--batch-check", stdin="".join(f"{t}^{{tree}}\n" for t in asked))
     answers = out.splitlines()
     if len(answers) != len(asked):
-        raise GateFreshError(
-            f"git cat-file --batch-check answered {len(answers)} of {len(asked)} trees"
-        )
+        raise GateError(f"git cat-file --batch-check answered {len(answers)} of {len(asked)} trees")
     for tree, answer in zip(asked, answers, strict=True):
         if answer.split()[1:2] != ["tree"]:  # "<name> missing", or another object type
             pruned.add(tree)
     return pruned
+
+
+def _exact_entry(root: Path, tree: str, key: str) -> "Stamp | Red | None":
+    """Return the stamp or red marker at (tree, key)'s own path when it is for exactly them."""
+    entry = read_entry(stamp_path(root, tree, key))
+    if entry is not None and entry.tree == tree and entry.command == key:
+        return entry
+    return None
 
 
 def lookup(
@@ -484,8 +462,8 @@ def lookup(
     "no stamp".
     """
     exact_path = stamp_path(root, tree, key)
-    entry = read_entry(exact_path)  # one read; on a hit the store is not touched
-    if entry is not None and entry.tree == tree and entry.command == key:
+    entry = _exact_entry(root, tree, key)  # one read; on a hit the store is not touched
+    if entry is not None:
         if isinstance(entry, Red):
             return Lookup(None, _red_reason(entry), store)
         return Lookup(entry, "", store)
@@ -579,10 +557,12 @@ class RunOutcome:
 Runner = Callable[["list[str] | str", Path, "dict[str, str]"], RunOutcome]
 """Run a shell line (inherit stdio, return "") or an argv (captured, stderr merged) in cwd."""
 
-_CHECK_USAGE = 2
 _STRIPPED = ("MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE")
-COVERAGE_GATE_OPTIONS = ["--threshold", "--selection", "--browsers", "--primary"]
-"""The declared coverage gate's option sequence (the Makefile's COVERAGE_STAMP_GATE, pinned)."""
+LEASE_PURPOSE = "gate-tip"
+"""The purpose the runner's own lease record names (``make bed-status`` shows it)."""
+CANONICAL_REMOTE = "origin"
+"""The remote whose main a landing is planned against: the CLI's default, and the one the
+Makefile's ``gate-tip`` and ``gate-status`` pass (pinned); a push elsewhere is told so."""
 
 
 def lane_env(environ: "dict[str, str]") -> "dict[str, str]":
@@ -597,7 +577,7 @@ def _default_runner(cmd: "list[str] | str", cwd: Path, env: "dict[str, str]") ->
     both gates share: a lane runs in a session of its own, the runner returns
     only when nothing the lane spawned is alive, and an interrupt is relayed to
     the lane's group and waited out before it propagates (a second one kills
-    the group; see :func:`main` for what the gate then does).
+    the group; see :func:`run` for what the gate then does).
     """
     shell = isinstance(cmd, str)
     result = run_awaiting_descendants(
@@ -608,63 +588,52 @@ def _default_runner(cmd: "list[str] | str", cwd: Path, env: "dict[str, str]") ->
 
 @dataclass
 class Options:
-    """What one `gate-tip` invocation was asked to do."""
+    """What one `gate-tip` (or `--status`) invocation was asked to do."""
 
     repo: Path
-    base: str = "origin/main"
+    base: "str | None" = None
+    """The landing's base; None is the remote's main, fetched (a dry run reads it unfetched)."""
+    remote: str = CANONICAL_REMOTE
     force: bool = False
     dry_run: bool = False
     overridden: "list[str]" = field(default_factory=list)
     runner: Runner = _default_runner
     out: TextIO = field(default_factory=lambda: sys.stdout)
     lab: "Path | None" = None
-    """The cell's lab file (the Makefile's LAB_FILE): what an interrupted run reaps."""
-    pid: "int | None" = None
-    """The run the lease belongs to (the recipe's ``$$PPID``, the ``make`` running this script)."""
-
-
-class FramingError(GateFreshError):
-    """The declared coverage gate holds a value the line framing cannot carry."""
+    """The cell's lab file (the Makefile's LAB_FILE): the bed a bed lane leases and reaps."""
+    gh: GhRunner = run_gh
+    """Runs ``gh``; bounded by ``GH_TIMEOUT``, so a hung post holds the store lock that long."""
 
 
 def _say(opts: Options, text: str) -> None:
     print(f"gate-tip: {text}", file=opts.out, flush=True)
 
 
-def _tip_list(repo: Path, base: str) -> "tuple[str, list[str]]":
-    """Return (merge-base sha, the oracle's tip list over merge-base..HEAD)."""
-    merge_base = _git(repo, "merge-base", base, "HEAD").strip()
-    head = _git(repo, "rev-parse", "HEAD").strip()
-    return merge_base, gate_scope.tip_commands(repo, merge_base, head)
+def resolve_base(opts: Options) -> str:
+    """Return the landing's base: ``--base`` when given, else the remote's main.
+
+    A dry run reads ``<remote>/main`` as the clone last fetched it and fetches nothing;
+    a real run fetches it (:func:`gate_stamp_common.fetch_main`, the one base resolver).
+    """
+    if opts.base:
+        return opts.base
+    if opts.dry_run:
+        return _git(opts.repo, "rev-parse", f"{opts.remote}/main").strip()
+    return fetch_main(opts.repo, opts.remote)
 
 
-def declared_coverage_gate(opts: Options, env: "dict[str, str]") -> "list[str]":
-    """Ask make for the declared coverage gate, one argv element per line, and check the framing."""
-    outcome = opts.runner(["make", "-s", "coverage-gate-args"], opts.repo, env)
-    if outcome.status != 0:
-        raise GateFreshError("make -s coverage-gate-args failed:\n" + outcome.output)
-    text = outcome.output
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    if len(lines) != 2 * len(COVERAGE_GATE_OPTIONS) or lines[0::2] != COVERAGE_GATE_OPTIONS:
-        raise FramingError(
-            "cannot frame the declared coverage gate as "
-            + " ".join(f"{o} <value>" for o in COVERAGE_GATE_OPTIONS)
-            + " (a value holds a newline, or the Makefile's COVERAGE_STAMP_GATE changed shape): "
-            + repr(text)
-        )
-    return lines
+def range_plan(repo: Path, base: str, tip: str) -> gate_scope.Plan:
+    """Return the oracle's plan for merge-base(base, tip)..tip: a landing, judged once.
+
+    The runner (*tip* HEAD) and the push check (*tip* a pushed sha) both plan through it.
+    """
+    merge_base = _git(repo, "merge-base", base, tip).strip()
+    return gate_scope.plan(repo, merge_base, _git(repo, "rev-parse", tip).strip())
 
 
-def coverage_check(opts: Options, env: "dict[str, str]", gate_args: "list[str]") -> int:
-    """Run the coverage stamp's own check for HEAD's tree, show its output, return 0/1/2."""
-    argv = ["uv", "run", "python", "scripts/coverage_stamp.py", "check", *gate_args]
-    outcome = opts.runner(argv, opts.repo, env)
-    text = outcome.output
-    if text:
-        opts.out.write(text if text.endswith("\n") else text + "\n")
-    return outcome.status
+def _plan(opts: Options) -> gate_scope.Plan:
+    """Return the oracle's plan for merge-base(base, HEAD)..HEAD."""
+    return range_plan(opts.repo, resolve_base(opts), "HEAD")
 
 
 def _measured_dirt(state: TreeState) -> "tuple[list[str], list[str]]":
@@ -672,34 +641,6 @@ def _measured_dirt(state: TreeState) -> "tuple[list[str], list[str]]":
     measured = [p for p in state.tracked_dirty if p in MEASURED_OUTPUTS]
     other = [p for p in state.tracked_dirty if p not in MEASURED_OUTPUTS]
     return measured, other
-
-
-@dataclass(frozen=True)
-class LaneResult:
-    """How a lane ended: its exit status, and whether the lane's command ran at all.
-
-    The coverage lane does not run when the coverage stamp already holds for the tree;
-    its stamp then carries no timing, because nothing was measured.
-    """
-
-    status: int
-    ran: bool
-
-
-def _run_lane(opts: Options, line: str, env: "dict[str, str]") -> LaneResult:
-    """Run one stamped lane; the coverage lane goes through the coverage stamp's check first."""
-    if goals(line) == ["coverage"]:
-        gate_args = declared_coverage_gate(opts, env)
-        status = coverage_check(opts, env, gate_args)
-        if status == _CHECK_USAGE:
-            return LaneResult(_CHECK_USAGE, ran=False)
-        if status == 0 and not opts.force:
-            return LaneResult(0, ran=False)
-        status = opts.runner(line, opts.repo, env).status
-        if status != 0:
-            return LaneResult(status, ran=True)
-        return LaneResult(coverage_check(opts, env, gate_args), ran=True)
-    return LaneResult(opts.runner(line, opts.repo, env).status, ran=True)
 
 
 def lane_timing(
@@ -713,7 +654,7 @@ def lane_timing(
     (the project venv; a lane's own interpreters are the lane's business), ``nproc`` the
     CPUs it may run on, and ``junit`` the reports under ``reports/junit`` that are new or
     rewritten since *before* (the snapshot taken as the lane started; empty when either
-    snapshot could not be taken). A report, never evidence: the pre-push check never
+    snapshot could not be taken). A report, never evidence: the push check never
     reads it.
     """
     return {
@@ -751,22 +692,118 @@ def _table(rows: "list[Row]", *, dated: bool = False) -> "list[str]":
 
 
 @dataclass
+class Lease:
+    """The bed lease this run holds: the cell it is on, and the pid it is held for."""
+
+    cell: Any
+    pid: int
+
+
+@dataclass
 class _Run:
     """What one `run` knows while it walks the lanes."""
 
     opts: Options
-    merge_base: str
+    plan: gate_scope.Plan
     root: Path
-    tree: str
     roots: "list[str]"
     env: "dict[str, str]"
+    lease: "Lease | None" = None
     stamped: int = 0
     already: int = 0
     live: int = 0
     red: int = 0
     stopped: bool = False
     missing: "list[str]" = field(default_factory=list)
+    red_keys: "list[str]" = field(default_factory=list)
+    """The lanes that left a red marker in this run: what a failure status names."""
     rows: "list[Row]" = field(default_factory=list)
+
+    @property
+    def tree(self) -> str:
+        """The tree every stamp of this run is keyed by: the plan's tip tree."""
+        return self.plan.tree
+
+
+def _new_run(opts: Options, plan: gate_scope.Plan) -> _Run:
+    """Return the walk's state for *plan*, before any lane."""
+    return _Run(
+        opts=opts,
+        plan=plan,
+        root=stamps_root(opts.repo, STORE),
+        roots=test_roots(opts.repo),
+        env=lane_env(dict(os.environ)),
+    )
+
+
+def _acquire_lease(ctx: _Run) -> None:
+    """Take the bed lease for this process, on the cell ``--lab`` names; GateError when not.
+
+    The runner's own pid holds it: every lane it spawns descends from it, so a lane's
+    own acquire re-enters the hold. ``bed_lease`` loads otto, so it is imported here,
+    never on the hook's path.
+    """
+    if ctx.opts.lab is None:
+        raise GateError("--lab is required to run a bed lane")
+    from scripts import bed_lease
+
+    pid = os.getpid()
+    try:
+        cell = bed_lease.load_cell(ctx.opts.lab, bed_lease.root_from(None))
+        status = bed_lease.acquire(cell, pid, LEASE_PURPOSE)
+    except bed_lease.UsageError as exc:
+        raise GateError(str(exc)) from exc
+    if status != 0:
+        raise GateError("the bed lease was not acquired")
+    ctx.lease = Lease(cell, pid)
+
+
+def _release_lease(ctx: _Run) -> None:
+    """Release the lease this run holds (after the lease's own drain) and forget it."""
+    lease, ctx.lease = ctx.lease, None
+    if lease is None:
+        return
+    from scripts import bed_lease
+
+    try:
+        bed_lease.release(lease.cell, lease.pid, force=False)
+    except bed_lease.UsageError as exc:
+        _say(ctx.opts, f"the bed lease was not released ({exc}): see make bed-status")
+
+
+class ReapInterrupted(KeyboardInterrupt):
+    """A second interrupt cut the reap short: the lease is kept, and the run said so."""
+
+
+def _interrupted(ctx: _Run) -> int:
+    """After an interrupt whose lanes are gone: reap the bed and release, when a lease is held."""
+    if ctx.lease is None:
+        _say(ctx.opts, "interrupted before any bed lane; no lease was taken, nothing to reap")
+        return EXIT_INTERRUPTED
+    _say(ctx.opts, "interrupted; the lanes are gone: reaping the bed and releasing the lease")
+    from scripts import bed_reap
+
+    # Detached before the reap: whatever escapes it (a second Ctrl-C included) leaves the
+    # lease kept, never released by run()'s finally over a bed the reap did not clean.
+    lease, ctx.lease = ctx.lease, None
+    try:
+        bed_reap.reap(lease.cell, lease.pid)
+    except Exception as exc:  # noqa: BLE001 -- any failure leaves the bed unknown: keep the lease
+        _say(ctx.opts, f"the reap failed ({exc}); the lease is kept — run make bed-reap")
+        return EXIT_INTERRUPTED
+    except KeyboardInterrupt as exc:
+        _say(
+            ctx.opts,
+            "interrupted during the reap; the lease is kept and the bed is not reaped "
+            "— run make bed-reap",
+        )
+        raise ReapInterrupted from exc
+    except BaseException:
+        _say(ctx.opts, "the reap did not finish; the lease is kept — run make bed-reap")
+        raise
+    ctx.lease = lease
+    _release_lease(ctx)
+    return EXIT_INTERRUPTED
 
 
 def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
@@ -784,7 +821,7 @@ def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
                     ctx.root,
                     tree=ctx.tree,
                     key=key,
-                    base=ctx.merge_base,
+                    base=ctx.plan.base_sha,
                     measured={},
                     checkout=str(ctx.opts.repo),
                     promoted_from=found.tree,
@@ -832,25 +869,19 @@ def _measure(
         return None
 
 
-def _mark_red(ctx: _Run, key: str, timing: "dict | None" = None) -> None:
-    """Count a red lane and leave its red marker, so nothing promotes to this tree for it.
-
-    A lane that could not be framed (a GateFreshError before it ran) leaves one too, with
-    no timing: nothing ran.
-    """
+def _mark_red(ctx: _Run, key: str, timing: "dict | None") -> None:
+    """Count a red lane and leave its red marker, so nothing promotes to this tree for it."""
     with store_lock(ctx.root):
         write_red(ctx.root, tree=ctx.tree, key=key, checkout=str(ctx.opts.repo), timing=timing)
     ctx.red += 1
+    ctx.red_keys.append(key)
     ctx.rows.append(Row(key, "red", timing["elapsed_s"] if timing else None))
 
 
-def _after_lane(
-    ctx: _Run, label: str, line: str, key: str, status: int, timing: "dict | None"
-) -> bool:
+def _after_lane(ctx: _Run, label: str, key: str, status: int, timing: "dict | None") -> bool:
     """Judge a finished lane and stamp it on green; return False when the run must stop.
 
-    *timing* is what the lane cost, or None when its command did not run (the coverage
-    lane under a coverage stamp that already holds).
+    *timing* is what the lane cost, or None when measuring it failed (``_measure``).
     """
     repo = ctx.opts.repo
     after = tree_state(repo)
@@ -863,10 +894,10 @@ def _after_lane(
                 f"the lane failed and still rewrote {path}: restore it "
                 f"(git checkout -- {path}) or review it before the next run",
             )
-        _say(ctx.opts, f"{label} … RED (exit {status}, {_elapsed_cell(elapsed) or 'did not run'})")
+        _say(ctx.opts, f"{label} … RED (exit {status}, {_elapsed_cell(elapsed) or 'not timed'})")
         _mark_red(ctx, key, timing)
         return False
-    blocking = blocking_untracked(after.untracked, ctx.roots)
+    blocking = blocking_untracked(after, ctx.roots)
     if tree_hash(repo) != ctx.tree or other or blocking:
         what = ", ".join(other + blocking) or "the tree hash moved"
         _say(ctx.opts, f"{label} … NOT STAMPED (the tree changed under the lane: {what})")
@@ -879,61 +910,71 @@ def _after_lane(
             ctx.root,
             tree=ctx.tree,
             key=key,
-            base=ctx.merge_base,
+            base=ctx.plan.base_sha,
             measured=blobs,
             checkout=str(repo),
             timing=timing,
         )
     for path in measured:
-        _say(ctx.opts, f"{line} rewrote {path}: review and commit, or restore it")
-    cost = f"{elapsed} s" if timing else "the coverage stamp holds"
-    _say(ctx.opts, f"{label} … stamped ({cost})")
+        _say(ctx.opts, f"{key} rewrote {path}: review and commit, or restore it")
+    _say(ctx.opts, f"{label} … stamped ({_elapsed_cell(elapsed) or 'not timed'})")
     ctx.stamped += 1
     ctx.rows.append(Row(key, "stamped", elapsed))
     return True
 
 
-def _stamp_lane(ctx: _Run, label: str, line: str, key: str) -> bool:
-    """Run one stamped lane and stamp it on green; return False when the run must stop."""
+def _stamp_lane(ctx: _Run, label: str, key: str) -> bool:
+    """Run one stamped lane and stamp it on green; return False when the run must stop.
+
+    The lease is taken here, after the tree check passed, before the first bed lane that
+    actually runs.
+    """
     if not _before_lane(ctx, label, key):
         return False
+    if ctx.lease is None and is_bed(key):
+        _acquire_lease(ctx)
     invalidate(ctx.opts.repo, ctx.root, key, tree=ctx.tree)
     _say(ctx.opts, f"{label} …")
     started_at, before, started = utc_now(), junit_snapshot_or_none(ctx.opts.repo), time.monotonic()
-    try:
-        result = _run_lane(ctx.opts, line, ctx.env)
-    except GateFreshError as exc:
-        _say(ctx.opts, f"{label} … RED ({exc})")
-        _mark_red(ctx, key)
-        return False
+    status = ctx.opts.runner(key, ctx.opts.repo, ctx.env).status
     elapsed = int(time.monotonic() - started)
-    timing = _measure(ctx, label, started_at, before, elapsed) if result.ran else None
-    return _after_lane(ctx, label, line, key, result.status, timing)
+    timing = _measure(ctx, label, started_at, before, elapsed)
+    return _after_lane(ctx, label, key, status, timing)
 
 
-def _walk(ctx: _Run, kinds: "list[tuple[str, bool]]") -> None:
-    """Visit each lane in order: name live ones, skip stamped ones, list or run the rest."""
-    for index, (line, live) in enumerate(kinds, 1):
-        label = f"[{index}/{len(kinds)}] {line}"
-        if live:
-            _say(ctx.opts, f"{label} … live at push")
-            ctx.live += 1
-            ctx.rows.append(Row(lane_key(line), "live at push"))
-            continue
-        key = lane_key(line)
+def _walk(ctx: _Run) -> None:
+    """Visit each lane in order: name live ones, skip stamped ones, list or run the rest.
+
+    The lease is taken before the first bed lane that actually runs (``_stamp_lane``),
+    never for a lane already stamped or one a dirty tree refuses, and never in a dry run.
+    """
+    plan = ctx.plan
+    total = len(plan.live) + len(plan.stamped)
+    for index, line in enumerate(plan.live, 1):
+        _say(ctx.opts, f"[{index}/{total}] {line} … live at push")
+        ctx.live += 1
+        ctx.rows.append(Row(lane_key(line), "live at push"))
+    for index, key in enumerate(plan.stamped, len(plan.live) + 1):
+        label = f"[{index}/{total}] {key}"
         if _already_stamped(ctx, label, key):
             continue
         if ctx.opts.dry_run:
             _say(ctx.opts, f"{label} … missing")
-            ctx.missing.append(line)
+            ctx.missing.append(key)
             ctx.rows.append(Row(key, "missing"))
             continue
-        if not _stamp_lane(ctx, label, line, key):
+        if not _stamp_lane(ctx, label, key):
             break
 
 
 def run(opts: Options) -> int:
-    """Run the oracle's stamped lanes for HEAD and stamp each on green; see the module docstring."""
+    """Run the plan's lanes for HEAD, stamp each on green, publish; see the module docstring.
+
+    The lease's one owner. A walk that returns, green or red (or raises anything but
+    ``UndrainedError``), releases it before anything is published. An interrupt that
+    escapes the walk (its lanes are drained) reaps the bed and then releases, and the exit
+    is ``EXIT_INTERRUPTED``. An ``UndrainedError`` propagates with the lease kept.
+    """
     repo = opts.repo
     if opts.overridden:
         _say(
@@ -942,28 +983,30 @@ def run(opts: Options) -> int:
             + ", ".join(opts.overridden),
         )
         return 2
-    roots = test_roots(repo)
-    why = dirt_refusals(tree_state(repo), roots)
+    why = dirt_refusals(tree_state(repo), test_roots(repo))
     if why:
         _say(opts, "refusing — " + "; ".join(why))
         return 2
     try:
-        merge_base, lines = _tip_list(repo, opts.base)
-        kinds = [(line, is_live(line)) for line in lines]
+        plan = _plan(opts)  # the oracle classifies every line as it plans
     except UnknownGoalError as exc:
         _say(opts, f"refusing — {exc}")
         return 2
-    count = int(_git(repo, "rev-list", "--count", f"{merge_base}..HEAD").strip())
-    _say(opts, f"base {opts.base} (merge-base {merge_base[:9]}), {count} commit(s) to land")
-    ctx = _Run(
-        opts=opts,
-        merge_base=merge_base,
-        root=stamps_root(repo, STORE),
-        tree=tree_hash(repo),
-        roots=roots,
-        env=lane_env(dict(os.environ)),
-    )
-    _walk(ctx, kinds)
+    count = int(_git(repo, "rev-list", "--count", f"{plan.base_sha}..HEAD").strip())
+    base = opts.base or f"{opts.remote}'s main"
+    _say(opts, f"merge-base {plan.base_sha[:9]} with {base}, {count} commit(s) to land")
+    ctx = _new_run(opts, plan)
+    undrained = False
+    try:
+        _walk(ctx)
+    except KeyboardInterrupt:
+        return _interrupted(ctx)
+    except UndrainedError:
+        undrained = True  # the bed is not idle: the lease stays, for `make bed-reap` to follow
+        raise
+    finally:
+        if ctx.lease is not None and not undrained:
+            _release_lease(ctx)
     _say(
         opts,
         f"{ctx.stamped} stamped, {ctx.already} already stamped, "
@@ -975,96 +1018,315 @@ def run(opts: Options) -> int:
             print(row, file=opts.out, flush=True)
     if opts.dry_run:
         return 1 if ctx.missing else 0
-    return 1 if ctx.red or ctx.stopped else 0
+    if ctx.red or ctx.stopped:
+        if ctx.red_keys:
+            _publish_failure(ctx)
+        return 1
+    _publish_success(opts, plan)
+    return 0
 
 
 @dataclass(frozen=True)
 class Missing:
-    """One stamped lane the pushed tree has no evidence for, and why."""
+    """One stamped lane the tree has no evidence for, and why."""
 
     lane: str
     reason: str
 
 
-@dataclass(frozen=True)
-class Verdict:
-    """What the pre-push check decided: the missing lanes and the refusal text (empty = push)."""
+def missing_stamps(
+    repo: Path, plan: gate_scope.Plan, store: "Store | None" = None
+) -> "list[Missing]":
+    """Return the plan's stamped lanes its tree has no satisfying stamp for.
 
-    missing: "list[Missing]"
-    lines: "list[str]"
-
-
-def _ancestry_refusal(repo: Path, remote: str, remote_sha: str, tip_sha: str) -> "str | None":
-    """Return the refusal line when remote_sha cannot be compared with tip_sha, else None."""
-    if remote_sha == ZERO_SHA:
-        return (
-            f"gate-tip: refusing to push {tip_sha[:12]}: {remote} has no main to compare "
-            "against; this check has no first-push mode (git push --no-verify)"
-        )
-    try:
-        _git(repo, "cat-file", "-e", f"{remote_sha}^{{commit}}")
-    except GateFreshError:
-        return (
-            f"gate-tip: {remote}'s main ({remote_sha[:12]}) is not in this clone: "
-            f"git fetch {remote} main, then push again"
-        )
-    try:
-        _git(repo, "merge-base", "--is-ancestor", remote_sha, tip_sha)
-    except GateFreshError:
-        return (
-            f"gate-tip: not a fast-forward of {remote}'s main ({remote_sha[:12]}): "
-            "fetch, rebase, re-gate"
-        )
-    return None
-
-
-def missing_stamps(repo: Path, remote: str, remote_sha: str, tip_sha: str) -> Verdict:
-    """Return the stamped lanes of the oracle's tip list over remote_sha..tip_sha the tree lacks."""
-    short = tip_sha[:12]
-    refusal = _ancestry_refusal(repo, remote, remote_sha, tip_sha)
-    if refusal is not None:
-        return Verdict([], [refusal])
-    tree = tree_hash(repo, tip_sha)
+    Lock-free: a caller that needs one store state holds the store lock around it (shared
+    to judge, exclusive to publish). A red marker is never evidence.
+    """
     root = stamps_root(repo, STORE)
-    try:
-        lines = gate_scope.tip_commands(repo, remote_sha, tip_sha)
-    except gate_scope.GateScopeError as exc:  # the oracle's own git errors derive from Exception
-        raise GateFreshError(
-            f"the oracle could not classify {remote_sha[:12]}..{short}: {exc}"
-        ) from exc
     # lookup loads the store once, at the first lane without exact evidence; with no store
     # there is nothing to scan (and nothing a peer writes mid-check is promoted from)
-    store: "Store | None" = None if root.is_dir() else Store([], [], [], [])
+    if store is None and not root.is_dir():
+        store = Store([], [], [], [])
     missing: "list[Missing]" = []
-    try:
-        with store_lock(root, shared=True):  # one store state, from the first read to the verdict
-            for line in lines:
-                if is_live(line):
-                    continue
-                found = lookup(repo, root, tree, lane_key(line), store, base=remote_sha)
-                store = found.store
-                if found.stamp is None:
-                    missing.append(Missing(line, found.reason))
-    except UnknownGoalError as exc:
-        raise GateFreshError(str(exc)) from exc
-    if not missing:
-        return Verdict([], [])
-    out = [
+    for key in plan.stamped:
+        found = lookup(repo, root, plan.tree, key, store, base=plan.base_sha)
+        store = found.store
+        if found.stamp is None:
+            missing.append(Missing(key, found.reason))
+    return missing
+
+
+def refusal_lines(
+    plan: gate_scope.Plan, missing: "list[Missing]", *, ref: str, who: str
+) -> "list[str]":
+    """Return the refusal for *ref*: the unstamped lanes, the one command, the bypass."""
+    tip, tree, base = plan.tip_sha[:12], plan.tree[:12], plan.base_sha[:12]
+    return [
         (
-            f"gate-tip: refusing to push {short} to main — its gate is not stamped on tree "
-            f"{tree[:12]} (range {remote_sha[:12]}..{short}):"
-        )
+            f"{who}: refusing {ref} ({tip}) — its gate is not stamped on tree {tree} "
+            f"(range {base}..{tip}):"
+        ),
+        *(f"  {m.lane}: {m.reason}" for m in missing),
+        f"run: make gate-tip   (on commit {tip}), then push again.",
+        (
+            "git push --no-verify skips this check; the local-gate status then stays absent "
+            "and gate-admission holds the pull request's CI."
+        ),
     ]
-    out += [f"  {m.lane}: {m.reason}" for m in missing]
-    out.append(
-        f"run: git fetch {remote} main && make gate-tip BASE=FETCH_HEAD   "
-        f"(on commit {short}), then push again."
-    )
-    out.append(
-        "git push --no-verify skips this check; CI then runs only its own lanes — "
-        "never make coverage or the beds."
-    )
-    return Verdict(missing, out)
+
+
+@dataclass(frozen=True)
+class PublishOutcome:
+    """Whether the ``local-gate`` status was posted, and why not when it was not."""
+
+    posted: bool
+    message: str
+
+
+def _is_red(root: Path, tree: str, key: str) -> bool:
+    """Return whether the store holds a red marker for (tree, key), at its own path."""
+    return isinstance(_exact_entry(root, tree, key), Red)
+
+
+def _publish_refusal(
+    opts: Options, root: Path, plan: gate_scope.Plan, state: str, red_keys: "list[str]"
+) -> str:
+    """Return why the store no longer backs a *state* post (under its lock); "" when it does."""
+    if state == "success":
+        missing = missing_stamps(opts.repo, plan)
+        if missing:
+            lanes = "; ".join(f"{m.lane}: {m.reason}" for m in missing)
+            return f"not every lane is stamped on {plan.tree[:12]}: {lanes}"
+        return ""
+    if not red_keys:
+        return "a failure post names the red lanes"
+    gone = [key for key in red_keys if not _is_red(root, plan.tree, key)]
+    if gone:
+        return f"{', '.join(gone)} no longer red on {plan.tree[:12]}: not posted"
+    return ""
+
+
+def publish(
+    opts: Options,
+    plan: gate_scope.Plan,
+    *,
+    state: str,
+    slug: str,
+    red_keys: "list[str] | None" = None,
+) -> PublishOutcome:
+    """Post the ``local-gate`` status for the plan's tip on *slug* in *state*, if the store agrees.
+
+    Under the exclusive store lock, from the re-validation to the post's return, so no
+    peer's stamp or red marker lands between them (``gh``'s timeout bounds the hold). A
+    ``success`` is refused when any stamped lane lacks evidence; a ``failure`` when it names
+    no red lane, or unless every lane of *red_keys* still holds its red marker (a later
+    green run replaced it).
+    """
+    root = stamps_root(opts.repo, STORE)
+    with store_lock(root):
+        refusal = _publish_refusal(opts, root, plan, state, red_keys or [])
+        if refusal:
+            return PublishOutcome(False, refusal)
+        outcome = post_status(slug, plan.tip_sha, expected(plan), state=state, gh=opts.gh)
+    return PublishOutcome(outcome.ok, outcome.message)
+
+
+def _report(opts: Options, plan: gate_scope.Plan, state: str, outcome: PublishOutcome) -> None:
+    """Say what publishing did; it never changes the exit status."""
+    if outcome.posted:
+        what = "local-gate" if state == "success" else f"local-gate {state}"
+        _say(opts, f"posted {what} on {plan.tip_sha[:12]}")
+    else:
+        _say(opts, f"local-gate not posted: {outcome.message}")
+
+
+def _publish_failure(ctx: _Run) -> None:
+    """Flip a success the tip already carries to failure: its gate just went red here."""
+    opts = ctx.opts
+    try:
+        slug = remote_slug(opts.repo, opts.remote)
+    except GateError as exc:
+        _say(opts, f"local-gate not read: {exc}")
+        return
+    try:
+        posted = head_status(slug, ctx.plan.tip_sha, gh=opts.gh)
+    except GateError as exc:
+        _say(opts, f"local-gate not read: {exc}")
+        return
+    if posted is None:
+        return
+    outcome = publish(opts, ctx.plan, state="failure", slug=slug, red_keys=ctx.red_keys)
+    _report(opts, ctx.plan, "failure", outcome)
+
+
+def _publish_success(opts: Options, plan: gate_scope.Plan) -> None:
+    """Post ``local-gate`` for a green run's tip and say what happened."""
+    try:
+        slug = remote_slug(opts.repo, opts.remote)
+    except GateError as exc:
+        _report(opts, plan, "success", PublishOutcome(False, str(exc)))
+        return
+    _report(opts, plan, "success", publish(opts, plan, state="success", slug=slug))
+
+
+def status_command(opts: Options) -> int:
+    """`make gate-status`: post ``local-gate`` for HEAD's stamped tree, then admit its PR run."""
+    plan = _plan(opts)
+    refusal = stamp_refusal(opts.repo, plan, ref="HEAD", who="gate-status")
+    if refusal:
+        print("\n".join(refusal), file=sys.stderr)
+        return 1
+    try:
+        slug = remote_slug(opts.repo, opts.remote)
+    except GateError as exc:
+        print(f"gate-status: local-gate not posted: {exc}", file=sys.stderr)
+        return 1
+    outcome = publish(opts, plan, state="success", slug=slug)
+    if not outcome.posted:
+        print(f"gate-status: local-gate not posted: {outcome.message}", file=sys.stderr)
+        return 1
+    print(f"gate-status: posted local-gate on {plan.tip_sha[:12]}", file=opts.out, flush=True)
+    return admit_pr_run(slug, plan.tip_sha, gh=opts.gh)
+
+
+def stamp_refusal(repo: Path, plan: gate_scope.Plan, *, ref: str, who: str) -> "list[str]":
+    """Return why *ref* is refused: the plan's stamped lanes its tree lacks; empty when none.
+
+    Judged under the shared store lock from its first read to its verdict, so no peer's
+    marker or stamp lands while it reads. The hook and ``--status`` both ask it.
+    """
+    with store_lock(stamps_root(repo, STORE), shared=True):
+        missing = missing_stamps(repo, plan)
+    if not missing:
+        return []
+    return refusal_lines(plan, missing, ref=ref, who=who)
+
+
+@dataclass(frozen=True)
+class PushedRef:
+    """One branch update of a push, as git's pre-push stdin names it."""
+
+    remote_ref: str
+    local_sha: str
+    remote_sha: str
+
+
+_PRE_PUSH_FIELDS = 4
+MAIN_REF = "refs/heads/main"
+_BRANCHES = "refs/heads/"
+MAIN_REFUSAL = (
+    "gate-tip: main takes no direct push; open a pull request (a non-canonical remote such "
+    "as a mirror takes --no-verify: the ruleset, not this hook, protects the canonical main)"
+)
+
+
+def pushed_refs(stdin_text: str) -> "list[PushedRef]":
+    """Return the branch updates of a push, in order: tags and deletes are not landings.
+
+    git feeds pre-push one ``<local ref> <local sha> <remote ref> <remote sha>`` line per
+    ref. The REMOTE ref decides: ``git push origin feature:main`` updates main from a branch
+    of another name. An all-zero local sha is a delete.
+    """
+    refs: "list[PushedRef]" = []
+    for line in stdin_text.splitlines():
+        fields = line.split()
+        if len(fields) != _PRE_PUSH_FIELDS:
+            continue
+        _local_ref, local_sha, remote_ref, remote_sha = fields
+        if remote_ref.startswith(_BRANCHES) and local_sha != ZERO_SHA:
+            refs.append(PushedRef(remote_ref, local_sha, remote_sha))
+    return refs
+
+
+def _is_canonical(repo: Path, remote: str) -> bool:
+    """Return whether *remote* (the hook's ``$1``: a name, or a URL) is the canonical remote.
+
+    git hands the hook the URL itself for a URL push, so the canonical remote's URL counts too.
+    """
+    if remote == CANONICAL_REMOTE:
+        return True
+    try:
+        return remote == _git(repo, "remote", "get-url", CANONICAL_REMOTE).strip()
+    except GateError:  # no canonical remote configured: nothing to compare with
+        return False
+
+
+def _refuse(lines: "list[str]") -> int:
+    print("\n".join(lines), file=sys.stderr)
+    return 1
+
+
+# The hook runs while git holds the connection to the remote OPEN: git dials the remote
+# first (it needs the remote refs to feed the hook on stdin), then runs this, then pushes.
+# Every second here is a second an idle SSH channel has to survive, and GitHub closes one
+# long before a test suite would finish: the push then fails with "Connection to github.com
+# closed by remote host" after the check passed. So the hook runs no lane: it reads stamps
+# and runs one history check, seconds, and the lanes ran earlier, in `make gate-tip`.
+def pre_push(opts: Options, stdin_text: str) -> int:
+    """Judge a push from git's pre-push stdin: 0 lets it through, anything else refuses it.
+
+    No branch update (a tag, a delete): through, before anything is read. Any update of
+    ``main``: refused, before any fetch (a pull request lands it). Otherwise every branch's
+    tip must carry its plan's stamps, the plan taken over merge-base(the remote's main,
+    fetched; the tip)..tip; then the plan's live line (the history check) runs for the ref
+    that is the checked-out HEAD, over a working tree that speaks for its commit. Another
+    ref's history is CI's ``lint-python`` to check, over the pull request's range.
+    """
+    refs = pushed_refs(stdin_text)
+    if not refs:
+        return 0
+    if any(ref.remote_ref == MAIN_REF for ref in refs):
+        return _refuse([MAIN_REFUSAL])
+    repo = opts.repo
+    try:
+        main_sha = fetch_main(repo, opts.remote)
+    except GateError as exc:
+        return _refuse([f"gate-tip: {exc}"])
+    plans: "list[gate_scope.Plan]" = []
+    for ref in refs:
+        try:
+            plan = range_plan(repo, main_sha, ref.local_sha)
+            refusal = stamp_refusal(repo, plan, ref=ref.remote_ref, who="gate-tip")
+        except (GateError, gate_scope.GateScopeError, UnknownGoalError) as exc:
+            where = f"{ref.remote_ref} ({main_sha[:12]}..{ref.local_sha[:12]})"
+            return _refuse([f"gate-tip: {where}: {exc}"])
+        if refusal:
+            if not _is_canonical(repo, opts.remote):
+                refusal.append(
+                    f"the push targets {opts.remote}; make gate-tip planned against "
+                    f"{CANONICAL_REMOTE}/main"
+                )
+            return _refuse(refusal)
+        plans.append(plan)
+    try:
+        head = _git(repo, "rev-parse", "HEAD").strip()
+        dirt = (
+            dirt_refusals(tree_state(repo), test_roots(repo))
+            if any(ref.local_sha == head for ref in refs)
+            else []
+        )
+    except GateError as exc:
+        return _refuse([f"gate-tip: {exc}"])
+    if dirt:
+        return _refuse(
+            [f"gate-tip: refusing — {why} (the check reads the tree on disk)" for why in dirt]
+        )
+    checked = False
+    for ref, plan in zip(refs, plans, strict=True):
+        if ref.local_sha != head:
+            _say(
+                opts,
+                f"{ref.remote_ref} ({ref.local_sha[:12]}) is not the checked-out tip; CI's "
+                "lint-python runs check-breaking-marks over the pull request's range",
+            )
+            continue
+        if checked:
+            continue  # one HEAD, one plan: its history is checked once
+        checked = True
+        status = opts.runner(plan.live[0], repo, lane_env(dict(os.environ))).status
+        if status != 0:
+            return status
+    return 0
 
 
 def timings(repo: Path, root: Path, rev: str) -> "list[str]":
@@ -1072,7 +1334,7 @@ def timings(repo: Path, root: Path, rev: str) -> "list[str]":
 
     One row per stamp or red marker the store holds for the tree, oldest first: elapsed
     (blank for a promoted stamp, or one older than the timing field), outcome, when it was
-    written, and the lane. Read under the shared lock, like the pre-push check.
+    written, and the lane. Read under the shared lock, like the push check.
     """
     tree = tree_hash(repo, rev)  # ``<tree-id>^{tree}`` is the tree id itself
     with store_lock(root, shared=True):
@@ -1105,49 +1367,41 @@ def _raise_interrupt(_signum: int, _frame: object) -> None:
     raise KeyboardInterrupt
 
 
-def reap_and_release(lab: "Path | None", pid: "int | None", out: TextIO) -> None:
-    """After an interrupted run whose lanes are gone: the quick reap, then the lease's release.
-
-    *pid* is the run the lease belongs to: the ``make`` running this script,
-    which the recipe passes as ``--pid $$PPID`` (this process's own parent is
-    ``uv``, and the release is the holder's alone). Without *lab* and *pid*
-    there is nothing to reap or release by: the operator is told to run
-    ``make bed-reap``. The reap and the release are the scripts' own functions,
-    called in-process, so no command line is restated here.
-    """
-    if lab is None or pid is None:
-        print("gate-tip: no --lab and --pid, so no reap: run `make bed-reap`", file=out, flush=True)
-        return
-    from scripts import bed_lease, bed_reap
-
-    cell = bed_lease.load_cell(lab, bed_lease.root_from(None))
-    bed_reap.reap(cell, pid)
-    bed_lease.release(cell, pid, force=False)
-
-
 def main(argv: "list[str] | None" = None) -> int:
-    """Parse the CLI and run, list, check, or print a tree's timings; return the status.
+    """Parse the CLI and run, list, post the status, judge a push, or print a tree's timings.
 
-    An interrupt (Ctrl-C, or SIGTERM) during a run reaches the lane's group
-    first and is waited out (the runner's contract), then the bed is reaped
-    and the lease released, and the exit is 130. A second interrupt kills the
-    lane's group; a group that does not empty within the kill budget is
-    reported with its pids, no reap runs, the lease is kept, and the exit is
-    130 as well: the bed is reaped once it is confirmed idle (``make bed-reap``).
+    An interrupt (Ctrl-C, or SIGTERM) during a lane reaches the lane's group first and is
+    waited out (the runner's contract); then, when the run holds the bed lease, the bed is
+    reaped and the lease released, and the exit is 130. A second interrupt kills the lane's
+    group; a group that does not empty within the kill budget is reported with its pids,
+    no reap runs, the lease is kept, and the exit is 130 as well: the bed is reaped once it
+    is confirmed idle (``make bed-reap``).
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--repo", default=".")
-    parser.add_argument("--base", default="origin/main")
+    parser.add_argument(
+        "--base", default=None, help="the landing's base (default, or empty: the remote's main)"
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overridden", action="append", default=[], metavar="NAME")
-    parser.add_argument("--remote", default="origin")
-    parser.add_argument("--lab", type=Path, default=None, metavar="LAB_JSON")
-    parser.add_argument("--pid", type=int, default=None, help="the run's pid (the lane's make)")
+    parser.add_argument("--remote", default=CANONICAL_REMOTE)
+    parser.add_argument(
+        "--lab", type=Path, default=None, metavar="LAB_JSON", help="the cell a bed lane leases"
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
-    mode.add_argument("--check", nargs=2, metavar=("REMOTE_SHA", "TIP_SHA"))
+    mode.add_argument(
+        "--pre-push",
+        action="store_true",
+        help="judge a push from git's pre-push stdin (the .githooks/pre-push hook)",
+    )
+    mode.add_argument(
+        "--status",
+        action="store_true",
+        help="post the local-gate status for HEAD's stamped tree, then admit its PR run",
+    )
     mode.add_argument(
         "--timings",
         nargs="?",
@@ -1156,49 +1410,58 @@ def main(argv: "list[str] | None" = None) -> int:
         help="print the stored timing table for REV's tree (a rev, commit or tree id; HEAD)",
     )
     args = parser.parse_args(argv)
-    if (args.lab is None) != (args.pid is None):
-        parser.error("--lab and --pid go together: the cell to reap and the run holding its lease")
     repo = Path(args.repo).resolve()
+    base = args.base or None  # the Makefile passes an empty --base for "not given"
     try:
         if args.timings is not None:
             print("\n".join(timings(repo, stamps_root(repo, STORE), args.timings or "HEAD")))
             return 0
-        if args.check:
-            verdict = missing_stamps(repo, args.remote, args.check[0], args.check[1])
-            if verdict.lines:
-                print("\n".join(verdict.lines), file=sys.stderr)
-                return 1
-            print(f"gate-tip: every stamped lane for {args.check[1][:12]} is stamped")
-            return 0
+        if args.pre_push:
+            text = sys.stdin.read()
+            return _run_interruptible(
+                Options(repo=repo, remote=args.remote), lambda opts: pre_push(opts, text)
+            )
+        if args.status:
+            return _run_interruptible(
+                Options(repo=repo, base=base, remote=args.remote), status_command
+            )
         return _run_interruptible(
             Options(
                 repo=repo,
-                base=args.base,
+                base=base,
+                remote=args.remote,
                 force=args.force,
                 dry_run=args.dry_run,
                 overridden=args.overridden,
                 lab=args.lab,
-                pid=args.pid,
             )
         )
-    except (GateFreshError, gate_scope.GateScopeError) as exc:
+    except (GateError, gate_scope.GateScopeError) as exc:
         print(f"gate-tip: {exc}", file=sys.stderr)
         return 2
 
 
-def _run_interruptible(opts: Options) -> int:
-    """Run under the interrupt policy :func:`main` describes."""
+def _run_interruptible(opts: Options, body: "Callable[[Options], int] | None" = None) -> int:
+    """Run *body* (:func:`run` by default) under the interrupt policy :func:`main` describes.
+
+    :func:`run` owns the lease; ``--status`` (:func:`status_command`) and ``--pre-push``
+    (:func:`pre_push`) take none, so an interrupt there is only reported.
+    """
     previous = signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
-        return run(opts)
+        return (body or run)(opts)
+    except ReapInterrupted:
+        return EXIT_INTERRUPTED  # run() already said the lease is kept and the bed unreaped
     except KeyboardInterrupt:
-        _say(opts, "interrupted; the lanes are gone: reaping the bed and releasing the lease")
-        reap_and_release(opts.lab, opts.pid, opts.out)
+        # run() releases the lease on every way out but an undrained one: an interrupt that
+        # escapes it came outside the walk (planning, publishing); --status and --pre-push
+        # take no lease at all
+        _say(opts, "interrupted; no lease is held, nothing to reap")
         return EXIT_INTERRUPTED
     except UndrainedError as exc:
         _say(
             opts,
-            f"interrupted twice and {exc}; no reap until the bed is idle and the lease is "
+            f"interrupted twice and {exc}; no reap until they are gone, and a lease held is "
             "kept: run `make bed-reap` once they are gone",
         )
         return EXIT_INTERRUPTED

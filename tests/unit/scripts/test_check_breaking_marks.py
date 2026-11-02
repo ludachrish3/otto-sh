@@ -1456,3 +1456,16 @@ def test_conversion_inventory_reads_commits_never_the_index(tmp_path):
         conversion_inventory(repo.root, "", tip, Path("golden.txt"))
     with pytest.raises(ValueError, match="'no-such-rev' is not a commit"):
         conversion_inventory(repo.root, f"{tip}~1", "no-such-rev", Path("golden.txt"))
+
+
+def test_an_amend_that_drops_the_breaking_marker_is_rejected_over_the_same_range(tmp_path):
+    """A lane stamp is keyed by tree, so an amend keeps it; this live check reads the message."""
+    repo = TmpGitRepo(tmp_path / "breaking")
+    base = _seed(repo, ["otto:Alpha", "otto:Beta"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("feat(api)!: drop Beta")
+    argv = ["--repo", str(repo.root), "--golden", "golden.txt"]
+    assert main([f"{base}..{tip}", *argv]) == 0
+    repo.git("commit", "--amend", "-q", "-m", "feat(api): drop Beta")
+    amended = repo.git("rev-parse", "HEAD").strip()
+    assert main([f"{base}..{amended}", *argv]) == 1

@@ -12,12 +12,16 @@ from tests._fixtures.paths import CHECKOUT_ROOT
 AGENTS_MD = CHECKOUT_ROOT / "AGENTS.md"
 
 
-def test_agents_md_tells_agents_to_run_the_fresh_gate():
+def test_agents_md_tells_agents_how_a_landing_is_gated_and_handed_back():
+    # The raw Markdown: the button's name is bold in the bullet.
+    # AGENTS.md is the only instruction surface present inside a worktree
+    # (docs/superpowers/specs/2026-11-02-landing-enforcement-design.md).
     text = AGENTS_MD.read_text()
-    assert "make gate-fresh" in text, (
-        "AGENTS.md must name the gate — it is the only instruction surface "
-        "present inside a worktree (see docs/superpowers/specs/2026-08-07-gate-fresh-design.md)"
-    )
+    assert "make gate-tip" in text
+    assert "make gate-status" in text
+    assert "make gate-fresh" not in text
+    assert "HEAD:main" not in text
+    assert "**Rebase and merge** button" in text
 
 
 def test_agents_md_says_when_to_run_it():
