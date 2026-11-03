@@ -537,6 +537,41 @@ The flow, from a branch whose commits are ready:
 pushes, opens the pull request as a draft (an existing one is left alone) and
 runs `make gate-status`.
 
+(landing-a-batch)=
+
+#### Landing a batch
+
+Several fixes can land as one pull request. A batch branch is one landing:
+one commit per fix (each with its own conventional subject), one tip gate over
+the final tip, one pull request and one rebase-merge. Every commit before the
+tip gets only its scoped working check (the tests in its likely breakage areas
+plus ruff on the files it changed), never a gate of its own. The integrator
+owns the branch.
+
+- **A red fix leaves the batch.** A fix whose own check is red is dropped
+  before the tip gate and re-queued together with anything that depended on
+  it. It is never carried along and never fixed in place by someone else. A
+  drop after the tip gate is a new tip and needs a new gate.
+- **A breaking (`!`) commit may ride a batch** when its subject is the
+  changelog line, even a batch whose tip plan has a bed lane. A rebase-merge
+  keeps every commit's message, and the changelog and `check-breaking-marks`
+  read each one. The pull request's title and body list every `!` subject.
+- **The ordering rule is a cost rule.** In a wave of landings, put those whose
+  tip plan has a bed lane first and those whose plan has none after them: a
+  landing whose plan has none should not merge while a landing with a bed lane
+  sits between its gate and its merge, because the rebase that follows would
+  re-run the bed. [The carry rule](#the-landings-gate-is-stamped) relaxes the
+  rule without removing it: when every intervening landing was a tip plan
+  without a bed lane, the bed stamp carries when the carry conditions hold,
+  so the bed does not re-run; the static lanes still do.
+- **One lease per tip gate.** Bed fixes for the same lab hosts may be grouped
+  into one batch, whose single tip gate takes one [bed lease](#bed-lease)
+  across its lanes. Separate landings take separate leases. No lease is held
+  while waiting for CI or for the merge, and grouping a batch never narrows
+  the selection the tip gate runs. The arithmetic — *n* scoped checks plus one
+  tip gate instead of *n* tip gates — is priced in
+  [what a gate costs](#what-a-gate-costs).
+
 **The behind-`main` gap.** The ruleset does not require a branch to be up to
 date with `main`, so a rebase-merge of a branch behind `main` lands a tree no
 gate ran on: the head's commits replayed onto changes they never saw. CI on
@@ -2076,7 +2111,14 @@ and the pre-push hook about 20 s on a stamped tree. A rebase onto a moved
 `main` costs the static lanes again (about 50 s) plus, for a tip with a bed
 lane, about 8 minutes, unless
 [the carry rule](#the-landings-gate-is-stamped) holds and the bed lane is
-carried: seconds. The stored table for any tree is one command away:
+carried: seconds.
+
+A batch ([Landing a batch](#landing-a-batch)) is priced by those numbers: a
+batch of *n* fixes costs *n* scoped working checks plus one tip gate, where *n*
+separate landings cost *n* tip gates. When the batch's tip plan has a bed lane
+that is one bed run (about 8 minutes) and one CI run instead of *n* of each.
+
+The stored table for any tree is one command away:
 
 ```bash
 uv run python scripts/gate_tip.py --timings          # HEAD's tree
@@ -2190,3 +2232,21 @@ AI-assisted commits carry an `Assisted-by:` trailer naming the model that
 actually produced the work — the trailer is a per-commit provenance claim, so a
 stale or approximate name defeats its purpose. An AI agent writes the trailer
 into the commit message itself; nothing adds it for you.
+
+### Review tiers
+
+AI-assisted work is reviewed in tiers, and the tier is a property of the whole
+landing:
+
+- **Full tier.** Every landing gets a design review by two independent models,
+  a plan check, an implementation review per task and a final branch review by
+  two models.
+- **Batch tier.** A batch of XS/S changes gets one design check per batch
+  plan, the implementation review per fix and one final branch review of the
+  batch. A change is XS/S when it is under about two hundred changed lines in
+  one package, has no public-API or breaking change, and has no bed lane in
+  its own plan.
+
+The tier is decided from the whole landing, not per fix, and is independent of
+the gate class: a landing's gate says what must run, its tier says how it is
+reviewed.
