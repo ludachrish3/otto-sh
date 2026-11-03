@@ -2163,7 +2163,7 @@ def hermetic_monitor_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     deliberate fail-fast for deployments that skipped ``make web``. That check
     is a trap for tests: **pytest never builds the web dist, but every
     developer checkout has one**, so a test that boots a server passes locally
-    and fails in CI's ``tests_hostless`` jobs and nightly's ``unit-repeat``, which
+    and fails in CI's hostless legs and nightly's ``unit-repeat``, which
     run pytest without ``make web``. Request this fixture from any test that boots a
     server to exercise something other than the bundle itself (archive
     persistence, console logging, port binding, ...).

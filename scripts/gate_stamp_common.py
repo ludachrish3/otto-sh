@@ -47,19 +47,35 @@ class TreeState:
     """Ignored ``.py`` files under ``src/`` or a test root: imported live, not committed."""
 
 
-def _git(repo: Path, *args: str, stdin: "str | None" = None) -> str:
-    """Run git in *repo* (feeding *stdin* when given) and return its stdout."""
+def run_git(
+    repo: Path, *args: str, stdin: "str | None" = None, env: "dict[str, str] | None" = None
+) -> "subprocess.CompletedProcess[str]":
+    """Run git in *repo* and return the completed process, whatever its exit status.
+
+    The one git spawn of ``gate_tip``, ``gate_scope`` and this module: *stdin* is fed
+    when given, *env* replaces the environment when given (``None`` inherits it).
+    Output is text, undecodable bytes replaced. A caller that reads the status itself
+    (an exit 1 that means "no") calls this; one for which any non-zero exit is an error
+    calls :func:`_git`. Only a failure to spawn git at all raises (:class:`GateError`).
+    """
     try:
-        result = subprocess.run(  # noqa: S603
+        return subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=repo,
             input=stdin,
             capture_output=True,
             text=True,
+            errors="replace",
+            env=env,
             check=False,
         )
     except OSError as exc:  # FileNotFoundError included: no git on PATH
         raise GateError(f"git is not available: {exc}") from exc
+
+
+def _git(repo: Path, *args: str, stdin: "str | None" = None) -> str:
+    """Run git in *repo* (feeding *stdin* when given) and return its stdout."""
+    result = run_git(repo, *args, stdin=stdin)
     if result.returncode != 0:
         error = GateError(f"git {' '.join(args)} failed in {repo}: {result.stderr.strip()}")
         error.stderr = result.stderr.strip()

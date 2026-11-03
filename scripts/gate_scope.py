@@ -18,7 +18,6 @@ import fnmatch
 import json
 import re
 import shlex
-import subprocess
 import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -29,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     GateError,
+    run_git,
     tree_hash,
     tree_state,
 )
@@ -1477,24 +1477,10 @@ class GateScopeError(Exception):
     """A git failure: the answer cannot be computed (exit 1)."""
 
 
-def _run_git(
-    repo: Path, args: "list[str]", env: "dict[str, str] | None"
-) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(  # noqa: S603 -- fixed argv, no shell; `repo`/`args` are ours
-        ["git", *args],  # noqa: S607 -- `git` via PATH
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        errors="replace",  # a non-UTF-8 test module is read, not a crash of the oracle
-        check=False,
-        env=env,
-    )
-
-
 def _git(repo: Path, *args: str, env: "dict[str, str] | None" = None) -> str:
     try:
-        completed = _run_git(repo, list(args), env)
-    except OSError as exc:
+        completed = run_git(repo, *args, env=env)
+    except GateError as exc:
         raise GateScopeError(f"git: {exc}") from exc
     if completed.returncode != 0:
         raise GateScopeError(f"git {' '.join(args)}: {completed.stderr.strip()}")
@@ -1523,7 +1509,7 @@ def head_tree(repo: Path, env: "dict[str, str] | None" = None, rev: str = "HEAD"
 
 def _reader(repo: Path, env: "dict[str, str] | None") -> Reader:
     def read(rev: str, path: str) -> "str | None":
-        completed = _run_git(repo, ["show", f"{rev}:{path}"], env)
+        completed = run_git(repo, "show", f"{rev}:{path}", env=env)
         return completed.stdout if completed.returncode == 0 else None
 
     return read
@@ -1543,6 +1529,8 @@ class Plan:
     stamped: "list[str]"
     # whether a stamped lane takes the bed lease
     bed: bool
+    # the range's path classes, sorted (the scope's ``classes``)
+    classes: "list[str]"
 
 
 def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None) -> Plan:
@@ -1563,6 +1551,7 @@ def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" =
         live=[line for line in cmds if is_live(line)],
         stamped=stamped,
         bed=any(is_bed(key) for key in stamped),
+        classes=sorted(scope.classes),
     )
 
 
@@ -1618,7 +1607,7 @@ def main(argv: "list[str] | None" = None, *, env: "dict[str, str] | None" = None
                 file=sys.stderr,
             )
             return 2
-        if _run_git(args.repo, ["rev-parse", "--verify", "-q", "HEAD^1"], env).returncode != 0:
+        if run_git(args.repo, "rev-parse", "--verify", "-q", "HEAD^1", env=env).returncode != 0:
             print("gate-scope: HEAD has no parent; nothing to classify per commit", file=sys.stderr)
             return 2
         merge_base = _git(args.repo, "merge-base", args.base, "HEAD", env=env).strip()
