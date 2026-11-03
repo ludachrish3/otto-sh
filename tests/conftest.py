@@ -3,9 +3,10 @@
 WHERE A FIXTURE BELONGS
 -----------------------
 A guard that protects **process-global state** belongs HERE, never in a package
-conftest. The trees are not separate processes: ``tests_hostless`` runs
-``tests/unit`` and ``tests/e2e`` in one pytest session (``make coverage`` adds
-``tests/integration``), and one xdist worker runs tests from several trees in
+conftest. The trees are not separate processes: ``make coverage-hostless``
+runs ``tests/unit`` and ``tests/e2e`` in one pytest session (``make coverage``
+adds ``tests/integration``; only CI's nox sessions split them, one per tier —
+see ``noxfile.py``), and one xdist worker runs tests from several trees in
 one process. So a guard parked in ``tests/unit/conftest.py`` leaves every other
 tree exposed to a hazard that is not remotely unit-specific.
 
@@ -2567,8 +2568,8 @@ def _isolate_registries():
     rebuilds.
 
     This guard lives in the ROOT conftest, not the unit tree's, ON PURPOSE. The
-    registries are process-global, so the hazard is too: ``tests_hostless`` runs
-    ``tests/unit`` and ``tests/e2e`` in ONE session (and ``make coverage`` adds
+    registries are process-global, so the hazard is too: ``make coverage-hostless``
+    runs ``tests/unit`` and ``tests/e2e`` in ONE session (and ``make coverage`` adds
     ``tests/integration``), so a single xdist worker runs tests from several
     trees in one process — an entry leaked by an e2e test lands in the very
     registry the next unit test asserts against. Scoped to ``tests/unit`` the

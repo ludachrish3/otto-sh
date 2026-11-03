@@ -473,7 +473,11 @@ only, never from the environment.
 A landing is a pull request, and its checks are split by who can run them.
 **The PR's CI runs everything that needs no lab**: every validation job in
 `.github/workflows/ci.yml`, the hostless matrix (the `tests_hostless-3.10` …
-`3.14` jobs: `tests/unit` and the no-VM e2e on every supported Python), the
+`3.14` contexts: `tests/unit` and the no-VM e2e, one nox session per tier,
+each on the Pythons [the session table](architecture/testing.md#other-axes-typescript-doctests-cross-python)
+gives it; the two bookend contexts are certificates over
+the primary's and the canary's sessions, and the 3.10 one also needs the
+coverage fold, see [the quality-gates table](architecture/quality-gates.md#what-binds-each-gate)), the
 docs build and the TypeScript gates among them; the CI column of [the
 quality-gates table](architecture/quality-gates.md#what-binds-each-gate) names
 them, and only the issue-filing job waits for a failed run on `main`, as
@@ -1267,7 +1271,7 @@ what you want to exercise:
 |----------|------------|------------|
 | Unit tier only (level) | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
-| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on 3.10, coverage-gated; minus the `interpreter_agnostic` family on every other Python — see [the cross-Python matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)) | none |
+| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned; the floor's by-hand certificate) / `make nox-hostless` (the three hostless sessions across their Pythons; no floor — see [the cross-Python matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
 | The bed half of that gate (tests/integration plus the e2e tests marked `integration` or `embedded`), uninstrumented, pass/fail: every `BED_REACH` tip's lane, never a floor | `make coverage-bed` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
@@ -1484,7 +1488,7 @@ make nox-unit                      # unit level tier across all Pythons (no VMs;
 make nox-integration               # unit + integration tiers across all Pythons (full lab; family on 3.10 only)
 make nox                           # tiered matrix: full suite on 3.10 (the oldest supported interpreter; uninstrumented — the floor is make coverage's); every product test, minus the interpreter_agnostic family, on 3.14 (warning canary); trimmed hostless on 3.11-3.13 (needs VMs)
 make nox-full                      # every tier on all Pythons; the interpreter_agnostic family on 3.10 only (needs VMs)
-uv run nox -s tests_hostless-3.10  # the no-testbed CI gate under one Python
+uv run nox -s tests_hostless_unit-3.10  # one tier of the no-testbed CI gate under one Python (no floor)
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
 uv run nox --list                  # show every available session
 ```
@@ -1832,8 +1836,9 @@ make coverage
 Any `make coverage-*` target writes the HTML report to `reports/coverage/html`
 on its final pytest leg. A bare `pytest` run prints the `term-missing`
 console report only. Nox sessions run with coverage off and print none
-(the one exception is `tests_hostless` on the primary Python, which keeps
-the CI floor — see the coverage-floors note at the top of `noxfile.py`). The
+(the instrumented hostless sessions on the primary Python write a partial
+report and enforce no floor; the CI floor is judged on their fold, see the
+coverage-floors note at the top of `noxfile.py`). The
 HTML tree is asked for per lane, not by `pyproject.toml`'s `addopts`, so the
 release legs (the ones the census in `tests/unit/test_lane_invariants.py`
 enumerates) do not each rewrite it.
@@ -1949,8 +1954,8 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
 - **Regenerate per interpreter.** `make import-snapshot` rewrites only the
   running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
   For another minor, install its nox env and run the script with that
-  interpreter: `uv run nox -s tests_hostless-3.14 --install-only`, then
-  `.nox/tests_hostless-3-14/bin/python scripts/import_budget.py --update`.
+  interpreter: `uv run nox -s tests_hostless_unit-3.14 --install-only`, then
+  `.nox/tests_hostless_unit-3-14/bin/python scripts/import_budget.py --update`.
   A missing-baseline failure prints the same commands for the interpreter
   it ran on.
 - **Never regenerate to absorb a cost increase without saying so.** A
@@ -1985,9 +1990,10 @@ the small remainder): docker e2e 381, console e2e 344, integration/host 292,
 cov e2e 251, cli e2e 215, tunnel e2e 125, busybox_bed 101, link impair 97,
 host e2e 92, the rest under 70 each. `make coverage-bed`'s reports
 (`reports/junit/coverage-bed/` and `coverage-bed-serial/`) measure the bed
-half alone. An escalating commit therefore has no local hostless run either:
-its full gate ends with `make coverage-bed`, `make coverage-hostless` is the
-by-hand working check when you want one, and CI owns the hostless half.
+half alone. An escalating commit therefore runs no hostless half locally either:
+its full gate ends with `make coverage-bed`; `make coverage-hostless` is the
+by-hand certificate when you want one, and CI owns the hostless sessions and
+the fold.
 
 `make unit-outliers` reads the two reports `make coverage` (or `make
 coverage-python`) last wrote, one for the parallel leg and one for the

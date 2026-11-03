@@ -3,15 +3,15 @@
 Two numbers gate Python coverage: ``COVERAGE_THRESHOLD`` (the full fold —
 ``make coverage``'s Python legs plus the dashboard browser process's
 ``--cov-append``) and ``CI_COVERAGE_THRESHOLD`` (the hostless selection CI
-runs and gates on the primary Python, 3.10; the 3.14 canary runs that
-selection minus the ``interpreter_agnostic`` family without coverage
-instrumentation, and the interior versions a trimmed, uninstrumented tier —
-see ``noxfile.py``'s
-``HOSTLESS_CANARY_TEST_ARGS`` and ``HOSTLESS_MIDDLE_TEST_ARGS``). Both live
-in the Makefile; the hostless one is restated in ``noxfile.py``'s
-``HOSTLESS_SERIAL_ARGS`` because the nox session is what CI actually
-invokes, and the two are a hand-kept pair — the
-noxfile comment says "keep in step" and nothing enforced it.
+runs and gates on the primary Python, 3.10; the 3.14 canary runs the unit
+and e2e tiers minus the ``interpreter_agnostic`` family without coverage
+instrumentation, and the interior versions a trimmed, uninstrumented unit tier —
+see ``noxfile.py``'s ``HOSTLESS_MIDDLE_TEST_ARGS`` and
+``HOSTLESS_E2E_CANARY_TEST_ARGS``). Both live
+in the Makefile and nowhere else. CI's hostless floor is judged by ``make
+coverage-hostless-fold`` on the fold of the primary's three nox legs (each leg
+writes a partial report at ``--cov-fail-under=0``); ``make coverage-hostless``
+reads the same variable by hand. The noxfile carries no positive floor.
 
 This module turns the floors into decisions. Every floor is a COMBINED
 line+branch number: ``.coveragerc`` sets ``branch = true`` (pinned below), so
@@ -36,14 +36,15 @@ build file where it is declared, never restated here. The readers strip
 comment lines and refuse duplicate declarations, because a regex that reads
 the first match is one commented-out experiment away from reading the wrong
 number. ``noxfile_floors`` is the exception: it is an inventory, returning
-every floor it finds and refusing nothing; the "only floor in the noxfile"
-claim lives in ``test_the_primary_hostless_pair_carries_the_noxfile_s_only_floor``.
+every floor it finds and refusing nothing; the "no floor in the noxfile"
+claim lives in ``test_the_noxfile_carries_no_positive_floor``.
 """
 
 import re
 
 import pytest
 
+from tests._fixtures.make_recipes import makefile_live_recipe
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -57,29 +58,24 @@ def _live_lines(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
-def makefile_threshold(text: str, name: str) -> float:
-    """The floor as declared; decimal since branch tracking (a quarter-point margin is real)."""
-    matches = re.findall(
-        rf"^{name}\s*[?:]?=\s*(\d+(?:\.\d+)?)\s*$", _live_lines(text), re.MULTILINE
-    )
+def makefile_variable(text: str, name: str) -> str:
+    """The value of the one live ``name :=`` (or ``?=``, ``=``) declaration, stripped.
+
+    Loud on absence and on a second live declaration: Make takes the last, a first-match
+    reader the first, and either guess could read the wrong value. Comment lines are not
+    declarations.
+    """
+    matches = re.findall(rf"^{name}\s*[?:]?=[ \t]*(.*?)\s*$", _live_lines(text), re.MULTILINE)
     assert matches, f"Makefile no longer declares `{name}`"
     assert len(matches) == 1, f"Makefile declares `{name}` {len(matches)} times: {matches}"
-    return float(matches[0])
+    return matches[0]
 
 
-def noxfile_hostless_serial_floor(text: str) -> float:
-    """The ``--cov-fail-under`` inside ``HOSTLESS_SERIAL_ARGS``, and only that one.
-
-    The parallel leg deliberately gates at 0 (the threshold judges the whole
-    session's fold, which only exists after the serial leg appends), so a
-    bare search for ``--cov-fail-under`` would read whichever leg came first.
-    """
-    block = re.search(r"^HOSTLESS_SERIAL_ARGS\s*=\s*\((.*?)^\)", text, re.MULTILINE | re.DOTALL)
-    assert block is not None, "noxfile.py no longer declares HOSTLESS_SERIAL_ARGS"
-    matches = re.findall(r"--cov-fail-under=(\d+(?:\.\d+)?)", _live_lines(block.group(1)))
-    assert matches, "HOSTLESS_SERIAL_ARGS carries no --cov-fail-under"
-    assert len(matches) == 1, f"HOSTLESS_SERIAL_ARGS carries {len(matches)} floors: {matches}"
-    return float(matches[0])
+def makefile_threshold(text: str, name: str) -> float:
+    """The floor as declared; decimal since branch tracking (a quarter-point margin is real)."""
+    value = makefile_variable(text, name)
+    assert re.fullmatch(r"\d+(?:\.\d+)?", value), f"`{name}` is not a number: {value!r}"
+    return float(value)
 
 
 def noxfile_floors(text: str) -> "dict[str, list[float]]":
@@ -90,12 +86,14 @@ def noxfile_floors(text: str) -> "dict[str, list[float]]":
     that is the one shape the sessions run (``session.run("pytest", *NAME, …)``,
     pinned by ``test_python_matrix_tiering``). A floor outside a bundle is
     outside the shape those pins police, so it is listed under its own key,
-    ``"<outside a bundle>"``, for the only-floor pin to see.
+    ``"<outside a bundle>"``, for the no-floor pin to see.
     """
     live = _live_lines(text)
     floors: "dict[str, list[float]]" = {}
     covered: "list[tuple[int, int]]" = []
-    for block in re.finditer(r"^([A-Z_]+_ARGS)\s*=\s*\((.*?)^\)", live, re.MULTILINE | re.DOTALL):
+    for block in re.finditer(
+        r"^([A-Z][A-Z0-9_]*_ARGS)\s*=\s*\((.*?)^\)", live, re.MULTILINE | re.DOTALL
+    ):
         covered.append(block.span())
         found = [float(x) for x in re.findall(r"--cov-fail-under=(\d+(?:\.\d+)?)", block.group(2))]
         if found:
@@ -108,6 +106,23 @@ def noxfile_floors(text: str) -> "dict[str, list[float]]":
     if outside:
         floors["<outside a bundle>"] = outside
     return floors
+
+
+def makefile_recipe_floor(text: str, target: str) -> "list[str]":
+    """The ``$(NAME)`` variables *target*'s recipe passes as a fail-under, in order.
+
+    Both spellings count: pytest-cov's ``--cov-fail-under=`` and coverage's
+    own ``--fail-under=``. The recipe is what the shell runs, read by the one
+    recipe reader (:func:`makefile_live_recipe`: comment and banner lines dropped).
+    """
+    assert re.search(rf"^{re.escape(target)}\s*:", text, re.MULTILINE), (
+        f"Makefile no longer declares target `{target}`"
+    )
+    return [
+        name
+        for line in makefile_live_recipe(text, target)
+        for name in re.findall(r"--(?:cov-)?fail-under=\$\(([A-Z_]+)\)", line)
+    ]
 
 
 def coveragerc_branch(text: str) -> bool:
@@ -167,31 +182,21 @@ def test_the_hostless_floor_holds_at_its_codified_minimum() -> None:
     )
 
 
-def test_the_hostless_floor_is_one_number_in_both_build_files() -> None:
-    """CI invokes the nox session and local runs the Makefile target: one floor for both.
-
-    The two selections are a hand-kept pair by intent (``M_HOSTLESS`` against
-    ``HOSTLESS_TEST_ARGS`` / ``HOSTLESS_SERIAL_ARGS``; ``test_lane_invariants``
-    pins their serial_timing halves). This pins the NUMBER only: a local
-    hostless green must mean what a CI green means.
-    """
-    make = makefile_threshold((CHECKOUT_ROOT / "Makefile").read_text(), "CI_COVERAGE_THRESHOLD")
-    nox = noxfile_hostless_serial_floor((CHECKOUT_ROOT / "noxfile.py").read_text())
-    assert make == nox, (
-        f"the hostless floor has drifted: Makefile CI_COVERAGE_THRESHOLD={make} but "
-        f"noxfile HOSTLESS_SERIAL_ARGS gates at {nox}. CI runs the nox session and `make "
-        f"coverage-hostless` runs the Makefile leg; a local green must mean the same thing "
-        f"as a CI green"
-    )
+def test_the_fold_and_the_by_hand_target_read_the_one_hostless_floor() -> None:
+    """CI judges the fold; a by-hand run judges its own fold: one variable for both."""
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    assert makefile_recipe_floor(text, "coverage-hostless") == ["CI_COVERAGE_THRESHOLD"]
+    assert makefile_recipe_floor(text, "coverage-hostless-fold") == ["CI_COVERAGE_THRESHOLD"]
+    assert "--fail-under=$(CI_COVERAGE_THRESHOLD)" in _live_lines(text)
 
 
 def test_the_makefile_still_gates_on_both_variables() -> None:
     """A floor nobody applies is a number, not a gate: each variable must reach a fail-under."""
     live = _live_lines((CHECKOUT_ROOT / "Makefile").read_text())
     for name in ("COVERAGE_THRESHOLD", "CI_COVERAGE_THRESHOLD"):
-        assert f"--cov-fail-under=$({name})" in live, (
-            f"no Makefile recipe applies `--cov-fail-under=$({name})` — the floor is declared "
-            f"but enforced nowhere"
+        assert re.search(rf"--(?:cov-)?fail-under=\$\({name}\)", live), (
+            f"no Makefile recipe applies `--cov-fail-under=$({name})` or "
+            f"`--fail-under=$({name})` — the floor is declared but enforced nowhere"
         )
 
 
@@ -240,42 +245,44 @@ def test_the_floor_readers_fail_loud_on_the_shapes_they_must_not_guess() -> None
     with pytest.raises(AssertionError, match="no longer declares"):
         makefile_threshold("CI_COVERAGE_THRESHOLD := 95\n", "COVERAGE_THRESHOLD")
 
-    decoy_first = (
-        'HOSTLESS_TEST_ARGS = (\n    "--cov-fail-under=0",\n)\n'
-        'HOSTLESS_SERIAL_ARGS = (\n    # was "--cov-fail-under=0",\n    "-n0",\n'
-        '    "--cov-fail-under=95",\n)\n'
+    # A floor outside any bundle is listed under its own key, never dropped.
+    assert noxfile_floors('def s(x):\n    x.run("pytest", "--cov-fail-under=90")\n') == {
+        "<outside a bundle>": [90.0]
+    }
+    # A digit in a bundle name is still a bundle.
+    assert noxfile_floors('HOSTLESS_E2E_ARGS = (\n    "--cov-fail-under=0",\n)\n') == {
+        "HOSTLESS_E2E_ARGS": [0.0]
+    }
+
+    recipe = (
+        "a: ## help\n\t# --fail-under=$(X)\n\tcoverage report --fail-under=$(CI_T)\n"
+        "b:\n\tpytest --cov-fail-under=$(OTHER)\n"
     )
-    assert noxfile_hostless_serial_floor(decoy_first) == 95
-    decimal = 'HOSTLESS_SERIAL_ARGS = (\n    "--cov-fail-under=94.75",\n)\n'
-    assert noxfile_hostless_serial_floor(decimal) == 94.75
-    with pytest.raises(AssertionError, match="carries no"):
-        noxfile_hostless_serial_floor('HOSTLESS_SERIAL_ARGS = (\n    "-n0",\n)\n')
+    assert makefile_recipe_floor(recipe, "a") == ["CI_T"]
+    assert makefile_recipe_floor(recipe, "b") == ["OTHER"]
+    assert makefile_recipe_floor("a:\n\techo hi\n", "a") == []
+    with pytest.raises(AssertionError, match="no longer declares target"):
+        makefile_recipe_floor(recipe, "a-fold")
 
     assert coveragerc_precision("[run]\nprecision = 0\n[report]\n; note\nprecision = 2\n") == 2
     with pytest.raises(AssertionError, match="sets no precision"):
         coveragerc_precision("[report]\n; precision = 2\n[html]\n")
 
 
-def test_the_primary_hostless_pair_carries_the_noxfile_s_only_floor() -> None:
-    """One floor in the noxfile: CI's, on the primary's hostless pair; all else uninstrumented.
+def test_the_noxfile_carries_no_positive_floor() -> None:
+    """No floor in the noxfile: each instrumented leg writes a slice at 0.
 
-    ``tests_all`` used to gate at 92 on its 3.10 leg — a second, lower reading
-    of the selection ``make coverage`` already gates at 95.5 on the same
-    tree, minus the browser fold-in — and the release ran it. Owner ruling 5
-    (#566): no canary floor; the 92 floor goes. With it the primary leg's
-    instrumentation goes too: a report nothing reads costs ~14 % of a leg.
-    The hostless primary pair keeps CI's floor (the parallel twin's ``0``
-    is the "judge the fold after the serial leg appends" idiom).
+    The hostless floor judges the fold of the primary's three legs (``make
+    coverage-hostless-fold``, reading the Makefile's ``CI_COVERAGE_THRESHOLD``);
+    a positive floor on any one slice would judge part of the selection against
+    a number set for the whole. Owner ruling 5 (#566): no canary floor either.
     """
-    text = (CHECKOUT_ROOT / "noxfile.py").read_text()
-    assert noxfile_floors(text) == {
-        "HOSTLESS_TEST_ARGS": [0.0],
-        "HOSTLESS_SERIAL_ARGS": [noxfile_hostless_serial_floor(text)],
-    }, (
-        "the noxfile carries a coverage floor outside the primary hostless pair: "
-        f"{noxfile_floors(text)}. The release trusts the coverage stamp for the primary "
-        "and runs every other leg uninstrumented; a floor elsewhere is a second gate "
-        "nobody reads (or a leg instrumented for nothing)"
+    floors = noxfile_floors((CHECKOUT_ROOT / "noxfile.py").read_text())
+    assert floors, "the instrumented primary legs no longer pass --cov-fail-under=0"
+    assert "<outside a bundle>" not in floors, floors
+    assert all(v == 0.0 for values in floors.values() for v in values), (
+        f"the noxfile carries a positive coverage floor: {floors}. The floor lives in the "
+        "Makefile's CI_COVERAGE_THRESHOLD and judges the fold of the three primary legs"
     )
 
 

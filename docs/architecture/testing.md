@@ -382,6 +382,21 @@ Three more axes sit alongside level/resource, each narrower in scope:
   coverage off. `make nox-full` is the complete matrix at roughly 5×
   `make nox`'s wall clock.
 
+  The hostless selection is three nox sessions, one per tier, so CI runs the
+  tiers side by side instead of in one long job:
+
+  | session | Pythons | selects | instrumentation |
+  | --- | --- | --- | --- |
+  | `tests_hostless_unit` | 3.10–3.14 | `tests/unit` minus the `interpreter_agnostic` family | instrumented on 3.10; the trimmed middle selection on 3.11–3.14, coverage off |
+  | `tests_hostless_e2e` | the bookends, 3.10 and 3.14 | the no-VM `tests/e2e` tier | instrumented on 3.10; coverage off on 3.14 |
+  | `tests_hostless_guards` | 3.10 only | the `interpreter_agnostic` family, one parallel leg and no serial twin | instrumented |
+
+  The primary's three sessions together select exactly what the one session
+  used to; the canary's two select exactly its old pair. **No session
+  enforces a coverage floor.** The three instrumented 3.10 sessions each
+  write a partial report, and the floor is judged once, on the fold of
+  those three data files (see [Coverage: a floor, not a scorecard](#coverage-a-floor-not-a-scorecard)).
+
 ## The host axis space: what a bed host *is*
 
 Some tests need to say more than "this needs a VM" — they need to know
@@ -774,10 +789,20 @@ and lab growth.
 
 `make coverage` enforces `--cov-fail-under=95.5` over the whole default run
 (the `dashboard` browser lane's Python-side coverage folds in via
-`--cov-append` first); the hostless CI gate (`make coverage-hostless`,
-`nox -s tests_hostless`) enforces a lower 94.75, because it deliberately
+`--cov-append` first); the hostless CI gate enforces a lower 94.75, because it deliberately
 exercises only the slice of otto that needs no VM at all and can't reach
-the full-run number. `nox -s tests_all` runs with coverage off on every
+the full-run number. The floor has one home, the Makefile's
+`CI_COVERAGE_THRESHOLD`, and two recipes read it. `make coverage-hostless`
+is the by-hand certificate: the whole hostless selection in one run, gated
+with `--cov-fail-under=`. CI's `coverage-hostless` job runs
+`make coverage-hostless-fold`: it downloads the data file each of the three
+primary sessions (`tests_hostless_unit`, `tests_hostless_e2e`,
+`tests_hostless_guards` on 3.10) uploaded, runs `coverage combine --keep`
+over exactly those three and `coverage report --fail-under=` on the result.
+A missing file fails the job by name, so a producer that wrote nothing can
+never read as a green fold. The noxfile enforces none: `uv run nox -s
+tests_hostless_unit` prints a report and gates nothing, because one tier's
+slice is not the number the floor is about. `nox -s tests_all` runs with coverage off on every
 interpreter: its primary leg is the selection `make coverage` already gates,
 so a second floor there was a lower reading of the same run (deleted,
 [#566](https://github.com/ludachrish3/otto-sh/issues/566)). Every

@@ -4,8 +4,9 @@ import re
 
 import pytest
 
+from tests._fixtures.make_recipes import makefile_live_recipe
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.test_lane_invariants import make_reachable, makefile_live_recipe
+from tests.unit.test_lane_invariants import make_reachable
 from tests.unit.test_make_release_lanes import _recipe, _rule
 
 pytestmark = pytest.mark.interpreter_agnostic

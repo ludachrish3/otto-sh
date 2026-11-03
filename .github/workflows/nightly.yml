@@ -101,15 +101,27 @@ jobs:
         run: make stability-unit COUNT=${{ inputs.count || '100' }}
 
   # Re-run the no-testbed CI gate matrix several times under pytest-repeat to
-  # flush flakes anywhere in the suite (not just the stability tests). Mirrors
-  # the CI `tests_hostless` job but loops each session with --count via
-  # pytest-repeat.
+  # flush flakes anywhere in the suite (not just the stability tests). Runs
+  # each interpreter's hostless sessions (tests_hostless_unit everywhere,
+  # tests_hostless_e2e on the bookends, tests_hostless_guards on 3.10) and
+  # loops each with --count via pytest-repeat.
   unit-matrix:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - python-version: "3.10"
+            sessions: tests_hostless_unit-3.10 tests_hostless_e2e-3.10 tests_hostless_guards-3.10
+          - python-version: "3.11"
+            sessions: tests_hostless_unit-3.11
+          - python-version: "3.12"
+            sessions: tests_hostless_unit-3.12
+          - python-version: "3.13"
+            sessions: tests_hostless_unit-3.13
+          - python-version: "3.14"
+            sessions: tests_hostless_unit-3.14 tests_hostless_e2e-3.14
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -124,7 +136,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      # Same tree as ci.yml's `tests` job, so the same artifact dependency:
+      # Same tree as ci.yml's hostless legs, so the same artifact dependency:
       # tests/unit/test_support_matrix.py spawns a hermetic conformance run
       # whose BusyBox cells are built from the artifacts, and this job repeats
       # that `nox_count` times (default 5) on the 3.10 leg — the module is
@@ -149,7 +161,7 @@ jobs:
 
       - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
         run: >-
-          uv run nox -s tests_hostless-${{ matrix.python-version }} --
+          uv run nox -s ${{ matrix.sessions }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
 
   # The test-isolation guard: tests/unit twice in ONE process (the
@@ -507,7 +519,7 @@ jobs:
   #   2  the dev group installs too     (tooling gaps kept apart from runtime ones)
   #   3  otto imports                   (`otto --version`; deprecations-as-errors)
   #   4  the hostless suite collects    (every test module + conftest imports, -n0)
-  #   5  the hostless session passes    (nox tests_hostless via --extra-python,
+  #   5  the hostless session passes    (nox tests_hostless_unit + _e2e via --extra-python,
   #                                      the import budget aside)
   #   6  the concurrency soak passes    (`make stability-unit`)
   #   7  the chaos suites pass          (tier 2 and the Docker slice)
@@ -695,7 +707,7 @@ jobs:
             # are per-interpreter and are regenerated once 3.15 is final, so it
             # must not hide a product failure behind a ceilings file that was
             # never written (#333).
-            rung 5 "the hostless session passes (budget aside)" uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" -- --ignore=tests/unit/import_budget || true
+            rung 5 "the hostless session passes (budget aside)" uv run --frozen nox -s "tests_hostless_unit-$CANARY_PYTHON" "tests_hostless_e2e-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" -- --ignore=tests/unit/import_budget || true
             rung 6 "the concurrency soak passes" make stability-unit COUNT=10 || true
             rung 7 "the chaos suites pass" canary_chaos || true
             rung 8 "the dashboard browser suite passes" canary_dashboard || true

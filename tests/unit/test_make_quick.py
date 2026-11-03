@@ -235,12 +235,14 @@ def test_a_failure_that_is_not_exit_5_aborts_the_lane(tmp_path: Path):
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_family_has_no_serial_timing_member(collect_marker_sets) -> None:  # noqa: F811
-    """`quick-guards` is one parallel leg: a serial_timing guard would error in a worker."""
+    """`quick-guards` and `tests_hostless_guards` are one parallel leg each: a serial_timing
+    guard would error in a worker."""
     both = [
         item.nodeid
         for item in collect_marker_sets(("tests/unit",))
         if {"interpreter_agnostic", "serial_timing"} <= item.markers
     ]
     assert not both, (
-        "give `quick-guards` a -n0 twin before marking one of these:\n  " + "\n  ".join(both)
+        "give `quick-guards` and nox's `tests_hostless_guards` a -n0 twin before marking "
+        "one of these:\n  " + "\n  ".join(both)
     )

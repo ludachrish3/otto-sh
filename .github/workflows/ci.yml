@@ -78,22 +78,102 @@ jobs:
           base="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
           uv run --no-project --with tomli python scripts/local_gate_status.py await --repo-slug "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha }}" --base "$base"
 
-  tests:
+  # The hostless suite on the primary Python, one leg per nox session, each
+  # instrumented: a leg checks that its session wrote the combined data file,
+  # then uploads it for `coverage-hostless` to fold and judge against the floor.
+  # A healthy session finishes well inside the budget. Without a timeout the job
+  # inherits GitHub's 6-hour default, and one stalled runner (2026-09-11: both
+  # xdist workers went silent mid-file at 75% with no failure and no
+  # pytest-timeout, run 34592801664) then blocks every later push in this
+  # branch's concurrency group until it expires. 60, not 30: a slow apt mirror
+  # alone once took 8.5 minutes of the budget (run 40372930261).
+  tests-primary:
     needs: [gate-admission]
-    name: tests_hostless-${{ matrix.python }}
+    name: ${{ matrix.session }}-3.10
     runs-on: ubuntu-latest
-    # A healthy lane finishes in 15-22 minutes (3.10 also runs tests/e2e). Without
-    # this the job inherits GitHub's 6-hour default, and one stalled runner
-    # (2026-09-11: both xdist workers went silent mid-file at 75% with no failure
-    # and no pytest-timeout, run 34592801664) then blocks every later push in
-    # this branch's concurrency group until it expires. 60, not 30: a slow
-    # apt mirror alone once took 8.5 minutes of the budget (run 40372930261),
-    # and the 3.10 lane was cancelled after its tests had finished.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        session: [tests_hostless_unit, tests_hostless_e2e, tests_hostless_guards]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: "3.10"
+
+      - name: Run ${{ matrix.session }} under Python 3.10
+        run: uv run nox -s ${{ matrix.session }}-3.10
+
+      # upload-artifact with `if-no-files-found: error` would also catch a
+      # missing file, but this names the failure for what it is.
+      - name: the session's combined data exists
+        run: test -f reports/coverage/.coverage
+
+      # The fold expects reports/coverage/hostless/coverage-<session>-3.10/.coverage:
+      # the upload root is reports/coverage/, and the download puts each artifact
+      # in a directory named after it. `.coverage` is a dot file, which
+      # upload-artifact skips unless told otherwise.
+      - name: Upload ${{ matrix.session }}'s coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.session }}-3.10
+          path: reports/coverage/.coverage*
+          include-hidden-files: true
+          if-no-files-found: error
+
+  # The newest Python, uninstrumented: the sessions whose behaviour can differ
+  # by interpreter. Same timeout reasoning as `tests-primary`.
+  tests-canary:
+    needs: [gate-admission]
+    name: ${{ matrix.session }}-3.14
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        session: [tests_hostless_unit, tests_hostless_e2e]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: "3.14"
+
+      - name: Run ${{ matrix.session }} under Python 3.14
+        run: uv run nox -s ${{ matrix.session }}-3.14
+
+  # The interior Pythons run the unit session alone. They keep the
+  # `tests_hostless-<python>` names because those are required contexts.
+  # Same timeout reasoning as `tests-primary`.
+  tests:
+    needs: [gate-admission]
+    name: tests_hostless-${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: ${{ matrix.python }}
+
+      - name: Run tests under Python ${{ matrix.python }}
+        run: uv run nox -s tests_hostless_unit-${{ matrix.python }}
+
+  # Combines the primary legs' data and judges the hostless floor on the fold.
+  # Not the hostless-setup action: combining data files needs no BusyBox cache,
+  # strace or compilers, only uv and the primary Python.
+  coverage-hostless:
+    needs: [gate-admission, tests-primary]
+    name: coverage-hostless
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -102,58 +182,44 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python }}
-        run: uv python install ${{ matrix.python }}
+      - name: Set up Python 3.10
+        run: uv python install 3.10
 
-      # THE ARTIFACT CACHE IS DELIBERATE HERE AND FORBIDDEN IN `busybox`, and the
-      # asymmetry is the point: the two jobs ask different questions of the same
-      # bytes.
-      #
-      # `busybox` VERIFIES them. Its whole value is re-fetching cold so that an
-      # upstream in-place rebuild reddens on the push, which is why that job must
-      # never cache (see its comment above). Detection lives there and stays there.
-      #
-      # This job merely CONSUMES them. Ten tests in
-      # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
-      # and the hermetic venue builds its BusyBox cells from these artifacts — so
-      # an unreachable artifact source reds a DEFAULT-gate job, on the
-      # PRIMARY Python only (every other version deselects that module — it is
-      # `interpreter_agnostic`; see noxfile.py's HOSTLESS_CANARY_* and
-      # HOSTLESS_MIDDLE_* bundles, which this job's `tests_hostless` runs), for a
-      # reason with nothing to do with the change under test. That is issue
-      # #261, when busybox.net alone was that source (the release mirror now
-      # answers first — see tests/_fixtures/busybox.py):
-      # an SSL handshake timeout fetching 1.16.1, on a release bump that touched
-      # only the version. Caching here removes that exposure without touching the
-      # detection the pin exists for.
-      #
-      # NO `restore-keys`, deliberately. A prefix restore would bring back the OLD
-      # bytes under the SAME filename in exactly the case that matters — a pin
-      # changed because upstream rebuilt an artifact in place — and
-      # `busybox_binary` fetches only when the target is ABSENT, so the stale file
-      # would be kept, fail `_verify`, and keep failing until the cache expired.
-      # An exact key misses on any pin change, which is precisely when this job
-      # should go to the network.
-      #
-      # A HIT DOES NOT SKIP VALIDATION: `_verify` runs on every artifact whether it
-      # was fetched or restored, so a corrupted cache still fails loudly here.
-      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
-        uses: actions/cache@v6
+      - name: Download the primary legs' coverage data
+        uses: actions/download-artifact@v8
         with:
-          path: ~/.cache/otto/busybox
-          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+          pattern: coverage-*
+          path: reports/coverage/hostless
 
-      - name: Install strace (the import budget counts stat syscalls through it)
-        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+      - name: Fold the legs and judge the floor
+        run: make coverage-hostless-fold
 
-      # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
-      # before 12, the gcc and clang, and reads what each writes with its own
-      # gcov; the runner image may lack gcc-11, clang or llvm-cov.
-      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
-        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
+  # THE BOOKEND CERTIFICATES keep the required contexts `tests_hostless-3.10`
+  # and `tests_hostless-3.14`. GitHub treats a SKIPPED required check as
+  # passing, so a certificate must never be skipped: `if: always()` makes it
+  # run whatever its needs did, and its one step fails unless every need's
+  # result is `success` (`failure`, `cancelled` and `skipped` all fail it).
+  # A head the admission refuses therefore turns these red within seconds.
+  hostless-primary:
+    needs: [gate-admission, tests-primary, coverage-hostless]
+    name: tests_hostless-3.10
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every primary leg and the fold succeeded
+        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-primary.result }}" = success && test "${{ needs.coverage-hostless.result }}" = success
 
-      - name: Run tests under Python ${{ matrix.python }}
-        run: uv run nox -s tests_hostless-${{ matrix.python }}
+  # The same certificate over the canary legs.
+  hostless-canary:
+    needs: [gate-admission, tests-canary]
+    name: tests_hostless-3.14
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every canary leg succeeded
+        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-canary.result }}" = success
 
   # One parallel job per browser engine (Blink/Gecko/Safari) — the nox
   # `dashboard` session is parametrized by browser, and this matrix runs each
@@ -609,7 +675,7 @@ jobs:
   # the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [gate-admission, lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
+    needs: [gate-admission, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -623,7 +689,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of gate-admission / lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
+            echo "Check the job logs to see which of gate-admission / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
           } > issue-body.md
 
       - name: Create issue from file

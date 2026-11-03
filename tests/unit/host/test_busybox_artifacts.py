@@ -56,6 +56,7 @@ from tests._fixtures.busybox import (
     require_interpreter,
     upstream_drift_report,
 )
+from tests._fixtures.gha_matrix import matrix_rows, render
 from tests._fixtures.make_caps import makefile_session_cap
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -1727,19 +1728,53 @@ _ARTIFACT_CACHE_PATH = "~/.cache/otto/busybox"
 # a bare `pytest tests/unit`) is NOT seen here and must be added as a
 # deliberate line. `make stability-unit` is deliberately absent — it is
 # `pytest -m concurrency`, four no-VM files that never touch the artifacts.
+#
+# Matching runs on the RENDERED `run:` text: each `${{ matrix.<key> }}` is
+# substituted from the job's matrix rows first, so these are the literal
+# session names a row executes, never the expression that names them.
 _UNIT_TREE_ENTRYPOINTS = (
-    "nox -s tests_hostless-",
+    "nox -s tests_hostless_unit-",
+    "nox -s tests_hostless_guards-",
     "nox -s tests_unit_repeat",
 )
 
 
+def _flatten(steps: "list[dict]") -> "list[dict]":
+    """``steps`` with each local ``uses: ./<dir>`` action's steps inlined at its position.
+
+    Only ``<dir>/action.yml`` is resolved; an ``action.yaml`` fails loud (FileNotFoundError).
+    """
+    flat: "list[dict]" = []
+    for step in steps:
+        uses = str(step.get("uses", ""))
+        if uses.startswith("./"):
+            action = yaml.safe_load(
+                (CHECKOUT_ROOT / uses / "action.yml").read_text(encoding="utf-8")
+            )
+            flat.extend(_flatten(action["runs"]["steps"]))
+        else:
+            flat.append(step)
+    return flat
+
+
 def _workflow_jobs() -> "dict[tuple[str, str], list[dict]]":
-    """Every job in every workflow file -> its steps, keyed by (workflow, job)."""
+    """Every job in every workflow file -> its steps, keyed by (workflow, job).
+
+    Local actions are flattened into the job's steps, and each step's ``run``
+    is rendered once per matrix row (joined by newlines), so a session named by
+    ``${{ matrix.<key> }}`` is seen by its literal name.
+    """
     jobs: "dict[tuple[str, str], list[dict]]" = {}
     for path in sorted(_WORKFLOWS.glob("*.yml")):
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         for job, spec in workflow["jobs"].items():
-            jobs[(path.name, job)] = spec.get("steps", [])
+            rows = matrix_rows(spec) or [{}]
+            jobs[(path.name, job)] = [
+                {**s, "run": "\n".join(render(str(s["run"]), row) for row in rows)}
+                if "run" in s
+                else s
+                for s in _flatten(spec.get("steps", []))
+            ]
     return jobs
 
 
@@ -1776,6 +1811,8 @@ def test_every_entrypoint_spelling_still_names_a_live_job():
             f"was renamed or removed; update _UNIT_TREE_ENTRYPOINTS in the same diff"
         )
     consumers = _unit_tree_jobs()
+    assert ("ci.yml", "tests-primary") in consumers, consumers
+    assert ("ci.yml", "tests-canary") in consumers, consumers
     assert ("ci.yml", "tests") in consumers, consumers
     assert ("nightly.yml", "unit-repeat") in consumers, consumers
     assert ("nightly.yml", "unit-matrix") in consumers, consumers

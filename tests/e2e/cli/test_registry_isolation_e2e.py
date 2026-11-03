@@ -4,7 +4,7 @@
 ``Registry`` before each test and restores it after. It originally lived in
 ``tests/unit/conftest.py``, so it covered only the unit tree — while the e2e
 tree bootstraps the real ``otto`` CLI, whose commands, host classes, backends
-and carriers all land in those same process-global singletons. ``tests_hostless``
+and carriers all land in those same process-global singletons. ``make coverage``
 runs ``tests/unit`` and ``tests/e2e`` in ONE session, so a single xdist worker
 runs tests from both trees in one process: an entry an e2e test leaves behind
 lands in the very registry the next unit test asserts against.

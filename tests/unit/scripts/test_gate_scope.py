@@ -15,6 +15,7 @@ from scripts import check_breaking_marks
 from scripts import gate_scope as gs
 from scripts import gate_tip as gt
 from tests._fixtures.gitrepo import git_env
+from tests._fixtures.make_recipes import makefile_live_recipe
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit import test_lane_invariants as _lane_invariants
 from tests.unit.test_lane_invariants import (
@@ -23,15 +24,15 @@ from tests.unit.test_lane_invariants import (
     _Leg,
     _legs_including_markerless,
     _marker_matcher,
+    _selected_node_ids,
     _within,
     make_legs,
     make_reachable,
-    makefile_live_recipe,
+    primary_ci_legs,
 )
 from tests.unit.test_tier_marker_invariants import (
     _makefile_marker_variables,
     _makefile_pytest_invocations,
-    _python_pytest_invocations,
 )
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -1496,14 +1497,9 @@ def _oracle_legs(lines: "list[str]", makefile: str) -> "list[_Leg]":
 
 
 def _ci_hostless_legs() -> "list[_Leg]":
-    """The pull request's `tests_hostless` legs on the primary Python, read from the noxfile
+    """The pull request's hostless legs on the primary Python, read from the noxfile
     as the partition pin (`test_lane_invariants`) reads them."""
-    return _legs_including_markerless(
-        "noxfile.py:tests_hostless@3.10",
-        _python_pytest_invocations(
-            CHECKOUT_ROOT / "noxfile.py", resolve_names=True, scope="tests_hostless", python="3.10"
-        ),
-    )
+    return primary_ci_legs()
 
 
 def _uncovered(
@@ -1515,18 +1511,9 @@ def _uncovered(
     hostless suite locally, CI does.
     """
     legs = [*_oracle_legs(lines, makefile), *(ci or [])]
-    compiled = [(leg, Expression.compile(leg.expr)) for leg in legs]
-    gaps = []
-    for item in collect(()):
-        item_path = item.path
-        if item_path != path:
-            continue
-        matcher = _marker_matcher(item.markers)
-        if not any(
-            _within(item_path, leg.roots) and expr.evaluate(matcher) for leg, expr in compiled
-        ):
-            gaps.append(item.nodeid)
-    return gaps
+    items = [item for item in collect(()) if item.path == path]
+    selected = _selected_node_ids(legs, items)
+    return [item.nodeid for item in items if item.nodeid not in selected]
 
 
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
@@ -1719,22 +1706,18 @@ def test_every_row_item_the_tip_does_not_run_is_in_ci_s_hostless_selection(
     keep their own lanes, special rows or nightly."""
     makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     lines = _src_row_tip(package)
-    tip = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
-    ci = [(leg, Expression.compile(leg.expr)) for leg in _ci_hostless_legs()]
     coverage = Expression.compile(
         _lane_invariants._makefile_marker_variables(makefile)["M_COVERAGE"]
     )
-    gaps = []
-    for item in collect_marker_sets(()):
-        if not gs._within(item.path, gs.UNIT_TREES[package]):
-            continue
-        matcher = _marker_matcher(item.markers)
-        if not coverage.evaluate(matcher):
-            continue
-        if any(_within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in tip):
-            continue
-        if not any(_within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in ci):
-            gaps.append(item.nodeid)
+    items = [
+        item
+        for item in collect_marker_sets(())
+        if gs._within(item.path, gs.UNIT_TREES[package])
+        and coverage.evaluate(_marker_matcher(item.markers))
+    ]
+    tip = _selected_node_ids(_oracle_legs(lines, makefile), items)
+    ci = _selected_node_ids(_ci_hostless_legs(), items)
+    gaps = [item.nodeid for item in items if item.nodeid not in tip | ci]
     assert gaps == [], f"{len(gaps)} item(s) neither the tip nor CI selects:\n  " + "\n  ".join(
         gaps[:40]
     )
