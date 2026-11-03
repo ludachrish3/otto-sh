@@ -541,6 +541,179 @@ class TestRunBridge:
             os.close(slave_fd)
 
 
+class _OverlapCountingReader:
+    """A real ``asyncio.StreamReader`` that counts reads running at the same time.
+
+    telnetlib3's reader raises "already waiting" on a second concurrent read,
+    and so does asyncio's; counting them as well makes an overlap visible even
+    where an error would be swallowed by a best-effort caller.
+    """
+
+    def __init__(self, events: list[str]) -> None:
+        self.inner = asyncio.StreamReader()
+        self.events = events
+        self.active = 0
+        self.overlaps = 0
+        self.parked = asyncio.Event()
+
+    async def read(self, n: int) -> bytes:
+        self.active += 1
+        if self.active > 1:
+            self.overlaps += 1
+        self.parked.set()
+        try:
+            data = await self.inner.read(n)
+        finally:
+            self.active -= 1
+        self.events.append(f"read:{data.decode()}")
+        return data
+
+
+@pytest.mark.asyncio
+async def test_bridge_cancelled_mid_read_leaves_no_pump_running(monkeypatch):
+    """Ctrl-C during ``otto login`` lands while the remote pump is mid-read.
+
+    The client is closed right after the bridge unwinds, and that close
+    drains a single-client console by reading the same stream. A pump still
+    parked in ``read()`` would collide with the drain ("already waiting") and
+    turn a clean release into an abort, which is what wedges a Zephyr
+    console. So both pumps must be finished by the time the bridge's
+    cancellation reaches the caller.
+    """
+    from otto.host import telnet
+    from tests.unit.host._telnet_fakes import fake_stream
+
+    events: list[str] = []
+    reader = _OverlapCountingReader(events)
+    aborts: list[object] = []
+
+    async def spy_abort(writer, transport, sock) -> None:
+        aborts.append(transport)
+
+    monkeypatch.setattr(telnet, "_abort_and_observe", spy_abort)
+    registry_before = set(telnet._live_console_transports)
+
+    async def write_remote(data: bytes) -> None:
+        return None
+
+    with (
+        patch.object(interact, "_spawn_stdin_reader") as mock_reader,
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+        patch.object(interact.os, "write"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        mock_reader.return_value = asyncio.get_running_loop().create_future()
+        mock_reader.return_value.set_result(None)
+
+        bridge = asyncio.create_task(
+            _run_bridge(
+                write_remote=write_remote,
+                read_remote=lambda: reader.read(4096),
+                install_sigwinch=lambda: lambda: None,
+                on_output_line=lambda _line: None,
+            )
+        )
+        await asyncio.wait_for(reader.parked.wait(), timeout=2.0)
+        assert reader.active == 1, "the remote pump never started its read"
+        pump_names = {"_pump_stdin_to_remote", "_pump_remote_to_stdout"}
+        pumps = [t for t in asyncio.all_tasks() if t.get_coro().__name__ in pump_names]
+        assert len(pumps) == 2
+
+        bridge.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge
+
+    assert all(p.done() for p in pumps), "a bridge pump outlived the bridge"
+    assert reader.active == 0
+
+    # The client's close now drains the same stream.
+    _, writer, transport = fake_stream(events, reader)
+    reader.inner.feed_data(b"trailing")
+    try:
+        await telnet.release_telnet_stream(
+            reader, writer, transport, single_client=True, reads_idle=telnet.ReadGate()
+        )
+        assert events.index("read:trailing") < events.index("close")
+        assert reader.overlaps == 0
+        assert aborts == []
+        assert transport not in telnet._live_console_transports
+    finally:
+        telnet._live_console_transports.clear()
+        telnet._live_console_transports.update(registry_before)
+
+
+@pytest.mark.asyncio
+async def test_bridge_cancelled_while_joining_its_pumps_still_raises():
+    """The caller's cancel during the pump join is never mistaken for a pump's own.
+
+    The user leaves with the escape byte while the remote pump is parked in
+    its read, so the bridge cancels the remote pump and waits for it to end.
+    That pump takes extra turns to unwind. A cancel of the bridge landing in
+    that wait is the caller's (Ctrl-C, a teardown deadline) and must reach
+    the caller, and the pump must still be finished before it does, because
+    the client close that follows reads the same stream.
+    """
+    parked = asyncio.Event()
+    unwinding = asyncio.Event()
+    hold = asyncio.Event()
+
+    async def read_remote() -> bytes:
+        parked.set()
+        try:
+            await asyncio.get_running_loop().create_future()
+        finally:
+            unwinding.set()
+            await hold.wait()
+        raise AssertionError("unreachable")
+
+    async def write_remote(data: bytes) -> None:
+        return None
+
+    queues: list[asyncio.Queue] = []
+
+    def spawn(loop, queue, shutdown):
+        queues.append(queue)
+        fut = loop.create_future()
+        fut.set_result(None)
+        return fut
+
+    with (
+        patch.object(interact, "_spawn_stdin_reader", side_effect=spawn),
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+        patch.object(interact.os, "write"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+
+        bridge = asyncio.create_task(
+            _run_bridge(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                install_sigwinch=lambda: lambda: None,
+                on_output_line=lambda _line: None,
+            )
+        )
+        await asyncio.wait_for(parked.wait(), timeout=2.0)
+        pump_names = {"_pump_stdin_to_remote", "_pump_remote_to_stdout"}
+        pumps = [t for t in asyncio.all_tasks() if t.get_coro().__name__ in pump_names]
+        assert len(pumps) == 2
+
+        queues[0].put_nowait(bytes([_ESCAPE_BYTE]))
+        # The remote pump is unwinding its cancellation: the bridge is in its join.
+        await asyncio.wait_for(unwinding.wait(), timeout=2.0)
+        bridge.cancel()
+        hold.set()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge
+
+    assert all(p.done() for p in pumps), "a bridge pump outlived the bridge"
+
+
 # ---------------------------------------------------------------------------
 # UnixHost.run_login dispatch — verifies CLI path reaches the right runner
 # ---------------------------------------------------------------------------

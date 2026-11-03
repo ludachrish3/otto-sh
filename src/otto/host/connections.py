@@ -42,7 +42,12 @@ from ..models.base import Cred
 from ..registry import BackendRegistry, Ref, class_backend, registration_boundary
 from .login_proxy import LoginProxyError, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
-from .telnet import TelnetClient, open_connection_default
+from .telnet import (
+    CONSOLE_QUIESCE_BUDGET,
+    TelnetClient,
+    open_connection_default,
+    single_client,
+)
 from .transport import teardown_ssh_connection
 
 if TYPE_CHECKING:
@@ -522,6 +527,18 @@ def _telnetlib3_waits(open_kwargs: dict[str, Any]) -> float:
     return _seconds(open_kwargs.get("connect_timeout")) + maxwait
 
 
+def _console_logout_allowance(options: ConsoleOptions) -> float:
+    """Seconds a console client's logout can spend; ``0`` when ``logout`` is off.
+
+    Two ``login_timeout`` reads and a settle between them: a logout right
+    after the login waits for the shell's first bytes, settles, types EOF and
+    waits for the login prompt (see ``ConsoleClient.logout``).
+    """
+    if not options.logout:
+        return 0.0
+    return 2 * options.login_timeout + options.settle
+
+
 class ConnectionManager:
     """Owns all raw transport connections for a single remote host.
 
@@ -764,10 +781,25 @@ class ConnectionManager:
             if not console.login:
                 return opened
             each = console.login_timeout
-            logout = 2 * each + console.settle if console.logout else 0.0
-            way_out = max(2 * each, each + logout)
+            way_out = max(2 * each, each + _console_logout_allowance(console))
             return opened + 2 * each + way_out
         return 0.0
+
+    def release_allowance(self, term: str | None = None) -> float:
+        """Seconds one release of the stream on *term* can spend draining it, bounded.
+
+        *term* defaults to the active one. A single-client stream is drained
+        to quiet before it is closed, bounded by
+        :data:`~otto.host.telnet.CONSOLE_QUIESCE_BUDGET`, and a failed open
+        releases its stream, so a caller bounding a session open allows this
+        per attempt too. Whether a term's stream is single-client is
+        :func:`~otto.host.telnet.single_client`, the decision the client's
+        release itself makes; any other stream counts ``0``. A console's
+        logout before its release is not counted here;
+        :meth:`connect_allowance` counts it.
+        """
+        term = self._term if term is None else term
+        return CONSOLE_QUIESCE_BUDGET if single_client(term, self._telnet_options) else 0.0
 
     def retries_failed_open(self, term: str | None = None) -> bool:
         """Return whether ``SessionManager._ensure_session`` retries a failed open on *term*.
@@ -1187,12 +1219,11 @@ class ConnectionManager:
 
         The synchronous counterpart of the console step in :meth:`close`, for
         a caller replacing this manager that cannot await (see
-        :meth:`~otto.host.console.ConsoleClient.abandon`). No-op when no
-        console client is cached.
+        ``ConsoleClient.abort()``). No-op when no console client is cached.
         """
         console, self._console_conn = self._console_conn, None
         if console is not None:
-            console.abandon()
+            console.abort()
 
     async def forward_port(self, dest_port: int) -> int:
         """Forward a local ephemeral port to ``self._ip:dest_port`` through the tunnel.
@@ -1235,8 +1266,19 @@ class ConnectionManager:
         behind it, in particular the SSH-hop teardown (chaos spec: teardown
         chain robustness). Cached slots are cleared take-then-clear BEFORE
         each close attempt so a failing close can't leave a half-dead
-        connection cached for reuse. ``CancelledError`` is not guarded: a
-        force-abandoned teardown stops the chain, loudly.
+        connection cached for reuse.
+
+        The telnet and console clients are released first, before any other
+        await: their release drains the line to quiet, and a stream forwarded
+        through a hop must not lose that hop mid-drain. A client another task
+        is already releasing (a session closing the same cached client) is
+        waited for, so the hops still close last.
+
+        ``CancelledError`` is not guarded: a force-abandoned teardown stops
+        the chain, loudly. Nothing closes this manager afterwards, so on the
+        way out it aborts the telnet and console clients it detached, without
+        a drain. One whose release was already under way, or already ended,
+        is left to it.
         """
         sftp, self._sftp_conn = self._sftp_conn, None
         ssh, self._ssh_conn = self._ssh_conn, None
@@ -1247,55 +1289,63 @@ class ConnectionManager:
         user_ssh, self._user_ssh_conns = self._user_ssh_conns, {}
         self._user_locks = {}
 
-        for login, client in user_sftp.items():
-            with teardown_step(self._name, f"sftp-as-{login}"):
-                client.exit()
+        try:
+            if telnet:
+                with teardown_step(self._name, "telnet"):
+                    await telnet.close()
 
-        for login, conn in user_ssh.items():
-            with teardown_step(self._name, f"ssh-as-{login}"):
-                await teardown_ssh_connection(conn)
+            if console:
+                with teardown_step(self._name, "console"):
+                    await console.close()
 
-        if sftp:
-            with teardown_step(self._name, "sftp"):
-                sftp.exit()
+            for login, client in user_sftp.items():
+                with teardown_step(self._name, f"sftp-as-{login}"):
+                    client.exit()
 
-        if ssh:
-            with teardown_step(self._name, "ssh"):
-                # The zombie-transport mitigation is the primitive's; see it.
-                await teardown_ssh_connection(ssh)
+            for login, conn in user_ssh.items():
+                with teardown_step(self._name, f"ssh-as-{login}"):
+                    await teardown_ssh_connection(conn)
 
-        if ftp:
-            with teardown_step(self._name, "ftp"):
-                await ftp.quit()
+            if sftp:
+                with teardown_step(self._name, "sftp"):
+                    sftp.exit()
 
-        if telnet:
-            with teardown_step(self._name, "telnet"):
-                await telnet.close()
+            if ssh:
+                with teardown_step(self._name, "ssh"):
+                    # The zombie-transport mitigation is the primitive's; see it.
+                    await teardown_ssh_connection(ssh)
 
-        if console:
-            with teardown_step(self._name, "console"):
-                await console.close()
+            if ftp:
+                with teardown_step(self._name, "ftp"):
+                    await ftp.quit()
 
-        if self._console_endpoint is not None and self._console_endpoint.hop is not None:
-            with teardown_step(self._name, "console hop"):
-                await self._console_endpoint.hop.close()
+            if self._console_endpoint is not None and self._console_endpoint.hop is not None:
+                with teardown_step(self._name, "console hop"):
+                    await self._console_endpoint.hop.close()
 
-        if self._hop is not None:
-            with teardown_step(self._name, "hop"):
-                await self._hop.close()
+            if self._hop is not None:
+                with teardown_step(self._name, "hop"):
+                    await self._hop.close()
+        except asyncio.CancelledError:
+            # Each client's ``abort()`` is sync and a no-op once its stream
+            # is taken, so this frees only what no release has reached.
+            for client in (telnet, console):
+                if client is not None:
+                    client.abort()
+            raise
 
-        # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled
-        # precisely above by closing ``asyncio_transport`` explicitly, which
-        # sets the *asyncio transport's* ``_closing=True`` so asyncio's own
-        # ``_SelectorSocketTransport.__del__`` finalizer is a no-op. This is
-        # unrelated to otto's host lifecycle and remains REQUIRED after the
-        # removal of ``RemoteHost.__del__`` — do not delete it as "dead
-        # ``__del__`` scaffolding". We deliberately
-        # do *not* call ``gc.collect()`` here: a process-wide collection sweeps
-        # up every leaked object in the interpreter — including sockets/loops
-        # leaked by unrelated tests — firing their ``__del__`` and letting
-        # pytest's ``[unraisable]`` plugin escalate those warnings into a flake
-        # on whatever test happens to be calling ``close()``.
+        # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled by
+        # :func:`~otto.host.transport.teardown_ssh_connection`, which every ssh
+        # step above goes through: it closes the connection's
+        # ``asyncio_transport`` explicitly, so asyncio's own
+        # ``_SelectorSocketTransport.__del__`` finalizer is a no-op. That
+        # remains REQUIRED after the removal of ``RemoteHost.__del__`` — do not
+        # delete it as "dead ``__del__`` scaffolding". We deliberately do *not*
+        # call ``gc.collect()`` here: a process-wide collection sweeps up every
+        # leaked object in the interpreter — including sockets/loops leaked by
+        # unrelated tests — firing their ``__del__`` and letting pytest's
+        # ``[unraisable]`` plugin escalate those warnings into a flake on
+        # whatever test happens to be calling ``close()``.
 
 
 class _UserConnections:

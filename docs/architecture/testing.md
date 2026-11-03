@@ -61,6 +61,7 @@ full list, from `pyproject.toml`:
 | `busybox` | Needs a real BusyBox artifact (fetched, SHA-256-verified and cached; qemu-user-static on non-x86_64); excluded from every default lane, opt-in via `make busybox`. Runs once in every release (`make release-campaign`). |
 | `conformance` | A host-contract conformance cell. In the default hermetic venue it stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses; under `OTTO_CONFORMANCE_BED=1` the same tests resolve against real bed hosts instead. Excluded from every default lane; opt-in via `make conformance` (hermetic) or `make conformance-bed` (real bed, dev VM only) — see below. The hermetic venue runs once, over every cell, in every release (`make release-campaign`); the bed venue runs in `make release-matrix`. |
 | `conformance_bed` | Carried *in addition* to `conformance` by the few tests in that tree which reach the real lab bed on **every** run, whichever venue is selected — today, the bed openers' witness. `make conformance` subtracts it, because that lane is hermetic and runs nightly in CI with no lab |
+| `release_proof` | The bed proof of a fix, run by its own lease-taking target and by nothing else: excluded from every default lane, tip and soak, and run once in every release (`make release-campaign`). Today, the #386 console-release arms (`make console-release-bed`). |
 | `no_bundle_page` / `no_hygiene_bracket` | Narrow opt-outs for two specific autouse guards (a browser test that renders no bundle; a chaos test that manages its own hygiene bracket) |
 
 Reading any test, then, is two lookups: which directory is it under (its
@@ -502,7 +503,12 @@ venue's cells:
   Zephyr guests over their consoles.
   55 cells over 16 elements — 35 `bed-unix`, 13 `bed-busybox`, 7
   `bed-zephyr` — of which 11 open a single-client console (the seven Zephyr
-  cells, `test2`'s three and `bb1350`'s one). `make conformance-bed` is
+  cells, `test2`'s three and `bb1350`'s one). The bed's wedge guard relies
+  on otto draining each of those consoles to quiet before it releases it
+  ({ref}`single-client-console`); the emergency registry drops a transport
+  only once its fd is released, and the pytest-timeout sweep can cut a
+  drain short (after a stopped event loop the fd goes at garbage collection
+  or exit, [#828](https://github.com/ludachrish3/otto-sh/issues/828)). `make conformance-bed` is
   its only lane; it is **dev VM only** (nothing in CI runs it, and
   `tests/unit/test_tier_marker_invariants.py` asserts that no other lane
   can set the knob), and it is **exhaustive by

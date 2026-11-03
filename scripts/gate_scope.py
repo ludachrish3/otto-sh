@@ -489,6 +489,13 @@ SPECIAL_TREES = [
     ),
     ("tests/conformance/*", ["make conformance"], ["make conformance-bed"]),
     ("tests/busybox/*", ["make busybox"], ["make busybox"]),
+    # The #386 bed proof (`release_proof`): its own lane, run when the file itself changes
+    # and once per release by `make release-campaign`; no tip runs it.
+    (
+        "tests/integration/host/test_console_release_bed.py",
+        ["make console-release-bed"],
+        [],
+    ),
     # its items are integration-marked: the tip's `make coverage-bed` runs them
     ("tests/integration/busybox_bed/*", ["make coverage-unix"], []),
     (
@@ -539,7 +546,15 @@ LANE_COVERS = {
     "make busybox": {"busybox"},
 }
 QUICK_EXCLUDED = frozenset(
-    {"stability", "busybox", "conformance", "kmodcov", "browser", "interpreter_agnostic"}
+    {
+        "stability",
+        "busybox",
+        "conformance",
+        "kmodcov",
+        "release_proof",
+        "browser",
+        "interpreter_agnostic",
+    }
 )
 """The marks both `make quick` legs deselect (M_QUICK; pinned against the Makefile)."""
 STATIC_LANES = ["make check-python", "make check-ts", "make docs"]
@@ -590,6 +605,7 @@ COMMIT_ONLY_GOALS = [
     "dashboard",
     "dashboard-soak",
     "stability-unit",
+    "console-release-bed",
 ]
 """What the commit column may emit beyond the tip's goals: a working check, never stamped,
 never in a tip. Their landing venues are CI's jobs and nightly's."""

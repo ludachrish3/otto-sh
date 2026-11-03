@@ -1,12 +1,14 @@
-"""A single-client console must be read to silence before it is released (#324).
+"""A failed handshake still reads a single-client console to quiet before release (#324, #386).
 
 The wedge these guard against: a Zephyr ``shell_telnet`` backend whose ``send``
 fails because the connection was released while it still had queued output
 takes a restart path that leaves it dead for the guest's life. otto's part is
 to let the console finish talking — go quiet — before the connection is
-released, on the handshake-failure teardown path (``_fail_init``), where the
-transport is still live. Quiet (not FIN-vs-RST) is what makes the release safe,
-and quiet is observable through a hop, so this holds on the tunneled path too.
+released. On the handshake-failure teardown path (``_fail_init``) that drain is
+no longer a step of its own: ``_fail_init`` closes the session, and the
+session closes through its client, whose release drains first. Quiet (not
+FIN-vs-RST) is what makes the release safe, and quiet is observable through a
+hop, so this holds on the tunneled path too.
 
 These drive the real ``TelnetSession`` over a loopback peer that behaves like
 the guest: it keeps sending for a while, never sends the readiness marker, and
@@ -23,9 +25,10 @@ from contextlib import suppress
 import pytest
 from typing_extensions import Self  # `typing.Self` is 3.11+; otto's floor is 3.10
 
+from otto.host import telnet as telnet_mod
 from otto.host.command_frame import ZephyrFrame
 from otto.host.options import TelnetOptions
-from otto.host.session import TelnetSession
+from otto.host.session import ShellSession, TelnetSession
 from otto.host.telnet import TelnetClient
 
 
@@ -104,8 +107,12 @@ def _client(port: int, *, single: bool = True) -> TelnetClient:
 
 
 @pytest.mark.asyncio
-async def test_failed_handshake_holds_the_console_open_until_it_goes_quiet() -> None:
-    """_fail_init must read the console to silence before releasing the connection."""
+async def test_fail_init_still_drains_through_close() -> None:
+    """_fail_init's close reads the console to silence before releasing the connection.
+
+    There is no session-level drain any more: the client's close does it.
+    """
+    assert not hasattr(ShellSession, "_quiesce"), "the drain has one home: the client's release"
     # Burst outlasts the readiness ceiling: the handshake fails at 0.2 s while the
     # peer is still sending, the production shape of a fast failure.
     async with _GuestLikePeer(burst=0.6) as peer:
@@ -114,7 +121,7 @@ async def test_failed_handshake_holds_the_console_open_until_it_goes_quiet() -> 
         session = TelnetSession(
             client.reader,
             client.writer,
-            _owned_client=client,
+            client=client,
             command_frame=ZephyrFrame(),
             init_timeout=0.2,
         )
@@ -128,18 +135,18 @@ async def test_failed_handshake_holds_the_console_open_until_it_goes_quiet() -> 
 
 
 @pytest.mark.asyncio
-async def test_quiesce_is_bounded_when_the_console_never_goes_quiet(monkeypatch) -> None:
+async def test_failed_init_drain_is_bounded_when_the_console_never_goes_quiet(
+    monkeypatch,
+) -> None:
     """A console that never stops talking must not turn a fast failure into a hang."""
-    from otto.host import session as session_mod
-
-    monkeypatch.setattr(session_mod, "_CONSOLE_QUIESCE_BUDGET", 0.3)
+    monkeypatch.setattr(telnet_mod, "CONSOLE_QUIESCE_BUDGET", 0.3)
     async with _GuestLikePeer(burst=10.0) as peer:
         client = _client(peer.port)
         await client.connect()
         session = TelnetSession(
             client.reader,
             client.writer,
-            _owned_client=client,
+            client=client,
             command_frame=ZephyrFrame(),
             init_timeout=0.1,
         )
@@ -151,24 +158,22 @@ async def test_quiesce_is_bounded_when_the_console_never_goes_quiet(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_non_console_telnet_does_not_quiesce(monkeypatch) -> None:
-    """A plain (multi-client) telnet shell must not pay the quiesce budget."""
-    from otto.host import session as session_mod
-
+async def test_non_console_telnet_does_not_drain(monkeypatch) -> None:
+    """A plain (multi-client) telnet shell must not pay the drain budget."""
     calls: list[str] = []
-    real = session_mod.TelnetSession._quiesce
+    real = telnet_mod._drain_to_quiet
 
-    async def spy(self):
-        calls.append("quiesce")
-        return await real(self)
+    async def spy(reader, deadline):
+        calls.append("drain")
+        return await real(reader, deadline)
 
-    monkeypatch.setattr(session_mod.TelnetSession, "_quiesce", spy)
+    monkeypatch.setattr(telnet_mod, "_drain_to_quiet", spy)
     async with _GuestLikePeer(burst=0.3) as peer:
         client = _client(peer.port, single=False)
         await client.connect()
         session = TelnetSession(
-            client.reader, client.writer, _owned_client=client, init_timeout=0.15
-        )  # default frame: single_client_console is False
+            client.reader, client.writer, client=client, init_timeout=0.15
+        )  # options.single_client_console is False
         with pytest.raises(ConnectionError):
             await session._ensure_initialized()
-    assert calls == [], "quiesce ran for a non-single-client console"
+    assert calls == [], "the release drained a non-single-client stream"

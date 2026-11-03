@@ -2254,7 +2254,7 @@ class TestOpenSession:
         MockTelnetSession.assert_called_once_with(
             mock_client.reader,
             mock_client.writer,
-            _owned_client=mock_client,
+            client=mock_client,
             command_frame=None,
             init_timeout=None,
             write_chunk_size=mock_client.options.write_chunk_size,
@@ -2367,8 +2367,8 @@ class TestOpenSession:
             await h.open_session("alpha")
             await h.open_session("beta")
         calls = MockTelnetSession.call_args_list
-        assert calls[0].kwargs["_owned_client"] is client_a
-        assert calls[1].kwargs["_owned_client"] is client_b
+        assert calls[0].kwargs["client"] is client_a
+        assert calls[1].kwargs["client"] is client_b
         await h.close()
 
     # --- Mix of SSH host and Telnet host ---
@@ -4486,8 +4486,8 @@ class _DeviceBehindConsole:
                 device.events.append(f"close {n}")
                 self.alive = False
 
-            def abandon(self):
-                device.events.append(f"abandon {n}")
+            def abort(self):
+                device.events.append(f"abort {n}")
                 self.alive = False
 
         client = _Client()
@@ -4575,7 +4575,7 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
     result = await console_unix_host.reboot(wait=True, timeout=5.0, poll_interval=0.01)
 
     assert result.status is Status.Success, result.msg
-    assert device.events[:2] == ["dial 0", "abandon 0"]
+    assert device.events[:2] == ["dial 0", "abort 0"]
     assert polls == [False, False, True]
     # Every poll is a fresh dial; a failed one is torn down before the next.
     assert device.events[2:] == ["dial 1", "close 1", "dial 2", "close 2", "dial 3"]
@@ -4584,12 +4584,12 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
 def test_rebuild_connections_releases_a_cached_console_line(console_unix_host):
     """Dropping the manager must not strand its console client on the line."""
     released: list[str] = []
-    cached = SimpleNamespace(abandon=lambda: released.append("abandon"))
+    cached = SimpleNamespace(abort=lambda: released.append("abort"))
     old = console_unix_host._connections
     old._console_conn = cached
 
     console_unix_host.rebuild_connections()
 
-    assert released == ["abandon"]
+    assert released == ["abort"]
     assert old._console_conn is None
     assert console_unix_host._connections is not old

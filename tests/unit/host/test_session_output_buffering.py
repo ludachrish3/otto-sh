@@ -144,6 +144,7 @@ async def test_on_output_argument_overrides_default_sink(bash_session: FrameMock
 from types import SimpleNamespace
 
 from otto.host.session import TelnetSession
+from tests.unit.host._telnet_fakes import stream_client
 
 
 class TestWriteProgress:
@@ -151,7 +152,9 @@ class TestWriteProgress:
     async def test_telnet_write_reports_progress_per_chunk(self):
         writes: list[bytes] = []
         writer = SimpleNamespace(write=writes.append)
-        s = TelnetSession(reader=None, writer=writer, write_chunk_size=4)
+        s = TelnetSession(
+            reader=None, writer=writer, client=stream_client(None, writer), write_chunk_size=4
+        )
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 
@@ -163,7 +166,9 @@ class TestWriteProgress:
     @pytest.mark.asyncio
     async def test_telnet_single_write_reports_once_at_completion(self):
         writer = SimpleNamespace(write=lambda b: None)
-        s = TelnetSession(reader=None, writer=writer, write_chunk_size=0)  # unchunked
+        s = TelnetSession(
+            reader=None, writer=writer, client=stream_client(None, writer), write_chunk_size=0
+        )  # unchunked
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 

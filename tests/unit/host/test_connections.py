@@ -12,6 +12,7 @@ slot that authenticates as ``login_target``.
 """
 
 import inspect
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -663,3 +664,65 @@ class TestConnectAllowance:
 
     def test_an_unknown_term_counts_nothing(self):
         assert self._cm("ssh").connect_allowance("xmodem") == 0.0
+
+
+class TestReleaseAllowance:
+    """The bounded drain one release spends agrees with whether the release drains (#386)."""
+
+    @staticmethod
+    async def _real_close_drains(cm: ConnectionManager, term: str, monkeypatch) -> bool:
+        """Close the real client *term* would use, over a fake stream; True if it drained."""
+        from otto.host import telnet as telnet_mod
+        from otto.host.console import ConsoleClient
+        from otto.host.telnet import TelnetClient
+        from tests.unit.host._telnet_fakes import RecordingReader, fake_stream
+
+        drains: list[str] = []
+        real = telnet_mod._drain_to_quiet
+
+        async def spy(reader, deadline):
+            drains.append("drain")
+            return await real(reader, deadline)
+
+        monkeypatch.setattr(telnet_mod, "_drain_to_quiet", spy)
+        events: list[str] = []
+        reader, writer, _ = fake_stream(events, RecordingReader(events, then="eof"))
+        if term == "telnet":
+            client: Any = TelnetClient("h", "u", None, options=cm.telnet_options)
+        else:
+            client = ConsoleClient(
+                "localhost", 1, "u", None, options=cm.console_options, name="h1", server="s"
+            )
+        client._install(reader, writer)
+        await client.close()
+        assert events[-1] == "close", events  # released gracefully, not aborted
+        return bool(drains)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("active", "term", "single_client"),
+        [
+            ("telnet", None, True),  # the active term by default
+            ("ssh", "telnet", False),
+            ("ssh", "telnet", True),
+            ("ssh", "console", False),  # a console is single-client by nature
+            ("telnet", "ssh", True),
+        ],
+        ids=["active-term", "telnet-shared", "telnet-single-client", "console", "ssh"],
+    )
+    async def test_release_allowance_matches_single_client_source(
+        self, active, term, single_client, monkeypatch
+    ):
+        cm = ConnectionManager(
+            ip="10.0.0.1",
+            creds=[Cred(login="u", password="p")],
+            term=active,
+            name="h1",
+            host_id="h1",
+            telnet_options=TelnetOptions(single_client_console=single_client),
+            console_options=ConsoleOptions(server="s", port=1, logout=False),
+        )
+        named = active if term is None else term
+        # ssh has no telnet-framed client and so never drains.
+        drains = named != "ssh" and await self._real_close_drains(cm, named, monkeypatch)
+        assert cm.release_allowance(term) == (2.0 if drains else 0.0)

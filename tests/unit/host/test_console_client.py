@@ -8,14 +8,17 @@ the client's own deadline) when the script runs dry.
 
 import asyncio
 import contextlib
+import logging
 import re
+from typing import Any
 
 import pytest
 
 from otto.host.console import ConsoleClient, ConsoleState, classify_tail, strip_ansi
 from otto.host.errors import ConsoleError
 from otto.host.options import ConsoleOptions
-from otto.host.telnet import _live_console_transports, _register_console_transport
+from otto.host.telnet import ReadGateClosed, _live_console_transports, _register_console_transport
+from otto.utils import wait_for_async
 
 LOGIN = r"login: ?$"
 PASSWORD = r"[Pp]assword: ?$"
@@ -114,13 +117,22 @@ class ScriptedWriter:
 
 
 class FakeTransport:
-    """A minimal telnetlib3-transport stand-in for the cancel-mid-logout test."""
+    """A socketless telnetlib3-transport stand-in: released once aborted."""
 
     def __init__(self):
         self.aborted = False
 
     def abort(self) -> None:
         self.aborted = True
+
+    def get_write_buffer_size(self) -> int:
+        return 0
+
+    def is_closing(self) -> bool:
+        return self.aborted
+
+    def get_extra_info(self, name, default=None):
+        return default
 
 
 def _client(
@@ -151,8 +163,7 @@ def _client(
         name="test2",
         server="test1",
     )
-    c.reader = reader
-    c.writer = ScriptedWriter(reader)
+    c._install(reader, ScriptedWriter(reader))  # as open() installs a stream
     return c
 
 
@@ -487,12 +498,11 @@ class TestConnectAndClose:
         )
         await c.login_sequence()
         reader = c.reader
-        await c.logout()
+        await c.logout(c.reader, c.writer)
         assert reader.written.endswith(b"Password1\r\x04"), (
             "the EOF must be typed only once the shell has spoken"
         )
         assert not reader.replies, "the login prompt came back: the EOF reached the shell"
-        assert not c.logged_in
 
     async def test_close_after_login_sends_eof_and_waits_for_the_prompt(self):
         c = _client(
@@ -510,6 +520,7 @@ class TestConnectAndClose:
         await c.close()
         assert reader.written.endswith(b"\x04")
         assert writer.closed
+        assert not c.logged_in, "the release's end forgets its stream's login"
 
     async def test_close_with_logout_disabled_sends_nothing(self):
         c = _client(
@@ -567,8 +578,8 @@ class TestConnectAndClose:
         results = await asyncio.gather(c.close(), c.close(), return_exceptions=True)
         assert results == [None, None]
 
-    async def test_abandon_releases_the_line_at_once_without_logging_out(self):
-        # A replaced connection manager (reboot) cannot await: abandon() frees
+    async def test_abort_releases_the_line_at_once_without_logging_out(self):
+        # A replaced connection manager (reboot) cannot await: abort() frees
         # the single-client slot synchronously and types nothing — the device
         # it would log out of has rebooted.
         c = _client([(b"\r", b"login: "), (b"test\r", b"Password: "), (b"Password1\r", b"$ ")])
@@ -578,17 +589,18 @@ class TestConnectAndClose:
         writer.transport = transport
         _register_console_transport(transport)
 
-        c.abandon()
+        c.abort()
 
-        assert reader.written == b"\rtest\rPassword1\r", "abandon typed on the line"
+        assert reader.written == b"\rtest\rPassword1\r", "abort typed on the line"
         assert writer.closed
         assert transport.aborted
+        await asyncio.sleep(0)  # the release is observed on the loop's next turn
         assert transport not in _live_console_transports
         assert not c.alive
         assert not c.logged_in
-        c.abandon()  # idempotent
+        c.abort()  # idempotent
 
-    async def test_abandon_never_raises_and_still_aborts_the_transport(self):
+    async def test_abort_never_raises_and_still_aborts_the_transport(self):
         c = _client([(b"\r", b"login: ")])
         transport = FakeTransport()
         c.writer.transport = transport
@@ -598,9 +610,10 @@ class TestConnectAndClose:
             raise RuntimeError("Event loop is closed")
 
         c.writer.close = closed_loop
-        c.abandon()
+        c.abort()
 
         assert transport.aborted, "a close() that raises must not skip the abort"
+        await asyncio.sleep(0)
         assert transport not in _live_console_transports
         assert not c.alive
 
@@ -893,3 +906,760 @@ class TestSendNaws:
     def test_no_writer_is_a_no_op(self):
         c = ConsoleClient(host="localhost", port=4001, user="test", password="Password1")
         c._send_naws(80, 24)  # must not raise
+
+
+# -- take, then release ---------------------------------------------------------
+#
+# A console close takes the stream before its first await, waits for the reads
+# already in flight to leave the gate, logs out on the taken stream, then hands
+# it to the one release (drain to quiet, close, observe the fd's release). Every
+# way out that is not graceful goes through telnet's one abort path.
+
+
+@pytest.fixture
+def empty_registry():
+    """Start and end a test with an empty emergency registry."""
+    _live_console_transports.clear()
+    yield
+    _live_console_transports.clear()
+
+
+def _logged_in_client(replies, **opt) -> ConsoleClient:
+    """A client whose shell has spoken since its login: logout types EOF at once."""
+    c = _client(replies, **opt)
+    c._logged_in = True
+    return c
+
+
+def _attach(c: ConsoleClient, transport) -> None:
+    """Give *c*'s fake writer *transport*, registered as open() would have."""
+    c.writer.transport = transport
+    _register_console_transport(transport)
+
+
+class _StalledWriter:
+    """A writer over a ``StalledTransport``: writes and closes go to the transport."""
+
+    def __init__(self, reader: ScriptedReader, transport) -> None:
+        self._reader = reader
+        self.transport = transport
+
+    def write(self, data: bytes) -> None:
+        self._reader.note_write(data)
+        self.transport.write(data)
+
+    def is_closing(self) -> bool:
+        return self.transport.is_closing()
+
+    def close(self) -> None:
+        self.transport.close()
+
+
+def _hold_the_gate(c: ConsoleClient, *, leave_after: float | None = None) -> "asyncio.Task[None]":
+    """A read of *c*'s stream inside its gate that leaves after *leave_after*, or never."""
+
+    async def read() -> None:
+        with c._read_gate.reading():
+            if leave_after is None:
+                await asyncio.get_running_loop().create_future()
+            await asyncio.sleep(leave_after)
+
+    return asyncio.ensure_future(read())
+
+
+async def _cancel(task: "asyncio.Task[Any]") -> None:
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+def _spy_release(monkeypatch, calls: list) -> None:
+    """Record each ``release_telnet_stream`` the console makes, still running the real one."""
+    from otto.host import console as console_mod
+
+    real = console_mod.release_telnet_stream
+
+    async def spy(*args, **kwargs):
+        calls.append(kwargs)
+        await real(*args, **kwargs)
+        calls.append("released")
+
+    monkeypatch.setattr(console_mod, "release_telnet_stream", spy)
+
+
+def _spy_logout(monkeypatch, c: ConsoleClient, calls: list) -> None:
+    """Record each logout with what the client still held, still running the real one."""
+    real = c.logout
+
+    async def spy(reader, writer):
+        calls.append((c.reader, c.writer, reader, writer))
+        await real(reader, writer)
+
+    monkeypatch.setattr(c, "logout", spy)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("empty_registry")
+class TestTakeThenRelease:
+    async def test_close_order_take_idle_logout_release(self, monkeypatch):
+        from otto.host import console as console_mod
+
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        order: list[str] = []
+        real_take, real_idle, real_logout = c._take, c._read_gate.wait_idle, c.logout
+
+        def take():
+            order.append("take")
+            return real_take()
+
+        async def wait_idle(deadline):
+            order.append("wait_idle")
+            return await real_idle(deadline)
+
+        async def logout(reader, writer):
+            order.append("logout")
+            await real_logout(reader, writer)
+
+        async def release(*args, **kwargs):
+            order.append("release")
+
+        monkeypatch.setattr(c, "_take", take)
+        monkeypatch.setattr(c._read_gate, "wait_idle", wait_idle)
+        monkeypatch.setattr(c, "logout", logout)
+        monkeypatch.setattr(console_mod, "release_telnet_stream", release)
+
+        await c.close()
+
+        assert order == ["take", "wait_idle", "logout", "release"]
+
+    async def test_idle_timeout_skips_logout_and_drain(self, monkeypatch):
+        from otto.host import console as console_mod
+
+        monkeypatch.setattr(console_mod, "CONSOLE_QUIESCE_BUDGET", 0.3)
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        transport = FakeTransport()
+        _attach(c, transport)
+        logouts: list = []
+        releases: list = []
+        aborts: list = []
+        _spy_logout(monkeypatch, c, logouts)
+        _spy_release(monkeypatch, releases)
+        real_abort = console_mod._abort_and_observe
+
+        async def abort_spy(*args):
+            aborts.append(args)
+            await real_abort(*args)
+
+        monkeypatch.setattr(console_mod, "_abort_and_observe", abort_spy)
+        stuck = _hold_the_gate(c)
+        await asyncio.sleep(0)
+        loop = asyncio.get_running_loop()
+        try:
+            started = loop.time()
+            await c.close()
+            elapsed = loop.time() - started
+        finally:
+            await _cancel(stuck)
+
+        assert logouts == []
+        assert releases == []
+        assert len(aborts) == 1
+        assert transport.aborted
+        assert c.reader is None
+        assert c.writer is None
+        assert c._released.is_set()
+        assert elapsed <= 0.3 + 0.3
+
+    async def test_idle_completes_before_logout_real_reader(self):
+        c = _logged_in_client(
+            [(b"", b"late output", 0.1), (b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")]
+        )
+        reader = c.reader
+        starts: list[int] = []
+        pending = 0
+        real_read = reader.read
+
+        async def read(n: int = 4096) -> bytes:
+            # telnetlib3 refuses a second concurrent read with this error.
+            nonlocal pending
+            if pending:
+                raise RuntimeError("already waiting")
+            starts.append(c._read_gate.in_flight)
+            pending += 1
+            try:
+                return await real_read(n)
+            finally:
+                pending -= 1
+
+        reader.read = read
+        in_flight = asyncio.ensure_future(c._read_chunk(5.0))
+        await asyncio.sleep(0)
+        assert c._read_gate.in_flight == 1
+
+        await c.close()
+
+        assert await in_flight == b"late output"
+        assert starts[0] == 1, "the first read was the in-flight one, inside the gate"
+        assert len(starts) > 1, "logout read the line"
+        assert all(n == 0 for n in starts[1:]), "logout read while a gated read was in flight"
+        assert reader.written == b"\x04"
+        assert not reader.replies, "the login prompt came back"
+
+    @pytest.mark.parametrize(
+        "window", ["refused", "cancel_establishment", "cancel_negotiation", "login_refused"]
+    )
+    async def test_close_after_failed_open_is_bounded(self, monkeypatch, window):
+        """``ConnectionManager.console()``'s own failure cleanup closes the client, bounded.
+
+        A refused dial or a cancellation inside the opener leaves nothing
+        installed: the opener released what it built, so the close returns at
+        once. A cancellation inside the echo negotiation, or a refused login,
+        comes after the streams are installed: the close drains the line (the
+        guest's banner) before it closes it, with no abort, and unregisters it.
+        """
+        from otto.host import console as console_mod
+        from otto.host import telnet
+        from otto.host.connections import ConnectionManager, ConsoleEndpoint, TermContext
+        from otto.host.telnet import CONSOLE_QUIESCE_BUDGET
+        from tests.unit.host._telnet_fakes import SilentTelnetPeer
+        from tests.unit.host.test_telnet_client import (
+            BANNER,
+            _cancel_in_establishment,
+            _refused_port,
+        )
+
+        loop = asyncio.get_running_loop()
+        closes: list[tuple[ConsoleClient, float]] = []
+        real_close = ConsoleClient.close
+
+        async def timed_close(self):
+            started = loop.time()
+            await real_close(self)
+            closes.append((self, loop.time() - started))
+
+        monkeypatch.setattr(ConsoleClient, "close", timed_close)
+        drained: list[bytes] = []  # the peer's record of what otto's side read
+        real_read_within = telnet._read_within
+
+        async def recording(reader, timeout):
+            data = await real_read_within(reader, timeout)
+            if data:
+                drained.append(data)
+            return data
+
+        # Only the release's drain reads through telnet's own copy.
+        monkeypatch.setattr(telnet, "_read_within", recording)
+        aborts: list = []
+        real_abort = telnet.abort_telnet_stream
+
+        def abort_spy(writer, transport):
+            aborts.append(transport)
+            real_abort(writer, transport)
+
+        monkeypatch.setattr(telnet, "abort_telnet_stream", abort_spy)
+        negotiating = asyncio.Event()
+        real_negotiate = console_mod.negotiate_no_echo
+
+        async def negotiate(writer, timeout):
+            negotiating.set()
+            await real_negotiate(writer, timeout)
+            if window == "cancel_negotiation":
+                # The silent peer never offers ECHO, so telnetlib3 already
+                # counts it off; hold the negotiation open as a server that
+                # never answers DONT ECHO would, until the caller cancels.
+                await asyncio.get_running_loop().create_future()
+
+        monkeypatch.setattr(console_mod, "negotiate_no_echo", negotiate)
+        if window == "login_refused":
+
+            async def refuse(self):
+                raise ConsoleError("scripted refusal")
+
+            monkeypatch.setattr(console_mod.ConsoleClient, "login_sequence", refuse)
+
+        installed = window in ("cancel_negotiation", "login_refused")
+        async with SilentTelnetPeer(BANNER if installed else None) as peer:
+            peer.drained = drained
+            port = _refused_port() if window == "refused" else peer.port
+            options = ConsoleOptions(
+                server="test1",
+                port=port,
+                dial="direct",
+                settle=0.0,
+                login_prompt=LOGIN,
+                password_prompt=PASSWORD,
+                echo_negotiation_timeout=0.05,
+                extra={"connect_minwait": 0, "connect_maxwait": 0.05},
+            )
+            mgr = ConnectionManager.create(
+                TermContext(
+                    ip="127.0.0.1",
+                    creds=[],
+                    term="console",
+                    name="dev1",
+                    host_id="dev1",
+                    console_options=options,
+                    console_endpoint=lambda: ConsoleEndpoint(server_ip="127.0.0.1", hop=None),
+                )
+            )
+            if window == "cancel_establishment":
+                _cancel_in_establishment(monkeypatch)
+            opening = asyncio.ensure_future(mgr.console())
+            if window == "cancel_negotiation":
+                await wait_for_async(
+                    negotiating.is_set, 2.0, interval=0.01, on_timeout="never negotiated echo"
+                )
+                await asyncio.sleep(0.1)  # the banner has arrived; the echo never agrees
+                assert _live_console_transports, "the opener registered it as single-client"
+                opening.cancel()
+            if window == "refused":
+                expected: Any = OSError
+            elif window == "login_refused":
+                expected = ConsoleError
+            else:
+                expected = asyncio.CancelledError
+            with pytest.raises(expected):
+                await opening
+            if installed:
+                await wait_for_async(
+                    lambda: peer.drained_at_eof is not None,
+                    2.0,
+                    interval=0.01,
+                    on_timeout="the peer never saw the client's EOF",
+                )
+
+        ((client, took),) = closes
+        assert mgr._console_conn is None
+        assert client.reader is None
+        assert client.writer is None
+        assert client._released.is_set()
+        assert not _live_console_transports
+        if installed:
+            assert took <= CONSOLE_QUIESCE_BUDGET + 0.3
+            assert peer.drained_at_eof == b"".join(BANNER), "the banner was drained before the EOF"
+            assert aborts == [], "a quiet line is released gracefully"
+        else:
+            assert took < 0.1, "nothing was installed, so nothing was left to release"
+            assert drained == []
+        await asyncio.wait_for(real_close(client), 0.5)
+
+    async def test_cancel_during_idle_wait_aborts_taken_stream(self):
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        reader, writer = c.reader, c.writer
+        transport = FakeTransport()
+        _attach(c, transport)
+        stuck = _hold_the_gate(c)
+        try:
+            closing = asyncio.ensure_future(c.close())
+            await asyncio.sleep(0.05)  # inside the idle wait
+            assert c.writer is None, "the stream was taken before the first await"
+            closing.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+        finally:
+            await _cancel(stuck)
+
+        assert transport.aborted
+        assert writer.closed
+        assert reader.written == b"", "no logout without exclusive use of the line"
+        assert transport not in _live_console_transports
+        assert c._released.is_set()
+        assert not c.logged_in
+
+    @pytest.mark.parametrize(
+        "case", ["observed_release", "grace_expires", "cancel_repeated_in_grace"]
+    )
+    @pytest.mark.parametrize("path", ["idle_timeout", "cancel_in_idle", "cancel_in_logout"])
+    async def test_console_abort_paths(self, monkeypatch, stalled_transport, path, case):
+        from otto.host import console as console_mod
+        from otto.host import telnet
+
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(console_mod, "CONSOLE_QUIESCE_BUDGET", 0.3)
+        if case == "cancel_repeated_in_grace":
+            # A grace that waited through the second cancel would see the
+            # release land at 0.3 s and unregister; the widened grace leaves
+            # room for that.
+            monkeypatch.setattr(telnet, "_ABORT_GRACE", 0.5)
+            transport = stalled_transport(release_after_seconds=0.3)
+        elif case == "grace_expires":
+            transport = stalled_transport(release_after_turns=None)
+        else:
+            transport = stalled_transport(release_after_turns=1)
+        c = _logged_in_client([])
+        c.options.login_timeout = 30  # logout's read blocks until cancelled
+        reader = c.reader
+        c.writer = _StalledWriter(reader, transport)
+        _register_console_transport(transport)
+        in_grace = asyncio.Event()
+        real_await = telnet._await_local_release
+
+        async def entering_grace(*args):
+            in_grace.set()
+            return await real_await(*args)
+
+        monkeypatch.setattr(telnet, "_await_local_release", entering_grace)
+
+        stuck = _hold_the_gate(c) if path != "cancel_in_logout" else None
+        try:
+            closing = asyncio.ensure_future(c.close())
+            if path == "cancel_in_logout":
+                await wait_for_async(
+                    lambda: reader.written.endswith(b"\x04"),
+                    2.0,
+                    interval=0.005,
+                    on_timeout="logout never typed its EOF",
+                )
+                await asyncio.sleep(0.01)
+                closing.cancel()
+            elif path == "cancel_in_idle":
+                await asyncio.sleep(0.05)
+                closing.cancel()
+            second_cancel = 0.0
+            if case == "cancel_repeated_in_grace":
+                # On the idle_timeout path this is the only cancel: the close
+                # reached the abort's grace on its own, so it is a first
+                # cancel delivered inside the grace, which must propagate as
+                # promptly as a repeated one.
+                await wait_for_async(
+                    in_grace.is_set, 2.0, interval=0.005, on_timeout="the abort's grace never began"
+                )
+                second_cancel = loop.time()
+                closing.cancel()
+            if path == "idle_timeout" and case != "cancel_repeated_in_grace":
+                await closing
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    await closing
+        finally:
+            if stuck is not None:
+                await _cancel(stuck)
+
+        assert in_grace.is_set(), "the real abort-and-observe ran"
+        assert transport.aborts == 1
+        if case == "cancel_repeated_in_grace":
+            assert loop.time() - second_cancel < 0.05
+            assert transport.sock.fileno() != -1
+            assert transport in _live_console_transports
+        elif case == "grace_expires":
+            assert transport.sock.fileno() != -1
+            assert transport in _live_console_transports
+        else:
+            assert transport.sock.fileno() == -1
+            assert transport not in _live_console_transports
+        assert c._released.is_set()
+        await asyncio.wait_for(c.close(), 0.5)  # a second closer returns
+        if path != "cancel_in_logout":
+            assert reader.written == b"", "logout ran without exclusive use of the line"
+
+    async def test_two_closers_during_idle_wait_one_release(self, monkeypatch):
+        c = _client([])
+        releases: list = []
+        _spy_release(monkeypatch, releases)
+        leaving = _hold_the_gate(c, leave_after=0.1)
+        await asyncio.sleep(0)
+
+        async def close(name: str) -> None:
+            await c.close()
+            releases.append(f"{name} returned")
+
+        await asyncio.gather(close("first"), close("second"))
+        await leaving
+
+        assert sum(isinstance(r, dict) for r in releases) == 1, "one release"
+        assert releases.index("released") < releases.index("second returned")
+        assert releases.index("released") < releases.index("first returned")
+
+    async def test_logout_runs_once_under_concurrent_close(self, monkeypatch):
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        reader = c.reader
+        logouts: list = []
+        _spy_logout(monkeypatch, c, logouts)
+
+        await asyncio.gather(c.close(), c.close())
+
+        assert len(logouts) == 1
+        assert reader.written.count(b"\x04") == 1
+
+    async def test_logout_uses_taken_streams(self, monkeypatch):
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        reader, writer = c.reader, c.writer
+        logouts: list = []
+        _spy_logout(monkeypatch, c, logouts)
+
+        await c.close()
+
+        assert logouts == [(None, None, reader, writer)], "logout ran on the taken stream"
+        assert reader.written == b"\x04"
+        assert not reader.replies, "the login prompt came back"
+
+    async def test_shell_unheard_logout_through_close(self, monkeypatch, caplog):
+        from otto.host.connections import _console_logout_allowance
+
+        c = _client(
+            [
+                (b"\r", b"login: "),
+                (b"test\r", b"Password: "),
+                (b"Password1\r", b"Last login: today\r\n$ ", 0.05),
+                (b"\x04", b"\r\nlogout\r\n\r\ntest2 login: "),
+            ],
+            login_flush=True,
+        )
+        await c.login_sequence()
+        assert c._shell_unheard
+        assert c.options.settle > 0
+        reader = c.reader
+        loop = asyncio.get_running_loop()
+        spent: list[float] = []
+        real_logout = c.logout
+
+        async def timed(reader, writer):
+            started = loop.time()
+            await real_logout(reader, writer)
+            spent.append(loop.time() - started)
+
+        monkeypatch.setattr(c, "logout", timed)
+
+        with caplog.at_level(logging.WARNING, logger="otto.host.console"):
+            await c.close()
+
+        assert reader.written.endswith(b"Password1\r\x04"), "the shell spoke before the EOF"
+        assert not reader.replies, "the shell's output and the login prompt were consumed"
+        assert not [r for r in caplog.records if "logout failed" in r.getMessage()]
+        assert len(spent) == 1
+        assert spent[0] <= _console_logout_allowance(c.options)
+
+    async def test_read_chunk_rejected_after_gate_closed(self):
+        c = _client([(b"", b"data")])
+        loop = asyncio.get_running_loop()
+        assert await c._read_gate.wait_idle(loop.time() + 1.0)
+
+        with pytest.raises(ReadGateClosed):
+            await c._read_chunk(0.1)
+        assert c.reader.read_calls == 0
+
+    @pytest.mark.parametrize(
+        ("replies", "typed"),
+        [
+            ([(b"\r", b"login: ", 0.2)], b"\r"),
+            ([(b"\r", b"login: "), (b"test\r", b"Password: ", 0.2)], b"\rtest\r"),
+        ],
+        ids=["login-prompt-then-username", "password-prompt-then-password"],
+    )
+    async def test_a_close_during_a_prompt_read_drops_the_login(self, replies, typed):
+        """The prompt arrives after a close took the stream: the login ends as a dropped line.
+
+        The read was admitted before the take, so it returns its prompt, and
+        the state machine's next step is a write. That write must fail as a
+        lost connection (``ReadGateClosed``), never reach a nulled attribute,
+        and never type a credential into a stream that is being released.
+        """
+        c = _client(replies)
+        reader = c.reader
+        login = asyncio.ensure_future(c.login_sequence())
+        await wait_for_async(
+            lambda: reader.written == typed and c._read_gate.in_flight == 1,
+            2.0,
+            interval=0.005,
+            on_timeout="the login never started its prompt read",
+        )
+        closing = asyncio.ensure_future(c.close())
+        await asyncio.sleep(0)
+        assert c.writer is None, "the close took the stream"
+
+        with pytest.raises(ReadGateClosed):
+            await login
+        await asyncio.wait_for(closing, 2.0)
+        assert reader.written == typed, "a credential was typed after the take"
+        assert not c.logged_in
+
+    async def test_chatty_console_close_bounded_by_budget(self, monkeypatch):
+        from otto.host import console as console_mod
+
+        monkeypatch.setattr(console_mod, "CONSOLE_QUIESCE_BUDGET", 0.5)
+
+        async def chatter(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            with contextlib.suppress(ConnectionError):
+                while not w.is_closing():
+                    w.write(b"boot log line\r\n")
+                    await w.drain()
+                    await asyncio.sleep(0.01)
+            w.close()
+            with contextlib.suppress(Exception):
+                await w.wait_closed()
+
+        server = await asyncio.start_server(chatter, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        c = ConsoleClient(
+            host="127.0.0.1",
+            port=port,
+            user="test",
+            password=None,
+            options=ConsoleOptions(
+                server="test1",
+                port=4001,
+                login=False,
+                logout=False,
+                settle=0.0,
+                echo_negotiation_timeout=0.05,
+                extra={"connect_minwait": 0, "connect_maxwait": 0.05},
+            ),
+            name="test2",
+            server="test1",
+        )
+        loop = asyncio.get_running_loop()
+        try:
+            await c.connect()
+            transport = c.writer.transport
+            sock = transport.get_extra_info("socket")
+            assert transport in _live_console_transports
+            started = loop.time()
+            await c.close()
+            elapsed = loop.time() - started
+        finally:
+            server.close()
+            await server.wait_closed()
+
+        assert elapsed <= 0.5 + 0.3
+        assert sock.fileno() == -1, "otto's socket was released"
+        assert transport not in _live_console_transports
+
+    async def test_abort_after_reboot_releases_without_logout(self, monkeypatch):
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        reader, writer = c.reader, c.writer
+        transport = FakeTransport()
+        _attach(c, transport)
+        logouts: list = []
+        _spy_logout(monkeypatch, c, logouts)
+
+        c.abort()
+
+        assert logouts == []
+        assert reader.written == b""
+        assert writer.closed
+        assert transport.aborted
+        assert c._released.is_set()
+        assert not c.alive
+        assert not c.logged_in
+        await asyncio.sleep(0)  # the release is observed on the loop's next turn
+        assert transport not in _live_console_transports
+        with pytest.raises(ReadGateClosed):
+            await c._read_chunk(0.1)
+
+    @pytest.mark.parametrize("where", ["idle_wait", "logout"])
+    async def test_a_failure_before_the_release_aborts_and_never_raises(self, monkeypatch, where):
+        c = _logged_in_client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")])
+        writer = c.writer
+        transport = FakeTransport()
+        _attach(c, transport)
+        releases: list = []
+        _spy_release(monkeypatch, releases)
+
+        async def broken(*args):
+            raise RuntimeError("scripted failure")
+
+        if where == "idle_wait":
+            monkeypatch.setattr(c._read_gate, "wait_idle", broken)
+        else:
+            monkeypatch.setattr(c, "logout", broken)
+
+        await c.close()
+
+        assert releases == [], "no drain after a failure"
+        assert transport.aborted
+        assert writer.closed
+        assert transport not in _live_console_transports
+        assert c._released.is_set()
+        assert not c.logged_in
+
+    async def test_a_stream_installed_during_the_close_is_left_alone(self):
+        """A stream installed mid-close keeps its gate, login and pending release.
+
+        The taken stream is still released in full: drained, closed, and
+        unregistered once its release is observed.
+        """
+        from otto.host.telnet import ReadGate
+        from tests.unit.host._telnet_fakes import RecordingTransport
+
+        c = _logged_in_client([])  # logout's EOF gets no reply: it waits login_timeout
+        old_reader, old_writer = c.reader, c.writer
+        old_transport = RecordingTransport([])
+        _attach(c, old_transport)
+        close_writer = old_writer.close
+
+        def close_closes_the_transport() -> None:
+            close_writer()
+            old_transport.closing = True
+
+        old_writer.close = close_closes_the_transport
+        closing = asyncio.ensure_future(c.close())
+        await wait_for_async(
+            lambda: old_reader.written.endswith(b"\x04"),
+            2.0,
+            interval=0.005,
+            on_timeout="logout never typed its EOF",
+        )
+        fresh = _client([])  # installed as open() installs a stream
+        c.reader, c.writer = fresh.reader, fresh.writer
+        c._read_gate = ReadGate()
+        c._released.clear()
+        c._logged_in = True
+
+        await closing
+
+        assert c.writer is fresh.writer
+        assert c._logged_in, "the new stream's login was cleared"
+        assert not c._released.is_set(), "the new stream's release was marked done"
+        assert not c._read_gate.closed, "the close waited on the new stream's gate"
+        assert old_writer.closed, "the taken stream was closed"
+        assert old_transport.aborts == 0, "the taken stream was released gracefully"
+        assert old_transport not in _live_console_transports
+
+    async def test_a_waiting_closer_returns_when_the_release_ends_despite_a_reconnect(
+        self, monkeypatch
+    ):
+        """Close A takes; close B waits; a reconnect dials only after A's release.
+
+        Without that wait, the reconnect would clear ``_released`` for its new
+        stream while B still waited, and B would wait out the new stream's
+        whole life.
+        """
+        from otto.host import console as console_mod
+
+        c = _logged_in_client([])  # logout's EOF gets no reply: it waits login_timeout
+        old_reader = c.reader
+        events: list[str] = []
+        _spy_release(monkeypatch, events)
+        fresh = _client([], login=False)
+
+        async def fake_open(host, **kw):
+            events.append("dial")
+            return fresh.reader, fresh.writer
+
+        async def negotiate(writer, timeout):
+            return None
+
+        monkeypatch.setattr(console_mod, "open_telnet_connection", fake_open)
+        monkeypatch.setattr(console_mod, "negotiate_no_echo", negotiate)
+
+        async def close(name: str) -> None:
+            await c.close()
+            events.append(f"{name} returned")
+
+        a = asyncio.ensure_future(close("A"))
+        await wait_for_async(
+            lambda: old_reader.written.endswith(b"\x04"),
+            2.0,
+            interval=0.005,
+            on_timeout="logout never typed its EOF",
+        )
+        b = asyncio.ensure_future(close("B"))
+        await asyncio.sleep(0)
+        assert not b.done(), "B waits for A's release"
+        await c.open()
+
+        await asyncio.wait_for(asyncio.gather(a, b), 1.0)
+        assert events.index("released") < events.index("dial"), "the reconnect waited"
+        assert "B returned" in events
+        assert c.writer is fresh.writer
+        assert not c._released.is_set(), "the new stream is live"

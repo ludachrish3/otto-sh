@@ -1875,28 +1875,29 @@ def make_legs(start: str) -> "list[_Leg]":
 # it on ("@3.10"); "@default" is a session whose Python the recipe did not pick.
 _HOSTLESS_MIDDLE = (
     "not integration and not embedded and not stability and not browser "
-    "and not busybox and not conformance and not kmodcov and not serial_timing "
-    "and not interpreter_agnostic"
+    "and not busybox and not conformance and not kmodcov and not release_proof "
+    "and not serial_timing and not interpreter_agnostic"
 )
 _HOSTLESS_MIDDLE_SERIAL = (
     "serial_timing and not integration and not embedded and not stability and not browser "
-    "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
+    "and not busybox and not conformance and not kmodcov and not release_proof "
+    "and not interpreter_agnostic"
 )
 _COVERAGE = (
     "not stability and not browser and not busybox and not conformance and not kmodcov "
-    "and not serial_timing"
+    "and not release_proof and not serial_timing"
 )
 _COVERAGE_SERIAL = (
     "serial_timing and not stability and not browser and not busybox and not conformance "
-    "and not kmodcov"
+    "and not kmodcov and not release_proof"
 )
 _ALL_NONPRIMARY = (
     "not browser and not stability and not busybox and not conformance and not kmodcov "
-    "and not serial_timing and not interpreter_agnostic"
+    "and not release_proof and not serial_timing and not interpreter_agnostic"
 )
 _ALL_NONPRIMARY_SERIAL = (
     "serial_timing and not browser and not stability and not busybox and not conformance "
-    "and not kmodcov and not interpreter_agnostic"
+    "and not kmodcov and not release_proof and not interpreter_agnostic"
 )
 _LINT_ARCH_IMPORT_RULES = (
     "tests/unit/test_patch_targets.py",
@@ -1972,6 +1973,12 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
         ("tests/e2e/tunnel_stability",),
         repeated=True,
     ),
+    # release-campaign → console-release-bed: the #386 bed proof, its only lane.
+    _Leg(
+        "Makefile:console-release-bed",
+        "release_proof and embedded",
+        ("tests/integration/host/test_console_release_bed.py",),
+    ),
     _Leg(
         "Makefile:stability-embedded",
         "stability and embedded and not chaos",
@@ -2031,6 +2038,7 @@ _REQUIRED_LANES = (
     "stability-unix",
     "stability-tunnel",
     "stability-embedded",
+    "console-release-bed",
     "dashboard-soak",
     "conformance",
     "busybox",
@@ -2440,6 +2448,7 @@ BED_TARGETS_DIRECT = [
     "stability-unix",
     "stability-tunnel",
     "stability-embedded",
+    "console-release-bed",
     "chaos",
     "chaos-embedded",
     "nox-integration",

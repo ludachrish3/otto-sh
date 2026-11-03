@@ -43,7 +43,7 @@ from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, r
 from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, finish_character, output_decoder
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
-from .telnet import TELNET_EOL, TelnetClient, telnet_line_ends
+from .telnet import TELNET_EOL, ReadGate, ReadGateClosed, TelnetClient, telnet_line_ends
 from .terminal_mapping import ONLCR, UNMEASURED, is_unknown, measure
 from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped
 
@@ -166,18 +166,6 @@ def resolve_init_timeout(
         raise OttoError(f"{INIT_TIMEOUT_ENV_VAR}={raw!r} is not a number of seconds greater than 0")
     return value
 
-
-# Single-client console quiesce (issue #324). Before a single-client console
-# connection is released on a failed-handshake teardown, otto reads it until it
-# has been silent for _CONSOLE_QUIESCE_QUIET_WINDOW, capped at
-# _CONSOLE_QUIESCE_BUDGET. A Zephyr shell_telnet backend whose send fails
-# because the connection was released while it still had queued output can take
-# a restart path that leaves it dead for the guest's life; letting it go quiet
-# first avoids that. A healthy console goes quiet within milliseconds, so the
-# window only binds on a console still talking, and the budget only on one that
-# never stops. See ShellSession._quiesce / TelnetSession._quiesce.
-_CONSOLE_QUIESCE_QUIET_WINDOW = 0.2
-_CONSOLE_QUIESCE_BUDGET = 2.0
 
 # Default pause between a failed first readiness handshake and the single retry
 # in ``SessionManager._ensure_session``. Calibrated to single-client RTOS telnet
@@ -581,16 +569,6 @@ class ShellSession(ABC):
         """
         ...
 
-    async def _quiesce(self) -> None:  # noqa: B027 — a concrete no-op default hook, not abstract: subclasses opt in
-        """Read the transport until the peer goes quiet, before it is released.
-
-        No-op by default. Overridden by transports whose peer must not have a
-        send fail under a mid-stream close — a single-client console (issue
-        #324). Called from :meth:`_fail_init` only for a
-        ``single_client_console`` frame, and only there, because that is the
-        one teardown point reached while the transport is still live.
-        """
-
     async def _refused_login(self) -> Exception | None:
         """Name a refused login from the output the failed handshake left behind, or ``None``.
 
@@ -598,8 +576,8 @@ class ShellSession(ABC):
         already says a login may not have completed, and no transport but a
         console can tell. Overridden by :class:`TelnetSession` for a console
         term, whose client knows the line's prompts. Called from
-        :meth:`_fail_init` before any drain or :meth:`close`, while the
-        transport can still be read.
+        :meth:`_fail_init` before :meth:`close`, while the transport can
+        still be read.
         """
         return None
 
@@ -863,21 +841,13 @@ class ShellSession(ABC):
             f"marking session dead and closing"
         )
         self._alive = False
-        # Read what the handshake left unread BEFORE any drain or close can
-        # discard it: on a console it is where a refused login shows.
+        # Read what the handshake left unread BEFORE close() can discard it:
+        # on a console it is where a refused login shows.
         refused: Exception | None = None
         with suppress(Exception):  # pragma: no cover - best-effort diagnosis
             refused = await self._refused_login()
-        # A single-client console must go quiet before its connection is
-        # released: a send that fails because we closed mid-stream can wedge
-        # the backend for the guest's life (issue #324). This is the one
-        # teardown point reached while the transport is still live (the
-        # readiness deadline just expired; nothing has torn the connection
-        # down), so the drain belongs here, not in close(). Best-effort and
-        # bounded; close() still runs regardless.
-        if self._frame.single_client_console:
-            with suppress(Exception):  # pragma: no cover - best-effort drain
-                await self._quiesce()
+        # On a single-client console the close drains the line to quiet
+        # before it releases it, as every release of such a line does.
         with suppress(Exception):  # pragma: no cover - best-effort cleanup
             await self.close()
         if self._frame.single_client_console:
@@ -1494,13 +1464,24 @@ class SshSession(ShellSession):
 
 
 class TelnetSession(ShellSession):
-    """Telnet persistent shell session via telnetlib3 streams."""
+    """Telnet persistent shell session via telnetlib3 streams.
+
+    Built on exactly one client that holds the streams: a
+    :class:`~otto.host.telnet.TelnetClient` (*client*) or, on a console term,
+    a :class:`~otto.host.console.ConsoleClient` (*console_client*). The
+    session reads through that client's read gate and closes through its
+    ``close()``, so a stream otto releases is always released by its client,
+    which drains a single-client console to quiet first.
+
+    Raises:
+        ValueError: neither client is given, or both are.
+    """
 
     def __init__(
         self,
         reader: Any,
         writer: Any,
-        _owned_client: "TelnetClient | None" = None,
+        client: "TelnetClient | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         write_chunk_size: int = 0,
@@ -1509,6 +1490,11 @@ class TelnetSession(ShellSession):
         console_client: "ConsoleClient | None" = None,
         failure_context: str = "",
     ) -> None:
+        if (client is None) == (console_client is None):
+            raise ValueError("a TelnetSession needs exactly one client: client= or console_client=")
+        # The one client holding the streams.
+        holder = client or console_client
+        assert holder is not None  # noqa: S101 — internal invariant: exactly one was given, checked above
         super().__init__(
             command_frame=command_frame,
             init_timeout=init_timeout,
@@ -1517,7 +1503,15 @@ class TelnetSession(ShellSession):
         )
         self._reader = reader
         self._writer = writer
-        self._owned_client = _owned_client
+        # The client whose streams these are: shared (the manager's cached
+        # client, for the default session) or owned (a named or exec-pool
+        # session's own). Either way its close() is the one closer; it is
+        # idempotent and joins a close already running.
+        self._client = client
+        # Every read of the stream runs inside its client's gate, which the
+        # client's release closes: a read that starts after that fails as a
+        # dropped line instead of colliding with the release's own read.
+        self._read_gate: ReadGate = holder.read_gate
         # ``readuntil_pattern`` stops where a byte pattern matched, which can
         # be inside a multi-byte character; the held decoder keeps that
         # character's bytes until read_transport_until reads the rest.
@@ -1525,7 +1519,7 @@ class TelnetSession(ShellSession):
         # The console term's client, when this session is a shell on a serial
         # console: *reader*/*writer* are its streams, it owns the line, and
         # closing this session closes it (logout, then release). ``None`` for
-        # every telnet session.
+        # every telnet-term session, which has ``_client`` instead.
         self.console_client = console_client
         if console_client is not None and console_client.logged_in:
             self._retry_failed_handshake = False
@@ -1572,50 +1566,33 @@ class TelnetSession(ShellSession):
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
-        try:
-            raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
-        except asyncio.IncompleteReadError as exc:
-            # End of stream: flush the decoder, as every output reader does, so
-            # an incomplete character still held shows in ``partial`` as U+FFFD.
-            tail = self._decoder.decode(exc.partial, final=True)
-            raise asyncio.IncompleteReadError(tail.encode(), exc.expected) from exc
-        text = self._decoder.decode(raw)
-        # The byte match can end inside a character: read the rest of it, so
-        # the text holds the whole match.
-        return text + await finish_character(self._decoder, self._reader.readuntil_pattern)
+        # Bound once, and both reads run inside the gate: a read admitted
+        # before the client's release began finishes on the reader it started
+        # with, and the release waits for it; a read that starts afterwards
+        # raises ReadGateClosed, a lost connection.
+        reader = self._reader
+        with self._read_gate.reading():
+            try:
+                raw: bytes = await reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
+            except asyncio.IncompleteReadError as exc:
+                # End of stream: flush the decoder, as every output reader does,
+                # so an incomplete character still held shows in ``partial`` as
+                # U+FFFD.
+                tail = self._decoder.decode(exc.partial, final=True)
+                raise asyncio.IncompleteReadError(tail.encode(), exc.expected) from exc
+            text = self._decoder.decode(raw)
+            # The byte match can end inside a character: read the rest of it,
+            # so the text holds the whole match.
+            return text + await finish_character(self._decoder, reader.readuntil_pattern)
 
     @override
-    async def _quiesce(self) -> None:
-        """Read the console until it has been silent for the quiet window (bounded).
+    def _connection_lost_errors(self) -> list[type[BaseException]]:
+        """Add :class:`~otto.host.telnet.ReadGateClosed`: a read refused because the release began.
 
-        Sending stops the guest from having a ``telnet_send`` fail under the
-        connection's release (issue #324): once the guest has nothing left to
-        send, releasing the connection cannot fault a send, whatever shape the
-        close takes and whether the path is direct or hop-tunneled — silence is
-        observable through the hop because otto is reading the forwarded stream.
-        Bounded by ``_CONSOLE_QUIESCE_BUDGET`` so a console that never stops
-        talking cannot turn a fast failure into a hang; best-effort, so any read
-        error just ends the drain and lets ``close()`` proceed.
+        Another task closing the client while a command still reads takes the
+        stream away under that command: the same event as EOF.
         """
-        reader = self._reader
-        if reader is None:
-            return
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _CONSOLE_QUIESCE_BUDGET
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return
-            try:
-                data = await asyncio.wait_for(
-                    reader.read(4096), timeout=min(_CONSOLE_QUIESCE_QUIET_WINDOW, remaining)
-                )
-            except asyncio.TimeoutError:
-                return  # silent for the quiet window → quiesced
-            except Exception:  # noqa: BLE001 — best-effort; close() still releases the fd
-                return
-            if not data:
-                return  # EOF — the peer closed first; nothing left to drain
+        return [*super()._connection_lost_errors(), ReadGateClosed]
 
     @override
     async def _refused_login(self) -> Exception | None:
@@ -1659,16 +1636,17 @@ class TelnetSession(ShellSession):
 
     @override
     async def close(self) -> None:
+        """Close through the client that holds the streams; never close them directly.
+
+        The client's close is the one release: a console logs out first, and
+        a single-client line is drained to quiet before it is closed. It is
+        idempotent and joins a close already running, so a default session
+        and its manager closing the same shared client release it once.
+        """
         if self.console_client is not None:
-            # The client owns the line: its close() logs out (EOF, then a
-            # bounded wait for the login prompt) BEFORE it releases the
-            # writer. Closing the writer here first would cut that logout off
-            # and leave the console logged in for the next client.
             await self.console_client.close()
-        elif self._writer:
-            self._writer.close()
-        if self._owned_client:
-            await self._owned_client.close()
+        elif self._client is not None:
+            await self._client.close()
         self._alive = False
         self._initialized = False
 
@@ -2888,8 +2866,9 @@ class SessionManager:
         Each attempt is the transport's bounded waits on *term* (the active
         one by default; see
         :meth:`~otto.host.connections.ConnectionManager.connect_allowance`)
-        plus the readiness deadline. On a single-client console dialect a failed attempt
-        also drains the line before releasing it (``_CONSOLE_QUIESCE_BUDGET``).
+        plus the readiness deadline, plus what the failed attempt's close spends
+        draining a single-client line before releasing it (see
+        :meth:`~otto.host.connections.ConnectionManager.release_allowance`).
         A caller that bounds the open with less reports a refused telnet
         password as its own timeout rather than as the ``ConnectionError`` the
         session raises. Waits otto leaves unbounded are not counted, so such a
@@ -2903,12 +2882,9 @@ class SessionManager:
         deadline = default if resolved is None else resolved
         conns = self._connections
         connect = 0.0 if conns is None else conns.connect_allowance(term)
+        release = 0.0 if conns is None else conns.release_allowance(term)
         retried = conns is None or conns.retries_failed_open(term)
-        frame = self._session_frame
-        quiesce = (
-            _CONSOLE_QUIESCE_BUDGET if frame is not None and frame.single_client_console else 0.0
-        )
-        attempt = connect + deadline + quiesce
+        attempt = connect + deadline + release
         return 2 * attempt + self._retry_backoff if retried else attempt
 
     def _login_user(self) -> str:
@@ -3279,6 +3255,7 @@ class SessionManager:
             return TelnetSession(
                 telnet_conn.reader,
                 telnet_conn.writer,
+                client=telnet_conn,
                 command_frame=self._session_frame,
                 init_timeout=init_timeout,
                 write_chunk_size=telnet_conn.options.write_chunk_size,
@@ -3315,7 +3292,7 @@ class SessionManager:
             return TelnetSession(
                 client.reader,
                 client.writer,
-                _owned_client=client,
+                client=client,
                 command_frame=self._session_frame,
                 init_timeout=init_timeout,
                 write_chunk_size=client.options.write_chunk_size,

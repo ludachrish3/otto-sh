@@ -380,7 +380,8 @@ a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
 never names a stability soak, only a single pass of a stability tier, and only
 where {ref}`its stability rule <gate-stability-lanes>` says so.
 The stability tiers also run once in every release: `make release-campaign` (a stage of
-`make release`) runs them at `COUNT=1`, then the dashboard replay soak,
+`make release`) runs them at `COUNT=1`, then the console-release bed proof
+(`make console-release-bed`, the `release_proof` marker), the dashboard replay soak,
 hermetic conformance over every cell, and the BusyBox artifact tier. The
 chaos lanes do **not**: by owner decision (2026-10-15) `chaos` and
 `chaos-embedded` are on demand only, because a red there is as

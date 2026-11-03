@@ -151,8 +151,98 @@ class TestTheConnectionSeamInstallsIt:
         monkeypatch.setattr(telnetlib3, "open_connection", fake_open)
         await telnet_mod.open_telnet_connection("h", port=23, client_factory=Mine)
         factory = seen["client_factory"]
-        assert issubclass(factory, Mine)
+        assert isinstance(_client(factory), Mine)
         await _assert_decodes(factory)
+
+    @pytest.mark.asyncio
+    async def test_nvt_composition_preserved_with_registration(self, monkeypatch):
+        import telnetlib3
+        from telnetlib3.client import TelnetClient
+
+        from otto.host import telnet as telnet_mod
+
+        class Mine(TelnetClient):
+            pass
+
+        seen: dict = {}
+
+        async def fake_open(*args, **kwargs):
+            seen.update(kwargs)
+            return MagicMock(), MagicMock()
+
+        monkeypatch.setattr(telnetlib3, "open_connection", fake_open)
+        # A registry of the test's own, so nothing it registers reaches the process's.
+        registry: set = set()
+        monkeypatch.setattr(telnet_mod, "_live_console_transports", registry)
+        await telnet_mod.open_telnet_connection(
+            "h", port=23, client_factory=Mine, single_client=True
+        )
+        client = _client(seen["client_factory"])
+        # Captured now: telnetlib3's connection_lost clears ``_transport``.
+        transport = client._transport
+        try:
+            assert isinstance(client, nvt_client_factory(Mine))
+            assert transport in registry
+            _receive(client, b"a\r\x00b")
+            assert await client.reader.read(10) == b"a\rb"
+        finally:
+            client.connection_lost(None)
+            telnet_mod._unregister_console_transport(transport)
+        assert registry == set()
+
+    @pytest.mark.asyncio
+    async def test_single_client_kw_not_forwarded_to_telnetlib3(self, monkeypatch):
+        import telnetlib3
+
+        from otto.host import telnet as telnet_mod
+
+        seen: dict = {}
+
+        async def fake_open(*args, **kwargs):
+            seen.update(kwargs)
+            return MagicMock(), MagicMock()
+
+        monkeypatch.setattr(telnetlib3, "open_connection", fake_open)
+        await telnet_mod.open_telnet_connection("h", port=23, single_client=True)
+        assert "single_client" not in seen
+        assert "client_factory" in seen
+
+    @pytest.mark.asyncio
+    async def test_registration_happens_in_connection_made(self):
+        from otto.host import telnet as telnet_mod
+        from otto.utils import wait_for_async
+        from tests.unit.host._telnet_fakes import SilentTelnetPeer
+
+        registry = telnet_mod._live_console_transports
+        before = set(registry)
+        async with SilentTelnetPeer() as peer:
+            opener = asyncio.create_task(
+                telnet_mod.open_telnet_connection(
+                    "127.0.0.1",
+                    port=peer.port,
+                    single_client=True,
+                    encoding=False,
+                    connect_minwait=30,
+                    connect_maxwait=30,
+                )
+            )
+            try:
+                await wait_for_async(
+                    lambda: bool(registry - before) or opener.done(),
+                    2.0,
+                    interval=0.01,
+                    on_timeout="the transport was never registered",
+                )
+                # Registered while telnetlib3 is still negotiating with a peer
+                # that never answers: from connection_made, not after the open.
+                assert not opener.done()
+                (transport,) = registry - before
+                assert not transport.is_closing()
+            finally:
+                opener.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await opener
+        assert registry == before
 
 
 async def _assert_decodes(client_class: type) -> None:

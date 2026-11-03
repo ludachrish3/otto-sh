@@ -10,6 +10,7 @@ characters and destroying otto's command framing. ``write_chunk_size`` /
 import pytest
 
 from otto.host.session import TelnetSession
+from tests.unit.host._telnet_fakes import stream_client
 
 
 class _FakeWriter:
@@ -29,7 +30,7 @@ class _FakeWriter:
 async def test_write_unchunked_by_default() -> None:
     """Default (write_chunk_size=0) sends the whole payload in one write."""
     w = _FakeWriter()
-    sess = TelnetSession(reader=None, writer=w)
+    sess = TelnetSession(reader=None, writer=w, client=stream_client(None, w))
     await sess.write_transport("x" * 200)
     assert w.writes == [b"x" * 200]
 
@@ -38,7 +39,13 @@ async def test_write_unchunked_by_default() -> None:
 async def test_write_splits_into_chunks() -> None:
     """A payload larger than the chunk size is split into <=chunk-size writes."""
     w = _FakeWriter()
-    sess = TelnetSession(reader=None, writer=w, write_chunk_size=64, write_chunk_delay=0.0)
+    sess = TelnetSession(
+        reader=None,
+        writer=w,
+        client=stream_client(None, w),
+        write_chunk_size=64,
+        write_chunk_delay=0.0,
+    )
     await sess.write_transport("x" * 200)
     assert [len(c) for c in w.writes] == [64, 64, 64, 8]
     assert b"".join(w.writes) == b"x" * 200
@@ -48,7 +55,13 @@ async def test_write_splits_into_chunks() -> None:
 async def test_write_smaller_than_chunk_is_single_write() -> None:
     """A payload at or below the chunk size is one write."""
     w = _FakeWriter()
-    sess = TelnetSession(reader=None, writer=w, write_chunk_size=64, write_chunk_delay=0.0)
+    sess = TelnetSession(
+        reader=None,
+        writer=w,
+        client=stream_client(None, w),
+        write_chunk_size=64,
+        write_chunk_delay=0.0,
+    )
     await sess.write_transport("abc")
     assert w.writes == [b"abc"]
 
@@ -59,6 +72,12 @@ async def test_chunking_preserves_crlf_to_cr_substitution() -> None:
     match the normalized payload across chunk boundaries.
     """
     w = _FakeWriter()
-    sess = TelnetSession(reader=None, writer=w, write_chunk_size=4, write_chunk_delay=0.0)
+    sess = TelnetSession(
+        reader=None,
+        writer=w,
+        client=stream_client(None, w),
+        write_chunk_size=4,
+        write_chunk_delay=0.0,
+    )
     await sess.write_transport("ab\r\ncd\nef")
     assert b"".join(w.writes) == b"ab\rcd\ref"

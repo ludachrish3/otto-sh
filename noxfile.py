@@ -152,7 +152,7 @@ _LEAK_ENV = {"OTTO_DETECT_ASYNCIO_LEAKS": "1"}
 # M_HOSTLESS is the same text, held equal by that module's partition pin.
 HOSTLESS_CLAUSES = (
     "not integration and not embedded and not stability and not browser "
-    "and not busybox and not conformance and not kmodcov"
+    "and not busybox and not conformance and not kmodcov and not release_proof"
 )
 
 # The hostless selection is three sessions, one per tier, so CI runs them as
@@ -276,12 +276,18 @@ DASHBOARD_MARKER_EXPR = "browser and not soak"
 UNIT_TEST_ARGS = (
     "tests/unit",
     "-m",
-    "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
+    (
+        "not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof and not serial_timing"
+    ),
 )
 UNIT_SERIAL_ARGS = (
     "tests/unit",
     "-m",
-    "serial_timing and not stability and not busybox and not conformance and not kmodcov",
+    (
+        "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof"
+    ),
     "-n0",
     "--cov-append",
 )
@@ -289,7 +295,8 @@ UNIT_NONPRIMARY_TEST_ARGS = (
     "tests/unit",
     "-m",
     (
-        "not stability and not busybox and not conformance and not kmodcov and not serial_timing "
+        "not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof and not serial_timing "
         "and not interpreter_agnostic"
     ),
     "--no-cov",
@@ -299,6 +306,7 @@ UNIT_NONPRIMARY_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof "
         "and not interpreter_agnostic"
     ),
     "-n0",
@@ -308,13 +316,19 @@ INTEGRATION_TEST_ARGS = (
     "tests/unit",
     "tests/integration",
     "-m",
-    "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
+    (
+        "not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof and not serial_timing"
+    ),
 )
 INTEGRATION_SERIAL_ARGS = (
     "tests/unit",
     "tests/integration",
     "-m",
-    "serial_timing and not stability and not busybox and not conformance and not kmodcov",
+    (
+        "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof"
+    ),
     "-n0",
     "--cov-append",
 )
@@ -323,7 +337,8 @@ INTEGRATION_NONPRIMARY_TEST_ARGS = (
     "tests/integration",
     "-m",
     (
-        "not stability and not busybox and not conformance and not kmodcov and not serial_timing "
+        "not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof and not serial_timing "
         "and not interpreter_agnostic"
     ),
     "--no-cov",
@@ -334,6 +349,7 @@ INTEGRATION_NONPRIMARY_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof "
         "and not interpreter_agnostic"
     ),
     "-n0",
@@ -343,6 +359,7 @@ TESTS_ALL_TEST_ARGS = (
     "-m",
     (
         "not browser and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof "
         "and not serial_timing"
     ),
     "--no-cov",
@@ -351,7 +368,7 @@ TESTS_ALL_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not browser and not stability and not busybox and not conformance "
-        "and not kmodcov"
+        "and not kmodcov and not release_proof"
     ),
     "-n0",
     "--no-cov",
@@ -360,6 +377,7 @@ TESTS_ALL_NONPRIMARY_TEST_ARGS = (
     "-m",
     (
         "not browser and not stability and not busybox and not conformance and not kmodcov "
+        "and not release_proof "
         "and not serial_timing and not interpreter_agnostic"
     ),
     "--no-cov",
@@ -368,7 +386,7 @@ TESTS_ALL_NONPRIMARY_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not browser and not stability and not busybox and not conformance "
-        "and not kmodcov and not interpreter_agnostic"
+        "and not kmodcov and not release_proof and not interpreter_agnostic"
     ),
     "-n0",
     "--no-cov",
@@ -574,7 +592,7 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # CI measured the job at 56-63 min (2026-11-01), the longest in the
         # workflow by a factor of two. Pinned by tests/unit/test_python_matrix_tiering.py.
         "-m",
-        "not stability and not busybox and not conformance and not kmodcov "
+        "not stability and not busybox and not conformance and not kmodcov and not release_proof "
         "and not interpreter_agnostic",
         # The shim differential is interpreter-DEPENDENT (it runs the
         # completion shim the user's Python executes against Typer in-process),
@@ -611,6 +629,7 @@ def tests_unix(session: nox.Session) -> None:
         "pytest",
         "-m",
         "integration and not embedded and not stability and not chaos and not kmodcov "
+        "and not release_proof "
         "and not serial_timing",
         _junitxml(session, "nox-unix"),
         *session.posargs,
@@ -619,7 +638,7 @@ def tests_unix(session: nox.Session) -> None:
         "pytest",
         "-m",
         "serial_timing and integration and not embedded and not stability and not chaos "
-        "and not kmodcov",
+        "and not kmodcov and not release_proof",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-unix-serial"),
@@ -643,7 +662,7 @@ def tests_embedded(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "embedded and not stability and not chaos and not kmodcov",
+        "embedded and not stability and not chaos and not kmodcov and not release_proof",
         _junitxml(session, "nox-embedded"),
         *session.posargs,
     )

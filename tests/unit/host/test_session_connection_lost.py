@@ -107,3 +107,82 @@ def test_mock_session_matches_ssh_session_connection_lost_errors():
     assert MockSession._connection_lost_errors(
         object.__new__(MockSession)
     ) == SshSession._connection_lost_errors(object.__new__(SshSession))
+
+
+def test_telnet_session_adds_the_closed_read_gate():
+    """A read refused because the stream's release began is a lost connection."""
+    from otto.host.session import TelnetSession
+    from otto.host.telnet import ReadGateClosed
+
+    assert TelnetSession._connection_lost_errors(object.__new__(TelnetSession)) == [
+        asyncio.IncompleteReadError,
+        BrokenPipeError,
+        ReadGateClosed,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_read_after_close_marks_session_dead(caplog):
+    """A command still reading when another task starts the close fails as a dropped line.
+
+    Its first read is admitted and finishes; the close takes the stream
+    meanwhile, so the command's next read is refused at the gate. ``run_cmd``
+    returns the connection-lost result, the session is dead, and the close
+    drains the line on its own, with no "already waiting" collision.
+    """
+    import logging
+    import re
+
+    from otto.host.session import TelnetSession
+    from otto.host.telnet import ReadGateClosed
+    from tests.unit.host._telnet_fakes import RecordingWriter, fake_stream, stream_client
+
+    class _Writer(RecordingWriter):
+        def write(self, data: bytes) -> None:
+            self.events.append("write")
+
+    closing: list[asyncio.Task[None]] = []
+
+    class _Reader:
+        """One line of output; the close starts while that read is in flight."""
+
+        def __init__(self) -> None:
+            self.matches = 0
+            self.drain_reads = 0
+
+        async def readuntil_pattern(self, pattern: re.Pattern[bytes]) -> bytes:
+            self.matches += 1
+            if self.matches > 1:
+                raise AssertionError("a read ran after the stream's release began")
+            closing.append(asyncio.ensure_future(client.close()))
+            await asyncio.sleep(0.05)  # the close takes the stream and waits on this read
+            return b"partial output\n"
+
+        async def read(self, n: int) -> bytes:
+            self.drain_reads += 1
+            return b""  # the guest has nothing left: EOF
+
+    events: list[str] = []
+    reader = _Reader()
+    _, _, transport = fake_stream(events)
+    writer = _Writer(events, transport)
+    client = stream_client(reader, writer, single_client=True)
+    session = TelnetSession(reader, writer, client=client)
+    session._initialized = True
+    session._alive = True
+
+    with caplog.at_level(logging.DEBUG):
+        result = await session.run_cmd("echo hi", timeout=5)
+        await closing[0]  # run_cmd bounds itself; the close is bounded by its budget
+
+    assert result.status == Status.Error
+    assert result.value == "Session died unexpectedly (connection lost)"
+    assert result.retcode == -1
+    assert not session.alive
+    assert reader.matches == 1
+    assert reader.drain_reads >= 1, "the close never drained the line"
+    assert writer.closes == 1
+    assert "already waiting" not in caplog.text
+    # The refusal itself is the read entry's: a read after the take never starts.
+    with pytest.raises(ReadGateClosed):
+        await session.read_transport_until(re.compile("x"))
