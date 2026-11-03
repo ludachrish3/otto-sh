@@ -314,3 +314,34 @@ class TestTreeState:
     def test_non_repo_raises(self, tmp_path: Path):
         with pytest.raises(common.GateError, match="not a git repository"):
             common.tree_state(tmp_path / "nope")
+
+
+def _two_commits(tmp_path: Path) -> "tuple[Path, str, str]":
+    repo = _repo(tmp_path)
+    parent = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tracked.txt").write_text("v2\n")
+    _git(repo, "commit", "-qam", "second")
+    return repo, parent, _git(repo, "rev-parse", "HEAD").strip()
+
+
+def test_run_git_returns_the_status_rather_than_raising(tmp_path: Path):
+    repo, parent, child = _two_commits(tmp_path)
+    result = common.run_git(repo, "merge-base", "--is-ancestor", child, parent)
+    assert result.returncode == 1
+
+
+def test_git_raises_naming_the_command_on_a_non_zero_status(tmp_path: Path):
+    repo, parent, child = _two_commits(tmp_path)
+    with pytest.raises(
+        common.GateError, match=f"git merge-base --is-ancestor {child} {parent} failed"
+    ):
+        common._git(repo, "merge-base", "--is-ancestor", child, parent)
+
+
+def test_run_git_names_a_spawn_failure_as_unavailable(tmp_path: Path, monkeypatch):
+    def no_spawn(*_args, **_kwargs):
+        raise OSError(7, "Argument list too long")
+
+    monkeypatch.setattr(common.subprocess, "run", no_spawn)
+    with pytest.raises(common.GateError, match="git is not available"):
+        common.run_git(tmp_path, "status")

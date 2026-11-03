@@ -28,15 +28,20 @@ exactly as a run produced it keeps every stamp of that run ("promotion").
 
 Every worktree shares the store, so a run deletes only what cannot still be true:
 before a lane runs, a corrupt or misnamed file at the gated tree's own path, and
-every stamp or red marker for the lane whose tree is pruned, whoever wrote it.
-Every other stamp stays, so a landing gated earlier, here or in a peer, keeps its
-evidence. A lane that goes red leaves a red marker at its (tree, key) path: never
-evidence, and the lookup stops there, so no stamp of another tree is promoted to
-a tree that went red. Only the lane's next outcome on that tree replaces it.
+every stamp for the lane whose tree is pruned, whoever wrote it, with every red
+marker without a base on a pruned tree. Every other stamp stays, so a landing gated
+earlier, here or in a peer, keeps its evidence. A lane that goes red leaves a red
+marker at its (tree, key) path: never evidence, and the lookup stops there, so no
+stamp of another tree is promoted to a tree that went red. Beside it, as
+``<marker stem>.patch``, git writes the patch base..tree the lane went red on, so the
+carry can still replay the marker once its tree is pruned; a marker with a base
+stays when its tree is pruned. Only the lane's next outcome on that tree replaces a
+marker, and its patch goes with it (or a hand deletes both).
 
 The store lock (a flock on ``<store>/.lock``) serializes peers. Writers hold it
 exclusively: every stamp or marker write, invalidate's load-then-delete,
-promotion's lookup-then-write, and a status post from its re-validation to the
+promotion's write (its scan runs unlocked; the write re-validates the exact path and
+the marker snapshot under the lock), and a status post from its re-validation to the
 post's return (``gh``'s timeout bounds that hold). A check that judges the store
 (the push check, ``--status``) holds it shared from its first read to its verdict,
 so it judges one state of the store. No lane runs under either, and no holder takes
@@ -51,11 +56,12 @@ import platform
 import re
 import signal
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, TypeVar
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -82,6 +88,7 @@ from scripts.gate_stamp_common import (  # noqa: E402
     junit_written,
     nproc,
     remote_slug,
+    run_git,
     stamps_root,
     store_lock,
     test_roots,
@@ -117,6 +124,11 @@ def slug(key: str) -> str:
 def stamp_path(root: Path, tree: str, key: str) -> Path:
     """Return where the (tree, key) stamp lives under *root*."""
     return root / tree / f"{slug(key)}.json"
+
+
+def sidecar(path: Path) -> Path:
+    """Return where the red marker at *path* keeps the patch it went red on."""
+    return path.with_suffix(".patch")
 
 
 @dataclass(frozen=True)
@@ -229,6 +241,7 @@ def write_stamp(
         record["timing"] = timing
     path = stamp_path(root, tree, key)
     write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+    sidecar(path).unlink(missing_ok=True)  # a red marker's patch goes with the marker
     return path
 
 
@@ -241,6 +254,8 @@ class Red:
     written_at: str
     checkout: str
     path: Path
+    base: "str | None" = None
+    """The base commit the lane went red against; None for a marker written without one."""
     timing: "dict | None" = None
     """What the red lane cost (``lane_timing``); None when it never ran (a framing error)."""
 
@@ -251,12 +266,16 @@ def _red_from(data: "dict | None", path: Path) -> "Red | None":
         return None
     if any(not isinstance(data.get(name), str) for name in _RED_FIELDS):
         return None
+    base = data.get("base")
+    if base is not None and not isinstance(base, str):
+        return None
     return Red(
         tree=data["tree"],
         command=data["command"],
         written_at=data["written_at"],
         checkout=data["checkout"],
         path=path,
+        base=base,
         timing=_timing_from(data),
     )
 
@@ -268,9 +287,22 @@ def read_entry(path: Path) -> "Stamp | Red | None":
 
 
 def write_red(
-    root: Path, *, tree: str, key: str, checkout: str, timing: "dict | None" = None
+    root: Path,
+    *,
+    tree: str,
+    key: str,
+    checkout: str,
+    base: "str | None" = None,
+    timing: "dict | None" = None,
+    repo: "Path | None" = None,
 ) -> Path:
-    """Write the red marker for (tree, key) atomically at the stamp's own path; return it."""
+    """Write the red marker for (tree, key) atomically at the stamp's own path; return it.
+
+    With a *base* and the *repo* holding it, the patch *base*..*tree* is written after the
+    marker, by git (:func:`write_patch`), to the marker's :func:`sidecar`: what keeps the marker
+    decidable once its tree is pruned. Any other marker drops a sidecar left at its path.
+    """
+    path = stamp_path(root, tree, key)
     record = {
         "format": FORMAT,
         "red": True,
@@ -279,11 +311,38 @@ def write_red(
         "written_at": utc_now(),
         "checkout": checkout,
     }
+    if base is not None:
+        record["base"] = base
     if timing is not None:
         record["timing"] = timing
-    path = stamp_path(root, tree, key)
     write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+    _write_sidecar(repo, base, tree, sidecar(path))
     return path
+
+
+def _write_sidecar(repo: "Path | None", base: "str | None", tree: str, patch: Path) -> None:
+    """Write the patch *base*..*tree* to *patch* by an atomic rename, or remove *patch*.
+
+    Removed when there is no *repo* or *base*, or git cannot write a non-empty patch (the
+    marker then replays from its tree while the tree exists).
+    """
+    if repo is None or base is None:
+        patch.unlink(missing_ok=True)
+        return
+    patch.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=patch.parent, prefix=".patch-")
+    os.close(fd)
+    try:
+        try:
+            written = write_patch(repo, base, tree, Path(tmp))
+        except GateError:  # no git to spawn: the marker is written all the same
+            written = False
+        if written:
+            Path(tmp).replace(patch)
+        else:
+            patch.unlink(missing_ok=True)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def _red_reason(red: Red) -> str:
@@ -313,6 +372,28 @@ def _identity_holds(stamp: Stamp, tree_dir: Path) -> "tuple[bool, bool]":
     return stamp.tree == tree_dir.name, stamp.path.name == f"{slug(stamp.command)}.json"
 
 
+def marker_snapshot(store: Store, key: str) -> "dict[Path, tuple[int, int, int]]":
+    """Return every red marker of *key* in *store*: its path, and (mtime_ns, size, inode).
+
+    A marker that vanishes while it is read maps to ``(-1, -1, -1)``. Two snapshots differ
+    when a marker was added, removed or rewritten between them, whatever it now holds.
+    The triple relies on every writer going through ``write_atomically``: its rename gives
+    the file a fresh inode, so a same-size rewrite within one mtime tick is still seen; the
+    blind spot left is an inode reused across two rewrites inside one tick.
+    """
+    seen: "dict[Path, tuple[int, int, int]]" = {}
+    for red in store.red:
+        if red.command != key:
+            continue
+        try:
+            st = red.path.stat()
+        except FileNotFoundError:
+            seen[red.path] = (-1, -1, -1)
+            continue
+        seen[red.path] = (st.st_mtime_ns, st.st_size, st.st_ino)
+    return seen
+
+
 def load_store(root: Path) -> Store:
     """Read every file in the store once.
 
@@ -320,7 +401,8 @@ def load_store(root: Path) -> Store:
     unreadable; a stamp whose file name is not its command's is mismatched (a digest
     collision, or a hand edit). Neither is ever a candidate or a witness; the lookup
     names them only when nothing else satisfies. A red marker at its own (tree, key) path is
-    neither: it lands in ``red``, never a candidate or a witness either.
+    neither: it lands in ``red``, never a candidate or a witness either. Only ``*.json``
+    files are entries: a marker's patch :func:`sidecar` is read with its marker, never here.
     """
     stamps: "list[Stamp]" = []
     unreadable: "list[Path]" = []
@@ -405,6 +487,69 @@ class Lookup:
     stamp: "Stamp | None"
     reason: str
     store: "Store | None" = None
+    promotion: str = ""
+    """How another tree's stamp came to count: ``"witnessed"`` (it differs only by measured
+    outputs a stamp of its tree recorded), ``"carried"`` (across a rebase, :func:`_carry`);
+    ``""`` for an exact hit or no stamp."""
+    carry_missed: bool = False
+    """True when the carry tried a candidate and none carried: ``reason`` is the carry's."""
+
+
+CARRY_CAP = 8
+"""How many of a key's newest other-base stamps the carry tries."""
+
+
+@dataclass
+class CarryContext:
+    """What lets a lookup carry a bed stamp across a rebase, and the answers it memoizes.
+
+    ``base`` is the landing's base now (the plan's ``base_sha``); the memos are keyed by
+    ``replays_to``'s, ``gate_scope.plan``'s and ``is_ancestor``'s arguments, so one context
+    handed to every lookup of a run asks git and the oracle each question once.
+    """
+
+    repo: Path
+    base: str
+    replays: "dict[tuple[str, str, str], str | None]" = field(default_factory=dict)
+    plans: "dict[tuple[str, str], gate_scope.Plan | None]" = field(default_factory=dict)
+    ancestry: "dict[tuple[str, str], bool | None]" = field(default_factory=dict)
+    patches: "dict[tuple[Path, str], str | None]" = field(default_factory=dict)
+
+    def behind(self, old: str) -> "bool | None":
+        """Return :func:`is_ancestor` of *old* and ``base``, memoized."""
+        if (old, self.base) not in self.ancestry:
+            self.ancestry[(old, self.base)] = is_ancestor(self.repo, old, self.base)
+        return self.ancestry[(old, self.base)]
+
+    def replayed(self, base0: str, tree0: str) -> "str | None":
+        """Return :func:`replays_to` of (*base0*, *tree0*) onto ``base``, memoized."""
+        asked = (base0, tree0, self.base)
+        if asked not in self.replays:
+            self.replays[asked] = replays_to(self.repo, base0, tree0, self.base)
+        return self.replays[asked]
+
+    def replayed_red(self, red: "Red") -> "str | None":
+        """Return the tree *red*'s patch makes on ``base``: from its sidecar, else its tree.
+
+        Memoized; ``None`` when neither the sidecar nor the tree can be replayed.
+        """
+        patch = sidecar(red.path)
+        if not patch.is_file():
+            return self.replayed(red.base or "", red.tree)
+        asked = (patch, self.base)
+        if asked not in self.patches:
+            self.patches[asked] = replay_patch(self.repo, patch, self.base)
+        return self.patches[asked]
+
+    def delta_plan(self, base0: str) -> "gate_scope.Plan | None":
+        """Return the plan for main's delta *base0*..``base``, memoized; None when it fails."""
+        asked = (base0, self.base)
+        if asked not in self.plans:
+            try:
+                self.plans[asked] = gate_scope.plan(self.repo, base0, self.base)
+            except (gate_scope.GateScopeError, UnknownGoalError, GateError):
+                self.plans[asked] = None
+        return self.plans[asked]
 
 
 def _pruned(repo: Path, tree: str) -> bool:
@@ -440,6 +585,109 @@ def _pruned_trees(repo: Path, trees: "list[str]") -> "set[str]":
     return pruned
 
 
+def is_ancestor(repo: Path, old: str, new: str) -> "bool | None":
+    """Say whether commit *old* is an ancestor of *new*: ``None`` when git cannot tell.
+
+    ``git merge-base --is-ancestor`` exits 0 for yes and 1 for no; any other status (an
+    unknown object, a corrupt store) or a failure to spawn git is not an answer.
+    """
+    try:
+        status = run_git(repo, "merge-base", "--is-ancestor", old, new).returncode
+    except GateError:
+        return None
+    return {0: True, 1: False}.get(status)
+
+
+def replays_to(repo: Path, base0: str, tree0: str, base1: str) -> "str | None":
+    """Return the tree that *tree0*'s change over *base0* makes when applied onto *base1*.
+
+    The patch ``base0..tree0`` (binary blobs armoured, full object ids, no rename
+    detection) is applied with ``git apply --cached`` to *base1* read into a throwaway
+    index (its own ``GIT_INDEX_FILE`` in a fresh temporary directory), and that index's
+    ``git write-tree`` is the answer; the working tree and the real index are never
+    touched. A clean rebase of the landing reproduces this tree exactly; any amendment
+    of the landing does not. ``git apply`` takes a hunk only where its context still
+    matches, so a base that edited inside a hunk's context gives ``None`` even when a
+    3-way rebase merges it cleanly: the conservative miss.
+
+    The patch travels as a FILE in the same temporary directory (``diff-tree --output``,
+    then ``git apply <file>``), never through Python: decoding it as text would fold
+    every CRLF to LF and replace undecodable bytes, so an amendment that only drops a CR
+    or rewrites such bytes would replay equal to the amended tree, a false match.
+
+    An empty patch, an unknown object, any step that exits non-zero, a failure to spawn
+    git and a failure of the temporary directory itself all give ``None``; this never
+    raises.
+    """
+
+    def steps(scratch: Path) -> "str | None":
+        patch = scratch / "patch"
+        return (
+            apply_patch(repo, patch, base1, scratch)
+            if write_patch(repo, base0, tree0, patch)
+            else None
+        )
+
+    return _in_scratch(steps)
+
+
+def replay_patch(repo: Path, patch: Path, base1: str) -> "str | None":
+    """Return the tree the patch file *patch* (:func:`write_patch`'s) makes applied onto *base1*.
+
+    :func:`replays_to`'s second half, for a patch written earlier (a red marker's sidecar):
+    the same throwaway index, the same ``None`` for anything that fails; this never raises.
+    """
+    return _in_scratch(lambda scratch: apply_patch(repo, patch, base1, scratch))
+
+
+def _in_scratch(steps: "Callable[[Path], str | None]") -> "str | None":
+    """Run *steps* in a fresh temporary directory; ``None`` when it or git fails."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="gate-replay-") as scratch:
+            return steps(Path(scratch))
+    except (OSError, GateError):
+        return None
+
+
+def write_patch(repo: Path, base0: str, tree0: str, out: Path) -> bool:
+    """Have git write the patch *base0*..*tree0* to the file *out*; return whether it is one.
+
+    Binary blobs armoured, full object ids, no rename detection: the patch
+    :func:`apply_patch` applies. False when git fails or the patch is empty. Only a failure
+    to spawn git raises (:class:`GateError`).
+    """
+    diff = run_git(
+        repo,
+        "diff-tree",
+        "-r",
+        "-p",
+        "--binary",
+        "--full-index",
+        "--no-renames",
+        f"--output={out}",
+        base0,
+        tree0,
+    )
+    return diff.returncode == 0 and out.is_file() and out.stat().st_size > 0
+
+
+def apply_patch(repo: Path, patch: Path, base1: str, scratch: Path) -> "str | None":
+    """Apply the patch file *patch* onto *base1* in a throwaway index in *scratch*; its tree.
+
+    ``None`` when any step exits non-zero; only a failure to spawn git raises.
+    """
+    env = {**os.environ, "GIT_INDEX_FILE": str(scratch / "index")}
+    if run_git(repo, "read-tree", base1, env=env).returncode != 0:
+        return None
+    applied = run_git(repo, "apply", "--cached", "--whitespace=nowarn", str(patch), env=env)
+    if applied.returncode != 0:
+        return None
+    written = run_git(repo, "write-tree", env=env)
+    if written.returncode != 0:
+        return None
+    return written.stdout.strip() or None
+
+
 def _exact_entry(root: Path, tree: str, key: str) -> "Stamp | Red | None":
     """Return the stamp or red marker at (tree, key)'s own path when it is for exactly them."""
     entry = read_entry(stamp_path(root, tree, key))
@@ -448,19 +696,108 @@ def _exact_entry(root: Path, tree: str, key: str) -> "Stamp | Red | None":
     return None
 
 
+EntryT = TypeVar("EntryT", Stamp, Red)
+
+
+def _newest_first(entries: "list[EntryT]") -> "list[EntryT]":
+    """Return the store *entries* newest first; equal times fall back to the path, descending."""
+    return sorted(entries, key=lambda e: (e.written_at, str(e.path)), reverse=True)
+
+
+def _carry(ctx: CarryContext, store: Store, tree: str, key: str) -> "tuple[Stamp | None, str]":
+    """Return a stamp of *key* carried to *tree* across a rebase onto ``ctx.base``.
+
+    A candidate is one of the newest :data:`CARRY_CAP` stamps of *key* on another tree and
+    another base, newest first. It carries when its base is behind ``ctx.base``, its patch
+    replays onto ``ctx.base`` to exactly *tree* (:func:`replays_to`), no red marker of *key*
+    replays to *tree* too, and main's delta from its base to ``ctx.base`` has no bed lane.
+    The first candidate that replays scans EVERY red marker of *key*, once: one without a
+    base blocks only its own tree; one whose base is not behind ``ctx.base`` is skipped; one
+    whose base or patch cannot be placed refuses the carry, as does one that replays to
+    *tree* (the lane went red on this patch on an earlier base). An oracle that fails for
+    the delta counts as a bed lane.
+
+    Returns ``(stamp, "")`` on a hit; ``(None, reason)`` on a miss, the reason the NEWEST
+    tried candidate's first failed condition (a red marker's refusal ends the scan and is
+    the reason); and ``(None, "")`` when there was no candidate.
+    """
+    candidates = _newest_first(
+        [s for s in store.stamps if s.command == key and s.tree != tree and s.base != ctx.base]
+    )[:CARRY_CAP]
+    reason = ""
+    scanned = False
+    here = ctx.base[:12]
+    for c in candidates:
+        if ctx.behind(c.base) is not True:
+            reason = reason or f"base {c.base[:12]} is not behind {here}"
+            continue
+        if ctx.replayed(c.base, c.tree) != tree:
+            reason = reason or f"the patch differs on {here}"
+            continue
+        if not scanned:
+            scanned = True
+            refusal = _red_refusal(ctx, store, tree, key)
+            if refusal:
+                return None, refusal
+        plan = ctx.delta_plan(c.base)
+        if plan is None or plan.bed:
+            classes = "unknown" if plan is None else ", ".join(plan.classes)
+            reason = reason or f"main's delta {c.base[:12]}..{here} reaches the bed: {classes}"
+            continue
+        return c, ""
+    return None, reason
+
+
+def _red_refusal(ctx: CarryContext, store: Store, tree: str, key: str) -> str:
+    """Return why a red marker of *key* refuses carrying a stamp to *tree*, or "".
+
+    Every marker of *key* is asked, newest first: the scan has no cap. A marker replays from
+    the patch beside it (its :func:`sidecar`) when it has one, else from its tree; one with
+    neither cannot be replayed and refuses.
+    """
+    for red in _newest_first([r for r in store.red if r.command == key]):
+        if red.base is None:
+            continue  # a marker without a base blocks only its own tree
+        behind = ctx.behind(red.base)
+        if behind is False:
+            continue
+        if behind is None:
+            return f"a red marker's base {red.base[:12]} cannot be placed; no carry"
+        replayed = ctx.replayed_red(red)
+        if replayed == tree:
+            return f"the lane went red on this patch at tree {red.tree[:12]} after a rebase"
+        if replayed is None:
+            return f"a red marker for this key cannot be replayed (tree {red.tree[:12]}); no carry"
+    return ""
+
+
 def lookup(
-    repo: Path, root: Path, tree: str, key: str, store: "Store | None" = None, base: str = ""
+    repo: Path,
+    root: Path,
+    tree: str,
+    key: str,
+    store: "Store | None" = None,
+    base: str = "",
+    carry: "CarryContext | None" = None,
 ) -> Lookup:
     """Find a stamp satisfying (tree, key): the exact file first, then every promoted candidate.
 
     A red marker for (tree, key) ends the search, whether the exact read or the store scan
     finds it: the lane went red on this tree, so no other tree's stamp is promoted to it.
+    With a *carry* context (whose ``base`` is *base*) and a bed key, a stamp no candidate
+    satisfies may still be carried across a rebase (:func:`_carry`), which answers one of
+    three ways: a hit; a miss with a reason (``carry_missed``, reported before the older
+    reasons below); or nothing tried (no candidate: the older reasons follow).
     Nothing that fails ends the search; the reason names the best evidence that did NOT count,
-    in this order: a stamp of a tree that differs beyond the measured outputs; a command
+    in this order: why the carry refused (a base not behind *base*, a patch that differs on
+    it, a red marker on this patch or one that cannot be placed or replayed, main's delta
+    reaching the bed); a stamp of a tree that differs beyond the measured outputs; a command
     mismatch at the exact path; an unreadable file (corrupt, wrong-tree, or a pruned tree); a
     same-goal stamp for a different path list (with the remote's base when *base* is given);
     "no stamp".
     """
+    if carry is not None and carry.base != base:
+        raise ValueError(f"the carry context's base {carry.base!r} is not the lookup's {base!r}")
     exact_path = stamp_path(root, tree, key)
     entry = _exact_entry(root, tree, key)  # one read; on a hit the store is not touched
     if entry is not None:
@@ -485,8 +822,13 @@ def lookup(
             continue
         witnessed = witnesses(store.stamps, candidate.tree)
         if witnessed and satisfies(repo, candidate, tree, witnessed):
-            return Lookup(candidate, "", store)
+            return Lookup(candidate, "", store, promotion="witnessed")
         nearest = candidate
+    if carry is not None and is_bed(key):
+        carried, why = _carry(carry, store, tree, key)
+        if carried is not None or why:
+            hit = carried is not None
+            return Lookup(carried, why, store, "carried" if hit else "", carry_missed=not hit)
     if nearest is not None:
         return Lookup(
             None,
@@ -516,17 +858,29 @@ def lookup(
     return Lookup(None, "no stamp", store)
 
 
-def find_stamp(repo: Path, root: Path, tree: str, key: str) -> "Stamp | None":
-    """Return the stamp satisfying (tree, key), or None."""
-    return lookup(repo, root, tree, key).stamp
+def find_stamp(
+    repo: Path,
+    root: Path,
+    tree: str,
+    key: str,
+    *,
+    base: str = "",
+    carry: "CarryContext | None" = None,
+) -> "Stamp | None":
+    """Return the stamp satisfying (tree, key), or None; *carry* as :func:`lookup` takes it."""
+    return lookup(repo, root, tree, key, base=base, carry=carry).stamp
 
 
 def invalidate(repo: Path, root: Path, key: str, *, tree: str) -> "list[Path]":
     """Delete, for *key*, only the store files that cannot still be true; return their paths.
 
     Those are a file at (*tree*, *key*)'s own path that is unreadable or claims another
-    command, and every stamp or red marker for *key* whose tree is pruned, whoever wrote it.
-    Everything else stays. That includes *tree*'s own stamp, which the lane's outcome
+    command, every stamp for *key* whose tree is pruned, whoever wrote it, and every red
+    marker for *key* without a base whose tree is pruned (it blocks only its own tree, which
+    is gone). A deleted file's :func:`sidecar` goes with it. Everything else stays: a red
+    marker with a base is evidence against its PATCH, so it stays when its tree is pruned
+    (its sidecar replays it; without one the carry refuses it as one that cannot be
+    replayed). That includes *tree*'s own stamp, which the lane's outcome
     overwrites, and every other tree's stamp, whichever checkout wrote it: a landing gated
     earlier, here or in a peer, keeps its evidence. A red marker on a live tree stays until
     the lane's next outcome on its tree replaces it, so an interrupted re-run keeps it. The
@@ -538,12 +892,18 @@ def invalidate(repo: Path, root: Path, key: str, *, tree: str) -> "list[Path]":
         here = stamp_path(root, tree, key)
         entries: "list[Stamp | Red]" = [e for e in [*store.stamps, *store.red] if e.command == key]
         pruned = _pruned_trees(repo, [e.tree for e in entries]) if entries else set()
-        gone = [e.path for e in entries if e.tree in pruned]
+        gone = [e.path for e in entries if e.tree in pruned and not _decidable_red(e)]
         gone += [p for p in store.unreadable if p == here]
         gone += [m.path for m in store.mismatched if m.path == here]
         for path in gone:
             path.unlink(missing_ok=True)
+            sidecar(path).unlink(missing_ok=True)
     return gone
+
+
+def _decidable_red(entry: "Stamp | Red") -> bool:
+    """Return whether *entry* is a red marker with a base: evidence against its patch."""
+    return isinstance(entry, Red) and entry.base is not None
 
 
 @dataclass(frozen=True)
@@ -708,6 +1068,8 @@ class _Run:
     root: Path
     roots: "list[str]"
     env: "dict[str, str]"
+    carry: CarryContext
+    """What every lookup of this run carries with: one context, for the plan's base."""
     lease: "Lease | None" = None
     stamped: int = 0
     already: int = 0
@@ -733,6 +1095,7 @@ def _new_run(opts: Options, plan: gate_scope.Plan) -> _Run:
         root=stamps_root(opts.repo, STORE),
         roots=test_roots(opts.repo),
         env=lane_env(dict(os.environ)),
+        carry=CarryContext(opts.repo, plan.base_sha),
     )
 
 
@@ -807,28 +1170,79 @@ def _interrupted(ctx: _Run) -> int:
 
 
 def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
-    """Report (and, outside a dry run, promote) a lane some stamp already satisfies for the tree."""
+    """Report (and, outside a dry run, promote) a lane some stamp already satisfies for the tree.
+
+    A dry run previews a carry (``would carry``) and writes nothing. A bed lane the carry
+    tried and missed says why before it runs.
+    """
     if ctx.opts.force:
         return False
-    if ctx.opts.dry_run:
-        with store_lock(ctx.root, shared=True):
-            found = find_stamp(ctx.opts.repo, ctx.root, ctx.tree, key)
-    else:
-        with store_lock(ctx.root):  # a peer's red marker cannot land between lookup and write
-            found = find_stamp(ctx.opts.repo, ctx.root, ctx.tree, key)
-            if found is not None and found.tree != ctx.tree:
-                write_stamp(
-                    ctx.root,
-                    tree=ctx.tree,
-                    key=key,
-                    base=ctx.plan.base_sha,
-                    measured={},
-                    checkout=str(ctx.opts.repo),
-                    promoted_from=found.tree,
-                )
-    if found is None:
+    repo, root, tree, base = ctx.opts.repo, ctx.root, ctx.tree, ctx.plan.base_sha
+    store: "Store | None" = None
+    seen: "dict[Path, tuple[int, int, int]]" = {}
+    # (a) the exact path; on a miss, the store and its markers' metadata, read as one state
+    with store_lock(root, shared=True):
+        entry = _exact_entry(root, tree, key)
+        if entry is None:
+            store = load_store(root)
+            seen = marker_snapshot(store, key)
+    if isinstance(entry, Stamp):
+        return _report_stamped(ctx, label, key, "already stamped")
+    if isinstance(entry, Red):
         return False
-    _say(ctx.opts, f"{label} … already stamped")
+    # (b) the scan, its replays and plans, with no lock held
+    found = lookup(repo, root, tree, key, store, base=base, carry=ctx.carry)
+    if found.stamp is None:
+        if found.carry_missed:
+            _say(ctx.opts, f"{label} … no carry: {found.reason}")
+        return False
+    if found.stamp.tree == tree:
+        return _report_stamped(ctx, label, key, "already stamped")
+    if ctx.opts.dry_run:
+        if found.promotion == "carried":
+            said = f"would carry (promoted from {found.stamp.tree[:12]})"
+        else:
+            said = "already stamped"
+        return _report_stamped(ctx, label, key, said)
+    # (c) the write, after the exact path and the markers are re-validated under the lock
+    with store_lock(root):
+        entry = _exact_entry(root, tree, key)
+        if isinstance(entry, Red):
+            return False
+        if isinstance(entry, Stamp):
+            return _report_stamped(ctx, label, key, "already stamped")
+        if marker_snapshot(load_store(root), key) != seen:
+            _say(ctx.opts, f"{label} … carry abandoned (a red marker changed during the scan)")
+            return False
+        write_stamp(
+            root,
+            tree=tree,
+            key=key,
+            base=base,
+            measured={},
+            checkout=str(repo),
+            promoted_from=found.stamp.tree,
+        )
+    return _report_stamped(ctx, label, key, _promoted_line(found.stamp, found.promotion, base))
+
+
+def _promoted_line(stamp: Stamp, promotion: str, base: str) -> str:
+    """Return the say text for *stamp*, of another tree, promoted to the tip's (onto *base*)."""
+    t0 = stamp.tree[:12]
+    if promotion == "carried":
+        b0, b1 = stamp.base[:12], base[:12]
+        return (
+            f"already stamped (promoted from {t0}: the patch replays onto {b1}, "
+            f"main's delta {b0}..{b1} has no bed lane)"
+        )
+    if promotion == "witnessed":
+        return f"already stamped (promoted from {t0}: measured outputs witnessed)"
+    raise ValueError(f"unknown promotion {promotion!r}")
+
+
+def _report_stamped(ctx: _Run, label: str, key: str, said: str) -> bool:
+    """Say *said* for a lane a stamp satisfies, count it, and return True."""
+    _say(ctx.opts, f"{label} … {said}")
     ctx.already += 1
     ctx.rows.append(Row(key, "already stamped"))
     return True
@@ -872,7 +1286,15 @@ def _measure(
 def _mark_red(ctx: _Run, key: str, timing: "dict | None") -> None:
     """Count a red lane and leave its red marker, so nothing promotes to this tree for it."""
     with store_lock(ctx.root):
-        write_red(ctx.root, tree=ctx.tree, key=key, checkout=str(ctx.opts.repo), timing=timing)
+        write_red(
+            ctx.root,
+            tree=ctx.tree,
+            key=key,
+            checkout=str(ctx.opts.repo),
+            base=ctx.plan.base_sha,
+            timing=timing,
+            repo=ctx.opts.repo,
+        )
     ctx.red += 1
     ctx.red_keys.append(key)
     ctx.rows.append(Row(key, "red", timing["elapsed_s"] if timing else None))

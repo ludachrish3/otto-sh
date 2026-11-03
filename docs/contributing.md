@@ -542,7 +542,8 @@ queue because landings are rare, and the dedicated bed runner (#801) is the
 structural fix. `gate-admission` compares the status's base with the merge
 base it computes, never with `main`'s tip, so a branch behind `main` is still
 admitted. When `main` has moved in an area your change touches, rebase onto
-it and gate again before asking for the merge.
+it and gate again before asking for the merge; a bed lane's stamp survives
+that rebase only under [the carry rule](#the-landings-gate-is-stamped).
 
 **The status is an attestation, not a proof.** Anyone with push access can
 post a `local-gate` status with `gh api`, as `git push --no-verify` skips the
@@ -676,7 +677,42 @@ A stamp is keyed by the committed tree, so a rebase or an amend that keeps the
 tree (a reworded message, commits squashed on the branch) keeps the stamps:
 `make gate-tip` on the new head finds every lane stamped and re-posts the
 `local-gate` status for the new sha in seconds. A rebase onto a `main` that
-moved changes the tree, and the lanes run again. Either way, run `make
+moved changes the tree: the static lanes run again (about 50 s), and a
+**bed** lane's stamp is **carried** to the new tree when all four hold:
+
+1. `main` advanced from the base the stamp was written on.
+2. Replaying the landing's patch onto the new base, as a rebase does, gives
+   exactly the new tree (an amended patch, a whitespace-only amendment, or
+   the same edit moved elsewhere gives another tree and refuses).
+3. No red marker for the lane exists on the same patch, on any base behind
+   the new one; a marker whose base cannot be placed or whose patch cannot be
+   replayed refuses the carry, and a marker written before bases were
+   recorded blocks only its own tree. A marker keeps the patch it went red on
+   beside it (`<marker>.patch`), so it still replays once its tree is pruned;
+   one without that file replays from its tree while git holds it.
+4. `main`'s delta, the old base to the new one, has no bed lane by `make
+   gate-scope`'s judgement, as if that delta were a landing; a plan that
+   cannot be computed counts as having one.
+
+Static lane stamps are never carried. Only the runner (`make gate-tip`)
+carries: it writes the carried stamp, with the tree it came from recorded as
+`promoted_from`, and prints `already stamped (promoted from <tree>: the
+patch replays onto <new base>, main's delta <old base>..<new base> has no
+bed lane)`. When no candidate carries, the runner prints `no carry: <reason>`,
+the first condition the newest candidate tried failed, and the lane runs.
+`--dry-run` previews a carry as `would carry (promoted from <tree>)`. The pre-push hook and `make
+gate-status` never carry; they see the stamp the runner wrote, exactly.
+`--timings` lists it as `promoted` ([What a gate costs](#what-a-gate-costs)).
+
+The carry has one known false miss: a `main` edit inside the three context
+lines of one of the landing's hunks, which the rebase merged cleanly, replays
+to another tree and the bed lane runs again. That errs on the safe side. The
+trust argument is the behind-`main` gap above, accepted one step earlier: a
+rebase-merge already lands a tree no gate ran on and CI on `main` catches it,
+and a carry reuses a bed run only when `main`'s delta would itself have
+landed without one. CI on `main` covers its own selections; a bed-only
+interaction between the landing and a bed-free delta is an accepted,
+unvalidated gap until #801 gates the merge result. Either way, run `make
 gate-status` after the push: the status belongs to a sha, and the old head's
 does not carry over.
 
@@ -717,8 +753,10 @@ lane that goes red writes a red marker where its stamp would be. Until the
 lane passes on that tree, nothing counts for it there, not even a stamp
 promoted from another tree. `make gate-tip` deletes only evidence that cannot
 still be true: before a lane runs, a corrupt or misnamed file at that lane's
-path for the gated tree, and that lane's stamps and red markers for trees git
-no longer holds. Every other stamp stays, whichever worktree wrote it, so two
+path for the gated tree, that lane's stamps for trees git no longer holds, and
+its red markers without a base on such trees. A red marker with a base stays
+when its tree is pruned: it is evidence against the patch, which its
+`.patch` file still replays. Every other stamp stays, whichever worktree wrote it, so two
 worktrees can gate at once and you can gate a second landing before you push
 the first. A lock on `otto-gate-stamps/.lock` keeps two runs from
 interleaving their writes, and the pre-push check holds it shared while it
@@ -2028,7 +2066,11 @@ local-gate on <sha>`, `local-gate not posted: <why>`, or, when a red run
 flipped a success `HEAD` carried, `posted local-gate failure on <sha>`. On
 the dev VM a tip that reaches no bed lane costs about 50 s, one that
 reaches the bed half about 8 minutes (`make coverage-bed` is 405 s of it),
-and the pre-push hook about 20 s on a stamped tree. The stored table for any tree is one command away:
+and the pre-push hook about 20 s on a stamped tree. A rebase onto a moved
+`main` costs the static lanes again (about 50 s) plus, for a tip with a bed
+lane, about 8 minutes, unless
+[the carry rule](#the-landings-gate-is-stamped) holds and the bed lane is
+carried: seconds. The stored table for any tree is one command away:
 
 ```bash
 uv run python scripts/gate_tip.py --timings          # HEAD's tree

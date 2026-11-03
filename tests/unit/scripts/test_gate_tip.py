@@ -1,5 +1,6 @@
 """Pins for scripts/gate_tip.py — the landing's gate: lane stamps, the runner and the push check."""
 
+import contextlib
 import dataclasses
 import fcntl
 import fnmatch
@@ -27,7 +28,21 @@ from tests._fixtures import fake_gh as fg
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.scripts._gate_repos import _bare, _commit_file, _git, _published, _stamp_tip
+from tests.unit.scripts._gate_repos import (
+    _bare,
+    _commit_file,
+    _docs_change,
+    _git,
+    _hostless_test_change,
+    _matrix_change,
+    _published,
+    _published_src,
+    _Rebased,
+    _rebased_landing,
+    _src_change,
+    _stamp_tip,
+    _write,
+)
 from tests.unit.scripts._gate_repos import _repo as _fresh_repo
 from tests.unit.scripts.test_gate_scope import _head_paths
 
@@ -859,6 +874,65 @@ class TestRedMarker:
             (tree, "make coverage-bed", "/x")
         ]
 
+    def test_a_red_marker_records_the_base_the_lane_went_red_against(self, tmp_path):
+        root = tmp_path / "store"
+        path = gt.write_red(
+            root, tree="t" * 40, key="make coverage-bed", checkout="c", base="b" * 40
+        )
+        red = gt.read_entry(path)
+        assert isinstance(red, gt.Red)
+        assert red.base == "b" * 40
+        assert json.loads(path.read_text())["base"] == "b" * 40
+
+    def test_a_marker_without_a_base_still_reads_as_a_marker(self, tmp_path):
+        path = gt.write_red(
+            tmp_path / "store", tree="t" * 40, key="make coverage-bed", checkout="c"
+        )
+        assert "base" not in json.loads(path.read_text())
+        red = gt.read_entry(path)
+        assert isinstance(red, gt.Red)
+        assert red.base is None
+
+    def test_a_marker_with_a_non_string_base_is_unreadable(self, tmp_path):
+        path = gt.write_red(
+            tmp_path / "store", tree="t" * 40, key="make coverage-bed", checkout="c"
+        )
+        record = json.loads(path.read_text())
+        record["base"] = 7
+        path.write_text(json.dumps(record))
+        assert gt.read_entry(path) is None
+
+    def test_a_marker_with_a_null_base_reads_like_one_without(self, tmp_path):
+        path = gt.write_red(
+            tmp_path / "store", tree="t" * 40, key="make coverage-bed", checkout="c"
+        )
+        record = json.loads(path.read_text())
+        record["base"] = None
+        path.write_text(json.dumps(record))
+        red = gt.read_entry(path)
+        assert isinstance(red, gt.Red)
+        assert red.base is None
+
+    def test_the_runner_writes_the_plans_base_into_a_red_marker(self, tmp_path, monkeypatch):
+        repo, _bare_repo, base, _tip = _published_src(tmp_path)
+        spy = _lease_spy(
+            monkeypatch,
+            FakeRunner(statuses={"make coverage-bed": 1}),
+            fg.scripted_gh([fg.GhReply([], stdout="{}")]),
+        )
+        opts = _options(repo, spy.runner, gh=spy.gh)
+        assert gt.run(opts) == 1
+        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), "make coverage-bed")
+        red = gt.read_entry(path)
+        assert isinstance(red, gt.Red)
+        assert red.base == base
+
+    def test_published_src_is_a_landing_that_reaches_the_bed(self, tmp_path):
+        repo, _bare_repo, base, tip = _published_src(tmp_path)
+        plan = gt.range_plan(repo, base, tip)
+        assert plan.bed is True
+        assert "make coverage-bed" in plan.stamped
+
     def test_a_red_marker_never_promotes_to_another_tree(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
@@ -930,6 +1004,7 @@ def _oracle(monkeypatch, repo, lines):
         live=[line for line in lines if gs.is_live(line)],
         stamped=[gs.lane_key(line) for line in lines if not gs.is_live(line)],
         bed=any(gs.is_bed(line) for line in lines),
+        classes=[],
     )
     monkeypatch.setattr(gt, "_plan", lambda _opts: plan)
     return head
@@ -1031,6 +1106,36 @@ def _peer_probe(lock: Path) -> str:
         timeout=10,
         check=False,
     ).stdout.strip()
+
+
+def _inject_on_promotion(monkeypatch, key: str, write) -> "list[str]":
+    """Run *write* as a peer would, as the runner takes the exclusive lock to promote *key*.
+
+    The runner's unlocked lookup for *key* arms it; the next exclusive take of the store lock
+    runs *write* first (once), then takes the real lock. Returns the keys it fired for.
+    """
+    fired: "list[str]" = []
+    armed: "list[bool]" = []
+    real_lookup, real_lock = gt.lookup, gt.store_lock
+
+    def spied_lookup(repo, root, tree, asked, *args, **kw):
+        found = real_lookup(repo, root, tree, asked, *args, **kw)
+        if asked == key and not fired:
+            armed.append(True)
+        return found
+
+    @contextlib.contextmanager
+    def lock(root, *, shared=False, **kw):
+        if armed and not shared and not fired:
+            armed.clear()
+            write()
+            fired.append(key)
+        with real_lock(root, shared=shared, **kw):
+            yield
+
+    monkeypatch.setattr(gt, "lookup", spied_lookup)
+    monkeypatch.setattr(gt, "store_lock", lock)
+    return fired
 
 
 class TestRunner:
@@ -1201,34 +1306,53 @@ class TestRunner:
         assert gt.lookup(repo, root, u_tree, LANE).reason.startswith("the lane went red")
         assert gt.exact_stamp(root, s_tree, LANE) is not None, "the peer's stamp stays"
 
-    def test_a_peers_red_marker_between_lookup_and_promotion_survives(self, tmp_path, monkeypatch):
-        """Promotion's lookup and write hold the store lock, so a peer's red cannot land between."""
+    @staticmethod
+    def _witnessed_landing(tmp_path) -> "tuple[Path, Path, str, str]":
+        """Return (repo, root, S, U): U differs from S only by a measured blob S's stamp holds."""
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
         b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
         _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
         _git(repo, "commit", "-qam", "measured")
-        u_tree = tree_hash(repo)
-        deferred: list = []
-        real = gt.find_stamp
+        return repo, root, s_tree, tree_hash(repo)
 
-        def find_then_peer(*args):
-            found = real(*args)
-            _peer_write(
-                root, lambda: gt.write_red(root, tree=u_tree, key=LANE, checkout="/peer"), deferred
-            )
-            return found
-
-        monkeypatch.setattr(gt, "find_stamp", find_then_peer)
-        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
-        assert (status, "already stamped" in out) == (0, True), "promoted from S"
-        for write in deferred:
-            write()
-        found = gt.lookup(repo, root, u_tree, LANE)
-        assert found.stamp is None, "the peer's later red stands"
-        assert found.reason.startswith("the lane went red")
+    def test_a_peers_red_marker_at_the_exact_path_before_promotion_runs_the_lane(
+        self, tmp_path, monkeypatch
+    ):
+        """The scan runs unlocked; the write re-reads the exact path under the lock."""
+        repo, root, s_tree, u_tree = self._witnessed_landing(tmp_path)
+        injected = _inject_on_promotion(
+            monkeypatch, LANE, lambda: gt.write_red(root, tree=u_tree, key=LANE, checkout="/peer")
+        )
+        runner = FakeRunner(statuses={LANE: 1})
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
+        assert injected == [LANE], "the peer's marker landed between the scan and the lock"
+        assert status == 1
+        assert runner.keys == [LANE], "the lane ran"
+        assert f"{LANE} … already stamped" not in out
+        assert "carry abandoned" not in out
+        assert isinstance(gt.read_entry(gt.stamp_path(root, u_tree, LANE)), gt.Red)
         assert gt.exact_stamp(root, s_tree, LANE) is not None
+
+    def test_a_peers_red_marker_at_another_tree_before_promotion_abandons_it(
+        self, tmp_path, monkeypatch
+    ):
+        repo, root, _s_tree, u_tree = self._witnessed_landing(tmp_path)
+        other = _live_tree(repo, "other")
+        injected = _inject_on_promotion(
+            monkeypatch, LANE, lambda: gt.write_red(root, tree=other, key=LANE, checkout="/peer")
+        )
+        runner = FakeRunner()
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
+        assert injected == [LANE]
+        assert status == 0
+        assert f"{LANE} … carry abandoned (a red marker changed during the scan)" in out
+        assert runner.keys == [LANE], "the lane ran"
+        assert isinstance(gt.read_entry(gt.stamp_path(root, other, LANE)), gt.Red), "kept"
+        stamp = gt.exact_stamp(root, u_tree, LANE)
+        assert stamp is not None
+        assert stamp.promoted_from is None, "stamped by its own run, not promoted"
 
     def test_the_lineage_sequence(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
@@ -2590,7 +2714,15 @@ class TestStatus:
         assert inspect.signature(lgs.run_gh).parameters["timeout"].default == lgs.GH_TIMEOUT
 
     def test_the_remedy_names_the_ref_the_lane_and_the_one_command(self, tmp_path):
-        plan = gs.Plan("c" * 40, "d" * 40, "e" * 40, [], ["make coverage-bed"], True)
+        plan = gs.Plan(
+            base_sha="c" * 40,
+            tip_sha="d" * 40,
+            tree="e" * 40,
+            live=[],
+            stamped=["make coverage-bed"],
+            bed=True,
+            classes=["src-leaf"],
+        )
         lines = gt.refusal_lines(
             plan, [gt.Missing("make coverage-bed", "no stamp")], ref="refs/heads/x", who="gate-tip"
         )
@@ -3255,3 +3387,971 @@ def test_gate_status_refuses_an_unstamped_tree_before_it_reads_the_remote(monkey
         "the status needs owner/repo\n"
     )
     assert opts.gh.calls == []
+
+
+def _tree(repo: Path, rev: str) -> str:
+    return _git(repo, "rev-parse", f"{rev}^{{tree}}").strip()
+
+
+def _commit_all(repo: Path, files: "dict[str, str | bytes | None]", message: str) -> str:
+    """Write (a str or bytes) or delete (None) each path, commit them as one, return the sha."""
+    for path, content in files.items():
+        target = repo / path
+        if content is None:
+            target.unlink()
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        else:
+            target.write_text(content)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", message)
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+@dataclasses.dataclass
+class _Landing:
+    """B0 → T0 on the ``landing`` branch, B1 on main; ``landing`` checked out."""
+
+    repo: Path
+    b0: str
+    t0: str
+    b1: str
+
+    def rebase(self) -> str:
+        """Rebase ``landing`` onto main and return T1."""
+        _git(self.repo, "rebase", "-q", "main")
+        return _git(self.repo, "rev-parse", "HEAD").strip()
+
+    def amend(self, path: str, content: "str | bytes") -> str:
+        """Amend HEAD with *path* rewritten to *content* and return the amended sha."""
+        if isinstance(content, bytes):
+            (self.repo / path).write_bytes(content)
+        else:
+            (self.repo / path).write_text(content)
+        _git(self.repo, "commit", "-q", "-a", "--amend", "--no-edit")
+        return _git(self.repo, "rev-parse", "HEAD").strip()
+
+    def replay(self) -> "str | None":
+        return gt.replays_to(self.repo, self.b0, _tree(self.repo, self.t0), self.b1)
+
+
+def _landing(
+    tmp_path: Path,
+    seed: "dict[str, str | bytes | None]",
+    landing: "dict[str, str | bytes | None]",
+    main: "dict[str, str | bytes | None]",
+    *,
+    executable: "list[str] | None" = None,
+) -> _Landing:
+    """Seed B0, commit *landing* on a branch (chmod +x *executable* first), *main* on main."""
+    repo = _fresh_repo(tmp_path)
+    b0 = _commit_all(repo, seed, "seed")
+    _git(repo, "checkout", "-q", "-b", "landing")
+    for path in executable or []:
+        (repo / path).chmod(0o755)
+    t0 = _commit_all(repo, landing, "landing")
+    _git(repo, "checkout", "-q", "main")
+    b1 = _commit_all(repo, main, "main")
+    _git(repo, "checkout", "-q", "landing")
+    return _Landing(repo, b0, t0, b1)
+
+
+_DOCS: "dict[str, str | bytes | None]" = {"docs/note.md": "a docs change\n"}
+_LINES = "".join(f"line {n}\n" for n in range(1, 31))
+
+
+def _patch_id(repo: Path, old: str, new: str) -> str:
+    diff = _git(repo, "diff", old, new)
+    out = subprocess.run(
+        ["git", "patch-id", "--verbatim"],
+        cwd=repo,
+        input=diff,
+        capture_output=True,
+        text=True,
+        check=True,
+        env=git_env(repo),
+    ).stdout
+    return out.split()[0]
+
+
+def _simple(tmp_path: Path) -> _Landing:
+    """A one-line landing over a docs commit on main."""
+    return _landing(tmp_path, {"src/m.py": "VALUE = 1\n"}, {"src/m.py": "VALUE = 2\n"}, _DOCS)
+
+
+class TestReplay:
+    """``replays_to``: the landing's patch applied onto a new base, in a throwaway index."""
+
+    def test_a_clean_rebase_over_a_docs_commit_replays_to_the_rebased_tree(self, tmp_path):
+        case = _simple(tmp_path)
+        t1 = case.rebase()
+        assert case.replay() == _tree(case.repo, t1)
+
+    def test_an_amended_landing_replays_to_another_tree(self, tmp_path):
+        case = _simple(tmp_path)
+        case.rebase()
+        t1 = case.amend("src/m.py", "VALUE = 3\n")
+        replayed = case.replay()
+        assert replayed is not None
+        assert replayed != _tree(case.repo, t1)
+
+    def test_a_whitespace_only_amendment_replays_to_another_tree(self, tmp_path):
+        case = _simple(tmp_path)
+        case.rebase()
+        t1 = case.amend("src/m.py", "VALUE = 2 \n")
+        replayed = case.replay()
+        assert replayed is not None
+        assert replayed != _tree(case.repo, t1)
+
+    def test_the_same_edit_moved_to_an_identical_block_replays_to_another_tree(self, tmp_path):
+        block = "a = 1\na = 1\na = 1\nx = 1\nb = 2\nb = 2\nb = 2\n"
+        text = block + "# sep\n" * 4 + block + "c = 3\n"
+        first = block.replace("x = 1", "x = 2") + "# sep\n" * 4 + block + "c = 3\n"
+        second = block + "# sep\n" * 4 + block.replace("x = 1", "x = 2") + "c = 3\n"
+        case = _landing(tmp_path, {"src/m.py": text}, {"src/m.py": first}, _DOCS)
+        case.rebase()
+        t1 = case.amend("src/m.py", second)
+        # the collision the replay must still tell apart: patch-id calls the two diffs one patch
+        assert _patch_id(case.repo, case.b0, case.t0) == _patch_id(case.repo, case.b1, t1)
+        replayed = case.replay()
+        assert replayed is not None
+        assert replayed != _tree(case.repo, t1)
+
+    def test_a_main_edit_in_the_same_file_above_the_hunk_replays(self, tmp_path):
+        case = _landing(
+            tmp_path,
+            {"src/m.py": _LINES},
+            {"src/m.py": _LINES.replace("line 20\n", "line twenty\n")},
+            {"src/m.py": _LINES.replace("line 1\n", "line one\n")},
+        )
+        t1 = case.rebase()
+        assert case.replay() == _tree(case.repo, t1)
+
+    def test_a_main_edit_inside_the_hunks_context_returns_none(self, tmp_path):
+        case = _landing(
+            tmp_path,
+            {"src/m.py": _LINES},
+            {"src/m.py": _LINES.replace("line 10\n", "line ten\n")},
+            {"src/m.py": _LINES.replace("line 8\n", "line eight\n")},
+        )
+        t1 = case.rebase()  # a clean 3-way merge: the rebase succeeds
+        assert "line eight\nline 9\nline ten\n" in _git(case.repo, "show", f"{t1}:src/m.py")
+        assert case.replay() is None  # git apply refuses: its context no longer matches
+
+    def test_a_binary_change_a_mode_change_an_added_and_a_deleted_file_replay(self, tmp_path):
+        case = _landing(
+            tmp_path,
+            {"blob.bin": b"\x00\x01\x02" * 50, "run.sh": "echo hi\n", "gone.txt": "bye\n"},
+            {"blob.bin": b"\x00\xff\x02" * 60, "new.txt": "hello\n", "gone.txt": None},
+            _DOCS,
+            executable=["run.sh"],
+        )
+        t1 = case.rebase()
+        assert _git(case.repo, "ls-tree", t1, "run.sh").startswith("100755")
+        assert case.replay() == _tree(case.repo, t1)
+
+    def test_a_deleted_file_main_also_edited_returns_none(self, tmp_path):
+        # built without the rebase: it would conflict (modify/delete)
+        case = _landing(
+            tmp_path, {"src/m.py": "VALUE = 1\n"}, {"src/m.py": None}, {"src/m.py": "VALUE = 9\n"}
+        )
+        assert case.replay() is None
+
+    def test_an_empty_diff_never_replays(self, tmp_path):
+        case = _simple(tmp_path)
+        assert gt.replays_to(case.repo, case.t0, _tree(case.repo, case.t0), case.b1) is None
+
+    def test_an_unknown_object_returns_none_without_raising(self, tmp_path):
+        case = _simple(tmp_path)
+        tree0 = _tree(case.repo, case.t0)
+        assert gt.replays_to(case.repo, "f" * 40, tree0, case.b1) is None
+        assert gt.replays_to(case.repo, case.b0, tree0, "f" * 40) is None
+
+    def test_a_spawn_failure_returns_none(self, tmp_path, monkeypatch):
+        case = _simple(tmp_path)
+        tree0 = _tree(case.repo, case.t0)
+
+        def no_spawn(*_args, **_kwargs):
+            raise OSError(7, "Argument list too long")
+
+        monkeypatch.setattr(gate_stamp_common.subprocess, "run", no_spawn)
+        assert gt.replays_to(case.repo, case.b0, tree0, case.b1) is None
+
+    def test_the_replay_leaves_the_working_tree_and_the_real_index_untouched(self, tmp_path):
+        case = _simple(tmp_path)
+        index_tree = _git(case.repo, "write-tree").strip()
+        assert _git(case.repo, "status", "--porcelain") == ""
+        assert case.replay() is not None
+        assert _git(case.repo, "status", "--porcelain") == ""
+        assert _git(case.repo, "write-tree").strip() == index_tree
+
+    def test_is_ancestor_distinguishes_no_from_unknown(self, tmp_path):
+        repo = _fresh_repo(tmp_path)
+        parent = _git(repo, "rev-parse", "HEAD").strip()
+        child = _commit_file(repo, "src/m.py", "VALUE = 1\n", "child")
+        assert gt.is_ancestor(repo, parent, child) is True
+        assert gt.is_ancestor(repo, child, parent) is False
+        assert gt.is_ancestor(repo, "f" * 40, child) is None
+
+    def test_is_ancestor_is_none_when_git_cannot_be_spawned(self, tmp_path, monkeypatch):
+        repo = _fresh_repo(tmp_path)
+        parent = _git(repo, "rev-parse", "HEAD").strip()
+        child = _commit_file(repo, "src/m.py", "VALUE = 1\n", "child")
+
+        def no_spawn(*_args, **_kwargs):
+            raise OSError(7, "Argument list too long")
+
+        monkeypatch.setattr(gate_stamp_common.subprocess, "run", no_spawn)
+        assert gt.is_ancestor(repo, parent, child) is None
+
+    def test_a_crlf_line_replays_to_the_rebased_tree(self, tmp_path):
+        case = _landing(
+            tmp_path, {"src/m.py": b"VALUE = 1\n"}, {"src/m.py": b"VALUE = 2\r\n"}, _DOCS
+        )
+        t1 = case.rebase()
+        assert _git(case.repo, "cat-file", "-s", f"{t1}:src/m.py").strip() == "11"  # CR kept
+        assert case.replay() == _tree(case.repo, t1)
+
+    def test_a_crlf_line_amended_to_lf_replays_to_another_tree(self, tmp_path):
+        case = _landing(
+            tmp_path, {"src/m.py": b"VALUE = 1\n"}, {"src/m.py": b"VALUE = 2\r\n"}, _DOCS
+        )
+        case.rebase()
+        t1 = case.amend("src/m.py", b"VALUE = 2\n")
+        replayed = case.replay()
+        assert replayed is not None
+        assert replayed != _tree(case.repo, t1)
+
+    def test_a_non_utf8_line_amended_to_its_replaced_text_replays_to_another_tree(self, tmp_path):
+        case = _landing(tmp_path, {"src/m.txt": b"cafe\n"}, {"src/m.txt": b"caf\xe9\n"}, _DOCS)
+        case.rebase()
+        t1 = case.amend("src/m.txt", "caf\N{REPLACEMENT CHARACTER}\n".encode())
+        replayed = case.replay()
+        assert replayed is not None
+        assert replayed != _tree(case.repo, t1)
+
+    def test_a_scratch_directory_failure_returns_none(self, tmp_path, monkeypatch):
+        case = _simple(tmp_path)
+        tree0 = _tree(case.repo, case.t0)
+
+        def no_scratch(*_args, **_kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(gt.tempfile, "TemporaryDirectory", no_scratch)
+        assert gt.replays_to(case.repo, case.b0, tree0, case.b1) is None
+
+
+K = "make coverage-bed"
+
+
+def _at(path: Path, written_at: str) -> Path:
+    """Rewrite the store record at *path* as written at *written_at*; return *path*."""
+    record = json.loads(path.read_text())
+    record["written_at"] = written_at
+    path.write_text(json.dumps(record))
+    return path
+
+
+def _stamp_at(root: Path, tree: str, base: str, key: str = K, written_at: str = "") -> Path:
+    path = gt.write_stamp(root, tree=tree, key=key, base=base, measured={}, checkout="/x")
+    return _at(path, written_at) if written_at else path
+
+
+def _red_at(root: Path, tree: str, base: "str | None", written_at: str = "") -> Path:
+    path = gt.write_red(root, tree=tree, key=K, checkout="/x", base=base)
+    return _at(path, written_at) if written_at else path
+
+
+def _when(n: int) -> str:
+    return f"2026-11-02T10:{n:02d}:00Z"
+
+
+def _rebase_again(case: _Rebased, change) -> "tuple[str, str]":
+    """Land *change* on main (pushed), rebase ``landing`` onto it; return (B2, T2's tree)."""
+    repo = case.repo
+    _git(repo, "checkout", "-q", "main")
+    change(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "main change 2")
+    b2 = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "checkout", "-q", "landing")
+    _git(repo, "rebase", "-q", "main")
+    return b2, tree_hash(repo)
+
+
+def _second_docs_change(repo: Path) -> None:
+    _write(repo, "docs/second.md", "another docs change\n")
+
+
+def _other_patch_trees(repo: Path, base: str, n: int) -> "list[str]":
+    """Return *n* trees, each a different edit of the landing's module over *base*."""
+    trees = []
+    for i in range(n):
+        _git(repo, "checkout", "-q", "-B", f"other{i}", base)
+        trees.append(
+            _tree(repo, _commit_file(repo, "src/otto/host/unix.py", f"VALUE = {i + 10}\n", "o"))
+        )
+    _git(repo, "checkout", "-q", "landing")
+    return trees
+
+
+def _recorded_replays(monkeypatch) -> "list[tuple[str, str, str]]":
+    """Record every (base0, tree0, base1) the carry asks ``replays_to`` about."""
+    calls: "list[tuple[str, str, str]]" = []
+    real = gt.replays_to
+
+    def spy(repo, base0, tree0, base1):
+        calls.append((base0, tree0, base1))
+        return real(repo, base0, tree0, base1)
+
+    monkeypatch.setattr(gt, "replays_to", spy)
+    return calls
+
+
+class TestCarry:
+    """A bed stamp carried across a rebase: the patch replays and main's delta has no bed lane."""
+
+    @staticmethod
+    def _carry(case, tree=None, key=K, base=None):
+        base = base or case.b1
+        root = gt.stamps_root(case.repo, gt.STORE)
+        ctx = gt.CarryContext(case.repo, base)
+        return gt.lookup(case.repo, root, tree or case.t1, key, base=base, carry=ctx)
+
+    def test_a_bed_stamp_carries_across_a_rebase_over_a_docs_commit(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        assert K in case.plan0.stamped
+        assert K in case.plan1.stamped
+        assert case.t0 != case.t1
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+        assert found.promotion == "carried"
+        assert found.reason == ""
+
+    def test_the_carry_never_fires_without_a_carry_context(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        assert self._carry(case).stamp is not None, "the control: with a context it carries"
+        found = gt.lookup(case.repo, root, case.t1, K, base=case.b1)
+        assert found.stamp is None
+        assert found.promotion == ""
+        assert gt.find_stamp(case.repo, root, case.t1, K, base=case.b1) is None
+
+    def test_a_carry_context_for_another_base_is_refused(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        ctx = gt.CarryContext(case.repo, case.b0)
+        with pytest.raises(ValueError, match="is not the lookup's"):
+            gt.lookup(case.repo, root, case.t1, K, base=case.b1, carry=ctx)
+
+    def test_find_stamp_passes_the_carry_context_through(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        ctx = gt.CarryContext(case.repo, case.b1)
+        found = gt.find_stamp(case.repo, root, case.t1, K, base=case.b1, carry=ctx)
+        assert found is not None
+        assert found.tree == case.t0
+
+    def test_a_static_key_is_never_carried(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        _stamp_at(root, case.t0, case.b0, key="make check-python")
+        assert self._carry(case).stamp is not None, "the control: the bed key carries"
+        assert self._carry(case, key="make check-python").stamp is None
+
+    def test_an_amended_landing_does_not_carry_and_the_reason_says_the_patch_differs(
+        self, tmp_path
+    ):
+        case = _rebased_landing(
+            tmp_path,
+            main_change=_docs_change,
+            amend=lambda repo: _write(repo, "src/otto/host/unix.py", "VALUE = 3\n"),
+        )
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == f"the patch differs on {case.b1[:12]}"
+
+    def test_a_main_delta_with_a_bed_lane_does_not_carry_and_the_reason_names_its_classes(
+        self, tmp_path
+    ):
+        case = _rebased_landing(tmp_path, main_change=_src_change)
+        delta = gs.plan(case.repo, case.b0, case.b1)
+        assert delta.bed is True
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == (
+            f"main's delta {case.b0[:12]}..{case.b1[:12]} reaches the bed: "
+            + ", ".join(delta.classes)
+        )
+        assert "src-leaf" in found.reason
+
+    def test_a_main_delta_of_a_hostless_test_module_carries(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_hostless_test_change)
+        assert gs.plan(case.repo, case.b0, case.b1).bed is False
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+
+    def test_a_main_delta_editing_a_measured_matrix_carries(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_matrix_change)
+        delta = gs.plan(case.repo, case.b0, case.b1)
+        assert delta.classes == ["tests-leaf"]
+        assert delta.bed is False
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+
+    def test_a_candidate_whose_base_is_not_behind_the_new_base_is_skipped(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        _git(case.repo, "checkout", "-q", "-b", "side", case.b0)
+        side = _commit_file(case.repo, "docs/side.md", "side\n", "side")
+        _git(case.repo, "checkout", "-q", "landing")
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, side)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == f"base {side[:12]} is not behind {case.b1[:12]}"
+
+    def test_a_candidate_with_an_unknown_base_is_skipped_and_the_next_carries(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, _live_tree(case.repo, "unknown base"), "f" * 40, written_at=_when(2))
+        _stamp_at(root, case.t0, case.b0, written_at=_when(1))
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+
+    @pytest.mark.parametrize("exc", [gs.GateScopeError, gt.UnknownGoalError, gt.GateError])
+    def test_an_oracle_failure_counts_as_a_bed_lane_and_the_scan_continues(
+        self, tmp_path, monkeypatch, exc
+    ):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        b2, t2 = _rebase_again(case, _second_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t1, case.b1, written_at=_when(2))
+        _stamp_at(root, case.t0, case.b0, written_at=_when(1))
+        real = gs.plan
+        failed: "list[str]" = []
+
+        def plan(repo, base, tip, env=None):
+            if base == case.b1:
+                failed.append(base)
+                raise exc("the oracle failed")
+            return real(repo, base, tip, env)
+
+        monkeypatch.setattr(gs, "plan", plan)
+        found = self._carry(case, tree=t2, base=b2)
+        assert failed == [case.b1], "the newest candidate's oracle ran, and failed"
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+        assert found.promotion == "carried"
+
+    def test_a_red_on_the_same_patch_after_a_rebase_blocks_the_carry(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        b2, t2 = _rebase_again(case, _second_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        assert self._carry(case, tree=t2, base=b2).stamp is not None, "the control carries"
+        _red_at(root, case.t1, case.b1)
+        found = self._carry(case, tree=t2, base=b2)
+        assert found.stamp is None
+        assert found.reason == (
+            f"the lane went red on this patch at tree {case.t1[:12]} after a rebase"
+        )
+
+    def test_the_ninth_red_marker_still_blocks(self, tmp_path, monkeypatch):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        b2, t2 = _rebase_again(case, _second_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        _red_at(root, case.t1, case.b1, written_at=_when(0))  # the matching one, oldest
+        others = _other_patch_trees(case.repo, case.b0, 8)
+        for n, other in enumerate(others, start=1):
+            _red_at(root, other, case.b0, written_at=_when(n))
+        calls = _recorded_replays(monkeypatch)
+        found = self._carry(case, tree=t2, base=b2)
+        assert {(case.b0, other, b2) for other in others} <= set(calls), "every red was replayed"
+        assert (case.b1, case.t1, b2) in calls, "the matching marker was visited"
+        assert found.stamp is None
+        assert found.reason == (
+            f"the lane went red on this patch at tree {case.t1[:12]} after a rebase"
+        )
+
+    def test_a_red_marker_whose_base_is_unknown_refuses(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        _red_at(root, _live_tree(case.repo, "red"), "f" * 40)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == f"a red marker's base {'f' * 12} cannot be placed; no carry"
+
+    def test_a_red_marker_whose_tree_is_unknown_refuses(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        _red_at(root, "f" * 40, case.b0)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == (
+            f"a red marker for this key cannot be replayed (tree {'f' * 12}); no carry"
+        )
+
+    def test_a_red_marker_without_a_base_does_not_refuse(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0)
+        _red_at(root, _live_tree(case.repo, "old red"), None)
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+
+    def test_only_the_newest_eight_candidates_are_tried(self, tmp_path, monkeypatch):
+        assert gt.CARRY_CAP == 8
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0, written_at=_when(0))  # the only one that replays
+        others = _other_patch_trees(case.repo, case.b0, 8)
+        for n, other in enumerate(others, start=1):
+            _stamp_at(root, other, case.b0, written_at=_when(n))
+        calls = _recorded_replays(monkeypatch)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert found.reason == f"the patch differs on {case.b1[:12]}"
+        assert {tree0 for _b0, tree0, _b1 in calls} == set(others)
+
+    def test_the_newest_eight_include_the_carrying_one(self, tmp_path):
+        """The control: eight candidates in all, the carrying one the oldest, carry."""
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _stamp_at(root, case.t0, case.b0, written_at=_when(0))
+        for n, other in enumerate(_other_patch_trees(case.repo, case.b0, 7), start=1):
+            _stamp_at(root, other, case.b0, written_at=_when(n))
+        found = self._carry(case)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+
+    def test_the_plan_for_one_base_pair_is_computed_once(self, tmp_path, monkeypatch):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        [other] = _other_patch_trees(case.repo, case.b0, 1)
+        _stamp_at(root, case.t0, case.b0, written_at=_when(1))
+        _stamp_at(root, other, case.b0, written_at=_when(2))
+        replayed: "list[str]" = []
+
+        def replays(repo, base0, tree0, base1):
+            replayed.append(tree0)
+            return case.t1
+
+        planned: "list[tuple[str, str]]" = []
+        bed_plan = gs.Plan(
+            base_sha=case.b0,
+            tip_sha=case.b1,
+            tree="e" * 40,
+            live=[],
+            stamped=[K],
+            bed=True,
+            classes=["src-leaf"],
+        )
+
+        def plan(repo, base, tip, env=None):
+            planned.append((base, tip))
+            return bed_plan
+
+        monkeypatch.setattr(gt, "replays_to", replays)
+        monkeypatch.setattr(gs, "plan", plan)
+        found = self._carry(case)
+        assert replayed == [other, case.t0], "both candidates replayed, the newest first"
+        assert planned == [(case.b0, case.b1)]
+        assert found.stamp is None
+        assert found.reason == (
+            f"main's delta {case.b0[:12]}..{case.b1[:12]} reaches the bed: src-leaf"
+        )
+
+    def test_a_witnessed_promotion_across_bases_wins_before_the_carry(self, tmp_path, monkeypatch):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        blob = _measure(case.repo, '{"as_of": "2026-10-20", "rows": [1]}\n')
+        gt.write_stamp(
+            root, tree=case.t1, key=K, base=case.b0, measured={SUPPORT: blob}, checkout="/x"
+        )
+        _git(case.repo, "commit", "-qam", "measured")
+        measured_tree = tree_hash(case.repo)
+
+        def never(*_args, **_kw):
+            raise AssertionError("the carry ran")
+
+        monkeypatch.setattr(gt, "replays_to", never)
+        monkeypatch.setattr(gs, "plan", never)
+        found = self._carry(case, tree=measured_tree)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t1
+        assert found.promotion == "witnessed"
+
+
+def _carried_run(tmp_path, monkeypatch=None, runner=None) -> "tuple[_Rebased, Path, FakeRunner]":
+    """Build a landing rebased over a docs commit with K stamped at (T0, B0); return the parts."""
+    case = _rebased_landing(tmp_path, main_change=_docs_change)
+    root = gt.stamps_root(case.repo, gt.STORE)
+    _stamp_at(root, case.t0, case.b0)
+    return case, root, runner or FakeRunner()
+
+
+def _carried_line(case: _Rebased) -> str:
+    return (
+        f"{K} … already stamped (promoted from {case.t0[:12]}: the patch replays onto "
+        f"{case.b1[:12]}, main's delta {case.b0[:12]}..{case.b1[:12]} has no bed lane)"
+    )
+
+
+class TestCarryInTheRunner:
+    """The runner scans for a carry with no lock held, then writes it after re-validating."""
+
+    def test_gate_tip_after_a_rebase_carries_the_bed_stamp_and_prints_why(self, tmp_path):
+        case, root, runner = _carried_run(tmp_path)
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 0
+        assert _carried_line(case) in opts.out.getvalue()
+        assert K not in runner.keys, "the carried lane never ran"
+        stamp = gt.exact_stamp(root, case.t1, K)
+        assert stamp is not None
+        assert stamp.promoted_from == case.t0
+        assert stamp.base == case.b1
+
+    def test_the_push_check_then_finds_the_carried_stamp_without_loading_the_store(
+        self, tmp_path, monkeypatch
+    ):
+        case, _root, runner = _carried_run(tmp_path)
+        assert gt.run(_options(case.repo, runner)) == 0
+
+        def never(_root):
+            raise AssertionError("the push check loaded the store")
+
+        monkeypatch.setattr(gt, "load_store", never)
+        head = _git(case.repo, "rev-parse", "HEAD").strip()
+        opts = gt.Options(repo=case.repo, runner=FakeRunner(), out=io.StringIO())
+        assert gt.pre_push(opts, _branch("refs/heads/landing", head)) == 0
+
+    def test_a_marker_changed_between_the_scan_and_the_lock_abandons_the_carry(
+        self, tmp_path, monkeypatch
+    ):
+        case, root, runner = _carried_run(tmp_path)
+        other = _live_tree(case.repo, "other")
+        marker = _red_at(root, other, None, written_at=_when(1))
+
+        def rewrite():
+            record = json.loads(marker.read_text())
+            record["base"] = case.b0
+            gate_stamp_common.write_atomically(marker, json.dumps(record))
+
+        injected = _inject_on_promotion(monkeypatch, K, rewrite)
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 0
+        out = opts.out.getvalue()
+        assert injected == [K]
+        assert f"{K} … carry abandoned (a red marker changed during the scan)" in out
+        assert _carried_line(case) not in out
+        assert K in runner.keys, "the lane ran"
+        stamp = gt.exact_stamp(root, case.t1, K)
+        assert stamp is not None
+        assert stamp.promoted_from is None
+
+    def test_a_marker_added_between_the_scan_and_the_lock_abandons_the_carry(
+        self, tmp_path, monkeypatch
+    ):
+        case, root, runner = _carried_run(tmp_path)
+        other = _live_tree(case.repo, "other")
+        injected = _inject_on_promotion(monkeypatch, K, lambda: _red_at(root, other, None))
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 0
+        assert injected == [K]
+        assert f"{K} … carry abandoned (a red marker changed during the scan)" in (
+            opts.out.getvalue()
+        )
+        assert K in runner.keys, "the lane ran"
+        assert isinstance(gt.read_entry(gt.stamp_path(root, other, K)), gt.Red), "kept"
+
+    def test_a_red_at_the_exact_path_under_the_lock_runs_the_lane(self, tmp_path, monkeypatch):
+        case, root, _runner = _carried_run(tmp_path)
+        runner = FakeRunner(statuses={K: 1})
+        injected = _inject_on_promotion(monkeypatch, K, lambda: _red_at(root, case.t1, case.b1))
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 1
+        out = opts.out.getvalue()
+        assert injected == [K]
+        assert K in runner.keys, "the lane ran"
+        assert "carry abandoned" not in out
+        assert _carried_line(case) not in out
+        assert isinstance(gt.read_entry(gt.stamp_path(root, case.t1, K)), gt.Red)
+
+    def test_a_carried_stamp_lists_as_promoted_in_the_timings(self, tmp_path):
+        case, root, runner = _carried_run(tmp_path)
+        assert gt.run(_options(case.repo, runner)) == 0
+        rows = [line for line in gt.timings(case.repo, root, "HEAD") if line.endswith(K)]
+        assert len(rows) == 1
+        assert "promoted" in rows[0]
+
+    def test_an_unknown_promotion_line_raises(self, tmp_path):
+        stamp = gt.read_stamp(_stamp_at(tmp_path / "store", "a" * 40, "b" * 40))
+        assert stamp is not None
+        with pytest.raises(ValueError, match="unknown promotion"):
+            gt._promoted_line(stamp, "", "c" * 40)
+
+    def test_the_witnessed_promotion_line_names_the_measured_outputs(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        s_tree = tree_hash(repo)
+        blob = _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, LANE, tree=s_tree, measured={SUPPORT: blob})
+        _git(repo, "commit", "-qam", "measured")
+        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
+        assert status == 0
+        assert (
+            f"{LANE} … already stamped (promoted from {s_tree[:12]}: measured outputs witnessed)"
+            in out
+        )
+
+    def test_no_replay_or_plan_runs_under_any_lock(self, tmp_path, monkeypatch):
+        case, root, runner = _carried_run(tmp_path)
+        held: "list[bool]" = []
+        asked: "list[str]" = []
+        real_lock, real_replays, real_plan = gt.store_lock, gt.replays_to, gs.plan
+
+        @contextlib.contextmanager
+        def lock(at, **kw):
+            with real_lock(at, **kw):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
+        def replays(*args):
+            assert not held, "replays_to ran under the store lock"
+            asked.append("replay")
+            return real_replays(*args)
+
+        def plan(*args):
+            assert not held, "the oracle ran under the store lock"
+            asked.append("plan")
+            return real_plan(*args)
+
+        monkeypatch.setattr(gt, "store_lock", lock)
+        monkeypatch.setattr(gt, "replays_to", replays)
+        monkeypatch.setattr(gs, "plan", plan)
+        assert gt.run(_options(case.repo, runner)) == 0
+        assert "replay" in asked, "the carry was asked"
+        stamp = gt.exact_stamp(root, case.t1, K)
+        assert stamp is not None
+        assert stamp.promoted_from == case.t0
+
+
+def _prune(repo: Path) -> None:
+    """Expire every reflog of *repo* and prune what nothing else reaches, now."""
+    _git(repo, "reflog", "expire", "--expire=now", "--all")
+    _git(repo, "prune", "--expire=now")
+
+
+def _red_with_patch(root: Path, repo: Path, tree: str, base: str, written_at: str = "") -> Path:
+    """Write a red marker for (tree, K) against *base*, its patch sidecar beside it."""
+    path = gt.write_red(root, tree=tree, key=K, checkout="/x", base=base, repo=repo)
+    return _at(path, written_at) if written_at else path
+
+
+def _pruned_red(tmp_path: Path, *, sidecar: bool) -> "tuple[_Rebased, Path, Path, str, str]":
+    """A landing stamped at (T0, B0), red at (T1, B1), rebased again to (T2, B2), T1 pruned.
+
+    T0 is kept by a scratch ref. Returns (case, root, the marker, B2, T2).
+    """
+    case = _rebased_landing(tmp_path, main_change=_docs_change)
+    root = gt.stamps_root(case.repo, gt.STORE)
+    _git(case.repo, "update-ref", "refs/keep/t0", case.plan0.tip_sha)
+    _stamp_at(root, case.t0, case.b0)
+    if sidecar:
+        marker = _red_with_patch(root, case.repo, case.t1, case.b1)
+        assert gt.sidecar(marker).is_file()
+    else:
+        marker = _red_at(root, case.t1, case.b1)
+        assert not gt.sidecar(marker).exists()
+    b2, t2 = _rebase_again(case, _second_docs_change)
+    _prune(case.repo)
+    assert gt._pruned(case.repo, case.t1), "the red tree is pruned"
+    assert not gt._pruned(case.repo, case.t0), "the stamped tree is kept"
+    return case, root, marker, b2, t2
+
+
+class TestRedMarkerAfterItsTreeIsPruned:
+    """A red marker with a base stays decidable, and on disk, after its tree is pruned."""
+
+    @staticmethod
+    def _carry(case, root, tree, base):
+        return gt.lookup(
+            case.repo, root, tree, K, base=base, carry=gt.CarryContext(case.repo, base)
+        )
+
+    def test_the_sidecar_decides_and_invalidate_keeps_the_marker(self, tmp_path):
+        case, root, marker, b2, t2 = _pruned_red(tmp_path, sidecar=True)
+        pruned_stamp = _stamp_at(root, "f" * 40, case.b0)
+        refused = f"the lane went red on this patch at tree {case.t1[:12]} after a rebase"
+        assert self._carry(case, root, t2, b2).reason == refused
+        assert gt.invalidate(case.repo, root, K, tree=t2) == [pruned_stamp]
+        assert gt.invalidate(case.repo, root, K, tree=_live_tree(case.repo, "other")) == []
+        assert marker.is_file()
+        assert gt.sidecar(marker).is_file()
+        found = self._carry(case, root, t2, b2)
+        assert found.stamp is None
+        assert found.reason == refused
+
+    def test_a_marker_without_a_sidecar_on_a_pruned_tree_cannot_be_replayed(self, tmp_path):
+        case, root, marker, b2, t2 = _pruned_red(tmp_path, sidecar=False)
+        refused = f"a red marker for this key cannot be replayed (tree {case.t1[:12]}); no carry"
+        assert self._carry(case, root, t2, b2).reason == refused
+        assert gt.invalidate(case.repo, root, K, tree=t2) == []
+        assert marker.is_file()
+        assert self._carry(case, root, t2, b2).reason == refused
+
+    def test_a_marker_without_a_base_on_a_pruned_tree_is_deleted(self, tmp_path):
+        root = _store(tmp_path)
+        repo = _fresh_repo(tmp_path)
+        marker = gt.write_red(root, tree="f" * 40, key=K, checkout="/x")
+        assert gt.invalidate(repo, root, K, tree=tree_hash(repo)) == [marker]
+        assert not marker.exists()
+
+    def test_an_unrelated_patchs_marker_on_a_pruned_tree_does_not_refuse(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _git(case.repo, "update-ref", "refs/keep/t0", case.plan0.tip_sha)
+        _stamp_at(root, case.t0, case.b0)
+        (other,) = _other_patch_trees(case.repo, case.b0, 1)
+        marker = _red_with_patch(root, case.repo, other, case.b0)
+        _git(case.repo, "branch", "-q", "-D", "other0")
+        _prune(case.repo)
+        assert gt._pruned(case.repo, other)
+        found = self._carry(case, root, case.t1, case.b1)
+        assert found.stamp is not None
+        assert found.stamp.tree == case.t0
+        gt.sidecar(marker).unlink()
+        assert self._carry(case, root, case.t1, case.b1).reason == (
+            f"a red marker for this key cannot be replayed (tree {other[:12]}); no carry"
+        ), "the control: without its sidecar the marker refuses"
+
+    def test_a_green_lane_on_the_markers_tree_removes_the_marker_and_its_sidecar(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        marker = _red_with_patch(root, case.repo, case.t1, case.b1)
+        runner = FakeRunner()
+        assert gt.run(_options(case.repo, runner)) == 0
+        assert K in runner.keys, "the lane ran"
+        assert isinstance(gt.read_entry(marker), gt.Stamp)
+        assert not gt.sidecar(marker).exists()
+
+    def test_the_sidecar_never_surfaces_in_the_store(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        marker = _red_with_patch(root, case.repo, case.t1, case.b1)
+        store = gt.load_store(root)
+        assert [r.path for r in store.red] == [marker]
+        assert store.unreadable == []
+        assert list(gt.marker_snapshot(store, K)) == [marker]
+
+    def test_a_red_then_pruned_then_interrupted_rerun_still_runs_the_lane(self, tmp_path):
+        case = _rebased_landing(tmp_path, main_change=_docs_change)
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _git(case.repo, "update-ref", "refs/keep/t0", case.plan0.tip_sha)
+        _stamp_at(root, case.t0, case.b0)
+        red = FakeRunner(statuses={K: 1})
+        assert gt.run(_options(case.repo, red, force=True)) == 1
+        marker = gt.stamp_path(root, case.t1, K)
+        assert isinstance(gt.read_entry(marker), gt.Red)
+        assert gt.sidecar(marker).is_file(), "the run wrote the patch beside the marker"
+        _b2, t2 = _rebase_again(case, _second_docs_change)
+        _prune(case.repo)
+        assert gt._pruned(case.repo, case.t1)
+        gt.invalidate(case.repo, root, K, tree=t2)  # an interrupted rerun: no result
+        runner = FakeRunner()
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 0
+        assert K in runner.keys, "the lane ran: nothing carried"
+        assert (
+            f"{K} … no carry: the lane went red on this patch at tree {case.t1[:12]} after a rebase"
+            in opts.out.getvalue()
+        )
+        assert isinstance(gt.read_entry(marker), gt.Red), "the old marker is still on disk"
+        assert gt.sidecar(marker).is_file()
+        assert gt.exact_stamp(root, t2, K) is not None
+
+
+class TestCarryReasons:
+    """A miss names the newest candidate's first failed condition; the runner says it."""
+
+    def test_the_reason_is_the_newest_candidates(self, tmp_path):
+        case = _rebased_landing(
+            tmp_path,
+            main_change=_docs_change,
+            amend=lambda repo: _write(repo, "src/otto/host/unix.py", "VALUE = 3\n"),
+        )
+        root = gt.stamps_root(case.repo, gt.STORE)
+        _git(case.repo, "checkout", "-q", "-b", "side", case.b0)
+        side = _commit_file(case.repo, "docs/side.md", "side\n", "side")
+        _git(case.repo, "checkout", "-q", "landing")
+        _stamp_at(root, case.t0, case.b0, written_at=_when(1))  # older: the patch differs
+        _stamp_at(root, _live_tree(case.repo, "x"), side, written_at=_when(2))  # newest
+        ctx = gt.CarryContext(case.repo, case.b1)
+        found = gt.lookup(case.repo, root, case.t1, K, base=case.b1, carry=ctx)
+        assert found.stamp is None
+        assert found.reason == f"base {side[:12]} is not behind {case.b1[:12]}"
+        assert (case.b0, case.t0, case.b1) in ctx.replays, "the older candidate was tried too"
+
+    def test_the_runner_says_why_nothing_carried_before_the_lane_runs(self, tmp_path):
+        case = _rebased_landing(
+            tmp_path,
+            main_change=_docs_change,
+            amend=lambda repo: _write(repo, "src/otto/host/unix.py", "VALUE = 3\n"),
+        )
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        runner = FakeRunner()
+        opts = _options(case.repo, runner)
+        assert gt.run(opts) == 0
+        out = opts.out.getvalue()
+        said = f"{K} … no carry: the patch differs on {case.b1[:12]}"
+        assert said in out
+        assert out.index(said) < out.index(f"{K} …\n"), "said before the lane runs"
+        assert K in runner.keys
+
+
+class TestRunnerReads:
+    """What the runner reads per lane: an exact hit never loads the store; a dry run carries."""
+
+    def test_an_exact_hit_never_loads_the_store(self, tmp_path, monkeypatch):
+        case, _root, runner = _carried_run(tmp_path)
+        assert gt.run(_options(case.repo, runner)) == 0
+
+        def never(_root):
+            raise AssertionError("the runner loaded the store for an exact hit")
+
+        monkeypatch.setattr(gt, "load_store", never)
+        rerun = FakeRunner()
+        opts = _options(case.repo, rerun)
+        assert gt.run(opts) == 0
+        assert f"{K} … already stamped\n" in opts.out.getvalue()
+        assert rerun.keys == []
+
+    def test_a_dry_run_previews_a_carry_without_writing_it(self, tmp_path):
+        case, root, runner = _carried_run(tmp_path)
+        entries = lambda: {p: b for p, b in _snapshot(root).items() if p.name != ".lock"}  # noqa: E731
+        before = entries()
+        opts = _options(case.repo, runner, dry_run=True)
+        gt.run(opts)
+        assert f"{K} … would carry (promoted from {case.t0[:12]})" in opts.out.getvalue()
+        assert entries() == before, "nothing written"
+        assert runner.keys == []

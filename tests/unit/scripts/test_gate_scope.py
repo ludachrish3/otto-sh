@@ -2612,6 +2612,15 @@ def test_plan_names_the_tip_in_the_live_line_and_the_stamped_keys(tmp_path):
     assert p.bed is True
 
 
+def test_a_plan_names_its_ranges_classes(tmp_path):
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "main").strip()
+    docs = _git(repo, "rev-parse", "feature~1").strip()  # the feature's docs-only commit
+    assert gs.plan(repo, base, docs, git_env(repo)).classes == ["docs"]
+    tip = _git(repo, "rev-parse", "feature").strip()  # then a src and test commit
+    assert "src-leaf" in gs.plan(repo, base, tip, git_env(repo)).classes
+
+
 def test_an_empty_range_is_a_plan_of_the_live_line_alone(tmp_path):
     repo = _repo(tmp_path)
     base = _git(repo, "rev-parse", "main").strip()
