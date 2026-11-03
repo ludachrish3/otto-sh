@@ -333,7 +333,7 @@ def test_two_processes_record_one_line(tmp_path):
     so only the re-read under the lock keeps the second from appending."""
     key = _key()
     f = tmp_path / "known_hosts"
-    ctx = multiprocessing.get_context("fork")
+    ctx = multiprocessing.get_context()
     ready = ctx.Semaphore(0)
     results = ctx.Queue()
     store = KnownHosts(f)
