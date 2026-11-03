@@ -23,6 +23,7 @@ from otto.host.command_frame import SessionMarkers, ZephyrFrame
 from otto.host.session import TelnetSession
 from otto.utils import Status
 from tests.unit.host._session_feed import FeedAfterWriteMixin
+from tests.unit.host._telnet_fakes import stream_client
 
 # Readiness ceiling EmbeddedHost passes for its slow QEMU telnet console; the
 # mock mirrors it so the session's behaviour matches production.
@@ -41,6 +42,10 @@ class MockZephyrSession(FeedAfterWriteMixin, TelnetSession):
         super().__init__(
             reader=None,
             writer=None,
+            # Holds no streams (the I/O primitives are in-memory), so this
+            # client's close would be a no-op by design; close() is overridden
+            # anyway.
+            client=stream_client(None, None),
             command_frame=ZephyrFrame(),
             init_timeout=_EMBEDDED_INIT_TIMEOUT,
         )

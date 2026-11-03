@@ -25,8 +25,8 @@ pytestmark = pytest.mark.interpreter_agnostic
 _MAKEFILE = (CHECKOUT_ROOT / "Makefile").read_text()
 
 M_QUICK = (
-    "not stability and not busybox and not conformance and not kmodcov and not browser"
-    " and not interpreter_agnostic"
+    "not stability and not busybox and not conformance and not kmodcov and not release_proof"
+    " and not browser and not interpreter_agnostic"
 )
 # A plain unit module: ordinary tests, no family mark, no serial_timing test.
 # Both quick legs would deselect a family-marked module (the stamp test is one).

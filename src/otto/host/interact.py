@@ -810,6 +810,8 @@ async def _run_bridge(
 
         line_buffer = _LineBuffer(on_output_line)
 
+        stdin_task: "asyncio.Task[None] | None" = None
+        remote_task: "asyncio.Task[None] | None" = None
         try:
             stdin_task = asyncio.create_task(_pump_stdin_to_remote(stdin_queue, write_remote))
             remote_task = asyncio.create_task(_pump_remote_to_stdout(read_remote, line_buffer))
@@ -826,29 +828,49 @@ async def _run_bridge(
                 # reach `line_buffer` and get flushed to the session log. Without
                 # this, cancelling immediately forfeits the read-buffer contents.
                 await asyncio.wait([remote_task], timeout=0.2)
-            for task in pending:
-                if task.done():
-                    continue
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
         finally:
             shutdown.set()
             try:
-                # asyncio.wait_for cancels its own internal waiter under a
-                # CancelledError raised while THIS await is suspended (e.g.
-                # a forced-exit re-cancel from asyncio.run's finalization) —
-                # that CancelledError is a BaseException, not an Exception,
-                # so it would escape a bare contextlib.suppress(...) here and
-                # skip _restore_terminal below. Keep the drain best-effort
-                # (suppress its own outcomes) but guarantee the restore runs
-                # regardless via the inner finally.
-                with contextlib.suppress(asyncio.TimeoutError, Exception):
-                    await asyncio.wait_for(asyncio.shield(reader_future), timeout=0.5)
-                with contextlib.suppress(Exception):
-                    uninstall_sigwinch()
+                # The caller closes the client once this returns, and closing
+                # a single-client console reads the same stream to drain it.
+                # A remote pump still parked in its read would collide with
+                # that drain, so both pumps are cancelled and awaited on every
+                # exit, a cancellation of the bridge included. Cancel both
+                # before joining either, so neither outlives the other's join.
+                #
+                # The join is asyncio.wait, which never raises a pump's own
+                # outcome, so a CancelledError out of it is the caller's and
+                # propagates. It is re-raised only once the pumps have ended:
+                # a cancelled pump still unwinding holds the reader's waiter.
+                pumps = [task for task in (stdin_task, remote_task) if task is not None]
+                for task in pumps:
+                    task.cancel()
+                if pumps:
+                    try:
+                        await asyncio.wait(pumps)
+                    except asyncio.CancelledError:
+                        await asyncio.wait(pumps)
+                        raise
+                    finally:
+                        for task in pumps:
+                            if task.done() and not task.cancelled():
+                                task.exception()  # retrieved: a pump's error is not the bridge's
             finally:
-                _restore_terminal(stdin_fd, saved_attrs)
+                try:
+                    # asyncio.wait_for cancels its own internal waiter under a
+                    # CancelledError raised while THIS await is suspended (e.g.
+                    # a forced-exit re-cancel from asyncio.run's finalization) —
+                    # that CancelledError is a BaseException, not an Exception,
+                    # so it would escape a bare contextlib.suppress(...) here and
+                    # skip _restore_terminal below. Keep the drain best-effort
+                    # (suppress its own outcomes) but guarantee the restore runs
+                    # regardless via the inner finally.
+                    with contextlib.suppress(asyncio.TimeoutError, Exception):
+                        await asyncio.wait_for(asyncio.shield(reader_future), timeout=0.5)
+                    with contextlib.suppress(Exception):
+                        uninstall_sigwinch()
+                finally:
+                    _restore_terminal(stdin_fd, saved_attrs)
     return remote_ended
 
 

@@ -81,7 +81,7 @@ async def _close(server) -> None:
     per-test loop would otherwise tear down uncancelled — leaking its
     socket to a bare ``__del__`` that turns into a hard error under this
     project's ``filterwarnings = ["error"]``. Same shape as
-    ``tests/unit/host/test_console_quiesce.py``'s fake server.
+    ``tests/unit/host/test_console_release_on_failed_init.py``'s fake server.
     """
     server.close()
     for task in list(server._test_handlers):

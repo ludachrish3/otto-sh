@@ -9,6 +9,8 @@ from otto.host.command_frame import ZephyrFrame
 from otto.host.errors import ConsoleError
 from otto.host.session import HostSession, TelnetSession
 from otto.host.session_setup import SessionSetupError
+from otto.host.telnet import ReadGate
+from tests.unit.host._telnet_fakes import stream_client
 from tests.unit.host.test_session import MockSession
 
 # The `landed` fixture (a MockSession past its bash landing handshake) lives
@@ -109,6 +111,7 @@ async def test_console_login_runs_the_client_sequence_on_a_console_session():
         # brief's stub needs it too, or construction itself raises
         # AttributeError before console_login() is ever reached.
         logged_in = False
+        read_gate = ReadGate()
 
         async def login_sequence(self):
             calls.append("login")
@@ -135,6 +138,7 @@ async def test_console_login_disables_the_handshake_retry_after_a_successful_log
     # a session built over an already-logged-in client.
     class _Client:
         logged_in = False
+        read_gate = ReadGate()
 
         async def login_sequence(self):
             pass
@@ -153,7 +157,8 @@ async def test_console_login_is_refused_off_a_console_term():
     # M1: the refusal must name THIS host and term — TelnetSession/
     # ShellSession only know their own session identity, not the host, so
     # HostSession.console_login() re-raises with host_id and term.
-    shell = TelnetSession(reader=object(), writer=object())
+    reader, writer = object(), object()
+    shell = TelnetSession(reader=reader, writer=writer, client=stream_client(reader, writer))
     handle = HostSession(
         "default",
         shell,

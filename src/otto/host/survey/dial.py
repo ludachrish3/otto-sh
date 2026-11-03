@@ -130,6 +130,7 @@ async def dial_direct(ip: str, port: int, *, timeout: float) -> DialOutcome:
         data = b""
         reset = True
     finally:
+        # Reads a banner to classify a port, not a console session: plain close, never a drain.
         with teardown_step("survey", "dial close"):
             writer.close()
     with teardown_step("survey", "dial wait_closed"):

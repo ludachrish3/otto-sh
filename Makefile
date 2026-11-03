@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -190,15 +190,15 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 # the plain stability soak); `not chaos` closes the same hole for the newer
 # chaos lane in the same change. See
 # tests/unit/test_tier_marker_invariants.py's G7.
-M_UNIX := integration and not embedded and not stability and not chaos and not kmodcov
-M_EMBEDDED := embedded and not stability and not chaos and not kmodcov
-M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kmodcov
+M_UNIX := integration and not embedded and not stability and not chaos and not kmodcov and not release_proof
+M_EMBEDDED := embedded and not stability and not chaos and not kmodcov and not release_proof
+M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kmodcov and not release_proof
 # The coverage-python selection. One variable, because the coverage stamp
 # (scripts/coverage_stamp.py) records the selection `make coverage` gated and
 # the Makefile passes it there: two spellings would let the stamp describe a
 # selection the legs did not run. The serial twin is `serial_timing and
 # $(M_COVERAGE)`; the parallel leg appends `and not serial_timing`.
-M_COVERAGE := not stability and not browser and not busybox and not conformance and not kmodcov
+M_COVERAGE := not stability and not browser and not busybox and not conformance and not kmodcov and not release_proof
 # The bed half of that selection (#797): tests/integration, whose conftest
 # marks every item, plus the e2e tests that declare integration or embedded.
 # Built on M_COVERAGE so the two cannot drift apart; M_HOSTLESS is the other
@@ -212,7 +212,7 @@ M_COVERAGE_BED := (integration or embedded) and $(M_COVERAGE)
 # `interpreter_agnostic` family runs in `quick-guards` instead, once, and
 # `browser` (Playwright) tests are their own pytest process under
 # `make dashboard`, never co-selected with the rest.
-M_QUICK := not stability and not busybox and not conformance and not kmodcov and not browser and not interpreter_agnostic
+M_QUICK := not stability and not busybox and not conformance and not kmodcov and not release_proof and not browser and not interpreter_agnostic
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
 # busybox.net and RAISES rather than skipping when it can't (deliberate — see
@@ -259,6 +259,12 @@ M_QUICK := not stability and not busybox and not conformance and not kmodcov and
 # source tree) and FAIL where it is absent, because a release must be able to
 # trust a green. `make kmodcov` is the opt-in lane; `make release` runs it.
 # Pinned by tests/unit/test_tier_marker_invariants.py's G12 family.
+#
+# `not release_proof` rides beside it, everywhere: a `release_proof` module is a bed
+# proof that only its own lease-taking target runs, and `make release-campaign`
+# invokes that target. One today: `make console-release-bed` (#386), whose ~17
+# minutes must never ride coverage-bed or a tip. Pinned by
+# tests/unit/test_tier_marker_invariants.py (the release_proof guards).
 
 # `browser` (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
@@ -446,10 +452,11 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # tests/unit/test_tier_marker_invariants.py (G13) and exercised for real by
 # tests/unit/test_make_release_lanes.py; the release census in
 # tests/unit/test_lane_invariants.py proves no collected test is left out.
-release-campaign: ## (Build & Release) Run every lane the default gates exclude, once each: stability (all tiers, COUNT=1), dashboard-soak, hermetic conformance over EVERY cell, then the BusyBox artifact tier — not the chaos lanes (on demand only; see docs/architecture/quality-gates.md). Invoked by `make release`; dev VM only (lab VMs + Zephyr guests). Measured at COUNT=1 on the dev VM: stability ~7 min, dashboard-soak ~1 min, conformance ~30 s, busybox ~15 s — the whole campaign ≈ 9 min (measured 2026-10-14).
+release-campaign: ## (Build & Release) Run every lane the default gates exclude, once each: stability (all tiers, COUNT=1), the console-release bed proof, dashboard-soak, hermetic conformance over EVERY cell, then the BusyBox artifact tier — not the chaos lanes (on demand only; see docs/architecture/quality-gates.md). Invoked by `make release`; dev VM only (lab VMs + Zephyr guests). Measured at COUNT=1 on the dev VM: stability ~7 min, dashboard-soak ~1 min, conformance ~30 s, busybox ~15 s (measured 2026-10-14); console-release-bed ~17 min (estimated from the bed diagnostic's per-cycle times, not yet measured as a lane) — the whole campaign ≈ 26 min.
 	$(call bed_acquire,release-campaign)
-	@$(SAY) "release campaign: every excluded lane, once (stability, soak, conformance=all, busybox; chaos is on demand only)"
+	@$(SAY) "release campaign: every excluded lane, once (stability, console-release-bed, soak, conformance=all, busybox; chaos is on demand only)"
 	@$(MAKE) stability COUNT=1
+	@$(MAKE) console-release-bed
 	@$(MAKE) dashboard-soak
 	@OTTO_CONFORMANCE_CELLS=all $(MAKE) conformance
 	@$(MAKE) busybox
@@ -1044,15 +1051,15 @@ coverage: coverage-stamp-start coverage-python coverage-ts ## Run BOTH language 
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not kmodcov and not serial_timing" $(call junitxml,coverage-unit)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not kmodcov and not release_proof and not serial_timing" $(call junitxml,coverage-unit)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance and not kmodcov and not release_proof" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	$(call bed_acquire,coverage-integration)
 	$(call bed_reap)
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kmodcov and not serial_timing" $(call junitxml,coverage-integration)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kmodcov and not release_proof and not serial_timing" $(call junitxml,coverage-integration)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kmodcov and not release_proof" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
 	$(call bed_reap)
 	$(call bed_release)
 
@@ -1643,6 +1650,27 @@ stability-embedded: ## Cross-OS stability contract against real telnet/SSH targe
 	$(call bed_reap)
 	$(call bed_release)
 
+# The #386 bed proof; what it runs and how it judges a guest is its module's
+# docstring (tests/integration/host/test_console_release_bed.py). It is a proof,
+# not a soak, so it runs once, here, and `make release-campaign` invokes it. The
+# `release_proof` marker keeps it out of every other lane (see `not release_proof`
+# above). `-p no:randomly` keeps each guest's arms in file order. Each guest's
+# arms run serially on one worker (the per-device xdist group); the guests run
+# in parallel. About 17 minutes, estimated from the diagnostic's cycle times.
+console-release-bed: ## Run the #386 console-release bed proof (`release_proof`-marked; excluded from every default lane; what it runs: tests/integration/host/test_console_release_bed.py). Takes the bed lease. ~17 min (estimated). Invoked by `make release-campaign`. JUnit XML lands in reports/junit/console-release-bed/.
+	$(call bed_acquire,console-release-bed)
+	$(call bed_reap)
+	@$(SAY) "pytest: #386 console-release bed proof"
+	@$(LEAK_DETECT) uv run pytest \
+	    tests/integration/host/test_console_release_bed.py \
+	    -m "release_proof and embedded" \
+	    -p no:randomly \
+	    -p no:cacheprovider \
+	    --no-cov \
+	    $(call junitxml,console-release-bed)
+	$(call bed_reap)
+	$(call bed_release)
+
 chaos: ## Tier-3 chaos lane, unix legs: interrupt/SIGKILL/reboot scenarios on a leased bed host. Requires lab VMs and EXCLUSIVE bed use (never co-run with other bed lanes). JUnit XML in reports/junit/nox-chaos/.
 	$(call bed_acquire,chaos)
 	$(call bed_reap)
@@ -1723,7 +1751,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/unit tests/integration tests/e2e \
-	    -m "not browser and not chaos and not busybox and not conformance and not kmodcov and not serial_timing" \
+	    -m "not browser and not chaos and not busybox and not conformance and not kmodcov and not release_proof and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -1731,7 +1759,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/unit tests/integration tests/e2e \
-	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kmodcov" \
+	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kmodcov and not release_proof" \
 	    -n0 \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \

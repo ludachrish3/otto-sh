@@ -1574,6 +1574,7 @@ member	otto.host:ConnectionManager.ip	property:g--
 member	otto.host:ConnectionManager.login_target	property:g--
 member	otto.host:ConnectionManager.login_target_for	method	sync	PK:protocol:-
 member	otto.host:ConnectionManager.proxy_hops	property:g--
+member	otto.host:ConnectionManager.release_allowance	method	sync	PK:term:N
 member	otto.host:ConnectionManager.retries_failed_open	method	sync	PK:term:N
 member	otto.host:ConnectionManager.sftp	method	coroutine	-
 member	otto.host:ConnectionManager.sftp_as	method	coroutine	PK:user:-
@@ -2684,7 +2685,7 @@ member	otto.host:SuppressCommandOutput.host	field
 abstract	otto.host:SuppressCommandOutput	-
 name	otto.host:TelnetSession	class
 mro	otto.host:TelnetSession	{otto.host:ShellSession}
-call	otto.host:TelnetSession	sync	PK:reader:- PK:writer:- PK:_owned_client:N PK:command_frame:N PK:init_timeout:N PK:write_chunk_size:I:0 PK:write_chunk_delay:F:0x0.0p+0 PK:shell_history:B:true PK:console_client:N PK:failure_context:S:""
+call	otto.host:TelnetSession	sync	PK:reader:- PK:writer:- PK:client:N PK:command_frame:N PK:init_timeout:N PK:write_chunk_size:I:0 PK:write_chunk_delay:F:0x0.0p+0 PK:shell_history:B:true PK:console_client:N PK:failure_context:S:""
 member	otto.host:TelnetSession.alive	property:g--
 member	otto.host:TelnetSession.close	method	coroutine	-
 member	otto.host:TelnetSession.console_login	method	coroutine	-

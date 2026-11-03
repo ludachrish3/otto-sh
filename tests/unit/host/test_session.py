@@ -2454,6 +2454,8 @@ from otto.host.console import ConsoleClient
 from otto.host.errors import ConsoleError
 from otto.host.options import ConsoleOptions
 from otto.host.session import TelnetSession
+from otto.host.telnet import ReadGate
+from tests.unit.host._telnet_fakes import stream_client
 
 
 async def _noop(*a, **k): ...
@@ -2486,6 +2488,7 @@ def fake_console_connections() -> SimpleNamespace:
         writer=MagicMock(),
         options=ConsoleOptions(server="test1", port=4001, dial="ssh"),
         logged_in=True,
+        read_gate=ReadGate(),
     )
     return _console_connections(client)
 
@@ -2566,8 +2569,12 @@ async def test_the_exec_pool_backstop_still_refuses_on_a_console_term(fake_conso
 
 @pytest.mark.asyncio
 async def test_failed_handshake_names_the_console(monkeypatch):
+    reader, writer = object(), object()
     session = TelnetSession(
-        reader=object(), writer=object(), failure_context="console test1:4001 (dial=ssh)"
+        reader=reader,
+        writer=writer,
+        client=stream_client(reader, writer),
+        failure_context="console test1:4001 (dial=ssh)",
     )
     monkeypatch.setattr(session, "close", _noop)
     with pytest.raises(ConnectionError, match=r"console test1:4001 \(dial=ssh\)"):
@@ -2617,17 +2624,21 @@ async def test_telnet_read_returns_the_whole_match_when_it_ends_inside_a_charact
     """A byte pattern can match on a character's first byte (``.`` matches one
     byte), ending the read mid-``é``; the read waits for the rest of it, so the
     text holds the whole match — the next read does not start on its tail."""
-    session = TelnetSession(
-        reader=_ByteStreamTelnetReader([b"Code: \xc3", b"\xa9", b"\n$ "]), writer=object()
-    )
+    session = _telnet_session(_ByteStreamTelnetReader([b"Code: \xc3", b"\xa9", b"\n$ "]))
 
     assert await session.read_transport_until(re.compile("Code: .")) == f"Code: {_E_ACUTE}"
     assert await session.read_transport_until(re.compile("\n")) == "\n"
 
 
+def _telnet_session(reader: object, writer: object = None) -> TelnetSession:
+    """A TelnetSession over *reader*/*writer*, on a client holding the same streams."""
+    writer = object() if writer is None else writer
+    return TelnetSession(reader=reader, writer=writer, client=stream_client(reader, writer))
+
+
 def _ready_telnet_session(feeds: list[bytes]) -> TelnetSession:
     """A TelnetSession past its handshake, so ``expect()`` reads straight away."""
-    session = TelnetSession(reader=_ByteStreamTelnetReader(feeds), writer=object())
+    session = _telnet_session(_ByteStreamTelnetReader(feeds))
     session._initialized = True
     session._alive = True
     return session
@@ -2657,7 +2668,7 @@ async def test_telnet_expect_ending_on_an_invalid_sequence_leaves_the_next_byte_
 
 @pytest.mark.asyncio
 async def test_telnet_read_ending_inside_a_character_at_end_of_stream_shows_a_replacement():
-    session = TelnetSession(reader=_ByteStreamTelnetReader([b"Code: \xe2\x82"]), writer=object())
+    session = _telnet_session(_ByteStreamTelnetReader([b"Code: \xe2\x82"]))
 
     assert await session.read_transport_until(re.compile("Code: .")) == "Code: \ufffd"
 
@@ -2798,19 +2809,17 @@ class TestConsoleHandshakeFailure:
         )
 
     @pytest.mark.asyncio
-    async def test_a_failed_handshake_logs_the_console_out_exactly_once(self, monkeypatch):
-        """Teardown runs the client's close (logout, THEN release) once, even through the manager.
+    async def test_a_failed_handshake_releases_the_console_exactly_once(self, monkeypatch):
+        """Teardown runs the client's close once, even through the manager.
 
-        A refused login is not a handshake race, so the manager does not dial
-        the console again to retry it (that would type the password again).
+        A refused login started no shell, so the close owes no logout and
+        types nothing; it only releases the line. A refused login is not a
+        handshake race either, so the manager does not dial the console again
+        to retry it (that would type the password again).
         """
         client = _console_client(b"Login incorrect\r\ntest2 login: ")
         writer = client.writer
-
-        async def logout() -> None:
-            assert not writer.close.called, "the writer was closed before the logout could send EOF"
-
-        logout_spy = AsyncMock(side_effect=logout)
+        logout_spy = AsyncMock()
         monkeypatch.setattr(client, "logout", logout_spy)
         conn = _console_connections(client)
         mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
@@ -2819,7 +2828,7 @@ class TestConsoleHandshakeFailure:
         with pytest.raises(ConsoleError, match="login refused for 'test'"):
             await mgr._ensure_session()
 
-        logout_spy.assert_awaited_once()
+        logout_spy.assert_not_awaited()
         writer.close.assert_called_once()
         assert client.writer is None, "the console client released its transport"
         assert conn.console_dials == 1, "a refused login must not be retried"
@@ -2871,26 +2880,31 @@ async def test_an_echoed_password_never_reaches_the_handshake_message(monkeypatc
 class TestOpenBudget:
     """How long opening the default session can take to report a shell that never became ready."""
 
-    def test_two_attempts_of_connect_and_deadline_and_the_backoff(self):
+    def test_two_attempts_of_connect_deadline_and_release_and_the_backoff(self):
         conn = MagicMock()
         conn.connect_allowance.return_value = 3.0
+        conn.release_allowance.return_value = 2.0
         mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
-        assert mgr.open_budget() == 2 * (3.0 + 4.0) + 1.0
+        assert mgr.open_budget() == 2 * (3.0 + 4.0 + 2.0) + 1.0
         conn.connect_allowance.assert_called_once_with(None)
+        conn.release_allowance.assert_called_once_with(None)
 
     def test_a_term_that_is_not_retried_counts_one_attempt_and_no_pause(self):
         conn = MagicMock()
         conn.connect_allowance.return_value = 3.0
+        conn.release_allowance.return_value = 0.0
         conn.retries_failed_open.return_value = False
         mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
         assert mgr.open_budget("console") == 3.0 + 4.0
         conn.retries_failed_open.assert_called_once_with("console")
 
-    def test_a_named_term_is_asked_for_its_own_connect_waits(self):
+    def test_a_named_term_is_asked_for_its_own_connect_and_release_waits(self):
         conn = MagicMock()
         conn.connect_allowance.return_value = 0.0
+        conn.release_allowance.return_value = 0.0
         SessionManager(connections=conn, name="h").open_budget("telnet")
         conn.connect_allowance.assert_called_once_with("telnet")
+        conn.release_allowance.assert_called_once_with("telnet")
 
     def test_no_override_uses_the_class_default(self, monkeypatch):
         # The class attribute is what a session without an override waits,
@@ -2899,13 +2913,37 @@ class TestOpenBudget:
         mgr = SessionManager(name="h", retry_backoff=0.5)
         assert mgr.open_budget() == 2 * 7.0 + 0.5
 
-    def test_a_single_client_console_dialect_counts_the_drain_of_each_failed_attempt(self):
-        from otto.host.session import _CONSOLE_QUIESCE_BUDGET
-
+    def test_the_dialects_single_client_flag_adds_nothing(self):
+        # Whether a release drains is the client's decision, read from the
+        # connection options (ConnectionManager.release_allowance); the
+        # frame's flag is diagnostic only.
         mgr = SessionManager(
             name="h", init_timeout=4.0, retry_backoff=1.0, command_frame=ZephyrFrame()
         )
-        assert mgr.open_budget() == 2 * (4.0 + _CONSOLE_QUIESCE_BUDGET) + 1.0
+        assert mgr.open_budget() == 2 * 4.0 + 1.0
+
+    def test_open_budget_counts_release_allowance_for_console(self):
+        # A unix host on its console term: the default frame sets no
+        # single-client flag, yet every failed attempt's close drains the
+        # line, so the attempt counts that budget.
+        from otto.host.connections import ConnectionManager
+        from otto.host.telnet import CONSOLE_QUIESCE_BUDGET
+        from otto.models.base import Cred
+
+        conns = ConnectionManager(
+            ip="10.0.0.1",
+            creds=[Cred(login="u", password="p")],
+            term="console",
+            name="h",
+            host_id="h",
+            console_options=ConsoleOptions(server="s", port=1),
+        )
+        mgr = SessionManager(connections=conns, name="h", init_timeout=4.0, retry_backoff=1.0)
+        frame = mgr._session_frame
+        assert frame is None or not frame.single_client_console
+        assert mgr.open_budget("console") == (
+            conns.connect_allowance("console") + 4.0 + CONSOLE_QUIESCE_BUDGET
+        )
 
 
 class TestInitTimeoutFromTheEnvironment:
@@ -3061,6 +3099,176 @@ def test_the_budgets_retry_rule_agrees_with_the_console_session(login):
         host_id="h",
         console_options=ConsoleOptions(server="s", port=1, login=login),
     )
-    client = SimpleNamespace(logged_in=login)
+    client = SimpleNamespace(logged_in=login, read_gate=ReadGate())
     session = TelnetSession(reader=object(), writer=object(), console_client=client)
     assert conns.retries_failed_open() is session._retry_failed_handshake
+
+
+# --- A telnet session closes through its client, and reads through its gate ---
+
+
+def _telnet_connections(client) -> SimpleNamespace:
+    """A telnet-term connections fake: ``telnet()`` hands back the cached *client*."""
+    return SimpleNamespace(term="telnet", telnet=AsyncMock(return_value=client))
+
+
+def _recording_close(client, events: list[str]) -> None:
+    """Record each call of *client*'s ``close()`` in *events*, then run the real one."""
+    real = client.close
+
+    async def close() -> None:
+        events.append("client.close")
+        await real()
+
+    client.close = close
+
+
+@pytest.mark.asyncio
+async def test_default_telnet_session_close_goes_through_shared_client():
+    """The default session shares the manager's cached client; closing it is that client's close.
+
+    The writer is closed exactly once, by the client's release, never by the
+    session itself.
+    """
+    from tests.unit.host._telnet_fakes import fake_stream
+
+    events: list[str] = []
+    reader, writer, _ = fake_stream(events)
+    client = stream_client(reader, writer)
+    _recording_close(client, events)
+    mgr = SessionManager(connections=_telnet_connections(client), name="h")
+    session = await mgr._open_transport_session(named=False)
+
+    await session.close()
+
+    assert events == ["client.close", "close"]
+    assert writer.closes == 1
+    assert not session.alive
+
+
+@pytest.mark.asyncio
+async def test_needs_recovery_session_closes_the_same_way():
+    """A session marked ``_needs_recovery`` records the identical close sequence."""
+    from tests.unit.host._telnet_fakes import fake_stream
+
+    sequences = []
+    for needs_recovery in (False, True):
+        events: list[str] = []
+        reader, writer, _ = fake_stream(events)
+        client = stream_client(reader, writer)
+        _recording_close(client, events)
+        session = TelnetSession(reader, writer, client=client)
+        session._needs_recovery = needs_recovery
+        await session.close()
+        sequences.append(events)
+    assert sequences[0] == sequences[1] == ["client.close", "close"]
+
+
+class _GateProbeReader:
+    """A reader whose ``readuntil_pattern`` records the gate's in-flight count at each call."""
+
+    def __init__(self, feeds: list[bytes], gate: ReadGate) -> None:
+        self._feeds = feeds
+        self._gate = gate
+        self.in_flight_seen: list[int] = []
+
+    async def readuntil_pattern(self, pattern: "re.Pattern[bytes]") -> bytes:
+        self.in_flight_seen.append(self._gate.in_flight)
+        return self._feeds.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_read_transport_until_gates_both_reads():
+    """The match read and the ``finish_character`` read both run inside the gate."""
+    writer = object()
+    client = stream_client(None, writer)
+    reader = _GateProbeReader([b"Code: \xc3", b"\xa9"], client._read_gate)
+    client.reader = reader
+    session = TelnetSession(reader, writer, client=client)
+
+    assert await session.read_transport_until(re.compile("Code: .")) == f"Code: {_E_ACUTE}"
+    assert reader.in_flight_seen == [1, 1]
+    assert client._read_gate.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_admitted_read_finishes_on_captured_reader():
+    """A read admitted before the release's idle wait finishes with its data, then the wait ends."""
+
+    class _HeldReader:
+        def __init__(self) -> None:
+            self.go = asyncio.Event()
+
+        async def readuntil_pattern(self, pattern: "re.Pattern[bytes]") -> bytes:
+            await self.go.wait()
+            return b"done\n"
+
+    reader, writer = _HeldReader(), object()
+    client = stream_client(reader, writer)
+    session = TelnetSession(reader, writer, client=client)
+    gate = client._read_gate
+    read = asyncio.ensure_future(session.read_transport_until(re.compile("\n")))
+    await wait_for_async(
+        lambda: gate.in_flight == 1, 1.0, interval=0.01, on_timeout="the read never entered"
+    )
+    loop = asyncio.get_running_loop()
+    idle = asyncio.ensure_future(gate.wait_idle(loop.time() + 2.0))
+    await asyncio.sleep(0.05)
+    assert gate.closed
+    assert not idle.done(), "the idle wait ended while an admitted read was still in flight"
+
+    reader.go.set()
+
+    assert await read == "done\n"
+    assert await idle is True
+
+
+def test_session_requires_exactly_one_client():
+    """Every telnet session has exactly one closer: a telnet client or a console client."""
+    reader, writer = object(), object()
+    console = SimpleNamespace(logged_in=False, read_gate=ReadGate())
+    with pytest.raises(ValueError, match="exactly one"):
+        TelnetSession(reader, writer)
+    with pytest.raises(ValueError, match="exactly one"):
+        TelnetSession(reader, writer, client=stream_client(reader, writer), console_client=console)
+
+
+@pytest.mark.asyncio
+async def test_each_production_session_shares_its_clients_gate(monkeypatch):
+    """Default, named (and exec-pool) and console sessions all borrow their client's gate."""
+    from otto.host import session as session_mod
+    from tests.unit.host._telnet_fakes import fake_stream
+
+    # The default session: the manager's cached client.
+    reader, writer, _ = fake_stream([])
+    shared = stream_client(reader, writer)
+    mgr = SessionManager(connections=_telnet_connections(shared), name="h")
+    default = await mgr._open_transport_session(named=False)
+    assert default._read_gate is shared._read_gate
+
+    # A named session (the exec pool's are named): the client it dials and owns.
+    owned: list = []
+
+    def _dial(*args, **kwargs):
+        r, w, _ = fake_stream([])
+        client = stream_client(r, w)
+        client.connect = AsyncMock()
+        owned.append(client)
+        return client
+
+    monkeypatch.setattr(session_mod, "TelnetClient", _dial)
+    conn = SimpleNamespace(
+        term="telnet",
+        credentials=("u", SecretStr("p")),
+        telnet_target=AsyncMock(return_value=SimpleNamespace(host="127.0.0.1", port=23)),
+        telnet_options=shared.options,
+    )
+    named = await SessionManager(connections=conn, name="h")._open_transport_session(named=True)
+    assert named._read_gate is owned[0]._read_gate
+
+    # The console: its client.
+    console = _console_client(b"")
+    on_console = await SessionManager(
+        connections=_console_connections(console), name="h"
+    )._open_transport_session(named=False)
+    assert on_console._read_gate is console._read_gate

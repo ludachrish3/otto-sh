@@ -41,11 +41,11 @@ allowlist here and nothing for a future author to remember to update.
 
 import asyncio
 import multiprocessing as mp
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
@@ -497,3 +497,85 @@ def ctx_with_local_lab() -> Iterator["OttoContext"]:
         yield ctx
     finally:
         reset_context(token)
+
+
+class _StalledSocket:
+    """The socket a :class:`StalledTransport` reports: open until released."""
+
+    def __init__(self) -> None:
+        self._fd = 99
+
+    def fileno(self) -> int:
+        return self._fd
+
+    def release(self) -> None:
+        self._fd = -1
+
+
+class StalledTransport(asyncio.Transport):
+    """A transport whose peer never reads: 4096 bytes stay queued until ``abort()``.
+
+    ``close()`` only marks it closing, as asyncio's selector transport does
+    while its buffer is non-empty, so a graceful close never finishes. After
+    ``abort()`` the buffer is empty, and the socket it reports through
+    ``get_extra_info("socket")`` is released *release_after_turns* loop turns
+    later, the way asyncio's ``_call_connection_lost`` closes the fd on a later
+    turn. ``release_after_seconds`` releases it that long after ``abort()``
+    instead, for a test that needs the release to land at a known point
+    inside a wait. With both None it is never released, even after abort.
+    """
+
+    def __init__(
+        self, release_after_turns: int | None = 1, *, release_after_seconds: float | None = None
+    ) -> None:
+        super().__init__()
+        self.sock = _StalledSocket()
+        self.release_after_turns = (
+            None if release_after_seconds is not None else release_after_turns
+        )
+        self.release_after_seconds = release_after_seconds
+        self.aborts = 0
+        self.closing = False
+        self.written = bytearray()
+
+    def write(self, data: Any) -> None:
+        self.written += data
+
+    def get_write_buffer_size(self) -> int:
+        return 0 if self.aborts else 4096
+
+    def is_closing(self) -> bool:
+        return self.closing
+
+    def close(self) -> None:
+        self.closing = True
+
+    def abort(self) -> None:
+        self.aborts += 1
+        self.closing = True
+        if self.release_after_seconds is not None:
+            asyncio.get_running_loop().call_later(self.release_after_seconds, self.sock.release)
+        elif self.release_after_turns is not None:
+            self._release_in(self.release_after_turns)
+
+    def _release_in(self, turns: int) -> None:
+        if turns <= 0:
+            self.sock.release()
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.call_soon(self._release_in, turns - 1)
+
+    def get_extra_info(self, name: str, default: Any = None) -> Any:
+        return self.sock if name == "socket" else default
+
+
+@pytest.fixture
+def stalled_transport() -> Callable[..., StalledTransport]:
+    """A factory for :class:`StalledTransport`: ``stalled_transport(release_after_turns=...)``.
+
+    Or ``stalled_transport(release_after_seconds=...)`` for a timed release.
+    """
+    return StalledTransport

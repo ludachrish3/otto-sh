@@ -1313,6 +1313,7 @@ what you want to exercise:
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
 | Stability / soak — every tier runs and the target fails at the end if any did (so `make release-campaign` can rely on it) | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
+| The #386 console-release bed proof (opt-in, dev VM only; `make release-campaign` runs it; what it runs: `tests/integration/host/test_console_release_bed.py`) | `make console-release-bed` | the telnet Zephyr guests and their hop |
 | Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded`. On demand only — never part of `make release` (owner decision, 2026-10-15; see [quality gates](architecture/quality-gates.md#the-last-two-rows-are-the-point)). | leased unix host, incl. test3 for docker (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
 | Host-contract conformance, hermetic venue (opt-in; also the GitHub nightly job) | `make conformance` (`OTTO_CONFORMANCE_CELLS=N\|all`) | none — loopback sshd + pinned BusyBox artifacts as subprocesses |

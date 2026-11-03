@@ -15,7 +15,6 @@ the connection manager inside their ``console`` branches.
 """
 
 import asyncio
-import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -23,6 +22,7 @@ from enum import Enum
 from typing import Any
 
 from pydantic import SecretBytes, SecretStr
+from typing_extensions import override
 
 from ..models.base import as_secret
 from .errors import ConsoleError
@@ -30,12 +30,18 @@ from .options import ConsoleOptions
 from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
 from .secret_wire import reveal, reveal_bytes
 from .telnet import (
+    CONSOLE_QUIESCE_BUDGET,
     TELNET_EOL,
-    _register_console_transport,
-    _unregister_console_transport,
+    ReadGate,
+    _abort_and_observe,
+    _read_within,
+    _StreamHolder,
+    _TakenStream,
     negotiate_no_echo,
     open_telnet_connection,
+    release_telnet_stream,
     send_naws,
+    single_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +118,7 @@ def classify_tail(
 
 
 @dataclass(eq=False)
-class ConsoleClient:
+class ConsoleClient(_StreamHolder):
     """Telnet transport to one serial console, with a classify-then-login handshake.
 
     ``host``/``port`` are WHERE TO DIAL (``localhost`` and a forwarded port
@@ -133,8 +139,6 @@ class ConsoleClient:
     name: str = ""
     server: str = ""
 
-    reader: Any = field(init=False, repr=False, default=None)
-    writer: Any = field(init=False, repr=False, default=None)
     _logged_in: bool = field(init=False, repr=False, default=False)
     _shell_unheard: bool = field(init=False, repr=False, default=False)
     """True from the moment the password is typed until the line speaks
@@ -181,12 +185,15 @@ class ConsoleClient:
 
     # -- I/O primitives ----------------------------------------------------
 
-    def _write(self, data: bytes | SecretBytes) -> None:
+    def _write(self, data: bytes | SecretBytes, writer: Any = None) -> None:
         """Write *data* to the line: the one console write primitive.
 
         A ``SecretBytes`` (the password) is unwrapped only inside the call.
+        *writer* is a stream already taken from this client, for the logout
+        that runs during its release. By default the client's own writer,
+        which fails as a lost connection once a close has taken the stream.
         """
-        self.writer.write(reveal_bytes(data))
+        (self._held_writer() if writer is None else writer).write(reveal_bytes(data))
 
     def _send_naws(self, cols: int, rows: int) -> None:
         """Transmit a NAWS subnegotiation with the given terminal size.
@@ -202,21 +209,34 @@ class ConsoleClient:
         send_naws(self.writer, cols, rows, label=self.name)
 
     async def _read_chunk(self, timeout: float) -> bytes | None:
-        """One read bounded by *timeout*; ``None`` on timeout, ``b""`` on EOF.
+        """One read of the line, inside its read gate; see :meth:`_read_chunk_core`.
 
-        Wraps any ``OSError`` the stream raises (e.g. a reset connection) in
-        a :class:`~otto.host.errors.ConsoleError` carrying this console's own prefix, so it
-        reads like every other failure this client raises instead of a raw
-        ``ConnectionResetError`` with no host/server/port context.
+        Every ordinary read of the console comes through here, so a release
+        knows when no read is in flight and can use the stream alone. Once a
+        release has begun it raises :class:`~otto.host.telnet.ReadGateClosed`,
+        a lost connection, rather than racing the release's own reads.
+        """
+        with self._read_gate.reading():
+            return await self._read_chunk_core(self.reader, timeout)
+
+    async def _read_chunk_core(self, reader: Any, timeout: float) -> bytes | None:
+        """One read of *reader* bounded by *timeout*; ``None`` on timeout, ``b""`` on EOF.
+
+        Ungated: only the release, which already has the stream to itself,
+        reads through this directly. Wraps any ``OSError`` the stream raises
+        (e.g. a reset connection) in a :class:`~otto.host.errors.ConsoleError`
+        carrying this console's own prefix, so it reads like every other
+        failure this client raises instead of a raw ``ConnectionResetError``
+        with no host/server/port context.
         """
         try:
-            return await asyncio.wait_for(self.reader.read(4096), timeout)
-        except asyncio.TimeoutError:
-            return None
+            return await _read_within(reader, timeout)
         except OSError as exc:
             raise self._fail(f"lost the connection: {exc}") from exc
 
-    async def _collect(self, budget: float, stop: "Any") -> "tuple[str, bool, bool]":
+    async def _collect(
+        self, budget: float, stop: "Any", reader: Any = None
+    ) -> "tuple[str, bool, bool]":
         """Read until *stop(tail)* is true, EOF, or *budget* seconds.
 
         Returns ``(text, eof, any_byte)``. *text* is everything accumulated
@@ -229,6 +249,9 @@ class ConsoleClient:
         rounds) rather than SILENT. *stop* only ever sees the last
         :data:`_CLASSIFY_WINDOW` bytes, decoded, so a chatty boot log costs
         O(window) per chunk rather than O(total) — see that constant.
+
+        Reads go through the gated :meth:`_read_chunk`, or, given *reader*
+        (a stream the release has taken), straight through the ungated core.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + budget
@@ -237,7 +260,10 @@ class ConsoleClient:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
-            chunk = await self._read_chunk(remaining)
+            if reader is None:
+                chunk = await self._read_chunk(remaining)
+            else:
+                chunk = await self._read_chunk_core(reader, remaining)
             if chunk is None:
                 return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
             if chunk == b"":
@@ -252,11 +278,14 @@ class ConsoleClient:
             if stop(tail):
                 return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
 
-    async def _settle(self) -> None:
-        """Drain whatever is already on the line; nothing here is classified."""
+    async def _settle(self, reader: Any = None) -> None:
+        """Drain whatever is already on the line; nothing here is classified.
+
+        *reader* is passed on to :meth:`_collect`.
+        """
         if self.options.settle <= 0:
             return
-        await self._collect(self.options.settle, lambda _t: False)
+        await self._collect(self.options.settle, lambda _t: False, reader=reader)
 
     # -- the state machine ---------------------------------------------------
 
@@ -446,9 +475,13 @@ class ConsoleClient:
             f"last seen: {self._quote(text)}"
         )
 
-    async def logout(self) -> None:
-        """Send EOF and wait up to ``login_timeout`` for the login prompt. Never raises."""
-        if not self._logged_in or self.writer is None:
+    async def logout(self, reader: Any, writer: Any) -> None:
+        """Send EOF and wait up to ``login_timeout`` for the login prompt. Never raises.
+
+        Runs on *reader* and *writer*, the stream ``close()`` has already
+        taken from this client and has to itself, so it reads past the gate.
+        """
+        if not self._logged_in or writer is None:
             return
         try:
             login_re, password_re = self._prompts()
@@ -460,19 +493,18 @@ class ConsoleClient:
                 # a fresh login left the shell up and waited out the whole
                 # budget). Wait for the line's first bytes, then let it
                 # settle, then log out.
-                await self._collect(self.options.login_timeout, bool)
-                await self._settle()
-            self._write(b"\x04")
+                await self._collect(self.options.login_timeout, bool, reader=reader)
+                await self._settle(reader=reader)
+            self._write(b"\x04", writer)
             text, _eof, _any_byte = await self._collect(
                 self.options.login_timeout,
                 lambda t: classify_tail(t, login_re, password_re) is ConsoleState.AT_LOGIN,
+                reader=reader,
             )
             if classify_tail(text, login_re, password_re) is not ConsoleState.AT_LOGIN:
                 logger.warning(f"{self._prefix()}login prompt did not return after logout")
         except Exception as exc:  # noqa: BLE001 — best-effort courtesy on close
             logger.warning(f"{self._prefix()}logout failed: {exc}")
-        finally:
-            self._logged_in = False
 
     async def refused_after_login(self) -> str:
         """After a failed marker handshake: raise if getty is back on the line, else quote the line.
@@ -530,7 +562,7 @@ class ConsoleClient:
     # -- lifecycle ---------------------------------------------------------
 
     async def open(self, interactive: bool = False) -> None:
-        """Run steps 1-2: dial, negotiate, register as single-client, settle.
+        """Dial (registered as single-client from the start), negotiate, then settle.
 
         Every phase is bounded: the TCP connect by ``login_timeout`` (passed
         as telnetlib3's ``connect_timeout``; ``options.extra`` may override
@@ -544,15 +576,18 @@ class ConsoleClient:
             f"ConsoleClient.open {self.host}:{self.port} user={self.user!r} "
             f"login={self.options.login} dial={self.options.dial} interactive={interactive}"
         )
+        await self._await_prior_release()
         open_kwargs = self.options._open_kwargs()  # noqa: SLF001 — intra-package access
         open_kwargs["port"] = self.port
         try:
-            self.reader, self.writer = await open_telnet_connection(self.host, **open_kwargs)
+            reader, writer = await open_telnet_connection(
+                self.host, single_client=single_client("console"), **open_kwargs
+            )
         except ConsoleError:
             raise
         except OSError as exc:
             raise self._fail(f"could not be dialled: {exc}") from exc
-        _register_console_transport(getattr(self.writer, "transport", None))
+        self._install(reader, writer)
         if not interactive:
             await negotiate_no_echo(self.writer, self.options.echo_negotiation_timeout)
         await self._settle()
@@ -565,67 +600,86 @@ class ConsoleClient:
         else:
             logger.debug(f"{self._prefix()}no login step (options.login=False)")
 
-    async def close(self) -> None:
-        """Log out if this client logged in, then release the transport. Never raises.
+    @override
+    async def _release(self, taken: _TakenStream) -> None:
+        """Log out if this client logged in, then release the stream. Never raises.
 
-        The release (unregister, close, abort) runs in a ``finally`` so a
-        cancelled or interrupted ``logout()`` — e.g. a caller-side timeout
-        firing partway through the bounded wait for the login prompt —
-        still releases the transport. Without this, the console server's
-        single-client slot stays held, and the next connect fails as BUSY:
-        exactly the stuck-console outcome this term exists to prevent.
+        The console's part of :meth:`close <otto.host.telnet._StreamHolder.close>`,
+        which takes the stream first and marks its release ended afterwards.
 
-        Holds ``writer`` in a local up front: a second, concurrent ``close()``
-        (e.g. a ConnectionManager teardown racing a session teardown) reads
-        the same non-``None`` writer before either's ``finally`` has nulled
-        ``self.writer``, so it must not reach back through ``self.writer`` —
-        which the first call to finish may already have set to ``None`` —
-        inside its own ``finally``. Nulling the attributes is itself guarded
-        by identity so neither call clobbers work the other has not yet
-        finished.
+        The release is the one every telnet-framed stream gets (see
+        :func:`~otto.host.telnet.release_telnet_stream`): a serial line can
+        wedge when its client goes away with output still queued, so the
+        release drains it to quiet before it closes, then waits for otto's
+        socket to be released.
+
+        The stream is *taken* first, before any await: the client forgets it,
+        so a second, concurrent ``close()`` (a manager teardown racing a
+        session teardown) finds nothing to take and waits for this one's
+        release to end, instead of logging out or draining a second time.
+        Next, the reads already in flight are waited for: logout reads the
+        line, and a read of its own beside one of theirs would collide. Then
+        the logout, on the taken stream, then the release. The idle wait and
+        the drain share one :data:`~otto.host.telnet.CONSOLE_QUIESCE_BUDGET`;
+        logout's time is added to the release's deadline, not charged to it,
+        since logout has its own allowance.
+
+        A read that never finishes makes the close skip logout and the drain
+        and abort the stream. A cancellation while waiting for reads or
+        during logout aborts the taken stream and re-raises: the caller asked
+        to stop, so no fresh drain starts. Either way the console server's
+        single-client slot is freed, or, when the release is not seen, the
+        transport stays registered for the emergency sweep.
         """
-        writer = self.writer
-        if writer is None:
-            return
+        reader, writer, transport, sock, gate = (
+            taken.reader,
+            taken.writer,
+            taken.transport,
+            taken.sock,
+            taken.gate,
+        )
+        owes_logout = self.options.logout and self._logged_in
+        loop = asyncio.get_running_loop()
+        idle_deadline = loop.time() + CONSOLE_QUIESCE_BUDGET
+        logout_elapsed = 0.0
         try:
-            if self.options.logout:
-                await self.logout()
-        finally:
-            self._release(writer)
-
-    def abandon(self) -> None:
-        """Release the transport now, synchronously, with no logout. Never raises.
-
-        For a caller that cannot await, such as
-        :meth:`~otto.host.host.BaseHost.rebuild_connections` dropping a
-        manager after a reboot: the client it drops would otherwise keep the
-        console server's single-client slot, and every fresh dial after it
-        would be refused as busy. The device has rebooted (or is about to),
-        so there is no shell left to log out of.
-        """
-        writer, self.writer = self.writer, None
-        if writer is None:
+            idle = await gate.wait_idle(idle_deadline)
+            if idle and owes_logout:
+                started = loop.time()
+                await self.logout(reader, writer)
+                logout_elapsed = loop.time() - started
+        except asyncio.CancelledError:
+            await _abort_and_observe(writer, transport, sock)
+            raise
+        except Exception as exc:  # noqa: BLE001 — close never raises: a failure aborts instead
+            logger.debug(f"{self._prefix()}console close failed before its release: {exc!r}")
+            await _abort_and_observe(writer, transport, sock)
             return
-        self._logged_in = False
-        self.reader = None
-        # Each step on its own: a close() that raises (the loop is already
-        # closed) must not skip the abort, or the transport would hold the
-        # server's single-client slot until garbage collection.
-        transport = getattr(writer, "transport", None)
-        _unregister_console_transport(transport)
-        with contextlib.suppress(Exception):
-            writer.close()
-        if transport is not None:
-            with contextlib.suppress(Exception):
-                transport.abort()
+        if not idle:
+            logger.debug(
+                f"{self._prefix()}a read did not finish before the release; "
+                f"aborting without logging out"
+            )
+            await _abort_and_observe(writer, transport, sock)
+            return
+        await release_telnet_stream(
+            reader,
+            writer,
+            transport,
+            single_client=single_client("console"),
+            reads_idle=gate,
+            deadline=idle_deadline + logout_elapsed,
+            sock=sock,
+        )
 
-    def _release(self, writer: Any) -> None:
-        """Unregister, close and abort *writer*'s transport; forget it if still ours."""
-        transport = getattr(writer, "transport", None)
-        _unregister_console_transport(transport)
-        writer.close()
-        if transport is not None:
-            transport.abort()
-        if self.writer is writer:
-            self.reader = None
-            self.writer = None
+    @override
+    def _release_ended(self, gate: ReadGate) -> bool:
+        """Mark the release ended, and forget the login that belonged to its stream.
+
+        A no-op once a newer stream is installed: ``_released`` and the login
+        then belong to that stream, not to the one whose release just ended.
+        """
+        if not super()._release_ended(gate):
+            return False
+        self._logged_in = False
+        return True

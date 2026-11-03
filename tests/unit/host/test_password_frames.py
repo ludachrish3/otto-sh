@@ -474,9 +474,12 @@ async def test_an_ssh_session_writes_a_secret_as_its_value_and_a_newline():
 @pytest.mark.asyncio
 async def test_a_telnet_session_writes_a_secret_once_with_a_cr_even_when_chunking():
     from otto.host.session import TelnetSession
+    from tests.unit.host._telnet_fakes import stream_client
 
-    writer = MagicMock()
-    session = TelnetSession(reader=MagicMock(), writer=writer, write_chunk_size=4)
+    reader, writer = MagicMock(), MagicMock()
+    session = TelnetSession(
+        reader=reader, writer=writer, client=stream_client(reader, writer), write_chunk_size=4
+    )
     await session.write_transport(SecretStr(PLANTED))
     writer.write.assert_called_once_with(PLANTED.encode() + b"\r")
 

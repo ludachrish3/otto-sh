@@ -180,9 +180,7 @@ async def _telnet_login(offered: Offered) -> None:
             extra={"connect_minwait": 0.0, "connect_maxwait": 0.1},
         )
         client = await _manager("telnet", telnet_options=options).telnet()
-        session = TelnetSession(
-            client.reader, client.writer, _owned_client=client, init_timeout=0.5
-        )
+        session = TelnetSession(client.reader, client.writer, client=client, init_timeout=0.5)
         await session._ensure_initialized()
 
 

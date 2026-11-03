@@ -629,6 +629,30 @@ def _can_select(expr: str, markers: "set[str]") -> bool:
     return Expression.compile(expr).evaluate(_marker_matcher(markers))
 
 
+def _lanes_reaching_tier_unasked(marker: str) -> "list[str]":
+    """The `-m` expressions that can select a module carrying *marker* without naming it.
+
+    Stated over what a lane can SELECT, not over the shape of its expression: a
+    positive resource selector (`integration`, `embedded`) reaches a tier whose
+    modules carry that resource marker too, and a negation-only check would miss it.
+    """
+    tier = _marker_sets_of_modules_carrying(marker)
+    assert tier, f"no module carries the {marker} marker (tier deleted? guard misparse?)"
+    surfaces = (
+        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
+        ("noxfile.py", _nox_marker_expressions()),
+    )
+    offenders = []
+    for label, exprs in surfaces:
+        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
+        for expr in exprs:
+            if marker in {term.strip() for term in expr.split(" and ")}:
+                continue
+            if any(_can_select(expr, markers) for markers in tier):
+                offenders.append(f"{label}: {expr!r}")
+    return offenders
+
+
 def test_can_select_reads_a_grouped_disjunction_as_pytest_does() -> None:
     assert _can_select("(integration or embedded) and not busybox", {"embedded"})
     assert not _can_select("(integration or embedded) and not busybox", {"embedded", "busybox"})
@@ -666,20 +690,7 @@ def test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier():
     carrying no ``stability``), and re-derives its premise on every run
     instead of remembering it.
     """
-    tier = _marker_sets_of_modules_carrying("busybox")
-    surfaces = (
-        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
-        ("noxfile.py", _nox_marker_expressions()),
-    )
-    offenders = []
-    for label, exprs in surfaces:
-        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
-        for expr in exprs:
-            # The opt-in lane is the one place selecting the tier is the point.
-            if "busybox" in {term.strip() for term in expr.split(" and ")}:
-                continue
-            if any(_can_select(expr, markers) for markers in tier):
-                offenders.append(f"{label}: {expr!r}")
+    offenders = _lanes_reaching_tier_unasked("busybox")
     assert not offenders, (
         f"these lanes reach the BusyBox tier without asking for it, so each "
         f"fetches real artifacts over the network and fails hard when upstream "
@@ -1536,20 +1547,7 @@ def test_no_lane_but_the_conformance_lane_can_select_the_conformance_tier():
     Reads the two build files only: `scripts/stability_campaign.py` spells no
     lane of its own (`test_the_stability_campaign_spells_no_lane_of_its_own`).
     """
-    tier = _marker_sets_of_modules_carrying("conformance")
-    surfaces = (
-        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
-        ("noxfile.py", _nox_marker_expressions()),
-    )
-    offenders = []
-    for label, exprs in surfaces:
-        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
-        for expr in exprs:
-            # The opt-in lane is the one place selecting the tier is the point.
-            if "conformance" in {term.strip() for term in expr.split(" and ")}:
-                continue
-            if any(_can_select(expr, markers) for markers in tier):
-                offenders.append(f"{label}: {expr!r}")
+    offenders = _lanes_reaching_tier_unasked("conformance")
     assert not offenders, (
         f"these lanes reach the conformance tier without asking for it, so each "
         f"stands up a throwaway sshd and runs the pinned BusyBox artifacts as "
@@ -2240,25 +2238,14 @@ def test_release_invokes_the_kmodcov_matrix_stage_which_runs_the_lane():
     the lane that selects the marker — derived at both ends from the
     Makefile's own text, so either may be renamed and the guard follows.
     """
-    lanes = _makefile_targets_selecting("kmodcov")
-    assert lanes, "no Makefile target positively selects `-m kmodcov` (G12b covers this)"
-    recipes = _makefile_recipes()
-    release = recipes.get("release")
+    release = _makefile_recipes().get("release")
     assert release, "no `release:` recipe with a body found in the Makefile (guard misparse?)"
     stage = "release-kmodcov-matrix"
     assert re.search(rf"\$\(MAKE\)\s+{re.escape(stage)}\b(?![-\w])", release), (
         f"`make release` does not invoke `{stage}`"
     )
-    stage_recipe = recipes.get(stage)
-    assert stage_recipe, f"no `{stage}:` recipe with a body found in the Makefile"
-    invoked = [
-        lane
-        for lane in lanes
-        if re.search(
-            rf"\$\(MAKE\)\s+(--no-print-directory\s+)?{re.escape(lane)}\b(?![-\w])", stage_recipe
-        )
-    ]
-    assert invoked, f"`make {stage}` invokes none of {lanes}"
+    missing = _marker_lanes_a_stage_misses(stage, "kmodcov")
+    assert not missing, f"`make {stage}` does not invoke the kmodcov lane(s) {missing}"
     assert not re.search(r"\$\(MAKE\)\s+kmodcov\b(?![-\w])", release), (
         "`make release` still invokes `kmodcov` directly beside the matrix stage — one run, not two"
     )
@@ -2270,6 +2257,7 @@ def test_release_invokes_the_kmodcov_matrix_stage_which_runs_the_lane():
 # in test_lane_invariants.py, which also holds the census honest about them).
 _CAMPAIGN_LANES = (
     "stability",
+    "console-release-bed",
     "dashboard-soak",
     "conformance",
     "busybox",
@@ -2398,30 +2386,31 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
         )
 
 
-def test_no_lane_but_the_kmodcov_lane_can_select_the_kmodcov_tier():
-    """G12d: stated over what a lane can SELECT, not over the shape of its expression.
+def _marker_lanes_a_stage_misses(stage: str, marker: str) -> "list[str]":
+    """The Makefile lanes selecting *marker* that *stage*'s recipe does not invoke.
 
-    The matrix module carries `integration`, so this is the guard that keeps
-    `M_UNIX` and nox's `tests_unix` honest — G12 sees only negation-only
-    expressions and would pass with those two reaching the bed lane.
+    Both ends are derived from the Makefile's own text, so the lane or the stage
+    may be renamed and the guard follows.
     """
-    tier = _marker_sets_of_modules_carrying("kmodcov")
-    assert tier, "no module carries the kmodcov marker (tier deleted? guard misparse?)"
-    surfaces = (
-        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
-        ("noxfile.py", _nox_marker_expressions()),
-    )
-    offenders = []
-    for label, exprs in surfaces:
-        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
-        for expr in exprs:
-            if "kmodcov" in {term.strip() for term in expr.split(" and ")}:
-                continue
-            if any(_can_select(expr, markers) for markers in tier):
-                offenders.append(f"{label}: {expr!r}")
+    lanes = _makefile_targets_selecting(marker)
+    assert lanes, f"no Makefile target positively selects `-m {marker}`"
+    recipe = _makefile_recipes().get(stage)
+    assert recipe, f"no `{stage}:` recipe with a body found in the Makefile"
+    return [lane for lane in lanes if lane not in _make_invocations(recipe)]
+
+
+@pytest.mark.parametrize("marker", ["kmodcov", "release_proof"])
+def test_no_lane_but_its_own_can_select_a_lane_only_tier(marker: str):
+    """G12d: only the lane that asks for a lane-only tier may reach it.
+
+    `kmodcov`: the matrix module carries `integration`, so this keeps `M_UNIX`
+    and nox's `tests_unix` honest. `release_proof`: the bed proof carries
+    `embedded`, so this keeps `M_EMBEDDED`, coverage-bed and the tips off it.
+    """
+    offenders = _lanes_reaching_tier_unasked(marker)
     assert not offenders, (
-        f"these lanes reach the otto_kmodcov toolchain tier without asking for it: "
-        f"{offenders}. Add `not kmodcov`."
+        f"these lanes reach the `{marker}` tier without asking for it: {offenders}. "
+        f"Add `not {marker}`."
     )
 
 
@@ -2494,3 +2483,21 @@ def test_the_stability_campaign_spells_no_lane_of_its_own(tmp_path: Path) -> Non
     )
     assert _python_pytest_invocations(probe) == [["uv", "run", "pytest", "-m", "concurrency"]]
     assert _python_marker_expressions(probe) == ["concurrency"]
+
+
+# --- Bed proofs (`release_proof`: tests/integration/host/test_console_release_bed.py)
+#
+# A bed proof is the evidence a fix holds on the real bed (#386: every telnet
+# Zephyr guest released through each arm; the bed module's docstring says how
+# often), not a soak and not a per-change test. Its own lease-taking target is its only lane, and
+# `make release-campaign` invokes it. G12d (parametrized over both lane-only
+# tiers) keeps every other lane off it; the guard below keeps it run.
+
+
+def test_the_release_campaign_runs_every_release_proof_lane():
+    """Excluded everywhere must not mean run nowhere: the campaign invokes each bed-proof lane.
+
+    G12d's parametrization keeps every other lane off the tier.
+    """
+    missing = _marker_lanes_a_stage_misses("release-campaign", "release_proof")
+    assert not missing, f"`make release-campaign` does not invoke the bed-proof lane(s) {missing}"

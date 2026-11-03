@@ -362,9 +362,33 @@ checks what state the line is in; these fields keep such a device working on
   ``Username:``, ``Password:``, etc.
 - ``single_client_console`` (default ``false``) — set ``true`` when the
   endpoint is a single-client console (e.g. Zephyr ``shell_telnet``).
-  Otto registers the transport so the embedded teardown can force-release
-  the slot if a timed-out test left it half-open.  Leave ``false`` for
-  ordinary multi-session telnetd.
+  otto then waits for the line to go quiet before it closes it (see
+  {ref}`single-client-console`), and if a test times out with the line
+  still open, the embedded teardown frees it for the next connection.
+  Leave ``false`` for ordinary multi-session telnetd.
+
+(single-client-console)=
+
+#### Single-client consoles
+
+A single-client console serves one connection at a time: a Zephyr
+``shell_telnet`` port, or a serial line behind a console server. Closing
+such a line while the device still has output queued for otto can wedge the
+console, so that it refuses every later connection
+([#386](https://github.com/ludachrish3/otto-sh/issues/386)). So when otto
+closes a session on one, it first reads and discards what the device is
+still printing, and closes the line only once it has gone quiet. A close
+takes a fraction of a second longer for that, and at most 2 s when the device keeps
+printing, after which otto closes the line anyway. Leave room for it in any
+timeout you put around closing a host or a session.
+
+A close that runs out of time or is cancelled, and the emergency teardown
+after a test times out, do not wait for the line: they abort the connection
+at once.
+
+This applies to a `telnet` host with ``single_client_console: true``, and
+to every host on the `console` term ({ref}`console-term`), whatever its
+telnet options say.
 
 (console-term)=
 
@@ -433,7 +457,7 @@ first connect, as a bad `hop` is, not at lab load.
 | `login_prompt`, `password_prompt` | from the OS profile | Regexes matched against the *end* of what the line shows. Unset means the host's OS profile's patterns ({doc}`os-profiles`); set them for a device whose prompts read differently. |
 | `login_timeout` | `10.0` | Seconds to wait for each prompt after otto presses Enter or types a name. Also bounds the dial. Raise it when a boot log precedes `login:`. |
 | `settle` | `0.5` | Seconds of output read and thrown away right after connecting, so stale bytes on the line are never mistaken for an answer. |
-| `logout` | `true` | On close, send Ctrl-D (end of input) and wait up to `login_timeout` for `login:`, so the next client finds the line logged out. |
+| `logout` | `true` | On close, send Ctrl-D (end of input) and wait up to `login_timeout` for `login:`, so the next client finds the line logged out. The close then waits for the line to go quiet ({ref}`single-client-console`). |
 | `write_chunk_size`, `write_chunk_delay` | `0`, `0.0` | Paced writes for a UART that overruns on a long line, as for telnet (above). |
 | `cols`, `rows` | `400`, `24` | Initial terminal size reported to the server. |
 | `encoding` | `false` | Text encoding; `false` is bytes mode. |
@@ -516,7 +540,9 @@ session on it:
   device is up.
 
 When otto closes the session it logs out (per `logout`), so the next client
-finds `login:`.
+finds `login:`, then waits for the line to go quiet before it releases it.
+A `console`-term host always closes this way, whatever its telnet options
+say: see {ref}`single-client-console`.
 
 ### SFTP, SCP, FTP, Netcat
 

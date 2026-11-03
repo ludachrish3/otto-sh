@@ -8,7 +8,6 @@ framing is exercised in ``test_zephyr.py``; the console transfer backend in
 """
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -88,9 +87,9 @@ class TestGenericEmbeddedFailsLoud:
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
-        telnet_conn = SimpleNamespace(
-            reader=MagicMock(), writer=MagicMock(), options=TelnetOptions()
-        )
+        from tests.unit.host._telnet_fakes import stream_client
+
+        telnet_conn = stream_client(MagicMock(), MagicMock())
         conn = MagicMock(term="telnet")
         conn.telnet = AsyncMock(return_value=telnet_conn)
         h._session_mgr._connections = conn
