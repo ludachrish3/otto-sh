@@ -1992,7 +1992,11 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   interpreter: `uv run nox -s tests_hostless_unit-3.14 --install-only`, then
   `.nox/tests_hostless_unit-3-14/bin/python scripts/import_budget.py --update`.
   A missing-baseline failure prints the same commands for the interpreter
-  it ran on.
+  it ran on. The next Python has a ceilings file too, read by nightly's
+  `python-canary`. It is not in `noxfile.py`'s `PYTHON_VERSIONS`, so its install
+  step needs the flag: `uv run nox -s tests_hostless_unit-3.15 --extra-python
+  3.15 --install-only`. `--update` moves ceilings only: a `target_ratio` breach
+  stays red.
 - **Never regenerate to absorb a cost increase without saying so.** A
   regeneration that raises a baseline goes in a commit whose message says
   which surface grew, by how much, and why the verb needs it; the failure's
