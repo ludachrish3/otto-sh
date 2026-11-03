@@ -17,6 +17,7 @@ import pytest
 
 from scripts import api_records, api_regen
 from scripts.api_manifest import load_formats
+from scripts.import_budget import NON_STDLIB_HELPER
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 MANIFEST = CHECKOUT_ROOT / "api" / "public.toml"
@@ -39,11 +40,11 @@ DECLARED = [
 ]
 """The "yes" rows of dump spec §13.4. A new format is added here and to the declaration together."""
 
-_PROBE = (
+_PROBE = NON_STDLIB_HELPER + (
     "import importlib, json, sys\n"
     "before = set(sys.modules)\n"
     "importlib.import_module(sys.argv[1])\n"
-    "print(json.dumps(sorted(set(sys.modules) - before)))\n"
+    "print(json.dumps(_non_stdlib(sorted(set(sys.modules) - before))))\n"
 )
 
 
@@ -102,13 +103,9 @@ def test_each_format_module_imports_only_the_standard_library(module):
         check=True,
         cwd=CHECKOUT_ROOT,
     )
-    loaded = json.loads(out.stdout)
+    not_stdlib = json.loads(out.stdout)
     parts = module.split(".")
     chain = {".".join(parts[: i + 1]) for i in range(len(parts))}
-    otto_extra = [m for m in loaded if m.split(".")[0] == "otto" and m not in chain]
-    foreign = [
-        m
-        for m in loaded
-        if m.split(".")[0] != "otto" and m.split(".")[0] not in sys.stdlib_module_names
-    ]
+    otto_extra = [m for m in not_stdlib if m.split(".")[0] == "otto" and m not in chain]
+    foreign = [m for m in not_stdlib if m.split(".")[0] != "otto"]
     assert (otto_extra, foreign) == ([], [])

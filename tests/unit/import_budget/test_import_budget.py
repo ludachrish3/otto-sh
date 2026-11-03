@@ -3,6 +3,7 @@
 See ``docs/superpowers/specs/2026-06-29-import-budget-guard-design.md``.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,24 @@ def test_measure_returns_module_inventory():
     # includes otto itself and never the standard library.
     assert set(result["non_stdlib_modules"]) <= set(result["modules"])
     assert "otto" in result["non_stdlib_modules"]
+
+
+def test_a_stdlib_module_the_interpreter_does_not_list_is_not_counted_as_foreign():
+    """CPython 3.15's ``traceback`` imports a module its own stdlib list omits."""
+    names = [*sorted(harness.UNLISTED_STDLIB), "os.path", "otto", "typer.main"]
+    classified = harness._run_child(
+        harness.NON_STDLIB_HELPER + f"import json\nprint(json.dumps(_non_stdlib({names!r})))"
+    )
+    assert json.loads(classified) == ["otto", "typer.main"]
+
+
+@pytest.mark.parametrize(
+    "child", ["_CHILD_IMPORT", "_CHILD_CLI", "_CHILD_ENTRY", "_CHILD_BASELINE"]
+)
+def test_every_child_classifies_through_the_one_helper(child):
+    source = getattr(harness, child)
+    assert source.count("stdlib_module_names") == 1
+    assert source.count("_non_stdlib(") == 2  # the definition and its one call
 
 
 def test_surfaces_table_well_formed():
@@ -766,8 +785,6 @@ def test_the_child_runs_in_a_private_empty_cwd(tmp_path, monkeypatch):
     starts in is one it imports from. Inheriting the caller's cwd hands it the
     checkout root, which every other test process in the run writes into.
     """
-    import json
-
     monkeypatch.chdir(tmp_path)
     body = """
 import json, os

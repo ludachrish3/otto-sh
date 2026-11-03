@@ -598,17 +598,32 @@ SURFACES: list[Surface] = [
 # `non_stdlib_modules`): nothing gates on it, but a failure is easier to read
 # with it, and tests that ask "is this module loaded on this path" read it.
 # `non_stdlib_modules` is total sys.modules minus the stdlib, classified via
-# the *child's own* sys.stdlib_module_names, so each Python version
-# self-classifies.
+# the *child's own* `_non_stdlib`, so each Python version self-classifies.
+
+UNLISTED_STDLIB = frozenset({"_missing_stdlib_info"})
+"""Stdlib modules ``sys.stdlib_module_names`` leaves out.
+
+CPython 3.15 generates this one at build time, ``traceback`` imports it, and
+the generated list omits it, so classifying by that list would call it foreign.
+"""
+
+NON_STDLIB_HELPER = f"""
+import sys as _sys
+def _non_stdlib(mods):
+    stdlib = _sys.stdlib_module_names.union({sorted(UNLISTED_STDLIB)!r})
+    return [m for m in mods if m.split(".")[0] not in stdlib]
+"""
+"""Child source defining ``_non_stdlib``, the one classification of a module as not stdlib."""
 
 # Prepended to every child. It installs nothing: every file operation is
 # counted from OUTSIDE the child, by strace, so the child must do no path work
 # of its own beyond what otto does. That is why the fixture root is used as the
 # raw string the harness passed in, never resolved: a `realpath` here would
 # charge one `lstat` per path component to every surface.
-_CHILD_PREAMBLE = """
+_CHILD_PREAMBLE = (
+    NON_STDLIB_HELPER
+    + """
 import os as _os
-import sys as _sys
 _fixture_root = _os.environ.get("IMPORT_BUDGET_FIXTURE_ROOT")
 def _fixture_path_entries():
     if not _fixture_root:
@@ -616,6 +631,7 @@ def _fixture_path_entries():
     return sum(1 for p in _sys.path
                if p == _fixture_root or p.startswith(_fixture_root + _os.sep))
 """
+)
 
 
 # Child script for `import otto` surface: bare import, no CLI invocation.
@@ -624,7 +640,7 @@ import sys, json
 import otto
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
-non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
+non_std = _non_stdlib(mods)
 print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods,
                   "non_stdlib_modules": non_std,
                   "sys_path_len": len(sys.path),
@@ -672,7 +688,7 @@ else:
     _ = cmd.list_commands(ctx)
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
-non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
+non_std = _non_stdlib(mods)
 print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods,
                    "non_stdlib_modules": non_std,
                    "sys_path_len": len(sys.path),
@@ -743,7 +759,7 @@ except BaseException as _e:
     _exception = f"{{type(_e).__module__}}.{{type(_e).__qualname__}}: {{_e}}"
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
-non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
+non_std = _non_stdlib(mods)
 _payload = json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods,
                    "non_stdlib_modules": non_std,
                    "sys_path_len": len(sys.path),
@@ -757,11 +773,13 @@ _CHILD_ENTRY = _CHILD_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_EN
 
 # Child script measuring the empty baseline: what a bare interpreter already has
 # in sys.modules before a single line of otto runs.
-_CHILD_BASELINE = """
+_CHILD_BASELINE = (
+    NON_STDLIB_HELPER
+    + """
 import sys, json
-print(json.dumps([m for m in sorted(sys.modules)
-                  if m.split(".")[0] not in sys.stdlib_module_names]))
+print(json.dumps(_non_stdlib(sorted(sys.modules))))
 """
+)
 
 
 def _sanitized_env() -> dict[str, str]:
