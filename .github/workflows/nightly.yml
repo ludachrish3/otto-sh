@@ -26,9 +26,10 @@ name: Nightly
 # Also runs the next-Python canary (`python-canary` below): a ratchet that
 # probes how far the interpreter AFTER the supported ceiling gets — install,
 # import, collect, test — and reds only when that changes. It belongs here
-# and not in ci.yml for the same reason as the sampled lane: its answer moves
-# on PyPI's clock (a wheel lands upstream) rather than on this repo's commits,
-# so a per-push run would repeat one answer forty times a day.
+# and not in ci.yml because it is the slow probe of an interpreter otto does
+# not support yet: most of what moves it moves on PyPI's clock (a wheel lands
+# or is pulled). A commit here can break it too, and that shows up the next
+# night, not on the pull request.
 #
 # Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
 # deliberately NOT duplicated here — they run on every push in ci.yml and
@@ -510,7 +511,7 @@ jobs:
       - name: Verify every pin against busybox.net's current bytes
         run: make busybox-drift
 
-  # The next-Python canary. NOT a matrix entry and NOT expected to pass:
+  # The next-Python canary. NOT a matrix entry, whether or not it passes:
   # PYTHON_VERSIONS in noxfile.py is the supported window, and this job probes
   # the interpreter one past its ceiling so the day it CAN join the window is
   # noticed rather than discovered. Ten rungs:
@@ -525,7 +526,7 @@ jobs:
   #   7  the chaos suites pass          (tier 2 and the Docker slice)
   #   8  the dashboard browser suite    (Chromium)
   #   9  host-contract conformance      (`make conformance`, hermetic)
-  #  10  the import budget holds        (last: its goldens are per-interpreter)
+  #  10  the import budget holds        (last: its ceilings are per-interpreter)
   #
   # Rungs 1-4 are prerequisites and a failure there stops the climb. From
   # rung 5 on every rung runs even after one fails, so one nightly names every
@@ -533,11 +534,13 @@ jobs:
   #
   # The verdict is a RATCHET against CANARY_EXPECTED_RUNG, the rung this repo
   # currently expects the canary to reach. Reaching exactly that rung is green.
-  # Reaching a HIGHER one is red: the ecosystem moved, bump the constant (and
-  # at rung 10, promote the version into PYTHON_VERSIONS and retire this job).
-  # Reaching a LOWER one is red too: something regressed — a wheel pulled, a
-  # dependency raising its floor — and silently resetting the climb is exactly
-  # what a plain allowed-to-fail job would do. `continue-on-error` is
+  # Reaching a HIGHER one is red: the ecosystem moved, bump the constant. Rung
+  # 10 is the top, so that red cannot fire while the constant is 10: promoting
+  # the version into PYTHON_VERSIONS and retiring this job is tracked on #333,
+  # not prompted here. Reaching a LOWER one is red too: something regressed — a
+  # wheel pulled, a dependency raising its floor, a commit here that broke the
+  # next Python or grew its import budget — and silently resetting the climb is
+  # exactly what a plain allowed-to-fail job would do. `continue-on-error` is
   # deliberately absent: both reds are the signal, and both open an issue via
   # report-failure. The step summary carries how far it got and what stopped it.
   #
@@ -563,31 +566,17 @@ jobs:
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 4 = the hostless
-      # suite collects; rung 5 (the hostless session) now fails on 3.15.
-      # Lowered 7 -> 4 on 2026-09-21 (#429), and not because anything of ours
-      # regressed: rung 5 gained a test (tests/unit/test_running_loop_leak_guard.py,
-      # d7ef3d66) whose inner session parks an event loop in a greenlet, and
-      # greenlet segfaults on 3.15.0rc2. Rung 5 is left whole on purpose — a
-      # 3.15-only skip is a hole nobody would remember to fill. What stops it:
-      #   - rungs 5 and 8 share ONE native crash: `Fatal Python error:
-      #     Segmentation fault` in greenlet's `Greenlet::g_switchstack`.
-      #     greenlet 3.5.3 ships cp315 wheels, so this is not a missing build;
-      #     rung 5's probe reproduces it with a bare greenlet switch, no
-      #     Playwright, which is why rung 8 (the dashboard + covapp browser
-      #     suites, all four workers within 5 s) dies the same way. The xdist
-      #     `KeyError: <WorkerController gw4>` INTERNALERROR that follows on
-      #     rung 8 is xdist failing to recover from the segfaults, not the cause.
-      #   - rung 10 has no 3.15 ceilings file, deliberately parked until
-      #     3.15.0 final (#333).
-      # Rungs 6, 7 and 9 pass (last seen 2026-09-21) but cannot lift this
-      # number: `reached` is the highest CONSECUTIVE rung, and 5 is the gap.
-      # When a greenlet release fixes the crash, expect the climb to reach 7
-      # (rung 8 may then pass too). Do NOT pre-bump -- it is gated on someone
-      # else's fix, so expecting it would red this job every night until that
-      # lands. Bump when this job reds with "climbed"; a red "regressed" is a
-      # real regression.
-      CANARY_EXPECTED_RUNG: "4"
+      # The rung the canary is EXPECTED to reach today. 10 = the whole ladder,
+      # first reached on CPython 3.15.2 on x86_64 by this workflow dispatched
+      # on the branch that set it (#333). Promoting 3.15 into PYTHON_VERSIONS
+      # and retiring this job is a separate step, so until then this job
+      # guards the climb: any rung that breaks reds it as "regressed".
+      #
+      # That includes the import budget: rung 10 reads the 3.15 ceilings, so a
+      # commit that grows the budget and regenerates only the supported minors'
+      # ceilings reds here.
+      # docs/contributing.md ("Regenerate per interpreter") has the command.
+      CANARY_EXPECTED_RUNG: "10"
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -693,10 +682,9 @@ jobs:
           }
 
           # THE PREREQUISITE RUNGS. Nothing below can run without them, so a
-          # failure here stops the climb. The `|| true` on the `if` is load
-          # bearing: the step shell is `bash -e`, and errexit ignores a failure
-          # anywhere in an && list EXCEPT its final command -- without it a
-          # failing last rung exits here, before the verdict below.
+          # failure here stops the climb. The `if` is load bearing: the step
+          # shell is `bash -e`, and errexit does not fire inside an `if`
+          # condition, so a failing rung still reaches the verdict below.
           if rung 1 "runtime dependencies install" uv sync --frozen --no-default-groups --no-install-project --python "$CANARY_PYTHON" &&
              rung 2 "the dev group installs too" uv sync --frozen --group dev --python "$CANARY_PYTHON" &&
              rung 3 "otto imports" uv run --frozen otto --version &&
@@ -704,9 +692,8 @@ jobs:
             # THE TEST RUNGS, cheapest first, and every one runs even after a
             # failure: one nightly then names every lane 3.15 breaks rather
             # than only the first. The budget is last by design -- its ceilings
-            # are per-interpreter and are regenerated once 3.15 is final, so it
-            # must not hide a product failure behind a ceilings file that was
-            # never written (#333).
+            # are per-interpreter, so a next Python's ceilings file is written
+            # late, and its absence must not hide a product failure (#333).
             rung 5 "the hostless session passes (budget aside)" uv run --frozen nox -s "tests_hostless_unit-$CANARY_PYTHON" "tests_hostless_e2e-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" -- --ignore=tests/unit/import_budget || true
             rung 6 "the concurrency soak passes" make stability-unit COUNT=10 || true
             rung 7 "the chaos suites pass" canary_chaos || true
@@ -725,7 +712,7 @@ jobs:
             echo "::error::Python $CANARY_PYTHON regressed to rung $reached (expected $CANARY_EXPECTED_RUNG): see the step summary for what stopped it"
             exit 1
           fi
-          echo "Python $CANARY_PYTHON still stops at rung $reached, as expected."
+          echo "Python $CANARY_PYTHON reached rung $reached, as expected."
 
   # The dashboard soak is a stability lane, so it is never a gate lane
   # (docs/contributing.md's stability-lanes rule); nightly runs it once, in a
@@ -814,12 +801,12 @@ jobs:
             echo "a reviewed commit. An unreachable busybox.net does NOT fail"
             echo "this job; it is annotated as a warning on a green run."
             echo
-            echo "**python-canary is not a test failure either.** It is red when"
-            echo "the next Python's climb stops on a rung other than"
-            echo "CANARY_EXPECTED_RUNG: higher means the ecosystem moved (bump"
-            echo "the constant; at rung 10 promote the version), lower means a"
-            echo "wheel was pulled or a floor was raised. The job's step summary"
-            echo "records the rung reached and what stopped the climb."
+            echo "**python-canary may not be a failure on a supported Python.** It"
+            echo "is red when the next Python's climb stops on a rung other than"
+            echo "CANARY_EXPECTED_RUNG: higher means the ecosystem moved (bump the"
+            echo "constant), lower means a wheel was pulled, a floor was raised, or"
+            echo "a commit here broke that Python or grew its import budget. The"
+            echo "job's step summary records the rung reached and what stopped it."
           } > issue-body.md
 
       - name: Create issue from file
