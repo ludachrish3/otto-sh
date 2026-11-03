@@ -1,0 +1,68 @@
+name: hostless setup
+description: The toolchain every hostless nox leg needs - uv, one Python, the BusyBox artifact cache, strace and the kmodcov compilers.
+
+inputs:
+  python:
+    description: The Python version the leg's nox session runs under.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v10.3.3
+      with:
+        enable-cache: true
+
+    - name: Set up Python ${{ inputs.python }}
+      shell: bash
+      run: uv python install ${{ inputs.python }}
+
+    # THE ARTIFACT CACHE IS DELIBERATE HERE AND FORBIDDEN IN `busybox`, and the
+    # asymmetry is the point: the two jobs ask different questions of the same
+    # bytes.
+    #
+    # `busybox` VERIFIES them. Its whole value is re-fetching cold so that an
+    # upstream in-place rebuild reddens on the push, which is why that job must
+    # never cache (see its comment in ci.yml). Detection lives there and stays there.
+    #
+    # The hostless legs merely CONSUME them. Ten tests in
+    # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
+    # and the hermetic venue builds its BusyBox cells from these artifacts — so
+    # an unreachable artifact source reds a DEFAULT-gate job, on the
+    # PRIMARY Python only (that module is `interpreter_agnostic`: on the primary
+    # the `tests_hostless_guards` session alone runs that family, and every other
+    # interpreter deselects it through noxfile.py's HOSTLESS_MIDDLE_* bundles),
+    # for a reason with nothing to do with the change under test. That is issue
+    # #261, when busybox.net alone was that source (the release mirror now
+    # answers first — see tests/_fixtures/busybox.py):
+    # an SSL handshake timeout fetching 1.16.1, on a release bump that touched
+    # only the version. Caching here removes that exposure without touching the
+    # detection the pin exists for.
+    #
+    # NO `restore-keys`, deliberately. A prefix restore would bring back the OLD
+    # bytes under the SAME filename in exactly the case that matters — a pin
+    # changed because upstream rebuilt an artifact in place — and
+    # `busybox_binary` fetches only when the target is ABSENT, so the stale file
+    # would be kept, fail `_verify`, and keep failing until the cache expired.
+    # An exact key misses on any pin change, which is precisely when this job
+    # should go to the network.
+    #
+    # A HIT DOES NOT SKIP VALIDATION: `_verify` runs on every artifact whether it
+    # was fetched or restored, so a corrupted cache still fails loudly here.
+    - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/otto/busybox
+        key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
+    - name: Install strace (the import budget counts stat syscalls through it)
+      shell: bash
+      run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+
+    # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
+    # before 12, the gcc and clang, and reads what each writes with its own
+    # gcov; the runner image may lack gcc-11, clang or llvm-cov.
+    - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
+      shell: bash
+      run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }

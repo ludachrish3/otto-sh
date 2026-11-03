@@ -27,8 +27,8 @@ import shlex
 
 import pytest
 
+from tests._fixtures.make_recipes import makefile_live_recipe
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.test_lane_invariants import makefile_live_recipe
 from tests.unit.test_tier_marker_invariants import _makefile_pytest_invocations
 
 try:

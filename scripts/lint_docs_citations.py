@@ -225,6 +225,7 @@ MAINTAINER_TARGETS = frozenset(
         "coverage-bed",
         "coverage-embedded",
         "coverage-hostless",
+        "coverage-hostless-fold",
         "coverage-integration",
         "coverage-python",
         "coverage-stamp-start",

@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -101,9 +101,9 @@ COVERAGE_TARGET ?= coverage-python
 # record, the lines-only history: full fold 96.27-96.31% (2026-08-25, four
 # runs); hostless 95.21-95.29% across the five CI Pythons (since 2026-09-11
 # only the PRIMARY (3.10) runs the full hostless selection, measured and gated;
-# the canary (3.14) runs the same paths minus the `interpreter_agnostic` family,
-# uninstrumented, and the interior versions a trimmed, uninstrumented tier;
-# see noxfile.py HOSTLESS_CANARY_TEST_ARGS and HOSTLESS_MIDDLE_TEST_ARGS),
+# the canary (3.14) runs the unit and e2e tiers minus the `interpreter_agnostic`
+# family, uninstrumented, and the interior versions the unit tier only;
+# see noxfile.py HOSTLESS_E2E_CANARY_TEST_ARGS and HOSTLESS_MIDDLE_TEST_ARGS),
 # 95.18-95.22% on a local 3.14 leg.
 # The floors sit just under the measurements on purpose, so a change that
 # sheds covered lines or branches argues with the gate rather than ratcheting
@@ -113,8 +113,10 @@ COVERAGE_TARGET ?= coverage-python
 COVERAGE_THRESHOLD := 95.5
 # CI runs the hostless selection only (integration/hops markers need Vagrant
 # VMs that don't exist in GitHub Actions), so its achievable number is lower.
-# Restated in noxfile.py's HOSTLESS_SERIAL_ARGS — CI invokes the nox session —
-# and the pair is held equal by the same test.
+# The floor lives only here. Two recipes read it: `coverage-hostless` (by
+# hand, `--cov-fail-under=`) and `coverage-hostless-fold` (CI, `--fail-under=`
+# on the fold of the primary's three nox legs, each of which writes its slice
+# at `--cov-fail-under=0`). tests/unit/test_coverage_floors.py pins both.
 CI_COVERAGE_THRESHOLD := 94.75
 
 # Worker count for `make coverage`'s main pytest leg (coverage-python) and for
@@ -175,7 +177,9 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 #     unix     — real telnet/SSH against the Linux Vagrant VMs (incl. multi-hop)
 #     embedded — Zephyr/QEMU under the zephyr VM
 #     hostless — needs no testbed at all (what CI gates on): tests/unit + the
-#                no-VM e2e tests. Mirrors noxfile.py tests_hostless.
+#                no-VM e2e tests. Mirrors noxfile.py HOSTLESS_CLAUSES (the
+#                tests_hostless_unit, tests_hostless_e2e and
+#                tests_hostless_guards sessions).
 # Both resource legs share a marker (`integration`/`embedded`) with the
 # tier-3 chaos lane (tests/e2e/chaos/ is stamped `chaos` + `stability` + one
 # of these two), and both are bare POSITIVE selectors — no catch-all's
@@ -559,9 +563,9 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 	$(call bed_reap)
 	$(call bed_release)
 
-nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the full selection (tests/unit + no-VM e2e) on 3.10 with the 94.75 coverage floor; the same paths minus the `interpreter_agnostic` family, no coverage, on 3.14; the trimmed tests/unit tier (minus the family, no coverage) on 3.11-3.13. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
+nox-hostless: ## Run the three no-testbed sessions across their Pythons: tests_hostless_unit (tests/unit minus the `interpreter_agnostic` family; instrumented on 3.10, no coverage on 3.11-3.14), tests_hostless_e2e (the no-VM e2e tier; instrumented on 3.10, no coverage on 3.14) and tests_hostless_guards (the family, 3.10 only). No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
 	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
-	@uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
+	@uv run nox -s $(HOSTLESS_FOLD_SESSIONS) -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-unit-repeat: ## Repeat the tests/unit tree (minus the stateless `interpreter_agnostic` guards and the ~4 min shim differential, which it ignores by path) twice in one process — the test-isolation leak guard (registry/tmp-import/module-identity) that nightly runs. No VMs. JUnit XML lands in reports/junit/nox-unit-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
 	@$(SAY) "nox: tests/unit twice in one process (isolation-leak guard)"
@@ -595,11 +599,20 @@ NOX_PRIMARY := 3.10
 NOX_CANARY := 3.14
 NOX_MIDDLE := 3.11 3.12 3.13
 
+# The hostless selection's three nox sessions (one per tier). CI uploads each
+# primary leg's `.coverage` under HOSTLESS_FOLD_DIR as
+# coverage-<session>-$(NOX_PRIMARY)/.coverage, and `coverage-hostless-fold`
+# combines exactly these three files — never a glob, so a stray sibling
+# directory cannot enter the fold and a missing leg fails by name.
+HOSTLESS_FOLD_SESSIONS := tests_hostless_unit tests_hostless_e2e tests_hostless_guards
+HOSTLESS_FOLD_DIR ?= reports/coverage/hostless
+HOSTLESS_FOLD_FILES := $(foreach s,$(HOSTLESS_FOLD_SESSIONS),$(HOSTLESS_FOLD_DIR)/coverage-$(s)-$(NOX_PRIMARY)/.coverage)
+
 nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interpreter, the `interpreter_agnostic` family included; uninstrumented — the coverage floor is `make coverage`'s) and the CANARY (3.14, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
 	$(call bed_acquire,nox)
 	$(call bed_reap)
 	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
-	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless_unit-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
 	$(call bed_reap)
 	$(call bed_release)
 
@@ -607,7 +620,7 @@ nox-release: ## (Build & Release) The release's cross-version matrix, once `make
 	$(call bed_acquire,nox-release)
 	$(call bed_reap)
 	@$(SAY) "nox (release): full suite on $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
-	@uv run nox -s tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	@uv run nox -s tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless_unit-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
 	$(call bed_reap)
 	$(call bed_release)
 
@@ -1048,6 +1061,11 @@ coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) 
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS) and not serial_timing" --cov-fail-under=0 $(call junitxml,coverage-hostless)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-hostless-serial)
+
+coverage-hostless-fold: ## CI's hostless floor: combine the primary's three nox legs' coverage data (HOSTLESS_FOLD_DIR/coverage-<session>-$(NOX_PRIMARY)/.coverage, exactly those three) and enforce CI_COVERAGE_THRESHOLD on the fold. Runs no tests; a missing leg fails by name. `make coverage-hostless` stays the by-hand floor. No VMs.
+	@for f in $(HOSTLESS_FOLD_FILES); do test -f "$$f" || { echo "coverage-hostless-fold: missing $$f"; exit 1; }; done
+	uv run coverage combine --keep $(HOSTLESS_FOLD_FILES)
+	uv run coverage report --show-missing --fail-under=$(CI_COVERAGE_THRESHOLD)
 
 collect-check: ## (Quality) Import every test module without running anything — the cheap half of what the pristine-runner lanes exist to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). `--doctest-modules` is what makes collection IMPORT the non-test helpers under testpaths. No VMs.
 	@$(SAY) "pytest: collect-only over the whole tree (imports, no execution)"

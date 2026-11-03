@@ -81,6 +81,7 @@ from _pytest.mark.expression import Expression
 
 from scripts import gate_scope as gs
 from scripts.gate_stamp_common import test_roots as pyproject_testpaths
+from tests._fixtures.make_recipes import is_commented_recipe, makefile_live_recipe
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _expand_makefile_variables,
@@ -243,8 +244,9 @@ _CONSTANT_PAIRS = (
     ("UNIT_NONPRIMARY_TEST_ARGS", "UNIT_NONPRIMARY_SERIAL_ARGS"),
     ("INTEGRATION_TEST_ARGS", "INTEGRATION_SERIAL_ARGS"),
     ("INTEGRATION_NONPRIMARY_TEST_ARGS", "INTEGRATION_NONPRIMARY_SERIAL_ARGS"),
-    ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS"),
-    ("HOSTLESS_CANARY_TEST_ARGS", "HOSTLESS_CANARY_SERIAL_ARGS"),
+    ("HOSTLESS_UNIT_TEST_ARGS", "HOSTLESS_UNIT_SERIAL_ARGS"),
+    ("HOSTLESS_E2E_TEST_ARGS", "HOSTLESS_E2E_SERIAL_ARGS"),
+    ("HOSTLESS_E2E_CANARY_TEST_ARGS", "HOSTLESS_E2E_CANARY_SERIAL_ARGS"),
     ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS"),
     ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS"),
     ("TESTS_ALL_NONPRIMARY_TEST_ARGS", "TESTS_ALL_NONPRIMARY_SERIAL_ARGS"),
@@ -276,20 +278,6 @@ _SERIAL_TIMING_TESTS = {
 }
 
 
-def _is_commented_recipe(line: str) -> bool:
-    """A recipe line make hands to the shell as a no-op comment.
-
-    ``\\t# ...`` and ``\\t@# ...`` both execute as a shell comment — the leg
-    "exists" textually but never runs. The review probe that motivated this
-    (fable, W17c): prefixing the real coverage-python serial leg with ``\\t# ``
-    left the scanner green while the discriminators silently left the gate.
-    """
-    body = line.lstrip("\t").lstrip()
-    if body.startswith("@"):
-        body = body[1:].lstrip()
-    return body.startswith("#")
-
-
 def makefile_serial_lane_gaps(text: str) -> list[str]:
     """Targets whose recipes exclude serial_timing without a paired -n0 leg.
 
@@ -305,7 +293,7 @@ def makefile_serial_lane_gaps(text: str) -> list[str]:
     block: list[str] = []
 
     def flush() -> None:
-        live = [line for line in block if not _is_commented_recipe(line)]
+        live = [line for line in block if not is_commented_recipe(line)]
         if target is None or not any("not serial_timing" in line for line in live):
             return
         joined = "\n".join(live)
@@ -505,27 +493,29 @@ def test_serial_lane_scanners_flag_a_missing_leg() -> None:
 def test_serial_lane_scanner_covers_the_hostless_constant_pair() -> None:
     """The module-level constant shape is checked end-to-end, not waved past."""
     pair = (
-        'HOSTLESS_TEST_ARGS = ("-m", "not stability and not serial_timing")\n'
-        'HOSTLESS_SERIAL_ARGS = ("-m", "serial_timing and not stability", "-n0")\n'
-        "def tests_hostless(session):\n"
-        '    session.run("pytest", *HOSTLESS_TEST_ARGS)\n'
-        '    session.run("pytest", *HOSTLESS_SERIAL_ARGS)\n'
+        'HOSTLESS_UNIT_TEST_ARGS = ("-m", "not stability and not serial_timing")\n'
+        'HOSTLESS_UNIT_SERIAL_ARGS = ("-m", "serial_timing and not stability", "-n0")\n'
+        "def tests_hostless_unit(session):\n"
+        '    session.run("pytest", *HOSTLESS_UNIT_TEST_ARGS)\n'
+        '    session.run("pytest", *HOSTLESS_UNIT_SERIAL_ARGS)\n'
     )
     assert noxfile_serial_lane_gaps(pair) == []
-    no_serial_const = 'HOSTLESS_TEST_ARGS = ("-m", "not stability and not serial_timing")\n'
+    no_serial_const = 'HOSTLESS_UNIT_TEST_ARGS = ("-m", "not stability and not serial_timing")\n'
     assert noxfile_serial_lane_gaps(no_serial_const) == [
-        "HOSTLESS_TEST_ARGS excludes serial_timing but HOSTLESS_SERIAL_ARGS is gone"
+        "HOSTLESS_UNIT_TEST_ARGS excludes serial_timing but HOSTLESS_UNIT_SERIAL_ARGS is gone"
     ]
-    unused_pair = pair.replace('    session.run("pytest", *HOSTLESS_SERIAL_ARGS)\n', "")
+    unused_pair = pair.replace('    session.run("pytest", *HOSTLESS_UNIT_SERIAL_ARGS)\n', "")
     assert noxfile_serial_lane_gaps(unused_pair) == [
-        "no session runs both HOSTLESS_TEST_ARGS and HOSTLESS_SERIAL_ARGS"
+        "no session runs both HOSTLESS_UNIT_TEST_ARGS and HOSTLESS_UNIT_SERIAL_ARGS"
     ]
     stray = 'STRAY_ARGS = ("-m", "not stability and not serial_timing")\n'
     (gap,) = noxfile_serial_lane_gaps(stray)
     assert "extend this pin" in gap  # novel module-level shapes are loud, never green
     # The interior-Python pair is a second sanctioned shape, judged by the
     # same rules: its twin must exist, keep -n0, and share a session.
-    middle = pair.replace("HOSTLESS_", "HOSTLESS_MIDDLE_").replace("tests_hostless", "middle")
+    middle = pair.replace("HOSTLESS_UNIT_", "HOSTLESS_MIDDLE_").replace(
+        "tests_hostless_unit", "middle"
+    )
     assert noxfile_serial_lane_gaps(pair + middle) == []
     assert noxfile_serial_lane_gaps(
         pair + middle.replace('    session.run("pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS)\n', "")
@@ -572,35 +562,6 @@ def test_root_conftest_refuses_serial_timing_inside_an_xdist_worker(
 # subcommand. Both files therefore need the leg, and both say so only in prose
 # ("keep both in sync"). These two pins are that sentence, enforced.
 _RULE_TEST_ARGV = ("ast-grep", "test")
-
-
-def _is_say_recipe(line: str) -> bool:
-    """A recipe line that only PRINTS — the banner above a leg, not the leg."""
-    body = line.lstrip("\t").lstrip()
-    if body.startswith("@"):
-        body = body[1:].lstrip()
-    return body.startswith("$(SAY)")
-
-
-def makefile_live_recipe(text: str, target: str) -> list[str]:
-    """Recipe lines of *target* that the shell would actually run.
-
-    Commented (``\t# ``) and ``$(SAY)`` lines are dropped: both are how a
-    removed leg most plausibly leaves a trace that still contains its own
-    name, which is the annotated-removal trap every scanner in this module is
-    built against.
-    """
-    lines: list[str] = []
-    in_target = False
-    for line in text.splitlines():
-        if line.startswith("\t"):
-            if in_target and not _is_commented_recipe(line) and not _is_say_recipe(line):
-                lines.append(line)
-            continue
-        matched = re.match(r"^([A-Za-z0-9_.-]+)\s*:", line)
-        if matched:
-            in_target = matched.group(1) == target
-    return lines
 
 
 def noxfile_session_commands(text: str, session: str) -> list[list[str]]:
@@ -1860,6 +1821,24 @@ def _legs_including_markerless(
     return legs
 
 
+# The hostless sessions the pull request runs on the primary Python, one per
+# tier; together they are the hostless half of the coverage selection.
+_PRIMARY_CI_SESSIONS = ("tests_hostless_unit", "tests_hostless_e2e", "tests_hostless_guards")
+
+
+def primary_ci_legs() -> "list[_Leg]":
+    """The pull request's hostless legs on the primary Python, read from the noxfile."""
+    legs: "list[_Leg]" = []
+    for session in _PRIMARY_CI_SESSIONS:
+        legs += _legs_including_markerless(
+            f"noxfile.py:{session}@3.10",
+            _python_pytest_invocations(
+                _REPO / "noxfile.py", resolve_names=True, scope=session, python="3.10"
+            ),
+        )
+    return legs
+
+
 def release_legs() -> "list[_Leg]":
     """Every pytest leg `make release` reaches (see :func:`make_legs`)."""
     return make_legs("release")
@@ -1966,13 +1945,13 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     # session is what the stamp proves.
     _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY, ()),
     _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY_SERIAL, ()),
-    # nox-release → tests_hostless on the middle Pythons: the trimmed tests/unit pair.
-    _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless@3.12", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless@3.12", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless@3.13", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless@3.13", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    # nox-release → tests_hostless_unit on the middle Pythons: the trimmed tests/unit pair.
+    _Leg("noxfile.py:tests_hostless_unit@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless_unit@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless_unit@3.12", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless_unit@3.12", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless_unit@3.13", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless_unit@3.13", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
     # dashboard-all → dashboard: the two browser suites on every engine.
     _Leg(
         "Makefile:dashboard",
@@ -2072,21 +2051,28 @@ def _within(path: str, roots: "tuple[str, ...]") -> bool:
     return not roots or gs._within(path, roots)
 
 
-def _release_census_gaps(rows: "tuple[_Leg, ...]", collect) -> "list[str]":
-    """Node ids collected under testpaths that NO row selects.
+def _selected_node_ids(legs: "list[_Leg] | tuple[_Leg, ...]", items) -> "set[str]":
+    """The node ids *legs* select from *items*: the one selection every census shares.
 
-    A row selects an item when its roots contain the item's file AND its `-m`
-    expression matches the item's markers.
+    A leg selects an item when its roots contain the item's file (:func:`_within`) AND its
+    `-m` expression matches the item's markers; each leg is judged over its own roots only.
     """
-    compiled = [(row, Expression.compile(row.expr)) for row in rows]
-    gaps: "list[str]" = []
-    for item in collect(()):
-        matcher = _marker_matcher(item.markers)
-        if not any(
-            _within(item.path, row.roots) and expr.evaluate(matcher) for row, expr in compiled
-        ):
-            gaps.append(item.nodeid)
-    return gaps
+    compiled = [(leg, Expression.compile(leg.expr)) for leg in legs]
+    return {
+        item.nodeid
+        for item in items
+        if any(
+            _within(item.path, leg.roots) and expr.evaluate(_marker_matcher(item.markers))
+            for leg, expr in compiled
+        )
+    }
+
+
+def _release_census_gaps(rows: "tuple[_Leg, ...]", collect) -> "list[str]":
+    """Node ids collected under testpaths that NO row selects (:func:`_selected_node_ids`)."""
+    items = list(collect(()))
+    selected = _selected_node_ids(rows, items)
+    return [item.nodeid for item in items if item.nodeid not in selected]
 
 
 def test_the_manifest_is_exactly_what_the_release_reaches() -> None:
@@ -2196,40 +2182,46 @@ def test_the_release_walker_reads_the_shapes_the_makefile_uses() -> None:
 
 
 def test_the_session_reader_follows_the_interpreter() -> None:
-    """tests_hostless on 3.11 contributes the middle pair only.
+    """Each hostless session contributes the bundles of the interpreter it is read for.
 
-    On 3.10 it contributes the bookend pair, on 3.14 the canary pair. Compared
-    on the RAW tokens, not the `-m` text: the canary pair is the bookend
-    selection minus the family and minus coverage, so only the tokens can
-    show that the `elif CANARY_PYTHON` branch (the constant-Name lookup) was
-    the one taken.
+    tests_hostless_unit: the UNIT pair on 3.10 (instrumented, `--cov-append` on
+    the serial leg), the MIDDLE pair on 3.11 (`--no-cov`); tests_hostless_e2e:
+    the instrumented pair on 3.10, the `--no-cov` canary on 3.14. Compared on
+    the RAW tokens, not the `-m` text: the 3.10 and 3.11 unit pairs and the
+    3.10 and 3.14 e2e pairs select alike, so only the tokens can show which
+    branch of the `session.python` ladder was taken.
     """
-    invocations = {
-        python: _python_pytest_invocations(
-            _REPO / "noxfile.py", resolve_names=True, scope="tests_hostless", python=python
+
+    def read(session: str, python: str) -> "list[list[str]]":
+        return _python_pytest_invocations(
+            _REPO / "noxfile.py", resolve_names=True, scope=session, python=python
         )
-        for python in ("3.10", "3.11", "3.14")
+
+    invocations = {
+        ("unit", "3.10"): read("tests_hostless_unit", "3.10"),
+        ("unit", "3.11"): read("tests_hostless_unit", "3.11"),
+        ("e2e", "3.10"): read("tests_hostless_e2e", "3.10"),
+        ("e2e", "3.14"): read("tests_hostless_e2e", "3.14"),
     }
     assert all(len(pair) == 2 for pair in invocations.values()), invocations
-    tokens = {python: {t for argv in pair for t in argv} for python, pair in invocations.items()}
+    tokens = {key: {t for argv in pair for t in argv} for key, pair in invocations.items()}
     exprs = {
-        python: {argv[argv.index("-m") + 1] for argv in pair}
-        for python, pair in invocations.items()
+        key: {argv[argv.index("-m") + 1] for argv in pair} for key, pair in invocations.items()
     }
-    # The floor gates coverage; the ceiling runs with it off.
-    assert "--cov-fail-under=94.75" in tokens["3.10"], tokens["3.10"]
-    assert "--no-cov" not in tokens["3.10"], tokens["3.10"]
-    assert "--no-cov" in tokens["3.14"], tokens["3.14"]
-    assert not [t for t in tokens["3.14"] if t.startswith("--cov-fail-under")], tokens["3.14"]
-    # The ceiling runs the floor's selection minus the family: each 3.14 expression is a
-    # 3.10 one plus exactly `not interpreter_agnostic` (#566: the family runs on the primary only).
-    trimmed = {f"{e} and not interpreter_agnostic" for e in exprs["3.10"]}
-    assert exprs["3.14"] == trimmed, (exprs["3.10"], exprs["3.14"])
-    # The middle trims the guards and the e2e tier; the PRIMARY never mentions the marker.
-    assert all("interpreter_agnostic" in e for e in exprs["3.11"]), exprs["3.11"]
-    assert not any("interpreter_agnostic" in e for e in exprs["3.10"]), exprs["3.10"]
-    assert "tests/e2e" in tokens["3.10"], tokens["3.10"]
-    assert "tests/e2e" not in tokens["3.11"], tokens["3.11"]
+    for instrumented, bare in (
+        (("unit", "3.10"), ("unit", "3.11")),
+        (("e2e", "3.10"), ("e2e", "3.14")),
+    ):
+        assert "--cov-append" in tokens[instrumented], tokens[instrumented]
+        assert "--no-cov" not in tokens[instrumented], tokens[instrumented]
+        assert "--no-cov" in tokens[bare], tokens[bare]
+        assert not [t for t in tokens[bare] if t.startswith("--cov-")], tokens[bare]
+        assert exprs[bare] == exprs[instrumented], (exprs[instrumented], exprs[bare])
+    # The unit legs deselect the family on every interpreter; the e2e legs never name it.
+    assert all("not interpreter_agnostic" in e for e in exprs["unit", "3.11"]), exprs
+    assert not any("interpreter_agnostic" in e for e in exprs["e2e", "3.10"]), exprs
+    assert "tests/e2e" not in tokens["unit", "3.10"], tokens["unit", "3.10"]
+    assert "tests/unit" not in tokens["e2e", "3.10"], tokens["e2e", "3.10"]
 
 
 def test_the_session_reader_refuses_a_ladder_it_cannot_resolve(tmp_path: Path) -> None:
@@ -2488,6 +2480,7 @@ HOSTLESS_TARGETS = [
     "validate-python",
     "coverage-unit",
     "coverage-hostless",
+    "coverage-hostless-fold",
     "coverage-stamp-start",
     "coverage-ts",
     "coverage-ts-unit",
@@ -2712,15 +2705,17 @@ def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> No
     The bed lane selects `M_COVERAGE_BED` = `(integration or embedded) and
     $(M_COVERAGE)`; the hostless slice selects `not integration and not
     embedded and` the same body, in two spellings: the Makefile's `M_HOSTLESS`
-    and the noxfile's hand-kept `HOSTLESS_TEST_ARGS`, which is what the pull
-    request's `tests_hostless` job runs on the primary Python. Together they
+    and the noxfile's `HOSTLESS_CLAUSES`, which the pull request's three hostless
+    sessions run on the primary Python (:func:`primary_ci_legs`). Together they
     are the coverage selection and they share no item, so a src-leaf tip that
     runs the bed lane and lets the PR's CI run the hostless slice has run every
     test `make coverage` would, once. The roots differ — the bed lane runs over
     `testpaths`, the hostless slice over `tests/unit tests/e2e` — and the
     partition still holds because every `tests/integration` item is
     integration-marked by its conftest (the bed's) and `tests/busybox` and
-    `tests/conformance` are excluded by marker on both sides. The bed lane is
+    `tests/conformance` are excluded by marker on both sides. The three legs
+    together select what the former single primary pair did — pinned by
+    `test_the_three_primary_legs_select_what_the_former_primary_pair_did`. The bed lane is
     uninstrumented on both legs (`--no-cov`: a floor-less pass/fail lane that
     leaves no coverage stamp) and its twin is the `-n0` leg. The collected-set
     check was run once at the landing (the spec's measurement); this is the
@@ -2731,17 +2726,28 @@ def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> No
     hostless = f"not integration and not embedded and {body}"
     assert variables["M_HOSTLESS"] == hostless
     assert variables["M_COVERAGE_BED"] == f"(integration or embedded) and {body}"
-    ci = _legs_including_markerless(
-        "noxfile.py:tests_hostless@3.10",
-        _python_pytest_invocations(
-            _REPO / "noxfile.py", resolve_names=True, scope="tests_hostless", python="3.10"
-        ),
-    )
-    assert [leg.expr for leg in ci] == [
+    ci = primary_ci_legs()
+    by_session = {
+        session: [leg for leg in ci if leg.surface == f"noxfile.py:{session}@3.10"]
+        for session in _PRIMARY_CI_SESSIONS
+    }
+    unit, e2e, guards = (by_session[session] for session in _PRIMARY_CI_SESSIONS)
+    family = "interpreter_agnostic"
+    assert [leg.expr for leg in unit] == [
+        f"{hostless} and not serial_timing and not {family}",
+        f"serial_timing and {hostless} and not {family}",
+    ], unit
+    assert [leg.expr for leg in e2e] == [
         f"{hostless} and not serial_timing",
         f"serial_timing and {hostless}",
-    ], ci
-    assert all(leg.roots == ("tests/unit", "tests/e2e") for leg in ci), ci
+    ], e2e
+    assert [leg.expr for leg in guards] == [f"{hostless} and {family}"], guards
+    assert all(leg.roots == ("tests/unit",) for leg in (*unit, *guards)), ci
+    assert all(leg.roots == ("tests/e2e",) for leg in e2e), ci
+    # The family is selected by exactly the guards leg and deselected by the unit legs.
+    clauses = [{c.strip() for c in leg.expr.split(" and ")} for leg in ci]
+    assert [leg for leg, c in zip(ci, clauses, strict=True) if family in c] == guards, ci
+    assert [leg for leg, c in zip(ci, clauses, strict=True) if f"not {family}" in c] == unit, ci
     legs = make_legs("coverage-bed")
     assert [leg.expr for leg in legs] == [
         f"(integration or embedded) and {body} and not serial_timing",
@@ -2788,3 +2794,45 @@ def test_every_makefile_target_is_classified_exactly_once() -> None:
     targets = set(re.findall(r"^([A-Za-z0-9_-]+)\s*:(?!=)", _MAKEFILE_TEXT, re.MULTILINE))
     assert sorted(targets - set(every)) == [], "Makefile targets the census does not classify"
     assert sorted(set(every) - targets) == [], "census entries that are not Makefile targets"
+
+
+# The single primary pair the hostless sessions replaced, spelled out as LITERALS
+# (never read from the noxfile) so the comparison below has a fixed baseline.
+_FORMER_PRIMARY_LEGS = (
+    _Leg(
+        "noxfile.py:tests_hostless@3.10",
+        "not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not kmodcov and not serial_timing",
+        ("tests/unit", "tests/e2e"),
+    ),
+    _Leg(
+        "noxfile.py:tests_hostless@3.10",
+        "serial_timing and not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not kmodcov",
+        ("tests/unit", "tests/e2e"),
+    ),
+)
+
+
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_three_primary_legs_select_what_the_former_primary_pair_did(
+    collect_marker_sets,
+) -> None:
+    """Splitting the hostless session per tier moved no test in or out of the primary run.
+
+    Both selections are evaluated over one real collection of `tests/unit` and
+    `tests/e2e`; the mutation control drops the guards leg, and the union then
+    misses the `interpreter_agnostic` family.
+    """
+    items = collect_marker_sets(("tests/unit", "tests/e2e"))
+    former = _selected_node_ids(_FORMER_PRIMARY_LEGS, items)
+    assert former, "the former pair selects nothing, so this compares nothing"
+    current = primary_ci_legs()
+    assert _selected_node_ids(current, items) == former
+    without_guards = [leg for leg in current if "tests_hostless_guards" not in leg.surface]
+    assert len(without_guards) == len(current) - 1, current
+    missed = former - _selected_node_ids(without_guards, items)
+    assert missed, "dropping the guards leg must lose the family"
+    family = {item.nodeid for item in items if "interpreter_agnostic" in item.markers}
+    assert missed <= family, sorted(missed - family)[:20]

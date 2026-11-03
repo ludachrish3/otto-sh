@@ -210,6 +210,25 @@ def _string_constants(tree: ast.Module) -> "dict[str, str]":
     }
 
 
+def resolve_string(node: ast.expr, constants: "dict[str, str]") -> "str | None":
+    """The string *node* spells, or None when this reader cannot tell.
+
+    The one place a build file's string expression is resolved: a ``str``
+    constant, a bare name in *constants*, or ``+`` of two such (so a bundle
+    string composed from a shared clause constant reads as its literal twin).
+    Every reader of ``noxfile.py`` that needs a flag's value goes through it.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = resolve_string(node.left, constants)
+        right = resolve_string(node.right, constants)
+        return left + right if left is not None and right is not None else None
+    return None
+
+
 def _python_marker_expressions(source: Path) -> list[str]:
     """Every marker expression passed via ``-m`` anywhere in *source*.
 
@@ -237,11 +256,33 @@ def _python_marker_expressions(source: Path) -> list[str]:
         for flag, value in pairwise(seq):
             if not (isinstance(flag, ast.Constant) and flag.value == "-m"):
                 continue
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                exprs.append(value.value)
-            elif isinstance(value, ast.Name) and value.id in assigns:
-                exprs.append(assigns[value.id])
+            resolved = resolve_string(value, assigns)
+            if resolved is not None:
+                exprs.append(resolved)
     return exprs
+
+
+_COMPOSED_SRC = (
+    'import nox\nCLAUSES = "not a and not b"\n'
+    'LIT = ("tests/unit", "-m", "not a and not b and not serial_timing")\n'
+    'COMP = ("tests/unit", "-m", CLAUSES + " and not serial_timing")\n'
+    "@nox.session\ndef s(session):\n"
+    '    session.run("pytest", *LIT)\n    session.run("pytest", *COMP)\n'
+)
+
+
+def test_the_three_readers_see_a_composed_bundle_as_its_literal_twin(tmp_path):
+    # Local: that module imports this one.
+    import tests.unit.test_python_matrix_tiering as matrix_tiering
+
+    src = tmp_path / "noxfile.py"
+    src.write_text(_COMPOSED_SRC)
+    tree = ast.parse(_COMPOSED_SRC)
+    assert matrix_tiering._bundles(tree)["COMP"] == matrix_tiering._bundles(tree)["LIT"]
+    assert _python_marker_expressions(src).count("not a and not b and not serial_timing") == 2
+    inv = _python_pytest_invocations(src, resolve_names=True)
+    assert inv[0] == inv[1]
+    assert inv[0][:2] == ["pytest", "tests/unit"]
 
 
 def _nox_marker_expressions() -> list[str]:
@@ -749,10 +790,10 @@ def _branch_for(
             f"line {stmt.lineno}: an `if` this reader cannot resolve — only a top-level "
             f"`if session.python == <str constant or name>` ladder is read"
         )
-        right = test.comparators[0]
-        value = right.value if isinstance(right, ast.Constant) else constants[right.id]
-        assert isinstance(value, str), (
-            f"line {stmt.lineno}: `session.python` is compared with {value!r}, not a str"
+        value = resolve_string(test.comparators[0], constants)
+        assert value is not None, (
+            f"line {stmt.lineno}: `session.python` is compared with "
+            f"{ast.unparse(test.comparators[0])}, not a str"
         )
         chosen += _branch_for(python, stmt.body if value == python else stmt.orelse, constants)
     return chosen
@@ -818,15 +859,10 @@ def _python_pytest_invocations(
         out: "list[str]" = []
         for elt in seq:
             if isinstance(elt, ast.Starred) and isinstance(elt.value, ast.Name):
-                out += [
-                    e.value
-                    for e in bundles.get(elt.value.id, [])
-                    if isinstance(e, ast.Constant) and isinstance(e.value, str)
-                ]
-            elif isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                out.append(elt.value)
-            elif isinstance(elt, ast.Name) and elt.id in constants:
-                out.append(constants[elt.id])
+                members = [resolve_string(e, constants) for e in bundles.get(elt.value.id, [])]
+            else:
+                members = [resolve_string(elt, constants)]
+            out += [m for m in members if m is not None]
         return out
 
     root: "ast.AST" = tree
@@ -1396,7 +1432,7 @@ def test_catchall_lanes_exclude_conformance():
     the lanes that could reach it.
 
     Both surfaces, because both are hand-edited and they are not checked
-    against each other anywhere else: `nox -s tests_hostless` runs on five
+    against each other anywhere else: `nox -s tests_hostless_unit` runs on five
     Pythons in CI, so a clause present in the Makefile and missing from
     noxfile.py is an escape that only CI would find.
     """

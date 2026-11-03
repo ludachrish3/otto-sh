@@ -33,10 +33,10 @@ PRIMARY_PYTHON = "3.10"
 # mirrors this value (hand-kept, like PRIMARY_PYTHON).
 CANARY_PYTHON = "3.14"
 
-# The floor and the ceiling. The floor runs everything and gates coverage
-# (HOSTLESS_*_ARGS below); the ceiling runs every product test with the
-# `interpreter_agnostic` family deselected and coverage off
-# (HOSTLESS_CANARY_*_ARGS); the versions between run the trimmed pair
+# The floor and the ceiling. The floor runs everything, instrumented (the
+# HOSTLESS_UNIT, HOSTLESS_E2E and HOSTLESS_GUARDS bundles below); the ceiling
+# runs the unit and e2e tiers with coverage off (HOSTLESS_MIDDLE_*_ARGS and
+# HOSTLESS_E2E_CANARY_*_ARGS); the versions between run the unit tier only
 # (HOSTLESS_MIDDLE_*_ARGS). Pinned to be exactly min/max of PYTHON_VERSIONS by
 # tests/unit/test_python_matrix_tiering.py.
 BOOKEND_PYTHONS = (PRIMARY_PYTHON, CANARY_PYTHON)
@@ -59,25 +59,28 @@ def _junitxml(session: nox.Session, group: str) -> str:
 nox.options.default_venv_backend = "uv"
 # `lint` runs ruff check + format --check; it is part of the default gate now
 # that the strict config (select=ALL minus the deny-list) is green.
-nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
+nox.options.sessions = [
+    "lint",
+    "tests_hostless_unit",
+    "tests_hostless_e2e",
+    "tests_hostless_guards",
+    "typecheck",
+    "docs",
+]
 
-# Coverage floors — every one a COMBINED line+branch number, since .coveragerc
-# measures branches (`branch = true`). ONE floor lives here: tests_hostless
-# gates at 94.75 on the PRIMARY Python — the Makefile's CI_COVERAGE_THRESHOLD,
-# and the floor `make coverage-hostless` enforces on the same selection, so
-# it's the same number; tests/unit/test_coverage_floors.py holds the pair
-# equal, both above their codified minimums (the Makefile comment on
-# COVERAGE_THRESHOLD has the measurements), and holds this to be the ONLY
-# floor in the file. Every other leg runs with coverage OFF: the canary's job
-# is "does otto still work on the newest interpreter", the interior's trimmed
-# selection cannot meet a floor, and tests_all's primary leg is the selection
-# `make coverage` already gates at 95.5 on the same tree — the coverage stamp
-# (scripts/coverage_stamp.py) is the release's evidence of that run. tests_all
-# used to carry a second, lower floor of its own (92: the same run minus the
-# dashboard --cov-append fold-in) that the release read; owner ruling 5
-# (#566) deleted it, and with it the leg's instrumentation. Instrumenting a
-# leg whose report nothing reads costs it ~14 % of wall time (the canary
-# session measured 552 s with coverage, 473 s without) for no reader.
+# Coverage floors: no floor lives in the noxfile. The hostless selection is
+# three sessions (one per tier, below) whose instrumented primary legs each
+# write a partial report with `--cov-fail-under=0`. The hostless floor is the
+# Makefile's CI_COVERAGE_THRESHOLD, judged by `make coverage-hostless-fold` on
+# the fold of those three primary legs, never on any one session's slice.
+# Every other leg runs with coverage OFF: the canary's job is "does otto
+# still work on the newest
+# interpreter", the interior's trimmed selection cannot meet a floor, and
+# tests_all's primary leg is the selection `make coverage` already gates on
+# the same tree — the coverage stamp (scripts/coverage_stamp.py) is the
+# release's evidence of that run. Instrumenting a leg whose report nothing
+# reads costs it ~14 % of wall time (the canary session measured 552 s with
+# coverage, 473 s without) for no reader.
 
 # `not busybox and not conformance` rides every catch-all selector below, for
 # reasons unrelated to the bed and spelled out in full above the Makefile's
@@ -115,7 +118,7 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # unarmed against 20.29 s / 20.94 s armed on 2026-09-12 — armed was faster in
 # both pairs, i.e. inside the noise. And "bookend-only" is a property of the
 # current lane shape, not of the bug: the same leak class this is for was seen
-# on tests_hostless-3.11 (see _dashboard_harness._reap_orphaned_transports and
+# on tests_hostless_unit-3.11 (see _dashboard_harness._reap_orphaned_transports and
 # its sibling regression test) back when the interior legs still ran tests/e2e.
 #
 # This can redden an interior leg that is green today, on a latent leak whose
@@ -130,103 +133,119 @@ _LEAK_ENV = {"OTTO_DETECT_ASYNCIO_LEAKS": "1"}
 # whole session, which breaks pytest-asyncio tests that share the process.
 # `dashboard` (below) is that dedicated process; every other session whose
 # paths/markers could otherwise co-select browser + async tests in one
-# pytest invocation (tests_hostless, tests_all) excludes `browser` instead.
+# pytest invocation (the hostless sessions, tests_all) excludes `browser`
+# instead.
 #
 # serial_timing (wall-clock discriminators — sibling xdist workers can
 # counterfeit their slow arm as a false red) is excluded from every parallel
 # invocation and re-appended by a paired `-n0` leg in the same session —
-# exclusion alone would make the tests CI-invisible. The coverage gate rides
-# the SERIAL args (the last leg, folding in via --cov-append), so the
-# threshold judges the session's whole run. The two marker expressions are a
-# hand-kept pair like DASHBOARD_MARKER_EXPR: if the resource exclusions
-# change, change both — the serial leg carries EVERY clause its parallel twin
-# does, `not busybox and not conformance` included, which is pinned for every
-# paired leg in this file and the Makefile by
-# tests/unit/test_lane_invariants.py (a serial leg that dropped them would
-# fetch artifacts in a lane whose parallel half excludes them).
-HOSTLESS_TEST_ARGS = (
-    "tests/unit",
-    "tests/e2e",
-    "-m",
-    (
-        "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not serial_timing"
-    ),
-    "--cov-fail-under=0",
-)
-HOSTLESS_SERIAL_ARGS = (
-    "tests/unit",
-    "tests/e2e",
-    "-m",
-    (
-        "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov"
-    ),
-    "-n0",
-    "--cov-append",
-    "--cov-fail-under=94.75",
+# exclusion alone would make the tests CI-invisible. An instrumented serial
+# leg folds into its parallel twin's report via --cov-append, so each
+# session's report covers its whole run.
+#
+# HOSTLESS_CLAUSES is the ONE home of the hostless exclusion list: every
+# hostless bundle below composes from it, so a resource exclusion added here
+# reaches every leg, serial twins included — `not busybox and not conformance`
+# on a serial leg is pinned for every paired leg in this file and the Makefile
+# by tests/unit/test_lane_invariants.py (a serial leg that dropped them would
+# fetch artifacts in a lane whose parallel half excludes them). The Makefile's
+# M_HOSTLESS is the same text, held equal by that module's partition pin.
+HOSTLESS_CLAUSES = (
+    "not integration and not embedded and not stability and not browser "
+    "and not busybox and not conformance and not kmodcov"
 )
 
-# The CANARY Python's pair: the bookend selection minus the family, coverage
-# off. Same paths (the e2e tier included — the newest interpreter runs every
-# product test the primary does), the same clauses plus `not
-# interpreter_agnostic` (the family runs on the primary only, #566 Q2), and
-# `--no-cov` in place of the gating flags.
-# tests/unit/test_python_matrix_tiering.py pins that this pair is the bookend
-# pair minus exactly those two things.
-HOSTLESS_CANARY_TEST_ARGS = (
+# The hostless selection is three sessions, one per tier, so CI runs them as
+# parallel jobs: tests_hostless_unit (tests/unit, every interpreter),
+# tests_hostless_e2e (tests/e2e, the bookends) and tests_hostless_guards (the
+# `interpreter_agnostic` family, the primary only). On the primary the three
+# together select exactly what one session over `tests/unit tests/e2e` did —
+# tests/unit/test_lane_invariants.py pins that against a literal baseline.
+# Each instrumented leg writes a partial report (`--cov-fail-under=0`); no
+# floor judges a slice.
+#
+# The UNIT pair: tests/unit less the family (the guards session runs it).
+HOSTLESS_UNIT_TEST_ARGS = (
     "tests/unit",
+    "-m",
+    HOSTLESS_CLAUSES + " and not serial_timing and not interpreter_agnostic",
+    "--cov-fail-under=0",
+)
+HOSTLESS_UNIT_SERIAL_ARGS = (
+    "tests/unit",
+    "-m",
+    "serial_timing and " + HOSTLESS_CLAUSES + " and not interpreter_agnostic",
+    "-n0",
+    "--cov-append",
+    "--cov-fail-under=0",
+)
+
+# The E2E pair: tests/e2e on the bookends. No family clause — the marker is
+# declared under tests/unit only, so no e2e test carries it.
+HOSTLESS_E2E_TEST_ARGS = (
     "tests/e2e",
     "-m",
-    (
-        "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not serial_timing "
-        "and not interpreter_agnostic"
-    ),
+    HOSTLESS_CLAUSES + " and not serial_timing",
+    "--cov-fail-under=0",
+)
+HOSTLESS_E2E_SERIAL_ARGS = (
+    "tests/e2e",
+    "-m",
+    "serial_timing and " + HOSTLESS_CLAUSES,
+    "-n0",
+    "--cov-append",
+    "--cov-fail-under=0",
+)
+
+# The CANARY Python's e2e pair: the E2E pair with `--no-cov` in place of every
+# coverage flag — the newest interpreter runs every product e2e test the
+# primary does, uninstrumented. tests/unit/test_python_matrix_tiering.py pins
+# that this pair is the E2E pair minus exactly the coverage flags.
+HOSTLESS_E2E_CANARY_TEST_ARGS = (
+    "tests/e2e",
+    "-m",
+    HOSTLESS_CLAUSES + " and not serial_timing",
     "--no-cov",
 )
-HOSTLESS_CANARY_SERIAL_ARGS = (
-    "tests/unit",
+HOSTLESS_E2E_CANARY_SERIAL_ARGS = (
     "tests/e2e",
     "-m",
-    (
-        "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
-    ),
+    "serial_timing and " + HOSTLESS_CLAUSES,
     "-n0",
     "--no-cov",
+)
+
+# The GUARDS leg: the `interpreter_agnostic` family, on the primary only — it
+# proves the same thing on every Python (#566 Q2). One parallel leg, no
+# serial_timing clause and no -n0 twin: tests/unit/test_make_quick.py pins
+# that no family test is `serial_timing` (the `quick-guards` shape).
+HOSTLESS_GUARDS_ARGS = (
+    "tests/unit",
+    "-m",
+    HOSTLESS_CLAUSES + " and interpreter_agnostic",
+    "--cov-fail-under=0",
 )
 
 # The INTERIOR Pythons' pair (every PYTHON_VERSIONS entry not in
-# BOOKEND_PYTHONS). Measured 2026-09-11: a full hostless leg is ~1,420 s of CPU
-# per interior Python, and 65 % of it is work whose subject is not otto under
-# THIS interpreter — the tests/e2e tier (real `otto` subprocesses, real `pip`
-# venv builds) and the repo-policy guards that re-collect the whole tree in a
-# subprocess. Those prove the same thing on every Python, so the interior legs
-# run the tests/unit tier with `interpreter_agnostic` deselected and coverage
-# off; the primary keeps the full selection above; the canary keeps the paths
-# but drops the family too. Each middle expression carries EVERY clause of its
-# bookend twin plus the trim, and the primary pair never mentions the marker
-# (a mention there would stop those tests running anywhere in the matrix) —
-# both pinned by tests/unit/test_python_matrix_tiering.py, and the constant
-# pairing itself by tests/unit/test_lane_invariants.py's serial-leg scanner.
+# BOOKEND_PYTHONS). Measured 2026-09-11: a full hostless leg was ~1,420 s of
+# CPU per interior Python, and 65 % of it was work whose subject is not otto
+# under THIS interpreter — the tests/e2e tier (real `otto` subprocesses, real
+# `pip` venv builds) and the repo-policy guards that re-collect the whole tree
+# in a subprocess. The interior legs run tests_hostless_unit only (no e2e
+# session there), so this pair is the UNIT pair with coverage off: the same
+# roots and marker expressions, `--no-cov` in place of the coverage flags —
+# pinned by tests/unit/test_python_matrix_tiering.py, and the constant pairing
+# itself by tests/unit/test_lane_invariants.py's serial-leg scanner.
 HOSTLESS_MIDDLE_TEST_ARGS = (
     "tests/unit",
     "-m",
-    (
-        "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not serial_timing "
-        "and not interpreter_agnostic"
-    ),
+    HOSTLESS_CLAUSES + " and not serial_timing and not interpreter_agnostic",
     "--no-cov",
 )
 HOSTLESS_MIDDLE_SERIAL_ARGS = (
     "tests/unit",
     "-m",
-    (
-        "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
-    ),
+    "serial_timing and " + HOSTLESS_CLAUSES + " and not interpreter_agnostic",
     "-n0",
     "--no-cov",
 )
@@ -396,20 +415,15 @@ def tests_integration(session: nox.Session) -> None:
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
-def tests_hostless(session: nox.Session) -> None:
-    """Run the no-testbed set (tests/unit + no-VM e2e) — the CI gate.
+def tests_hostless_unit(session: nox.Session) -> None:
+    """Run the no-testbed ``tests/unit`` tier, less the guards family, on every Python.
 
-    Identical selection to the former ``tests_unit``: every test that needs no
-    testbed across ``tests/unit`` and ``tests/e2e``. This is what
-    ``.github/workflows/ci.yml`` runs and what ``nox.options.sessions`` defaults
-    to. Auto-includes any future no-testbed e2e test.
-
-    Tiered by interpreter: the PRIMARY_PYTHON runs the full pair with the
-    coverage gate, the CANARY_PYTHON the same paths with the
-    `interpreter_agnostic` family deselected and coverage off, and
-    the interior versions the trimmed HOSTLESS_MIDDLE pair (see its comment for
-    what is trimmed and why). The junit group names are shared, so
-    reports/junit/nox-hostless/<session>.xml is one file per Python either way.
+    The PRIMARY_PYTHON runs the instrumented UNIT pair; every other
+    interpreter the HOSTLESS_MIDDLE pair (the same selection, coverage off).
+    One of the three hostless sessions (with ``tests_hostless_e2e`` and
+    ``tests_hostless_guards``) that ``.github/workflows/ci.yml`` runs and
+    ``nox.options.sessions`` defaults to. The junit group names are shared,
+    so reports/junit/nox-hostless/<session>.xml is one file per session.
     """
     # Each branch spells its bundles by NAME: the lane scanners in
     # tests/unit/test_tier_marker_invariants.py expand `*MODULE_CONSTANT` and
@@ -418,14 +432,11 @@ def tests_hostless(session: nox.Session) -> None:
     parallel_junit = _junitxml(session, "nox-hostless")
     serial_junit = _junitxml(session, "nox-hostless-serial")
     if session.python == PRIMARY_PYTHON:
-        session.run("pytest", *HOSTLESS_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV)
-        session.run("pytest", *HOSTLESS_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV)
-    elif session.python == CANARY_PYTHON:
         session.run(
-            "pytest", *HOSTLESS_CANARY_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV
+            "pytest", *HOSTLESS_UNIT_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV
         )
         session.run(
-            "pytest", *HOSTLESS_CANARY_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
+            "pytest", *HOSTLESS_UNIT_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
         )
     else:
         session.run(
@@ -434,6 +445,57 @@ def tests_hostless(session: nox.Session) -> None:
         session.run(
             "pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
         )
+
+
+@nox_uv.session(python=list(BOOKEND_PYTHONS), uv_groups=["dev"])
+def tests_hostless_e2e(session: nox.Session) -> None:
+    """Run the no-testbed ``tests/e2e`` tier on the bookend Pythons.
+
+    The PRIMARY_PYTHON runs the instrumented E2E pair, the CANARY_PYTHON the
+    same selection with coverage off. The interior versions run no e2e: its
+    subject (real ``otto`` subprocesses, real ``pip`` venv builds) is the same
+    on every Python.
+    """
+    parallel_junit = _junitxml(session, "nox-hostless")
+    serial_junit = _junitxml(session, "nox-hostless-serial")
+    if session.python == PRIMARY_PYTHON:
+        session.run(
+            "pytest", *HOSTLESS_E2E_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV
+        )
+        session.run(
+            "pytest", *HOSTLESS_E2E_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
+        )
+    else:
+        session.run(
+            "pytest",
+            *HOSTLESS_E2E_CANARY_TEST_ARGS,
+            parallel_junit,
+            *session.posargs,
+            env=_LEAK_ENV,
+        )
+        session.run(
+            "pytest",
+            *HOSTLESS_E2E_CANARY_SERIAL_ARGS,
+            serial_junit,
+            *session.posargs,
+            env=_LEAK_ENV,
+        )
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def tests_hostless_guards(session: nox.Session) -> None:
+    """Run the ``interpreter_agnostic`` guards family, on the primary Python only.
+
+    One parallel leg: the family has no ``serial_timing`` member (see
+    HOSTLESS_GUARDS_ARGS).
+    """
+    session.run(
+        "pytest",
+        *HOSTLESS_GUARDS_ARGS,
+        _junitxml(session, "nox-hostless"),
+        *session.posargs,
+        env=_LEAK_ENV,
+    )
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
@@ -688,14 +750,14 @@ def dashboard(session: nox.Session, browser: str) -> None:
     Runs both suites in one pytest invocation: `tests/e2e/monitor/dashboard`
     (the monitor dashboard, through a real `MonitorServer`) and
     `tests/e2e/cov/report_browser` (the coverage-report SPA — both its
-    `file://` lane and, since Task 10, the served-CSP lane against a real
+    `file://` lane and, since it landed, the served-CSP lane against a real
     HTTP server; see `tests/_fixtures/_csp_server.py`). This is what puts the
     coverage-report suite's browser matrix into CI: this session is what
     `.github/workflows/ci.yml`'s `dashboard` job runs per engine.
 
     Both suites drive a BUILT React bundle (`src/otto/_webassets/monitor/dist/`
     and `src/otto/_webassets/covapp/dist/` respectively) —
-    there's no legacy static fallback since the Task 9 cutover, so both
+    there's no legacy static fallback since the React cutover, so both
     `dist/` dirs must already exist before this session runs. Building them
     needs Node/npm (`make web`, which installs web/'s dependencies itself),
     which nox-uv's per-session venvs (Python-only, one per `PYTHON_VERSIONS`
@@ -789,7 +851,7 @@ def lint(session: nox.Session) -> None:
     workflow's push/pull_request event. Its parse-only pytest legs — the
     layer test, the import-string audit and the
     lazy-export import rules — are not repeated here either: they are
-    ordinary unit tests, so the `tests_hostless` session already runs them.
+    ordinary unit tests, so the hostless sessions already run them.
     """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
