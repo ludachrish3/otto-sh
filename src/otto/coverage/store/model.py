@@ -59,7 +59,7 @@ merely annotated, so every percentage in the file already has them out of
 the denominator. Version 7 also carries an additive, optional ``files[].functions``
 list (2026-09); absent keys load as no functions, so no bump.
 Version 8 adds a per-run ``product`` (the ``<product>`` segment of
-``cov/<host>/<product>/``; ``""`` for a synthetic or unnamed unit run).
+``cov/<host>/<product>/``; ``""`` for a synthetic run (a ``--tier`` tracefile)).
 The version ``save`` writes: the one entry of ``STORE_WRITE_VERSIONS``
 (``otto.coverage.formats``), unpacked so that a second write version fails at
 import until a writer chooses it. There is no migration shim: ``load``
@@ -242,8 +242,8 @@ class RunRecord:
     board: str = ""
     # Host id (the capture's board dir name == host.id); "" = no host attribution.
     host: str = ""
-    # The <product> segment of cov/<host>/<product>/; "" = a synthetic or
-    # unnamed unit run, which names no product.
+    # The <product> segment of cov/<host>/<product>/; "" = a synthetic run
+    # (a --tier tracefile), which names no product.
     product: str = ""
     labs: list[str] = field(default_factory=list)
     captured_at: str = ""

@@ -35,8 +35,8 @@ browser. Without `--dir` it lands under this invocation's output directory
    host — the pre-product one-level tree — is refused by name rather than
    misread as a product; there is no migration shim, so re-collect with this
    version of otto.
-2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, plus each of
-   its named `products` views, swept fresh from the current build tree. For a
+2. **Unit harvest** — each `unit`-kind tier's `products` views, swept fresh
+   from the current build tree. For a
    `docker_image` product named by reference, this scans the product's
    running container for its binaries, which can take up to the scan's
    540-second limit ({ref}`coverage-unit-filter`).
@@ -334,7 +334,7 @@ configure.
   that product count, so one pin answers "how much of this code did *this*
   product prove?" across every page, whatever host or tier produced the
   evidence. The controls appear only when the report has products to pin —
-  a report whose every run is an unnamed unit harvest shows none.
+  a report whose every run names no product (only `--tier` loads) shows none.
 
   It composes with the other pins. A context and a product together read as
   `nightly · agent` and intersect; a pinned ticket

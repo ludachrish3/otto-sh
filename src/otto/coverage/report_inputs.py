@@ -26,7 +26,7 @@ class ReportInputs:
     its name: a unit tier reports the sources of that project's products
     only. ``tier_configs`` is
     that project's ``[coverage.tiers]``, parsed by
-    :func:`otto.coverage.tiers.load_tiers`. With ``project_root`` ``None``,
+    :func:`otto.coverage.tiers.load_tiers` against ``project_root``. With ``project_root`` ``None``,
     :func:`otto.coverage.reporter.run_coverage_report` reports tracefiles
     alone and refuses run directories; the ``--tier`` escape hatch relies on
     that — it never resolves settings, so it passes ``ReportInputs()``
@@ -90,7 +90,7 @@ def resolve_report_inputs(projects: "list[Project]") -> ReportInputs:
     if cov_project is None:
         return ReportInputs()
     cov_config = get_cov_config(projects)
-    tier_configs = load_tiers(cov_config)
+    tier_configs = load_tiers(cov_config, root=cov_project.root)
     return ReportInputs(
         project_root=cov_project.root,
         project_name=cov_project.name,

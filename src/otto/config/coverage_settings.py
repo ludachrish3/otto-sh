@@ -37,6 +37,9 @@ class CoverageConfigError(OttoError, ValueError):
     directly instead of the ``cov/<host>/<product>/`` tree this version of
     otto stages — since that too is a configuration the pipeline cannot run
     against, and there is no migration shim for it.
+
+    Also raised by ``otto.coverage.tiers.load_tiers`` for a tier entry the
+    settings model refuses, prefixed ``[coverage.tiers.<name>]``.
     """
 
 

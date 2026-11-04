@@ -401,11 +401,11 @@ member	otto.coverage:ReportInputs.tier_configs	field
 abstract	otto.coverage:ReportInputs	-
 name	otto.coverage:TierConfig	class
 mro	otto.coverage:TierConfig	-
-call	otto.coverage:TierConfig	sync	PK:name:- PK:kind:- PK:precedence:- PK:color:- PK:harvest_dirs:O PK:max_age_days:N PK:products:O PK:toolchain:N
+call	otto.coverage:TierConfig	sync	PK:name:- PK:kind:- PK:precedence:- PK:color:- PK:max_age_days:N PK:products:O PK:toolchain:N
 member	otto.coverage:TierConfig.__eq__	method	sync	PK:other:-
 member	otto.coverage:TierConfig.__hash__	method	sync	-
 member	otto.coverage:TierConfig.color	field
-member	otto.coverage:TierConfig.harvest_dirs	field
+member	otto.coverage:TierConfig.harvests_unit	property:g--
 member	otto.coverage:TierConfig.kind	field
 member	otto.coverage:TierConfig.max_age_days	field
 member	otto.coverage:TierConfig.name	field

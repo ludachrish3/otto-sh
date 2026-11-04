@@ -388,7 +388,12 @@ class TestCovReportUnitRefusals:
         unit_build(project / "build/tests", project, ["src/core/add.c"])
         install_lab(monkeypatch, [ContainerHost("h1", [reference_image()], running=False)])
         tiers = load_tiers(
-            {"tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}}}
+            {
+                "tiers": {
+                    "unit": {"kind": "unit", "precedence": 1, "products": {"img": ["build/tests"]}}
+                }
+            },
+            root=project,
         )
         inputs = ReportInputs(project_root=project, project_name="proj", tier_configs=tiers)
         with patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=inputs):
@@ -417,13 +422,13 @@ class TestCovReportUnitRefusals:
             )
         own_files(monkeypatch, project, ["src/core/add.c"])
         unit_build(project / "build/tests", project, ["src/core/add.c"])
-        tier = {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}
+        tier = {"kind": "unit", "precedence": 1, "products": {"core": ["build/tests"]}}
         if toolchain is not None:
             tier["toolchain"] = toolchain
         inputs = ReportInputs(
             project_root=project,
             project_name="proj",
-            tier_configs=load_tiers({"tiers": {"unit": tier}}),
+            tier_configs=load_tiers({"tiers": {"unit": tier}}, root=project),
         )
         with patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=inputs):
             result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])

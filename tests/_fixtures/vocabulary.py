@@ -127,11 +127,11 @@ REJECTION_INVENTORY: dict[str, list[str]] = {
         '{"repo_name": "fw", "sut_dir": "/src/fw", "toolchains": {}, "source_roots": {}}',
         "assert \"'repo_name'\" in out",
     ],
-    # the removed ${sut_dir} settings token: a tier's harvest_dirs keep it as a
+    # the removed ${sut_dir} settings token: a tier's product dirs keep it as a
     # literal path segment
     "tests/unit/cov/test_tiers.py": [
-        '"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["${sut_dir}/build"]},',
-        'assert unit.harvest_dirs == [Path("${sut_dir}/build")]',
+        '"unit": {"kind": "unit", "precedence": 1, "products": {"app": ["${sut_dir}/build"]}},',
+        'assert unit.products == {"app": [Path("${sut_dir}/build")]}',
     ],
     # the removed ${sut_dir} settings token: a project's libs keep it as a literal
     # path segment

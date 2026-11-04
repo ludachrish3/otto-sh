@@ -13,10 +13,12 @@ placement-and-phases §3.6); they are imported inside ``to_runtime()``, and
 under ``TYPE_CHECKING`` for annotations only.
 """
 
+import json
+import posixpath
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
@@ -96,6 +98,22 @@ def anchor_to_project_root(v: Path, info: ValidationInfo) -> Path:
 
 ProjectPath = Annotated[Path, AfterValidator(anchor_to_project_root)]
 """A ``settings.toml`` path, ``~``-expanded and then anchored to the project root."""
+
+
+def _settings_where(info: ValidationInfo) -> str:
+    """Return the ``<root>/.otto/settings.toml: `` prefix a refusal names (``""`` without root).
+
+    The one spelling of "which file said this" for the refusals in this module.
+    """
+    root = (info.context or {}).get("root")
+    if root is None:
+        return ""
+    # Lazy, and only on this error path: this module must not import
+    # otto.config at module scope (module docstring; ast-grep rule
+    # models-no-module-scope-config-import).
+    from ..config.scope import TOML_SETTINGS_PATH
+
+    return f"{Path(root) / TOML_SETTINGS_PATH}: "
 
 
 class DockerImageSpec(OttoModel):
@@ -485,17 +503,8 @@ class LoggingConfigSpec(OttoModel):
     @classmethod
     def _reject_removed_capture(cls, data: Any, info: ValidationInfo) -> Any:
         if isinstance(data, dict) and "capture" in data:
-            root = (info.context or {}).get("root")
-            where = ""
-            if root is not None:
-                # Lazy, and only on this error path: this module must not import
-                # otto.config at module scope (module docstring; ast-grep rule
-                # models-no-module-scope-config-import).
-                from ..config.scope import TOML_SETTINGS_PATH
-
-                where = f"{Path(root) / TOML_SETTINGS_PATH}: "
             raise ValueError(
-                f"{where}[logging] `capture` was removed: capture is automatic "
+                f"{_settings_where(info)}[logging] `capture` was removed: capture is automatic "
                 "(otto logs through the root logger — every library's records "
                 "are routed without registration). See the [logging.levels] "
                 "section of the settings reference for per-library levels."
@@ -707,18 +716,41 @@ class CoverageTierToolchainSpec(OttoModel):
 
 
 class CoverageTierSpec(OttoModel):
-    """One ``[coverage.tiers.<name>]`` block: a declared coverage tier."""
+    """One ``[coverage.tiers.<name>]`` block: a declared coverage tier.
+
+    A unit build directory is declared once, under the product it tests. The
+    removed ``harvest_dirs`` is refused with a pointer at ``products``, and a
+    tier in which one unit dir equals or sits inside another is refused here,
+    at load: lcov's ``-d`` recurses, so that dir's counters would be captured
+    twice and every line in it counted double.
+    """
 
     kind: Literal["e2e", "unit", "manual"]
     precedence: int
     color: str | None = None
-    harvest_dirs: list[Path] = Field(default_factory=list)
     max_age: str | None = None
     products: dict[str, list[Path]] = Field(default_factory=dict)
     """``unit``-kind only: named product views, each its own run record —
-    ``{"app": ["build/app-tests"]}``. Keys follow the product-name rule."""
+    ``{"app": ["build/app-tests"]}``. Keys follow the product-name rule. One
+    directory belongs to exactly one view: a dir that equals or sits inside
+    another dir of the tier, in the same view or another, is refused."""
     toolchain: CoverageTierToolchainSpec | None = None
     """``unit``-kind only: the tools every directory of the tier is captured with."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _harvest_dirs_was_removed(cls, data: Any, info: ValidationInfo) -> Any:
+        if isinstance(data, dict) and "harvest_dirs" in data:
+            dirs = data["harvest_dirs"]
+            example = '["build"]'
+            if isinstance(dirs, list) and dirs and all(isinstance(d, str) for d in dirs):
+                example = "[" + ", ".join(json.dumps(d) for d in dirs) + "]"
+            raise ValueError(
+                f"{_settings_where(info)}`harvest_dirs` was removed: declare each unit "
+                "build directory under `[coverage.tiers.<tier>.products]`, named for the "
+                f"product it tests (for example `<product> = {example}`)"
+            )
+        return data
 
     @field_validator("color")
     @classmethod
@@ -749,6 +781,33 @@ class CoverageTierSpec(OttoModel):
             raise ValueError("`products` is only valid on a unit-kind tier")
         if self.toolchain is not None and self.kind != "unit":
             raise ValueError("`toolchain` is only valid on a unit-kind tier")
+        return self
+
+    @model_validator(mode="after")
+    def _one_dir_one_view(self, info: ValidationInfo) -> "CoverageTierSpec":
+        # Lexical identity: anchored as every settings path is (the project
+        # root, else ``~`` expansion only), then ``..`` folded. Symlinks are
+        # never resolved: the capture reads these runner-side trees lexically.
+        # A ``~user`` this machine cannot expand is compared as written: the dir
+        # is refused when a report reads it, never at settings load, so it can
+        # never break a command that does not report.
+        def key(d: Path) -> PurePosixPath:
+            try:
+                anchored = anchor_to_project_root(d, info)
+            except (ValueError, RuntimeError):
+                anchored = d
+            return PurePosixPath(posixpath.normpath(anchored))
+
+        dirs = [(view, d, key(d)) for view, written in self.products.items() for d in written]
+        for i, (vi, wi, ki) in enumerate(dirs):
+            for vj, wj, kj in dirs[i + 1 :]:
+                if ki == kj or ki in kj.parents or kj in ki.parents:
+                    raise ValueError(
+                        f"{_settings_where(info)}unit views {vi!r} ({wi}) and {vj!r} ({wj}): "
+                        "one unit build directory equals or sits inside another, so its "
+                        "counters would be counted twice; declare each unit build directory "
+                        "once, under the product it tests"
+                    )
         return self
 
 

@@ -331,7 +331,7 @@ function resolveTicket(id: string | null, index: IndexPayload | null): string | 
 
 /** `resolveTicket`'s product counterpart, checked against `index.products` —
  * the report's sorted, distinct, NON-EMPTY run products. A run whose
- * `product` is `""` (an unnamed unit run) is therefore absent from that list
+ * `product` is `""` (a `--tier` tracefile run) is therefore absent from that list
  * and can never be pinned: `""` resolves to `null`, i.e. cleared, like any
  * other unknown value. */
 function resolveProduct(name: string | null, index: IndexPayload | null): string | null {

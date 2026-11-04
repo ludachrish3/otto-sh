@@ -421,8 +421,9 @@ otto --lab example_lab cov report ~/otto-runs/quickstart-docker/e2e --dir ~/otto
 :language: text
 ```
 
-The `unit unit:` line is the unit tier, keeping only the products' own
-sources ({ref}`what the unit report counts <coverage-unit-filter>`).
+The `unit unit/banner:` line is the unit tier and its one view, named for
+`banner`, keeping only that product's sources, textlib's among them since it
+links textlib ({ref}`what the unit report counts <coverage-unit-filter>`).
 `banner` is declared by an image reference, so it has no local artifact to
 read its object list from. The report needs that list to know which sources
 are `banner`'s, so it finds the binary in the running container and copies it

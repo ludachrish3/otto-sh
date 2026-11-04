@@ -57,7 +57,7 @@ def _overrides(project: Path, text: str) -> None:
 
 
 async def _report(project: Path, out: Path):
-    tier_configs = load_tiers(COV)
+    tier_configs = load_tiers(COV, root=project)
     return await run_coverage_report(
         [],
         out,
@@ -185,7 +185,9 @@ async def test_absent_file_and_key_is_identical(tmp_path):
     s2 = await run_coverage_report(  # overrides never resolved at all
         [],
         tmp_path / "r2",
-        ReportInputs(project_root=project, tier_configs=load_tiers(COV), ticket_spec=SPEC),
+        ReportInputs(
+            project_root=project, tier_configs=load_tiers(COV, root=project), ticket_spec=SPEC
+        ),
     )
     d1 = json.loads((tmp_path / "r1" / "store.json").read_text())
     d2 = json.loads((tmp_path / "r2" / "store.json").read_text())

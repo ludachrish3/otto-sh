@@ -333,10 +333,8 @@ agent = ["build/agent-tests"]
 instead of a lab collection; `precedence` orders the tiers when two of them
 cover the same line, lower winning. The paths are project-relative — resolved
 against the project that declares `[coverage]`, never the directory you happen to
-run from. Without the `products` sub-table the tier still sweeps whatever
-`harvest_dirs` it declares, but as one unnamed view: its lines count toward
-the unit tier, and no product pin shows them. Name each build directory in
-one place, `harvest_dirs` or one view: a directory both reach is counted twice
+run from. Each view is named for the product it tests, and each build
+directory is declared in one view only
 ({ref}`one place per directory <coverage-unit-one-place>`, which also covers a
 library two products link).
 

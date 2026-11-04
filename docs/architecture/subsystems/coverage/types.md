@@ -24,7 +24,7 @@ manual-kind tier on `otto cov get` copies the capture into the project's
 committed store at `.otto/coverage/manual/` — proof of that session that
 travels with the code and is PR-reviewable. E2e data instead lives in each
 test run's output directory, and unit data is harvested fresh from the build
-tree's `harvest_dirs` at report time, so neither needs a permanent home.
+tree's unit views at report time, so neither needs a permanent home.
 
 `otto cov report` assembles a store from all three sources per tier `kind`:
 e2e captures from the given output directories (behind the base_commit
@@ -43,9 +43,10 @@ state table and how each renders in a report.
 
 ## Tier mechanics: precedence, kind, color, label
 
-`otto.coverage.tiers.load_tiers` turns the raw `[coverage.tiers]` dict into
-`TierConfig` values sorted by `precedence`, first entry highest. An
-empty or missing table yields exactly one tier — `system`, `kind="e2e"`,
+`otto.coverage.tiers.load_tiers` validates each entry of the raw
+`[coverage.tiers]` dict through `CoverageTierSpec` against the project root
+(the refusals of settings load) and turns them into `TierConfig` values
+sorted by `precedence`, first entry highest. An empty or missing table yields exactly one tier — `system`, `kind="e2e"`,
 `precedence=1` — which is byte-for-byte pre-tier behavior: a project that never
 declares tiers never meets the machinery.
 
@@ -241,8 +242,8 @@ deliberately does **not** share this version counter; see
   the explicit host identity, which every e2e and manual run carries; it is
   `""` only for a run with no single host behind it (a unit harvest, a
   `--tier` tracefile). `product` (v8) is the `<product>` segment the
-  capture was produced from, `""` for a `--tier` tracefile or an unnamed unit
-  harvest, which name no product; together with `tier` and `label` the four
+  capture was produced from, `""` for a `--tier` tracefile, which names no
+  product; together with `tier` and `label` the four
   form the `(tier, label, host, product)` context identity supersede keys on
   ({doc}`merging`). Product belongs in that identity because one host can
   carry several instrumented products, and without it the second would

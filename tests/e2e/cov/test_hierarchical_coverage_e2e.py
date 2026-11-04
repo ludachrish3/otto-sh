@@ -273,22 +273,22 @@ class TestHierarchicalCoverage:
     def test_every_run_carries_host_and_product(self, passes, which):
         """Every e2e run names its host and product; the clean pass adds the unit run.
 
-        The unit tier's plain ``harvest_dirs`` sweep is one run with no host
-        and no product behind it. The stale pass has none (see
+        The unit tier's one view, ``app``, is one run with no host, tagged
+        with its product. The stale pass has none (see
         :meth:`test_stale_unit_view_keeps_nothing`).
         """
         runs = passes[which].store_json["runs"]
         e2e = sorted((r["host"], r["product"]) for r in runs if r["tier"] == "system")
         assert e2e == [(_HOST, "app"), (_HOST, "tool")]
         unit = [(r["host"], r["product"]) for r in runs if r["tier"] == "unit"]
-        assert unit == ([("", "")] if which == "clean" else [])
+        assert unit == ([("", "app")] if which == "clean" else [])
         assert len(runs) == len(e2e) + len(unit)
 
     def test_unit_tier_holds_only_product_sources(self, passes):
         """The unit build compiles core.cpp and the gtest file; only core.cpp counts.
 
-        core.cpp is app's source through its DT_NEEDED library, so it is a
-        product source; tests/unit/test_core.cpp is no product's. core.h is
+        core.cpp is app's source through its DT_NEEDED library, so the ``app``
+        view keeps it; tests/unit/test_core.cpp is no product's. core.h is
         not reported because the notes never name it: it holds a declaration
         and no code.
         """
@@ -312,14 +312,14 @@ class TestHierarchicalCoverage:
         """
         out = passes["clean"].report_output
         counts = re.search(
-            r"unit unit: kept (\d+) product source files, dropped (\d+) not in any product", out
+            r"unit unit/app: kept (\d+) source files of product app, dropped (\d+) others", out
         )
         assert counts is not None, out
         assert int(counts[1]) == 1
         assert int(counts[2]) >= 2
-        keeps = re.findall(r"unit unit: keep (\S+) \(product (\S+)\)", out)
+        keeps = re.findall(r"unit unit/app: keep (\S+) \(product (\S+)\)", out)
         assert keeps == [(CORE, "app")]
-        drops = re.findall(r"unit unit: drop (\S+) \(not in any product\)", out)
+        drops = re.findall(r"unit unit/app: drop (\S+) \(not a source of product app\)", out)
         assert "tests/unit/test_core.cpp" in drops
         others = [d for d in drops if d != "tests/unit/test_core.cpp"]
         assert others, drops
@@ -338,7 +338,7 @@ class TestHierarchicalCoverage:
         collection). The unit view then skips its capture and adds no run.
         """
         out = passes["stale"].report_output
-        assert "unit unit: kept 0 product source files" in out
-        assert "unit unit: no product source files under" in out
+        assert "unit unit/app: kept 0 source files of product app" in out
+        assert "unit unit/app: no source files of product app under" in out
         assert "nothing to capture" in out
         assert not [r for r in passes["stale"].store_json["runs"] if r["tier"] == "unit"]

@@ -10,7 +10,7 @@ Every tier's `kind` selects how `otto cov report` collects its data:
 | Kind | Collected by | Storage |
 |------|---------------|---------|
 | `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<host_id>/<product>/capture.json` — not committed, same lifecycle as other run artifacts ({ref}`the run tree <run-tree>`) |
-| `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time and counts only your products' sources ({ref}`what the unit report counts <coverage-unit-filter>`) | no capture file |
+| `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from each of the tier's `products` views in the **current build tree** at report time and counts only your products' sources ({ref}`what the unit report counts <coverage-unit-filter>`) | no capture file |
 | `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>-<product-slug>.json`, committed to the project's git repository |
 
 **Only manual captures are committed to the project's git repository** — every capture
@@ -33,8 +33,10 @@ color = "green"                # CSS color name or "#RRGGBB"; per-kind default i
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 2
-harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the project root
 color = "yellow"
+
+[coverage.tiers.unit.products]
+core = ["build"]             # swept for .gcda at report time; relative to the project root
 
 [coverage.tiers.manual]
 kind = "manual"
@@ -54,8 +56,7 @@ Each `[coverage.tiers.<name>]` block:
 | `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
-| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the project root (see {doc}`../../configuration/settings`). The sweep counts the sources of every product of the project ({ref}`coverage-unit-filter`). |
-| `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately, counts only the sources of the product it is named after, and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Name each build directory in one place only, here or in `harvest_dirs` ({ref}`one place per directory <coverage-unit-one-place>`). Keys follow {ref}`the product-name rule <run-tree>`. |
+| `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`, the build directories swept for `.gcda` at report time. Relative paths resolve against the project root (see {doc}`../../configuration/settings`). Each named view is swept separately, counts only the sources of the product it is named after ({ref}`coverage-unit-filter`), and becomes its own run, tagged with that product. A unit build directory is declared once, in one view ({ref}`one place per directory <coverage-unit-one-place>`). Keys follow {ref}`the product-name rule <run-tree>`. |
 | `toolchain` | `unit`-kind only: the `[coverage.tiers.<name>.toolchain]` sub-table naming the tools the tier's captures run (`coverage_tool`, `lcov`, `lcov_args`); unset, the build's own stamps and `PATH` choose them ({ref}`coverage-unit-toolchain`). |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
@@ -119,8 +120,8 @@ ones the lab's hosts carry. Build your
 unit tests with coverage instrumentation too and run them as you always have.
 A unit test binary writes each object's `.gcda` beside that object's `.gcno`,
 wherever the object was built, so a library's counters land in the library's
-own object directory, not the test binary's. The tier's `harvest_dirs` (e.g.
-`build/`), or one of its views below, must reach that directory. The build is
+own object directory, not the test binary's. One of the tier's views
+({ref}`below <coverage-unit-views>`) must reach that directory. The build is
 step 1 of the order above; running the unit tests is step 6, or any time
 after the build:
 
@@ -141,11 +142,12 @@ find build -name '*.gcda' -delete
 ```
 
 No lcov invocation and no `--tier unit=...` flag are needed — as long
-as `[coverage.tiers.unit].harvest_dirs` points at `build`, `otto cov
+as a view under `[coverage.tiers.unit.products]` reaches `build`, `otto cov
 report` finds and merges the counters itself, keeping only product sources
 ({ref}`coverage-unit-filter`). Without `--lab`, or with a lab that declares
 none of the project's products, the report is refused.
 
+(coverage-unit-views)=
 ### Distinct unit views
 
 `[coverage.tiers.unit.products]` declares named views, each its own run in
@@ -167,25 +169,41 @@ only that product's sources; a name that is no product is refused
 product pin show the product's end-to-end and unit evidence together.
 
 (coverage-unit-one-place)=
-Name each build directory **in one place only**: in `harvest_dirs` or in one
-view. Every view is swept on its own and nothing removes the overlap, so a
-directory reached by `harvest_dirs` and a view is counted twice. A sweep
-includes the directories under it: with `harvest_dirs = ["build"]` beside `app =
-["build/app"]`, every hit on `app`'s sources in `build/app` is counted
-twice in the unit tier. A line counted twice keeps its covered or not covered
-state, so the line percentage does not change, but its hit count is doubled
-and both runs claim it. The example above declares no `harvest_dirs` for
-that reason.
+**A unit build directory is declared once, under the product it tests.** Every
+view is swept on its own, and a sweep includes the directories under it
+(`lcov`'s `-d` recurses): with `app = ["build"]` beside `tool =
+["build/tool"]`, every counter in `build/tool` would be captured twice and
+every hit on it counted double. So settings load refuses a tier in which one
+unit directory equals or sits inside another, in one view or across two,
+naming both views and both directories:
+
+```text
+unit views 'app' (build) and 'tool' (build/tool): one unit build directory equals or sits inside another, …
+```
+
+The check is lexical: a relative directory is anchored at the project root,
+`~` is expanded and `..` is folded (`build/x/../app` is `build/app`), but
+symlinks are not followed. A `~user` this machine cannot expand is compared as
+written, so it never breaks settings load; only the report that reads it
+fails. Directories that only share a name prefix
+(`build/app` and `build/app-tests`) are separate. Two tiers are separate runs,
+so one directory may appear in each.
+
+The removed `harvest_dirs` key is refused the same way, at load, with the
+`products` line that replaces it.
 
 (coverage-unit-shared-library)=
 **A library two products link** is built once, in one object directory, so
-it can be named in only one view. Name it in the view of one product that
-links it; the other product's view then shows its unit evidence without the
-library's lines. To give each product the library's unit evidence, build the
-library once per product, each copy in its own object directory with unit
-tests linked against it, and name each copy in its product's view. Or keep
-one `harvest_dirs` sweep and no views: it counts every product's sources,
-the library's included, once, but no product pin shows them.
+its unit build directory is declared once:
+
+- under the library's own product, when it is one (for example `core =
+  ["build/core-tests"]`);
+- otherwise under one product that links it. The other linking product's pin
+  then shows no unit evidence for the library.
+
+To give each product the library's unit evidence, build the library once per
+product, each copy in its own object directory with unit tests linked against
+it, and name each copy in its product's view.
 
 Each view needs its **own build or object directory**, and that is a
 requirement, not a tidiness preference: `.gcno` notes files sit beside the
@@ -208,11 +226,11 @@ A unit build compiles your products' sources and your test code side by side
 sources**: the files some product of the project is built from. Test code
 never reaches the report, and `lcov`'s `geninfo` never processes it.
 
-**Which products.** The plain `harvest_dirs` view counts the sources of every
-product of the project in the active lab (`--lab`), except those declared
-`instrumented = false` ({doc}`../../configuration/declared-products-tools`). A
-`products` view counts the sources of the product it is named after. A
-product's sources are every file its objects' notes (`.gcno`) name, headers
+**Which products.** A view counts the sources of the product it is named
+after, a product of the project in the active lab (`--lab`). A view named for
+a product declared `instrumented = false`
+({doc}`../../configuration/declared-products-tools`) is refused (see
+**Refusals** below). A product's sources are every file its objects' notes (`.gcno`) name, headers
 that hold code (inline functions, templates) included. otto lists a product's objects the way collection does ([shared
 libraries included](instrumenting/gcc.md#shared-libraries-and-plugins)), and
 reads their notes on this machine, under the project root: at the object's own
@@ -245,22 +263,22 @@ files that are product sources.
 **What it logs.** One INFO line per harvest directory, for example:
 
 ```text
-unit unit: kept 41 product source files, dropped 17 not in any product
+unit unit/core: kept 41 source files of product core, dropped 17 others
 ```
 
-The second `unit` is the view: the tier's name, or `<tier>/<product>` for a
-`products` view. `dropped` counts every other file the unit build's notes
-name, system and gtest headers included. Under `--log-level DEBUG` one line
-per file says which:
+`unit/core` is the view: `<tier>/<product>`. `dropped` counts every other file
+the unit build's notes name: test code, system and gtest headers, and the
+sources of the project's other products. Under `--log-level DEBUG` one line per
+file says which:
 
 ```text
-unit unit: keep src/core/add.c (product core)
-unit unit: drop tests/test_add.cpp (not in any product)
+unit unit/core: keep src/core/add.c (product core)
+unit unit/core: drop tests/test_add.cpp (not a source of product core)
 ```
 
-When nothing is kept, the INFO line `unit <view>: no product source files
-under <dir>; nothing to capture` replaces the capture: that directory adds no
-run. A directory with no `.gcda` at all is a warning that ends `run the unit
+When nothing is kept, the INFO line `unit <view>: no source files of product
+<product> under <dir>; nothing to capture` replaces the capture: that directory
+adds no run. A directory with no `.gcda` at all is a warning that ends `run the unit
 tests first; skipping`.
 
 **Refusals.** Every unit view is checked before anything is captured, and a
@@ -268,7 +286,8 @@ refusal stops the whole report — there is no unfiltered fallback:
 
 | The error says | What happened | What to do | Exit |
 |---|---|---|---|
-| *no products of project P found in the active lab (L)*, *no product named 'app' …*, or *every product … is declared instrumented = false* | The view has no product to count the sources of | Run with the lab that declares the products (`--lab`), and build them with `--coverage` | `1` |
+| *no product named 'app' of project P found in the active lab (L)*, or *no products of project P found: no lab is active* | The view has no product to count the sources of | Run with the lab that declares the products (`--lab`), and build them with `--coverage` | `1` |
+| *product 'app' of project P is declared instrumented = false* | The view is named for a product that declares it has no coverage instrumentation | Remove the view, or instrument the product and drop `instrumented = false` | `1` |
 | *product 'app' (build/app) is not instrumented: … Build it with coverage instrumentation (--coverage) …* | The product's `artifact` ({doc}`../../configuration/declared-products-tools`) is missing, or holds no coverage paths | Build it with `--coverage`, or declare it `instrumented = false` | `1` |
 | *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | Start a stopped container with `docker start` on its parent ({ref}`coverage-container-stop-to-flush`, step 4); install one that is gone (`otto run install`) | `2` |
 | *could not read product 'app''s object list: …* | The artifact or the container scan could not be read; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit (set only when the image has `timeout` and `date`; without them the scan runs to the host-side timeout), is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
@@ -289,7 +308,7 @@ count shows it.
 The unit capture runs on the machine otto runs on, over build
 trees no lab host owns, so its tools are a setting of the tier itself, the
 optional `toolchain` sub-table — one setting for every directory of the tier,
-the plain `harvest_dirs` view and every `products` view alike:
+in every `products` view:
 
 <!-- pinned by tests/unit/docs/test_unit_tier_toolchain_example.py -->
 ```toml
@@ -307,8 +326,8 @@ lcov_args = ["--rc", "geninfo_unexecuted_blocks=1"]
 
 Every field is optional, and an empty table is the same as none. A value
 without a `/` is a command looked up on `PATH`; one with a `/` is a path, `~`
-expanded and a relative one anchored at the project root, as `harvest_dirs`
-is — so `./gcov` is the project's own file and `gcov` is the one on `PATH`.
+expanded and a relative one anchored at the project root, as a view's
+directories are — so `./gcov` is the project's own file and `gcov` is the one on `PATH`.
 That is not a host's `toolchain` ({ref}`per-host-toolchain`), whose `gcov` and
 `lcov` are paths under its `sysroot`: a copied `lcov = "usr/bin/lcov"` would
 here name a file under the project root. `coverage_tool` and `lcov` must each
@@ -358,11 +377,11 @@ paths are printed absolute; `<project>` below is the project root:
 | *coverage.tiers.unit.toolchain.coverage_tool = 'gcov-12': no `gcov-12` command is on PATH* (or *… is not an executable file*) | A configured tool cannot be found — checked for every unit tier, even one whose directories are all skipped | Install it, or correct the setting | `2` |
 | *coverage.tiers.unit.toolchain.coverage_tool = 'gcov-12' resolves to /opt/my tools/gcov-12, which lcov cannot run: …* | The configured tool's resolved path holds white space or a shell metacharacter | Install it at a plain path, or name one | `2` |
 | *coverage.tiers.unit.toolchain.coverage_tool = 'llvm-cov' cannot read \<project\>/build/tests: an llvm-cov reads only gcov stamps 402\*/408\*/B11\*, …* | The configured reader's name contradicts the directory's stamps | Name a reader for that stamp, or leave the setting unset | `2` |
-| *unit tier unit: \<project\>/build/tests holds notes for more than one reader — …* | One directory's notes need two readers | Build each compiler's objects into its own directory | `2` |
-| *unit tier unit: capturing \<project\>/build/tests needs `lcov`, but no `lcov` is on PATH* | A default tool the data needs is missing; for another gcc major's stamp, or one of llvm-cov's, the message names `gcov-<major>` or `llvm-cov` and its package | Install it, or set the key the message names | `1` |
-| *unit tier unit: the tool found on PATH at /opt/my tools/lcov cannot be run by lcov: …* | The default tool found on `PATH` sits at a path with white space or a shell metacharacter | Install it at a plain path, or set the key the message names | `1` |
-| *unit tier unit: the capture of \<project\>/build/tests with … recorded no source file* | The reader read nothing — one of another compiler's data that its name did not reveal | Check `coverage_tool` | `1` |
-| *unit tier unit: capturing \<project\>/build/tests failed; if the counter reader is the wrong one, set …* | lcov itself failed; its own first error and last lines follow | Fix what lcov says, or name the right reader | `1` |
+| *unit tier unit/core: \<project\>/build/tests holds notes for more than one reader — …* | One directory's notes need two readers | Build each compiler's objects into its own directory | `2` |
+| *unit tier unit/core: capturing \<project\>/build/tests needs `lcov`, but no `lcov` is on PATH* | A default tool the data needs is missing; for another gcc major's stamp, or one of llvm-cov's, the message names `gcov-<major>` or `llvm-cov` and its package | Install it, or set the key the message names | `1` |
+| *unit tier unit/core: the tool found on PATH at /opt/my tools/lcov cannot be run by lcov: …* | The default tool found on `PATH` sits at a path with white space or a shell metacharacter | Install it at a plain path, or set the key the message names | `1` |
+| *unit tier unit/core: the capture of \<project\>/build/tests with … recorded no source file* | The reader read nothing — one of another compiler's data that its name did not reveal | Check `coverage_tool` | `1` |
+| *unit tier unit/core: capturing \<project\>/build/tests failed; if the counter reader is the wrong one, set …* | lcov itself failed; its own first error and last lines follow | Fix what lcov says, or name the right reader | `1` |
 
 ### Report all three tiers
 
@@ -375,7 +394,7 @@ otto --lab my_lab cov report path/to/e2e_run_output/ --dir ./cov_report --overwr
 ```
 
 `otto cov report` reads the e2e capture(s) from the given output
-directory, harvests the unit tier's `harvest_dirs` from the current
+directory, harvests each unit view from the current
 build tree, and loads every committed manual capture automatically —
 no path arguments needed for the unit or manual tiers.
 
@@ -463,8 +482,8 @@ Every coverage input becomes a **run** at report time: each manual
 or e2e capture is one run — one host, one product (labelled by the host's
 display name, shown as `host · product` where runs are listed; hover for
 tier, ticket, note, date, and base_commit) — each named unit-tier product
-view is its own run, and the unnamed `harvest_dirs` sweep or a `--tier`
-`.info` load gets a synthetic per-tier run that names no product.  On a file's annotated page,
+view is its own run, and a `--tier` `.info` load gets a synthetic per-tier
+run that names no product.  On a file's annotated page,
 the right-hand **runs** column expands per line to list every run that hit
 it, colored by tier, with per-run hit counts.  A stale line lists the
 revoked run struck through — the ticket to re-verify.  The index's

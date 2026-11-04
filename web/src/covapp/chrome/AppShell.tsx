@@ -354,7 +354,7 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
   const overrides = index?.overrides ?? [];
   // Per-product spec §10: the ⋮ menu's "Pin product" section, gated the same
   // "no data, no control" way — a report whose runs carry no product (every
-  // run an unnamed unit run) emits `products: []`, so there is nothing to
+  // run a `--tier` tracefile run) emits `products: []`, so there is nothing to
   // pin and the section stays absent rather than offering "All products"
   // alone.
   const products = index?.products ?? [];

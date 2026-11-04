@@ -1,9 +1,11 @@
 """Typed [coverage] settings: tiers, colors, exclusions."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from otto.models.settings import SettingsModel
+from otto.models.settings import CoverageTierSpec, SettingsModel
 
 BASE = {"name": "demo", "version": "1.0.0"}
 
@@ -33,13 +35,13 @@ def test_tiers_parse_with_defaults() -> None:
         {
             "tiers": {
                 "system": {"kind": "e2e", "precedence": 1},
-                "unit": {"kind": "unit", "precedence": 2, "harvest_dirs": ["build"]},
+                "unit": {"kind": "unit", "precedence": 2, "products": {"app": ["build"]}},
                 "manual": {"kind": "manual", "precedence": 3, "max_age": "180d"},
             }
         }
     )
     assert s.coverage.tiers["system"].kind == "e2e"
-    assert s.coverage.tiers["unit"].harvest_dirs[0].name == "build"
+    assert s.coverage.tiers["unit"].products["app"][0].name == "build"
     assert s.coverage.tiers["manual"].max_age == "180d"
 
 
@@ -241,3 +243,176 @@ def test_a_toolchain_table_on_another_kind_is_refused_even_when_empty(
 def test_a_two_word_llvm_cov_reader_is_told_to_name_the_binary(value: str) -> None:
     with pytest.raises(ValidationError, match=r"name the llvm-cov binary alone; otto adds `gcov`"):
         _unit_toolchain({"coverage_tool": value})
+
+
+# -- a unit build directory is declared once (#778) -------------------------------
+
+
+def _where(root: Path) -> str:
+    return f"{root / '.otto' / 'settings.toml'}: "
+
+
+def _tier(products: dict, root: Path | None) -> CoverageTierSpec:
+    return CoverageTierSpec.model_validate(
+        {"kind": "unit", "precedence": 1, "products": products},
+        context=None if root is None else {"root": root},
+    )
+
+
+def test_harvest_dirs_is_refused_with_the_users_dirs_and_the_settings_path(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError, match="`harvest_dirs` was removed") as excinfo:
+        SettingsModel.model_validate(
+            {
+                **BASE,
+                "coverage": {
+                    "tiers": {
+                        "unit": {
+                            "kind": "unit",
+                            "precedence": 1,
+                            "harvest_dirs": ["build", "build/x"],
+                        }
+                    }
+                },
+            },
+            context={"root": tmp_path},
+        )
+    message = str(excinfo.value)
+    assert _where(tmp_path) in message
+    assert "`harvest_dirs` was removed" in message
+    assert "`[coverage.tiers.<tier>.products]`" in message
+    assert "named for the product it tests" in message
+    assert '<product> = ["build", "build/x"]' in message
+    assert [e["loc"] for e in excinfo.value.errors()] == [("coverage", "tiers", "unit")]
+
+
+def test_the_settings_path_prefix_is_one_helper(tmp_path: Path) -> None:
+    """Both removed-key refusals spell the settings path through one helper."""
+    removed = {
+        "logging": {"logging": {"capture": True}},
+        "harvest_dirs": {
+            "coverage": {
+                "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["b"]}}
+            }
+        },
+    }
+    for data in removed.values():
+        with pytest.raises(ValidationError, match="was removed") as anchored:
+            SettingsModel.model_validate({**BASE, **data}, context={"root": tmp_path})
+        assert anchored.value.errors()[0]["msg"].startswith(f"Value error, {_where(tmp_path)}")
+        with pytest.raises(ValidationError, match="was removed") as bare:
+            SettingsModel.model_validate({**BASE, **data})
+        assert ".otto" not in bare.value.errors()[0]["msg"]
+
+
+@pytest.mark.parametrize(
+    ("products", "named"),
+    [
+        pytest.param(
+            {"app": ["build/x/../app"], "tool": ["build/app"]},
+            ["'app'", "'tool'", "build/x/../app", "build/app"],
+            id="dotdot-equals-its-normal-form",
+        ),
+        pytest.param(
+            {"app": ["build", "build/app-tests"]},
+            ["build", "build/app-tests"],
+            id="one-view-with-nested-dirs",
+        ),
+        pytest.param(
+            {"app": ["build"], "tool": ["build"]},
+            ["'app'", "'tool'", "(build)"],
+            id="two-views-sharing-one-dir",
+        ),
+        pytest.param(
+            {"app": ["build"], "tool": ["build/tool-tests"]},
+            ["'app'", "'tool'", "(build)", "build/tool-tests"],
+            id="two-views-with-nested-dirs",
+        ),
+    ],
+)
+def test_overlapping_unit_dirs_are_refused(
+    products: dict, named: list[str], tmp_path: Path
+) -> None:
+    with pytest.raises(ValidationError, match="equals or sits inside another") as excinfo:
+        _tier(products, tmp_path)
+    message = str(excinfo.value)
+    assert _where(tmp_path) in message
+    assert "one unit build directory equals or sits inside another" in message
+    for text in named:
+        assert text in message
+
+
+def test_one_view_with_nested_dirs_names_the_view_twice(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="equals or sits inside another") as excinfo:
+        _tier({"app": ["build", "build/app-tests"]}, tmp_path)
+    assert "unit views 'app' (build) and 'app' (build/app-tests)" in str(excinfo.value)
+
+
+def test_an_absolute_and_a_relative_dir_overlap_after_anchoring(tmp_path: Path) -> None:
+    absolute = str(tmp_path / "build")
+    with pytest.raises(ValidationError, match="equals or sits inside another") as excinfo:
+        _tier({"app": [absolute], "tool": ["build/tool"]}, tmp_path)
+    message = str(excinfo.value)
+    assert f"'app' ({absolute})" in message
+    assert "'tool' (build/tool)" in message
+
+
+def test_a_tilde_dir_is_expanded_before_comparing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    nested = str(tmp_path / "b" / "t")
+    with pytest.raises(ValidationError, match="equals or sits inside another") as excinfo:
+        _tier({"app": ["~/b"], "tool": [nested]}, tmp_path / "proj")
+    message = str(excinfo.value)
+    assert "'app' (~/b)" in message
+    assert f"'tool' ({nested})" in message
+
+
+def test_disjoint_dirs_are_accepted(tmp_path: Path) -> None:
+    spec = _tier({"app": ["build/app-tests"], "tool": ["build/tool-tests"]}, tmp_path)
+    assert set(spec.products) == {"app", "tool"}
+
+
+def test_string_prefix_siblings_are_disjoint(tmp_path: Path) -> None:
+    spec = _tier({"app": ["build/app"], "tool": ["build/app-tests"]}, tmp_path)
+    assert set(spec.products) == {"app", "tool"}
+
+
+def test_the_same_dir_in_two_tiers_is_accepted(tmp_path: Path) -> None:
+    """The check is per tier: two tiers are two separate runs, never merged into one view."""
+    tier = {"kind": "unit", "products": {"app": ["build"]}}
+    s = SettingsModel.model_validate(
+        {
+            **BASE,
+            "coverage": {
+                "tiers": {"unit": {**tier, "precedence": 1}, "unit2": {**tier, "precedence": 2}}
+            },
+        },
+        context={"root": tmp_path},
+    )
+    assert set(s.coverage.tiers) == {"unit", "unit2"}
+
+
+def test_overlap_without_a_root_compares_unanchored() -> None:
+    with pytest.raises(ValidationError, match="one unit build directory equals or sits inside"):
+        _tier({"app": ["build"], "tool": ["build/t"]}, None)
+
+
+@pytest.mark.parametrize("with_root", [True, False], ids=["root", "no-root"])
+def test_an_unexpandable_tilde_dir_never_breaks_settings_load(
+    tmp_path: Path, with_root: bool
+) -> None:
+    """``~nosuchuser`` fails only when a report reads the dir, never at settings load."""
+    spec = _tier({"app": ["~nosuchuser/b"], "tool": ["build/t"]}, tmp_path if with_root else None)
+    assert spec.products["app"] == [Path("~nosuchuser/b")]
+
+
+@pytest.mark.parametrize("with_root", [True, False], ids=["root", "no-root"])
+def test_an_unexpandable_tilde_dir_still_overlaps_as_written(
+    tmp_path: Path, with_root: bool
+) -> None:
+    products = {"app": ["~nosuchuser/b"], "tool": ["~nosuchuser/b/./t"]}
+    with pytest.raises(ValidationError, match="equals or sits inside another"):
+        _tier(products, tmp_path if with_root else None)

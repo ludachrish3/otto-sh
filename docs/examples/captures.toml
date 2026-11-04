@@ -439,6 +439,7 @@ files = ["{project}/src/shout/main.cpp"]
 [[capture.store_sources]]
 path = "{xdir}/report/store.json"
 tier = "unit"
+product = "wordcount"
 files = ["{project}/src/textlib/text.cpp"]
 
 [[capture]]
@@ -685,7 +686,7 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/quickstart-km
 # installed or fetched into the build tree, so the count is redacted.
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
-    ["dropped \\d+ not in any product", "dropped <n> not in any product"],
+    ["dropped \\d+ others", "dropped <n> others"],
 ]
 
 [[capture.store]]
@@ -784,6 +785,7 @@ files = ["{project}/module/qs_main.c", "{project}/module/wordcount.c"]
 [[capture.store_sources]]
 path = "{xdir}/quickstart-kmod/report/store.json"
 tier = "unit"
+product = "qs_wordcount"
 files = ["{project}/module/wordcount.c"]
 
 [[capture]]
@@ -1015,7 +1017,7 @@ redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
     ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
-    ["dropped \\d+ not in any product", "dropped <n> not in any product"],
+    ["dropped \\d+ others", "dropped <n> others"],
 ]
 
 [[capture.store]]
@@ -1111,6 +1113,7 @@ files = ["{project}/ext/src/cov_entry.c", "{project}/ext/src/ext.c", "{project}/
 [[capture.store_sources]]
 path = "{xdir}/quickstart-embedded/report/store.json"
 tier = "unit"
+product = "mathops"
 files = ["{project}/logic/mathops.c"]
 
 [[capture]]
@@ -1492,6 +1495,7 @@ files = ["{project}/src/textlib/text.cpp", "{project}/src/wordcount/main.cpp"]
 [[capture.store_sources]]
 path = "{xdir}/quickstart-docker/report/store.json"
 tier = "unit"
+product = "banner"
 files = ["{project}/src/textlib/text.cpp"]
 
 # The always tail. It runs after a failure too, unrecorded.
