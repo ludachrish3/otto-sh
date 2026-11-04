@@ -1670,6 +1670,8 @@ replaces with their final ones.
 
 **Amended 2026-10-29.** A third joined the foundation layer: `otto.config.corpus_snapshot`, the one stat classification, carved out of `otto.config` so the leaf `otto.models.base` (the json sources' fingerprint) may call it (#764). `LAYERED_AT["P9b"]` is 77.
 
+**Amended 2026-11-04.** A fourth joined the foundation layer: `otto._terminal`, the one "is this descriptor a usable terminal" decision and the interactive terminal size, which the console shim, `otto.console`'s width pin and `otto.host`'s logins share; it is standard library only, so the shim can import it before the CLI graph (#785). `LAYERED_AT["P9b"]` is 78.
+
 The model finds no layer violation at any landing.
 
 ### 5.3 String audit (lands in P1a)
