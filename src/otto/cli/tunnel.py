@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich import get_console
 from rich import print as rprint
-from rich.markup import escape
 
 from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
 from ..tunnel.carrier import DEFAULT_CARRIER
@@ -22,6 +21,8 @@ from .completers import completion_source
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
+    from rich.text import Text
+
     from ..config.project import Project
     from ..tunnel.check import TunnelCheckReport
     from ..tunnel.manage import DryRunPlan
@@ -175,16 +176,15 @@ def _fmt_via(tunnel: "Tunnel") -> str:
     return " ".join(parts) or "-"
 
 
-def _row(text: str) -> None:
-    """Print one detail row verbatim: no markup parsing, no width wrapping.
+def _row(text: "str | Text") -> None:
+    """Print one detail row literally, through ``otto.console.print_literal``.
 
-    Every field on a ``--dry-run`` row is user-supplied lab data (a host id, an
-    interface) or a shell command built from it, and rich would read the
-    ``socat`` address ``TCP4-LISTEN:49152,fork,reuseaddr`` — or an interface
-    named ``eth0[dataplane]`` — as markup and print something otto never sends.
-    Soft-wrapped for the same reason: a broken argv is worse than a long line.
+    Every field on these rows is user-supplied lab data (a host id, an
+    interface) or a shell command built from it.
     """
-    get_console().print(text, markup=False, soft_wrap=True)
+    from ..console import print_literal
+
+    print_literal(text)
 
 
 def _print_dry_run_plan(header: str, plan: "DryRunPlan") -> None:
@@ -198,10 +198,13 @@ def _print_dry_run_plan(header: str, plan: "DryRunPlan") -> None:
     endpoint, whose argv cannot be built without ``docker inspect``; the header
     still prints, so the command never answers with silence.
     """
-    get_console().print(
-        f"[cyan]dry run[/cyan] {escape(header)}: no device was contacted — "
-        f"nothing was read and nothing was changed",
-        soft_wrap=True,
+    from rich.text import Text
+
+    _row(
+        Text.assemble(
+            ("dry run", "cyan"),
+            f" {header}: no device was contacted — nothing was read and nothing was changed",
+        )
     )
     for line in plan.would:
         _row(f"  would: {line}")
@@ -219,7 +222,9 @@ def _print_check_dry_run(path: str, plan: list[str]) -> None:
     rich would eat a bracketed one (see ``_row``'s docstring). Mirrors
     ``otto.cli.link._print_check_dry_run``.
     """
-    get_console().print(f"[cyan]dry run[/cyan] {escape(path)}:", soft_wrap=True)
+    from rich.text import Text
+
+    _row(Text.assemble(("dry run", "cyan"), f" {path}:"))
     for line in plan:
         _row(f"  {line}")
 
@@ -274,10 +279,14 @@ async def add(
         # marked as provisional.
         _print_dry_run_plan(f"{t.path[0].host} <-> {t.path[-1].host}", added.plan)
         return
-    rprint(
-        f"[green]added[/green] {t.id} "
-        f"({t.path[0].host} <-> {t.path[-1].host}, via {_fmt_via(t)}, "
-        f"carriers {added.carrier_fwd}/{added.carrier_rev})"
+    from rich.text import Text
+
+    _row(
+        Text.assemble(
+            ("added", "green"),
+            f" {t.id} ({t.path[0].host} <-> {t.path[-1].host}, via {_fmt_via(t)}, "
+            f"carriers {added.carrier_fwd}/{added.carrier_rev})",
+        )
     )
 
 
@@ -422,29 +431,24 @@ async def list_tunnels() -> None:
         return
     record_tunnel_ids(get_projects(), [d.tunnel.id for d in discovery.tunnels])
     if discovery.tunnels:
-        # Borderless + single-space gaps: the worst-case row (20-char id,
-        # 22-char endpoints, "degraded (3/4)") must survive an 80-column
-        # terminal without wrapping or truncating — ids get copy-pasted
-        # into `otto tunnel remove`.
-        table = Table(
-            "ID",
-            "ENDPOINTS",
-            "VIA",
-            "PORT",
-            "PROTO",
-            "AGE",
-            "STATUS",
-            box=None,
-            pad_edge=False,
-            padding=(0, 1, 0, 0),
-        )
+        from ..console import id_column, literal_cell
+
+        # Borderless + single-space gaps, so the worst-case row (20-char id,
+        # 22-char endpoints, "degraded (3/4)") fits an 80-column terminal. A
+        # narrower one folds the id columns onto more lines rather than cutting
+        # them — ids get copy-pasted into `otto tunnel remove`.
+        table = Table(box=None, pad_edge=False, padding=(0, 1, 0, 0))
+        for column in ("ID", "ENDPOINTS", "VIA"):
+            id_column(table, column)
+        for column in ("PORT", "PROTO", "AGE", "STATUS"):
+            table.add_column(column)
         for d in discovery.tunnels:
             t = d.tunnel
             a, b = t.path[0], t.path[-1]
             table.add_row(
-                t.id,
-                f"{a.host}@{a.interface or '-'} <-> {b.host}@{b.interface or '-'}",
-                _fmt_via(t),
+                literal_cell(t.id),
+                literal_cell(f"{a.host}@{a.interface or '-'} <-> {b.host}@{b.interface or '-'}"),
+                literal_cell(_fmt_via(t)),
                 str(t.service_port),
                 t.protocol,
                 _fmt_age(d.age_seconds),
@@ -452,9 +456,14 @@ async def list_tunnels() -> None:
             )
         rprint(table)
     if discovery.unreachable:
-        rprint(
-            f"[yellow bold]partial scan[/yellow bold] — could not reach: "
-            f"{', '.join(sorted(discovery.unreachable))}"
+        from rich.text import Text
+
+        _row(
+            Text.assemble(
+                ("partial scan", "yellow bold"),
+                " — could not reach: ",
+                ", ".join(sorted(discovery.unreachable)),
+            )
         )
 
 
@@ -515,5 +524,7 @@ async def remove(
         print_error(f"still running after kill: {pretty}")
         raise typer.Exit(1)
     if report.unreachable:
-        rprint(f"[yellow]could not reach:[/yellow] {', '.join(report.unreachable)}")
+        from rich.text import Text
+
+        _row(Text.assemble(("could not reach:", "yellow"), " ", ", ".join(report.unreachable)))
         raise typer.Exit(1)

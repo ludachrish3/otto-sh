@@ -480,8 +480,9 @@ def print_error(message: object, *, soft_wrap: bool = False) -> None:
     so none can be assumed bracket-free. Numeric subscripts (``argv[1]``)
     happen to survive; that is not a rule worth relying on.
 
-    Lives here rather than in ``otto.console`` because every render site is a
-    CLI one, and ``otto.cli`` deliberately does not depend on that module.
+    Lives here rather than in ``otto.console`` because it renders otto's own
+    red markup around the message; text that must print exactly as written
+    goes through ``otto.console.print_literal`` instead.
 
     *soft_wrap* turns the hard word-wrap off for messages that carry a token
     the reader is meant to COPY. Rich folds at the console width, and it folds
@@ -1702,24 +1703,24 @@ def print_dry_run_block(
     section, the same "suppress the payload, not its absence" rule the lab
     line already follows.
 
-    Every line prints ``soft_wrap=True`` (the same call ``fail()`` uses for a
-    message meant to be re-typed): a long resolved value — a path, a token, a
-    URL — must stay on ONE line when piped or captured, never hard-wrapped or
-    cropped at the console width.
+    Every line prints through ``otto.console.print_literal``, so a long
+    resolved value stays one line.
     """
     from rich import get_console
+    from rich.text import Text
 
+    from ..console import print_literal
     from ..utils import DRY_RUN_HEADLINE, DRY_RUN_HEADLINE_PROBED
 
     console = get_console()
     headline = DRY_RUN_HEADLINE_PROBED if contacted else DRY_RUN_HEADLINE
-    console.print(f"[magenta]{escape(headline)}[/magenta]", soft_wrap=True)
-    console.print(f"  would run: {escape(would_run_line(ctx))}", soft_wrap=True)
+    print_literal(Text(headline, style="magenta"), console=console)
+    print_literal(f"  would run: {would_run_line(ctx)}", console=console)
     if options:
-        console.print("  options:", soft_wrap=True)
+        print_literal("  options:", console=console)
         for instance in options:
-            console.print(f"    {escape(_options_line(instance))}", soft_wrap=True)
-    console.print(f"  {escape(_lab_line(references or []))}", soft_wrap=True)
+            print_literal(f"    {_options_line(instance)}", console=console)
+    print_literal(f"  {_lab_line(references or [])}", console=console)
 
 
 def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
@@ -1945,11 +1946,12 @@ class RenderPolicy:
 
 def _print_value(value: Any, *, literal: bool) -> None:
     """Print one value: as plain text when *literal* and it is a ``str``, else via Rich."""
-    from rich import get_console
     from rich import print as rprint
 
+    from ..console import print_literal
+
     if literal and isinstance(value, str):
-        get_console().print(value, markup=False, emoji=False, highlight=False, soft_wrap=True)
+        print_literal(value)
     else:
         rprint(value)
 

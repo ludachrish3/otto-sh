@@ -41,7 +41,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
 from .._webassets.artifacts import MONITOR
-from ..console import CONSOLE
+from ..console import CONSOLE, print_literal
 from ..logger.formatters import NO_LOCALS_ATTR
 from ..models.monitor import (
     EventCreateBody,
@@ -991,11 +991,11 @@ class MonitorServer:
                 # persist a live credential to console.log / verbose.log on every run.
                 # Only a keyless origin goes to the logger for the on-disk audit trail.
                 if len(all_urls) == 1:
-                    CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
+                    print_literal(f"Server running at {all_urls[0]}", console=CONSOLE)
                 else:
                     CONSOLE.print("Server running at:", highlight=False)
                     for u in all_urls:
-                        CONSOLE.print(f"  {u}", highlight=False)
+                        print_literal(f"  {u}", console=CONSOLE)
                 CONSOLE.print("Press Ctrl+C to stop", highlight=False)
                 logger.info(
                     f"Monitor dashboard started on {self.origin} (access key omitted from logs)"

@@ -17,6 +17,11 @@ without turning the emoji pass off. :func:`escape_relayed` is the pure escape,
 for text that is displayed rather than logged. This is not a general logging
 API: a caller who opts in to markup on its own escapes and opts out of emoji
 itself.
+
+:func:`escape_relayed` is for foreign text that must stay a markup string:
+log records, and progress descriptions. Every other displayed text goes
+through ``otto.console.literal_cell`` (a table cell) or
+``otto.console.print_literal`` (a line).
 """
 
 import logging

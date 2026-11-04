@@ -1941,3 +1941,17 @@ def test_both_check_verbs_answer_the_same_input_the_same_way(
     absent = runner.invoke(cov_app, [verb, "check", str(tmp_path / "nowhere")])
     assert absent.exit_code == 2
     assert absent_text in absent.output
+
+
+def test_the_get_report_prints_capture_paths_literally(monkeypatch, capsys):
+    """#785: a capture path is user data, printed as written on one line at any width."""
+    from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    cov_dir = Path("/tmp") / HOSTILE
+    capture = cov_dir / "capture.json"
+    got = GetReport(cov_dir=cov_dir, tier="t", captures=[capture], manual_captures=[], clean=None)
+    cov_module._render_get_report(got)
+    out = capsys.readouterr().out
+    assert_one_verbatim_line(out, str(capture))
+    assert_one_verbatim_line(out, f"Coverage captured: 1 product(s) -> {cov_dir}")

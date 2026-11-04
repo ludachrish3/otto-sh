@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import SecretBytes, SecretStr
 from typing_extensions import override
 
+from .._terminal import interactive_terminal_size
 from ..logger.mode import LogMode
 from ..models.base import Cred
 from .command_frame import CommandFrame
@@ -306,18 +307,6 @@ def _spawn_stdin_reader(
             loop.call_soon_threadsafe(stdin_queue.put_nowait, None)
 
     return loop.run_in_executor(None, _run)
-
-
-def _initial_term_size() -> tuple[int, int]:
-    """Return the current local terminal size, falling back to 80x24."""
-    import shutil
-
-    try:
-        size = shutil.get_terminal_size((80, 24))
-    except OSError:
-        return 80, 24
-    else:
-        return size.columns, size.lines
 
 
 def _setup_raw_mode(fd: int) -> Any:
@@ -950,7 +939,7 @@ async def run_ssh_login(
     import asyncssh
 
     term_type = os.environ.get("TERM") or "xterm"
-    cols, rows = _initial_term_size()
+    cols, rows = interactive_terminal_size()
 
     process_kwargs: dict[str, Any] = {
         "request_pty": "force",
@@ -977,7 +966,7 @@ async def run_ssh_login(
 
         def handler() -> None:
             try:
-                c, r = _initial_term_size()
+                c, r = interactive_terminal_size()
                 process.change_terminal_size(c, r)
             except Exception as exc:  # noqa: BLE001 — SIGWINCH handler, best-effort resize
                 logger.debug(f"SSH window-change forward failed: {exc}")
@@ -1106,14 +1095,14 @@ async def run_telnet_login(
 
         def handler() -> None:
             try:
-                c, r = _initial_term_size()
+                c, r = interactive_terminal_size()
                 client._send_naws(c, r)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for SIGWINCH handler
             except Exception as exc:  # noqa: BLE001 — SIGWINCH handler, best-effort NAWS push
                 logger.debug(f"NAWS push failed: {exc}")
 
         loop.add_signal_handler(signal.SIGWINCH, handler)
         try:
-            c, r = _initial_term_size()
+            c, r = interactive_terminal_size()
             client._send_naws(c, r)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for initial window size
         except Exception as exc:  # noqa: BLE001 — best-effort initial NAWS, signal handler will retry
             logger.debug(f"Initial NAWS push failed (non-fatal, signal handler will retry): {exc}")

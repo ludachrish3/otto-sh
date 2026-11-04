@@ -27,13 +27,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
-from rich import box, get_console
+from rich import box
 from rich import print as rprint
 from rich.markup import escape
 
 from .invoke import fail
 
 if TYPE_CHECKING:
+    from rich.text import Text
+
     from ..inventory.protocol import Inventory
     from ..models.inventory import InventoryRecord
 
@@ -59,16 +61,14 @@ def inventory_callback(ctx: typer.Context) -> None:
 
 
 def _row(text: str) -> None:
-    """Print one detail row verbatim: no markup parsing, no width wrapping.
+    """Print one detail row literally, through ``otto.console.print_literal``.
 
-    Same treatment as ``otto.cli.link._row``, for the same reason: every field
-    on these rows is user-supplied (an inventory key, a backend label, a
-    filesystem path), and rich would read ``inventory[old].json`` as a style
-    tag and print ``inventory.json`` — naming a file that does not exist.
-    Folding is just as damaging here: a path broken mid-line is a path the
-    reader cannot paste.
+    Every field on these rows is user-supplied: an inventory key, a backend
+    label, a filesystem path.
     """
-    get_console().print(text, markup=False, soft_wrap=True)
+    from ..console import print_literal
+
+    print_literal(text)
 
 
 def _no_inventory_message() -> str:
@@ -214,16 +214,18 @@ def _not_cached_reason(inventory: "Inventory") -> str:
     )
 
 
-def _cell(value: "Any") -> str:
+def _cell(value: "Any") -> "Text":
     """One table cell: a string verbatim, anything else as canonical JSON.
 
     A string is passed through so ``lab-a`` reads as ``lab-a`` rather than
     ``"lab-a"``; everything else (numbers, booleans, structures) is JSON with
-    sorted keys. Escaped either way — rich parses ``[...]`` in a cell as a
-    style tag and deletes it, and every value here came from an inventory.
+    sorted keys. Literal either way (``otto.console.literal_cell``): every
+    value here came from an inventory, and its column is an ``id_column``.
     """
+    from ..console import literal_cell
+
     text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-    return escape(text)
+    return literal_cell(text)
 
 
 @inventory_app.command("lookup")
@@ -232,6 +234,8 @@ def lookup(
 ) -> None:
     """Show the resolved record for KEY — creds as login names only, never passwords."""
     from rich.table import Table
+
+    from ..console import id_column
 
     inventory = _inventory()
     from ..inventory.errors import InventoryError
@@ -253,8 +257,8 @@ def lookup(
     _creds_row(inventory)
 
     table = Table(box=box.ROUNDED)
-    table.add_column("field")
-    table.add_column("value")
+    id_column(table, "field")
+    id_column(table, "value")
     # `exclude_unset`, never `exclude_defaults`: the two differ on a field
     # stated AT its default (`is_virtual: false`), and that is exactly what the
     # join reads to decide whether the inventory supplied it.
@@ -265,17 +269,17 @@ def lookup(
         if name == "creds":
             # LOGINS ONLY. The record holds passwords, this prints to a
             # terminal and into whatever captured it.
-            table.add_row("creds", escape(", ".join(c.login for c in record.creds)))
+            table.add_row(_cell("creds"), _cell(", ".join(c.login for c in record.creds)))
             continue
-        table.add_row(name, _cell(stated[name]))
+        table.add_row(_cell(name), _cell(stated[name]))
     rprint(table)
 
     if record.extra:
         extra = Table(title="extra (opaque to otto)", box=box.ROUNDED)
-        extra.add_column("key")
-        extra.add_column("value")
+        id_column(extra, "key")
+        id_column(extra, "value")
         for name in sorted(record.extra):
-            extra.add_row(escape(name), _cell(record.extra[name]))
+            extra.add_row(_cell(name), _cell(record.extra[name]))
         rprint(extra)
 
     _row(f"supplies: {', '.join(sorted(inventory.supplies))}")
@@ -312,13 +316,15 @@ def list_records() -> None:
     """List every inventory key with its address."""
     from rich.table import Table
 
+    from ..console import id_column
+
     inventory = _inventory()
     records = _records(inventory)
     table = Table(box=box.ROUNDED)
-    table.add_column("key")
-    table.add_column("ip")
+    id_column(table, "key")
+    id_column(table, "ip")
     for key in sorted(records):
-        table.add_row(escape(key), escape(records[key].ip))
+        table.add_row(_cell(key), _cell(records[key].ip))
     rprint(table)
     _row(f"{len(records)} record(s) in {inventory.label}")
     _creds_row(inventory)
@@ -423,6 +429,7 @@ def diff(
     # Developer note: the "could not answer" exit status is `_CANNOT_ANSWER`.
     from rich.table import Table
 
+    from ..console import id_column
     from ..inventory.snapshot import diff_records
 
     if other is not None:
@@ -442,16 +449,16 @@ def diff(
     _row(f"right: {right_label}")
     table = Table(box=box.ROUNDED)
     for column in ("key", "field", "left", "right"):
-        table.add_column(column)
+        id_column(table, column)
     for difference in differences:
         # field=None is "this key is on one side only" — a whole-record row,
         # where an empty cell means ABSENT rather than unstated.
         empty = _ABSENT if difference.field is None else _UNSTATED
         table.add_row(
-            escape(difference.key),
-            escape(difference.field) if difference.field is not None else "(whole record)",
-            escape(difference.left) if difference.left is not None else empty,
-            escape(difference.right) if difference.right is not None else empty,
+            _cell(difference.key),
+            _cell(difference.field if difference.field is not None else "(whole record)"),
+            _cell(difference.left if difference.left is not None else empty),
+            _cell(difference.right if difference.right is not None else empty),
         )
     rprint(table)
     _row(_DIFF_LEGEND)

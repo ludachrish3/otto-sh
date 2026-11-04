@@ -568,11 +568,11 @@ def _failure_line(error: BaseException) -> str:
 
 def _render_get_report(got: "GetReport") -> None:
     """Print one line per capture and the summary; a failed ``--clean`` exits 1."""
-    from rich import print as rprint
+    from ..console import print_literal
 
     for path in got.captures:
-        rprint(escape_markup(str(path)))
-    rprint(escape_markup(f"Coverage captured: {len(got.captures)} product(s) -> {got.cov_dir}"))
+        print_literal(str(path))
+    print_literal(f"Coverage captured: {len(got.captures)} product(s) -> {got.cov_dir}")
     if got.clean is not None:
         _render_clean_report(got.clean)
 

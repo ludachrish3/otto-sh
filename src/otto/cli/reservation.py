@@ -152,6 +152,8 @@ def check(ctx: typer.Context) -> None:
     from rich import box
     from rich.table import Table
 
+    from ..console import id_column, literal_cell
+
     # Function-scope: ``otto.cli.reservation`` is a budgeted import surface, and
     # the fleet accessor and rich's table machinery would otherwise be charged
     # to every ``otto reservation`` invocation, ``--help`` included.
@@ -174,17 +176,19 @@ def check(ctx: typer.Context) -> None:
             ),
             box=box.ROUNDED,
         )
-        for column in ("resource", "level", "owner", "held"):
-            table.add_column(column)
+        id_column(table, "resource")
+        table.add_column("level")
+        id_column(table, "owner")
+        table.add_column("held")
         for row in report.rows:
-            # escape(): identifiers are opaque to otto, and rich would read
+            # literal_cell(): identifiers are opaque to otto, and rich would read
             # 'rack[a]' as a style tag and drop it. "n/a" is the `none`
             # backend's absence of a verdict.
             if row.held is None:
                 held_cell = "n/a"
             else:
                 held_cell = "[green]yes[/green]" if row.held else "[red]no[/red]"
-            table.add_row(escape(row.resource), row.level, escape(row.owner), held_cell)
+            table.add_row(literal_cell(row.resource), row.level, literal_cell(row.owner), held_cell)
         rprint(table)
         # After the table, before the verdict: a status report says everything
         # it knows. Not suppressed by -R, because this command's whole job is

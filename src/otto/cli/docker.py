@@ -1060,28 +1060,28 @@ def _use_cases(
                     for sf in frags
                 }
 
-        table = Table(
-            "fragment",
-            "provides",
-            "host",
-            "env keys",
-            "status",
-            title=f"use-case {name}",
-        )
+        from ..console import id_column, literal_cell
+
+        table = Table(title=f"use-case {name}")
+        id_column(table, "fragment")
+        table.add_column("provides")
+        id_column(table, "host")
+        id_column(table, "env keys")
+        table.add_column("status")
         for sf in candidates:
             frag = sf.fragment
             provides = (
                 f"{frag.provides} (priority {frag.priority})" if frag.provides is not None else "-"
             )
             table.add_row(
-                # escape()d: the `project[compose,...]` spelling is rich MARKUP
-                # syntax, and an unescaped `[core]` is eaten as a style tag —
+                # Literal: the `project[compose,...]` spelling is rich MARKUP
+                # syntax, and a `[core]` read as markup is eaten as a style tag —
                 # which rendered a project's two fragments identically (found on
-                # the live bed, T15). The other cells carry no bracket idiom.
-                escape(f"{sf.project.name}[{','.join(frag.composes)}]"),
+                # the live bed, T15).
+                literal_cell(f"{sf.project.name}[{','.join(frag.composes)}]"),
                 provides,
-                hosts.get(id(frag), "-"),
-                _env_key_names(frag),
+                literal_cell(hosts.get(id(frag), "-")),
+                literal_cell(_env_key_names(frag)),
                 "displaced" if id(frag) in excluded else "",
             )
         rprint(table)

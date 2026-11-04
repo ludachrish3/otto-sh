@@ -109,8 +109,10 @@ def _resolve_host(host_id: str) -> "UnixHost":
         # generator would also make this error path raise its own error when
         # the universe came out empty, replacing "No host with ID x" with a
         # scoping complaint about a lab the user was not asking about.
+        from ..console import print_literal
+
         for known_id in get_context().lab.hosts:
-            rprint(f"  - {known_id}")
+            print_literal(f"  - {known_id}")
         raise typer.Exit(1) from None
 
 

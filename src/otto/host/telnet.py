@@ -11,8 +11,8 @@ TelnetSession for command execution.
 import asyncio
 import contextlib
 import logging
+import os
 import re
-import shutil
 import signal
 import struct
 import sys
@@ -29,6 +29,7 @@ from weakref import WeakSet
 from pydantic import SecretStr
 from typing_extensions import Self, override
 
+from .._terminal import interactive_terminal_size
 from ..errors import OttoError
 from ..models.base import as_secret
 from ..utils import WaitTimeoutError, wait_for_async
@@ -719,7 +720,7 @@ async def release_telnet_stream(
 
 def _sigwinch_fanout() -> None:
     """SIGWINCH handler: push a fresh NAWS update to every subscribed client."""
-    cols, rows = shutil.get_terminal_size((80, 24))
+    cols, rows = interactive_terminal_size()
     for client in list(_naws_subscribers):
         try:
             client._send_naws(cols, rows)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for SIGWINCH fanout
@@ -999,7 +1000,9 @@ class TelnetClient(_StreamHolder):
         # Hook up NAWS after login so banners/MOTD don't get mixed with
         # subnegotiation bytes on the wire.
         if self.options.auto_window_resize and sys.stdin.isatty():
-            cols, rows = shutil.get_terminal_size((self.options.cols, self.options.rows))
+            cols, rows = interactive_terminal_size(
+                fallback=os.terminal_size((self.options.cols, self.options.rows))
+            )
             self._send_naws(cols, rows)
             _naws_subscribers.add(self)
             _install_sigwinch_handler()

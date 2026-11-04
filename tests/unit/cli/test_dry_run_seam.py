@@ -1516,3 +1516,38 @@ class TestSelfFinishingLeafSharesTheProbeTail:
         assert "dut1: reachable" in flat(res.output)
         assert calls == [], "a non-previewing self-finishing leaf ran its body"
         assert len(opened.opens) == 1
+
+
+class TestTheBlockPrintsResolvedValuesLiterally:
+    """#785: a resolved value is user data, so the block prints it through ``print_literal``.
+
+    ``escape()`` alone kept the brackets but let ``:smile:`` become an emoji;
+    every line now prints exactly as written, on one line, whatever the width.
+    """
+
+    def test_the_would_run_and_options_lines_hold_hostile_text_verbatim(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    ) -> None:
+        import dataclasses
+
+        import click
+
+        from otto.cli.invoke import _options_line, print_dry_run_block, would_run_line
+        from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+        @dataclasses.dataclass
+        class GoOptions:
+            name: str
+
+        monkeypatch.setenv("COLUMNS", "40")
+        root = click.Context(click.Group("seamdemo"))
+        leaf = click.Command("go", params=[click.Option(["--name"])])
+        ctx = leaf.make_context("go", ["--name", HOSTILE], parent=root)
+        instance = GoOptions(name=HOSTILE)
+        print_dry_run_block(ctx, options=[instance])
+        out = capsys.readouterr().out
+        would_run = f"  would run: {would_run_line(ctx)}"
+        assert HOSTILE in would_run
+        assert_one_verbatim_line(out, would_run)
+        assert_one_verbatim_line(out, f"    {_options_line(instance)}")
+        assert_one_verbatim_line(out, DRY_RUN_HEADLINE)

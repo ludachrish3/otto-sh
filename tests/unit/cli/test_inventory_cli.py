@@ -16,7 +16,6 @@ makes "no inventory is configured" a reachable state here at all.
 import json
 import os
 import re
-import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -24,6 +23,7 @@ from typer.testing import CliRunner
 
 from otto import bootstrap
 from otto.cli.inventory import inventory_app
+from tests._fixtures.env_guard import preserved_timezone, set_timezone
 from tests._fixtures.project_scaffold import make_project
 from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device
 
@@ -415,22 +415,12 @@ def far_east_timezone():
     no-op and dropping it changes nothing. Kiritimati is the largest offset
     there is, and it has no DST, so ``%Z`` renders a stable ``+14``.
 
-    ``TZ`` carries no ``OTTO_`` prefix, so the suite's ambient-env strip leaves
-    it alone; ``tzset()`` is what makes ``time``/``datetime`` re-read it, and it
-    has to run again on the way out or the new zone leaks into every later test
-    in this process.
+    ``preserved_timezone`` restores ``TZ`` and re-runs ``tzset()``, so the zone
+    cannot leak.
     """
-    previous = os.environ.get("TZ")
-    os.environ["TZ"] = "Pacific/Kiritimati"
-    time.tzset()
-    try:
+    with preserved_timezone():
+        set_timezone("Pacific/Kiritimati")
         yield
-    finally:
-        if previous is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = previous
-        time.tzset()
 
 
 def test_refresh_replaces_the_snapshot_and_reports_its_age(netbox_project, far_east_timezone):
@@ -702,3 +692,13 @@ def test_without_a_creds_store_there_is_no_creds_row(project):
     listed = _run(["list"])
     assert listed.exit_code == 0, listed.output
     assert "creds:    " not in listed.output
+
+
+def test_a_detail_row_prints_hostile_text_literally(monkeypatch, capsys):
+    """#785: ``_row`` is a trampoline into ``print_literal``: no markup, no emoji, no wrap."""
+    from otto.cli import inventory
+    from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    inventory._row(HOSTILE)
+    assert_one_verbatim_line(capsys.readouterr().out, HOSTILE)

@@ -19,10 +19,10 @@ _TITLES = {"products": "products", "dev_tools": "dev tools"}
 
 
 def _print_line(text: str) -> None:
-    """Print one plain line: no markup (a ``[project]`` in it is literal), no wrapping."""
-    from rich import get_console
+    """Print one line literally, through ``otto.console.print_literal``."""
+    from ..console import print_literal
 
-    get_console().print(text, markup=False, highlight=False, soft_wrap=True)
+    print_literal(text)
 
 
 def show_listing(ctx: "typer.Context", seam: str) -> None:
@@ -36,6 +36,7 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     from rich.markup import escape
     from rich.table import Table
 
+    from ..console import id_column, literal_cell
     from ..declared import get_projects
     from ..host import listing
     from .invoke import (
@@ -54,27 +55,22 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
         lab = get_context().lab
         result = listing.lab_rows(lab, listing.active_projects(), seam)
         table = Table(title=f"{title} in lab {escape(lab.name)}", box=box.ROUNDED)
-        for column in (
-            "name",
-            "kind",
-            "variant",
-            "instrumented",
-            "project",
-            "hosts",
-            "artifact",
-            "stage dir",
-        ):
-            table.add_column(column)
+        id_column(table, "name")
+        table.add_column("kind")
+        id_column(table, "variant")
+        table.add_column("instrumented")
+        for column in ("project", "hosts", "artifact", "stage dir"):
+            id_column(table, column)
         for row in result.rows:
             table.add_row(
-                escape(row.name),
+                literal_cell(row.name),
                 escape(row.kind),
-                escape(row.variant),
+                literal_cell(row.variant),
                 escape(row.instrumented),
-                escape(row.project),
-                escape(", ".join(row.hosts)),
-                escape(row.artifact),
-                escape(row.stage_dir),
+                literal_cell(row.project),
+                literal_cell(", ".join(row.hosts)),
+                literal_cell(row.artifact),
+                literal_cell(row.stage_dir),
             )
         rprint(table)
         if result.unused:
@@ -89,17 +85,21 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     fail_without_projects(get_projects())
     projects = listing.active_projects()
     table = Table(title=title, box=box.ROUNDED)
-    for column in ("name", "kind", "variant", "instrumented", "project", "match", "artifact"):
-        table.add_column(column)
+    id_column(table, "name")
+    table.add_column("kind")
+    id_column(table, "variant")
+    table.add_column("instrumented")
+    for column in ("project", "match", "artifact"):
+        id_column(table, column)
     for declared in listing.declared_rows(projects, seam):
         table.add_row(
-            escape(declared.name),
+            literal_cell(declared.name),
             escape(declared.kind),
-            escape(declared.variant),
+            literal_cell(declared.variant),
             escape(declared.instrumented),
-            escape(declared.project),
-            escape(declared.match),
-            escape(declared.artifact),
+            literal_cell(declared.project),
+            literal_cell(declared.match),
+            literal_cell(declared.artifact),
         )
     rprint(table)
     for note in listing.provider_notes(projects, seam):

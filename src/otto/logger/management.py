@@ -51,7 +51,7 @@ from rich.logging import RichHandler
 from typing_extensions import override
 
 from .. import layout
-from ..console import CONSOLE
+from ..console import CONSOLE, print_literal
 from .formatters import (
     CONSOLE_TRACEBACK_MAX_FRAMES,
     EXC_ID_ATTR,
@@ -875,7 +875,7 @@ def _after_listener_stop() -> None:
 def _print_output_dir() -> None:
     """atexit-safe: print the final output dir, unless reset() cleared it."""
     if _state.last_output_dir is not None:
-        CONSOLE.print(f"\nOutput directory: {_state.last_output_dir}", highlight=False)
+        print_literal(f"\nOutput directory: {_state.last_output_dir}", console=CONSOLE)
 
 
 def reset() -> None:

@@ -99,7 +99,8 @@ path = "otto.check"
 layer = "topology"
 # Shared by otto.link and otto.tunnel, so it may import NEITHER (they stay
 # decoupled; see the otto.link entry). Host probing only.
-depends_on = ["otto.host", "otto.version", "otto.errors", "otto.result"]
+# otto.console: render.py's feature column is an id_column (a foundation leaf).
+depends_on = ["otto.host", "otto.version", "otto.errors", "otto.result", "otto.console"]
 
 [[modules]]
 path = "otto.cli"
@@ -127,7 +128,9 @@ layer = "entry"
 # model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
 # otto.layout: `otto cov report`'s default --dir and each run dir's cov/ (cov_dir,
 # cov_report_dir). Function-local, like otto.labs.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.config.corpus_snapshot", "otto.declared", "otto.fleet", "otto.layout"]
+# otto.console: print_literal, the one "print this exactly" decision for paths,
+# ids and argvs. Function-local, so no verb's `--help` loads rich.console.
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.config.corpus_snapshot", "otto.declared", "otto.fleet", "otto.layout", "otto.console"]
 
 [[modules]]
 path = "otto.config"
@@ -239,7 +242,7 @@ depends_on = ["otto.config.home", "otto.models", "otto.models.base", "otto.confi
 [[modules]]
 path = "otto.console"
 layer = "foundation"
-depends_on = []
+depends_on = ["otto._terminal"]
 
 [[modules]]
 path = "otto.context"
@@ -328,6 +331,9 @@ depends_on = [
     # composes them as it always did (spec 2026-10-11 placement-and-phases
     # §3.12). Same layer: root to root.
     "otto.bootstrap",
+    # otto.console: the instrumentation table's host and product columns are
+    # id_columns. A foundation leaf, imported at function scope.
+    "otto.console",
 ]
 
 [[modules]]
@@ -536,6 +542,9 @@ path = "otto.host"
 layer = "host"
 depends_on = [
     "otto.logger",
+    # otto._terminal: a login sizes its remote pty from the real terminal
+    # (interactive_terminal_size), never from COLUMNS.
+    "otto._terminal",
     # otto.models.base: OttoModel, the credential pair (CredSpec, the runtime
     # Cred) and resources_nonempty, the leaf the host specs share with
     # otto.models (spec 2026-10-11 placement-and-phases §3.3). The host specs
@@ -965,6 +974,9 @@ depends_on = [
     "otto.layout",
     "otto.config.scope",
     "otto.models.dependencies",
+    # otto.console: render.py's project, lab, host and name columns are
+    # id_columns. A foundation leaf, imported at function scope.
+    "otto.console",
 ]
 
 [[modules]]
@@ -1098,6 +1110,14 @@ layer = "foundation"
 # anything else in otto on every TAB. `otto cache` inspects it.
 depends_on = []
 
+[[modules]]
+path = "otto._terminal"
+layer = "foundation"
+# The one "is this descriptor a usable terminal" decision and the interactive
+# terminal size: standard library only, and imported by the console shim before
+# the CLI graph, so it may depend on nothing in otto.
+depends_on = []
+
 # The last files to join a module (spec 2026-10-11 placement-and-phases §3.11,
 # §5.1): the root package's facade, the lab facade, the env verbs' module and
 # the console entry. tach sees no import a file outside every module makes.
@@ -1132,7 +1152,7 @@ depends_on = [
 path = "otto._shim"
 # The console entry: answers --version and a warm TAB before importing the CLI.
 layer = "entry"
-depends_on = ["otto.version", "otto._shim_complete", "otto.cli"]
+depends_on = ["otto.version", "otto._shim_complete", "otto._terminal", "otto.cli"]
 
 [[modules]]
 path = "otto.__main__"

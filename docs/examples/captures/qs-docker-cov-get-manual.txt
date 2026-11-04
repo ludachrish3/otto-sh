@@ -47,8 +47,7 @@ INFO     lcov capture: 2 file(s) ->
          wordcount/board.info
 INFO     docker-host.quickstart.tools/wordcount: skipped 5 source file(s) outside the project root
 INFO     Coverage captures produced: 1 board(s)
-/tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount
-/capture.json
+/tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount/capture.json
 Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov
 
 Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_get

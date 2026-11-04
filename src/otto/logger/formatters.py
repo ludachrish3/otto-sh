@@ -30,12 +30,19 @@ from ..console import CONSOLE
 ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None] | tuple[None, None, None]
 """A record's ``exc_info``: what ``sys.exc_info()`` returns."""
 
-TRACEBACK_FILE_WIDTH = 160
-"""Column width of a traceback in a log file.
+LOG_FILE_WIDTH = 160
+"""Column width of everything Rich renders into a log file, a traceback or a renderable record.
 
 Fixed rather than the terminal's: a file is read later, often somewhere wider,
 and a frame's location line folded at 80 columns is no longer one line a
 reader can grep or copy."""
+
+LOG_FILE_HEIGHT = 25
+"""Height of the log file's console, which is Rich's own fallback.
+
+Set only so the size is stored: Rich returns a stored width and height before
+it checks for a dumb terminal, which would otherwise render 80 wide under
+``TERM=dumb``. No line-oriented record depends on it."""
 
 TRACEBACK_MAX_FRAMES = 100
 """Frames a log file's traceback shows before it elides the middle."""
@@ -82,15 +89,46 @@ _exc_ids = itertools.count(1)
 _PLAIN = Formatter()
 """The stdlib's own exception formatting, for the fallback text."""
 
-_console = Console(highlight=False, width=CONSOLE.width)
-"""Dedicated capture-only console for rendering Rich markup to a string.
 
-Must remain a separate object from the display console (otto.console.CONSOLE),
-but takes its width so log lines wrap in the file exactly as on screen.
-Without a fixed width Rich re-probes fds 0/1/2 on every render, and otto's
-in-process pytest run leaves those non-tty — collapsing the width to 80 and
-wrapping the log file narrower than the terminal. CONSOLE is already pinned
-to the launch-time terminal width in otto.console."""
+def _file_console(rich: bool) -> Console:
+    """Build a console that renders for a log file, never for the screen.
+
+    It reads nothing from the environment or the descriptors: the size is
+    :data:`LOG_FILE_WIDTH` by :data:`LOG_FILE_HEIGHT`, the colour is truecolor
+    when *rich* (``no_color=False``, so ``NO_COLOR`` cannot strip a rich log
+    file the user asked for) and none otherwise, and it is never a terminal,
+    a Jupyter cell or interactive unless *rich* forces the terminal for the
+    colour. So the file is byte-identical however stdout was attached, under
+    ``COLUMNS``, ``TERM=dumb`` or ``NO_COLOR``. A string or markup record
+    prints ``soft_wrap=True`` and is one line; a renderable (a ``Table``)
+    renders at the file width. The one constructor for every log-file
+    console: :func:`render_traceback` and :func:`_capture_console` both build
+    theirs here.
+    """
+    return Console(
+        file=io.StringIO(),
+        width=LOG_FILE_WIDTH,
+        height=LOG_FILE_HEIGHT,
+        color_system="truecolor" if rich else None,
+        force_terminal=rich,
+        no_color=False,
+        force_jupyter=False,
+        force_interactive=False,
+        highlight=False,
+    )
+
+
+@functools.cache
+def _capture_console(rich: bool) -> Console:
+    """Return the one capture console per mode that :class:`RichFormatter` renders markup through.
+
+    Built lazily, on the first opted-in record of that mode, because ``rich``
+    belongs to each formatter. A renderable reaches it only when the formatter
+    is called directly: installed logging stringifies every message in
+    ``_InProcessQueueHandler.prepare`` before a file formatter sees it.
+    """
+    return _file_console(rich)
+
 
 _ANSI = re.compile(
     r"\x1b"  # ESC
@@ -372,7 +410,7 @@ def render_traceback(record: LogRecord, *, color: bool) -> str:
     The one renderer for an exception in a file sink. It prints the Rich
     traceback as a renderable, never as markup, so a ``[bold]`` in a source
     line or a local's value comes out as written. The width is
-    :data:`TRACEBACK_FILE_WIDTH` whatever the terminal is; *color* keeps
+    :data:`LOG_FILE_WIDTH` whatever the terminal is; *color* keeps
     Rich's ANSI styling, otherwise the text is plain. Frames inside the
     packages :func:`suppressed_traceback_packages` names are shown by
     location only.
@@ -381,28 +419,19 @@ def render_traceback(record: LogRecord, *, color: bool) -> str:
     and ``""`` when the record carries no exception. Raises if Rich fails, so
     the caller can fall back to that same plain text.
 
-    The console is built per call rather than shared with the message
-    renderer above, which is sized to the terminal and whose colour follows
-    whether otto started in one.
+    The console is built per call by ``_file_console``, the constructor the
+    message renderer's capture console shares, so the two cannot drift.
     """
     trace = getattr(record, TRACE_ATTR, None)
     if trace is None:
         return record.exc_text or ""
     from rich.traceback import Traceback
 
-    console = Console(
-        file=io.StringIO(),
-        width=TRACEBACK_FILE_WIDTH,
-        color_system="truecolor" if color else None,
-        force_terminal=color,
-        force_jupyter=False,
-        force_interactive=False,
-        highlight=False,
-    )
+    console = _file_console(color)
     console.print(
         Traceback(
             trace,
-            width=TRACEBACK_FILE_WIDTH,
+            width=LOG_FILE_WIDTH,
             code_width=None,
             show_locals=True,
             locals_max_length=LOCALS_MAX_LENGTH,
@@ -633,11 +662,13 @@ class RichFormatter(MultilineFormatter):
         """
         if not getattr(record, "markup", False):
             return record
-        with _console.capture() as capture:
-            _console.print(
+        console = _capture_console(self.rich)
+        with console.capture() as capture:
+            console.print(
                 record.msg,
                 markup=True,
                 emoji=getattr(record, "emoji", True),
+                soft_wrap=True,
             )
 
         record.msg = capture.get()

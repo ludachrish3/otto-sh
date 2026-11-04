@@ -14,6 +14,7 @@ from otto.host.daemon import (
     launch_command,
     parse_etime,
     parse_ps_output,
+    ps_listing,
     ps_scan_command,
     split_token,
 )
@@ -65,7 +66,9 @@ class TestPsScanCommand:
         # non-interactive shells (ssh exec) never had the alias and are
         # byte-unaffected apart from the backslash itself.
         assert ps_scan_command("otto-tunnel") == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-tunnel:' || true"
+            "{ ps -ww -eo pid= -eo etime= -eo args= 2>/dev/null"
+            " || ps -eo pid= -eo etime= -eo args= 2>/dev/null; }"
+            " | \\grep -a ' otto-tunnel:' || true"
         )
 
     @pytest.mark.parametrize("bad", ["o'tto", "otto tunnel", "otto.tunnel", "otto[x]", "", "-x"])
@@ -79,8 +82,20 @@ class TestPsScanCommand:
 
     def test_impair_prefix_golden(self):
         assert ps_scan_command("otto-impair") == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-impair:' || true"
+            "{ ps -ww -eo pid= -eo etime= -eo args= 2>/dev/null"
+            " || ps -eo pid= -eo etime= -eo args= 2>/dev/null; }"
+            " | \\grep -a ' otto-impair:' || true"
         )
+
+    def test_sweeps_share_one_listing_core(self) -> None:
+        """The two failure-marking sweeps are the daemon scan's listing, not restatements."""
+        from otto.host import daemon
+        from otto.link import check_live
+        from otto.tunnel import check_probes
+
+        assert check_probes.SWEEP_COMMAND.startswith(ps_listing(mark_failure=True))
+        assert check_live.SWEEP_SCAN.startswith(ps_listing(mark_failure=True))
+        assert check_probes.PS_FAILED is check_live.PS_FAILED is daemon.PS_FAILED
 
 
 class TestParseEtime:

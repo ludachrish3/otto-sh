@@ -4,8 +4,6 @@ The library-facing gate (:class:`~otto.reservations.ReservationGate` and its
 ``evaluate()`` outcome matrix) is tested separately in ``test_gate.py``.
 """
 
-import os
-import time
 from datetime import datetime, timezone
 
 import pytest
@@ -24,6 +22,7 @@ from otto.reservations import (
     required_resource_origins,
     required_resources,
 )
+from tests._fixtures.env_guard import preserved_timezone, set_timezone
 from tests.conftest import make_host
 
 
@@ -39,25 +38,11 @@ def pin_timezone():
     nothing, so that guard pins ``Pacific/Kiritimati`` (UTC+14, the largest
     offset there is, and no DST).
 
-    ``TZ`` carries no ``OTTO_`` prefix, so the suite's ambient-env strip leaves
-    it alone; ``tzset()`` is what makes ``time``/``datetime`` re-read it, and
-    it has to run again on the way out or the new zone leaks into every later
-    test in this process.
+    ``preserved_timezone`` restores ``TZ`` and re-runs ``tzset()``, so the zone
+    cannot leak.
     """
-    previous = os.environ.get("TZ")
-
-    def pin(name):
-        os.environ["TZ"] = name
-        time.tzset()
-
-    try:
-        yield pin
-    finally:
-        if previous is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = previous
-        time.tzset()
+    with preserved_timezone():
+        yield set_timezone
 
 
 class _FakeBackend(ReservationBackendBase):

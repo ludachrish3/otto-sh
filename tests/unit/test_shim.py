@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.env_guard import preserved_env_var
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.user_settings import set_cache_enabled
 
@@ -29,15 +30,12 @@ def _no_pydantic_plugin_setting_leaks():
     patched ``entry`` has the shim ``setdefault`` the variable into THIS
     process's environment. It would then reach every later subprocess the
     worker starts, among them the import-budget children, which count ~140
-    fewer file operations with it set. Restored by hand, not by
+    fewer file operations with it set. ``preserved_env_var``, not
     ``monkeypatch.delenv``: that records nothing for a variable that was
     absent, so its teardown would leave the shim's value behind.
     """
-    saved = os.environ.pop("PYDANTIC_DISABLE_PLUGINS", None)
-    yield
-    os.environ.pop("PYDANTIC_DISABLE_PLUGINS", None)
-    if saved is not None:
-        os.environ["PYDANTIC_DISABLE_PLUGINS"] = saved
+    with preserved_env_var("PYDANTIC_DISABLE_PLUGINS", absent_during=True):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -458,7 +456,7 @@ def test_the_shim_entry_imports_only_stdlib_at_module_level():
     module_level, deferred = _shim_imports("_shim.py")
 
     assert module_level == {"os", "sys"}
-    assert deferred == {"otto._shim_complete", "otto.cli.main", "otto.version"}
+    assert deferred == {"otto._shim_complete", "otto._terminal", "otto.cli.main", "otto.version"}
 
 
 def test_a_candidate_stdout_cannot_encode_falls_through_to_the_full_path(monkeypatch):

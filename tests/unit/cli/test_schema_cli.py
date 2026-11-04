@@ -75,3 +75,28 @@ def test_export_prints_a_pruned_name_literally_not_as_markup(tmp_path, monkeypat
     result = runner.invoke(schema_app, ["export"])
     assert result.exit_code == 0, result.output
     assert "[bold]x.schema.json" in result.output
+
+
+def test_export_prints_its_paths_literally_on_one_line(tmp_path, monkeypatch):
+    """#785: the output directory is user data, so it prints as written at any width."""
+    from tests._fixtures.literal_text import assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    out = tmp_path / "[red]x[/red]:smile:" / ("p" * 200)
+    result = runner.invoke(schema_app, ["export", "--out", str(out), "--builtins-only"])
+    assert result.exit_code == 0, result.output
+    assert_one_verbatim_line(result.output, "  wrote lab.schema.json")
+    assert_one_verbatim_line(result.output, f"Wrote schemas to {out}")
+
+
+def test_export_prints_a_pruned_emoji_name_literally(tmp_path, monkeypatch):
+    from tests._fixtures.literal_text import assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / ".otto" / "schemas"
+    out.mkdir(parents=True)
+    (out / "[red]x:smile:.schema.json").write_text("{}")
+    result = runner.invoke(schema_app, ["export"])
+    assert result.exit_code == 0, result.output
+    assert_one_verbatim_line(result.output, "  pruned [red]x:smile:.schema.json")

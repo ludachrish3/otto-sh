@@ -242,6 +242,11 @@ def run_otto(
     timeout:
         Subprocess timeout in seconds (default 60).
 
+    Stdin is ``/dev/null``. No caller feeds the child input, and an inherited
+    terminal on stdin (pytest run with ``-n 0`` from a shell) would make the
+    child's width depend on how pytest was launched: the CLI sizes its output
+    from a terminal on stdin when stdout is not one.
+
     Returns
     -------
     subprocess.CompletedProcess[str]
@@ -257,6 +262,7 @@ def run_otto(
     return subprocess.run(
         cmd,
         env=otto_subprocess_env(xdir=xdir, roots=roots, extra_env=extra_env),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         cwd=str(cwd if cwd is not None else CHECKOUT_ROOT),

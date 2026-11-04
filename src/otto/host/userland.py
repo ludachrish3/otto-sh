@@ -1283,11 +1283,14 @@ def _probe_report(userland: "Userland") -> "list[str | Table | Text]":
     rows = _capability_rows(userland)
     pin = userland.as_lab_json()
     assumed = [n for n, _, s in rows if s == "assumed"]
+    from ..console import id_column, literal_cell
+
     table = Table(title="userland", box=box.ROUNDED)
-    for column in ("capability", "value", "source"):
-        table.add_column(column)
+    id_column(table, "capability")
+    id_column(table, "value")
+    table.add_column("source")
     for n, v, s in rows:
-        table.add_row(Text(n), Text(v), Text(s))
+        table.add_row(literal_cell(n), literal_cell(v), Text(s))
     lines: list[str | Table | Text] = [table, "", Text(_SOURCE_LEGEND), ""]
     if not pin:
         lines.append(

@@ -23,6 +23,7 @@ from otto.link import (
 from otto.link.check import LinkCheckHost, LinkCheckReport
 from otto.link.model import Link, LinkEndpoint
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
 from tests.conftest import active_context
 
 from .test_manage_impair import INPATH, LINK, MGMT_LINK, _bed
@@ -1049,3 +1050,91 @@ class TestDryRunRendering:
         assert "a->b: -  b->a: -" in result.output
         assert "not read" not in result.output
         assert "dry run" not in result.output
+
+
+# ── literal output (#785) ────────────────────────────────────────────────────
+#
+# Link ids, host ids and netdevs are user data: printed through
+# `otto.console.print_literal`, a `[red]` tag, a `:smile:` code and a 300-
+# character run all come out as written, on one line, under a 40-column console.
+
+
+class TestLiteralOutput:
+    def test_rows_and_dry_run_lines_print_hostile_text_verbatim(self, monkeypatch, capsys):
+        from otto.cli import link as link_cli
+        from otto.link import DryRunPlan
+
+        monkeypatch.setenv("COLUMNS", "40")
+        link_cli._row(HOSTILE)
+        link_cli._print_dry_run_plan(HOSTILE, DryRunPlan(would=[HOSTILE], unchecked=["x"]))
+        link_cli._print_check_dry_run(HOSTILE, [HOSTILE])
+        out = capsys.readouterr().out
+        assert_one_verbatim_line(out, HOSTILE)
+        assert_one_verbatim_line(
+            out,
+            f"dry run {HOSTILE}: no device was contacted — "
+            "nothing was read and nothing was changed",
+        )
+        assert_one_verbatim_line(out, f"  would: {HOSTILE}")
+        assert_one_verbatim_line(out, f"dry run {HOSTILE}:")
+        assert_one_verbatim_line(out, f"  {HOSTILE}")
+
+    @staticmethod
+    def _list_output(*states: LinkState) -> str:
+        with (
+            patch("otto.fleet.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=list(states))),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_the_list_summaries_name_hostile_links_verbatim(self, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "40")
+        down = LinkState(
+            link=Link(a=LINK.a, b=LINK.b, id=HOSTILE),
+            impairable=True,
+            unreachable=True,
+            by_direction={FlowDirection.A_TO_B: None, FlowDirection.B_TO_A: None},
+        )
+        broken = LinkState(
+            link=Link(a=LINK.a, b=LINK.b, id="b:smile:"),
+            impairable=True,
+            unreachable=False,
+            by_direction={FlowDirection.A_TO_B: None},
+            read_errors={FlowDirection.A_TO_B: "'tc qdisc show' failed on 'test1'"},
+        )
+        output = self._list_output(down, broken)
+        assert_one_verbatim_line(output, f"partial scan — could not fully read: {HOSTILE}")
+        assert_one_verbatim_line(
+            output, "read failed — host reachable, read command failed: b:smile:"
+        )
+
+    def test_the_impaired_and_repaired_lines_name_hostile_data_verbatim(self, monkeypatch, capsys):
+        """Both headlines interpolate a link id, a host id and a netdev into otto's styling."""
+        from otto.cli import link as link_cli
+        from otto.link import RepairReport
+
+        monkeypatch.setenv("COLUMNS", "40")
+        netdev = "eth0[dataplane]:smile:"
+        params = ImpairmentParams(delay_ms=50.0)
+        link_cli._print_impair_report(
+            ImpairReport(
+                link_id=HOSTILE,
+                applied=[
+                    AppliedPlacement(Placement("test1", netdev, FlowDirection.A_TO_B), params)
+                ],
+            )
+        )
+        link_cli._print_repair_report(
+            RepairReport(HOSTILE, cleared=[Placement("test1", netdev, FlowDirection.A_TO_B)])
+        )
+        out = capsys.readouterr().out
+        assert_one_verbatim_line(
+            out,
+            f"impaired {HOSTILE} {FlowDirection.A_TO_B.value} on test1/{netdev}: "
+            f"{params.describe()}",
+        )
+        assert_one_verbatim_line(
+            out, f"repaired {HOSTILE}: cleared test1/{netdev}, timers cancelled 0"
+        )

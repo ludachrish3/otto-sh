@@ -86,6 +86,7 @@ async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Res
     from rich.table import Table
     from rich.text import Text
 
+    from ..console import id_column, literal_cell
     from . import orchestrator  # function-scope: the orchestrator imports this module's caller
     from .options import StatusOptions
 
@@ -96,15 +97,17 @@ async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Res
     ]
     if report.projects or unusable:
         table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+        id_column(table, "project")
+        table.add_column("state")
         for project_name, state in report.projects.items():
-            table.add_row(project_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
+            table.add_row(literal_cell(project_name), f"[{_STATE_STYLES[state]}]{state.value}[/]")
         for project_name, row in unusable:
             # A ``Text``, not a markup string like the states above, because the
             # lab names and the patterns in this cell come from a settings file:
             # a '[' in one -- and a host_patterns entry like `[a-z]+` is a
             # character class -- would be read as markup and swallow the rest of
             # the row.
-            table.add_row(project_name, Text(_skipped_cell(row), style="dim"))
+            table.add_row(literal_cell(project_name), Text(_skipped_cell(row), style="dim"))
         rprint(table)
     if full:
         _print_scoping(report.scoping)
@@ -172,12 +175,17 @@ def _print_scoping(scoping: "dict[str, ProjectScopeSummary]") -> None:
     from rich.table import Table
     from rich.text import Text
 
+    from ..console import id_column, literal_cell
+
     table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    for column in ("project", "labs", "hosts"):
+        id_column(table, column)
+    table.add_column("skipped")
     for project_name, row in scoping.items():
         table.add_row(
-            project_name,
-            Text(f"labs: {_joined(row.applicable_labs)}"),
-            Text(f"hosts: {_joined(row.universe)}"),
+            literal_cell(project_name),
+            literal_cell(f"labs: {_joined(row.applicable_labs)}"),
+            literal_cell(f"hosts: {_joined(row.universe)}"),
             Text("skipped (unmet dependencies)" if row.skipped else ""),
         )
     rprint("[bold]fleet of interest[/]")
@@ -208,14 +216,19 @@ def _cleanliness_table(report: "CleanlinessReport") -> "Table":
     from rich.table import Table
     from rich.text import Text
 
+    from ..console import id_column, literal_cell
+
     table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    table.add_column("section")
+    id_column(table, "name")
+    table.add_column("state")
     heading = ""
     for item in report.items:
         label = _CLEANLINESS_LABELS[item.kind]
         cell = Text(item.state.value, style=_CLEANLINESS_STYLES[item.state])
         if item.detail:
             cell.append(f" — {item.detail}", style="dim")
-        table.add_row("" if label == heading else label, item.name, cell)
+        table.add_row("" if label == heading else label, literal_cell(item.name), cell)
         heading = label
     return table
 

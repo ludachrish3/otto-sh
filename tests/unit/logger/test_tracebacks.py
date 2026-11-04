@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from rich.console import Console
 
 from otto.logger import formatters, install, management
 
@@ -116,7 +115,6 @@ def test_traceback_text_is_never_read_as_markup(tmp_path):
 def test_the_file_traceback_does_not_wrap_to_the_terminal_width(tmp_path, monkeypatch):
     """A frame's location line stays whole however narrow the operator's terminal is."""
     monkeypatch.setenv("COLUMNS", "40")
-    monkeypatch.setattr(formatters, "_console", Console(highlight=False, width=40))
     out = tmp_path / "out"
     install(log_level="INFO", output_dir=out)
 
