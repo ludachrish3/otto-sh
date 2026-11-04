@@ -60,5 +60,9 @@ precedence = 2
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 3
-harvest_dirs = ["build"]
+# textlib, which the unit tests exercise, is linked by wordcount and shout; its
+# unit evidence is declared once, under wordcount, so shout's pin shows none
+# for it (Coverage tiers: "A library two products link").
+[coverage.tiers.unit.products]
+wordcount = ["build"]
 # doc: end coverage

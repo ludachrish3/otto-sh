@@ -334,6 +334,10 @@ depends_on = [
     # otto.console: the instrumentation table's host and product columns are
     # id_columns. A foundation leaf, imported at function scope.
     "otto.console",
+    # load_tiers validates raw tier entries through CoverageTierSpec,
+    # function-locally; root → specs, and otto.models has no edge back (see
+    # its own list).
+    "otto.models",
 ]
 
 [[modules]]

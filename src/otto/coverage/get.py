@@ -142,7 +142,7 @@ async def get_coverage(
         # cannot be followed by a caller of get_coverage either.
         raise NoCoverageHostsError(e.cli_message(walker="coverage")) from e
 
-    resolved = resolve_get_tier(load_tiers(cov_config), tier)
+    resolved = resolve_get_tier(load_tiers(cov_config, root=cov_project.root), tier)
     if resolved.kind == "manual" and not ticket:
         raise CoverageInputError(
             f"tier {resolved.name!r} is a manual-kind tier and requires a ticket", field="ticket"

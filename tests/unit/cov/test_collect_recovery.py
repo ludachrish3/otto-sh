@@ -141,7 +141,7 @@ async def test_a_stale_leaf_in_a_reused_cov_dir_is_neither_captured_nor_cleaned(
     cov_dir = tmp_path / "reused/cov"
     _write_meta(
         cov_dir,
-        tier=collect._resolve_tier({"hosts": "h"}, None).name,
+        tier=collect._resolve_tier({"hosts": "h"}, None, root=tmp_path).name,
         base_commit=head_commit(lab.root),
     )
     stale = cov_dir / "other" / "app" / "x" / "stale.c.gcda"
@@ -188,7 +188,7 @@ async def test_a_reused_dir_with_pending_counters_from_another_collection_is_ref
     from otto.coverage.errors import CoverageInputError
 
     kwargs = collect_kwargs(lab.root)
-    tier = collect._resolve_tier({"hosts": "h"}, None).name
+    tier = collect._resolve_tier({"hosts": "h"}, None, root=tmp_path).name
     head = head_commit(lab.root)
     cov_dir = tmp_path / "reused/cov"
     _pending_leaf(cov_dir)
@@ -227,7 +227,7 @@ async def test_a_reused_dir_whose_pending_counters_match_this_collection_is_reus
     _pending_leaf(cov_dir)
     _write_meta(
         cov_dir,
-        tier=collect._resolve_tier({"hosts": "h"}, None).name,
+        tier=collect._resolve_tier({"hosts": "h"}, None, root=tmp_path).name,
         base_commit=head_commit(lab.root),
     )
 

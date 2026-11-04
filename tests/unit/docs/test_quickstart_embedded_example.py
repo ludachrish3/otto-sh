@@ -75,9 +75,10 @@ def test_the_declared_artifact_is_where_ext_build_sh_puts_it():
     assert settings["coverage"]["embedded"]["build_dir"] == "build/ext"
 
 
-def test_the_unit_tier_harvests_the_gtest_objects_never_the_extension_build():
+def test_the_unit_view_harvests_the_gtest_objects_never_the_extension_build():
     unit = _settings()["coverage"]["tiers"]["unit"]
-    assert unit["harvest_dirs"] == ["build/tests"]
+    assert unit["products"] == {"mathops": ["build/tests"]}
+    assert "harvest_dirs" not in unit
 
 
 def test_the_root_cmake_tree_never_references_the_extension():

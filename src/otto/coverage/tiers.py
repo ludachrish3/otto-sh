@@ -8,11 +8,14 @@ exposes plain dicts.  This module turns those dicts into ordered
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .colors import DEFAULT_TIER_COLORS
 from .errors import CoverageInputError
 from .store.model import TIER_SYSTEM
+
+if TYPE_CHECKING:
+    from ..models.settings import CoverageTierSpec
 
 
 @dataclass(frozen=True)
@@ -36,45 +39,51 @@ class TierConfig:
     kind: str
     precedence: int
     color: str
-    harvest_dirs: list[Path] = field(default_factory=list)
     max_age_days: int | None = None
     products: dict[str, list[Path]] = field(default_factory=dict)
+    """``unit``-kind only: each product view's build dirs, as written (unanchored)."""
     toolchain: TierToolchain | None = None
     """``unit``-kind only: the tier's own capture tools; ``None`` when no table is set."""
 
+    @property
+    def harvests_unit(self) -> bool:
+        """Whether a report harvests unit counters for this tier (a unit tier with a view)."""
+        return self.kind == "unit" and bool(self.products)
 
-def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
-    kind = entry["kind"]
-    max_age = entry.get("max_age")
-    toolchain = entry.get("toolchain")
+
+def _tier_from_spec(name: str, spec: "CoverageTierSpec") -> TierConfig:
+    toolchain = spec.toolchain
     return TierConfig(
         name=name,
-        kind=kind,
-        precedence=int(entry["precedence"]),
-        color=entry.get("color") or DEFAULT_TIER_COLORS[kind],
-        harvest_dirs=[Path(p) for p in entry.get("harvest_dirs") or []],
-        max_age_days=int(max_age[:-1]) if max_age else None,
-        products={
-            product: [Path(p) for p in dirs]
-            for product, dirs in (entry.get("products") or {}).items()
-        },
+        kind=spec.kind,
+        precedence=spec.precedence,
+        color=spec.color or DEFAULT_TIER_COLORS[spec.kind],
+        max_age_days=int(spec.max_age[:-1]) if spec.max_age else None,
+        products={product: list(dirs) for product, dirs in spec.products.items()},
         toolchain=None
         if toolchain is None
         else TierToolchain(
-            coverage_tool=toolchain.get("coverage_tool"),
-            lcov=toolchain.get("lcov"),
-            lcov_args=list(toolchain.get("lcov_args") or []),
+            coverage_tool=toolchain.coverage_tool,
+            lcov=toolchain.lcov,
+            lcov_args=list(toolchain.lcov_args),
         ),
     )
 
 
-def load_tiers(cov_config: dict[str, Any]) -> list[TierConfig]:
+def load_tiers(cov_config: dict[str, Any], *, root: Path) -> list[TierConfig]:
     """Ordered tier configs (highest precedence first).
 
     An empty/missing ``tiers`` table yields the implicit ``system`` tier
-    only — identical to pre-tier behavior. ``harvest_dirs`` entries are carried
-    through verbatim as unanchored paths; ``otto.coverage.reporter`` anchors
+    only — identical to pre-tier behavior. Each entry is validated through
+    :class:`~otto.models.settings.CoverageTierSpec` against *root*, with the
+    refusals of settings load, so a library caller handing a raw dict gets
+    the same answer the project's settings would. Product dirs stay
+    unanchored; :func:`otto.coverage.unit_filter.plan_unit_views` anchors
     them against the project root at consumption time.
+
+    Raises:
+        otto.config.coverage_settings.CoverageConfigError: an entry the
+            settings model refuses, prefixed ``[coverage.tiers.<name>]``.
     """
     raw = cov_config.get("tiers") or {}
     if not raw:
@@ -86,7 +95,23 @@ def load_tiers(cov_config: dict[str, Any]) -> list[TierConfig]:
                 color=DEFAULT_TIER_COLORS["e2e"],
             )
         ]
-    tiers = [_tier_from_entry(name, entry) for name, entry in raw.items()]
+    # Function-local: the settings models are pydantic-heavy, and a tier load
+    # is the only coverage path that needs them.
+    from pydantic import ValidationError
+
+    from ..config.coverage_settings import CoverageConfigError
+    from ..models.base import compact_validation_error
+    from ..models.settings import CoverageTierSpec
+
+    tiers = []
+    for name, entry in raw.items():
+        try:
+            spec = CoverageTierSpec.model_validate(entry, context={"root": root})
+        except ValidationError as e:
+            raise CoverageConfigError(
+                f"[coverage.tiers.{name}] {compact_validation_error(e)}"
+            ) from None
+        tiers.append(_tier_from_spec(name, spec))
     return sorted(tiers, key=lambda t: t.precedence)
 
 

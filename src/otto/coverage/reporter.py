@@ -525,14 +525,13 @@ class CoverageReporter:
     ) -> None:
         """Capture + load each unit view's directories: its products' sources only.
 
-        ``harvest_dirs`` fold into one unnamed run (``product=""``); each
-        ``products`` entry gets its own run, named after the product. Each
+        Each ``products`` entry gets its own run, named after the product. Each
         view's directories, their kept sources and their toolchains come from
         the unit plan (:class:`CollectionInputs`), planned here when none was
         given: the tier's own ``toolchain`` setting over what each
         directory's stamps choose.
         """
-        if not any(t.kind == "unit" and (t.harvest_dirs or t.products) for t in self.tier_configs):
+        if not any(t.harvests_unit for t in self.tier_configs):
             return
         if self.project_root is None:
             logger.warning("Unit tiers need the project root to read its products; skipping them")
@@ -593,7 +592,7 @@ class CoverageReporter:
         key = setting_key(view.tier, "coverage_tool")
         run_id: int | None = None
         for unit_dir in view.captures:
-            suffix = f"_{view.product}" if view.product else ""
+            suffix = f"_{view.product}"
             raw_info = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.raw.info"
             info_out = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.info"
             if run_id is None:
@@ -1135,9 +1134,9 @@ async def run_coverage_report(
        neither is captured now with the tier and commit its
        ``.otto_cov_meta.json`` records. Every run carries its host and
        product.
-    3. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs`` and
-       ``products``, keeping only the sources of ``inputs.project_name``'s
-       products in the active lab, each directory captured with the tier's
+    3. **unit harvest** — each ``kind == "unit"`` tier's ``products`` views,
+       keeping only the sources of ``inputs.project_name``'s products in the
+       active lab, each directory captured with the tier's
        own ``toolchain`` setting over what its stamps choose. Every unit view
        and every directory's toolchain is validated first — before the
        destination is touched and before any capture.

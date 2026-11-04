@@ -225,7 +225,7 @@ class UnitDir:
 
 @dataclass(frozen=True)
 class UnitView:
-    """One unit capture target: a tier's plain ``harvest_dirs`` or one ``products`` entry.
+    """One unit capture target: one ``products`` entry of a unit tier.
 
     ``owners`` maps every project-relative source the view's products were
     built from to the product that owns it; a view whose product selection
@@ -234,9 +234,9 @@ class UnitView:
 
     tier: str
     product: str
-    """The ``products`` entry's name; ``""`` for plain ``harvest_dirs``."""
+    """The ``products`` entry's name."""
     label: str
-    """``<tier>`` or ``<tier>/<product>``: the view as log lines and errors name it."""
+    """``<tier>/<product>``: the view as log lines and errors name it."""
     dirs: list[Path]
     """The view's directories, anchored at the project root."""
     owners: dict[Path, str]
@@ -270,9 +270,9 @@ async def plan_unit_views(
 ) -> UnitPlan:
     """Select each unit view's products, its directories' sources and their toolchains.
 
-    Plain ``harvest_dirs`` filter by every product of *project_name* in the
-    active lab, a ``products`` entry by the product of its name; a product
-    declared ``instrumented = false`` takes no part. With no *project_name*
+    Each ``products`` entry filters by the product of its name among
+    *project_name*'s products in the active lab; a product declared
+    ``instrumented = false`` takes no part. With no *project_name*
     no product is selected, so every view is refused. Each directory the
     harvest will capture gets its kept sources and its full toolchain here:
     every unit tier's configured tools are resolved first, whether or not
@@ -299,7 +299,7 @@ async def plan_unit_views(
     configured = {
         t.name: resolve_configured(t, project_root) for t in tier_configs if t.kind == "unit"
     }
-    tiers = [t for t in tier_configs if t.kind == "unit" and (t.harvest_dirs or t.products)]
+    tiers = [t for t in tier_configs if t.harvests_unit]
     if not tiers:
         return UnitPlan(views=[], resolver=resolver)
     toolchains = UnitToolchains()
@@ -315,12 +315,9 @@ async def plan_unit_views(
     lab = ctx.lab.name if ctx is not None else None
     views: list[UnitView] = []
     for tier in tiers:
-        entries = ([("", tier.harvest_dirs)] if tier.harvest_dirs else []) + list(
-            tier.products.items()
-        )
-        for name, dirs in entries:
-            label = f"{tier.name}/{name}" if name else tier.name
-            candidates = [s for s in owned if not name or s.product.name == name]
+        for name, dirs in tier.products.items():
+            label = f"{tier.name}/{name}"
+            candidates = [s for s in owned if s.product.name == name]
             selected = [
                 s
                 for s in candidates
@@ -339,7 +336,7 @@ async def plan_unit_views(
             anchored = [anchor_path(d, project_root) for d in dirs]
             captures = []
             for idx, hdir in enumerate(anchored):
-                selection = _select_dir(label, hdir, project_root, resolver, owners)
+                selection = _select_dir(label, name, hdir, project_root, resolver, owners)
                 if selection is None:
                     continue
                 toolchain = toolchains.resolve(configured[tier.name], label, hdir, selection.notes)
@@ -360,9 +357,18 @@ async def plan_unit_views(
 
 
 def _select_dir(
-    label: str, hdir: Path, project_root: Path, resolver: SourceResolver, owners: dict[Path, str]
+    label: str,
+    product: str,
+    hdir: Path,
+    project_root: Path,
+    resolver: SourceResolver,
+    owners: dict[Path, str],
 ) -> UnitSelection | None:
-    """Return *hdir*'s kept sources, or ``None`` (with one log line) when it is not captured."""
+    """Return *hdir*'s kept sources, or ``None`` (with one log line) when it is not captured.
+
+    *owners* holds only the view's own *product*'s sources, so a dropped file is
+    named as not that product's: it may well be another product's source.
+    """
     if not hdir.is_dir():
         logger.warning("Unit tier %s: harvest dir does not exist: %s — skipping", label, hdir)
         return None
@@ -377,17 +383,23 @@ def _select_dir(
     _warn_if_stale_counters(label, hdir, gcda_files)
     selection = select_unit_sources(hdir, project_root, resolver, owners)
     logger.info(
-        "unit %s: kept %d product source files, dropped %d not in any product",
+        "unit %s: kept %d source files of product %s, dropped %d others",
         label,
         len(selection.kept),
+        product,
         len(selection.dropped),
     )
     for rel, owner in selection.kept.items():
         logger.debug("unit %s: keep %s (product %s)", label, rel.as_posix(), owner)
     for dropped in selection.dropped:
-        logger.debug("unit %s: drop %s (not in any product)", label, dropped)
+        logger.debug("unit %s: drop %s (not a source of product %s)", label, dropped, product)
     if not selection.kept:
-        logger.info("unit %s: no product source files under %s; nothing to capture", label, hdir)
+        logger.info(
+            "unit %s: no source files of product %s under %s; nothing to capture",
+            label,
+            product,
+            hdir,
+        )
         return None
     return selection
 
@@ -436,14 +448,10 @@ def _no_products(
         what = "no project is named, so no products are selected"
     elif lab is None:
         what = f"no products of project {project} found: no lab is active"
-    elif declared_false and name:
-        what = f"product {name!r} of project {project} is declared instrumented = false"
     elif declared_false:
-        what = f"every product of project {project} is declared instrumented = false"
-    elif name:
-        what = f"no product named {name!r} of project {project} found in the active lab ({lab})"
+        what = f"product {name!r} of project {project} is declared instrumented = false"
     else:
-        what = f"no products of project {project} found in the active lab ({lab})"
+        what = f"no product named {name!r} of project {project} found in the active lab ({lab})"
     return CoverageNotInstrumentedError(f"unit tier {label}: {what} — {_BUILD_IT}")
 
 

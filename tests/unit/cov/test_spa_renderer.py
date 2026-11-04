@@ -214,14 +214,16 @@ class TestExcludedLinesRoundTripThroughReporter:
         monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         cov_config = {
-            "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}},
+            "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": [str(hdir)]}}},
         }
         out = tmp_path / "report"
         store = await run_coverage_report(
             [],
             out,
             ReportInputs(
-                project_root=project, project_name="proj", tier_configs=load_tiers(cov_config)
+                project_root=project,
+                project_name="proj",
+                tier_configs=load_tiers(cov_config, root=project),
             ),
         )
 

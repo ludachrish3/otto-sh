@@ -398,7 +398,7 @@ async def collect_coverage(
         # must not be handed this collection's provenance.
         _refuse_foreign_pending(
             cov_dir,
-            tier=_resolve_tier(cov_config, tier).name,
+            tier=_resolve_tier(cov_config, tier, root=cov_project.root).name,
             base_commit=gitio.head_commit(cov_project.root),
         )
 
@@ -456,7 +456,7 @@ async def collect_coverage(
     produced = ProduceResult([])
     failure: CoverageCaptureError | None = None
     if cov_project is not None:
-        resolved_tier = _resolve_tier(cov_config, tier)
+        resolved_tier = _resolve_tier(cov_config, tier, root=cov_project.root)
         # The commit the counters were collected at: recorded beside them,
         # and the one every capture below is anchored to.
         base_commit = gitio.head_commit(cov_project.root)
@@ -599,23 +599,28 @@ def _refuse_foreign_pending(cov_dir: Path, *, tier: str, base_commit: str) -> No
     )
 
 
-def _resolve_tier(cov_config: dict[str, Any], tier: "str | TierConfig | None") -> "TierConfig":
+def _resolve_tier(
+    cov_config: dict[str, Any], tier: "str | TierConfig | None", *, root: Path
+) -> "TierConfig":
     """Resolve the tier a collection annotates its captures with.
 
     A :class:`~otto.coverage.tiers.TierConfig` is used as is: a caller like
     ``otto cov get`` that resolved its own tier up front (to validate the
     manual-tier ``--ticket`` requirement) must not pay for — or risk
-    diverging from — a second resolution by name here.
+    diverging from — a second resolution by name here. Otherwise the tiers
+    are loaded against *root*, the ``[coverage]`` project's root.
 
     Raises:
         ValueError: An ambiguous or unknown tier name (from
-            :func:`~otto.coverage.tiers.resolve_get_tier`).
+            :func:`~otto.coverage.tiers.resolve_get_tier`), or a tier entry
+            the settings model refuses (a
+            :class:`~otto.config.coverage_settings.CoverageConfigError`).
     """
     from .tiers import TierConfig, load_tiers, resolve_get_tier
 
     if isinstance(tier, TierConfig):
         return tier
-    return resolve_get_tier(load_tiers(cov_config), tier)
+    return resolve_get_tier(load_tiers(cov_config, root=root), tier)
 
 
 def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:

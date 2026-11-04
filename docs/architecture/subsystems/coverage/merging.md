@@ -128,13 +128,13 @@ The order is not incidental; the last step depends on it.
    hits on locally-modified lines rather than misaligning everything past
    the edit.
 3. **Unit harvest.** `_harvest_unit_tiers` lcov-captures each `kind ==
-   "unit"` tier's `harvest_dirs` out of the *current* build tree (relative
+   "unit"` tier's `products` views out of the *current* build tree (relative
    entries resolved against the project root, not the process CWD — `otto
    cov report` may run from anywhere). A unit build writes each `.gcda`
    beside its own `.gcno`, so `LcovMerger.capture_dir` captures in place,
    with no staging and no search, after checking that every `.gcda` has its
-   notes. One run per **view** — the unnamed `harvest_dirs`, or one named
-   `products` entry — not per directory: `_harvest_one` creates the run id
+   notes. One run per **view**, one named `products` entry, not per
+   directory: `_harvest_one` creates the run id
    lazily on the first usable dir and reuses it, so a view with three dirs
    contributes one run. Counters
    whose newest `.gcda` predates the newest `.gcno` warn but still load —

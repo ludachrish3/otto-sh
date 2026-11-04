@@ -138,25 +138,24 @@ path = "lab_data/creds.json"
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]
 #hosts = "example-device"
-## Each tier's `kind` decides which fields it may carry: `harvest_dirs`,
-## `products` and `toolchain` are unit-only, `max_age` is manual-only. One
-## tier of each kind below, so every field is shown where it is legal.
+## Each tier's `kind` decides which fields it may carry: `products` and
+## `toolchain` are unit-only, `max_age` is manual-only. One tier of each kind
+## below, so every field is shown where it is legal.
 #[coverage.tiers.nightly]
 #kind = "e2e"
 #precedence = 10
 #color = "#22c55e"
-## A unit tier harvests .gcda from the build tree at report time. Name each
-## build dir in ONE place: `harvest_dirs` (one unnamed view) or `products`
-## (named views, one run each) -- a dir reached from both counts twice. Each
-## view is named after a [[products]] entry (any other name is refused), so
-## one product filter shows its e2e and unit evidence together. Each view
-## needs its OWN build dir: .gcno sit beside the objects.
+## A unit tier harvests .gcda from the build tree at report time, one run
+## per `products` view. Name each build dir in ONE view, under the product it
+## tests: a dir that equals or sits inside another dir of the tier is refused
+## at load. Each view is named after a [[products]] entry (any other name is
+## refused), so one product filter shows its e2e and unit evidence together.
+## Each view needs its OWN build dir: .gcno sit beside the objects.
 ## Only the products' own sources count: build the products on this machine,
 ## under the project root, before `otto cov report` (it reads their notes).
 #[coverage.tiers.unit]
 #kind = "unit"
 #precedence = 20
-#harvest_dirs = ["build/lib-tests"]
 #[coverage.tiers.unit.products]
 #app = ["build/app-tests"]
 ## The tools the unit captures run, all optional: unset, the build's own gcov

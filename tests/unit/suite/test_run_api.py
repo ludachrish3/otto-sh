@@ -882,7 +882,7 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     project.name = "project"
     project.settings = {
         "coverage": {
-            "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}},
+            "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": [str(hdir)]}}},
             "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
         }
     }
@@ -933,7 +933,7 @@ def test_post_run_coverage_warns_on_an_unresolvable_unit_toolchain(tmp_path, mon
                 "unit": {
                     "kind": "unit",
                     "precedence": 1,
-                    "harvest_dirs": [str(hdir)],
+                    "products": {"core": [str(hdir)]},
                     "toolchain": {"coverage_tool": "no-such-reader"},
                 }
             }

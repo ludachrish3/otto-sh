@@ -62,7 +62,7 @@ export interface Context {
 /** Host pill text. A run captured under `cov/<host>/<product>/` names its
  * product too ("h1 · app"): with several products on one host the bare host
  * name is ambiguous, and the runs page's free-text filter searches this
- * string (`searchHaystack`). An unnamed unit run (`product: ""`) keeps the
+ * string (`searchHaystack`). A `--tier` tracefile run (`product: ""`) keeps the
  * plain host display it has always had. */
 function hostDisplay(run: RunJson): string {
   const host = run.host || run.board || "—";
@@ -157,7 +157,7 @@ export function groupContexts(payload: IndexPayload): Context[] {
  * A product NOT in `index.products` is ignored (falls back to the ctx
  * scope): `FocusProvider`/`resolveProduct` already validates `?product=`
  * against that same list, so this is the defensive half. A run with
- * `product: ""` (an unnamed unit run) matches no product pin — `""` is
+ * `product: ""` (a `--tier` tracefile run) matches no product pin — `""` is
  * never a member of `index.products`, which carries non-empty names only.
  *
  * Optional `contexts`: a caller that already holds `groupContexts(index)`

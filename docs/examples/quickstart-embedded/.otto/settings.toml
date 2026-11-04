@@ -47,7 +47,8 @@ precedence = 2
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 3
-harvest_dirs = ["build/tests"]
+[coverage.tiers.unit.products]
+mathops = ["build/tests"]
 
 # Where the extension's .gcno files are: the report's source root.
 [coverage.embedded]

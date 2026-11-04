@@ -100,5 +100,10 @@ precedence = 2
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 3
-harvest_dirs = ["build"]
+# textlib, which the unit tests exercise, is linked by wordcount, shout and
+# banner; its unit evidence is declared once, under banner, whose binary the
+# report reads from its container (Coverage tiers: "A library two products
+# link").
+[coverage.tiers.unit.products]
+banner = ["build"]
 # doc: end coverage

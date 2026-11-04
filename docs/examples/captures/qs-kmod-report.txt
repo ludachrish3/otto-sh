@@ -1,8 +1,9 @@
 $ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-kmod/e2e --dir /tmp/otto-gs/xdir/quickstart-kmod/report
-INFO     unit unit: kept 1 product source files, dropped <n> not in any product
-INFO     lcov capture -> /tmp/otto-gs/xdir/quickstart-kmod/report/_work/unit_unit_0.raw.info
-INFO     Loading unit_unit_0.info as unit coverage
-INFO     Loaded 1 files from unit_unit_0.info
+INFO     unit unit/qs_wordcount: kept 1 source files of product qs_wordcount, dropped <n> others
+INFO     lcov capture ->
+         /tmp/otto-gs/xdir/quickstart-kmod/report/_work/unit_unit_qs_wordcount_0.raw.info
+INFO     Loading unit_unit_qs_wordcount_0.info as unit coverage
+INFO     Loaded 1 files from unit_unit_qs_wordcount_0.info
 INFO     === Rendering coverage report ===
 INFO     Report written to /tmp/otto-gs/xdir/quickstart-kmod/report/index.html
 INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-kmod/report/index.html

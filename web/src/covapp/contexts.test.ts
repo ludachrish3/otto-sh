@@ -252,7 +252,7 @@ describe("resolveScope / scopeTreeLines", () => {
     expect(resolveScope(index, null, "ghost")).toBeUndefined();
   });
 
-  it("a run with no product ('' — an unnamed unit run) never matches a product pin", () => {
+  it("a run with no product ('' — a --tier tracefile run) never matches a product pin", () => {
     const unnamed = makeIndex({
       products: ["app"],
       runs: [makeRun({ id: 7, label: "unit harvest", product: "" })],

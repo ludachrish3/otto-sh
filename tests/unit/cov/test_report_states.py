@@ -61,7 +61,7 @@ def _cov_dir(tmp_path: Path, project: Path, **overrides: object) -> Path:
 
 
 def _inputs(project: Path) -> ReportInputs:
-    return ReportInputs(project_root=project, tier_configs=load_tiers(_TIERS))
+    return ReportInputs(project_root=project, tier_configs=load_tiers(_TIERS, root=project))
 
 
 def _spy_produce(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
@@ -291,13 +291,17 @@ async def test_unit_harvest_uses_capture_dir(tmp_path, monkeypatch):
         return output
 
     monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture_dir)
-    cov_config = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}}}
+    cov_config = {
+        "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": [str(hdir)]}}}
+    }
 
     await run_coverage_report(
         [],
         tmp_path / "report",
         ReportInputs(
-            project_root=project, project_name="proj", tier_configs=load_tiers(cov_config)
+            project_root=project,
+            project_name="proj",
+            tier_configs=load_tiers(cov_config, root=project),
         ),
     )
 

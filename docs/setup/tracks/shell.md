@@ -271,8 +271,10 @@ otto --lab example_lab cov report ~/otto-runs/e2e --dir ~/otto-runs/report
 :language: text
 ```
 
-The `unit unit:` line is the unit tier, named `unit`, keeping only the
-products' own sources ({ref}`what the unit report counts <coverage-unit-filter>`).
+The `unit unit/wordcount:` line is the unit tier, named `unit`, and its one
+view, named for `wordcount`, keeping only that product's sources, textlib's
+among them since it links textlib
+({ref}`what the unit report counts <coverage-unit-filter>`).
 The log says nothing of the other two tiers, but the report loads both: the
 e2e capture from the directory you named, and the manual capture from the
 store you committed. Open `~/otto-runs/report/index.html` to see all three,

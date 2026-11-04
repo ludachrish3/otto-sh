@@ -396,7 +396,10 @@ class TestE2eBaseCommitGuard:
             await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+                ReportInputs(
+                    project_root=project,
+                    tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
+                ),
             )
 
         message = str(excinfo.value)
@@ -421,7 +424,9 @@ class TestE2eBaseCommitGuard:
         store = await run_coverage_report(
             [cov],
             tmp_path / "report",
-            ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+            ReportInputs(
+                project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project)
+            ),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -461,7 +466,10 @@ class TestE2eDirtyTreeRemap:
             store = await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+                ReportInputs(
+                    project_root=project,
+                    tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
+                ),
             )
 
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -475,14 +483,22 @@ class TestE2eDirtyTreeRemap:
         assert any("uncommitted changes" in rec.message for rec in caplog.records)
 
 
-_UNIT_COV = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}}}
+_UNIT_COV = {
+    "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": ["build/tests"]}}}
+}
+
+
+# A reference image's view, named for the image product (``reference_image()``).
+_IMG_COV = {
+    "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"img": ["build/tests"]}}}
+}
 
 
 def _unit_inputs(project: Path, cov_config: dict | None = None) -> ReportInputs:
     return ReportInputs(
         project_root=project,
         project_name="proj",
-        tier_configs=load_tiers(cov_config or _UNIT_COV),
+        tier_configs=load_tiers(cov_config or _UNIT_COV, root=project),
     )
 
 
@@ -496,7 +512,7 @@ def _store_paths(store, project: Path) -> list[str]:
 
 
 class TestUnitHarvest:
-    """kind==unit tiers with harvest_dirs are captured+loaded via the merger."""
+    """kind==unit tiers' product views are captured+loaded via the merger."""
 
     @pytest.fixture(autouse=True)
     def _tools(self, tmp_path, monkeypatch):
@@ -524,7 +540,7 @@ class TestUnitHarvest:
 
         cov_config = {
             "tiers": {
-                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]},
+                "unit": {"kind": "unit", "precedence": 1, "products": {"core": [str(hdir)]}},
                 "system": {"kind": "e2e", "precedence": 2},
             }
         }
@@ -538,8 +554,7 @@ class TestUnitHarvest:
     @pytest.mark.asyncio
     async def test_products_table_creates_one_run_per_product(self, tmp_path, monkeypatch):
         """A unit tier's ``products`` table gets one run record per named
-        product plus one unnamed run for ``harvest_dirs``, each loaded from
-        its own info file."""
+        product, each loaded from its own info file."""
         from otto.coverage.merge import lcov_loader as loader_mod
         from otto.coverage.merge import merger as merger_mod
 
@@ -549,8 +564,7 @@ class TestUnitHarvest:
         install_lab(monkeypatch, [FakeHost("h1", [app, agent])])
         app_dir = tmp_path / "build" / "app-tests"
         agent_dir = tmp_path / "build" / "agent-tests"
-        unit_dir = tmp_path / "build" / "tests"
-        for d in (app_dir, agent_dir, unit_dir):
+        for d in (app_dir, agent_dir):
             unit_build(d, project, ["f.c"])
 
         src = project / "f.c"
@@ -575,7 +589,6 @@ class TestUnitHarvest:
                 "unit": {
                     "kind": "unit",
                     "precedence": 1,
-                    "harvest_dirs": [str(unit_dir)],
                     "products": {"app": [str(app_dir)], "agent": [str(agent_dir)]},
                 },
             }
@@ -584,16 +597,72 @@ class TestUnitHarvest:
             [], tmp_path / "report", _unit_inputs(project, cov_config)
         )
         assert store is not None
-        assert {r.product for r in store.runs} == {"app", "agent", ""}
+        assert {r.product for r in store.runs} == {"app", "agent"}
 
         names = {name for name, _ in load_calls}
         assert names == {
             "unit_unit_app_0.info",
             "unit_unit_agent_0.info",
-            "unit_unit_0.info",
         }
         run_ids = {rid for _, rid in load_calls}
-        assert len(run_ids) == 3
+        assert len(run_ids) == 2
+
+    @pytest.mark.asyncio
+    async def test_issue_778_independent_executions_still_accumulate(self, tmp_path, monkeypatch):
+        """#778 is a check on the declaration, never a dedupe by source line.
+
+        Two disjoint views whose test binaries both ran ``core.cpp:4`` 15 times
+        are two independent executions: the tier counts 30, each run 15.
+        """
+        from otto.coverage.merge import merger as merger_mod
+
+        project = _init_git_repo(tmp_path)
+        (project / "core.cpp").write_text("".join(f"int l{i};\n" for i in range(1, 7)))
+        app = product_build(project, "app", ["core.cpp"])
+        lib = product_build(project, "lib", ["core.cpp"])
+        install_lab(monkeypatch, [FakeHost("h1", [app, lib])])
+        build = tmp_path / "ut"
+        unit_build(build / "app-tests", project, ["core.cpp"])
+        unit_build(build / "lib-tests", project, ["core.cpp"])
+        src = project / "core.cpp"
+
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
+            output.write_text(f"TN:\nSF:{src}\nDA:4,15\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
+        products = {"app": [str(build / "app-tests")], "lib": [str(build / "lib-tests")]}
+        cov_config = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "products": products}}}
+        store = await run_coverage_report(
+            [], tmp_path / "report", _unit_inputs(project, cov_config)
+        )
+        assert store is not None
+        (frec,) = [f for f in store.files() if f.path.name == "core.cpp"]
+        line = frec.lines[4]
+        assert line.hits.for_tier("unit") == 30
+        by_product = {store.runs[r].product: n for r, n in line.run_hits.items()}
+        assert by_product == {"app": 15, "lib": 15}
+
+    @pytest.mark.parametrize(
+        "tier",
+        [
+            pytest.param(
+                {"harvest_dirs": ["build"], "products": {"app": ["build/app-tests"]}},
+                id="the-issue-shape",
+            ),
+            pytest.param(
+                {"products": {"app": ["build"], "libapp": ["build/app-tests"]}},
+                id="two-views-nested",
+            ),
+        ],
+    )
+    def test_issue_778_double_declaration_is_refused_at_load(self, tmp_path, tier):
+        """Both declarations that reached ``core.cpp`` twice are refused before any capture."""
+        from otto.config.coverage_settings import CoverageConfigError
+
+        cov_config = {"tiers": {"unit": {"kind": "unit", "precedence": 1, **tier}}}
+        with pytest.raises(CoverageConfigError, match=r"^\[coverage\.tiers\.unit\] "):
+            _unit_inputs(tmp_path, cov_config)
 
     @pytest.mark.asyncio
     async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
@@ -612,7 +681,7 @@ class TestUnitHarvest:
                 "unit": {
                     "kind": "unit",
                     "precedence": 1,
-                    "harvest_dirs": [str(tmp_path / "does_not_exist")],
+                    "products": {"core": [str(tmp_path / "does_not_exist")]},
                 },
             }
         }
@@ -646,7 +715,7 @@ class TestUnitHarvest:
                 "unit": {
                     "kind": "unit",
                     "precedence": 1,
-                    "harvest_dirs": [str(hdir)],
+                    "products": {"core": [str(hdir)]},
                 },
             }
         }
@@ -688,7 +757,7 @@ class TestUnitHarvest:
 
         cov_config = {
             "tiers": {
-                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]},
+                "unit": {"kind": "unit", "precedence": 1, "products": {"core": [str(hdir)]}},
             }
         }
         with caplog.at_level("WARNING"):
@@ -704,8 +773,28 @@ class TestUnitHarvest:
         assert frec.lines[1].hits.for_tier("unit") == 5
 
     @pytest.mark.asyncio
-    async def test_relative_harvest_dir_resolves_against_project_root(self, tmp_path, monkeypatch):
-        """A relative ``harvest_dirs`` entry is project-root-relative (spec §4), not
+    async def test_an_unexpandable_tilde_dir_fails_the_report_before_any_capture(
+        self, tmp_path, monkeypatch
+    ):
+        """Settings load accepts ``~nosuchuser/b``; the report that reads it refuses it."""
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
+        calls = install_capture(monkeypatch)
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "products": {"core": ["~nosuchuser/b"]}}
+            }
+        }
+
+        with pytest.raises(ValueError, match="cannot expand ~nosuchuser/b"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov_config))
+
+        assert calls == []
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    async def test_relative_product_dir_resolves_against_project_root(self, tmp_path, monkeypatch):
+        """A relative product view dir is project-root-relative (spec §4), not
         CWD-relative — it must resolve even when ``otto cov report`` runs
         from a directory other than the project root."""
         from otto.coverage.merge import merger as merger_mod
@@ -732,7 +821,7 @@ class TestUnitHarvest:
 
         cov_config = {
             "tiers": {
-                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["unit_build"]},
+                "unit": {"kind": "unit", "precedence": 1, "products": {"core": ["unit_build"]}},
             }
         }
         store = await run_coverage_report(
@@ -743,8 +832,8 @@ class TestUnitHarvest:
         assert frec.lines[1].hits.for_tier("unit") == 5
 
     @pytest.mark.asyncio
-    async def test_tilde_harvest_dir_expands_via_home(self, tmp_path, monkeypatch):
-        """A ``~``-prefixed ``harvest_dirs`` entry expands against ``HOME`` before
+    async def test_tilde_product_dir_expands_via_home(self, tmp_path, monkeypatch):
+        """A ``~``-prefixed product view dir expands against ``HOME`` before
         project-root anchoring (path-resolution convention, docs/configuration/settings.md).
 
         Without the fix, ``~`` is never expanded and the entry is anchored
@@ -773,7 +862,7 @@ class TestUnitHarvest:
 
         cov_config = {
             "tiers": {
-                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["~/unit_build"]},
+                "unit": {"kind": "unit", "precedence": 1, "products": {"core": ["~/unit_build"]}},
             }
         }
         store = await run_coverage_report(
@@ -799,12 +888,35 @@ class TestUnitHarvest:
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
-        assert "unit unit: kept 1 product source files, dropped 1 not in any product" in (
+        assert "unit unit/core: kept 1 source files of product core, dropped 1 others" in (
             _messages(caplog, "INFO")
         )
         debug = _messages(caplog, "DEBUG")
-        assert "unit unit: keep src/core/add.c (product core)" in debug
-        assert "unit unit: drop tests/test_add.cpp (not in any product)" in debug
+        assert "unit unit/core: keep src/core/add.c (product core)" in debug
+        assert "unit unit/core: drop tests/test_add.cpp (not a source of product core)" in debug
+
+    @pytest.mark.asyncio
+    async def test_a_view_names_its_product_when_it_drops_another_products_source(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A source of another product of the project is dropped as not this view's,
+        never as "not in any product"."""
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        app = product_build(project, "app", ["src/app/main.c"])
+        install_lab(monkeypatch, [FakeHost("h1", [core, app])])
+        unit_build(project / "build/tests", project, ["src/core/add.c", "src/app/main.c"])
+        install_capture(monkeypatch)
+
+        with caplog.at_level("DEBUG"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert "unit unit/core: kept 1 source files of product core, dropped 1 others" in (
+            _messages(caplog, "INFO")
+        )
+        debug = _messages(caplog, "DEBUG")
+        assert "unit unit/core: drop src/app/main.c (not a source of product core)" in debug
+        assert not [m for m in _messages(caplog) if "any product" in m]
 
     @pytest.mark.asyncio
     async def test_view_with_no_products_refuses(self, tmp_path, monkeypatch):
@@ -818,8 +930,9 @@ class TestUnitHarvest:
             await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
 
         message = str(excinfo.value)
-        assert "unit tier unit: no products of project proj found in the active lab (bench)" in (
-            message
+        assert (
+            "unit tier unit/core: no product named 'core' of project proj found in the active lab"
+            " (bench)" in message
         )
         assert "coverage instrumentation (--coverage)" in message
         assert calls == []
@@ -837,7 +950,7 @@ class TestUnitHarvest:
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
             await plan_unit_views(
-                load_tiers(_UNIT_COV),
+                load_tiers(_UNIT_COV, root=project),
                 project,
                 None,
                 ObjectListCache(project),
@@ -846,7 +959,7 @@ class TestUnitHarvest:
             )
 
         message = str(excinfo.value)
-        assert "unit tier unit: no project is named, so no products are selected" in message
+        assert "unit tier unit/core: no project is named, so no products are selected" in message
         assert "--coverage" in message
 
     @pytest.mark.asyncio
@@ -870,7 +983,7 @@ class TestUnitHarvest:
         assert calls == []
 
     @pytest.mark.asyncio
-    async def test_all_products_declared_uninstrumented_refuses(self, tmp_path, monkeypatch):
+    async def test_a_product_declared_uninstrumented_refuses(self, tmp_path, monkeypatch):
         project = _init_git_repo(tmp_path)
         core = own_files(monkeypatch, project, ["src/core/add.c"])
         core.instrumented_override = False
@@ -880,7 +993,7 @@ class TestUnitHarvest:
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
             await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
 
-        assert "every product of project proj is declared instrumented = false" in str(
+        assert "product 'core' of project proj is declared instrumented = false" in str(
             excinfo.value
         )
         assert calls == []
@@ -896,7 +1009,7 @@ class TestUnitHarvest:
             await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
 
         message = str(excinfo.value)
-        assert "unit tier unit: no products of project proj found: no lab is active" in message
+        assert "unit tier unit/core: no products of project proj found: no lab is active" in message
         assert "--coverage" in message
         assert calls == []
 
@@ -912,8 +1025,9 @@ class TestUnitHarvest:
             store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
 
         assert calls == []
-        assert f"unit unit: no product source files under {hdir}; nothing to capture" in (
-            _messages(caplog, "INFO")
+        assert (
+            f"unit unit/core: no source files of product core under {hdir}; nothing to capture"
+            in (_messages(caplog, "INFO"))
         )
         assert store.runs == []
 
@@ -969,10 +1083,12 @@ class TestUnitHarvest:
     async def test_other_projects_products_are_ignored(self, tmp_path, monkeypatch, caplog, built):
         project = _init_git_repo(tmp_path)
         core = product_build(project, "core", ["src/core/add.c"])
+        # The other project's product shares the view's name: only the owner filter
+        # keeps it out.
         if built:
-            other = product_build(project, "other", ["src/other.c"], owner="other")
+            other = product_build(project / "otherproj", "core", ["src/other.c"], owner="other")
         else:
-            other = FakeProduct("other", owner="other", artifact=str(project / "nope.bin"))
+            other = FakeProduct("core", owner="other", artifact=str(project / "nope.bin"))
         install_lab(monkeypatch, [FakeHost("h1", [core, other])])
         # The unit build compiles the other project's file too.
         unit_build(project / "build/tests", project, ["src/core/add.c", "src/other.c"])
@@ -983,7 +1099,9 @@ class TestUnitHarvest:
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
-        assert "unit unit: drop src/other.c (not in any product)" in _messages(caplog, "DEBUG")
+        assert "unit unit/core: drop src/other.c (not a source of product core)" in _messages(
+            caplog, "DEBUG"
+        )
 
     @pytest.mark.asyncio
     async def test_project_tree_is_walked_once_per_report(self, tmp_path, monkeypatch):
@@ -1068,7 +1186,7 @@ class TestUnitHarvest:
         unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
         calls = install_capture(monkeypatch)
 
-        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -1087,11 +1205,11 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageInputError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
 
         assert excinfo.value.field is None
         assert str(excinfo.value) == (
-            "unit tier unit: product 'img' reads its object list from container 'img-c', "
+            "unit tier unit/img: product 'img' reads its object list from container 'img-c', "
             "which is not running — install the product first (otto run install)."
         )
         assert calls == []
@@ -1115,10 +1233,10 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CaptureFailedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
 
         assert str(excinfo.value).startswith(
-            "unit tier unit: could not read product 'img''s object list: "
+            "unit tier unit/img: could not read product 'img''s object list: "
             "could not scan container img-c: the scan exited 2"
         )
         assert calls == []
@@ -1132,10 +1250,10 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
 
         assert str(excinfo.value).startswith(
-            "unit tier unit: product 'img' (registry.example/img:1) is not instrumented: "
+            "unit tier unit/img: product 'img' (registry.example/img:1) is not instrumented: "
             "container img-c holds no coverage paths (not instrumented). Build it with "
             "coverage instrumentation (--coverage)"
         )
@@ -1180,13 +1298,13 @@ class TestUnitHarvest:
         assert not [
             r for r in caplog.records if r.levelno == logging.WARNING and "config.h" in r.message
         ]
-        assert "unit unit: drop /opt/sdk/config.h (not in any product)" in _messages(
+        assert "unit unit/core: drop /opt/sdk/config.h (not a source of product core)" in _messages(
             caplog, "DEBUG"
         )
 
 
 def _tier(toolchain: dict | None = None, **extra) -> dict:
-    tier = {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"], **extra}
+    tier = {"kind": "unit", "precedence": 1, "products": {"core": ["build/tests"]}, **extra}
     if toolchain is not None:
         tier["toolchain"] = toolchain
     return tier
@@ -1301,20 +1419,25 @@ class TestUnitToolchain:
         assert calls[0]["toolchain"].gcov == expected
 
     @pytest.mark.asyncio
-    async def test_one_setting_covers_a_plain_and_a_products_view(
-        self, tmp_path, monkeypatch, tools
-    ):
+    async def test_one_setting_covers_every_view_of_the_tier(self, tmp_path, monkeypatch, tools):
+        """One tier ``toolchain`` setting reaches the dirs of two views."""
         reader = stub_tool(tools, "gcov-13")
-        project = self._project(tmp_path, monkeypatch)
-        unit_build(project / "build/core-tests", project, ["src/core/add.c"])
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        other = product_build(project, "other", ["src/other/sub.c"])
+        install_lab(monkeypatch, [FakeHost("h1", [core, other])])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        unit_build(project / "build/other-tests", project, ["src/other/sub.c"])
         calls = install_capture(monkeypatch)
         inputs = _toolchain_inputs(
-            project, {"coverage_tool": "gcov-13"}, products={"core": ["build/core-tests"]}
+            project,
+            {"coverage_tool": "gcov-13"},
+            products={"core": ["build/tests"], "other": ["build/other-tests"]},
         )
 
         await run_coverage_report([], tmp_path / "report", inputs)
 
-        assert [c["directory"].name for c in calls] == ["tests", "core-tests"]
+        assert [c["directory"].name for c in calls] == ["tests", "other-tests"]
         assert [c["toolchain"].gcov for c in calls] == [reader, reader]
 
     @pytest.mark.asyncio
@@ -1330,7 +1453,7 @@ class TestUnitToolchain:
                 "unit2": {
                     "kind": "unit",
                     "precedence": 2,
-                    "harvest_dirs": ["build/other"],
+                    "products": {"core": ["build/other"]},
                     "toolchain": {"coverage_tool": str(llvm18)},
                 },
             }
@@ -1352,8 +1475,9 @@ class TestUnitToolchain:
             await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
 
         assert [c["toolchain"].gcov for c in calls] == [gcov_12]
-        assert f"unit unit: gcov stamp 'B24*' is gcc 12's; reading counters with {gcov_12}" in (
-            _messages(caplog, "INFO")
+        assert (
+            f"unit unit/core: gcov stamp 'B24*' is gcc 12's; reading counters with {gcov_12}"
+            in (_messages(caplog, "INFO"))
         )
 
     # -- refusals before the destination ------------------------------------
@@ -1427,7 +1551,7 @@ class TestUnitToolchain:
 
         message = str(excinfo.value)
         assert message == (
-            f"unit tier unit: capturing {project / 'build/tests'} needs `{missing}`, but no "
+            f"unit tier unit/core: capturing {project / 'build/tests'} needs `{missing}`, but no "
             f"`{missing}` is on PATH. Install it, or set `coverage.tiers.unit.toolchain.{key}`."
         )
         assert calls == []
@@ -1463,7 +1587,7 @@ class TestUnitToolchain:
         await run_coverage_report(
             [],
             tmp_path / "report",
-            _toolchain_inputs(project, products={"core": ["build/core-tests"]}),
+            _toolchain_inputs(project, products={"core": ["build/tests", "build/core-tests"]}),
         )
 
         assert probes == ["gcov"]
@@ -1478,7 +1602,7 @@ class TestUnitToolchain:
             await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
 
         message = str(excinfo.value)
-        assert f"unit tier unit (directory {project / 'build/tests'})" in message
+        assert f"unit tier unit/core (directory {project / 'build/tests'})" in message
         assert "`coverage.tiers.unit.toolchain.coverage_tool`" in message
         assert "host" not in message
         assert not (tmp_path / "report").exists()
@@ -1563,7 +1687,7 @@ class TestUnitToolchain:
             else "gcc 12's (gcov stamp 'B24*')"
         )
         assert str(excinfo.value) == (
-            f"unit tier unit: {hdir} holds notes for more than one reader — "
+            f"unit tier unit/core: {hdir} holds notes for more than one reader — "
             f"{hdir / 'add.c.gcno'} is gcc 13's (gcov stamp 'B33*') and {hdir / 'sub.c.gcno'} "
             f"is {theirs}. No single reader decodes both; build them into separate directories."
         )
@@ -1606,7 +1730,8 @@ class TestUnitToolchain:
             await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
 
         assert str(excinfo.value).startswith(
-            f"unit tier unit: the tool found on PATH at {spaced / 'lcov'} cannot be run by lcov"
+            f"unit tier unit/core: the tool found on PATH at {spaced / 'lcov'} cannot be run "
+            "by lcov"
         )
         assert "`coverage.tiers.unit.toolchain.lcov`" in str(excinfo.value)
         assert not (tmp_path / "report").exists()
@@ -1637,7 +1762,7 @@ class TestUnitToolchain:
 
         message = str(excinfo.value)
         assert message.startswith(
-            f"unit tier unit: the capture of {project / 'build/tests'} with "
+            f"unit tier unit/core: the capture of {project / 'build/tests'} with "
             f"{project / 'tools/wrap.sh'} recorded no source file, though 1 product source"
         )
         assert "`coverage.tiers.unit.toolchain.coverage_tool`" in message
@@ -1660,8 +1785,8 @@ class TestUnitToolchain:
             await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
 
         assert str(excinfo.value) == (
-            f"unit tier unit: capturing {project / 'build/tests'} failed; if the counter reader "
-            "is the wrong one, set `coverage.tiers.unit.toolchain.coverage_tool`.\n"
+            f"unit tier unit/core: capturing {project / 'build/tests'} failed; if the counter "
+            "reader is the wrong one, set `coverage.tiers.unit.toolchain.coverage_tool`.\n"
             "lcov --capture failed:\ngeninfo: ERROR: no data"
         )
 
@@ -1747,7 +1872,7 @@ def _c_unit_project(tmp_path: Path, cc: str) -> Path:
 
 
 _REAL_UNIT_COV = {
-    "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/unit"]}}
+    "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": ["build/unit"]}}}
 }
 
 
@@ -1766,7 +1891,7 @@ class TestUnitHarvestRealTools:
             [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
         )
 
-        raw = (tmp_path / "report/_work/unit_unit_0.raw.info").read_text()
+        raw = (tmp_path / "report/_work/unit_unit_core_0.raw.info").read_text()
         assert "SF:" in raw
         assert "test_add.c" not in raw
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -1782,7 +1907,7 @@ class TestUnitHarvestRealTools:
             [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
         )
 
-        raw = (tmp_path / "report/_work/unit_unit_0.raw.info").read_text()
+        raw = (tmp_path / "report/_work/unit_unit_core_0.raw.info").read_text()
         assert "SF:" in raw
         assert "test_add.c" not in raw
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -1810,7 +1935,8 @@ class TestUnitHarvestRealTools:
         assert _store_paths(store, project) == ["src/core/add.c"]
         gcov = shutil.which(f"gcov-{other}")
         assert any(
-            m.startswith("unit unit: gcov stamp ") and m.endswith(f"reading counters with {gcov}")
+            m.startswith("unit unit/core: gcov stamp ")
+            and m.endswith(f"reading counters with {gcov}")
             for m in _messages(caplog, "INFO")
         )
 
@@ -1862,7 +1988,7 @@ class TestUnitHarvestRealTools:
         assert _store_paths(store, project) == ["src/core/add.c"]
         (capture,) = [c for c in commands if "--capture" in c]
         assert " --rc geninfo_unexecuted_blocks=1 " in capture
-        assert "SF:" in (out / "_work/unit_unit_0.raw.info").read_text()
+        assert "SF:" in (out / "_work/unit_unit_core_0.raw.info").read_text()
         assert not list(out.rglob("llvm-gcov-*"))
 
     @_needs("lcov", "gcc", "g++", "gcov")
@@ -1921,8 +2047,8 @@ class TestUnitHarvestRealTools:
 
         assert _store_paths(store, project) == ["src/core/add.c"]
         debug = _messages(caplog, "DEBUG")
-        assert "unit unit: drop tests/test_add.cpp (not in any product)" in debug
-        assert any(m.startswith("unit unit: drop /usr/include/gtest/") for m in debug)
+        assert "unit unit/core: drop tests/test_add.cpp (not a source of product core)" in debug
+        assert any(m.startswith("unit unit/core: drop /usr/include/gtest/") for m in debug)
 
 
 @pytest.mark.asyncio
@@ -1962,7 +2088,7 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
         tmp_path / "report",
         collection=CollectionInputs(
             project_root=project,
-            tier_configs=load_tiers(cov),
+            tier_configs=load_tiers(cov, root=project),
             capture_paths=[dup],
         ),
     )
@@ -2017,7 +2143,7 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
         tmp_path / "report",
         collection=CollectionInputs(
             project_root=project,
-            tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
+            tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
             capture_paths=capture_paths,
         ),
     )
@@ -2102,7 +2228,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
         tmp_path / "report",
         collection=CollectionInputs(
             project_root=project,
-            tier_configs=load_tiers(cov_config),
+            tier_configs=load_tiers(cov_config, root=project),
             capture_paths=[e2e_path],
         ),
     )
@@ -2165,7 +2291,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
         tmp_path / "report",
         collection=CollectionInputs(
             project_root=project,
-            tier_configs=load_tiers(cov_config),
+            tier_configs=load_tiers(cov_config, root=project),
             capture_paths=[dup],
         ),
     )
@@ -2238,7 +2364,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
         tmp_path / "report",
         collection=CollectionInputs(
             project_root=project,
-            tier_configs=load_tiers(cov_config),
+            tier_configs=load_tiers(cov_config, root=project),
             capture_paths=[dup],
         ),
     )

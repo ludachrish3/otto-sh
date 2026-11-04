@@ -60,5 +60,6 @@ precedence = 2
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 3
-harvest_dirs = ["build"]
+[coverage.tiers.unit.products]
+qs_wordcount = ["build"]
 # doc: end coverage

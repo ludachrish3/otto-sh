@@ -34,7 +34,7 @@ export interface RunJson {
   label: string;
   board: string;
   host: string;
-  /** The <product> segment of cov/<host>/<product>/; "" for an unnamed unit run. */
+  /** The <product> segment of cov/<host>/<product>/; "" for a `--tier` tracefile run. */
   product: string;
   labs: string[];
   captured_at: string;
