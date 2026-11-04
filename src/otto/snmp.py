@@ -87,6 +87,18 @@ async def snmp_get(
     except Exception as exc:  # noqa: BLE001 — pysnmp raises heterogeneous errors; every one is "silence" with its text
         return SnmpGet(outcome="silence", detail=f"{type(exc).__name__}: {exc}")
     finally:
+        # pysnmp 7.1.29-7.1.30 bug: ``SnmpDispatcher.close()`` terminates each
+        # pending request by calling its ``cbFun`` with 4 arguments, but the
+        # callback ``get_cmd`` registers takes 5, so a GET cancelled mid-request
+        # (a survey ``wait_for``) has its ``CancelledError`` replaced by a
+        # ``TypeError``. The only consumer of that callback is our own awaiting
+        # future, already cancelled or done, so drop the pending requests first;
+        # ``close()`` still unregisters the callbacks and closes the transport.
+        # Couples to the private ``_pendingReqs``; a pysnmp without it falls back
+        # to a plain ``close()``. Pinned by test_snmp_leaf.py.
+        pending = getattr(dispatcher, "_pendingReqs", None)
+        if pending is not None:
+            pending.clear()
         dispatcher.close()
 
     if error_indication:

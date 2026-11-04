@@ -11,6 +11,7 @@ import sys
 import types
 
 import pytest
+import pytest_asyncio
 
 from otto.snmp import SnmpGet, snmp_get
 
@@ -149,3 +150,98 @@ def test_the_leaf_imports_nothing_from_pysnmp_at_module_scope():
         "sorted(m for m in sys.modules if m.startswith('pysnmp'))"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# --- #742: cancelling a real pysnmp GET -------------------------------------
+
+
+class _SilentAgent:
+    """A 127.0.0.1 UDP endpoint that receives datagrams and never answers."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self.received = asyncio.Event()
+
+    def connection_made(self, transport) -> None:
+        pass
+
+    def datagram_received(self, data, addr) -> None:
+        self.received.set()
+
+    def error_received(self, exc) -> None:
+        pass
+
+    def connection_lost(self, exc) -> None:
+        pass
+
+
+@pytest_asyncio.fixture
+async def silent_agent():
+    """``(port, agent)`` for a silent agent; ``agent.received`` is set once a request lands."""
+    import asyncio
+
+    agent = _SilentAgent()
+    transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        lambda: agent, local_addr=("127.0.0.1", 0)
+    )
+    try:
+        yield transport.get_extra_info("sockname")[1], agent
+    finally:
+        transport.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_pending_real_get_propagates_the_cancel(silent_agent, monkeypatch):
+    """pysnmp 7.1.29-7.1.30 ``close()`` calls a pending cbFun with 4 args.
+
+    The ``TypeError`` that raises would replace the ``CancelledError``. The
+    cancel lands only once the agent has the request, so the request is
+    pending in the dispatcher when ``close()`` runs.
+    """
+    import asyncio
+
+    from pysnmp.hlapi.v1arch.asyncio import SnmpDispatcher
+
+    closed: list[dict] = []
+    real_close = SnmpDispatcher.close
+
+    def spy_close(self) -> None:
+        real_close(self)
+        closed.append(dict(self._pendingReqs))
+
+    monkeypatch.setattr(SnmpDispatcher, "close", spy_close)
+    port, agent = silent_agent
+    task = asyncio.ensure_future(
+        snmp_get("127.0.0.1", port, "public", "2c", [OID_UPTIME], timeout=2.0)
+    )
+    await asyncio.wait_for(agent.received.wait(), 2.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed == [{}], "the dispatcher was not closed, or kept a pending request"
+
+
+@pytest.mark.asyncio
+async def test_the_survey_reports_a_timeout_row_for_a_cancelled_real_get(silent_agent):
+    """``_bounded`` catches only the timeout; no ``TypeError`` may replace it."""
+    from otto.host.survey.engine import _Deadline, _snmp_row
+
+    port, agent = silent_agent
+    verdict = await _snmp_row(
+        port, _Deadline(0.5), address="127.0.0.1", community="public", version="2c"
+    )
+    assert agent.received.is_set(), "the request never reached the agent"
+    assert verdict.state == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_pysnmps_dispatcher_keeps_its_pending_requests_in_a_dict():
+    """Pins the private ``_pendingReqs`` coupling in ``snmp_get``'s ``finally``."""
+    from pysnmp.hlapi.v1arch.asyncio import SnmpDispatcher
+
+    dispatcher = SnmpDispatcher()
+    try:
+        assert isinstance(dispatcher._pendingReqs, dict)
+    finally:
+        dispatcher.close()
