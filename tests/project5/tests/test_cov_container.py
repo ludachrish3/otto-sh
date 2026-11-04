@@ -26,6 +26,7 @@ import shlex
 
 import pytest
 import pytest_asyncio
+from project5_containers import PRODUCTS, exec_in, install_products, uninstall_products
 
 from otto.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
@@ -33,56 +34,24 @@ from otto.host.unix_host import UnixHost
 logger = logging.getLogger(__name__)
 
 _HOST = re.compile(r"test3")
-PRODUCTS = ("cov_container", "cov_container_ref")
-
-
-async def _exec_in(host: UnixHost, container: str, *args: str) -> str:
-    argv = " ".join(shlex.quote(a) for a in args)
-    cmd = f"docker exec {shlex.quote(container)} /opt/product {argv}"
-    result = await host.exec(cmd, timeout=30)
-    if not result.status.is_ok:
-        raise RuntimeError(f"{host.id}: {cmd} failed: {result.value}")
-    return result.value
 
 
 async def _install(host: UnixHost) -> None:
-    for name in PRODUCTS:
-        product = next(p for p in host.products if p.name == name)
-        cov_dir = shlex.quote(product.cov_dir)
-        prepare = f"sudo mkdir -p {cov_dir} && sudo chmod 777 {cov_dir}"
-        prepared = await host.exec(prepare, timeout=30)
-        if not prepared.status.is_ok:
-            raise RuntimeError(f"{host.id}: preparing {product.cov_dir} failed: {prepared.value}")
-        if not await product.is_installed(host):
-            result = await product.stage(host)
-            if result.is_ok:
-                result = await product.install(host)
-            if not result.is_ok:
-                raise RuntimeError(f"{host.id}: installing {name} failed: {result.msg}")
+    await install_products(host, PRODUCTS)
 
 
 async def _exercise(host: UnixHost) -> dict[str, str]:
     """Run each container's product once, returning every read-back output."""
     return {
-        "tarball_add": await _exec_in(host, "cov_container", "add", "2", "3"),
-        "tarball_div": await _exec_in(host, "cov_container", "div", "20", "5"),
-        "ref_sub": await _exec_in(host, "cov_container_ref", "sub", "10", "4"),
-        "ref_clamp": await _exec_in(host, "cov_container_ref", "clamp", "15", "5", "10"),
+        "tarball_add": await exec_in(host, "cov_container", "add", "2", "3"),
+        "tarball_div": await exec_in(host, "cov_container", "div", "20", "5"),
+        "ref_sub": await exec_in(host, "cov_container_ref", "sub", "10", "4"),
+        "ref_clamp": await exec_in(host, "cov_container_ref", "clamp", "15", "5", "10"),
     }
 
 
 async def _uninstall(host: UnixHost) -> None:
-    # Product (and product debug) logs first, while the containers still
-    # exist — otto test never calls Host.uninstall() itself, so nothing
-    # else will haul them, and `docker logs` needs the container present.
-    hauled = await host.get_product_logs()
-    if not hauled.is_ok:
-        raise RuntimeError(f"{host.id}: hauling product logs failed: {hauled.msg}")
-    for name in reversed(PRODUCTS):
-        product = next(p for p in host.products if p.name == name)
-        result = await product.uninstall(host)
-        if not result.is_ok:
-            raise RuntimeError(f"{host.id}: uninstalling {name} failed: {result.msg}")
+    await uninstall_products(host, PRODUCTS)
 
 
 class TestCovContainer:

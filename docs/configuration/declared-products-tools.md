@@ -469,7 +469,7 @@ product's own module, is the consumer's side — see
 ## The `docker_image` kind
 
 Built in, products only: a docker image, installed with `docker run -d` and
-removed with `docker rm -f`. Registered for every host — nothing is checked
+removed with `docker rm -f -v`. Registered for every host — nothing is checked
 at declaration; `install` itself probes `docker` on the host's `PATH` and
 fails loud naming the host when it is not.
 
@@ -489,12 +489,26 @@ coverage story: an instrumented binary inside the container writing under
 fetcher and the default hooks already work, no collector and no host class
 needed. A tarball entry's staged copy under its `stage_dir` is removed right
 after a successful `docker load` — it is an intermediate the load has already
-consumed, not the product itself. `is_installed` asks the daemon whether
-the container is *running* — one that exists but has exited answers not
-installed, so a re-install then collides with docker's own "name already
-in use" unless the old container is removed first.
+consumed, not the product itself.
 
-`uninstall` always runs `docker rm -f <container_name>` (idempotent — a
+Before `docker run`, after the load or pull has succeeded, `install` runs
+`docker rm -v <container_name>`:
+
+- a stopped or never-started container of that name is removed, with its
+  anonymous volumes (named volumes are untouched), and install logs
+  `removed stopped container <container_name> before install`; no container
+  of that name is nothing to remove;
+- an active container (running, paused or restarting) makes docker refuse
+  the removal, and install fails with docker's own message;
+- "installed" still means *running*: `is_installed` asks the daemon whether
+  the container is running, so a stopped one answers not installed until the
+  next install replaces it.
+
+Replacing a stopped container has two side effects: its `docker logs` go with
+it, and for a tarball product the image it ran stays loaded but is no longer
+used by any container: install never removes it.
+
+`uninstall` always runs `docker rm -f -v <container_name>` (idempotent — a
 missing container is not a failure), and follows with `docker rmi` only
 for an image otto itself loaded from a tarball; a pulled or
 already-present reference stays in the daemon's cache. That image is

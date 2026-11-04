@@ -6,7 +6,9 @@ compiler name turns into, the staleness rule the toolchain stamp adds, and
 the ``.init_array`` reader's parse of readelf's table.
 """
 
+import functools
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -345,3 +347,65 @@ def test_the_overlay_project_points_a_lab_source_at_that_lab_file(tmp_path):
     # or project block that could shadow project5's.
     assert "[[products]]" not in settings
     assert "tests =" not in settings
+
+
+# --- The docker3 overlay: a test3-only lab for `otto run install` ------------
+
+
+def _lab_hosts(overlay: Path, lab: str, monkeypatch, tmp_path) -> set[str]:
+    """Lab *lab*'s host ids with project5 then *overlay*, loaded as ``otto --lab`` loads it."""
+    from otto.config.project import load_projects
+    from otto.session import build_lab
+    from tests.e2e._otto_subprocess import PROJECT5
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    # OTTOPATH order: project5 first, so the overlay's source is read last.
+    hosts = set(build_lab(load_projects([PROJECT5, overlay]), [lab]).hosts)
+    # The built-in `local` host is injected into every lab and is never part of
+    # the fleet `otto run install` walks (otto.fleet.all_hosts).
+    return hosts - {"local"}
+
+
+def test_the_docker3_overlay_resolves_to_exactly_test3(tmp_path, monkeypatch):
+    overlay = helper.docker3_overlay_project(tmp_path / "overlays")
+    assert _lab_hosts(overlay, "docker3", monkeypatch, tmp_path) == {"test3"}
+    # The same-name element keeps every lab it was in: unix is unchanged.
+    assert _lab_hosts(overlay, "unix", monkeypatch, tmp_path) == {"test1", "test2", "test3"}
+
+
+def test_the_docker3_lab_lists_exactly_the_two_container_products(tmp_path):
+    """The reinstall proof's own guard, hostless: ``otto --lab docker3 --list-products``.
+
+    The kmod product appears under "not used in this lab:", so a substring
+    check of stdout could not rule it out: the table is parsed. A run under a
+    pipe renders whole cells by default (#785: 200 columns, literal ids), and
+    LISTING_ENV's wider console reads the same table.
+    """
+    from tests.e2e._otto_subprocess import PROJECT5, run_otto
+
+    overlay = helper.docker3_overlay_project(tmp_path / "overlays")
+    env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(overlay)])}
+    run = functools.partial(
+        run_otto, ["--list-products"], roots=PROJECT5, lab=helper.DOCKER3_LAB, timeout=120
+    )
+    for extra_env in (env, {**env, **helper.LISTING_ENV}):
+        listed = run(extra_env=extra_env)
+        assert listed.returncode == 0, listed.stderr
+        assert "otto_kmod_demo" in listed.stdout  # under "not used in this lab:"
+        assert helper.listed_products(listed.stdout) == {
+            "cov_container": ["test3"],
+            "cov_container_ref": ["test3"],
+        }, listed.stdout
+
+
+def test_the_docker3_overlay_copies_test3_and_adds_only_the_lab(tmp_path):
+    overlay = helper.docker3_overlay_project(tmp_path)
+    settings = (overlay / ".otto" / "settings.toml").read_text()
+    assert "[[products]]" not in settings
+    assert "tests =" not in settings
+    data = json.loads((tmp_path / "docker3_lab.json").read_text())
+    assert data["labs"] == {"docker3": {"resources": ["test3"]}}
+    (element,) = data["elements"]
+    fixture = json.loads((helper.LAB_DATA / "lab.json").read_text())
+    (original,) = [e for e in fixture["elements"] if e["name"] == "test3"]
+    assert element == {**original, "labs": ["unix", "docker3"]}

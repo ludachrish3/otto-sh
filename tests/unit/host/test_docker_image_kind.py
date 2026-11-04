@@ -208,6 +208,7 @@ async def test_tarball_install_stages_loads_then_runs_with_the_bind_mount():
     # The staged tarball is removed right after a successful load — it is an
     # intermediate docker load has already consumed, not the product itself.
     assert host.exec_calls[2] == "rm -f /tmp/app.tar"
+    assert host.exec_calls[-2] == "docker rm -v app"
     assert host.exec_calls[-1] == (
         "docker run -d --name app -v /var/cov/app:/var/cov/app -e GCOV_PREFIX=/var/cov/app app:1.2"
     )
@@ -273,6 +274,85 @@ async def test_reference_with_pull_pulls_first():
     assert "docker pull app:1 failed" in result.msg
 
 
+# ── install over a container of the same name (#783) ─────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["created", "exited", "dead"])
+async def test_install_removes_a_container_of_the_name_before_run(caplog, state):
+    # Whatever state docker's plain `rm -v` accepts, the container is removed and run follows.
+    host = _DockerHost(answers={"docker rm -v": (Status.Success, "app\n")})
+    with caplog.at_level("INFO", logger="otto.host.docker_image_kind"):
+        result = await _build(host, image="app:1").install(host)
+    assert result.is_ok, (state, result.msg)
+    assert host.exec_calls[-3:] == [
+        "docker image inspect app:1 >/dev/null",
+        "docker rm -v app",
+        "docker run -d --name app -v /tmp/app:/tmp/app app:1",
+    ]
+    removed = [m for m in caplog.messages if "removed stopped container" in m]
+    assert removed == ["test3: app: removed stopped container app before install"]
+
+
+@pytest.mark.asyncio
+async def test_install_with_no_container_tolerates_no_such_container(caplog):
+    gone = "Error response from daemon: No such container: app"
+    host = _DockerHost(answers={"docker rm -v": (Status.Error, gone)})
+    with caplog.at_level("INFO", logger="otto.host.docker_image_kind"):
+        result = await _build(host, image="app:1").install(host)
+    assert result.is_ok
+    assert host.exec_calls[-1].startswith("docker run -d --name app ")
+    assert not [m for m in caplog.messages if "removed stopped container" in m]
+
+
+_REFUSAL = 'Error response from daemon: cannot remove container "/app": container is {}'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        _REFUSAL.format("running: stop the container before removing or force remove"),
+        _REFUSAL.format("paused and must be unpaused first"),
+        _REFUSAL.format("restarting: stop the container before removing or force remove"),
+    ],
+    ids=["running", "paused", "restarting"],
+)
+async def test_install_over_an_active_container_aborts_with_dockers_message(refusal):
+    host = _DockerHost(answers={"docker rm -v": (Status.Error, refusal)})
+    result = await _build(host, image="app:1").install(host)
+    assert result.status is Status.Error
+    assert "app: docker rm -v app failed on test3" in result.msg
+    assert refusal in result.msg
+    assert not any(c.startswith("docker run") for c in host.exec_calls)
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_rm_failure_aborts_install_with_its_output():
+    host = _DockerHost(answers={"docker rm -v": (Status.Error, "permission denied")})
+    result = await _build(host, image="app:1").install(host)
+    assert result.status is Status.Error
+    assert "app: docker rm -v app failed on test3" in result.msg
+    assert "permission denied" in result.msg
+    assert not any(c.startswith("docker run") for c in host.exec_calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("build_kwargs", "failing"),
+    [
+        ({"image": "docker/app.tar"}, "docker load"),
+        ({"image": "app:1", "pull": True}, "docker pull"),
+    ],
+    ids=["tarball", "pull"],
+)
+async def test_a_failed_load_or_pull_never_runs_rm(build_kwargs, failing):
+    host = _DockerHost(answers={failing: (Status.Error, "no space left on device")})
+    result = await _build(host, **build_kwargs).install(host)
+    assert not result.is_ok
+    assert not any(c.startswith("docker rm") for c in host.exec_calls)
+
+
 @pytest.mark.asyncio
 async def test_stage_is_a_noop_for_a_reference():
     host = _DockerHost()
@@ -304,12 +384,12 @@ async def test_uninstall_removes_the_container_and_only_a_loaded_image():
     assert (await p.uninstall(host)).is_ok
     assert host.exec_calls[-3:] == [
         "docker container inspect -f '{{.Config.Image}}' app",
-        "docker rm -f app",
+        "docker rm -f -v app",
         "docker rmi app:1",
     ]
     ref_host = _DockerHost()
     assert (await _build(ref_host, image="app:1").uninstall(ref_host)).is_ok
-    assert ref_host.exec_calls == ["docker rm -f app"]
+    assert ref_host.exec_calls == ["docker rm -f -v app"]
 
 
 @pytest.mark.asyncio
@@ -328,7 +408,7 @@ async def test_uninstall_resolves_the_image_from_the_container_not_from_memory()
     assert result.is_ok
     assert host.exec_calls == [
         "docker container inspect -f '{{.Config.Image}}' app",
-        "docker rm -f app",
+        "docker rm -f -v app",
         "docker rmi app:1",
     ]
 
@@ -351,7 +431,7 @@ async def test_uninstall_skips_rmi_when_the_container_is_already_gone():
     assert result.is_ok
     assert host.exec_calls == [
         "docker container inspect -f '{{.Config.Image}}' app",
-        "docker rm -f app",
+        "docker rm -f -v app",
     ]
 
 
@@ -362,7 +442,7 @@ async def test_uninstall_tolerates_an_already_removed_container():
     host = _DockerHost(answers={"docker rm -f": (Status.Error, "Error: No such container: app")})
     result = await _build(host, image="app:1").uninstall(host)
     assert result.is_ok
-    assert host.exec_calls == ["docker rm -f app"]
+    assert host.exec_calls == ["docker rm -f -v app"]
 
 
 @pytest.mark.asyncio
@@ -370,7 +450,7 @@ async def test_uninstall_rm_failure_names_the_command():
     host = _DockerHost(answers={"docker rm -f": (Status.Error, "connection refused")})
     result = await _build(host, image="app:1").uninstall(host)
     assert not result.is_ok
-    assert "docker rm -f app failed on test3" in result.msg
+    assert "app: docker rm -f -v app failed on test3" in result.msg
 
 
 @pytest.mark.asyncio
@@ -420,6 +500,7 @@ async def test_injection_shaped_values_are_quoted_not_executed():
         ({"image": "app:1", "pull": True}, "docker pull"),
         ({"image": "app:1"}, "docker image inspect"),
         ({"image": "app:1"}, "docker run"),
+        ({"image": "app:1"}, "docker rm -v"),
     ],
 )
 async def test_install_propagates_a_dry_run_decline_at_every_probe(
@@ -428,6 +509,8 @@ async def test_install_propagates_a_dry_run_decline_at_every_probe(
     host = _DockerHost(answers={declined_substring: (Status.NotRun, "")})
     result = await _build(host, **build_kwargs).install(host)
     assert result.status is Status.NotRun
+    if declined_substring == "docker rm -v":
+        assert not any(c.startswith("docker run") for c in host.exec_calls)
 
 
 @pytest.mark.asyncio

@@ -42,11 +42,12 @@ async def test_reference_with_pull_plans_pull_then_run(plan_recorder):
         == plan.install
         == [
             "docker pull nginx:1.25",
+            "docker rm -v web",
             "docker run -d --name web -v /tmp/web:/tmp/web -p 80:80 nginx:1.25",
         ]
     )
     assert (await product.uninstall(host)).is_ok
-    assert host.take() == plan.uninstall == ["docker rm -f web"]
+    assert host.take() == plan.uninstall == ["docker rm -f -v web"]
     assert plan.unchecked == ["that docker is on h1's PATH (command -v docker)"]
 
 
@@ -63,7 +64,7 @@ async def test_reference_without_pull_plans_run_and_names_the_presence_read(plan
     assert (
         _actions(recorded, {DOCKER_PROBE, present})
         == plan.install
-        == ["docker run -d --name web -v /tmp/web:/tmp/web nginx:1.25"]
+        == ["docker rm -v web", "docker run -d --name web -v /tmp/web:/tmp/web nginx:1.25"]
     )
     assert plan.unchecked == [
         "that docker is on h1's PATH (command -v docker)",
@@ -96,6 +97,7 @@ async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder)
         == [
             "docker load -i /opt/stage/web.tar",
             "rm -f /opt/stage/web.tar",
+            "docker rm -v web",
             "docker run -d --name web -v /tmp/web:/tmp/web web:1",
         ]
     )
@@ -104,7 +106,7 @@ async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder)
     assert (
         _actions(host.take(), {inspect})
         == [line.replace("<image the container ran>", "web:1") for line in plan.uninstall]
-        == ["docker rm -f web", "docker rmi web:1"]
+        == ["docker rm -f -v web", "docker rmi web:1"]
     )
     assert plan.unchecked == [
         "that docker is on h1's PATH (command -v docker)",
@@ -139,7 +141,7 @@ def test_a_tarball_on_a_host_with_no_login_home_is_a_refusal():
     assert plan.stage == plan.install == []
     # The refusal is the install's: uninstall needs no stage dir and still runs.
     assert plan.uninstall == [
-        "docker rm -f web",
+        "docker rm -f -v web",
         "docker rmi <image the container ran>",
     ]
     assert plan.unchecked == [
@@ -189,4 +191,5 @@ async def test_plan_quotes_exactly_as_the_hooks_do_for_values_that_need_it(plan_
     assert install == plan.install
     assert uninstall == plan.uninstall
     assert "'we b'" in plan.uninstall[0]
+    assert plan.install[-2] == "docker rm -v 'we b'"
     assert "-v '/opt/My App/cov':'/opt/My App/cov' -p 80:80 -e 'A=b c'" in plan.install[-1]

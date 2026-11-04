@@ -2,7 +2,9 @@
 The built-in ``docker_image`` kind — a container image as a product.
 
 A docker daemon drives the verbs: ``install`` loads a ``docker save`` tarball
-(or verifies/pulls a reference), then ``docker run -d`` starts it with the
+(or verifies/pulls a reference), removes a stopped or never-started container
+of the same name (``docker rm -v``, never ``-f``: docker refuses an active one
+and install fails with its message), then ``docker run -d`` starts it with the
 product's ``cov_dir`` bind-mounted at the same path; ``is_installed`` asks
 whether the container is running; ``uninstall`` removes the container and,
 for a tarball-loaded image, resolves that image from the CONTAINER ITSELF
@@ -37,6 +39,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
+from .docker_cli import missing, rm_container_command
 from .product import (
     ProductPlan,
     ShellProduct,
@@ -60,9 +63,6 @@ if TYPE_CHECKING:
     from .host import Host
 
 logger = logging.getLogger(__name__)
-
-_NO_SUCH_CONTAINER = "No such container"
-"""What the docker CLI prints when the named container does not exist (case-sensitive)."""
 
 TARBALL_SUFFIXES = (".tar", ".tar.gz", ".tgz")
 """An ``image`` value with one of these suffixes is a ``docker save`` tarball path."""
@@ -178,9 +178,9 @@ class DockerImageProduct(ShellProduct):
             f"-v {shlex.quote(cov_dir)}:{shlex.quote(cov_dir)}{args} {ref}"
         )
 
-    def _rm_command(self) -> str:
-        """Force-remove the container."""
-        return f"docker rm -f {shlex.quote(self.container_name)}"
+    def _rm_command(self, *, force: bool) -> str:
+        """Remove the container and its anonymous volumes; *force* also stops an active one."""
+        return rm_container_command(self.container_name, force=force)
 
     def _rmi_command(self, image: str) -> str:
         """``docker rmi`` of *image*, ALREADY shell-quoted (see :meth:`_run_command`)."""
@@ -242,10 +242,33 @@ class DockerImageProduct(ShellProduct):
                     "there or set `pull = true` on the entry",
                 )
             ref = self.image
+        replaced = await self._remove_stopped(host)
+        if replaced is not None:
+            return replaced
         run = await host.exec(self._run_command(shlex.quote(ref)), timeout=120)
         if not run.status.is_ok:
             return self._error_from(host, f"{self.name}: docker run", run)
         return Result(Status.Success)
+
+    async def _remove_stopped(self, host: "Host") -> Result | None:
+        """Remove a stopped or never-started container of the name; ``None`` lets run follow.
+
+        Plain ``docker rm -v`` (no ``-f``): docker refuses a running, paused or
+        restarting container, and that refusal is returned with docker's own text.
+        No container of the name is nothing to remove.
+        """
+        removed = await host.exec(self._rm_command(force=False), timeout=120)
+        if removed.status is Status.NotRun:
+            return Result(Status.NotRun)
+        if removed.status.is_ok:
+            logger.info(
+                f"{host.id}: {self.name}: removed stopped container {self.container_name} "
+                "before install"
+            )
+            return None
+        if missing(removed, "container"):
+            return None
+        return self._error_from(host, f"{self.name}: {self._rm_command(force=False)}", removed)
 
     @override
     async def uninstall(self, host: "Host") -> Result:
@@ -269,14 +292,13 @@ class DockerImageProduct(ShellProduct):
                 resolved = str(inspected.value).strip()
                 if resolved:
                     image_to_remove = resolved
-        removed = await host.exec(self._rm_command(), timeout=120)
+        removed = await host.exec(self._rm_command(force=True), timeout=120)
         if removed.status is Status.NotRun:
             return Result(Status.NotRun)
         # Idempotent: a container that was never installed (or already removed
         # by a prior, failed run) is not an uninstall failure.
-        if not removed.status.is_ok and _NO_SUCH_CONTAINER not in removed.value:
-            what = f"{self.name}: docker rm -f {self.container_name}"
-            return self._error_from(host, what, removed)
+        if not removed.status.is_ok and not missing(removed, "container"):
+            return self._error_from(host, f"{self.name}: {self._rm_command(force=True)}", removed)
         if image_to_remove is not None:
             # Only an image otto loaded from a tarball is otto's to remove;
             # a pulled or pre-existing reference stays in the daemon's cache
@@ -301,7 +323,10 @@ class DockerImageProduct(ShellProduct):
         host_id = getattr(host, "id", "?")
         plan = ProductPlan(unchecked=[f"that docker is on {host_id}'s PATH (command -v docker)"])
         if self.is_tarball:
-            uninstall = [self._rm_command(), self._rmi_command("<image the container ran>")]
+            uninstall = [
+                self._rm_command(force=True),
+                self._rmi_command("<image the container ran>"),
+            ]
             image_gap = (
                 "the image to remove, read from the container (docker container inspect "
                 f"{self.container_name}); no running container means no `docker rmi`"
@@ -317,6 +342,7 @@ class DockerImageProduct(ShellProduct):
             plan.install = [
                 self._load_command(staged),
                 self._cleanup_command(staged),
+                self._rm_command(force=False),
                 self._run_command("<loaded image>"),
             ]
             plan.uninstall = uninstall
@@ -335,8 +361,8 @@ class DockerImageProduct(ShellProduct):
                 f"that {self.image} is present on {host_id} (docker image inspect); a missing "
                 "image fails the install unless the entry sets `pull = true`"
             )
-        plan.install.append(self._run_command(shlex.quote(self.image)))
-        plan.uninstall = [self._rm_command()]
+        plan.install += [self._rm_command(force=False), self._run_command(shlex.quote(self.image))]
+        plan.uninstall = [self._rm_command(force=True)]
         return plan
 
     @override
@@ -367,11 +393,7 @@ class DockerImageProduct(ShellProduct):
         """
         hauled = await super().get_debug_logs(host, dest)
         logs = await host.exec(f"docker logs {shlex.quote(self.container_name)} 2>&1", timeout=60)
-        if (
-            logs.status is not Status.NotRun
-            and not logs.status.is_ok
-            and _NO_SUCH_CONTAINER in logs.value
-        ):
+        if not logs.status.is_ok and missing(logs, "container"):
             host_id = getattr(host, "id", "?")
             logger.info(
                 f"{host_id}: {self.name}: container {self.container_name} is gone; "
