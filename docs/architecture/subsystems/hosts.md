@@ -64,10 +64,11 @@ CLI projection without touching the Python call shape.
 A verb's return value is rendered by one shared path: members of the
 {class}`~otto.result.Result` family drive both output and the exit code
 (`result.exit_code`, ssh-like semantics — {doc}`../utilities/results`);
-`None` means side-effect-only success; any other value is the documented
-third-party fallback, printed as-is with exit `0`. Command output itself
-streams live during execution, so a successful `exec` verb prints nothing
-extra at the end — the user-facing exit-code table lives in
+`None` means side-effect-only success; a `bool` (the predicate verbs) prints
+and exits `0`/`1` for `True`/`False`; any other value is the documented
+third-party fallback, printed as-is with exit `0` ({ref}`cli-return-values`).
+Command output itself streams live during execution, so a successful `exec`
+verb prints nothing extra at the end — the user-facing exit-code table lives in
 {doc}`../../cli/host/index`.
 
 Tab completion mirrors the synthesis model at every position: host ids come

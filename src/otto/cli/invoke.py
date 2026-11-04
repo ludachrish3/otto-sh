@@ -2080,8 +2080,10 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     (:doc:`/extend/extending-cli`) for every registered command and
     instruction: an ``otto.result`` family value derives the process exit code
     from its own ``exit_code`` (the ssh-like rules); a
-    :class:`~otto.result.CliReport` prints its report text as plain text; any
-    other non-``None`` value is printed as-is, exit 0. ``None`` renders nothing by default —
+    :class:`~otto.result.CliReport` prints its report text as plain text; a
+    ``bool`` is printed as-is and exits 0 for ``True``, 1 for ``False`` (the
+    predicate verbs); any other non-``None`` value is printed as-is, exit 0.
+    ``None`` renders nothing by default —
     every side-effect-only first-party leaf returns it, so a leaf that wants a
     completion message must say so via :class:`RenderPolicy` (installed on
     ``ctx.meta[RENDER_POLICY_KEY]``, e.g. by the ``otto host`` verb bodies).
@@ -2122,7 +2124,9 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
         _print_value(value.__otto_cli_report__(), literal=True)
         return
 
-    _print_value(value, literal=literal)  # documented third-party plain-value fallback, exit 0
+    _print_value(value, literal=literal)  # documented third-party plain-value fallback
+    if value is False:
+        raise typer.Exit(1)  # a predicate answered False: print it, then fail like `test(1)`
 
 
 def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:

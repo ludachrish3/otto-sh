@@ -269,14 +269,17 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
   completion is answered from the cache). If the import fails, the cache degrades
   to the group's name and help — and the real dispatch error stays loud.
 
+(cli-return-values)=
 ## Return values
 
 Inside the command body, return whatever your logic produces. If it's a
 `Result` (or `CommandResult`/`Results`), otto derives the process exit code
 from it using the same polymorphic, ssh-like rules `otto host <name> <verb>`
 uses — see [Exit codes](../cli/host/index.md#exit-codes) in the host guide for the
-full table; a failing result exits the process non-zero. A plain
-(non-`Result`) return value is printed as-is and the process exits `0`;
+full table; a failing result exits the process non-zero. A `bool`
+return is printed and sets the exit code (`0` for `True`, `1` for `False`), so
+a predicate command works in `if otto ...`; any other plain (non-`Result`)
+return value is printed as-is and the process exits `0`;
 a `list` that carries a Rich `Table` or `Text` is printed one item per
 line, so a renderable interleaved with plain strings renders in order
 rather than as one pretty-printed Python object. A value whose text is its

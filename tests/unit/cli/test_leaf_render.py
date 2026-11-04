@@ -356,3 +356,48 @@ def test_none_is_silent_without_a_policy(capsys):
 def test_none_prints_the_policy_none_message(capsys):
     render_leaf_value(None, RenderPolicy(none_message="done"))
     assert "done" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# A bool return is a predicate: printed as today, exit 0 for True / 1 for False
+# ---------------------------------------------------------------------------
+
+
+def test_true_is_printed_and_returns_normally(capsys):
+    render_leaf_value(True)  # must not raise
+    assert capsys.readouterr().out.strip() == "True"
+
+
+def test_false_is_printed_and_exits_one(capsys):
+    with pytest.raises(typer.Exit) as excinfo:
+        render_leaf_value(False)
+    assert excinfo.value.exit_code == 1
+    assert capsys.readouterr().out.strip() == "False"
+
+
+@pytest.mark.parametrize(("value", "code"), [(True, 0), (False, 1)])
+def test_registered_leaf_returning_a_bool_sets_the_exit_code(value, code):
+    """Any registered leaf, first- or third-party, gets the predicate rule."""
+    app = typer.Typer(name="pred-tool")
+
+    @app.command()
+    async def check() -> bool:
+        return value
+
+    r = DispatchRunner().invoke(app, [])
+    assert r.exit_code == code, r.output
+    assert str(value) in r.output
+
+
+@pytest.mark.parametrize(
+    ("value", "printed"), [(0, "0\n"), (1, "1\n"), ("", "\n"), ([], "[]\n"), ({}, "{}\n")]
+)
+def test_only_a_bool_false_is_a_failing_predicate(value, printed, capsys):
+    """Falsy non-bools (and ints) keep the plain-value fallback: print, exit 0."""
+    render_leaf_value(value)  # must not raise
+    assert capsys.readouterr().out == printed
+
+
+def test_a_successful_result_holding_false_still_exits_zero():
+    """A bool INSIDE a Result is data; the Result branch decides the exit code."""
+    render_leaf_value(CommandResult(Status.Success, value=False, command="x", retcode=0))
