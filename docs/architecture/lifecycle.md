@@ -50,8 +50,8 @@ only once the leaf-invoke wrapper took over rendering. The seam is
 lifecycle bridge awaited. A returned `Result` supplies its own `exit_code`.
 `None` — what every side-effect-only first-party leaf returns — renders
 **nothing** and exits `0`, unless the leaf installed a `RenderPolicy` with a
-`none_message`; any other value prints as-is and exits `0`
-({doc}`../extend/extending-cli`).
+`none_message`; a `bool` prints and exits `0`/`1` for `True`/`False`, and any
+other value prints as-is and exits `0` ({ref}`cli-return-values`).
 
 The front door looks like this — and every terminal block in these docs is
 **captured from the real CLI at build time** (a scaffolded demo project, real

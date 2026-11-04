@@ -138,7 +138,8 @@ a pattern that matched telnet's padding NULs (`\r\x00`) must drop them.
 | Failed without a retcode | the `Status` value |
 
 A `@cli_exposed` host verb returning any `Result` gets these semantics on the
-CLI for free; returning a plain value exits `0`. See
+CLI for free; returning a `bool` exits `0`/`1` for `True`/`False`, and any
+other plain value exits `0` ({ref}`cli-return-values`). See
 {doc}`../subsystems/hosts` for how verbs become CLI commands.
 
 ## The convention, and its two gates

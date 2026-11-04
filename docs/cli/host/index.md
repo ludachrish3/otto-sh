@@ -93,10 +93,10 @@ when called from Python with no explicit `user=` of its own.
 | `stage` | Stage products onto the host without installing |
 | `install` | Stage then install products |
 | `uninstall` | Uninstall products |
-| `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products ({ref}`exit 0 either way <host-exit-codes>`) |
-| `is-uninstalled` | Print the opposite of `is-installed`: `True` unless every product is installed, so also on a partly installed host (exit 0 either way) |
+| `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products (exit 0 if `True`, 1 if `False`, see {ref}`exit codes <host-exit-codes>`) |
+| `is-uninstalled` | Print the opposite of `is-installed`: `True` unless every product is installed, so also on a partly installed host or one with no products (exit 0 if `True`, 1 if `False`) |
 | `cleanup` | Uninstall products, then remove dev tools and toolchain tools |
-| `is-clean` | Print `True` if no product, dev tool, or toolchain tool is present, else `False` (exit 0 either way) |
+| `is-clean` | Print `True` if no product, dev tool, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
 | `get-logs` | Retrieve product and debug logs into `logs/<host_id>/` ({ref}`the run tree <run-tree>`) |
 | `get-product-logs` | Retrieve each product's logs, and its own `debug_log_globs`, into `logs/<host_id>/<product>/` |
 | `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host_id>/debug/` |
@@ -105,7 +105,7 @@ when called from Python with no explicit `user=` of its own.
 | `uninstall-dev-tools` | Remove every dev tool attached to the host (best-effort) |
 | `install-toolchain-tools` | Put each declared toolchain tool, renamed and chowned |
 | `remove-toolchain-tools` | Remove every declared toolchain tool from the host |
-| `exists` | Print `True` if a path exists on the host, else `False` (exit 0 either way) |
+| `exists` | Print `True` if a path exists on the host, else `False` (exit 0 if `True`, 1 if `False`) |
 | `ls` | List directory contents on the host |
 | `glob` | Expand a pattern on the host and print the matching paths |
 | `mkdir` | Create a directory on the host |
@@ -192,11 +192,13 @@ Command results are ssh-like: the shell's retcode when the command ran,
 | Any other verb: `Status.Failed` | 1 |
 | Any other verb: `Status.Error` | 2 (note: Click also uses 2 for CLI usage errors) |
 | Any other verb: `Status.Unstable` | 3 |
+| Predicate verb returned `False` | 1 |
 
 The predicate verbs (`exists`, `is-installed`, `is-uninstalled`, `is-clean`)
 return a plain `True` or `False`, not a `Result`: the CLI prints the value and
-exits 0 either way. A script tests the printed value, not the exit code. Custom
-verbs on third-party host classes that return plain values behave the same way.
+exits 0 for `True`, 1 for `False`, so a script may test either. Custom verbs
+on third-party host classes that return a `bool` behave the same way; other
+plain values print and exit 0.
 
 ## Beyond the CLI
 

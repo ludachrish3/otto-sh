@@ -62,8 +62,9 @@ person typing the command: single backticks around a literal command or flag are
 fine, but no reStructuredText (double backticks, roles such as `:meth:`,
 `*emphasis*`). The method's docstring stays free to be written for API readers.
 
-A verb returning a `Result` exits non-zero when its status is not OK, and a
-verb returning a plain value exits 0 with the value printed as-is — see
+A verb returning a `Result` exits non-zero when its status is not OK. A verb
+returning a `bool` prints it and exits 0 for `True`, 1 for `False`; any other
+plain value exits 0 ({ref}`cli-return-values`). See
 [Exit codes](../cli/host/index.md#exit-codes).
 
 ### Parameter inference rules
