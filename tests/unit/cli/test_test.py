@@ -460,7 +460,7 @@ class TestInRunReportGeneration:
             cov_dir=cov_dir,
             cov_report_dir=report_dir,
         )
-        asyncio.run(_post_run_coverage([project], tmp_path / "log", opts))
+        asyncio.run(_post_run_coverage([project], tmp_path / "log", opts, None))
 
         store_json = json.loads((report_dir / "store.json").read_text())
         assert store_json["tier_order"] == ["unit", "system", "manual"]

@@ -1459,7 +1459,7 @@ class TestPostRunSwallowPolicy:
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
         ):
-            asyncio.run(_post_run_coverage([project], cov_dir.parent / "log", opts))
+            asyncio.run(_post_run_coverage([project], cov_dir.parent / "log", opts, None))
 
     def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, project_root, caplog):
         cov_dir = tmp_path / "cov"
@@ -1891,7 +1891,7 @@ class TestAFailedFetchIsAFailedProduct:
             self._lab(cov_dir, self._app_captured(cov_dir), clean_mock) as project,
             caplog.at_level("WARNING"),
         ):
-            asyncio.run(_post_run_coverage([project], tmp_path / "log", opts))
+            asyncio.run(_post_run_coverage([project], tmp_path / "log", opts, None))
 
         warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         # One line per product not collected; nothing that says "failed to capture".

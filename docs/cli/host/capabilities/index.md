@@ -9,7 +9,7 @@ is for and how to use it.
 | Capability | CLI verbs | Python-only |
 |------------|-----------|-------------|
 | Power, reboot & reachability | `power`, `reboot`, `shutdown` | `is_reachable`, `wait_until_up`, `wait_until_down` |
-| Products & lifecycle | `stage`, `install`, `uninstall`, `cleanup`, `is-installed`, `is-uninstalled`, `is-clean` | — |
+| Products & lifecycle | `stage`, `install`, `uninstall`, `cleanup`, `is-installed`, `is-uninstalled`, `is-clean`, `remove-coverage-dirs`, `coverage-dirs-clean` | — |
 | Log retrieval | `get-logs`, `get-product-logs`, `get-debug-logs` | `log_dest` |
 | Dev tools & toolchain tools | `install-tools`, `install-dev-tools`, `uninstall-dev-tools`, `install-toolchain-tools`, `remove-toolchain-tools` | `toolchain_tools_absent` |
 | Remote file operations | `exists`, `ls`, `glob`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |

@@ -1,8 +1,19 @@
 $ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-kmod/e2e/cov --no-random TestWordcount
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
+INFO     @dut   | printf '\n%s\n' otto-cov-presence
+         if test -d /tmp/qs_wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0
+         absent'; fi
+INFO
+INFO     @dut > | otto-cov-presence
+INFO     @dut > | otto-cov 0 present
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
-         /tmp/qs_wordcount || find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -delete'
+         /tmp/qs_wordcount || find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {}
+         \;'
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n%s\n'"'"'
+         otto-gcda-check; LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -print
+         2>&1'
+INFO     @dut > | otto-gcda-check
 INFO     coverage counters cleared before the run on 1 product(s) across 1 host(s)
 INFO     === test_counts_words[one-1] ===
 INFO     @dut   | qs_wordcount: staged
@@ -43,7 +54,12 @@ INFO     lcov capture: 2 file(s) ->
 INFO     dut/qs_wordcount: skipped 1 source file(s) outside the project root
 INFO     Coverage captures produced: 1 board(s)
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
-         /tmp/qs_wordcount || find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -delete'
+         /tmp/qs_wordcount || find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {}
+         \;'
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n%s\n'"'"'
+         otto-gcda-check; LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -print
+         2>&1'
+INFO     @dut > | otto-gcda-check
 INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
 
 Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

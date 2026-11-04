@@ -16,6 +16,7 @@ which calls each product's own ``reset_coverage`` hook directly.
 """
 
 import contextlib
+import functools
 import logging
 import re
 import shutil
@@ -70,7 +71,9 @@ def _discard_leaf(dest: Path) -> None:
         dest.parent.rmdir()
 
 
-async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) -> Path | None:
+async def _fetch_one_product(
+    host: Any, product: "Product", staging_root: Path, *, existed_at_reset: bool = False
+) -> Path | None:
     """Archive, download and extract one product's ``.gcda`` from *host*.
 
     The whole ``cov_dir`` is packed by a plain ``tar`` into one archive that
@@ -98,7 +101,9 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
     and the host walk records it; an empty result is DEBUG,
     because an instrumented product that a run never exercised producing no
     counters (or no ``cov_dir`` at all) is ordinary and would otherwise cry
-    wolf on every collection.
+    wolf on every collection — unless *existed_at_reset*: this invocation's
+    pre-run reset saw the ``cov_dir`` exist, so a missing one now means it
+    was removed before collection, and its coverage is lost (a WARNING).
 
     Raises:
         ProductFetchError: The fetch failed, as above (already logged).
@@ -152,14 +157,22 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
         if archive.status is Status.NotRun:
             issued = False
             return None  # dry run: nothing was archived
-        return await _take_archive(host, product, cov_dir, archive, staging_root)
+        return await _take_archive(
+            host, product, cov_dir, archive, staging_root, existed_at_reset=existed_at_reset
+        )
     finally:
         if issued:
             await _remove_remote(host, remove)
 
 
 async def _take_archive(
-    host: Any, product: "Product", cov_dir: str, archive: Any, staging_root: Path
+    host: Any,
+    product: "Product",
+    cov_dir: str,
+    archive: Any,
+    staging_root: Path,
+    *,
+    existed_at_reset: bool = False,
 ) -> Path | None:
     """Fetch and extract the archive the archive command answered, if it made one.
 
@@ -189,7 +202,16 @@ async def _take_archive(
         raise ProductFetchError(f"archiving {cov_dir} failed: {output}")
     if not remote_tar:
         if any(line.strip() == _NO_COV_DIR for line in lines):
-            logger.debug("No cov_dir for %s on %s at %s", product.name, host.id, cov_dir)
+            if existed_at_reset:
+                logger.warning(
+                    "cov_dir %s on %s for %s existed at run start and is gone: its coverage "
+                    "is missing from this run (was it removed before collection?)",
+                    cov_dir,
+                    host.id,
+                    product.name,
+                )
+            else:
+                logger.debug("No cov_dir for %s on %s at %s", product.name, host.id, cov_dir)
             return None
         answer = repr("\n".join(lines).strip())
         logger.warning(
@@ -313,12 +335,17 @@ def safe_extract(archive: Path, dest: Path, *, suffix: str | None = None) -> Non
 
 
 async def _fetch_one_host(
-    host: Any, staging_root: Path, failures: FetchFailures
+    host: Any,
+    staging_root: Path,
+    failures: FetchFailures,
+    *,
+    present_at_reset: frozenset[tuple[str, str]] = frozenset(),
 ) -> dict[str, Path] | None:
     """Fetch every instrumented product on *host*; ``{product: dir}`` or ``None``.
 
     Each product is fetched on its own (:func:`~otto.coverage.fetcher.failures.fetch_each`):
     one that fails is recorded in *failures* and the next one is still fetched.
+    *present_at_reset* says which products' ``cov_dir`` the pre-run reset saw.
     """
     if _skipped_family(host):
         return None
@@ -330,7 +357,8 @@ async def _fetch_one_host(
         return None
 
     async def fetch_one(product: "Product") -> Path | None:
-        return await _fetch_one_product(host, product, staging_root)
+        existed = (host.id, product.name) in present_at_reset
+        return await _fetch_one_product(host, product, staging_root, existed_at_reset=existed)
 
     return await fetch_each(host, products, failures, fetch_one) or None
 
@@ -349,15 +377,21 @@ class GcdaFetcher:
 
     Hosts come from :func:`~otto.fleet.all_hosts` (containers included),
     optionally narrowed by *pattern* against each host's ``id``.
+    *present_at_reset* is the pre-run reset's evidence
+    (:attr:`~otto.coverage.reports.CleanReport.present_at_reset`): a listed
+    product whose ``cov_dir`` is gone is a WARNING rather than a DEBUG line.
     """
 
     def __init__(
         self,
         staging_root: Path,
         pattern: re.Pattern[str] | None = None,
+        *,
+        present_at_reset: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self.staging_root = staging_root
         self.pattern = pattern
+        self.present_at_reset = present_at_reset
 
     async def fetch_all(self, *, failures: FetchFailures) -> dict[ProductKey, Path]:
         """Fetch from every matching host concurrently; ``{ProductKey: dir}``.
@@ -368,4 +402,5 @@ class GcdaFetcher:
         Required: a caller that ignored failures would report a lost product
         as one that ran nothing.
         """
-        return await fetch_from_hosts(_fetch_one_host, self.staging_root, self.pattern, failures)
+        fetch_host = functools.partial(_fetch_one_host, present_at_reset=self.present_at_reset)
+        return await fetch_from_hosts(fetch_host, self.staging_root, self.pattern, failures)

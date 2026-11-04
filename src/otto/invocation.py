@@ -23,7 +23,7 @@ go stale across runs.
 import logging
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 if TYPE_CHECKING:
@@ -50,6 +50,30 @@ def check_variant(value: object) -> Variant:
         if value == variant:
             return variant
     raise ValueError(f"variant must be 'debug' or 'field', got {value!r}")
+
+
+@dataclass
+class CoverageCollection:
+    """Whether this invocation is collecting coverage, and its cleanup warning's latch.
+
+    Held by :attr:`otto.context.RunPolicy.coverage`, so a host's ``cleanup`` (which reads
+    the policy, never the run) and a project's cleanup decide the WARNING for
+    discarded counters on the same state
+    (:func:`otto.host.cov_sweep.warn_if_counters_discarded`).
+    :attr:`otto.context.OttoContext.collecting_coverage` reads and writes it.
+    """
+
+    collecting: bool = False
+    """Whether a post-run coverage collection is scheduled (``otto test --cov`` sets it)."""
+    warned: bool = False
+    """Whether this invocation's cleanup-during-collection WARNING was already logged."""
+
+    def claim_warning(self) -> bool:
+        """Return ``True`` exactly once while :attr:`collecting` is set; ``False`` otherwise."""
+        if not self.collecting or self.warned:
+            return False
+        self.warned = True
+        return True
 
 
 @dataclass
@@ -81,6 +105,10 @@ class RunPolicy:
     Preparation fills it from ``OTTO_TEARDOWN_DEADLINE`` once discovery has
     run; with no policy installed, readers see this default.
     """
+    coverage: CoverageCollection = field(
+        default_factory=CoverageCollection, init=False, repr=False, compare=False
+    )
+    """This invocation's coverage-collection state, fresh per policy and shared by its contexts."""
 
     def __post_init__(self) -> None:
         check_variant(self.variant)

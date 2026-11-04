@@ -110,7 +110,7 @@ param; everything else is optional:
 | `artifact` | **Required.** Local file, forward slashes, anchored to the project root |
 | `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. A missing directory is created (`mkdir -p`) before the artifact is transferred; only a creation that fails (no permission, a file in the way) fails staging, with the host's reason. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `embedded` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
 | `install` / `uninstall` / `check` | optional command strings run on the host |
-| `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`, and the empty string is refused |
+| `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`. It must be an absolute, normalized path of at least two components (`/tmp/x`, never `/`, `/tmp`, a `..`, a `//` or a trailing slash), and unique and un-nested per host: two products on one host whose `cov_dir`s are equal or one inside the other are refused at lab load, naming both. The empty string is refused too |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
 | `instrumented` | `true`/`false`, overriding the artifact scan — the answer for an archive (`.tar`, `.tar.gz`, `.zip`, …), which always scans `unknown` because the scan cannot see inside it |
 
@@ -121,9 +121,10 @@ coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
 
 (cov-dir-lifecycle)=
 
-**Leave `cov_dir` out of `uninstall`.** otto clears and collects the counters
-of the instrumented products on the `[coverage] hosts` at these points, and at
-no other:
+**Uninstall unloads; cleanup removes what otto placed, coverage counters
+included.** So `uninstall` may not name `{cov_dir}` (refused at lab load), and
+otto clears, collects and removes the counters of the instrumented products
+on the `[coverage] hosts` at these points, and at no other:
 
 | When | What otto does |
 |---|---|
@@ -131,14 +132,39 @@ no other:
 | `otto test`, after the last test | fetches every product's counters, then clears those of each product that captured ({doc}`../cli/cov/during-tests`) |
 | `otto cov get` | fetches; clears only with `--clean` ({doc}`../cli/cov/get`) |
 | `otto cov clean` | clears ({doc}`../cli/cov/clean`) |
-| `otto run uninstall`, `otto run cleanup`, `--recover-partial`, `ensure` markers, `Host.uninstall()` | neither: they run each product's own `uninstall` |
+| `otto run uninstall`, `--recover-partial`, `ensure("uninstalled")`, `Host.uninstall()` | neither: they run each product's own `uninstall`, which leaves `cov_dir` alone |
+| `otto run cleanup`, `ensure("clean")`, `Host.cleanup()` | remove its counters and the directories they leave empty |
 
 Counters add up between the two `otto test` rows, across every install and
-uninstall the tests do, as long as `uninstall` leaves `cov_dir` alone. A
-`cov_dir` that an `uninstall` deleted has nothing to fetch, and that product
-drops out of the run's captures with no warning: otto cannot tell it from a
-product that never ran. otto's own uninstalls (`kmod`, `docker_image`) never
-delete it.
+uninstall the tests do. A `cov_dir` that existed when the run started and is
+gone at collection loses that product's coverage, and otto logs a WARNING
+naming the directory, the host and the product. A `cov_dir` that did not exist
+at the start stays quiet: gcov creates it the first time the product exits, so
+a product the tests never ran has none. With `--no-cov-clean`, and for a
+standalone `otto cov get`, otto has no record of what existed, and a missing
+directory is only a DEBUG line.
+
+Cleanup's removal is narrow: under each instrumented product's `cov_dir` it
+deletes regular files named `*.gcda`, then each directory that is left empty,
+and nothing else. `cov_dir` itself goes too when the session can remove it; one
+it cannot (its parent is root's, as `/var/cov` is) stays, empty. A `cov_dir`
+that also holds other files keeps them (and itself, and the directories that
+lead to them). Either way cleanup says the `cov_dir` was kept, at INFO, and
+counts the product clean. `is-clean` asks the same question: any
+counter, or any empty directory under a `cov_dir`, left means not clean. A `docker_image` or
+`kmod` product's `cov_dir` is root-owned, so its removal runs through sudo; the
+check runs without sudo first and re-runs elevated only when it cannot read the
+directory. A product otto cannot tell is instrumented (`instrumented` unset on
+a build the scan reads as unknown) is never swept.
+
+A cleanup that removes counters while `otto test --cov` is running discards
+what was collected so far, and logs a WARNING once per run, whichever way it
+was reached (`ensure("clean")`, a project's cleanup, or a test's own
+`await host.cleanup()`): a coverage suite
+marks itself `ensure("uninstalled")` rather than `ensure("clean")`
+({doc}`../setup/writing-tests`). A cleanup from another invocation while a run
+on the same lab is still collecting is a user error that the bed lease and
+reservations exist to prevent; otto does not detect it.
 
 Clearing deletes the `.gcda` files under `cov_dir`, the only place a
 file-backed product's counters persist. A kernel module's counters are also in
@@ -179,10 +205,10 @@ session. On a container host, a long-running process belongs in the image's
 **products only** — a dev tool's command strings are passed through
 untouched:
 
-| Placeholder | Expands to |
-|---|---|
-| `{cov_dir}` | the entry's `cov_dir`, or the `/tmp/<name>` default |
-| `{name}` | the entry's `name` |
+| Placeholder | Expands to | Valid in |
+|---|---|---|
+| `{cov_dir}` | the entry's `cov_dir`, or the `/tmp/<name>` default | `install`, `check`; refused in `uninstall` ({ref}`why <cov-dir-lifecycle>`) |
+| `{name}` | the entry's `name` | all three |
 
 ```toml
 [[products]]

@@ -12,6 +12,9 @@ are declared on :doc:`/api/context`.
 
 .. autofunction:: otto.invocation.check_variant
 
+.. autoclass:: otto.invocation.CoverageCollection
+   :members:
+
 .. autofunction:: otto.invocation.current_policy
 
 .. autofunction:: otto.invocation.installed_policy

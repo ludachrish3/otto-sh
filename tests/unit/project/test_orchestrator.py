@@ -25,6 +25,7 @@ import io
 import logging
 import re
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from rich.console import Console
@@ -44,6 +45,7 @@ from otto.config.scope import (
 )
 from otto.context import OttoContext
 from otto.errors import OttoError
+from otto.invocation import RunPolicy
 from otto.link import (
     DirectionState,
     FlowDirection,
@@ -183,10 +185,16 @@ class _FakeCtx:
     # ``scopes_of(ctx)`` reads the verdicts through the context's own resolver,
     # borrowed for the same reason; seeded below, it returns them unresolved.
     _resolve_scopes = OttoContext._resolve_scopes
+    # A project's cleanup asks whether a coverage collection is scheduled
+    # and claims the warning latch through the context's own method.
+    claim_cleanup_warning = OttoContext.claim_cleanup_warning
+    collecting_coverage = OttoContext.collecting_coverage
 
     def __init__(self, hosts, lab=None, scopes=None, include_projects=(), exclude_projects=()):
         self.hosts = list(hosts)
         self.lab = _fake_lab() if lab is None else lab
+        # The collection state and its warning latch live on the policy hosts read.
+        self.policy = RunPolicy()
         # The resolver's verdicts, as ``scopes_of(ctx)`` hands them over.
         # An empty mapping is the whole-lab fallback (§6) and the shape every
         # test above this one runs under: nothing declared, nothing narrowed.
@@ -1918,6 +1926,97 @@ async def test_ensure_clean_cleans_a_lab_dirty_only_in_docker_staging(monkeypatc
         assert result.status is Status.Skipped
         assert result.msg == "already clean"
         assert removed == []
+
+
+class _CoverageHost(_FakeHost):
+    """A host carrying one project's product, its lifecycle verbs and its coverage dirs.
+
+    The project keeps otto's own actions, so the real ``ProjectActions`` asks
+    and drives these: ``coverage_dirs_clean`` answers False until
+    ``remove_coverage_dirs`` ran, the way empty ``cov_dir`` trees a fetch left
+    behind read until cleanup sweeps them.
+    """
+
+    def __init__(self, host_id, events, products, *, swept_clean=False):
+        super().__init__(host_id, events, products=products)
+        self.swept_clean = swept_clean
+
+    async def install(self, owner=None):
+        for product in self.products:
+            product.installed = True
+        return self._record("install", Result(Status.Success))
+
+    async def uninstall(self, get_product_logs=True, get_debug_logs=True, owner=None):
+        for product in self.products:
+            product.installed = False
+        return self._record("uninstall", Result(Status.Success))
+
+    async def uninstall_dev_tools(self, owner=None):
+        return self._record("uninstall_dev_tools", Result(Status.Success))
+
+    async def get_product_logs(self, dest=None, owner=None):
+        return self._record("get_product_logs", Result(Status.Success))
+
+    async def remove_coverage_dirs(self, owner=None):
+        self.swept_clean = True
+        return self._record("remove_coverage_dirs", Result(Status.Success))
+
+    async def coverage_dirs_clean(self, owner=None):
+        return self._record("coverage_dirs_clean", self.swept_clean)
+
+
+def _wire_coverage_lab(monkeypatch, products, *, swept_clean=False):
+    events = []
+    host = _CoverageHost("h0", events, products, swept_clean=swept_clean)
+    monkeypatch.setattr(
+        "otto.project.actions._dispatch_remove_docker_staging",
+        AsyncMock(return_value=Result(Status.Success)),
+    )
+    monkeypatch.setattr("otto.project.actions._docker_staging_left", AsyncMock(return_value=False))
+    _wire_lab(monkeypatch, ["app"], _FakeCtx([host]))
+    _wire_infra(monkeypatch, events)
+    return host, events
+
+
+@pytest.mark.asyncio
+async def test_ensure_clean_runs_cleanup_when_only_empty_cov_dirs_remain(monkeypatch):
+    """After a coverage run the fetch cleared the counters but left the dirs: not clean (#777).
+
+    ``ensure("clean")`` used to skip such a lab; cleanup now owns the dirs, so
+    it cleans, and the lab is clean afterwards.
+    """
+    host, events = _wire_coverage_lab(monkeypatch, [_FakeItem("app", installed=False)])
+
+    result = await project.ensure_clean()
+
+    assert result.msg != "already clean"
+    assert ("h0", "remove_coverage_dirs") in events
+    assert host.swept_clean
+    assert await project.is_clean()
+
+
+@pytest.mark.asyncio
+async def test_ensure_clean_skips_a_lab_whose_cov_dirs_are_gone(monkeypatch):
+    _, events = _wire_coverage_lab(monkeypatch, [_FakeItem("app")], swept_clean=True)
+    result = await project.ensure_clean()
+    assert result.status is Status.Skipped
+    assert ("h0", "remove_coverage_dirs") not in events
+
+
+@pytest.mark.asyncio
+async def test_partial_recovery_keeps_cov_dir(monkeypatch):
+    """The ``--ensure`` recovery uninstalls; it never runs cleanup, so coverage data stays."""
+    _, events = _wire_coverage_lab(
+        monkeypatch, [_FakeItem("app", installed=True), _FakeItem("app", installed=False)]
+    )
+
+    result = await project.ensure_installed()
+
+    assert result.is_ok, result.msg
+    verbs = [verb for _host, verb in events]
+    assert "uninstall" in verbs
+    assert "install" in verbs
+    assert "remove_coverage_dirs" not in verbs
 
 
 @pytest.mark.asyncio

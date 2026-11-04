@@ -263,7 +263,10 @@ before the test body. Each step does only the work the lab's state needs:
 - `uninstalled` runs `uninstall` unless the lab is already fully
   uninstalled.
 - `clean` runs `cleanup` unless the lab is already clean, which is stricter
-  than uninstalled: dev tools and toolchain tools count too.
+  than uninstalled: dev tools, toolchain tools and coverage counters count
+  too. Under `otto test --cov` that cleanup removes the counters collected so
+  far, so a coverage suite marks `ensure("uninstalled", "installed")` instead
+  ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 - `none`, the only step in its path, converges nothing; use it to exempt one
   test from its class's marker.
 
@@ -322,6 +325,9 @@ class TestRouter:
     @pytest.mark.ensure("clean", "installed")
     async def test_first_boot(self, dut) -> None: ...
 ```
+
+`test_first_boot` is not a coverage test: its `clean` removes the counters a
+`--cov` run has collected so far ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
 `host.run(...)` returns a {class}`~otto.result.Results`, one entry per
 command; `.only` asserts exactly one command ran and returns it, and `.value`

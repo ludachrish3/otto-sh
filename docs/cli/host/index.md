@@ -95,8 +95,10 @@ when called from Python with no explicit `user=` of its own.
 | `uninstall` | Uninstall products |
 | `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products (exit 0 if `True`, 1 if `False`, see {ref}`exit codes <host-exit-codes>`) |
 | `is-uninstalled` | Print the opposite of `is-installed`: `True` unless every product is installed, so also on a partly installed host or one with no products (exit 0 if `True`, 1 if `False`) |
-| `cleanup` | Uninstall products, then remove dev tools and toolchain tools |
-| `is-clean` | Print `True` if no product, dev tool, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
+| `cleanup` | Uninstall products, remove their coverage data, then remove dev tools and toolchain tools |
+| `is-clean` | Print `True` if no product, coverage data, dev tool, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
+| `remove-coverage-dirs` | Remove each instrumented product's `.gcda` counters and the directories they leave empty ({ref}`the coverage lifecycle <cov-dir-lifecycle>`) |
+| `coverage-dirs-clean` | Print `True` if no instrumented product has a counter or an empty coverage directory left, else `False` (exit 0 if `True`, 1 if `False`) |
 | `get-logs` | Retrieve product and debug logs into `logs/<host_id>/` ({ref}`the run tree <run-tree>`) |
 | `get-product-logs` | Retrieve each product's logs, and its own `debug_log_globs`, into `logs/<host_id>/<product>/` |
 | `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host_id>/debug/` |

@@ -129,8 +129,9 @@ not by user: if a colleague has this project installed on the same hosts,
 your `uninstall` removes their copy too. Reservations
 ({doc}`../cli/reservation/index`) are how a team keeps that from happening.
 
-`otto --lab my_lab run cleanup` also takes the dev tools and the hosts'
-toolchain tools off, and by default it resets every impairment and removes
+`otto --lab my_lab run cleanup` also takes the dev tools, the products'
+coverage counters ({ref}`the coverage lifecycle <cov-dir-lifecycle>`) and the
+hosts' toolchain tools off, and by default it resets every impairment and removes
 every otto tunnel in the lab, other people's included. On a lab you share,
 run it as
 `otto --lab my_lab run cleanup --no-reset-impairments --no-remove-tunnels`.

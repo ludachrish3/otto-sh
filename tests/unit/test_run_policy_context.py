@@ -10,7 +10,7 @@ import pytest
 
 from otto import context
 from otto.host.host import SuppressCommandOutput, get_logging_command_output_enabled, is_dry_run
-from otto.invocation import RunPolicy, installed_policy, installed_resolver
+from otto.invocation import RunPolicy, current_policy, installed_policy, installed_resolver
 from otto.labs.loader import Lab
 from otto.run_context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 from tests._fixtures.bootstrap_seam import patch_bootstrap
@@ -404,3 +404,36 @@ def test_declared_reads_the_variant_through_the_leaf_and_never_imports_the_conte
     assert bad == []
     assert leaf_at_top == []
     assert "invocation" in (CHECKOUT_ROOT / "src" / "otto" / "declared.py").read_text()
+
+
+def test_a_second_context_on_the_active_policy_keeps_its_coverage_state():
+    """Contexts sharing one policy are one run: building another resets nothing.
+
+    A cleared flag would let the outer run's next ``Host.cleanup()`` discard
+    counters without the warning.
+    """
+    outer = OttoContext(lab=Lab(name="rig"))
+    binding = set_context(outer)
+    try:
+        outer.collecting_coverage = True
+        assert outer.claim_cleanup_warning() is True
+        OttoContext(lab=Lab(name="rig"), policy=outer.policy)
+        state = current_policy().coverage
+        assert (state.collecting, state.warned) == (True, True)
+    finally:
+        reset_context(binding)
+
+
+def test_coverage_collection_preserved_restores_the_live_state():
+    """The flag and the latch set inside the block are undone, on the state hosts read."""
+    ctx = OttoContext(lab=Lab(name="rig"))
+    binding = set_context(ctx)
+    try:
+        with ctx.coverage_collection_preserved():
+            OttoContext(lab=Lab(name="rig"), policy=ctx.policy)
+            ctx.collecting_coverage = True
+            assert ctx.claim_cleanup_warning() is True
+        state = current_policy().coverage
+        assert (state.collecting, state.warned) == (False, False)
+    finally:
+        reset_context(binding)

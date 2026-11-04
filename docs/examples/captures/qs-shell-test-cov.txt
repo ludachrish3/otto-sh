@@ -1,8 +1,26 @@
 $ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/e2e/cov --no-random TestTools
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
-INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -delete
-INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -delete
+INFO     @dut   | printf '\n%s\n' otto-cov-presence
+         if test -d /tmp/wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0 absent';
+         fi
+         if test -d /tmp/shout; then echo 'otto-cov 1 present'; else echo 'otto-cov 1 absent'; fi
+INFO
+INFO     @dut > | otto-cov-presence
+INFO     @dut > | otto-cov 0 absent
+INFO     @dut > | otto-cov 1 present
+INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -exec rm -f
+         {} \;
+INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '*.gcda' -type
+         f -print 2>&1
+INFO
+INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/wordcount': No such file or directory
+INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -exec rm -f {} \;
+INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/shout -name '*.gcda' -type f
+         -print 2>&1
+INFO
+INFO     @dut > | otto-gcda-check
 INFO     coverage counters cleared before the run on 2 product(s) across 1 host(s)
 INFO     === test_wordcount_counts_words[one-1] ===
 INFO     @dut   | GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /tmp/quickstart/wordcount one
@@ -40,8 +58,17 @@ INFO     === Capturing dut/wordcount ===
 INFO     lcov capture: 2 file(s) -> /tmp/otto-gs/xdir/e2e/cov/dut/wordcount/board.info
 INFO     dut/wordcount: skipped 5 source file(s) outside the project root
 INFO     Coverage captures produced: 2 board(s)
-INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -delete
-INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -delete
+INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -exec rm -f
+         {} \;
+INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '*.gcda' -type
+         f -print 2>&1
+INFO
+INFO     @dut > | otto-gcda-check
+INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -exec rm -f {} \;
+INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/shout -name '*.gcda' -type f
+         -print 2>&1
+INFO
+INFO     @dut > | otto-gcda-check
 INFO     coverage counters cleared after collection on 2 product(s) across 1 host(s)
 
 Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

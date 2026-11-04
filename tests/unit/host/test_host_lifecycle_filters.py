@@ -518,3 +518,140 @@ async def test_is_clean_asks_the_toolchain_question_through_the_extracted_helper
     assert await recording_host.is_clean() is False
     assert calls == ["absent"]
     assert recording_host.exec_calls == []
+
+
+# =========================================================================== #
+# Coverage data (#777): cleanup removes it, is_clean asks about it
+#
+# The sweep itself (what is removed, what is kept, elevation) is pinned in
+# tests/unit/host/test_cov_sweep.py; what these pin is that the host verbs
+# go through it, scoped and ordered.
+# =========================================================================== #
+
+
+class _InstrumentedProduct(_ScriptedProduct):
+    """A scripted product whose build is known to be instrumented: the sweep may touch it."""
+
+    def __init__(self, name, owner=None, **kwargs):
+        super().__init__(name, owner=owner, **kwargs)
+        self.cov_dir = f"/var/cov/{name}"
+
+    def instrumented(self):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_host_cleanup_sweeps_every_owner_after_uninstall(recording_host, tmp_path):
+    events = []
+
+    async def _sweep(owner=None):
+        events.append(("sweep", owner))
+        return Result(Status.Success)
+
+    async def _tools(owner=None):
+        events.append(("tools", owner))
+        return Result(Status.Success)
+
+    recording_host.remove_coverage_dirs = _sweep
+    recording_host.uninstall_dev_tools = _tools
+    recording_host.products = [_ScriptedProduct("app", events=events)]
+    with active_context(output_dir=tmp_path):
+        assert (await recording_host.cleanup()).is_ok
+    assert events == ["app:uninstall", ("sweep", None), ("tools", None)]
+
+
+@pytest.mark.asyncio
+async def test_host_cleanup_reports_a_failed_sweep_and_still_removes_the_tooling(
+    recording_host, tmp_path
+):
+    tools = []
+
+    async def _sweep(owner=None):
+        return Result(Status.Failed, msg="h1: cleanup left coverage data: app: left /x/a.gcda")
+
+    async def _tools(owner=None):
+        tools.append(owner)
+        return Result(Status.Success)
+
+    recording_host.remove_coverage_dirs = _sweep
+    recording_host.uninstall_dev_tools = _tools
+    with active_context(output_dir=tmp_path):
+        result = await recording_host.cleanup()
+    assert not result.is_ok
+    assert "cleanup left coverage data" in result.msg
+    assert tools == [None]
+
+
+@pytest.mark.asyncio
+async def test_host_is_clean_asks_the_coverage_question(recording_host):
+    asked = []
+
+    async def _clean(owner=None):
+        asked.append(owner)
+        return False
+
+    recording_host.coverage_dirs_clean = _clean
+    recording_host.toolchain = Toolchain(tools=[_tool(dest="/d")])
+    assert await recording_host.is_clean() is False
+    assert asked == [None]
+    assert recording_host.exec_calls == []  # answered before the toolchain probe
+
+
+@pytest.mark.asyncio
+async def test_remove_coverage_dirs_sweeps_only_the_owners_eligible_products(
+    recording_host, monkeypatch
+):
+    swept = []
+
+    async def _spy(host, products):
+        swept.append([p.name for p in products])
+        return Result(Status.Success)
+
+    monkeypatch.setattr("otto.host.cov_sweep.remove_coverage", _spy)
+    recording_host.products = [
+        _InstrumentedProduct("a1", owner="A"),
+        _InstrumentedProduct("b1", owner="B"),
+        _ScriptedProduct("a2", owner="A"),  # instrumented() is None: never swept
+    ]
+    assert (await recording_host.remove_coverage_dirs(owner="A")).is_ok
+    assert (await recording_host.remove_coverage_dirs()).is_ok
+    assert swept == [["a1"], ["a1", "b1"]]
+
+
+@pytest.mark.asyncio
+async def test_coverage_dirs_clean_is_false_while_something_is_left(recording_host, monkeypatch):
+    seen = []
+
+    async def _left(host, products):
+        seen.append([p.name for p in products])
+        return {"a1": ["/var/cov/a1/x.gcda"]}
+
+    monkeypatch.setattr("otto.host.cov_sweep.coverage_left", _left)
+    recording_host.products = [_InstrumentedProduct("a1", owner="A")]
+    assert await recording_host.coverage_dirs_clean(owner="A") is False
+    assert await recording_host.coverage_dirs_clean(owner="B") is False
+    assert seen == [["a1"], []]
+
+
+@pytest.mark.asyncio
+async def test_remove_coverage_dirs_on_an_embedded_host_sends_nothing():
+    from otto.host.command_frame import ZephyrFrame
+    from otto.host.element import Element
+    from otto.host.embedded_host import EmbeddedHost
+    from otto.logger.mode import LogMode
+
+    board = EmbeddedHost(
+        ip="192.0.2.1",
+        element=Element("zephyr37_fat"),
+        log=LogMode.QUIET,
+        command_frame=ZephyrFrame(),
+    )
+    board.products = [_InstrumentedProduct("ext")]
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("an embedded board has no cov_dir to sweep or probe")
+
+    board.exec = _refuse
+    board.run = _refuse
+    assert (await board.remove_coverage_dirs()).is_ok
+    assert await board.coverage_dirs_clean() is True

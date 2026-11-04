@@ -1,7 +1,8 @@
 """Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
 
+import itertools
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from ..layout import validate_product_name
@@ -18,7 +19,13 @@ from .os_profile import (
     constructing_with,
     resolve_os_profile,
 )
-from .product import apply_declared_products, apply_product_providers, stamp_cov_dir
+from .product import (
+    apply_declared_products,
+    apply_product_providers,
+    cov_dir_of,
+    stamp_cov_dir,
+    validate_cov_dir,
+)
 from .remote_host import RemoteHost, make_host_id
 
 if TYPE_CHECKING:
@@ -345,7 +352,30 @@ def apply_providers(host: "RemoteHost | Any") -> None:
         except ValueError as e:
             raise ValueError(f"host {host.id}: {e}") from e
         stamp_cov_dir(product)
+        validate_cov_dir(cov_dir_of(product), f"host {host.id}: product {product.name!r}")
     check_stage_collisions(host)
+    check_cov_dir_overlaps(host)
+
+
+def check_cov_dir_overlaps(host: "RemoteHost | Any") -> None:
+    """Refuse two products on THIS host whose ``cov_dir`` values are equal or nested.
+
+    One product's counter reset (and cleanup's sweep) walks its whole
+    ``cov_dir``, so a dir shared with, or containing, another product's would
+    wipe that product's counters. The test is by path component, both ways
+    round over every unordered pair, so the verdict never depends on
+    declaration order and siblings that merely share a string prefix
+    (``/var/cov/app`` and ``/var/cov/app_ref``) are fine. The same
+    ``cov_dir`` on two hosts is fine too.
+    """
+    for p, q in itertools.combinations(host.products, 2):
+        a, b = cov_dir_of(p), cov_dir_of(q)
+        first, second = PurePosixPath(a), PurePosixPath(b)
+        if first == second or second.is_relative_to(first) or first.is_relative_to(second):
+            raise ValueError(
+                f"host {host.id}: products {p.name!r} and {q.name!r} share cov_dir {a} / {b} "
+                "(equal or nested): one product's counter reset would wipe the other's"
+            )
 
 
 def check_stage_collisions(host: "RemoteHost | Any") -> None:

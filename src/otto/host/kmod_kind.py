@@ -32,7 +32,7 @@ import logging
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
@@ -54,7 +54,6 @@ from .product import (
     cov_dir_of,
     ensure_stage_dir,
     planned_stage_dir,
-    sudo_gcda_delete,
 )
 from .shell_kind import (
     coverage_params,
@@ -93,6 +92,9 @@ _MODULE_VERBS = ("load", "unload", "lsmod")
 @dataclass
 class KmodProduct(ShellProduct):
     """A ``kind = "kmod"`` entry's runtime form."""
+
+    cov_dir_root_owned: ClassVar[bool] = True
+    """The kernel writes the counters as root, whatever the ``coverage`` method."""
 
     module_name: str = ""
     """What ``/proc/modules`` shows: the artifact stem with ``-`` → ``_`` unless declared."""
@@ -313,8 +315,9 @@ class KmodProduct(ShellProduct):
             # A NotRun here (the session declining under --dry-run) falls
             # through to the shared delete below, which announces its own
             # command and carries the same NotRun back as the overall result.
-        # The kernel wrote the files as root: the default delete, elevated.
-        return await sudo_gcda_delete(self, host)
+        # The kernel wrote the files as root: the default delete, elevated
+        # because the kind's cov_dir is root-owned (cov_dir_root_owned).
+        return await super().reset_coverage(host)
 
     def _kmodcov_file(self, name: str) -> str:
         return f"{KMODCOV_SYSFS_ROOT}/{self.module_name}/kmodcov/{name}"

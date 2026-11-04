@@ -366,7 +366,9 @@ def test_post_run_coverage_shows_a_capture_failure_once(tmp_path, monkeypatch, c
 
     with caplog.at_level(logging.INFO):
         asyncio.run(
-            _post_run_coverage([project], log_dir, RunOptions(cov_clean=False, cov_report=True))
+            _post_run_coverage(
+                [project], log_dir, RunOptions(cov_clean=False, cov_report=True), None
+            )
         )
 
     text = "\n".join(r.getMessage() for r in caplog.records)
