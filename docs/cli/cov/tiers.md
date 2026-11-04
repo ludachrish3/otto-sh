@@ -115,7 +115,8 @@ in the lab you report with, and built with coverage instrumentation **on this
 machine, under the project root** — otto reads which files each one is built
 from out of its notes (`.gcno`). The lab matters even though the unit tier runs
 nothing on its hosts (a `docker_image` named by reference is the exception: its
-object list is read from its running container): the products counted are the
+object list is read from its container — running, stopped, or, with none, its
+image): the products counted are the
 ones the lab's hosts carry. Build your
 unit tests with coverage instrumentation too and run them as you always have.
 A unit test binary writes each object's `.gcda` beside that object's `.gcno`,
@@ -241,7 +242,12 @@ notes are not found contributes nothing; one INFO line per product counts
 those objects and names the first few.
 
 A `docker_image` product named by reference has no local artifact: its object
-list is read by scanning its running container. The scan skips the virtual
+list is read by scanning its container on the lab host. A running container is
+scanned in place. A stopped or paused one is scanned through a short-lived,
+labelled copy of it that shares its mounts, user and groups; that read has a
+20-minute total budget, and its copy is removed when it ends (or by the next
+read's expiry sweep). With no container, the product's image is scanned
+alone. The scan skips the virtual
 and runtime top-level directories — `/proc`, `/sys`, `/dev`, `/tmp`, `/run`
 and `/var/run` — and hidden top-level directories (`/.name`), so a product
 binary installed only there is reported as not instrumented. Install it
@@ -279,7 +285,8 @@ unit unit/core: drop tests/test_add.cpp (not a source of product core)
 When nothing is kept, the INFO line `unit <view>: no source files of product
 <product> under <dir>; nothing to capture` replaces the capture: that directory
 adds no run. A directory with no `.gcda` at all is a warning that ends `run the unit
-tests first; skipping`.
+tests first; skipping`. A view none of whose directories holds a `.gcda` is
+skipped without reading its products, so nothing about them is refused.
 
 **Refusals.** Every unit view is checked before anything is captured, and a
 refusal stops the whole report — there is no unfiltered fallback:
@@ -289,8 +296,8 @@ refusal stops the whole report — there is no unfiltered fallback:
 | *no product named 'app' of project P found in the active lab (L)*, or *no products of project P found: no lab is active* | The view has no product to count the sources of | Run with the lab that declares the products (`--lab`), and build them with `--coverage` | `1` |
 | *product 'app' of project P is declared instrumented = false* | The view is named for a product that declares it has no coverage instrumentation | Remove the view, or instrument the product and drop `instrumented = false` | `1` |
 | *product 'app' (build/app) is not instrumented: … Build it with coverage instrumentation (--coverage) …* | The product's `artifact` ({doc}`../../configuration/declared-products-tools`) is missing, or holds no coverage paths | Build it with `--coverage`, or declare it `instrumented = false` | `1` |
-| *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | Start a stopped container with `docker start` on its parent ({ref}`coverage-container-stop-to-flush`, step 4); install one that is gone (`otto run install`) | `2` |
-| *could not read product 'app''s object list: …* | The artifact or the container scan could not be read; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit (set only when the image has `timeout` and `date`; without them the scan runs to the host-side timeout), is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
+| *product 'app': image r is not on h's docker daemon — install the product (or pull the image) first* | A `docker_image` product named by reference has no container on its lab host, and its image is not on that host's daemon either | Install the product (`otto run install`), or pull the image on its host | `2` |
+| *could not read product 'app''s object list: …* | The artifact or the container scan could not be read, or the container is dead or being removed; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit (set only when the image has `timeout` and `date`; without them the scan runs to the host-side timeout), is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
 
 Under `otto test --cov --cov-report` a refusal costs that run its inline
 report, never the test result: a warning names the cause, the e2e captures

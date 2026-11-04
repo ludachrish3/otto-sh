@@ -166,7 +166,6 @@ def build_command(root: Path, project: str, image: DockerImage, options: BuildOp
     return f"{_BUILD_ENV} docker build {' '.join(flags)} {context_arg}"
 
 
-_ID_FORMAT = "{{.Id}}"
 _LIST_FORMAT = "{{.Repository}}:{{.Tag}} {{.ID}}"
 
 
@@ -180,16 +179,16 @@ async def _read_back(
     part lists every tag of its repository, and only the just-built image's are
     this build's. Nothing here is composed by otto.
     """
-    inspected = await parent.exec(
-        f"docker image inspect --format {shlex.quote(_ID_FORMAT)} {shlex.quote(references[0])}"
-    )
-    if not inspected.status.is_ok:
-        return [], None, inspected
-    full_id = str(inspected.value).strip().removeprefix("sha256:")
+    from ..host.docker_cli import image_id_of  # function-local: off the build import path
+
+    inspected = await image_id_of(parent, references[0])
+    if not inspected.result.status.is_ok:
+        return [], None, inspected.result
+    full_id = (inspected.id or "").removeprefix("sha256:")
 
     found: list[str] = []
     image_id: str | None = None
-    listed = inspected
+    listed = inspected.result
     for reference in references:
         listed = await parent.exec(
             f"docker images --format {shlex.quote(_LIST_FORMAT)} {shlex.quote(reference)}"

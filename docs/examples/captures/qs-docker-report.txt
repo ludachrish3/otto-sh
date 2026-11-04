@@ -1,8 +1,10 @@
 $ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-docker/e2e --dir /tmp/otto-gs/xdir/quickstart-docker/report
-INFO     @docker-host   | docker container inspect -f '{{.State.Running}} {{.Image}}'
+INFO     @docker-host   | docker container inspect --format '{"status":{{json
+         .State.Status}},"running":{{json .State.Running}},"image":{{json .Image}},"ref":{{json
+         .Config.Image}},"user":{{json .Config.User}},"groups":{{json .HostConfig.GroupAdd}}}'
          quickstart-banner
-INFO     @docker-host > | true
-         sha256:<id>
+INFO     @docker-host > |
+         {"status":"running","running":true,"image":"sha256:<id>","ref":"quickstart-banner:latest","user":"","groups":null}
 INFO     @docker-host   | docker exec -e OTTO_SCAN_ID=<uuid>
          quickstart-banner sh -c 'unset OTTO_SCAN_END; if timeout 5 sh -c : 2>/dev/null &&
          now=$(date +%s 2>/dev/null) && [ -n "$now" ]; then OTTO_SCAN_END=$(( now + 540 )); export
@@ -35,10 +37,11 @@ INFO     @docker-host > | /tmp/otto-objlist.<uuid>
 INFO     @docker-host   | docker cp quickstart-banner:/opt/quickstart/banner
          /tmp/otto-objlist.<uuid>/0
 INFO     @docker-host   | rm -rf "${TMPDIR:-/tmp}/otto-objlist.<uuid>"
-INFO     unit unit: kept 4 product source files, dropped 19 not in any product
-INFO     lcov capture -> /tmp/otto-gs/xdir/quickstart-docker/report/_work/unit_unit_0.raw.info
-INFO     Loading unit_unit_0.info as unit coverage
-INFO     Loaded 1 files from unit_unit_0.info
+INFO     unit unit/banner: kept 2 source files of product banner, dropped 21 others
+INFO     lcov capture ->
+         /tmp/otto-gs/xdir/quickstart-docker/report/_work/unit_unit_banner_0.raw.info
+INFO     Loading unit_unit_banner_0.info as unit coverage
+INFO     Loaded 1 files from unit_unit_banner_0.info
 INFO     === Rendering coverage report ===
 INFO     Report written to /tmp/otto-gs/xdir/quickstart-docker/report/index.html
 INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-docker/report/index.html

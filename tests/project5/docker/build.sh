@@ -26,12 +26,27 @@
 # the main checkout), so it is computed here, at build time, and baked into
 # the image as an ENV default (see Dockerfile) rather than hardcoded in
 # settings.toml — the products' run_args then need only pass GCOV_PREFIX.
+#
+# The image's PID 1 is the product's own `serve` (see Dockerfile and
+# src/main.c): a `docker stop` ends it through its SIGTERM handler, so the
+# stop is what flushes its counters. `docker exec ... /opt/product <op>` runs
+# the short ops beside it as before.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$HERE/src"
 BUILD="$HERE/build"
 mkdir -p "$BUILD"
 gcc --coverage -static -O0 -g -o "$BUILD/product" "$SRC/main.c" "$SRC/math_ops.c"
+
+# Two more builds, neither of which goes into the image (its context stays
+# build/): build-bind/product is the same product, which the e2e bind-mounts
+# into a container at /opt instead (the stopped-container --volumes-from
+# proof), and build-unit/test_math_ops is the unit test, run on the dev VM, whose
+# directory is cov_container_ref's unit view (.otto/settings.toml).
+mkdir -p "$HERE/build-bind" "$HERE/build-unit"
+gcc --coverage -static -O0 -g -o "$HERE/build-bind/product" "$SRC/main.c" "$SRC/math_ops.c"
+gcc --coverage -O0 -g -o "$HERE/build-unit/test_math_ops" \
+    "$HERE/unit/test_math_ops.c" "$SRC/math_ops.c"
 
 # Count BUILD's own '/'-separated components: stripping that many leaves
 # just the bare filename (e.g. "product-main.gcda").

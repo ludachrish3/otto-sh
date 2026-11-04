@@ -53,6 +53,7 @@ from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT5
+from tests.project5.pylib.project5_containers import BIND_SRC
 
 BUILD = PROJECT5 / "build"
 DEMO_SRC = PROJECT5 / "kmod" / "demo"
@@ -61,6 +62,10 @@ KMODCOV = PROJECT5 / "third_party" / "otto_kmodcov"
 user's project holds."""
 DOCKER = PROJECT5 / "docker"
 DOCKER_SRC = DOCKER / "src"
+DOCKER_UNIT = DOCKER / "unit"
+UNIT_BUILD = DOCKER / "build-unit"
+UNIT_BINARY = UNIT_BUILD / "test_math_ops"
+BIND_BINARY = DOCKER / "build-bind" / "product"
 TARBALL = DOCKER / "otto-cov-demo.tar"
 KMOD_BUILD = PROJECT5 / "kmod" / "build.sh"
 LAB_DATA = CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
@@ -417,8 +422,9 @@ def _overlay(
     """The one overlay-project builder: *name* under *root*, layered over project5 by OTTOPATH.
 
     It declares one json ``[[lab.sources]]`` per *lab_sources* file and the
-    ``[[products]]`` text *products*, and nothing else: no tests and no project
-    block, so it can never shadow project5's own.
+    ``[[products]]`` text *products*, and nothing else: no tests, so it can never
+    shadow project5's own. A *products* text carries its own ``[project]
+    lab_patterns``, which otto requires of every project that declares products.
     """
     sources = "".join(
         f'[[lab.sources]]\nbackend = "json"\npaths = ["{lab}"]\n' for lab in lab_sources or []
@@ -460,6 +466,37 @@ def docker3_overlay_project(root: Path) -> Path:
         + "\n"
     )
     return _overlay(root, "docker3_overlay", lab_sources=[lab])
+
+
+# The --volumes-from + cp proof: a stopped container whose binary sits on a
+# bind mount, not in its image. Opt-in through OTTOPATH, so that no host-wide
+# install, --cov-clean or fetch in any other lane ever sees it. The mount's
+# source is the stop suites' BIND_SRC, which they populate on test3.
+_BIND_PRODUCT = f"""\
+[project]
+lab_patterns = [".*"]
+
+[[products]]
+name = "cov_container_bind"
+kind = "docker_image"
+image = "otto-cov-demo:e2e"
+pull = false
+instrumented = false
+cov_dir = "/var/cov/cov_container_bind"
+run_args = "-v {BIND_SRC}:/opt:ro"
+match = {{ id = "test3" }}
+"""
+
+
+def bind_overlay_project(root: Path) -> Path:
+    """A project under *root* declaring ``cov_container_bind`` on test3, and nothing else.
+
+    Its container runs ``/opt/product serve`` from ``build-bind/``, bind-mounted
+    read-only at ``/opt`` (``project5_containers.BIND_SRC`` on test3), so its
+    object list is readable only through that mount: a stopped one is the
+    snapshot scan's ``--volumes-from`` proof.
+    """
+    return _overlay(root, "bind_overlay", products=_BIND_PRODUCT)
 
 
 def kmod_artifacts_are_stale(artifacts: list[Path], sources: list[Path], tc: Toolchain) -> bool:
@@ -980,10 +1017,10 @@ def _record(store: CoverageStore, name: str) -> FileRecord:
     raise AssertionError(f"no FileRecord ending with {name!r}; have {have}")
 
 
-def _hits(rec: FileRecord, lineno: int) -> int:
-    """*lineno*'s system-tier hit count, or a named failure when it carries no ``DA:`` record."""
+def _hits(rec: FileRecord, lineno: int, tier: str = "system") -> int:
+    """*lineno*'s *tier* hit count, or a named failure when it carries no ``DA:`` record."""
     assert lineno in rec.lines, f"{rec.path}:{lineno} carries no coverage data"
-    return rec.lines[lineno].hits.for_tier("system")
+    return rec.lines[lineno].hits.for_tier(tier)
 
 
 def _demo_and_kmodcov_sources() -> list[Path]:
@@ -1005,6 +1042,7 @@ def _image_sources() -> list[Path]:
     return [
         *DOCKER_SRC.glob("*.c"),
         *DOCKER_SRC.glob("*.h"),
+        *DOCKER_UNIT.glob("*.c"),
         DOCKER / "Dockerfile",
         DOCKER / "build.sh",
     ]
@@ -1066,7 +1104,9 @@ def ensure_kmod_artifacts(tmp_path_factory, tc: Toolchain = DEFAULT_TOOLCHAIN) -
     container-image half has its own script and its own ensure function —
     with *tc*'s environment, plus ``OTTO_KMODCOV_TOOLCHAIN=tc.name``, on top of
     the process's; the script itself is the toolchain stamp's single writer.
+    It first clears any stranded unit counters (:func:`clear_unit_counters`).
     """
+    clear_unit_counters()
     _assert_committed([DEMO_SRC], tmp_path_factory)
     lib_ko = BUILD / "lib" / "otto_kmodcov.ko"
     demo_ko = DEMO_SRC / "otto_kmod_demo.ko"
@@ -1087,14 +1127,19 @@ def ensure_kmod_artifacts(tmp_path_factory, tc: Toolchain = DEFAULT_TOOLCHAIN) -
 
 
 def ensure_image_artifacts(tmp_path_factory) -> None:
-    """Build the container-image half (the tarball) when missing or stale.
+    """Build the container-image half (the tarball, the bind build and the unit test) when
+    missing or stale.
 
     Runs ``docker/build.sh`` directly, not ``tests/project5/build.sh`` — the
     image half stands alone and needs no kernel headers, so the e2e that
     only exercises it must not inherit the kmod half's prerequisites.
+    It first clears any stranded unit counters (:func:`clear_unit_counters`).
     """
-    _assert_committed([DOCKER_SRC], tmp_path_factory)
-    if _artifacts_are_stale([TARBALL], _image_sources()):
+    clear_unit_counters()
+    _assert_committed(
+        [DOCKER_SRC, DOCKER_UNIT, DOCKER / "Dockerfile", DOCKER / "build.sh"], tmp_path_factory
+    )
+    if _artifacts_are_stale([TARBALL, BIND_BINARY, UNIT_BINARY], _image_sources()):
         try:
             subprocess.run([str(DOCKER / "build.sh")], check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:
@@ -1102,3 +1147,29 @@ def ensure_image_artifacts(tmp_path_factory) -> None:
                 f"{DOCKER / 'build.sh'} failed (exit {exc.returncode}):\n"
                 f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}"
             ) from exc
+
+
+def clear_unit_counters() -> None:
+    """Remove the unit test's ``.gcda`` files, so the next run counts from zero.
+
+    Both ensures call it at their start, :func:`run_unit_tests` before it
+    runs, and the stopped-report proof at its end. Every project5 report lane
+    (docker image, kmod, kmodcov) passes through one of the ensures, so
+    counters a killed run stranded never reach a later report. Left there, they
+    would make project5's unit view read ``cov_container_ref``'s objects, and
+    refuse once its image is gone. Safe from a race because every lane that
+    calls it on the real :data:`UNIT_BUILD` is in the one ``coverage_e2e``
+    xdist group, so none runs while another's counters are live; the hostless
+    helper tests that call an ensure point :data:`UNIT_BUILD` at a temp dir.
+    """
+    for gcda in UNIT_BUILD.glob("*.gcda"):
+        gcda.unlink()
+
+
+def run_unit_tests() -> None:
+    """Run the project5 unit test once from zero counts; it writes ``build-unit/*.gcda``."""
+    clear_unit_counters()
+    ran = subprocess.run([str(UNIT_BINARY)], check=False, capture_output=True, text=True)
+    assert ran.returncode == 0, (
+        f"{UNIT_BINARY} exited {ran.returncode}:\nstdout:\n{ran.stdout}\nstderr:\n{ran.stderr}"
+    )

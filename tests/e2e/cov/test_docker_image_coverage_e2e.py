@@ -10,6 +10,15 @@
     otto -l docker3 run install
     otto -l docker3 host test3 is-installed
 
+``TestStoppedContainerReport`` is #782's proof: a report reads the objects of
+products whose containers are stopped (project5 + the bind overlay):
+
+    docker/build-unit/test_math_ops                              (the unit view's counts)
+    otto -l unix test --cov --cov-clean TestContainerStopFlow    (installs, stops: the flush)
+    otto -l unix cov report <run> --dir <report>
+    otto -l unix test TestScanLeftovers                          (nothing left; the store)
+    otto -l unix test TestContainerStopCleanup
+
 Prerequisites: test3 up with docker; docker and gcc on the dev VM (the
 tarball is built here, by tests/project5/docker/build.sh directly, when
 missing or stale — no kernel headers needed, since TestCovContainer's own
@@ -18,6 +27,7 @@ test` never touches a product verb). Pinned to one xdist worker:
 /var/cov/cov_container* on test3 is shared state.
 """
 
+import json
 import os
 import subprocess
 
@@ -35,9 +45,12 @@ from tests.e2e.cov._project5_build import (
     _hits,
     _line_of,
     _record,
+    bind_overlay_project,
+    clear_unit_counters,
     docker3_overlay_project,
     ensure_image_artifacts,
     listed_products,
+    run_unit_tests,
 )
 
 PRODUCTS = {"cov_container", "cov_container_ref"}
@@ -109,8 +122,8 @@ class TestDockerImageCoverage:
 
     def test_container_log_is_hauled(self, coverage_run):
         """The haul writes the file even though it is legitimately empty: `docker logs`
-        captures the container's own PID1 output (`sleep infinity`, which prints
-        nothing), not what `docker exec` ran inside it — so an empty
+        captures the container's own PID1 output (`/opt/product serve`, which
+        prints nothing), not what `docker exec` ran inside it — so an empty
         container.log is the correct pin here, not merely the weakest one.
         """
         _, _, log_dir = coverage_run
@@ -168,12 +181,24 @@ def reinstall_run(tmp_path_factory) -> "dict[str, subprocess.CompletedProcess[st
     overlay = docker3_overlay_project(tmp / "overlays")
     # LISTING_ENV: the guard below reads the --list-products table back.
     env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(overlay)]), **LISTING_ENV}
+    # The cleanup suite uninstalls the stop suites' products, the bind one
+    # among them, so it needs the bind overlay too: an earlier stop flow's
+    # leftover is removed here as well.
+    bind = bind_overlay_project(tmp / "overlays")
+    cleanup_env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(overlay), str(bind)])}
     xdir = tmp / "xdir"
     xdir.mkdir()
 
-    def otto(argv: "list[str]", timeout: int = 900) -> "subprocess.CompletedProcess[str]":
+    def otto(
+        argv: "list[str]", timeout: int = 900, extra_env: "dict[str, str] | None" = None
+    ) -> "subprocess.CompletedProcess[str]":
         return run_otto(
-            argv, xdir=xdir, roots=PROJECT5, lab=DOCKER3_LAB, extra_env=env, timeout=timeout
+            argv,
+            xdir=xdir,
+            roots=PROJECT5,
+            lab=DOCKER3_LAB,
+            extra_env=extra_env or env,
+            timeout=timeout,
         )
 
     steps: "dict[str, subprocess.CompletedProcess[str]]" = {}
@@ -194,7 +219,7 @@ def reinstall_run(tmp_path_factory) -> "dict[str, subprocess.CompletedProcess[st
             steps["is_installed"] = otto(["host", "test3", "is-installed"], timeout=120)
             steps["hook"] = otto(["test", "TestContainerReinstall"])
         finally:
-            steps["cleanup"] = otto(["test", "TestContainerStopCleanup"])
+            steps["cleanup"] = otto(["test", "TestContainerStopCleanup"], extra_env=cleanup_env)
     return steps
 
 
@@ -212,3 +237,109 @@ class TestInstallOverAStoppedContainer:
 
     def test_the_reinstall_cleaned_up(self, reinstall_run):
         assert reinstall_run["cleanup"].returncode == 0, _said(reinstall_run["cleanup"])
+
+
+# --- #782: a report reads the objects of stopped containers ------------------
+
+_CONTAINERD_STORE = ["driver-type", "io.containerd.snapshotter.v1"]
+
+
+@pytest.fixture(scope="module")
+def stopped_report(tmp_path_factory) -> dict:
+    """Unit counts, a flushing stop, the report, the leftover check and the cleanup.
+
+    Each step's result is kept and asserted by the tests, never inside the
+    ``finally``: a failing cleanup cannot mask the report's failure, and the
+    unit counters are cleared whatever the cleanup does.
+    """
+    tmp = tmp_path_factory.mktemp("docker_stopped_report_e2e")
+    bind = bind_overlay_project(tmp / "overlays")
+    env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(bind)])}
+    xdir = tmp / "xdir"
+    xdir.mkdir()
+    report_dir = tmp / "report"
+    record_path = tmp / "image_store.json"
+
+    def otto(
+        argv: "list[str]", timeout: int = 900, extra_env: "dict[str, str] | None" = None
+    ) -> "subprocess.CompletedProcess[str]":
+        return run_otto(
+            argv,
+            xdir=xdir,
+            roots=PROJECT5,
+            lab=_LAB,
+            extra_env={**env, **(extra_env or {})},
+            timeout=timeout,
+        )
+
+    steps: "dict[str, subprocess.CompletedProcess[str]]" = {}
+    log_dir = None
+    with docker_host_lease():
+        try:
+            try:
+                run_unit_tests()
+                steps["test"] = otto(["test", "--cov", "--cov-clean", "TestContainerStopFlow"])
+                (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
+                steps["report"] = otto(
+                    ["cov", "report", str(log_dir), "--dir", str(report_dir)], timeout=900
+                )
+                steps["leftovers"] = otto(
+                    ["test", "TestScanLeftovers"],
+                    extra_env={"OTTO_E2E_IMAGE_STORE_RECORD": str(record_path)},
+                )
+            finally:
+                steps["cleanup"] = otto(["test", "TestContainerStopCleanup"])
+        finally:
+            clear_unit_counters()
+    store_json = report_dir / "store.json"
+    return {
+        "store": CoverageStore.load(store_json) if store_json.is_file() else None,
+        "log_dir": log_dir,
+        "record": json.loads(record_path.read_text()) if record_path.is_file() else None,
+        "steps": steps,
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestStoppedContainerReport:
+    def test_the_report_ran_on_the_stopped_products(self, stopped_report):
+        steps = stopped_report["steps"]
+        assert steps["test"].returncode == 0, _said(steps["test"])
+        assert steps["report"].returncode == 0, _said(steps["report"])
+
+    def test_the_unit_tier_counts_the_stopped_products_sources(self, stopped_report):
+        store = stopped_report["store"]
+        assert store is not None, "the report wrote no store.json"
+        rec = _record(store, "math_ops.c")
+        src = PROJECT5 / "docker" / "src" / "math_ops.c"
+        assert _hits(rec, _line_of(src, "return a + b;"), tier="unit") == 2
+        assert _hits(rec, _line_of(src, "return a * b;"), tier="unit") == 1
+        assert _hits(rec, _line_of(src, "return a - b;"), tier="unit") == 0
+        # The unit view keeps only the product's own sources: the test's own
+        # file is not one (meaningful because ensure_image_artifacts proves it
+        # is committed, so it could not have dropped out of the capture).
+        assert not [f.path for f in store.files() if str(f.path).endswith("test_math_ops.c")]
+
+    def test_the_stop_flushed_the_serving_products_counters(self, stopped_report):
+        store = stopped_report["store"]
+        assert store is not None, "the report wrote no store.json"
+        main = _record(store, "main.c")
+        msrc = PROJECT5 / "docker" / "src" / "main.c"
+        # One SIGTERM per instrumented product (cov_container, cov_container_ref);
+        # only a stop executes this line.
+        assert _hits(main, _line_of(msrc, "stop_requested = 1;"), tier="system") == 2
+
+    def test_the_report_left_no_scan_snapshot(self, stopped_report):
+        leftovers = stopped_report["steps"]["leftovers"]
+        assert leftovers.returncode == 0, _said(leftovers)
+
+    def test_the_image_store_was_containerd(self, stopped_report):
+        record = stopped_report["record"]
+        assert record is not None, "TestScanLeftovers wrote no image-store record"
+        assert record["driver"], record
+        assert _CONTAINERD_STORE in record["driver_status"], record
+
+    def test_the_stop_flow_cleaned_up(self, stopped_report):
+        cleanup = stopped_report["steps"]["cleanup"]
+        assert cleanup.returncode == 0, _said(cleanup)

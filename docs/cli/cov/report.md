@@ -38,8 +38,9 @@ browser. Without `--dir` it lands under this invocation's output directory
 2. **Unit harvest** — each `unit`-kind tier's `products` views, swept fresh
    from the current build tree. For a
    `docker_image` product named by reference, this scans the product's
-   running container for its binaries, which can take up to the scan's
-   540-second limit ({ref}`coverage-unit-filter`).
+   container (running or stopped) or, with none, its image for its binaries,
+   which can take up to the scan's 540-second limit
+   ({ref}`coverage-unit-filter`).
 3. **Manual store** — every capture committed under the project's
    `.otto/coverage/manual/` ({ref}`the committed manual store
    <coverage-tier-kinds>`), loaded automatically with the validity pass

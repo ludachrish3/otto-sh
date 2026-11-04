@@ -15,10 +15,13 @@ a tar or zip archive (member by member), a single compressed file (``.gz``,
 ``docker save`` tarball (the image's final filesystem, layers and whiteouts
 applied). The archive forms are exactly :data:`~otto.host.product.ARCHIVE_SUFFIXES`.
 A ``docker_image`` named by reference has no local artifact: its list is read
-from its running container on the lab host instead (:meth:`ObjectListCache.read_running`).
+from its container on the lab host instead, running or stopped, or from its
+image when no container exists (:meth:`ObjectListCache.read_container`).
 """
 
+import asyncio
 import bz2
+import functools
 import gzip
 import json
 import logging
@@ -32,18 +35,21 @@ import tarfile
 import tempfile
 import zipfile
 import zlib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
-from ..host.docker_cli import missing, said
+from ..host.docker_cli import image_rm_command, missing, rm_container_command, said
+from ..host.host import EXEC_CANCEL_REAP_BOUND
 from ..host.product import ARCHIVE_SUFFIXES
 from ..host.shell_quote import path_operand, shell_operand
 
 if TYPE_CHECKING:
+    from ..host.docker_cli import ContainerState, DockerResource
     from ..host.host import Host
     from ..host.product import Product
+    from ..result import CommandResult
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +85,7 @@ UnavailableKind = Literal[
     "not-instrumented",
     "reference",
     "no-definition",
-    "not-running",
+    "image-missing",
     "dry-run",
 ]
 """The cases :class:`Unavailable` names, one per reason a product has no object list."""
@@ -95,7 +101,8 @@ class Unavailable:
     ``"not-instrumented"`` (read, but it holds no coverage paths),
     ``"reference"`` (a ``docker_image`` named by reference, not a local
     tarball), ``"no-definition"`` (the active lab does not define the product),
-    ``"not-running"`` (its container is not running) or ``"dry-run"``.
+    ``"image-missing"`` (no container of its name, and its image is not on the
+    daemon) or ``"dry-run"``.
     """
 
     product: str
@@ -227,7 +234,7 @@ class ObjectListCache:
         self._stems: dict[tuple[str, str, int, int], list[str]] = {}
         self._sonames: dict[str, list[Path]] | None = None
         self._images: dict[str, list[str]] = {}
-        """Stems per running image id: a second product on one image scans nothing."""
+        """Stems per image id: a second product on one image scans nothing."""
 
     def read(self, product: "Product") -> ObjectList | Unavailable:
         """Return *product*'s object list, or why it has none (logged at INFO)."""
@@ -271,103 +278,497 @@ class ObjectListCache:
             product=product.name, paths=[PurePosixPath(s) for s in stems], source=str(path)
         )
 
-    async def read_running(self, product: "Product", host: "Host") -> ObjectList | Unavailable:
-        """Return a reference-form image's object list, read from its running container.
+    async def read_container(self, product: "Product", host: "Host") -> ObjectList | Unavailable:
+        """Return a reference-form image's object list, read from its container on *host*.
 
         Every command runs on *host*, the daemon host the product is installed
-        on. The container's image is scanned once per cache: every regular file
-        under its root that holds a coverage path is copied out and read, so the
-        scan itself lists every instrumented file and no ``DT_NEEDED`` library is
+        on, and one container inspect decides how: a running (or restarting)
+        container is scanned in place; a created, exited or paused one through
+        a labelled snapshot that shares its mounts, user and groups; with no
+        container, the product's image alone. A dead or removing container is
+        unreadable, with its remedy. The image is scanned once per cache, keyed
+        by its id, before anything is committed: every regular file under its
+        root that holds a coverage path is copied out and read, so the scan
+        itself lists every instrumented file and no ``DT_NEEDED`` library is
         followed. Files on volumes and mounted builds are included; the virtual
-        and runtime directories (``/proc``, ``/sys``, ``/dev``, ``/tmp``, ``/run``,
-        ``/var/run``) and hidden top-level entries (``/.name``) are not.
+        and runtime directories (``/proc``, ``/sys``, ``/dev``, ``/tmp``,
+        ``/run``, ``/var/run``) and hidden top-level entries (``/.name``) are
+        not, and nor is anything a stopped container's process mounted at
+        runtime (a tmpfs among them).
         """
+        from ..host.docker_cli import image_id_of, inspect_container
         from ..utils import Status
 
         container = str(getattr(product, "container_name", "") or product.name)
-        state = await host.exec(_INSPECT_COMMAND + shlex.quote(container), timeout=60)
-        if state.status is Status.NotRun:
+        inspected = await inspect_container(host, container)
+        if inspected.declined:
             return self._unavailable(product, _DRY_RUN, kind="dry-run")
-        if not state.status.is_ok and not missing(state, "container"):
+        if inspected.absent:
+            ref = str(getattr(product, "image", "") or "")
+            image = await image_id_of(host, ref)
+            if image.result.status is Status.NotRun:
+                return self._unavailable(product, _DRY_RUN, kind="dry-run")
+            if image.id is None:
+                if missing(image.result, "image"):
+                    return self._unavailable(
+                        product,
+                        f"image {ref} is not on {host.id}'s docker daemon — install the "
+                        "product (or pull the image) first",
+                        kind="image-missing",
+                    )
+                return self._unavailable(
+                    product,
+                    f"could not inspect image {ref} on {host.id}: {said(image.result)}",
+                    kind="unreadable",
+                )
+            where = f"image {ref}"
+            return await self._listed(
+                product,
+                key=image.id,
+                where=where,
+                source=f"{host.id}:{ref}",
+                scan=functools.partial(
+                    self._scan_snapshot,
+                    product,
+                    host,
+                    source=None,
+                    image=image.id,
+                    container=container,
+                    what=where,
+                ),
+            )
+        if not inspected.result.status.is_ok:
             # the daemon is down, its socket refused us, or docker is missing
             return self._unavailable(
                 product,
-                f"could not inspect container {container} on {host.id}: {said(state)}",
+                f"could not inspect container {container} on {host.id}: {said(inspected.result)}",
                 kind="unreadable",
             )
-        answer = str(state.value).strip() if state.status.is_ok else ""
-        running, _, image = answer.partition(" ")
-        if running != "true" or not image.strip():
+        state = inspected.state
+        where = f"container {container}"
+        if state is None:
+            # A container exists: scanning its image instead would read the wrong set.
             return self._unavailable(
                 product,
-                f"container {container} is not running on {host.id}",
-                kind="not-running",
+                f"could not read the inspect of container {container} on {host.id}: "
+                f"unexpected output {said(inspected.result)[:200]!r}",
+                kind="unreadable",
             )
-        image = image.strip()
+        if state.status in _EXEC_STATES:
+            scan = functools.partial(self._scan_container, product, host, container)
+        elif state.status in _SNAPSHOT_STATES:
+            scan = functools.partial(
+                self._scan_snapshot,
+                product,
+                host,
+                source=state,
+                image=state.image_id,
+                container=container,
+                what=where,
+            )
+        elif state.status in ("dead", "removing"):
+            return self._unavailable(
+                product,
+                f"container {container} is {state.status}; remove it (`docker rm`) and reinstall",
+                kind="unreadable",
+            )
+        else:
+            return self._unavailable(
+                product,
+                f"container {container} on {host.id} is in state {state.status!r}, which otto "
+                "cannot read",
+                kind="unreadable",
+            )
+        return await self._listed(
+            product,
+            key=state.image_id,
+            where=where,
+            source=f"{host.id}:{container}",
+            scan=scan,
+        )
+
+    async def _listed(
+        self,
+        product: "Product",
+        *,
+        key: str,
+        where: str,
+        source: str,
+        scan: "Callable[[], Awaitable[list[str] | Unavailable]]",
+    ) -> ObjectList | Unavailable:
+        """Return the object list of the image *key*, scanning it with *scan* on a cache miss."""
         # Keyed by image, not container: the image's own files are the object
         # list, so every container of one image shares it (a bind mount or
         # volume that supplies other binaries does not change it).
-        stems = self._images.get(image)
+        stems = self._images.get(key)
         if stems is None:
-            got = await self._scan_container(product, host, container)
+            got = await scan()
             if isinstance(got, Unavailable):
                 return got
-            stems = self._images[image] = got
+            stems = self._images[key] = got
         if not stems:
             return self._unavailable(
                 product,
-                f"container {container} holds no coverage paths (not instrumented)",
+                f"{where} holds no coverage paths (not instrumented)",
                 kind="not-instrumented",
             )
         return ObjectList(
-            product=product.name,
-            paths=[PurePosixPath(s) for s in stems],
-            source=f"{host.id}:{container}",
+            product=product.name, paths=[PurePosixPath(s) for s in stems], source=source
         )
 
     async def _scan_container(
         self, product: "Product", host: "Host", container: str
     ) -> list[str] | Unavailable:
-        """Return the stems of every file in *container* that holds a coverage path."""
+        """Return the stems of every file in the running *container* that holds a coverage path."""
+        res = _ScanResources(_scan_token())
+        try:
+            finished = False
+            try:
+                scan = await host.exec(
+                    f"docker exec -e OTTO_SCAN_ID={res.token} {shlex.quote(container)} "
+                    f"sh -c {shlex.quote(_SCAN_SCRIPT)}",
+                    timeout=_SCAN_TIMEOUT,
+                )
+                got = self._interpret_scan(product, scan, f"container {container}")
+                finished = not isinstance(got, Unavailable) or got.kind == "dry-run"
+            finally:
+                if not finished:
+                    # A host-side timeout, a cancellation or a lost connection leaves the
+                    # container's processes running (docker exec does not stop them), and
+                    # a scan that ended early may have left a grep behind: stop them all.
+                    await self._reap(product, host, container, res.token)
+            if isinstance(got, Unavailable):
+                return got
+            if not got.paths:
+                return []
+            return await self._fetch(product, host, container, got.paths, res=res)
+        finally:
+            await self._cleanup_once(product, host, res)
+
+    def _interpret_scan(
+        self, product: "Product", scan: "CommandResult", where: str
+    ) -> "_ScanPaths | Unavailable":
+        """Read one scan's answer, from ``docker exec`` or ``docker start -a`` alike.
+
+        *where* is what was scanned (``container c`` or ``image i``), which every
+        reason names.
+        """
         from ..utils import Status
 
-        token = _scan_token()
-        finished = False
-        try:
-            scan = await host.exec(
-                f"docker exec -e OTTO_SCAN_ID={token} {shlex.quote(container)} "
-                f"sh -c {shlex.quote(_SCAN_SCRIPT)}",
-                timeout=_SCAN_TIMEOUT,
-            )
-            parsed = _parse_scan(str(scan.value))
-            finished = scan.status is Status.NotRun or (scan.status.is_ok and not parsed.errors)
-        finally:
-            if not finished:
-                # A host-side timeout, a cancellation or a lost connection leaves the
-                # container's processes running (docker exec does not stop them), and a
-                # scan that ended early may have left a grep behind: stop them all.
-                await self._reap(product, host, container, token)
         if scan.status is Status.NotRun:
             return self._unavailable(product, _DRY_RUN, kind="dry-run")
         if not scan.status.is_ok:
             return self._unavailable(
                 product,
-                f"could not scan container {container}: {said(scan)}",
+                f"could not scan {where}: {said(scan)}",
                 kind="unreadable",
             )
+        parsed = _parse_scan(str(scan.value))
         if parsed.errors:
             # A partial scan may have missed an instrumented file: it is no object list.
-            where = f" under {', '.join(parsed.failed_dirs)}" if parsed.failed_dirs else ""
+            under = f" under {', '.join(parsed.failed_dirs)}" if parsed.failed_dirs else ""
             return self._unavailable(
                 product,
-                f"could not scan container {container}: the scan exited "
-                f"{max(parsed.errors)}{where} (an unreadable file or directory, no find "
+                f"could not scan {where}: the scan exited "
+                f"{max(parsed.errors)}{under} (an unreadable file or directory, no find "
                 f"or grep in the image, or the scan outran its {_SCAN_LIMIT}s limit)",
                 kind="unreadable",
             )
-        if not parsed.paths:
+        return _ScanPaths(parsed.paths)
+
+    async def _scan_snapshot(
+        self,
+        product: "Product",
+        host: "Host",
+        *,
+        source: "ContainerState | None",
+        image: str,
+        container: str,
+        what: str,
+    ) -> list[str] | Unavailable:
+        """Return the stems of a stopped or paused *container*'s files, or of *image* alone.
+
+        With *source* (the container's inspected state) the container is
+        committed to a labelled snapshot and scanned in a fresh container that
+        shares its mounts, user and groups; with none, *image* (an id) is
+        scanned alone. *what* names what is scanned in every reason: the
+        container, or the image the product declares (never its id). The whole
+        sequence runs under one total deadline (:data:`SCAN_TOTAL_BUDGET`), and
+        one compensated cleanup removes what
+        it created whatever happened: a cleanup that runs out of time leaves
+        the rest to the expiry sweep and never changes the scan's answer.
+        """
+        res = _ScanResources(_scan_token())
+
+        async def sequence() -> list[str] | Unavailable:
+            # A step's own timeout (the fetch's shared commands do not go through
+            # _run_step) ends here, as that step's: so the only TimeoutError that
+            # can reach the wait_for below is the total deadline's own, on 3.10
+            # (asyncio.TimeoutError) and later (the builtin) alike.
+            try:
+                return await self._snapshot_sequence(
+                    product,
+                    host,
+                    source=source,
+                    image=image,
+                    container=container,
+                    what=what,
+                    res=res,
+                )
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                return self._timed_out(product, host, f"a step of the scan of {what}", e)
+
+        try:
+            listed = await asyncio.wait_for(sequence(), SCAN_TOTAL_BUDGET)
+        except (asyncio.TimeoutError, TimeoutError):
+            listed = self._unavailable(
+                product,
+                f"the scan of {what} outran its {int(SCAN_TOTAL_BUDGET)}-second budget",
+                kind="unreadable",
+            )
+        finally:
+            await self._cleanup_once(product, host, res)
+        return listed
+
+    async def _snapshot_sequence(
+        self,
+        product: "Product",
+        host: "Host",
+        *,
+        source: "ContainerState | None",
+        image: str,
+        container: str,
+        what: str,
+        res: "_ScanResources",
+    ) -> list[str] | Unavailable:
+        """Clock, sweep, commit, create, start and copy out: the snapshot scan's commands.
+
+        *what* names what is scanned (:meth:`read_container` decides it once).
+        """
+        from ..host import docker_cli
+        from ..utils import Status
+
+        try:
+            clock = await docker_cli.parent_clock(host)
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            return self._timed_out(product, host, "the clock read", e)
+        if clock.result.status is Status.NotRun:
+            return self._unavailable(product, _DRY_RUN, kind="dry-run")
+        if clock.now is None:
+            return self._unavailable(
+                product,
+                f"could not read the clock on {host.id}: {said(clock.result)}",
+                kind="unreadable",
+            )
+        swept = await docker_cli.sweep_stale_scans(host, now=clock.now)
+        for error in swept.errors:
+            logger.warning("%s: scan sweep on %s: %s", product.name, host.id, error)
+        labels = docker_cli.scan_labels(clock.now + int(SCAN_TOTAL_BUDGET + SCAN_EXPIRY_MARGIN))
+        run_ref = image
+        if source is not None:
+            changes = " ".join(
+                f"--change {shlex.quote(f'LABEL {k}={v}')}" for k, v in labels.items()
+            )
+            res.snapshot = True  # named before it runs: a lost reply still names the tag
+            committed = await self._run_step(
+                product,
+                host,
+                f"docker commit --pause=false {changes} {shlex.quote(container)} "
+                f"{shlex.quote(res.snapshot_tag)}",
+                timeout=_SNAPSHOT_TIMEOUT,
+                what=f"the commit of container {container}",
+                failed=f"could not snapshot container {container}",
+            )
+            if isinstance(committed, Unavailable):
+                return committed
+            run_ref = res.snapshot_tag
+        flags = [f"--label {shlex.quote(f'{k}={v}')}" for k, v in labels.items()]
+        flags += ["--network none", "--no-healthcheck"]
+        if source is not None:
+            flags.append(f"--volumes-from {shlex.quote(container)}")
+            flags.append(f"--user {shlex.quote(source.user)}")
+            flags += [f"--group-add {shlex.quote(g)}" for g in source.group_add]
+        res.container = True  # named before it runs, like the snapshot
+        created = await self._run_step(
+            product,
+            host,
+            f"docker create --name {shlex.quote(res.container_name)} {' '.join(flags)} "
+            f"--entrypoint sh {shlex.quote(run_ref)} -c {shlex.quote(_SCAN_SCRIPT)}",
+            timeout=_SNAPSHOT_TIMEOUT,
+            what="the scan container's create",
+            failed=f"could not create the scan container on {host.id}",
+        )
+        if isinstance(created, Unavailable):
+            return created
+        started = await self._run_step(
+            product,
+            host,
+            f"docker start -a {shlex.quote(res.container_name)}",
+            timeout=_SCAN_TIMEOUT,
+            what=f"the scan of {res.container_name}",
+        )
+        if isinstance(started, Unavailable):
+            return started
+        got = self._interpret_scan(product, started, what)
+        if isinstance(got, Unavailable):
+            return got
+        if not got.paths:
             return []
-        return await self._fetch(product, host, container, parsed.paths)
+        return await self._fetch(product, host, res.container_name, got.paths, res=res)
+
+    async def _run_step(
+        self,
+        product: "Product",
+        host: "Host",
+        cmd: str,
+        *,
+        timeout: float,
+        what: str,
+        failed: str | None = None,
+    ) -> "CommandResult | Unavailable":
+        """Run one snapshot command; a host-side timeout is ``unreadable``, never a raise.
+
+        So no step's ``TimeoutError`` reaches :meth:`_scan_snapshot`, where only the
+        total deadline's may land. With *failed*, a failed answer is ``unreadable``
+        too, its reason *failed* and what docker said.
+        """
+        from ..utils import Status
+
+        try:
+            result = await host.exec(cmd, timeout=timeout)
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            return self._timed_out(product, host, what, e)
+        if result.status is Status.NotRun:
+            return self._unavailable(product, _DRY_RUN, kind="dry-run")
+        if failed is not None and not result.status.is_ok:
+            return self._unavailable(product, f"{failed}: {said(result)}", kind="unreadable")
+        return result
+
+    def _timed_out(
+        self, product: "Product", host: "Host", what: str, error: BaseException
+    ) -> Unavailable:
+        return self._unavailable(
+            product,
+            f"{what} on {host.id} timed out: {str(error) or 'no answer'}",
+            kind="unreadable",
+        )
+
+    async def _cleanup_once(self, product: "Product", host: "Host", res: "_ScanResources") -> None:
+        """Run the scan's one cleanup, shielded from a caller's cancellation, once.
+
+        Its timeout is a backstop a correct cleanup never reaches (each step is
+        bounded inside one shared budget); when it fires, whatever is left
+        carries its expiry label and the next sweep removes it.
+        """
+        from ..lifecycle import compensate  # function-local, as otto.host.transfer.shell does
+
+        done = await compensate(
+            self._scan_cleanup(product, host, res),
+            timeout=SCAN_TEARDOWN_BUDGET + 3 * SCAN_REAP_BOUND,
+            what=f"{product.name}: scan cleanup {res.token} on {host.id}",
+        )
+        if done is None and (res.container or res.snapshot):
+            logger.warning(
+                "%s: the scan cleanup on %s outran its budget; %s and %s are left for the "
+                "expiry sweep",
+                product.name,
+                host.id,
+                res.container_name,
+                res.snapshot_tag,
+            )
+
+    async def _scan_cleanup(self, product: "Product", host: "Host", res: "_ScanResources") -> bool:
+        """Remove what one scan created: its temp dir, then its container, then its snapshot.
+
+        Each step runs whatever the one before it did (nested ``finally``), under
+        one budget: each gets at most :data:`_TEARDOWN_STEP_CAP` of what is left
+        of :data:`SCAN_TEARDOWN_BUDGET`, bounding the whole await (connection
+        and channel included), and a step with nothing left is skipped: a scan
+        container or snapshot it leaves carries its expiry label, so the next
+        sweep removes it. A missing resource is quiet; any other failure is logged.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + SCAN_TEARDOWN_BUDGET
+        try:
+            if res.staging:
+                where = res.staging_dir
+                await self._cleanup_step(
+                    product,
+                    host,
+                    deadline,
+                    f"remove {where}",
+                    f'rm -rf "{where}"',
+                    None,
+                    left=f"{where} is left behind",
+                )
+        finally:
+            try:
+                if res.container:
+                    name = res.container_name
+                    await self._cleanup_step(
+                        product,
+                        host,
+                        deadline,
+                        f"remove scan container {name}",
+                        rm_container_command(name, force=True),
+                        "container",
+                        left=f"{name} is left for the expiry sweep",
+                    )
+            finally:
+                if res.snapshot:
+                    tag = res.snapshot_tag
+                    await self._cleanup_step(
+                        product,
+                        host,
+                        deadline,
+                        f"remove scan snapshot {tag}",
+                        image_rm_command([tag]),
+                        "image",
+                        left=f"{tag} is left for the expiry sweep",
+                    )
+        return True
+
+    async def _cleanup_step(
+        self,
+        product: "Product",
+        host: "Host",
+        deadline: float,
+        what: str,
+        cmd: str,
+        resource: "DockerResource | None",
+        *,
+        left: str,
+    ) -> None:
+        """Run one cleanup step with its share of the budget; *left* says what a miss leaves."""
+        from ..host.connections import teardown_step
+        from ..utils import Status
+
+        grant = min(_TEARDOWN_STEP_CAP, deadline - asyncio.get_running_loop().time())
+        if grant < _MIN_STEP_GRANT:
+            logger.warning(
+                "%s: %s on %s skipped: the cleanup budget is spent; %s",
+                product.name,
+                what,
+                host.id,
+                left,
+            )
+            return
+        with teardown_step(product.name, f"{what} on {host.id}"):
+            try:
+                # wait_for bounds the whole await (connection and channel included);
+                # the exec timeout only lets a well-behaved host end the command first.
+                result = await asyncio.wait_for(host.exec(cmd, timeout=grant), grant)
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                raise _CleanupStepTimeoutError(
+                    f"no answer in {grant:g}s ({str(e) or 'timed out'}); {left}"
+                ) from None
+            if result.status is Status.NotRun or result.status.is_ok:
+                return
+            if resource is not None and missing(result, resource):
+                return
+            logger.warning(
+                "%s: %s on %s teardown failed: %s", product.name, what, host.id, said(result)
+            )
 
     async def _reap(self, product: "Product", host: "Host", container: str, token: str) -> None:
         """Kill every process the scan carrying *token* left in *container*; best effort."""
@@ -389,45 +790,38 @@ class ObjectListCache:
                 )
 
     async def _fetch(
-        self, product: "Product", host: "Host", container: str, paths: list[str]
+        self,
+        product: "Product",
+        host: "Host",
+        source: str,
+        paths: list[str],
+        *,
+        res: "_ScanResources",
     ) -> list[str] | Unavailable:
-        """Copy *paths* out of *container* through a host temp dir; return their stems."""
-        from ..host.connections import teardown_step
+        """Copy *paths* out of the container *source* through the scan's host temp dir.
+
+        The directory is named by the scan's token before ``mkdir`` runs, so a
+        creation whose reply never arrives still names what the scan's one
+        cleanup removes; the cleanup, not this, removes it.
+        """
         from ..utils import Status
 
-        # The name is chosen here, so a creation whose result never arrives (a dropped
-        # connection, a cancellation) still names the directory the cleanup removes.
-        token = _scan_token()
-        may_exist = True
-        try:
-            made = await host.exec(_make_temp_dir_command(token), timeout=60)
-            if made.status is Status.NotRun:
-                may_exist = False
-                return self._unavailable(product, _DRY_RUN, kind="dry-run")
-            hostdir = str(made.value).strip() if made.status.is_ok else ""
-            if not hostdir:
-                return self._unavailable(
-                    product,
-                    f"could not make a temp dir on {host.id}: {said(made)}",
-                    kind="unreadable",
-                )
-            return await self._copy_out(product, host, container, paths, hostdir)
-        finally:
-            if may_exist:
-                where = f"{_TEMP_DIR_EXPR}/{_TEMP_DIR_PREFIX}{token}"
-                with teardown_step(product.name, f"remove {where} on {host.id}"):
-                    removed = await host.exec(f'rm -rf "{where}"', timeout=60)
-                    if not removed.status.is_ok and removed.status is not Status.NotRun:
-                        logger.warning(
-                            "%s: remove %s on %s teardown failed: %s",
-                            product.name,
-                            where,
-                            host.id,
-                            said(removed),
-                        )
+        res.staging = True
+        made = await host.exec(_make_temp_dir_command(res.token), timeout=60)
+        if made.status is Status.NotRun:
+            res.staging = False
+            return self._unavailable(product, _DRY_RUN, kind="dry-run")
+        hostdir = str(made.value).strip() if made.status.is_ok else ""
+        if not hostdir:
+            return self._unavailable(
+                product,
+                f"could not make a temp dir on {host.id}: {said(made)}",
+                kind="unreadable",
+            )
+        return await self._copy_out(product, host, source, paths, hostdir)
 
     async def _copy_out(
-        self, product: "Product", host: "Host", container: str, paths: list[str], hostdir: str
+        self, product: "Product", host: "Host", source: str, paths: list[str], hostdir: str
     ) -> list[str] | Unavailable:
         from ..utils import Status
 
@@ -435,7 +829,7 @@ class ObjectListCache:
         for n, path in enumerate(paths):
             dest = f"{hostdir}/{n}"
             copied = await host.exec(
-                f"docker cp {shell_operand(f'{container}:{path}')} {path_operand(dest)}",
+                f"docker cp {shell_operand(f'{source}:{path}')} {path_operand(dest)}",
                 timeout=_COPY_TIMEOUT,
             )
             if copied.status is Status.NotRun:
@@ -443,7 +837,7 @@ class ObjectListCache:
             if not copied.status.is_ok:
                 return self._unavailable(
                     product,
-                    f"could not copy {path} out of container {container}: {said(copied)}",
+                    f"could not copy {path} out of container {source}: {said(copied)}",
                     kind="unreadable",
                 )
             staged.append(Path(dest))
@@ -458,7 +852,7 @@ class ObjectListCache:
                     why = said(one) if one is not None else said(got)
                     return self._unavailable(
                         product,
-                        f"could not fetch {path} (container {container}) from {host.id}: {why}",
+                        f"could not fetch {path} (container {source}) from {host.id}: {why}",
                         kind="unreadable",
                     )
             groups: list[list[str]] = []
@@ -467,7 +861,7 @@ class ObjectListCache:
                 if not fetched.is_file():
                     return self._unavailable(
                         product,
-                        f"could not fetch {path} (container {container}) from {host.id}: "
+                        f"could not fetch {path} (container {source}) from {host.id}: "
                         "the transfer reported it fetched but delivered no file",
                         kind="unreadable",
                     )
@@ -545,7 +939,10 @@ class ObjectListCache:
         return matches[0] if len(matches) == 1 else None
 
 
-_INSPECT_COMMAND = "docker container inspect -f '{{.State.Running}} {{.Image}}' "
+_EXEC_STATES = ("running", "restarting")
+"""Container states scanned in place, with ``docker exec``."""
+_SNAPSHOT_STATES = ("created", "exited", "paused")
+"""Container states scanned through a snapshot: ``docker exec`` cannot run in them."""
 
 
 _BOUNDED = (
@@ -682,7 +1079,71 @@ def _make_temp_dir_command(token: str) -> str:
 
 _SCAN_TIMEOUT = 600
 _COPY_TIMEOUT = 120
+_SNAPSHOT_TIMEOUT = 600
+"""A ``docker commit`` of a large writable layer, or a ``docker create``, on a busy parent."""
 _DRY_RUN = "dry run: the container was not read"
+
+SCAN_TOTAL_BUDGET = 1200.0
+"""Seconds one snapshot scan may take, from its clock read to its last copy-out."""
+SCAN_TEARDOWN_BUDGET = 120.0
+"""Seconds one scan's cleanup may take, shared by its steps."""
+_TEARDOWN_STEP_CAP = SCAN_TEARDOWN_BUDGET / 3
+"""At most this much of the cleanup budget goes to one step (there are three), so a
+stalled step never starves the next of its own share."""
+_MIN_STEP_GRANT = 0.01
+"""A cleanup step with less than this left of the budget is not issued: nothing can
+answer in it, and a timer may fire a clock tick early."""
+SCAN_REAP_BOUND = EXEC_CANCEL_REAP_BOUND
+"""How long one cancelled or timed-out command can take to unwind (its shielded reap)."""
+SCAN_EXPIRY_MARGIN = SCAN_TEARDOWN_BUDGET + (3 + 1) * SCAN_REAP_BOUND + 60.0
+"""Added to :data:`SCAN_TOTAL_BUDGET` for a scan resource's expiry: the cleanup's budget,
+one reap per cleanup step plus the sequence's, and 60 s of slack (``date +%s``'s
+truncation, loop scheduling, asyncssh's own unbounded connect/open unwind). So a live
+scan, cleanup included, ends before any sweep may remove what it created."""
+if SCAN_EXPIRY_MARGIN < SCAN_TEARDOWN_BUDGET + (3 + 1) * SCAN_REAP_BOUND + 1 + 30:
+    raise AssertionError("the scan expiry margin no longer covers its cleanup")  # pragma: no cover
+
+_SCAN_IMAGE = "otto-scan"
+"""The repository of every scan snapshot: ``otto-scan:<token>``."""
+_SCAN_CONTAINER_PREFIX = "otto-scan-"
+"""Every scan container's name: ``otto-scan-<token>``."""
+
+
+@dataclass(frozen=True)
+class _ScanPaths:
+    """A scan's answer, read: the files that hold a coverage path."""
+
+    paths: list[str]
+
+
+@dataclass
+class _ScanResources:
+    """What one scan may have created on its parent; one token names all three.
+
+    A flag is set immediately before the command that may create the resource,
+    so a creation whose reply is lost is still removed.
+    """
+
+    token: str
+    staging: bool = False
+    container: bool = False
+    snapshot: bool = False
+
+    @property
+    def staging_dir(self) -> str:
+        return f"{_TEMP_DIR_EXPR}/{_TEMP_DIR_PREFIX}{self.token}"
+
+    @property
+    def container_name(self) -> str:
+        return f"{_SCAN_CONTAINER_PREFIX}{self.token}"
+
+    @property
+    def snapshot_tag(self) -> str:
+        return f"{_SCAN_IMAGE}:{self.token}"
+
+
+class _CleanupStepTimeoutError(Exception):
+    """A cleanup step got no answer within its share of the budget."""
 
 
 def _archive_suffix(name: str) -> str | None:

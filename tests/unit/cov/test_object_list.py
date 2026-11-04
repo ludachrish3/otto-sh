@@ -17,7 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from otto.coverage.objects import ObjectList, ObjectListCache, Unavailable, coverage_stems
+from otto.coverage.objects import (
+    _SCAN_SCRIPT,
+    ObjectList,
+    ObjectListCache,
+    Unavailable,
+    coverage_stems,
+)
+from otto.host.docker_cli import _INSPECT_TEMPLATE
 
 ELF = b"\x7fELF"
 
@@ -384,11 +391,13 @@ class _RefImg:
     def __init__(self, name="img", container_name="img-c"):
         self.name = name
         self.artifact = Path("redis:7")
+        self.image = "redis:7"
         self.is_tarball = False
         self.container_name = container_name
 
 
 _INSPECT = "docker container inspect"
+_IMAGE_ID = "docker image inspect --format '{{.Id}}'"
 _EXEC = "docker exec -e OTTO_SCAN_ID="
 _REAP = "docker exec img-c"
 _TOKEN = "f00d"
@@ -397,6 +406,31 @@ _CP = "docker cp"
 _RM = "rm -rf"
 _HOST_TMP = f"/tmp/otto-objlist.{_TOKEN}"
 _RM_CMD = f'rm -rf "${{TMPDIR:-/tmp}}/otto-objlist.{_TOKEN}"'
+_PARENT_NOW = 1700000000
+_CLOCK = "date +%s"
+_SWEEP_PS = "docker ps -a --filter label=otto.scan=1"
+_SWEEP_IMAGES = "docker image ls -q"
+_COMMIT = "docker commit"
+_CREATE = "docker create"
+_START = "docker start -a"
+_RM_SCAN = "docker rm -f -v otto-scan-"
+_RMI_SCAN = "docker image rm -- otto-scan:"
+_RM_SCAN_CMD = f"docker rm -f -v otto-scan-{_TOKEN}"
+_RMI_SCAN_CMD = f"docker image rm -- otto-scan:{_TOKEN}"
+
+
+def _state(status="running", image="sha256:feed", user="", groups=None, ref="redis:7"):
+    """The daemon's answer to the one container inspect (otto.host.docker_cli)."""
+    return json.dumps(
+        {
+            "status": status,
+            "running": status == "running",
+            "image": image,
+            "ref": ref,
+            "user": user,
+            "groups": groups,
+        }
+    )
 
 
 def _ok(value=""):
@@ -428,23 +462,45 @@ class _DockerHost:
         self.calls: list[str] = []
         self.get_fails = get_fails
         self.get_drops = set(get_drops)
-        self.answers = {
-            _INSPECT: _ok("true sha256:feed\n"),
+        self.timeouts: dict[str, float | None] = {}
+        self.before_get = None
+        defaults = {
+            _INSPECT: _ok(_state()),
+            _IMAGE_ID: _ok("sha256:feed"),
             _EXEC: _scan(sorted(container_files)),
             _REAP: _ok(),
             _MKDIR: _ok(_HOST_TMP + "\n"),
             _RM: _ok(),
+            # the snapshot path's commands
+            _CLOCK: _ok(f"{_PARENT_NOW}"),
+            _SWEEP_PS: _ok(),
+            _SWEEP_IMAGES: _ok(),
+            _COMMIT: _ok("sha256:5eed"),
+            _CREATE: _ok("c0ffee"),
+            _START: _scan(sorted(container_files)),
+            _RM_SCAN: _ok(),
+            _RMI_SCAN: _ok(),
         }
-        self.answers.update(answers or {})
+        # A test's own answers are matched first, so a longer prefix of its own wins
+        # over a default that is a prefix of it.
+        self.answers = dict(answers or {})
+        self.answers.update({k: v for k, v in defaults.items() if k not in self.answers})
 
     async def exec(self, cmd, timeout=None):
+        """Answer by prefix: an exception is raised, a callable is awaited with the timeout."""
         self.calls.append(cmd)
+        self.timeouts[cmd] = timeout
         if cmd.startswith(_CP):
+            answer = self.answers.get(_CP)
+            if callable(answer):
+                await answer(cmd, timeout)
             return self._cp(cmd)
         for prefix, answer in self.answers.items():
             if cmd.startswith(prefix):
                 if isinstance(answer, BaseException):
                     raise answer
+                if callable(answer):
+                    return await answer(cmd, timeout)
                 return answer
         raise AssertionError(f"unexpected command: {cmd}")
 
@@ -453,7 +509,7 @@ class _DockerHost:
 
         _docker, _cp, src, dest = shlex.split(cmd)
         answer = self.answers.get(_CP)
-        if answer is not None:
+        if answer is not None and not callable(answer):
             return answer
         path = src.split(":", 1)[1]
         self.host_files[dest] = self.container_files[path]
@@ -464,6 +520,9 @@ class _DockerHost:
         from otto.utils import Status
 
         assert show_progress is False
+        self.calls.append("GET")
+        if self.before_get is not None:
+            await self.before_get()
         if self.get_fails:
             return Result(Status.Error, value={}, msg="sftp: connection lost")
         got = {}
@@ -490,10 +549,10 @@ async def test_running_container_lists_the_stems_of_its_scanned_files(tmp_path, 
     from otto.coverage.objects import _SCAN_SCRIPT
 
     host = _DockerHost(_TWO)
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert _paths(result) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
     assert host.issued(_INSPECT) == [
-        "docker container inspect -f '{{.State.Running}} {{.Image}}' img-c"
+        f"docker container inspect --format {shlex.quote(_INSPECT_TEMPLATE)} img-c"
     ]
     assert host.issued(_EXEC) == [
         f"docker exec -e OTTO_SCAN_ID={_TOKEN} img-c sh -c {shlex.quote(_SCAN_SCRIPT)}"
@@ -509,7 +568,7 @@ async def test_running_container_lists_the_stems_of_its_scanned_files(tmp_path, 
 async def test_scan_keeps_only_absolute_path_lines(tmp_path):
     stray = ["grep: warning: recursive search of stdin", "sh: 1: something odd"]
     host = _DockerHost(_TWO, answers={_EXEC: _scan(sorted(_TWO), rcs=(0, 0), extra=stray)})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert _paths(result) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
     assert len(host.issued(_CP)) == 2  # the stray lines were never fetched
 
@@ -520,7 +579,7 @@ async def test_a_grep_error_beside_hits_is_unreadable_and_not_cached(tmp_path):
     scan = _scan(sorted(_TWO), rcs=("0:/bin", "2:/opt", "0:/srv"))
     host = _DockerHost(_TWO, answers={_EXEC: scan})
     cache = ObjectListCache(tmp_path)
-    first = await cache.read_running(_RefImg(), host)
+    first = await cache.read_container(_RefImg(), host)
     assert isinstance(first, Unavailable)
     assert first.kind == "unreadable"
     assert first.reason == (
@@ -528,7 +587,7 @@ async def test_a_grep_error_beside_hits_is_unreadable_and_not_cached(tmp_path):
         "or directory, no find or grep in the image, or the scan outran its 540s limit)"
     )
     assert host.issued(_CP) == []
-    await cache.read_running(_RefImg(), host)
+    await cache.read_container(_RefImg(), host)
     assert len(host.issued(_EXEC)) == 2  # the failed scan was not cached
 
 
@@ -540,7 +599,7 @@ async def test_a_failed_temp_dir_removal_keeps_the_scan_result_and_is_logged(
     answer = OSError("ssh: broken pipe") if failure == "raises" else _failed(msg="rm: busy")
     host = _DockerHost(_TWO, answers={_RM: answer})
     with caplog.at_level("WARNING"):
-        result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+        result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert _paths(result) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(f"otto-objlist.{_TOKEN}" in w for w in warnings), warnings
@@ -548,29 +607,159 @@ async def test_a_failed_temp_dir_removal_keeps_the_scan_result_and_is_logged(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "inspect",
-    [_ok("false sha256:feed\n"), _failed("Error: No such container: img-c")],
-    ids=["stopped", "absent"],
+    ("status", "path"),
+    [
+        ("running", "exec"),
+        ("restarting", "exec"),
+        ("created", "snapshot"),
+        ("exited", "snapshot"),
+        ("paused", "snapshot"),
+    ],
 )
-async def test_a_container_not_running_is_unavailable(tmp_path, inspect):
-    host = _DockerHost(_TWO, answers={_INSPECT: inspect})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+async def test_the_container_state_picks_the_path(tmp_path, token, status, path):
+    host = _DockerHost(_TWO, answers={_INSPECT: _ok(_state(status))})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert _paths(result) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    assert result.source == "lab1:img-c"
+    if path == "exec":
+        assert len(host.issued(_EXEC)) == 1
+        assert host.issued(_COMMIT) == []
+    else:
+        assert len(host.issued(_COMMIT)) == 1
+        assert "--volumes-from img-c" in host.issued(_CREATE)[0]
+        assert not [c for c in host.calls if c.startswith("docker exec")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["dead", "removing"])
+async def test_a_dead_or_removing_container_is_unreadable_with_its_own_reason(tmp_path, status):
+    host = _DockerHost(_TWO, answers={_INSPECT: _ok(_state(status))})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
-    assert result.kind == "not-running"
-    assert "img-c" in result.reason
-    assert host.issued(_EXEC) == []
+    assert result.kind == "unreadable"
+    assert result.reason == f"container img-c is {status}; remove it (`docker rm`) and reinstall"
+    assert host.calls == host.issued(_INSPECT)
+
+
+@pytest.mark.asyncio
+async def test_any_other_status_is_unreadable_naming_it(tmp_path):
+    host = _DockerHost(_TWO, answers={_INSPECT: _ok(_state("frozen"))})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(result, Unavailable)
+    assert result.kind == "unreadable"
+    assert result.reason == "container img-c on lab1 is in state 'frozen', which otto cannot read"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    ["not json\n", json.dumps({"running": True, "image": "x", "ref": "y", "user": ""})],
+    ids=["text", "no-status"],
+)
+async def test_an_unparseable_inspect_is_unreadable_and_scans_nothing(tmp_path, answer):
+    host = _DockerHost(_TWO, answers={_INSPECT: _ok(answer)})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(result, Unavailable)
+    assert result.kind == "unreadable"
+    assert result.reason == (
+        "could not read the inspect of container img-c on lab1: unexpected output "
+        f"{answer.strip()[:200]!r}"
+    )
+    assert host.calls == host.issued(_INSPECT)
+
+
+_NO_CONTAINER = _failed("Error response from daemon: No such container: img-c", msg="")
+
+
+@pytest.mark.asyncio
+async def test_with_no_container_the_image_alone_is_scanned(tmp_path, token):
+    host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert _paths(result) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    assert result.source == "lab1:redis:7"
+    assert host.issued(_IMAGE_ID) == ["docker image inspect --format '{{.Id}}' redis:7"]
+    (create,) = host.issued(_CREATE)
+    assert "--volumes-from" not in create
+    assert "--user" not in create
+    assert create.endswith(f"--entrypoint sh sha256:feed -c {shlex.quote(_SCAN_SCRIPT)}")
+    assert host.issued(_COMMIT) == []
+    assert host.issued(_RMI_SCAN) == []  # the product's own image is never removed
+
+
+@pytest.mark.asyncio
+async def test_the_no_container_path_sweeps_and_labels_too(tmp_path, token):
+    host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER})
+    await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert host.issued(_CLOCK) == [_CLOCK]
+    assert len(host.issued(_SWEEP_PS)) == 1
+    (create,) = host.issued(_CREATE)
+    assert f"--label otto.scan=1 --label otto.scan.expires={_expires()} " in create
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_commits_nothing(tmp_path, token):
+    host = _DockerHost(_TWO)
+    cache = ObjectListCache(tmp_path)
+    await cache.read_container(_RefImg("a", "a-c"), host)
+    host.answers[_INSPECT] = _ok(_state("exited"))
+    second = await cache.read_container(_RefImg("b", "b-c"), host)
+    assert _paths(second) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    assert host.issued(_COMMIT) == []
+
+
+@pytest.mark.asyncio
+async def test_a_missing_image_is_image_missing_and_a_daemon_failure_is_unreadable(tmp_path):
+    host = _DockerHost(
+        _TWO,
+        answers={
+            _INSPECT: _NO_CONTAINER,
+            _IMAGE_ID: _failed("Error response from daemon: No such image: redis:7", msg=""),
+        },
+    )
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(result, Unavailable)
+    assert result.kind == "image-missing"
+    assert result.reason == (
+        "image redis:7 is not on lab1's docker daemon — install the product (or pull the "
+        "image) first"
+    )
+
+    denied = "permission denied while trying to connect to the Docker daemon socket"
+    host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER, _IMAGE_ID: _failed(denied, msg="")})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(result, Unavailable)
+    assert result.kind == "unreadable"
+    assert denied in result.reason
+
+    # a local tarball that is not on disk keeps its own kind
+    tarball = _Shell("t", tmp_path / "gone.tar")
+    tarball.is_tarball = True
+    assert ObjectListCache(tmp_path).read(tarball).kind == "missing"
 
 
 @pytest.mark.asyncio
 async def test_the_same_image_is_scanned_once(tmp_path):
     host = _DockerHost(_TWO)
     cache = ObjectListCache(tmp_path)
-    first = await cache.read_running(_RefImg("a", "a-c"), host)
-    second = await cache.read_running(_RefImg("b", "b-c"), host)
+    first = await cache.read_container(_RefImg("a", "a-c"), host)
+    second = await cache.read_container(_RefImg("b", "b-c"), host)
     assert _paths(first) == _paths(second)
     assert second.product == "b"
     assert len(host.issued(_EXEC)) == 1
     assert len(host.issued(_INSPECT)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_declined_image_inspect_is_a_dry_run(tmp_path):
+    from otto.result import NotRunResult
+    from otto.utils import Status
+
+    declined = NotRunResult(Status.NotRun, command="docker image inspect", msg="declined")
+    host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER, _IMAGE_ID: declined})
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(result, Unavailable)
+    assert result.kind == "dry-run"
 
 
 @pytest.mark.asyncio
@@ -580,7 +769,7 @@ async def test_a_dry_run_is_unavailable_and_issues_nothing_further(tmp_path):
 
     declined = NotRunResult(Status.NotRun, command="docker container inspect", msg="declined")
     host = _DockerHost(_TWO, answers={_INSPECT: declined})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "dry-run"
     assert host.calls == [host.issued(_INSPECT)[0]]
@@ -589,7 +778,7 @@ async def test_a_dry_run_is_unavailable_and_issues_nothing_further(tmp_path):
 @pytest.mark.asyncio
 async def test_a_grep_error_with_no_stems_is_unreadable_not_uninstrumented(tmp_path):
     host = _DockerHost(_TWO, answers={_EXEC: _scan([], rcs=(0, 1))})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert "could not scan container img-c" in result.reason
@@ -599,7 +788,7 @@ async def test_a_grep_error_with_no_stems_is_unreadable_not_uninstrumented(tmp_p
 @pytest.mark.asyncio
 async def test_a_clean_scan_with_no_matches_is_not_instrumented(tmp_path):
     host = _DockerHost(_TWO, answers={_EXEC: _scan([], rcs=(0, 0))})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "not-instrumented"
 
@@ -607,7 +796,7 @@ async def test_a_clean_scan_with_no_matches_is_not_instrumented(tmp_path):
 @pytest.mark.asyncio
 async def test_a_failed_scan_exec_is_unreadable(tmp_path):
     host = _DockerHost(_TWO, answers={_EXEC: _failed("OCI runtime exec failed: no sh")})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
 
@@ -615,7 +804,7 @@ async def test_a_failed_scan_exec_is_unreadable(tmp_path):
 @pytest.mark.asyncio
 async def test_a_failed_docker_cp_is_unreadable_naming_the_path(tmp_path, token):
     host = _DockerHost(_TWO, answers={_CP: _failed("Error: no such file")})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert "/usr/bin/app" in result.reason
@@ -625,7 +814,7 @@ async def test_a_failed_docker_cp_is_unreadable_naming_the_path(tmp_path, token)
 @pytest.mark.asyncio
 async def test_the_host_temp_dir_is_removed_when_the_get_fails(tmp_path, token):
     host = _DockerHost(_TWO, get_fails=True)
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert host.issued(_RM) == [_RM_CMD]
@@ -656,7 +845,7 @@ def test_busybox_grep_lists_a_binary_file_holding_a_coverage_path(tmp_path):
 async def test_an_inspect_that_fails_otherwise_is_unreadable_with_dockers_error(tmp_path):
     said = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
     host = _DockerHost(_TWO, answers={_INSPECT: _failed(said, msg="")})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert said in result.reason
@@ -667,7 +856,7 @@ async def test_an_inspect_that_fails_otherwise_is_unreadable_with_dockers_error(
 @pytest.mark.asyncio
 async def test_a_file_the_get_reported_but_never_delivered_is_unreadable(tmp_path, token):
     host = _DockerHost(_TWO, get_drops=[_TWO["/usr/lib/libcore.so"]])
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert "/usr/lib/libcore.so" in result.reason
@@ -871,9 +1060,9 @@ async def test_a_scan_that_did_not_finish_cleanly_is_reaped(tmp_path, token, out
     cache = ObjectListCache(tmp_path)
     if outcome in ("raises", "cancelled"):
         with pytest.raises(type(answer)):
-            await cache.read_running(_RefImg(), host)
+            await cache.read_container(_RefImg(), host)
     else:
-        result = await cache.read_running(_RefImg(), host)
+        result = await cache.read_container(_RefImg(), host)
         assert isinstance(result, Unavailable)
         assert result.kind == "unreadable"
     from otto.coverage.objects import _REAP_SCRIPT
@@ -962,7 +1151,7 @@ def test_an_unreadable_file_or_directory_is_a_scan_error(tmp_path, scan_token, k
 async def test_any_nonzero_scan_status_for_a_directory_is_unreadable(tmp_path):
     """``find`` folds every failed batch into ``1``: no status but ``0`` is a clean directory."""
     host = _DockerHost(_TWO, answers={_EXEC: _scan(sorted(_TWO), rcs=("0:/bin", "1:/srv"))})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "unreadable"
     assert "under /srv" in result.reason
@@ -973,7 +1162,7 @@ async def test_a_temp_dir_whose_creation_result_was_lost_is_still_removed(tmp_pa
     """The remote mkdir ran, then the connection dropped: its exact path is still removed."""
     host = _DockerHost(_TWO, answers={_MKDIR: OSError("ssh: connection lost")})
     with pytest.raises(OSError, match="connection lost"):
-        await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+        await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert host.issued(_RM) == [_RM_CMD]
 
 
@@ -984,7 +1173,7 @@ async def test_a_declined_temp_dir_creation_removes_nothing(tmp_path, token):
 
     declined = NotRunResult(Status.NotRun, command="mkdir", msg="declined")
     host = _DockerHost(_TWO, answers={_MKDIR: declined})
-    result = await ObjectListCache(tmp_path).read_running(_RefImg(), host)
+    result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
     assert result.kind == "dry-run"
     assert host.issued(_RM) == []
@@ -1109,3 +1298,742 @@ def test_runtime_directories_are_not_scanned(tmp_path, scan_token, kind):
     parsed = _parse_scan(done.stdout)
     assert sorted(parsed.paths) == sorted(str(p) for p in kept), done.stdout
     assert _rcs(done.stdout) == [0, 0], done.stdout
+
+
+# --- a stopped or paused container, read through a labelled snapshot ---------------------
+
+
+def _exited(user="", groups=()):
+    from otto.host.docker_cli import ContainerState
+
+    return ContainerState("exited", False, "sha256:feed", "img:1", user, list(groups))
+
+
+def _expires() -> int:
+    from otto.coverage import objects
+
+    return _PARENT_NOW + int(objects.SCAN_TOTAL_BUDGET + objects.SCAN_EXPIRY_MARGIN)
+
+
+async def _snapshot(host, tmp_path, *, source="exited", image="sha256:feed", cache=None):
+    """Drive ``_scan_snapshot`` the way the reader does, for the container ``img-c``."""
+    cache = cache or ObjectListCache(tmp_path)
+    state = _exited() if source == "exited" else source
+    what = "container img-c" if state is not None else "image redis:7"
+    return await cache._scan_snapshot(
+        _RefImg(), host, source=state, image=image, container="img-c", what=what
+    )
+
+
+def _stall():
+    """An answer that never comes and ignores its timeout: a stalled connection or channel."""
+    import asyncio
+
+    async def answer(cmd, timeout):
+        await asyncio.Event().wait()
+
+    return answer
+
+
+def _held(event):
+    """An answer that waits for *event*, then succeeds."""
+
+    async def answer(cmd, timeout):
+        await event.wait()
+        return _ok()
+
+    return answer
+
+
+def _honouring(event):
+    """An answer that waits for *event* but times out as a host does, after *timeout*."""
+    import asyncio
+
+    async def answer(cmd, timeout):
+        try:
+            await asyncio.wait_for(event.wait(), timeout)
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"{cmd}: no answer in {timeout}s") from None
+        return _ok()
+
+    return answer
+
+
+def _create_cmd(*, volumes_from="img-c", user="''", groups=(), ref=f"otto-scan:{_TOKEN}"):
+    from otto.coverage.objects import _SCAN_SCRIPT
+
+    mounts = f" --volumes-from {volumes_from}" if volumes_from else ""
+    who = f" --user {user}" if user is not None else ""
+    added = "".join(f" --group-add {g}" for g in groups)
+    return (
+        f"docker create --name otto-scan-{_TOKEN} --label otto.scan=1 "
+        f"--label otto.scan.expires={_expires()} --network none --no-healthcheck"
+        f"{mounts}{who}{added} --entrypoint sh {ref} -c {shlex.quote(_SCAN_SCRIPT)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_container_is_committed_created_started_and_copied_never_execd(
+    tmp_path, token
+):
+    host = _DockerHost(_TWO)
+    got = await _snapshot(host, tmp_path)
+    assert sorted(got) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    commit = (
+        "docker commit --pause=false --change 'LABEL otto.scan=1' "
+        f"--change 'LABEL otto.scan.expires={_expires()}' img-c otto-scan:{_TOKEN}"
+    )
+    assert host.issued(_COMMIT) == [commit]
+    assert host.issued(_CREATE) == [_create_cmd()]
+    assert host.issued(_START) == [f"docker start -a otto-scan-{_TOKEN}"]
+    copies = host.issued(_CP)
+    assert len(copies) == 2
+    assert all(c.startswith(f"docker cp otto-scan-{_TOKEN}:/usr/") for c in copies), copies
+    assert not [c for c in host.calls if c.startswith("docker exec")]
+    order = [host.calls.index(c) for c in (commit, _create_cmd(), host.issued(_START)[0])]
+    assert order == sorted(order)
+    assert order[-1] < host.calls.index(copies[0])
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skew", [-(10**6), 10**6])
+async def test_commit_and_create_carry_the_scan_labels_with_the_parents_expiry(
+    tmp_path, token, monkeypatch, skew
+):
+    import time
+
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() + skew)
+    host = _DockerHost(_TWO)
+    await _snapshot(host, tmp_path)
+    (commit,) = host.issued(_COMMIT)
+    (create,) = host.issued(_CREATE)
+    assert "--change 'LABEL otto.scan=1'" in commit
+    assert f"--change 'LABEL otto.scan.expires={_expires()}'" in commit
+    assert "--label otto.scan=1 " in create
+    assert f"--label otto.scan.expires={_expires()} " in create
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "rendered"),
+    [("", "''"), ("1000:1000", "1000:1000"), ("app user", "'app user'")],
+    ids=["empty", "uid-gid", "named"],
+)
+async def test_the_user_and_groups_pass_through_quoted(tmp_path, token, user, rendered):
+    host = _DockerHost(_TWO)
+    await _snapshot(host, tmp_path, source=_exited(user=user, groups=["audio", "44"]))
+    assert host.issued(_CREATE) == [_create_cmd(user=rendered, groups=["audio", "44"])]
+
+
+def test_the_expiry_margin_covers_the_teardown():
+    from otto.coverage import objects
+    from otto.host.host import _EXEC_REAP_TIMEOUT
+
+    worst = objects.SCAN_TEARDOWN_BUDGET + (3 + 1) * objects.SCAN_REAP_BOUND + 1
+    assert worst + 30 <= objects.SCAN_EXPIRY_MARGIN
+    assert objects.SCAN_REAP_BOUND >= 2 * _EXEC_REAP_TIMEOUT
+    assert objects.SCAN_TEARDOWN_BUDGET / 3 == objects._TEARDOWN_STEP_CAP
+
+
+@pytest.mark.asyncio
+async def test_the_scan_sweeps_through_the_shared_sweep_first(tmp_path, token, monkeypatch):
+    from otto.host import docker_cli
+
+    host = _DockerHost(_TWO)
+    seen = []
+
+    async def recorder(swept_host, *, now=None):
+        seen.append((swept_host, now, list(host.calls)))
+        return docker_cli.SweepReport([], [])
+
+    monkeypatch.setattr(docker_cli, "sweep_stale_scans", recorder)
+    await _snapshot(host, tmp_path)
+    assert len(seen) == 1
+    swept_host, now, before = seen[0]
+    assert (swept_host, now) == (host, _PARENT_NOW)
+    assert not [c for c in before if c.startswith(_COMMIT)]
+
+
+@pytest.mark.asyncio
+async def test_exceeding_the_total_budget_aborts_tears_down_and_is_unreadable(
+    tmp_path, token, monkeypatch
+):
+    import asyncio
+
+    from otto.coverage import objects
+
+    monkeypatch.setattr(objects, "SCAN_TOTAL_BUDGET", 0.05)
+
+    async def slow(cmd, timeout):
+        await asyncio.sleep(1)
+        return _scan(sorted(_TWO))
+
+    host = _DockerHost(_TWO, answers={_START: slow})
+    got = await _snapshot(host, tmp_path)
+    assert isinstance(got, Unavailable)
+    assert got.kind == "unreadable"
+    assert got.reason == "the scan of container img-c outran its 0-second budget"
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["mkdir", "cp", "get"])
+async def test_a_step_timing_out_well_inside_the_budget_is_that_steps_timeout(
+    tmp_path, token, step
+):
+    """Only the total deadline says "outran its budget"; a fetch step's own timeout says so.
+
+    The fetch's commands are the reader's shared ones, not the sequence's
+    ``_run_step``: their own TimeoutError (``asyncio.TimeoutError`` on 3.10,
+    the builtin later) must never read as the budget's.
+    """
+    lost = TimeoutError("ssh: no answer")
+
+    async def raising(cmd, timeout):
+        raise lost
+
+    async def raising_get():
+        raise lost
+
+    answers = {"mkdir": {_MKDIR: lost}, "cp": {_CP: raising}, "get": {}}[step]
+    host = _DockerHost(_TWO, answers=answers)
+    if step == "get":
+        host.before_get = raising_get
+    got = await _snapshot(host, tmp_path)
+    assert isinstance(got, Unavailable), got
+    assert got.kind == "unreadable"
+    assert "budget" not in got.reason, got.reason
+    assert got.reason == (
+        f"a step of the scan of container img-c on {host.id} timed out: ssh: no answer"
+    )
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["success", "scan-failure", "timeout", "cancellation"])
+async def test_teardown_runs_both_removals(tmp_path, token, ending):
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def cancelled_start(cmd, timeout):
+        started.set()
+        await asyncio.Event().wait()
+
+    start = {
+        "success": _scan(sorted(_TWO)),
+        "scan-failure": _scan([], rcs=("2:/opt",)),
+        "timeout": TimeoutError("ssh: no answer"),
+        "cancellation": cancelled_start,
+    }[ending]
+    host = _DockerHost(_TWO, answers={_START: start})
+    task = asyncio.ensure_future(_snapshot(host, tmp_path))
+    if ending == "cancellation":
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        await task
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_when_only_create_succeeded_both_removals_still_run(tmp_path, token):
+    host = _DockerHost(_TWO, answers={_START: _failed("cannot start", msg="")})
+    got = await _snapshot(host, tmp_path)
+    assert isinstance(got, Unavailable)
+    assert got.reason == "could not scan container img-c: cannot start"
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["failed", "partial"])
+async def test_a_failed_image_only_scan_names_the_image_not_a_container(tmp_path, token, answer):
+    """It names the image the product declares, as every other image-path reason does."""
+    start = {"failed": _failed("cannot start", msg=""), "partial": _scan([], rcs=("2:/opt",))}
+    host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER, _START: start[answer]})
+    got = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
+    assert isinstance(got, Unavailable), got
+    assert got.reason.startswith("could not scan image redis:7: "), got.reason
+    assert "img-c" not in got.reason
+    assert "sha256:" not in got.reason
+
+
+@pytest.mark.asyncio
+async def test_a_commit_whose_reply_was_lost_still_removes_the_tag(tmp_path, token):
+    host = _DockerHost(_TWO, answers={_COMMIT: ConnectionResetError("reply lost")})
+    with pytest.raises(ConnectionResetError):
+        await _snapshot(host, tmp_path)
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+    assert host.issued(_CREATE) == []
+    assert host.issued(_RM_SCAN) == []  # nothing was created, so nothing names a container
+
+
+@pytest.mark.asyncio
+async def test_a_failing_rm_never_skips_the_rmi(tmp_path, token, caplog):
+    host = _DockerHost(_TWO, answers={_RM_SCAN: _failed("permission denied", msg="")})
+    with caplog.at_level("WARNING"):
+        got = await _snapshot(host, tmp_path)
+    assert sorted(got) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(f"otto-scan-{_TOKEN}" in w and "permission denied" in w for w in warnings)
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_the_rm_still_reaches_the_rmi(tmp_path, token):
+    import asyncio
+
+    release = asyncio.Event()
+    in_rm = asyncio.Event()
+
+    async def rm(cmd, timeout):
+        in_rm.set()
+        await release.wait()
+        return _ok()
+
+    host = _DockerHost(_TWO, answers={_RM_SCAN: rm})
+    task = asyncio.ensure_future(_snapshot(host, tmp_path))
+    await in_rm.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert host.issued(_RMI_SCAN) == []
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_scan_tag_is_quiet_and_a_daemon_failure_is_logged(tmp_path, token, caplog):
+    gone = _failed(f"Error response from daemon: No such image: otto-scan:{_TOKEN}", msg="")
+    host = _DockerHost(_TWO, answers={_RMI_SCAN: gone})
+    with caplog.at_level("WARNING"):
+        await _snapshot(host, tmp_path)
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    caplog.clear()
+    down = _failed("Cannot connect to the Docker daemon", msg="")
+    host = _DockerHost(_TWO, answers={_RMI_SCAN: down})
+    with caplog.at_level("WARNING"):
+        await _snapshot(host, tmp_path)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Cannot connect to the Docker daemon" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_the_fetch_temp_dir_is_removed_under_cancellation(tmp_path, token):
+    import asyncio
+
+    in_get = asyncio.Event()
+
+    async def hold():
+        in_get.set()
+        await asyncio.Event().wait()
+
+    host = _DockerHost(_TWO)
+    host.before_get = hold
+    task = asyncio.ensure_future(_snapshot(host, tmp_path))
+    await in_get.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    tail = host.calls[host.calls.index("GET") + 1 :]
+    assert tail == [_RM_CMD, _RM_SCAN_CMD, _RMI_SCAN_CMD]
+
+
+def _cleanup_timeouts(host) -> list[float]:
+    return [
+        host.timeouts[c]
+        for c in host.calls
+        if c in (_RM_CMD, _RM_SCAN_CMD, _RMI_SCAN_CMD) and host.timeouts.get(c) is not None
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["snapshot", "exec"])
+async def test_the_cleanup_steps_share_one_budget(tmp_path, token, monkeypatch, caplog, path):
+    import asyncio
+
+    from otto import lifecycle
+    from otto.coverage import objects
+
+    monkeypatch.setattr(objects, "SCAN_TEARDOWN_BUDGET", 0.3)
+    monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 0.1)
+    entered = []
+    real = lifecycle.compensate
+
+    async def counting(coro, **kw):
+        entered.append(kw.get("what"))
+        return await real(coro, **kw)
+
+    monkeypatch.setattr(lifecycle, "compensate", counting)
+    host = _DockerHost(_TWO, answers={_RM: _honouring(asyncio.Event())})
+    cache = ObjectListCache(tmp_path)
+    if path == "snapshot":
+        await _snapshot(host, tmp_path, cache=cache)
+        assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+        assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+    else:
+        await cache._scan_container(_RefImg(), host, "img-c")
+        assert host.issued(_RM) == [_RM_CMD]
+    granted = _cleanup_timeouts(host)
+    assert granted, host.calls
+    assert all(g <= objects._TEARDOWN_STEP_CAP + 1e-9 for g in granted), granted
+    assert sum(granted) <= objects.SCAN_TEARDOWN_BUDGET + 1e-9, granted
+    assert len(entered) == 1, entered
+
+    if path == "exec":
+        return
+    # Spent before the rmi: the first two steps each hold until their timeout.
+    monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 0.2)
+    host = _DockerHost(
+        _TWO,
+        answers={_RM: _honouring(asyncio.Event()), _RM_SCAN: _honouring(asyncio.Event())},
+    )
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        await _snapshot(host, tmp_path)
+    granted = _cleanup_timeouts(host)
+    assert sum(granted) <= objects.SCAN_TEARDOWN_BUDGET + 1e-9, granted
+    assert host.issued(_RMI_SCAN) == []
+    left = [r.getMessage() for r in caplog.records if "left for the expiry sweep" in r.getMessage()]
+    assert [m for m in left if f"otto-scan:{_TOKEN}" in m and "budget" in m], left
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_connection_or_channel_is_cut_off_by_wait_for(
+    tmp_path, token, monkeypatch, caplog
+):
+    import asyncio
+
+    from otto.coverage import objects
+
+    monkeypatch.setattr(objects, "SCAN_TEARDOWN_BUDGET", 0.3)
+    monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 0.1)
+    host = _DockerHost(_TWO, answers={_RM: _stall()})
+    res = objects._ScanResources(_TOKEN, staging=True, container=True, snapshot=True)
+    loop = asyncio.get_running_loop()
+    began = loop.time()
+    with caplog.at_level("WARNING"):
+        await ObjectListCache(tmp_path)._scan_cleanup(_RefImg(), host, res)
+    assert loop.time() - began <= objects.SCAN_TEARDOWN_BUDGET + 0.1
+    failed = [r.getMessage() for r in caplog.records if "teardown failed" in r.getMessage()]
+    assert len(failed) == 1, failed
+    assert "otto-objlist." in failed[0], failed
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_sequence_is_cut_off_and_the_cleanup_still_runs(
+    tmp_path, token, monkeypatch
+):
+    from otto.coverage import objects
+
+    monkeypatch.setattr(objects, "SCAN_TOTAL_BUDGET", 0.1)
+    host = _DockerHost(_TWO, answers={_START: _stall()})
+    got = await _snapshot(host, tmp_path)
+    assert isinstance(got, Unavailable)
+    assert got.reason == "the scan of container img-c outran its 0-second budget"
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_propagates_through_the_wait_for(tmp_path, token):
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def stalled(cmd, timeout):
+        started.set()
+        await asyncio.Event().wait()
+
+    host = _DockerHost(_TWO, answers={_START: stalled})
+    task = asyncio.ensure_future(_snapshot(host, tmp_path))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", ["step", "backstop"])
+async def test_a_cleanup_timeout_keeps_a_successful_scan(
+    tmp_path, token, monkeypatch, caplog, bound
+):
+    from otto.coverage import objects
+
+    if bound == "step":
+        monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 0.1)
+    else:
+        # A backstop of 0.1 s against steps that may each take 1 s: it fires during the rm.
+        monkeypatch.setattr(objects, "SCAN_TEARDOWN_BUDGET", 1.0)
+        monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 1.0)
+        monkeypatch.setattr(objects, "SCAN_REAP_BOUND", -0.3)
+    host = _DockerHost(_TWO, answers={_RM_SCAN: _stall()})
+    with caplog.at_level("WARNING"):
+        got = await _snapshot(host, tmp_path)
+    assert sorted(got) == ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c"]
+    left = [r.getMessage() for r in caplog.records if "left for the expiry sweep" in r.getMessage()]
+    assert [m for m in left if f"otto-scan-{_TOKEN}" in m], [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.asyncio
+async def test_the_total_deadline_does_not_cut_the_cleanup(tmp_path, token, monkeypatch):
+    from otto.coverage import objects
+
+    monkeypatch.setattr(objects, "SCAN_TOTAL_BUDGET", 0.05)
+    host = _DockerHost(_TWO, answers={_START: _stall()})
+    got = await _snapshot(host, tmp_path)  # nothing escapes: no CancelledError, no TimeoutError
+    assert isinstance(got, Unavailable)
+    assert got.reason == "the scan of container img-c outran its 0-second budget"
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+    # Each step had its own cap, never what was left of the spent total.
+    for cmd in (_RM_SCAN_CMD, _RMI_SCAN_CMD):
+        assert host.timeouts[cmd] == pytest.approx(objects._TEARDOWN_STEP_CAP, abs=1.0)
+
+
+_ANSWERS = {
+    "not-run": "NOTRUN",
+    "failed": _failed("exec failed", msg=""),
+    "parse-errors": _scan(["/opt/app"], rcs=("0:/bin", "2:/opt")),
+    "empty": _scan([]),
+    "two-files": _scan(sorted(_TWO)),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", list(_ANSWERS))
+async def test_one_scan_answer_reads_the_same_through_both_paths(tmp_path, token, case):
+    from otto.result import NotRunResult
+    from otto.utils import Status
+
+    answer = _ANSWERS[case]
+    if answer == "NOTRUN":
+        answer = NotRunResult(status=Status.NotRun, command="scan", retcode=-1, host_name="lab1")
+    exec_host = _DockerHost(_TWO, answers={_EXEC: answer})
+    by_exec = await ObjectListCache(tmp_path)._scan_container(_RefImg(), exec_host, "img-c")
+    snap_host = _DockerHost(_TWO, answers={_START: answer})
+    by_snapshot = await _snapshot(snap_host, tmp_path)
+    if isinstance(by_exec, Unavailable):
+        assert isinstance(by_snapshot, Unavailable)
+        assert (by_snapshot.kind, by_snapshot.reason) == (by_exec.kind, by_exec.reason)
+    else:
+        assert sorted(by_snapshot) == sorted(by_exec)
+
+
+@pytest.mark.asyncio
+async def test_the_scan_removes_through_the_shared_builders(tmp_path, token):
+    from otto.host.docker_cli import image_rm_command, rm_container_command
+
+    host = _DockerHost(_TWO)
+    await _snapshot(host, tmp_path)
+    assert host.issued(_RM_SCAN) == [rm_container_command(f"otto-scan-{_TOKEN}", force=True)]
+    assert host.issued(_RMI_SCAN) == [image_rm_command([f"otto-scan:{_TOKEN}"])]
+
+
+@pytest.mark.asyncio
+async def test_a_mounted_build_below_a_top_directory_is_scanned_through_the_stopped_path(
+    tmp_path, token
+):
+    mounted = {"/opt/build/app": ELF + b"\x00/src/build/app.c.gcda\x00"}
+    host = _DockerHost(mounted)
+    got = await _snapshot(host, tmp_path)
+    assert got == ["/src/build/app.c"]
+    assert "--volumes-from img-c" in host.issued(_CREATE)[0]
+    assert host.issued(_CP) == [f"docker cp otto-scan-{_TOKEN}:/opt/build/app {_HOST_TMP}/0"]
+
+
+# --- two scans against one daemon ------------------------------------------------------
+
+
+class _StatefulDaemon:
+    """One docker parent shared by concurrent scans: labelled resources, a settable clock.
+
+    A scan's commit or copy-out can be held on an event per token, and a cleanup
+    step on another, so a test can line two scans up against each other.
+    """
+
+    def __init__(self, files):
+        self.files = files
+        self.now = _PARENT_NOW
+        self.containers: dict[str, int] = {}  # name -> expires
+        self.images: dict[str, int] = {}  # tag -> expires
+        self.host_files: dict[str, bytes] = {}
+        self.holds: dict[str, object] = {}  # "<step>:<token>" -> awaitable factory
+        self.id = "lab1"
+        self.calls: list[str] = []
+
+    async def _hold(self, step, cmd):
+        for key, hold in list(self.holds.items()):
+            name, _, tok = key.partition(":")
+            if name == step and tok in cmd:
+                await hold()
+
+    async def exec(self, cmd, timeout=None):  # noqa: PLR0911 — one answer per docker command
+        import re
+
+        self.calls.append(cmd)
+        if cmd == _CLOCK:
+            return _ok(f"{self.now}")
+        if cmd.startswith(_SWEEP_PS):
+            return _ok("\n".join(f"{n} {e}" for n, e in self.containers.items()))
+        if cmd.startswith(_SWEEP_IMAGES):
+            return _ok("\n".join(self.images))
+        if cmd.startswith("docker image inspect"):
+            ids = shlex.split(cmd)[5:]
+            return _ok("\n".join(f"{i} {self.images[i]}" for i in ids if i in self.images))
+        expires = re.search(r"otto\.scan\.expires=(\d+)", cmd)
+        if cmd.startswith(_COMMIT):
+            tag = shlex.split(cmd)[-1]
+            self.images[tag] = int(expires.group(1))
+            await self._hold("commit", cmd)
+            return _ok("sha256:5eed")
+        if cmd.startswith(_CREATE):
+            self.containers[shlex.split(cmd)[3]] = int(expires.group(1))
+            return _ok("c0ffee")
+        if cmd.startswith(_START):
+            return _scan(sorted(self.files))
+        if cmd.startswith(_MKDIR):
+            tok = cmd.split("otto-objlist.", 1)[1].split('"', 1)[0]
+            return _ok(f"/tmp/otto-objlist.{tok}")
+        if cmd.startswith(_CP):
+            await self._hold("cp", cmd)
+            _docker, _cp, src, dest = shlex.split(cmd)
+            self.host_files[dest] = self.files[src.split(":", 1)[1]]
+            return _ok()
+        if cmd.startswith(_RM):
+            await self._hold("rm-rf", cmd)
+            return _ok()
+        if cmd.startswith("docker rm -f -v "):
+            await self._hold("rm", cmd)
+            name = shlex.split(cmd)[-1]
+            if self.containers.pop(name, None) is None:
+                return _failed(f"Error response from daemon: No such container: {name}", msg="")
+            return _ok(name)
+        if cmd.startswith("docker image rm -- "):
+            tag = shlex.split(cmd)[-1]
+            if self.images.pop(tag, None) is None:
+                return _failed(f"Error response from daemon: No such image: {tag}", msg="")
+            return _ok(f"Untagged: {tag}")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    async def get(self, src_files, dest_dir, user=None, show_progress=True, **_):
+        from otto.result import Result
+        from otto.utils import Status
+
+        got = {}
+        for src in src_files:
+            (Path(dest_dir) / src.name).write_bytes(self.host_files[str(src)])
+            got[src] = _ok()
+        return Result(Status.Success, value=got)
+
+
+@pytest.fixture
+def two_tokens(monkeypatch):
+    tokens = iter(["aaaa", "bbbb", "cccc", "dddd"])
+    monkeypatch.setattr("otto.coverage.objects._scan_token", lambda: next(tokens))
+
+
+def _held_until(event, entered=None):
+    async def hold():
+        if entered is not None:
+            entered.set()
+        await event.wait()
+
+    return hold
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_in", ["commit", "cp"])
+async def test_overlapping_scans_never_sweep_each_other(tmp_path, two_tokens, held_in):
+    import asyncio
+
+    from otto.coverage import objects
+
+    files = {**_TWO, "/usr/bin/tool": ELF + b"\x00/build/tool/t.c.gcda\x00"}
+    daemon = _StatefulDaemon(files)
+    release, entered = asyncio.Event(), asyncio.Event()
+    daemon.holds[f"{held_in}:aaaa"] = _held_until(release, entered)
+    a = asyncio.ensure_future(_snapshot(daemon, tmp_path))
+    await entered.wait()
+    # B starts as late as A's own total budget allows A to still be running.
+    daemon.now = _PARENT_NOW + int(objects.SCAN_TOTAL_BUDGET) - 1
+    b = await _snapshot(daemon, tmp_path)
+    assert sorted(b) == sorted(
+        ["/build/app/main.c", "/build/app/util.c", "/build/core/core.c", "/build/tool/t.c"]
+    )
+    assert "otto-scan:aaaa" in daemon.images, "B's sweep removed A's live snapshot"
+    if held_in == "cp":
+        assert "otto-scan-aaaa" in daemon.containers, "B's sweep removed A's live container"
+    release.set()
+    assert sorted(await a) == sorted(b)
+    assert (daemon.containers, daemon.images) == ({}, {})
+    for tok in ("aaaa", "bbbb"):
+        assert daemon.calls.count(f"docker rm -f -v otto-scan-{tok}") == 1
+        assert daemon.calls.count(f"docker image rm -- otto-scan:{tok}") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_scan_held_in_its_cleanup_at_the_budget_edge_is_never_swept(
+    tmp_path, two_tokens, monkeypatch
+):
+    import asyncio
+
+    from otto.coverage import objects
+    from otto.host.docker_cli import sweep_stale_scans
+
+    monkeypatch.setattr(objects, "SCAN_TOTAL_BUDGET", 0.2)
+    daemon = _StatefulDaemon(_TWO)
+    in_rm_rf, rm_rf_go = asyncio.Event(), asyncio.Event()
+    in_rm, rm_go = asyncio.Event(), asyncio.Event()
+    in_cp = asyncio.Event()
+    daemon.holds["cp:aaaa"] = _held_until(asyncio.Event(), in_cp)  # never released: A times out
+    daemon.holds["rm-rf:aaaa"] = _held_until(rm_rf_go, in_rm_rf)
+    daemon.holds["rm:aaaa"] = _held_until(rm_go, in_rm)
+    a = asyncio.ensure_future(_snapshot(daemon, tmp_path))
+    await in_cp.wait()
+    daemon.now = _PARENT_NOW + int(objects.SCAN_TOTAL_BUDGET)
+    await in_rm_rf.wait()  # A's deadline fired mid-copy-out; its cleanup is held
+    # The worst-case end of A's cleanup, on the parent's clock.
+    daemon.now = _PARENT_NOW + int(objects.SCAN_TOTAL_BUDGET + objects.SCAN_TEARDOWN_BUDGET) + 1
+    del daemon.holds["cp:aaaa"]
+    b = await _snapshot(daemon, tmp_path)
+    assert not isinstance(b, Unavailable), b
+    assert "otto-scan:aaaa" in daemon.images
+    assert "otto-scan-aaaa" in daemon.containers
+    rm_rf_go.set()
+    await in_rm.wait()
+    assert "otto-scan-aaaa" in daemon.containers
+    rm_go.set()
+    got = await a
+    assert isinstance(got, Unavailable)
+    assert got.reason == "the scan of container img-c outran its 0-second budget"
+    assert (daemon.containers, daemon.images) == ({}, {})
+
+    # Had A's cleanup never run, a sweep at its expiry would have removed what it left.
+    daemon.images["otto-scan:aaaa"] = _PARENT_NOW + int(
+        objects.SCAN_TOTAL_BUDGET + objects.SCAN_EXPIRY_MARGIN
+    )
+    daemon.containers["otto-scan-aaaa"] = daemon.images["otto-scan:aaaa"]
+    daemon.now = daemon.images["otto-scan:aaaa"] - 1
+    assert (await sweep_stale_scans(daemon)).removed == []
+    daemon.now += 1
+    assert (await sweep_stale_scans(daemon)).removed == [
+        "container otto-scan-aaaa",
+        "image otto-scan:aaaa",
+    ]

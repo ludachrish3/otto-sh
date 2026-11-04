@@ -277,8 +277,10 @@ async def plan_unit_views(
     harvest will capture gets its kept sources and its full toolchain here:
     every unit tier's configured tools are resolved first, whether or not
     its directories are captured; a directory that is missing, holds no
-    counters or keeps no product source is skipped with one log line. Nothing
-    is captured here, so every refusal precedes every capture of the report.
+    counters or keeps no product source is skipped with one log line. A view
+    none of whose directories holds counters has nothing to capture, so its
+    products are not read and nothing about them is refused. Nothing is
+    captured here, so every refusal precedes every capture of the report.
 
     Raises:
         otto.coverage.errors.CoverageNotInstrumentedError: a view selects no
@@ -286,10 +288,10 @@ async def plan_unit_views(
             holds no coverage paths.
         otto.coverage.errors.CaptureFailedError: a selected product's object
             list could not be read (an operational failure).
-        otto.coverage.errors.CoverageInputError: a selected image's container
-            is not running, a configured tool cannot be resolved, or a
-            directory's notes contradict the configured reader or each other
-            (``field=None``).
+        otto.coverage.errors.CoverageInputError: a selected image is on no
+            container and not on its daemon (``image-missing``), a configured
+            tool cannot be resolved, or a directory's notes contradict the
+            configured reader or each other (``field=None``).
         otto.host.errors.CoverageToolMissingError: a default tool a
             directory's data needs is not on ``PATH``.
     """
@@ -325,7 +327,23 @@ async def plan_unit_views(
             ]
             if not selected:
                 raise _no_products(label, project_name, lab, name, declared_false=bool(candidates))
+            anchored = [anchor_path(d, project_root) for d in dirs]
+            counted = [_has_counters(label, hdir) for hdir in anchored]
             owners: dict[Path, str] = {}
+            if not any(counted):
+                # Nothing to capture, so nothing to read and nothing to refuse: a
+                # product whose container or image is gone costs a view no report.
+                views.append(
+                    UnitView(
+                        tier=tier.name,
+                        product=name,
+                        label=label,
+                        dirs=anchored,
+                        owners=owners,
+                        captures=[],
+                    )
+                )
+                continue
             for s in selected:
                 listed = await _read_objects(s.product, s.host, cache)
                 if isinstance(listed, Unavailable):
@@ -333,9 +351,10 @@ async def plan_unit_views(
                     continue
                 for rel in sorted(product_source_set(listed, project_root, resolver, index)):
                     owners.setdefault(rel, s.product.name)
-            anchored = [anchor_path(d, project_root) for d in dirs]
             captures = []
             for idx, hdir in enumerate(anchored):
+                if not counted[idx]:
+                    continue
                 selection = _select_dir(label, name, hdir, project_root, resolver, owners)
                 if selection is None:
                     continue
@@ -356,6 +375,21 @@ async def plan_unit_views(
     return UnitPlan(views=views, resolver=resolver)
 
 
+def _has_counters(label: str, hdir: Path) -> bool:
+    """Return whether *hdir* is a directory holding a ``.gcda``; say why not, once, if not."""
+    if not hdir.is_dir():
+        logger.warning("Unit tier %s: harvest dir does not exist: %s — skipping", label, hdir)
+        return False
+    if next(hdir.rglob("*.gcda"), None) is None:
+        logger.warning(
+            "Unit tier %s: harvest dir has no .gcda files: %s — run the unit tests first; skipping",
+            label,
+            hdir,
+        )
+        return False
+    return True
+
+
 def _select_dir(
     label: str,
     product: str,
@@ -366,21 +400,11 @@ def _select_dir(
 ) -> UnitSelection | None:
     """Return *hdir*'s kept sources, or ``None`` (with one log line) when it is not captured.
 
-    *owners* holds only the view's own *product*'s sources, so a dropped file is
-    named as not that product's: it may well be another product's source.
+    *hdir* holds counters (:func:`_has_counters` said so). *owners* holds only the
+    view's own *product*'s sources, so a dropped file is named as not that
+    product's: it may well be another product's source.
     """
-    if not hdir.is_dir():
-        logger.warning("Unit tier %s: harvest dir does not exist: %s — skipping", label, hdir)
-        return None
-    gcda_files = list(hdir.rglob("*.gcda"))
-    if not gcda_files:
-        logger.warning(
-            "Unit tier %s: harvest dir has no .gcda files: %s — run the unit tests first; skipping",
-            label,
-            hdir,
-        )
-        return None
-    _warn_if_stale_counters(label, hdir, gcda_files)
+    _warn_if_stale_counters(label, hdir, list(hdir.rglob("*.gcda")))
     selection = select_unit_sources(hdir, project_root, resolver, owners)
     logger.info(
         "unit %s: kept %d source files of product %s, dropped %d others",
@@ -432,10 +456,11 @@ async def _read_objects(
     """Return *product*'s object list: the one place the unit tier reads one.
 
     An image named by reference has no local artifact, so its list is read
-    from its running container on *host*, the lab host it is installed on.
+    from its container on *host*, the lab host it is installed on, running or
+    stopped (or from its image there when no container exists).
     """
     if getattr(product, "is_tarball", None) is False:
-        return await cache.read_running(product, host)
+        return await cache.read_container(product, host)
     return cache.read(product)
 
 
@@ -470,12 +495,9 @@ def _refuse(label: str, product: "Product", listed: Unavailable) -> None:
             f"{listed.reason}. Build it with coverage instrumentation (--coverage) before "
             "collecting unit coverage, or declare it instrumented = false."
         )
-    if listed.kind == "not-running":
-        container = getattr(product, "container_name", None) or name
+    if listed.kind == "image-missing":
         raise CoverageInputError(
-            f"unit tier {label}: product {name!r} reads its object list from container "
-            f"{container!r}, which is not running — install the product first (otto run install).",
-            field=None,
+            f"unit tier {label}: product {name!r}: {listed.reason}.", field=None
         )
     raise CaptureFailedError(
         f"unit tier {label}: could not read product {name!r}'s object list: {listed.reason}"

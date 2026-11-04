@@ -1,5 +1,6 @@
 """The built-in ``docker_image`` kind: params, verbs, hooks, container logs."""
 
+import json
 import shlex
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from otto.declared import DeclaredEntry
 from otto.host import docker_image_kind  # noqa: F401 — import registers the kind
 from otto.host import product as product_mod
+from otto.host.docker_cli import _INSPECT_TEMPLATE
 from otto.host.docker_image_kind import DockerImageProduct, _loaded_reference
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
@@ -27,6 +29,9 @@ def _entry(**params):
         match={},
         params=params,
     )
+
+
+_IMAGE_ID = "sha256:" + "f" * 64
 
 
 class _DockerHost(SimpleNamespace):
@@ -47,6 +52,8 @@ class _DockerHost(SimpleNamespace):
 
         self.login_home = _login_home
         self.answers = dict(answers or {})
+        # A present image answers its id, as the daemon does; a test overrides it by key.
+        self.answers.setdefault("docker image inspect", (Status.Success, _IMAGE_ID))
         self.exec_calls: list[str] = []
         self.run_calls: list[tuple[str, dict]] = []
         self.put = AsyncMock(return_value=Result(Status.Success, value={}))
@@ -75,6 +82,28 @@ class _DockerHost(SimpleNamespace):
             retcode = 0 if status is Status.Success else 1
             entry = CommandResult(command=cmd, value=output, status=status, retcode=retcode)
         return Results.collect([entry])
+
+
+_INSPECT = "docker container inspect"
+
+
+def _inspect_cmd(name: str) -> str:
+    """The one container inspect (:func:`otto.host.docker_cli.inspect_container`) of *name*."""
+    return f"docker container inspect --format {shlex.quote(_INSPECT_TEMPLATE)} {name}"
+
+
+def _inspected(*, running: bool = True, ref: str = "app:1") -> str:
+    """The daemon's answer to that inspect."""
+    return json.dumps(
+        {
+            "status": "running" if running else "exited",
+            "running": running,
+            "image": "sha256:feed",
+            "ref": ref,
+            "user": "",
+            "groups": None,
+        }
+    )
 
 
 def _build(host=None, **params) -> DockerImageProduct:
@@ -286,7 +315,7 @@ async def test_install_removes_a_container_of_the_name_before_run(caplog, state)
         result = await _build(host, image="app:1").install(host)
     assert result.is_ok, (state, result.msg)
     assert host.exec_calls[-3:] == [
-        "docker image inspect app:1 >/dev/null",
+        "docker image inspect --format '{{.Id}}' app:1",
         "docker rm -v app",
         "docker run -d --name app -v /tmp/app:/tmp/app app:1",
     ]
@@ -362,10 +391,10 @@ async def test_stage_is_a_noop_for_a_reference():
 
 @pytest.mark.asyncio
 async def test_is_installed_means_the_container_is_running():
-    running = _DockerHost(answers={"docker container inspect": (Status.Success, "true\n")})
+    running = _DockerHost(answers={_INSPECT: (Status.Success, _inspected())})
     assert await _build(running, image="app:1").is_installed(running) is True
-    assert "docker container inspect -f '{{.State.Running}}' app" in running.exec_calls[0]
-    stopped = _DockerHost(answers={"docker container inspect": (Status.Success, "false\n")})
+    assert running.exec_calls == [_inspect_cmd("app")]
+    stopped = _DockerHost(answers={_INSPECT: (Status.Success, _inspected(running=False))})
     assert await _build(stopped, image="app:1").is_installed(stopped) is False
     missing = _DockerHost(answers={"docker container inspect": (Status.Error, "No such object")})
     assert await _build(missing, image="app:1").is_installed(missing) is False
@@ -376,16 +405,16 @@ async def test_uninstall_removes_the_container_and_only_a_loaded_image():
     host = _DockerHost(
         answers={
             "docker load": (Status.Success, "Loaded image: app:1\n"),
-            "docker container inspect -f '{{.Config.Image}}'": (Status.Success, "app:1\n"),
+            _INSPECT: (Status.Success, _inspected()),
         }
     )
     p = _build(host, image="docker/app.tar")
     await p.install(host)
     assert (await p.uninstall(host)).is_ok
     assert host.exec_calls[-3:] == [
-        "docker container inspect -f '{{.Config.Image}}' app",
+        _inspect_cmd("app"),
         "docker rm -f -v app",
-        "docker rmi app:1",
+        "docker image rm -- app:1",
     ]
     ref_host = _DockerHost()
     assert (await _build(ref_host, image="app:1").uninstall(ref_host)).is_ok
@@ -399,17 +428,15 @@ async def test_uninstall_resolves_the_image_from_the_container_not_from_memory()
     install` process left running — exactly the shape of `otto install` then
     `otto uninstall` as two processes. The image must come from the
     container, never from in-memory state."""
-    host = _DockerHost(
-        answers={"docker container inspect -f '{{.Config.Image}}'": (Status.Success, "app:1\n")}
-    )
+    host = _DockerHost(answers={_INSPECT: (Status.Success, _inspected())})
     p = _build(host, image="docker/app.tar")
     assert p.loaded_ref is None
     result = await p.uninstall(host)
     assert result.is_ok
     assert host.exec_calls == [
-        "docker container inspect -f '{{.Config.Image}}' app",
+        _inspect_cmd("app"),
         "docker rm -f -v app",
-        "docker rmi app:1",
+        "docker image rm -- app:1",
     ]
 
 
@@ -420,17 +447,14 @@ async def test_uninstall_skips_rmi_when_the_container_is_already_gone():
     # is the end of it — no rmi is attempted.
     host = _DockerHost(
         answers={
-            "docker container inspect -f '{{.Config.Image}}'": (
-                Status.Error,
-                "No such object: app",
-            ),
+            _INSPECT: (Status.Error, "Error: No such container: app"),
             "docker rm -f": (Status.Error, "Error: No such container: app"),
         }
     )
     result = await _build(host, image="docker/app.tar").uninstall(host)
     assert result.is_ok
     assert host.exec_calls == [
-        "docker container inspect -f '{{.Config.Image}}' app",
+        _inspect_cmd("app"),
         "docker rm -f -v app",
     ]
 
@@ -458,15 +482,15 @@ async def test_uninstall_rmi_failure_names_the_command():
     host = _DockerHost(
         answers={
             "docker load": (Status.Success, "Loaded image: app:1\n"),
-            "docker container inspect -f '{{.Config.Image}}'": (Status.Success, "app:1\n"),
-            "docker rmi": (Status.Error, "image is being used by a container"),
+            _INSPECT: (Status.Success, _inspected()),
+            "docker image rm": (Status.Error, "image is being used by a container"),
         }
     )
     p = _build(host, image="docker/app.tar")
     await p.install(host)
     result = await p.uninstall(host)
     assert not result.is_ok
-    assert "docker rmi app:1 failed on test3" in result.msg
+    assert "docker image rm -- app:1 failed on test3" in result.msg
 
 
 @pytest.mark.asyncio
@@ -525,8 +549,8 @@ async def test_uninstall_propagates_a_dry_run_decline_on_rmi():
     host = _DockerHost(
         answers={
             "docker load": (Status.Success, "Loaded image: app:1\n"),
-            "docker container inspect -f '{{.Config.Image}}'": (Status.Success, "app:1\n"),
-            "docker rmi": (Status.NotRun, ""),
+            _INSPECT: (Status.Success, _inspected()),
+            "docker image rm": (Status.NotRun, ""),
         }
     )
     p = _build(host, image="docker/app.tar")
@@ -537,9 +561,7 @@ async def test_uninstall_propagates_a_dry_run_decline_on_rmi():
 
 @pytest.mark.asyncio
 async def test_uninstall_propagates_a_dry_run_decline_on_inspect():
-    host = _DockerHost(
-        answers={"docker container inspect -f '{{.Config.Image}}'": (Status.NotRun, "")}
-    )
+    host = _DockerHost(answers={_INSPECT: (Status.NotRun, "")})
     result = await _build(host, image="docker/app.tar").uninstall(host)
     assert result.status is Status.NotRun
 

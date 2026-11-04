@@ -21,7 +21,7 @@ there was nothing:
    qdiscs, nc listeners and ``/tmp/otto*`` staging entries are removed through
    otto's own removers.
 2. Docker, on the cell's container parents, under each host's own pool lease:
-   orphan stacks and e2e-labelled images.
+   orphan stacks, e2e-labelled images and expired otto scan snapshots.
 3. The embedded coverage product, local to this machine: a declared build
    whose artifact is missing is rebuilt (a cut ``west build`` left it).
 4. With ``--full`` only, the consoles: ``make console-logout`` (after ``make
@@ -286,6 +286,9 @@ async def _reap_docker(lab: Any, hosts: list[Any], out: Outcome) -> None:
                 )
                 images = await docker.remove_labelled_images(host, docker.E2E_IMAGE_LABEL)
                 out.removed.extend(f"{name}: docker image {image}" for image in images)
+                swept = await docker.sweep_stale_scans(host)
+                out.removed.extend(f"{name}: docker {item}" for item in swept.removed)
+                out.failures.extend(f"{name}: docker scan sweep: {e}" for e in swept.errors)
         except Exception as exc:  # noqa: BLE001
             out.failures.append(f"{name}: docker: {exc}")
 

@@ -72,6 +72,9 @@ class Doubles:
         self.snapshots: dict[str, list] = {}
         self.unreachable: set[str] = set()
         self.docker_parents: list[str] = []
+        from otto.host.docker_cli import SweepReport
+
+        self.sweep_report = SweepReport(["image sha256:x"], [])
         self.builds: list = []
         self.leased: list = []
         self.health_status = 0
@@ -128,10 +131,17 @@ def doubles(monkeypatch, tmp_path):
         d.calls.append(("remove_labelled_images", host.id, label))
         return ["sha256:img"]
 
+    async def sweep_stale_scans(host):
+
+        d.calls.append(("sweep_stale_scans", host.id))
+        d.leased.append(("sweep", host.id))
+        return d.sweep_report
+
     docker = types.SimpleNamespace(
         docker_parents=lambda hosts: list(d.docker_parents),
         reap_docker=reap_docker,
         remove_labelled_images=remove_labelled_images,
+        sweep_stale_scans=sweep_stale_scans,
         E2E_IMAGE_LABEL="otto-e2e-699",
     )
     monkeypatch.setattr(bed_reap, "_docker", lambda: docker)
@@ -365,7 +375,12 @@ def test_the_verdict_is_taken_after_the_docker_and_product_steps(cell, doubles, 
     doubles_docker.reap_docker = reap_docker
     status, out = _reap(cell, capsys, full=True)
     assert status == 0, out
-    assert [c[0] for c in calls] == ["reap_docker", "remove_labelled_images", "run_lab_health"]
+    assert [c[0] for c in calls] == [
+        "reap_docker",
+        "remove_labelled_images",
+        "sweep_stale_scans",
+        "run_lab_health",
+    ]
     assert "still carries" not in out
 
 
@@ -394,14 +409,41 @@ def test_docker_is_reaped_on_the_parents_under_their_own_pool_lease(cell, double
     assert status == 0, out
     assert doubles.leased == [
         ("enter", "test1"),
+        ("sweep", "test1"),
         ("exit", "test1"),
         ("enter", "test3"),
+        ("sweep", "test3"),
         ("exit", "test3"),
     ]
     assert ("reap_docker", "test1") in doubles.calls
     assert ("remove_labelled_images", "test3", "otto-e2e-699") in doubles.calls
     assert "removed test1: docker container c1" in out
     assert "removed test3: docker image sha256:img" in out
+
+
+def test_the_reap_sweeps_stale_scans_on_each_parent_under_its_lease(cell, doubles, lab, capsys):
+    doubles.docker_parents = ["test1"]
+    status, out = _reap(cell, capsys)
+    assert status == 0, out
+    assert "removed test1: docker image sha256:x" in out
+    assert doubles.leased == [("enter", "test1"), ("sweep", "test1"), ("exit", "test1")]
+
+
+def test_a_sweep_error_is_a_failure_naming_the_parent(cell, doubles, lab, capsys):
+    from otto.host.docker_cli import SweepReport
+
+    doubles.docker_parents = ["test3"]
+    doubles.sweep_report = SweepReport([], ["docker image rm -- sha256:x: permission denied"])
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_DIRTY
+    assert "test3: docker scan sweep: docker image rm -- sha256:x: permission denied" in out
+
+
+def test_the_reap_and_the_reader_share_one_sweep():
+    import otto.host.docker_cli
+    import tests._fixtures.docker_reap
+
+    assert tests._fixtures.docker_reap.sweep_stale_scans is otto.host.docker_cli.sweep_stale_scans
 
 
 def test_a_docker_failure_names_the_parent_and_the_reap_goes_on(

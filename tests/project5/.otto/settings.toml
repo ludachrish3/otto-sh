@@ -77,3 +77,21 @@ match = { id = "test3" }
 # e2e's own fetch tree is exactly, and only, the hosts its own suite drove.
 [coverage]
 hosts = "test[1-3]"
+
+# The unit view is the stopped-container report proof: reporting it reads
+# cov_container_ref's object list from its container, running or stopped, to
+# keep the unit test's counts to the product's own sources. Declaring any tier
+# replaces the implicit `system` one, so it is declared here too. A run with
+# no unit counts (docker/build-unit/ holds no .gcda) reads no objects, so the
+# other project5 reports never touch the container. The bind-mounted product
+# is NOT declared here: it lives in the e2e's opt-in overlay.
+[coverage.tiers.system]
+kind = "e2e"
+precedence = 1
+
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 2
+
+[coverage.tiers.unit.products]
+cov_container_ref = ["docker/build-unit"]

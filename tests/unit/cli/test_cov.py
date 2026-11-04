@@ -380,13 +380,16 @@ class TestCovReportMergeErrors:
 
 
 class TestCovReportUnitRefusals:
-    def test_a_stopped_reference_image_exits_2_naming_the_container(self, tmp_path, monkeypatch):
+    def test_a_reference_image_on_no_container_and_no_image_exits_2_naming_it(
+        self, tmp_path, monkeypatch
+    ):
         from otto.coverage.tiers import load_tiers
         from tests.unit.cov._unit_lab import ContainerHost, install_lab, reference_image, unit_build
 
         project = tmp_path / "sut"
         unit_build(project / "build/tests", project, ["src/core/add.c"])
-        install_lab(monkeypatch, [ContainerHost("h1", [reference_image()], running=False)])
+        host = ContainerHost("h1", [reference_image()], state=None, image_present=False)
+        install_lab(monkeypatch, [host])
         tiers = load_tiers(
             {
                 "tiers": {
@@ -402,8 +405,8 @@ class TestCovReportUnitRefusals:
         assert result.exit_code == 2, result.output
         out = _flat(result.output)
         assert "Traceback" not in result.output
-        assert "product 'img' reads its object list from container 'img-c'" in out
-        assert "which is not running" in out
+        assert "product 'img': image registry.example/img:1 is not on h1's docker daemon" in out
+        assert "install the product (or pull the image) first" in out
 
     @staticmethod
     def _unit_report(tmp_path, monkeypatch, toolchain):

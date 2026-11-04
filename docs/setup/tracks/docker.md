@@ -398,16 +398,15 @@ The run clears every product's counters before the first test and again
 after collection. `banner`'s are cleared through `sudo`, because its
 container wrote them as root. Here too the parent's lines and the
 container's interleave differently on each run. `object list unavailable` is
-expected for `banner`: the report reads its binary from the running container
+expected for `banner`: the report reads its binary from its container
 instead (below).
 
 `--cov-dir` refuses a directory that is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
-The report reads `banner`'s binary from its running container (below), so
-the container must be up when you report. The track's tests leave it running.
-If you stopped it, as a long-running process's counters need, start it again
-first ({ref}`coverage-container-stop-to-flush`).
+The report reads `banner`'s binary from its container (below), running or
+stopped, so a container you stopped to flush a long-running process's
+counters needs no restart ({ref}`coverage-container-stop-to-flush`).
 
 Your unit run's counters are already in `build/`, from the unit test
 section. Report all three tiers, naming the directory that holds `cov/`,
@@ -426,8 +425,9 @@ The `unit unit/banner:` line is the unit tier and its one view, named for
 links textlib ({ref}`what the unit report counts <coverage-unit-filter>`).
 `banner` is declared by an image reference, so it has no local artifact to
 read its object list from. The report needs that list to know which sources
-are `banner`'s, so it finds the binary in the running container and copies it
-out to read the list. That is why the report comes before the clean up. The
+are `banner`'s, so it finds the binary in the container and copies it out to
+read the list. With neither the container nor its image on the parent, the
+report refuses (`image-missing`), so report before you remove the image. The
 log says nothing of the other two tiers, but the report loads both.
 Open `~/otto-runs/quickstart-docker/report/index.html` to see all three, and
 which tier covered each line.

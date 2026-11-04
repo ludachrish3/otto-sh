@@ -4,7 +4,10 @@ Three decisions live here and nowhere else: which loaded hosts are container
 parents (:func:`docker_parents`), what a disposable test stack's name carries
 (:data:`ORPHAN_FRAGMENTS`, read by :func:`reap_docker`), and how the e2e
 image tests label what they build (:data:`E2E_IMAGE_LABEL`, read by
-:func:`remove_labelled_images` and its command builder). The integration
+:func:`remove_labelled_images` and its command builder). A fourth, which
+expired otto coverage-scan snapshots to remove, lives in otto itself
+(:func:`otto.host.docker_cli.sweep_stale_scans`, which the coverage reader
+also runs) and is re-exported here as :func:`sweep_stale_scans`. The integration
 conftest's orphan sweep, the image-honesty test's finalizer, the e2e docker
 pool and ``scripts/bed_reap.py`` all call in here, so the pool and the reap
 cannot drift apart.
@@ -12,6 +15,7 @@ cannot drift apart.
 
 from collections.abc import Iterable
 
+from otto.host.docker_cli import sweep_stale_scans  # noqa: F401 — re-exported for the bed reap
 from otto.logger.mode import LogMode
 
 ORPHAN_FRAGMENTS = ("-e2e-", "-noexist-")

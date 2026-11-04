@@ -81,24 +81,23 @@ nothing either. One coverage run of such a product goes in this order:
 
 3. Let the run end. Its tail fetches the counters from the parent, then
    clears them.
-4. Start the container again on its parent:
+4. Report, and leave the container stopped:
+   `otto --lab <lab> cov report <run dir>`. For an image named by reference,
+   the unit tier reads the product's objects from its container whether it
+   is running or stopped ({ref}`the unit filter <coverage-unit-filter>`), so
+   `otto test --cov --cov-report`, which reports inline, works too.
+5. When you next need the product running, install it again: install
+   replaces the stopped container ({ref}`docker-image-kind`). The process it
+   starts holds its own counts from then on, and a clean cannot zero them
+   while it runs: before the next coverage run, stop it as
+   {ref}`zeroing a running process <coverage-clean-running-process>` says.
 
-   ```bash
-   otto --lab <lab> host <parent> exec 'docker start <container_name>'
-   ```
-
-   A stopped container answers not installed until the next install replaces
-   it ({ref}`docker-image-kind`). Started, it answers installed again.
-5. Report: `otto --lab <lab> cov report <run dir>`. For an image named by
-   reference, the unit tier reads the product's objects from its running
-   container, and a stopped one refuses the whole report
-   ({ref}`the unit refusals <coverage-unit-filter>`).
-
-`otto test --cov --cov-report` reports inline before step 4, so for an image
-named by reference it loses its report to that refusal; run step 5 instead.
-The process step 4 starts holds its own counts from then on, and a clean
-cannot zero them while it runs: before the next coverage run, stop it as
-{ref}`zeroing a running process <coverage-clean-running-process>` says.
+A stopped container is read through a short-lived copy of it, so what the
+stopped container no longer has is not read: its tmpfs mounts and anything
+its process mounted at runtime. A dead or removing container is refused,
+with its remedy. The read leaves nothing behind: the copy's `otto-scan:*`
+image and `otto-scan-*` container are removed when it ends, or, if that
+removal is cut short, by the next read's expiry sweep.
 
 ## Tarball or reference
 
