@@ -11,20 +11,10 @@ stop the others. Their listing sibling, :func:`~otto.docker.observe.list_images`
 import shlex
 from collections.abc import Sequence
 
+# The one image-removal builder lives with the host's docker commands, where
+# a product's uninstall and coverage's scan cleanup also reach it.
+from ..host.docker_cli import image_rm_command
 from .observe import DockerVerbError, ObserveReport, decline_dry_run, docker_parents, run_on
-
-
-def image_rm_command(
-    images: "Sequence[str]", *, force: bool = False, no_prune: bool = False
-) -> str:
-    """``docker image rm [-f] [--no-prune] -- IMAGE...``, every image name shell-quoted.
-
-    The ``--`` ends docker's flags, so an image whose name starts with ``-``
-    (``otto docker image rm -- -f``) is removed as named, never read as a flag.
-    """
-    flags = (" -f" if force else "") + (" --no-prune" if no_prune else "")
-    names = "".join(f" {shlex.quote(image)}" for image in images)
-    return f"docker image rm{flags} --{names}"
 
 
 def image_prune_command(

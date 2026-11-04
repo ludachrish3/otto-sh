@@ -6,11 +6,28 @@ through their own verbs (``test_cov_container.py``, ``test_container_stop.py``).
 
 import shlex
 from collections.abc import Sequence
+from pathlib import Path
 
+from otto.bootstrap import get_projects
 from otto.host.unix_host import UnixHost
 
 PRODUCTS = ("cov_container", "cov_container_ref")
 """The two container products, in install order: the tarball loads the image the reference runs."""
+
+STOP_PRODUCTS = (*PRODUCTS, "cov_container_bind")
+"""The stop suites' products: :data:`PRODUCTS`, then the bind-mounted one.
+
+``cov_container_bind`` is declared only by the e2e's opt-in bind overlay
+(``OTTOPATH=<project5>:<bind overlay>``), so only the stop suites see it.
+"""
+
+BIND_SRC = "/var/cov/otto-bind-src"
+"""Where test3 holds ``docker/build-bind/``'s product; ``cov_container_bind`` mounts it at /opt."""
+
+
+def project5_root() -> Path:
+    """This project's root, as otto loaded it (the suite runs inside ``otto test``)."""
+    return next(p.root for p in get_projects() if p.name == "project5")
 
 
 async def exec_in(host: UnixHost, container: str, *args: str) -> str:

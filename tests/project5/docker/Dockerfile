@@ -10,4 +10,8 @@ RUN test -n "$GCOV_PREFIX_STRIP"
 ENV GCOV_PREFIX_STRIP=$GCOV_PREFIX_STRIP
 # A static build: alpine has no glibc, and the binary was linked on the dev VM.
 COPY product /opt/product
-CMD ["sleep", "infinity"]
+# The product itself is PID 1, waiting in `serve`, so that `docker stop`
+# (SIGTERM) makes it return from main and gcov's exit-time dump flush its
+# counters. As PID 1 an unhandled SIGTERM is ignored, and docker would SIGKILL
+# it after 10 s with nothing flushed; `serve` installs the handler for that.
+CMD ["/opt/product", "serve"]

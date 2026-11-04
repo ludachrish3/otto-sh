@@ -26,6 +26,7 @@ class FakeProduct:
     instrumented_override: bool | None = None
     kind: str = "shell"
     container_name: str = ""
+    image: str = ""
 
 
 @dataclass
@@ -39,29 +40,71 @@ class FakeHost:
 class ContainerHost(FakeHost):
     """A docker daemon host: its container lists *files*, which ``docker cp`` and ``get`` copy.
 
-    ``running`` answers the inspect; ``scan``, when set, replaces the scan's answer.
+    ``state`` answers the container inspect (``None``: no container of the name);
+    ``image_present`` answers the image inspect of a product with no container.
+    ``scan``, when set, replaces the scan's answer, whether it runs through
+    ``docker exec`` (a running container) or ``docker start -a`` (a snapshot).
     """
 
-    running: bool = True
+    state: str | None = "running"
+    image_present: bool = True
     files: dict[str, bytes] = field(default_factory=dict)
     scan: Any = None
     calls: list[str] = field(default_factory=list)
     staged: dict[str, bytes] = field(default_factory=dict)
 
-    async def exec(self, cmd: str, timeout: float | None = None) -> Any:
+    def _scan_answer(self) -> Any:
+        from otto.result import Result
+        from otto.utils import Status
+
+        if self.scan is not None:
+            return self.scan
+        listed = "".join(f"{p}\n" for p in self.files)
+        return Result(Status.Success, value=listed + "otto-scan-rc:0\n")
+
+    async def exec(self, cmd: str, timeout: float | None = None) -> Any:  # noqa: PLR0911 — one answer per docker command
+        import json
+
         from otto.result import Result
         from otto.utils import Status
 
         self.calls.append(cmd)
+        ok = Result(Status.Success, value="")
         if cmd.startswith("docker container inspect"):
-            return Result(Status.Success, value=f"{str(self.running).lower()} sha256:feed\n")
+            if self.state is None:
+                return Result(
+                    Status.Error, value="Error response from daemon: No such container: img-c"
+                )
+            state = {
+                "status": self.state,
+                "running": self.state == "running",
+                "image": "sha256:feed",
+                "ref": "registry.example/img:1",
+                "user": "",
+                "groups": None,
+            }
+            return Result(Status.Success, value=json.dumps(state))
+        if cmd.startswith("docker image inspect --format '{{.Id}}' "):
+            if not self.image_present:
+                return Result(
+                    Status.Error,
+                    value="Error response from daemon: No such image: registry.example/img:1",
+                )
+            return Result(Status.Success, value="sha256:feed")
+        if cmd == "date +%s":
+            return Result(Status.Success, value="1700000000")
+        if cmd.startswith(("docker ps -a --filter label=otto.scan=1", "docker image ls -q")):
+            return ok  # no scan leftovers to sweep
+        if cmd.startswith(("docker commit", "docker create", "docker rm -f -v otto-scan-")):
+            return ok
+        if cmd.startswith("docker image rm -- otto-scan:"):
+            return ok
+        if cmd.startswith("docker start -a"):
+            return self._scan_answer()
         if cmd.startswith("docker exec") and " OTTO_SCAN_ID=" not in cmd.split(" sh -c ", 1)[0]:
-            return Result(Status.Success, value="")  # the reap of an unclean scan
+            return ok  # the reap of an unclean scan
         if cmd.startswith("docker exec"):
-            if self.scan is not None:
-                return self.scan
-            listed = "".join(f"{p}\n" for p in self.files)
-            return Result(Status.Success, value=listed + "otto-scan-rc:0\n")
+            return self._scan_answer()
         if cmd.startswith('d="${TMPDIR:-/tmp}/otto-objlist.'):
             return Result(Status.Success, value="/tmp/otto-objlist.x\n")
         if cmd.startswith("docker cp"):
@@ -89,6 +132,7 @@ def reference_image(name: str = "img", container: str = "img-c") -> FakeProduct:
         is_tarball=False,
         kind="docker_image",
         container_name=container,
+        image="registry.example/img:1",
     )
 
 

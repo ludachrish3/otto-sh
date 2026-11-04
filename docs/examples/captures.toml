@@ -1394,6 +1394,8 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/quickstart-do
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    # The container inspect's JSON image digest, which the console may wrap mid-hash.
+    ["sha256:[0-9a-f]+(?:\\n +[0-9a-f]+)*", "sha256:<id>"],
     ["\\b[0-9a-f]{64}\\b", "<id>"],
     ["\\b[0-9a-f]{32}\\b", "<uuid>"],
     ["\\b[0-9a-f]{12}\\b", "<id>"],

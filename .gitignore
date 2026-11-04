@@ -150,4 +150,7 @@ tests/project5/kmod/**/*.symvers
 # saved image tarball is a build product of docker/build.sh, not a fixture
 # input.
 tests/project5/docker/build/
+# docker/build.sh's two out-of-image builds: build-bind/ (the bind-mounted
+# product) and build-unit/ (the unit test and its counters).
+tests/project5/docker/build-*/
 tests/project5/docker/*.tar

@@ -167,6 +167,17 @@ A process can ignore SIGTERM, so the post-terminate reap must itself be
 bounded — an unbounded wait here would defeat the timeout it implements.
 """
 
+EXEC_CANCEL_REAP_BOUND = 2 * _EXEC_REAP_TIMEOUT
+"""Seconds a cancelled or timed-out ``exec`` can take to unwind on the ssh channel route.
+
+The only shielded work its cancel path runs (``session.py``'s ``except
+BaseException`` around the channel drain) is the reap, which signals the
+process, waits ``_EXEC_REAP_TIMEOUT``, then kills it and waits once more
+(``_reap_exec_process``); the timeout path runs the same reap. A second cancel
+abandons even that. Connection acquisition and channel creation are asyncssh's
+own and not bounded here.
+"""
+
 
 def _validate_timeout(timeout: float) -> float:
     """Reject timeout values ``asyncio.wait_for`` would silently misinterpret.

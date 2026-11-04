@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import tomli
 
 from tests.e2e.cov import _project5_build as helper
 
@@ -134,6 +135,9 @@ def test_the_stamp_makes_artifacts_built_by_another_compiler_stale(tmp_path, mon
 
 
 def test_ensure_kmod_artifacts_tells_the_build_script_which_toolchain_ran(monkeypatch, tmp_path):
+    # The ensure clears the unit counters first: never the checkout's own, from
+    # a hostless test that may run beside a live stopped-report proof.
+    monkeypatch.setattr(helper, "UNIT_BUILD", tmp_path)
     monkeypatch.setattr(helper, "_assert_committed", lambda paths, tmp_path_factory: None)
     monkeypatch.setattr(helper, "kmod_artifacts_are_stale", lambda artifacts, sources, tc: True)
     calls = []
@@ -149,6 +153,33 @@ def test_ensure_kmod_artifacts_tells_the_build_script_which_toolchain_ran(monkey
     assert argv == [str(helper.KMOD_BUILD)]
     assert env["CC"] == "gcc-12"
     assert env["OTTO_KMODCOV_TOOLCHAIN"] == "gcc-12"
+
+
+@pytest.mark.parametrize(
+    "ensure",
+    [
+        pytest.param(lambda: helper.ensure_kmod_artifacts(None), id="kmod"),
+        pytest.param(lambda: helper.ensure_image_artifacts(None), id="image"),
+    ],
+)
+def test_every_project5_lane_starts_with_no_stranded_unit_counters(ensure, monkeypatch, tmp_path):
+    """A killed stopped-report run strands build-unit/*.gcda; the next lane's start clears it.
+
+    Left there, every later project5 report would read cov_container_ref's
+    objects for the unit view and refuse (image-missing) once its image is gone.
+    Every project5 report lane (docker image, kmod, kmodcov) passes through one
+    of these two ensures.
+    """
+    unit = tmp_path / "build-unit"
+    unit.mkdir()
+    (unit / "test_math_ops-math_ops.gcda").write_bytes(b"stranded")
+    (unit / "test_math_ops-math_ops.gcno").write_bytes(b"notes")
+    monkeypatch.setattr(helper, "UNIT_BUILD", unit)
+    monkeypatch.setattr(helper, "_assert_committed", lambda paths, tmp_path_factory: None)
+    monkeypatch.setattr(helper, "kmod_artifacts_are_stale", lambda artifacts, sources, tc: False)
+    monkeypatch.setattr(helper, "_artifacts_are_stale", lambda artifacts, sources: False)
+    ensure()
+    assert sorted(p.name for p in unit.iterdir()) == ["test_math_ops-math_ops.gcno"]
 
 
 # The measured shape of readelf's three tables for a demo .ko as GNU as on
@@ -409,3 +440,233 @@ def test_the_docker3_overlay_copies_test3_and_adds_only_the_lab(tmp_path):
     fixture = json.loads((helper.LAB_DATA / "lab.json").read_text())
     (original,) = [e for e in fixture["elements"] if e["name"] == "test3"]
     assert element == {**original, "labs": ["unix", "docker3"]}
+
+
+# --- The bind overlay: the stopped-container --volumes-from proof product ----
+
+
+def _products_by_host(overlays: "list[Path]", tmp_path) -> dict[str, set[str]]:
+    """Each unix-lab host's product names with project5 then *overlays*: ``otto --list-products``.
+
+    The CLI, not an in-process load: products attach to hosts in otto's own
+    composition, which also refuses an overlay it could not run.
+    """
+    from tests.e2e._otto_subprocess import PROJECT5, run_otto
+
+    listed = run_otto(
+        ["--list-products"],
+        roots=PROJECT5,
+        lab="unix",
+        extra_env={
+            "OTTOPATH": os.pathsep.join(str(p) for p in [PROJECT5, *overlays]),
+            "OTTO_HOME": str(tmp_path / "home"),
+            **helper.LISTING_ENV,
+        },
+        timeout=120,
+    )
+    assert listed.returncode == 0, f"{listed.stdout}\n{listed.stderr}"
+    by_host: dict[str, set[str]] = {}
+    for name, hosts in helper.listed_products(listed.stdout).items():
+        for host in hosts:
+            by_host.setdefault(host, set()).add(name)
+    assert by_host, listed.stdout
+    return by_host
+
+
+def test_the_bind_overlay_adds_the_bind_product_to_test3_alone(tmp_path):
+    overlay = helper.bind_overlay_project(tmp_path / "overlays")
+    with_bind = _products_by_host([overlay], tmp_path)
+    without = _products_by_host([], tmp_path)
+    assert "cov_container_bind" not in set().union(*without.values())
+    assert with_bind["test3"] == without["test3"] | {"cov_container_bind"}
+    assert {h: p for h, p in with_bind.items() if h != "test3"} == {
+        h: p for h, p in without.items() if h != "test3"
+    }
+
+
+def test_the_bind_overlay_declares_only_the_bind_product(tmp_path):
+    overlay = helper.bind_overlay_project(tmp_path)
+    settings = tomli.loads((overlay / ".otto" / "settings.toml").read_text())
+    assert settings["products"] == [
+        {
+            "name": "cov_container_bind",
+            "kind": "docker_image",
+            "image": "otto-cov-demo:e2e",
+            "pull": False,
+            "instrumented": False,
+            "cov_dir": "/var/cov/cov_container_bind",
+            "run_args": "-v /var/cov/otto-bind-src:/opt:ro",
+            "match": {"id": "test3"},
+        }
+    ]
+    assert settings["project"] == {"lab_patterns": [".*"]}
+    assert "lab" not in settings
+    assert "tests" not in settings
+
+
+def test_both_overlays_compose_over_project5(tmp_path):
+    """The Task 3 cleanup run's OTTOPATH: project5, the docker3 overlay, the bind overlay."""
+    docker3 = helper.docker3_overlay_project(tmp_path / "d3")
+    bind = helper.bind_overlay_project(tmp_path / "bind")
+    products = _products_by_host([docker3, bind], tmp_path)
+    assert "cov_container_bind" in products["test3"]
+
+
+# --- project5's unit view: the stopped-reference-product report proof ---------
+
+
+def test_project5_declares_one_unit_view_on_the_reference_product():
+    from otto.coverage.tiers import load_tiers
+    from tests.e2e._otto_subprocess import PROJECT5
+
+    settings = tomli.loads((PROJECT5 / ".otto" / "settings.toml").read_text())
+    tiers = load_tiers(settings["coverage"], root=PROJECT5)
+    assert sorted((t.name, t.kind, t.precedence) for t in tiers) == [
+        ("system", "e2e", 1),
+        ("unit", "unit", 2),
+    ]
+    (unit,) = [t for t in tiers if t.kind == "unit"]
+    assert unit.products == {"cov_container_ref": [Path("docker/build-unit")]}
+
+
+# --- The project5 image's PID 1: a product that flushes on SIGTERM -----------
+#
+# The image runs `/opt/product serve` as PID 1, so `docker stop` (SIGTERM) ends
+# it through its handler and gcov's exit-time dump writes its counters. Built
+# here as docker/build.sh builds it, minus -static, so the counters' names are
+# the image's: product-main.gcda and product-math_ops.gcda, flat under
+# GCOV_PREFIX.
+
+_STOP_DEADLINE = 5.0
+
+
+@pytest.fixture(scope="module")
+def serve_build(tmp_path_factory) -> "tuple[Path, int]":
+    """The product built with --coverage, and the GCOV_PREFIX_STRIP that lands it flat."""
+    import shutil
+
+    assert shutil.which("gcc") is not None, "gcc is not on PATH: install gcc"
+    build = tmp_path_factory.mktemp("serve") / "build"
+    build.mkdir()
+    subprocess.run(
+        [
+            "gcc",
+            "--coverage",
+            "-O0",
+            "-g",
+            "-o",
+            str(build / "product"),
+            str(helper.DOCKER_SRC / "main.c"),
+            str(helper.DOCKER_SRC / "math_ops.c"),
+        ],
+        check=True,
+        cwd=build,
+    )
+    # build.sh's count: every '/'-separated component of the build directory.
+    return build / "product", len([part for part in str(build).split("/") if part])
+
+
+def _serve(build: "tuple[Path, int]", cov: Path, **env: str) -> "subprocess.Popen[bytes]":
+    product, strip = build
+    return subprocess.Popen(
+        [str(product), "serve"],
+        env={"GCOV_PREFIX": str(cov), "GCOV_PREFIX_STRIP": str(strip), **env},
+    )
+
+
+def _state(pid: int) -> str:
+    """The process state letter ``/proc/<pid>/stat`` shows (the field after the name)."""
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    return stat.rsplit(")", 1)[1].split()[0]
+
+
+def _catches_sigterm(pid: int) -> bool:
+    """Whether *pid* has a SIGTERM handler installed: ``SigCgt``'s bit 14 (signal 15 - 1)."""
+    import signal
+
+    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+        if line.startswith("SigCgt:"):
+            return bool(int(line.split()[1], 16) & (1 << (signal.SIGTERM - 1)))
+    raise AssertionError(f"/proc/{pid}/status has no SigCgt line")
+
+
+def test_a_sleeping_process_is_not_yet_one_that_catches_sigterm():
+    """State ``S`` is no readiness signal: a process sleeps before it installs a handler.
+
+    ``sleep`` sleeps with SIGTERM at its default disposition, so it reads ``S``
+    while :func:`_catches_sigterm` reads False; only the caught-signal mask
+    says the handler is in place.
+    """
+    from otto.utils import wait_for
+
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        wait_for(
+            lambda: _state(proc.pid) == "S",
+            _STOP_DEADLINE,
+            interval=0.01,
+            on_timeout=lambda: f"sleep never slept: state {_state(proc.pid)}",
+        )
+        assert not _catches_sigterm(proc.pid)
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_the_image_product_serves_until_sigterm_then_flushes(serve_build, tmp_path):
+    import signal
+
+    from otto.utils import wait_for
+
+    cov = tmp_path / "cov"
+    proc = _serve(serve_build, cov)
+    try:
+        # Its SIGTERM handler is installed (after the block), so the signal is
+        # caught, never the default death; a sleeping state could precede both.
+        wait_for(
+            lambda: _catches_sigterm(proc.pid),
+            _STOP_DEADLINE,
+            interval=0.01,
+            on_timeout=lambda: f"serve never installed its SIGTERM handler: {_state(proc.pid)}",
+        )
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=_STOP_DEADLINE) == 0
+    finally:
+        proc.kill()
+        proc.wait()
+    assert (cov / "product-main.gcda").is_file()
+
+
+def test_a_stop_raised_at_wait_entry_is_never_lost(serve_build, tmp_path):
+    """The SIGTERM lands after the flag test and before the wait: it must still end the loop."""
+    cov = tmp_path / "cov"
+    proc = _serve(serve_build, cov, OTTO_SERVE_RAISE_BEFORE_WAIT="1")
+    try:
+        assert proc.wait(timeout=_STOP_DEADLINE) == 0
+    finally:
+        proc.kill()
+        proc.wait()
+    assert (cov / "product-main.gcda").is_file()
+
+
+def test_a_stop_around_startup_never_hangs(serve_build, tmp_path):
+    import shutil
+    import signal
+    import time
+
+    cov = tmp_path / "cov"
+    for n in range(50):
+        shutil.rmtree(cov, ignore_errors=True)
+        proc = _serve(serve_build, cov)
+        try:
+            time.sleep(n * 0.0004)  # 0 to ~20 ms: through the setup window
+            proc.send_signal(signal.SIGTERM)
+            code = proc.wait(timeout=_STOP_DEADLINE)
+        finally:
+            proc.kill()
+            proc.wait()
+        # Either the handler ran (exit 0, counters written) or the signal came
+        # before main blocked it, which no product can close.
+        assert code in (0, -signal.SIGTERM), (n, code)
+        if code == 0:
+            assert (cov / "product-main.gcda").is_file(), n

@@ -22,6 +22,9 @@ from tests._fixtures.otto_modules import otto_module_names
 SECRET_NAME = re.compile(r"pass(word|wd|phrase)|secret|token", re.IGNORECASE)
 
 NOT_SECRET: dict[str, str] = {
+    "otto.coverage.objects._ScanResources.token": (
+        "the random tag naming one object scan's staging dir, container and snapshot"
+    ),
     "otto.host.daemon.DaemonProcess.token": "the sentinel tag a daemon shows in ps output",
     "otto.tunnel.check._Run.token": "the random tag a tunnel check echoes on its hosts",
     "otto.host.option_specs.ConsoleOptionsSpec.password_prompt": (

@@ -1196,11 +1196,48 @@ class TestUnitHarvest:
         )
 
     @pytest.mark.asyncio
-    async def test_a_stopped_reference_image_is_an_input_refusal(self, tmp_path, monkeypatch):
+    async def test_a_stopped_reference_image_is_read_from_a_snapshot(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        built = product_build(project, "img", ["src/core/add.c"])
+        host = ContainerHost("h1", [reference_image()], state="exited")
+        host.files = {"/usr/bin/img": Path(str(built.artifact)).read_bytes()}
+        install_lab(monkeypatch, [host])
+        unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
+        install_capture(monkeypatch)
+
+        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        assert any(c.startswith("docker commit --pause=false") for c in host.calls)
+        assert not [c for c in host.calls if c.startswith("docker exec")]
+
+    @pytest.mark.asyncio
+    async def test_a_view_with_no_counters_reads_no_objects(self, tmp_path, monkeypatch, caplog):
+        """Nothing to capture, so nothing to read and nothing to refuse (ruling 13)."""
+        project = _init_git_repo(tmp_path)
+        host = ContainerHost("h1", [reference_image()], state=None, image_present=False)
+        install_lab(monkeypatch, [host])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        for gcda in (project / "build/tests").rglob("*.gcda"):
+            gcda.unlink()  # built, never run: notes and no counters
+        calls = install_capture(monkeypatch)
+
+        with caplog.at_level("WARNING"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+
+        assert host.calls == []
+        assert calls == []
+        assert any("harvest dir has no .gcda files" in m for m in caplog.messages)
+
+    @pytest.mark.asyncio
+    async def test_a_reference_image_on_no_container_and_no_image_is_an_input_refusal(
+        self, tmp_path, monkeypatch
+    ):
         from otto.coverage.errors import CoverageInputError
 
         project = _init_git_repo(tmp_path)
-        install_lab(monkeypatch, [ContainerHost("h1", [reference_image()], running=False)])
+        host = ContainerHost("h1", [reference_image()], state=None, image_present=False)
+        install_lab(monkeypatch, [host])
         unit_build(project / "build/tests", project, ["src/core/add.c"])
         calls = install_capture(monkeypatch)
 
@@ -1209,8 +1246,8 @@ class TestUnitHarvest:
 
         assert excinfo.value.field is None
         assert str(excinfo.value) == (
-            "unit tier unit/img: product 'img' reads its object list from container 'img-c', "
-            "which is not running — install the product first (otto run install)."
+            "unit tier unit/img: product 'img': image registry.example/img:1 is not on h1's "
+            "docker daemon — install the product (or pull the image) first."
         )
         assert calls == []
 

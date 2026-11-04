@@ -8,7 +8,8 @@ and install fails with its message), then ``docker run -d`` starts it with the
 product's ``cov_dir`` bind-mounted at the same path; ``is_installed`` asks
 whether the container is running; ``uninstall`` removes the container and,
 for a tarball-loaded image, resolves that image from the CONTAINER ITSELF
-(``docker container inspect -f '{{.Config.Image}}'``) and removes it too — never from
+(its ``.Config.Image``, through ``otto.host.docker_cli.inspect_container``)
+and removes it too — never from
 in-process memory, since the project CLI's normal lifecycle
 (``otto install`` … ``otto uninstall``) runs each verb in its own process.
 The bind mount is the whole coverage story: an instrumented binary inside
@@ -39,7 +40,13 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
-from .docker_cli import missing, rm_container_command
+from .docker_cli import (
+    image_id_of,
+    image_rm_command,
+    inspect_container,
+    missing,
+    rm_container_command,
+)
 from .product import (
     ProductPlan,
     ShellProduct,
@@ -161,10 +168,6 @@ class DockerImageProduct(ShellProduct):
         """``docker pull`` of :attr:`image`."""
         return f"docker pull {shlex.quote(self.image)}"
 
-    def _present_command(self) -> str:
-        """Ask the daemon whether :attr:`image` is already there."""
-        return f"docker image inspect {shlex.quote(self.image)} >/dev/null"
-
     def _run_command(self, ref: str) -> str:
         """``docker run -d`` of *ref*, which the caller has ALREADY shell-quoted.
 
@@ -182,9 +185,9 @@ class DockerImageProduct(ShellProduct):
         """Remove the container and its anonymous volumes; *force* also stops an active one."""
         return rm_container_command(self.container_name, force=force)
 
-    def _rmi_command(self, image: str) -> str:
-        """``docker rmi`` of *image*, ALREADY shell-quoted (see :meth:`_run_command`)."""
-        return f"docker rmi {image}"
+    def _image_rm_command(self, image: str) -> str:
+        """Remove *image* (unquoted; the shared builder quotes it)."""
+        return image_rm_command([image])
 
     @override
     async def stage(self, host: "Host") -> Result:
@@ -232,10 +235,10 @@ class DockerImageProduct(ShellProduct):
                 return self._error_from(host, f"{self.name}: docker pull {self.image}", pulled)
             ref = self.image
         else:
-            present = await host.exec(self._present_command(), timeout=60)
-            if present.status is Status.NotRun:
+            present = await image_id_of(host, self.image)
+            if present.result.status is Status.NotRun:
                 return Result(Status.NotRun)
-            if not present.status.is_ok:
+            if present.id is None:
                 return Result(
                     Status.Error,
                     msg=f"{self.name}: image {self.image} is not present on {host.id}; load it "
@@ -281,17 +284,11 @@ class DockerImageProduct(ShellProduct):
             # was loaded by install() (a reference never reaches here, see
             # below). A container that is already gone (or never existed)
             # has no image to resolve; docker rm -f below is then a no-op.
-            inspected = await host.exec(
-                "docker container inspect -f '{{.Config.Image}}' "
-                + shlex.quote(self.container_name),
-                timeout=60,
-            )
-            if inspected.status is Status.NotRun:
+            inspected = await inspect_container(host, self.container_name)
+            if inspected.declined:
                 return Result(Status.NotRun)
-            if inspected.status.is_ok:
-                resolved = str(inspected.value).strip()
-                if resolved:
-                    image_to_remove = resolved
+            if inspected.state is not None and inspected.state.image_ref:
+                image_to_remove = inspected.state.image_ref
         removed = await host.exec(self._rm_command(force=True), timeout=120)
         if removed.status is Status.NotRun:
             return Result(Status.NotRun)
@@ -303,9 +300,10 @@ class DockerImageProduct(ShellProduct):
             # Only an image otto loaded from a tarball is otto's to remove;
             # a pulled or pre-existing reference stays in the daemon's cache
             # (is_tarball guards this branch, never a reference's image).
-            gone = await host.exec(self._rmi_command(shlex.quote(image_to_remove)), timeout=120)
+            remove = self._image_rm_command(image_to_remove)
+            gone = await host.exec(remove, timeout=120)
             if not gone.status.is_ok:
-                return self._error_from(host, f"{self.name}: docker rmi {image_to_remove}", gone)
+                return self._error_from(host, f"{self.name}: {remove}", gone)
             self.loaded_ref = None
         return Result(Status.Success)
 
@@ -325,11 +323,11 @@ class DockerImageProduct(ShellProduct):
         if self.is_tarball:
             uninstall = [
                 self._rm_command(force=True),
-                self._rmi_command("<image the container ran>"),
+                self._image_rm_command("<image the container ran>"),
             ]
             image_gap = (
                 "the image to remove, read from the container (docker container inspect "
-                f"{self.container_name}); no running container means no `docker rmi`"
+                f"{self.container_name}); no running container means no `docker image rm`"
             )
             where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
             if where.refusal is not None:
@@ -371,11 +369,8 @@ class DockerImageProduct(ShellProduct):
 
         A missing container or a failed (or declined) inspect is not installed.
         """
-        state = await host.exec(
-            "docker container inspect -f '{{.State.Running}}' " + shlex.quote(self.container_name),
-            timeout=60,
-        )
-        return state.status.is_ok and state.value.strip() == "true"
+        inspected = await inspect_container(host, self.container_name)
+        return inspected.state is not None and inspected.state.running
 
     @override
     async def reset_coverage(self, host: "Host") -> Result:
