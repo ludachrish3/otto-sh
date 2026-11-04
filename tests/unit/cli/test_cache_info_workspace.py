@@ -11,6 +11,7 @@ import json
 import re
 from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 import otto.config.completion_cache as cc
@@ -105,6 +106,63 @@ def test_info_explains_the_workspace_hosts_and_what_was_dropped(tmp_path, monkey
     assert "dropped: 1 — not offered, and why:" in out
     assert f"[invsut] {project / 'hosts.json'}: element 'dut2' hosts[0]: " in out
     assert "ghost" in out
+
+
+def test_info_says_a_deadline_answer_is_served_on_the_short_ttl(tmp_path, monkeypatch):
+    """A host source past its deadline: the entry is fresh, and kept only briefly (#744).
+
+    The line says how long the incomplete answer is served before the next TAB
+    asks the source again, from the TTL the writer stored, never a second guess.
+    """
+    from otto.cli.cache import cache_app
+    from otto.config.project import discover
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    projects = discover().projects
+    deadline = {"project": "invsut", "where": "w", "reason": "did not answer", "timed_out": True}
+    cc.write_cache(projects, instructions=[], hosts=["local"], host_drops=[deadline])
+
+    result = runner.invoke(cache_app, ["info"])
+
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "completion names: fresh" in out
+    assert "tainted" not in out
+    assert "[invsut] w: did not answer" in out
+    assert "a deadline: this answer is served for at most 5m, then a TAB asks again" in out
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "state"),
+    [("tainted", True, "tainted"), ("generated_at", 0, "expired")],
+)
+def test_info_promises_the_short_ttl_only_for_a_fresh_entry(
+    tmp_path, monkeypatch, field, value, state
+):
+    """A tainted or expired entry is not being served, so no TTL is promised (#744).
+
+    The drop and its reason still show: they are what the last enumeration said.
+    """
+    from otto.cli.cache import cache_app
+    from otto.config.project import discover
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    projects = discover().projects
+    deadline = {"project": "invsut", "where": "w", "reason": "did not answer", "timed_out": True}
+    cc.write_cache(projects, instructions=[], hosts=["local"], host_drops=[deadline])
+    path = cc._cache_path()
+    assert path is not None
+    data = json.loads(path.read_text())
+    data["sections"]["names"][field] = value
+    path.write_text(json.dumps(data))
+
+    result = runner.invoke(cache_app, ["info"])
+
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert f"completion names: {state}" in out
+    assert "[invsut] w: did not answer" in out
+    assert "served for at most" not in out
 
 
 def test_info_says_none_dropped_when_every_entry_built(tmp_path, monkeypatch):

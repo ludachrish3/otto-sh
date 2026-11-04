@@ -41,7 +41,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 29
+SCHEMA = 30
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -833,17 +833,32 @@ def servable_shim(data: Any, now: float) -> dict[str, Any]:
     shim = sections.get("shim")
     if not isinstance(shim, dict) or not isinstance(shim.get("payload"), dict):
         raise Handover("no shim section", stale=True)
-    if shim.get("tainted"):
-        raise Handover("tainted")
-    at = shim.get("generated_at")
-    payload = shim["payload"]
-    ttl = payload.get("ttl_seconds")
-    if not isinstance(at, (int, float)) or not isinstance(ttl, (int, float)) or now - at > ttl:
-        raise Handover("expired", stale=True)
+    _check_live(shim, now)
     names = sections.get("names")
     if not isinstance(names, dict) or not isinstance(names.get("payload"), dict):
         raise Handover("no names section", stale=True)
-    return payload
+    # The shim serves `names` data too, so that entry must be live by its own stamps:
+    # an expired names entry is never served, whatever the shim entry says.
+    _check_live(names, now)
+    return shim["payload"]
+
+
+def _check_live(entry: dict[str, Any], now: float) -> None:
+    """Hand over unless *entry* is untainted and inside its stored TTL.
+
+    Mirrors the Python reader (``completion_cache._section_payload_if_fresh``
+    over ``cache_sections.stored_ttl_seconds``): the TTL is the one the writer
+    decided and stored (``write_sections``), never decided here, and only a
+    non-bool ``int`` is a TTL; a bool or a float is a miss.
+    """
+    if entry.get("tainted"):
+        raise Handover("tainted")
+    at = entry.get("generated_at")
+    ttl = entry.get("ttl_seconds")
+    if not isinstance(ttl, int) or isinstance(ttl, bool):
+        raise Handover("expired", stale=True)
+    if not isinstance(at, (int, float)) or now - at > ttl:
+        raise Handover("expired", stale=True)
 
 
 def _stat_pass(triples: list[Any]) -> None:

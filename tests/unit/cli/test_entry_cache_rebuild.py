@@ -559,3 +559,121 @@ def test_an_inventory_file_whose_parent_turns_unsearchable_is_served_after_one_r
         assert cache.stat().st_mtime_ns == before, "the full path rewrote a valid cache"
     finally:
         parent.chmod(0o700)
+
+
+# A cold host enumeration that misses the completion deadline (#744): project1's
+# FIRST enumeration in the process never answers, as a cold start under a slow
+# tracer may not; any later one is prompt. So a collector that missed the memo
+# would enumerate project1 again, in time, and the payload's `hosts` and
+# `hosts_by_lab` would disagree. Every other project's enumeration is prompt.
+_SLOW_PROJECT1_ENTRY = """\
+import threading
+import otto.config.completion_cache as cc
+real = cc._enumerate_host_summaries
+never = threading.Event()
+project1_calls = []
+def slow_first_project1(project, *args, **kwargs):
+    if project.root.name == "project1":
+        project1_calls.append(1)
+        if len(project1_calls) == 1:
+            never.wait()
+    return real(project, *args, **kwargs)
+cc._enumerate_host_summaries = slow_first_project1
+from otto.cli.main import entry
+entry()
+"""
+
+# The first child's deadline. It is one process-wide env var, so it cannot be
+# set per project: project1's first enumeration blocks with no end, and the
+# deadline is what ends it, while the healthy project2 (tens of ms on 3.10, a
+# few times that under 3.14's coverage tracer) must answer inside the same
+# deadline. 5 s gives project2 a margin of 25x or more even under that
+# slowdown; the test pays it once, as the wait on project1.
+_FIRST_CHILD_DEADLINE = "5"
+
+
+def _host_tab(env) -> set[str]:
+    """``otto host <TAB>`` as bash runs it: the console script, shim first."""
+    tab_env = {
+        **env,
+        "_OTTO_COMPLETE": "complete_bash",
+        "COMP_WORDS": "otto host ",
+        "COMP_CWORD": "2",
+    }
+    otto = Path(sys.executable).with_name("otto")
+    tab = subprocess.run([str(otto)], env=tab_env, capture_output=True, text=True, check=False)
+    assert tab.returncode == 0, tab.stderr
+    return set(tab.stdout.split())
+
+
+def test_a_host_enumeration_past_the_deadline_is_served_on_the_short_ttl_then_recovers(
+    tmp_path,
+):
+    """A deadline answer is served for at most the short TTL; the next rebuild replaces it.
+
+    Stored for the normal TTL (a day for a file lab), one slow cold start left
+    ``otto host <TAB>`` offering only ``local`` for a day (#744). Now the drop
+    stays in ``host_drops`` for ``otto cache info``, ``hosts`` agrees with
+    ``hosts_by_lab`` (one enumeration answers both), every TAB is served from
+    the cache, partial, for at most
+    :data:`~otto.config.completion_cache.UNFINGERPRINTED_CACHE_TTL_SECONDS`, and
+    once that has passed the next rebuild, in time, stores a full answer on the
+    normal TTL.
+    """
+    import json
+
+    import otto.config.completion_cache as cc
+    from tests._fixtures.paths import CHECKOUT_ROOT
+    from tests.e2e._otto_subprocess import otto_subprocess_env
+
+    project1 = CHECKOUT_ROOT / "tests" / "project1"
+    project2 = CHECKOUT_ROOT / "tests" / "project2"
+    ottopath = {"OTTOPATH": os.pathsep.join([str(project1), str(project2)])}
+    # The recovery legs get the generous child deadline; only the first child probes it.
+    env = otto_subprocess_env(xdir=tmp_path, roots=None, extra_env=ottopath)
+    first = otto_subprocess_env(
+        xdir=tmp_path,
+        roots=None,
+        extra_env={**ottopath, cc.HOST_SUMMARY_DEADLINE_ENV_VAR: _FIRST_CHILD_DEADLINE},
+    )
+    p = subprocess.run(
+        [sys.executable, "-c", _SLOW_PROJECT1_ENTRY, *_ROOT_HELP],
+        env=first,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert p.returncode == 0, p.stderr
+    cache = _cache_file(env)
+    sections = json.loads(cache.read_text())["sections"]
+    payload = sections["names"]["payload"]
+    bucketed = {host for ids in payload["hosts_by_lab"].values() for host in ids}
+    assert set(payload["hosts"]) - {"local"} == bucketed, "one payload, two enumerations"
+    assert [(d["where"], d["timed_out"]) for d in payload["host_drops"]] == [
+        (str(project1), True)
+    ], payload["host_drops"]
+    assert {"alt1", "alt2", "alt3"} <= bucketed, "control: the healthy project answered"
+    assert "test1" not in bucketed, "control: project1 missed its deadline"
+    for name in ("names", "shim"):
+        assert sections[name]["tainted"] is False, name
+        assert sections[name]["ttl_seconds"] <= cc.UNFINGERPRINTED_CACHE_TTL_SECONDS, name
+
+    assert _shim_tab(env).items is not None, "the shim does not serve the short-TTL answer"
+    offered = _host_tab(env)
+    assert {"local", "alt1"} <= offered
+    assert "test1" not in offered, "control: the TAB was served from the cache"
+
+    # Let the short TTL run out without waiting for it: backdate every entry.
+    data = json.loads(cache.read_text())
+    for entry in data["sections"].values():
+        entry["generated_at"] -= cc.UNFINGERPRINTED_CACHE_TTL_SECONDS + 1
+    cache.write_text(json.dumps(data))
+
+    _run(env, argv=_ROOT_HELP)
+    sections = json.loads(cache.read_text())["sections"]
+    assert sections["names"]["payload"]["host_drops"] == [], "the rebuild did not replace it"
+    assert {"test1", "alt1"} <= set(sections["names"]["payload"]["hosts"])
+    for name in ("names", "shim"):
+        assert sections[name]["ttl_seconds"] == cc.CACHE_TTL_SECONDS, name
+    assert _shim_tab(env).items is not None, "the shim does not serve the clean rebuild"
+    assert {"local", "test1", "alt1"} <= _host_tab(env)

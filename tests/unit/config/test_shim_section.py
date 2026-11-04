@@ -39,7 +39,7 @@ def test_payload_keys_are_the_names_key_set_plus_the_user_settings_file(tmp_path
     expected = sorted({*keys, user_settings_path()})
     assert payload["keys"] == [stat_triple(p) for p in expected]
     assert payload["tables"] == [str(project.root) for project in projects]
-    assert payload["ttl_seconds"] == cc._cache_ttl_seconds(projects)
+    assert "ttl_seconds" not in payload, "the writer stores the TTL on the entry (#744)"
     assert "tests_digest" not in payload
     assert payload["inventory"] == {"kind": "none"}
     assert payload["tree"]["name"] == "otto"

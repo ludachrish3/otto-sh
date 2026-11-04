@@ -41,6 +41,14 @@ class HostDrop:
     reason: str
     """The error text the skip swallowed."""
 
+    timed_out: bool = False
+    """Whether this is the enumeration's own deadline, not a skip.
+
+    A skip or a failed source is an answer: what the enumeration left out, and
+    why. A deadline is not: the source may well be fine and merely slow, so the
+    completion cache's writer stores a ``names`` section built from one on the
+    short TTL, and the first TAB after it expires asks again."""
+
 
 _SINK: contextvars.ContextVar["list[HostDrop] | None"] = contextvars.ContextVar(
     "otto_host_drops", default=None

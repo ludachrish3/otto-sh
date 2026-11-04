@@ -114,7 +114,12 @@ warning into the shell, so this block is where those skips are explained.
 means TAB is served from it; `stale`, `expired` and `outdated` mean the next
 TAB rebuilds it; `tainted` means it was written while startup reported errors
 and is never served, so every TAB runs the full load until the error is
-fixed.
+fixed. In a `fresh` entry, a `dropped` entry from a host source that missed
+its deadline is followed by
+`a deadline: this answer is served for at most 5m`: the entry is kept for at
+most five minutes, and the first TAB after that asks the source again. See
+[the cache's freshness rules](../../architecture/subsystems/completion-cache.md#freshness)
+for why.
 
 `shim` is the standing of the fast answer — a warm TAB is answered by the
 console script from the cache alone when the entry's recorded files and
