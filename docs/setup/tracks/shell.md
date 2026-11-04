@@ -217,9 +217,8 @@ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --
 ```
 
 `otto-no-cov-dir` means `wordcount` has no `cov_dir` on the host: it has not
-run there yet. A second pass through this track finds the first pass's
-`/tmp/wordcount` (cleanup leaves it), so it archives that empty directory
-instead. The `skipped` line counts the system headers the tool compiled in,
+run there yet (a previous pass's cleanup removed its counters and the
+directory). The `skipped` line counts the system headers the tool compiled in,
 which are not the project's sources.
 
 `--tester-name` and `--tester-email` record who did the testing. Leave them
@@ -327,8 +326,9 @@ otto --lab example_lab test --no-cov --no-random TestMonitoring
 otto --lab example_lab run cleanup
 ```
 
-This removes the tools from the host and leaves their counters under each
-tool's `cov_dir` ({ref}`what cleanup leaves <cleanup-leaves>`). `cleanup` acts
+This removes the tools from the host, and their coverage counters with them
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`): collect coverage before
+you clean up. `cleanup` acts
 on the whole lab, not only this project: it also resets every impairment and
 removes every otto tunnel in it. On a lab you share, take it down with the
 flags {ref}`the teardown recipe <teardown-recipe>` gives, which also sets the

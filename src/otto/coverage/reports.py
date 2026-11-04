@@ -5,7 +5,7 @@ cannot disagree about whether the verb succeeded. Frozen and
 equality-comparable; not hashable (they hold dicts and lists).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,6 +45,15 @@ class CleanReport:
 
     hosts: "dict[str, dict[str, Result]]"
     """Host id -> product name -> that product's counter reset, in walk order."""
+
+    present_at_reset: frozenset[tuple[str, str]] = field(default_factory=frozenset)
+    """``(host id, product name)`` for every ``cov_dir`` that existed just before the reset.
+
+    Recorded only when the clean was asked to (``record_presence=True``, the
+    pre-run reset of ``otto test --cov``), and only for hosts whose presence
+    probe answered. A product here whose ``cov_dir`` is gone at the fetch
+    lost its coverage, which the fetch reports as a WARNING.
+    """
 
     @property
     def failed(self) -> list[FailedReset]:

@@ -307,3 +307,121 @@ def test_a_dev_tool_that_stages_nothing_is_not_a_collision():
     host = _staging_host()
     factory.apply_providers(host)
     assert [p.name for p in host.products] == ["alpha"]
+
+
+# ── the cov_dir path rule and one owner per dir (#777 §2) ────────────────────
+
+
+def _declared_shell(name: str, cov_dir: str | None):
+    """A ``kind = "shell"`` products entry, ingested by ``apply_declared_products``."""
+    from otto.declared import DeclaredEntry
+
+    params: dict = {"artifact": f"build/{name}"}
+    if cov_dir is not None:
+        params["cov_dir"] = cov_dir
+    return DeclaredEntry(
+        name=name,
+        kind="shell",
+        seam="products",
+        owner="declrepo",
+        base_dir=Path("/project"),
+        match={},
+        params=params,
+    )
+
+
+def _ingest(monkeypatch, *, declared=(), provided=(), host_id="h1"):
+    """Run the one ingest chokepoint over declared and provider (name, cov_dir) pairs."""
+    from otto.host import shell_kind  # noqa: F401 — import registers the kind
+
+    entries = [_declared_shell(n, d) for n, d in declared]
+    monkeypatch.setattr(product_mod, "declared_for_host", lambda host, attr: list(entries))
+    if provided:
+        made = [_P(artifact=Path(f"/{n}"), name=n, cov_dir=d) for n, d in provided]
+        product_mod.register_product_provider(lambda host: list(made))
+    host = SimpleNamespace(id=host_id, products=[], dev_tools=[], source_lab="")
+    factory.apply_providers(host)
+    return host
+
+
+@pytest.mark.parametrize("seam", ["declared", "provided"])
+@pytest.mark.parametrize(
+    "bad", ["cov", "/tmp/../etc/x", "/tmp/x/", "//tmp/cov", "/", "/tmp", "/tmp/./x"]
+)
+def test_a_cov_dir_that_is_not_absolute_normalized_and_two_deep_is_refused(monkeypatch, seam, bad):
+    with pytest.raises(ValueError, match=r"host h1: product 'app'") as caught:
+        _ingest(monkeypatch, **{seam: [("app", bad)]})
+    assert repr(bad) in str(caught.value)
+    assert "cov_dir" in str(caught.value)
+
+
+def test_a_relative_cov_dir_shares_the_absolute_path_grammar(monkeypatch):
+    with pytest.raises(ValueError, match=r"'cov_dir' must be an absolute path on the host"):
+        _ingest(monkeypatch, declared=[("app", "cov")])
+
+
+@pytest.mark.parametrize("bad", ["/tmp/../etc/x", "//tmp/cov", "/tmp"])
+def test_a_refused_cov_dir_names_the_rule(monkeypatch, bad):
+    with pytest.raises(ValueError, match=r"absolute, normalized, at least two components"):
+        _ingest(monkeypatch, declared=[("app", bad)])
+
+
+@pytest.mark.parametrize("seam", ["declared", "provided"])
+@pytest.mark.parametrize("good", ["/tmp/x", "/opt/My App/cov", None])
+def test_an_absolute_normalized_cov_dir_is_accepted(monkeypatch, seam, good):
+    host = _ingest(monkeypatch, **{seam: [("app", good)]})
+    assert [p.cov_dir for p in host.products] == [good or "/tmp/app"]
+
+
+def _place(monkeypatch, triples):
+    """Ingest (seam, name, cov_dir) triples, keeping their order within each seam."""
+    return _ingest(
+        monkeypatch,
+        declared=[(n, d) for s, n, d in triples if s == "declared"],
+        provided=[(n, d) for s, n, d in triples if s == "provided"],
+    )
+
+
+def test_two_products_with_one_cov_dir_are_refused_naming_both(monkeypatch):
+    with pytest.raises(ValueError, match=r"host h1: products 'a' and 'b' share cov_dir"):
+        _place(monkeypatch, [("declared", "a", "/var/cov/a"), ("declared", "b", "/var/cov/a")])
+
+
+@pytest.mark.parametrize(
+    ("parent_seam", "child_seam"),
+    [
+        ("declared", "declared"),
+        ("provided", "provided"),
+        ("provided", "declared"),
+        ("declared", "provided"),
+    ],
+)
+@pytest.mark.parametrize("parent_first", [True, False], ids=["parent-first", "child-first"])
+def test_nested_cov_dirs_are_refused_in_either_order(
+    monkeypatch, parent_seam, child_seam, parent_first
+):
+    parent = (parent_seam, "outer", "/var/cov")
+    child = (child_seam, "inner", "/var/cov/a")
+    triples = [parent, child] if parent_first else [child, parent]
+    with pytest.raises(ValueError, match=r"share cov_dir") as caught:
+        _place(monkeypatch, triples)
+    assert "'outer'" in str(caught.value)
+    assert "'inner'" in str(caught.value)
+
+
+@pytest.mark.parametrize("ref_first", [False, True], ids=["container-first", "ref-first"])
+def test_siblings_that_share_a_string_prefix_are_accepted(monkeypatch, ref_first):
+    # Review Focus 1: nesting is a path-component test, never startswith
+    # (tests/project5 declares exactly this pair).
+    triples = [
+        ("declared", "cov_container", "/var/cov/cov_container"),
+        ("declared", "cov_container_ref", "/var/cov/cov_container_ref"),
+    ]
+    host = _place(monkeypatch, triples[::-1] if ref_first else triples)
+    assert len(host.products) == 2
+
+
+def test_one_cov_dir_on_two_hosts_is_accepted(monkeypatch):
+    for host_id in ("h1", "h2"):
+        host = _ingest(monkeypatch, declared=[("app", "/var/cov/app")], host_id=host_id)
+        assert [p.cov_dir for p in host.products] == ["/var/cov/app"]

@@ -8,11 +8,16 @@ Pinned by ``test_registration_survives_a_repeat_run`` below, which registers
 the same project name a second time in the same process.
 """
 
+import contextlib
+import logging
+
 import pytest
 
 from otto import layout
 from otto.context import OttoContext, ProjectContextView
 from otto.errors import OttoError
+from otto.host.host import BaseHost
+from otto.invocation import RunPolicy, install_policy, reset_binding
 from otto.labs.loader import Lab
 from otto.project import (
     PROJECT_ACTIONS,
@@ -83,6 +88,7 @@ _HOST_VERBS = (
     "get_product_logs",
     "install_dev_tools",
     "uninstall_dev_tools",
+    "remove_coverage_dirs",
 )
 
 
@@ -104,6 +110,14 @@ class _FakeHost:
     def log_dest(self, dest=None):
         assert self._log_dir is not None, f"host {self.id} was given no log dir"
         return self._log_dir
+
+    async def coverage_dirs_clean(self, owner=None):
+        """The coverage question: True (clean) unless scripted; recorded like a verb."""
+        self.calls.append(("coverage_dirs_clean", {"owner": owner}))
+        outcome = self._scripted.get("coverage_dirs_clean", True)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
     def __getattr__(self, name):
         if name not in _HOST_VERBS:
@@ -138,10 +152,17 @@ class _FakeCtx:
     # OttoContext's own method keeps a second copy of the wiring out of the
     # tests that exist to certify it.
     for_project = OttoContext.for_project
+    # The cleanup warning's latch and the coverage read, borrowed for the same
+    # reason: the once-per-invocation rule is the context's, not this double's.
+    claim_cleanup_warning = OttoContext.claim_cleanup_warning
+    collecting_coverage = OttoContext.collecting_coverage
+    cov = OttoContext.cov
 
     def __init__(self, hosts):
         self.hosts = list(hosts)
         self.scope_owners = []
+        self.policy = RunPolicy()
+        self.cov_decision = None
 
     def all_hosts(self, _scope_owner=None):
         self.scope_owners.append(_scope_owner)
@@ -330,6 +351,7 @@ async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
+        ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
     ]
     assert mine.calls == []
@@ -348,6 +370,7 @@ async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
+        ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
     ]
 
@@ -407,6 +430,7 @@ async def test_cleanup_removes_the_project_s_docker_staging_on_every_host_last(s
     for host in hosts:
         assert [verb for verb, _ in host.calls] == [
             "uninstall",
+            "remove_coverage_dirs",
             "uninstall_dev_tools",
             "remove_project_staging",
         ]
@@ -615,6 +639,7 @@ async def test_cleanup_hands_a_project_override_an_instance_of_its_own_class():
     assert seen == [("SoftUninstall", True, False)]
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
+        ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
     ]
 
@@ -1218,6 +1243,267 @@ async def test_is_clean_is_true_when_owned_products_and_tools_are_gone():
         dev_tools=[_FakeItem("probe", "acme", installed=False)],
     )
     assert await _actions(_FakeCtx([host])).is_clean() is True
+
+
+# ── coverage data: cleanup removes it, is_clean asks about it (#777) ─────────
+
+
+class _CovItem(_FakeItem):
+    """An instrumented product with a host ``cov_dir``: what the coverage sweep may touch."""
+
+    kind = "shell"
+    cov_dir_root_owned = False
+
+    def __init__(self, name, owner, **kwargs):
+        super().__init__(name, owner, **kwargs)
+        self.cov_dir = f"/var/cov/{name}"
+
+    def instrumented(self):
+        return True
+
+
+class _SweepingHost(_FakeHost):
+    """A host double whose coverage verb is the REAL host method, over its own products.
+
+    Borrowed, not reimplemented (the ``for_project`` idiom of ``_FakeCtx``): the
+    owner filter and the eligibility predicate are the host's, so this test
+    pins the whole path from the project action to ``remove_coverage``.
+    """
+
+    remove_coverage_dirs = BaseHost.remove_coverage_dirs
+    _owned_products = BaseHost._owned_products
+
+
+@pytest.mark.asyncio
+async def test_cleanup_of_project_a_leaves_project_bs_counters(monkeypatch):
+    swept = []
+
+    async def _spy(host, products):
+        swept.append((host.id, [p.name for p in products]))
+        return Result(Status.Success)
+
+    monkeypatch.setattr("otto.host.cov_sweep.remove_coverage", _spy)
+    host = _SweepingHost("h0", products=[_CovItem("a1", "acme"), _CovItem("b1", "other")])
+    assert (await _actions(_FakeCtx([host])).cleanup(CleanupOptions())).is_ok
+    assert swept == [("h0", ["a1"])]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_sweeps_after_uninstall_and_before_dev_tools():
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    await _actions(ctx).cleanup(CleanupOptions())
+    verbs = [verb for verb, _ in hosts[0].calls]
+    assert verbs == ["uninstall", "remove_coverage_dirs", "uninstall_dev_tools"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_passes_over_a_stopped_container_s_coverage(caplog):
+    ctx, stopped, _, _ = _stopped_container_ctx()
+    with caplog.at_level(logging.INFO):
+        assert (await _actions(ctx).cleanup(CleanupOptions())).is_ok
+    assert stopped.calls == []
+    assert any("coverage data to remove" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_under_dry_run_declines_the_sweep_without_a_reprobe():
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    hosts[0].script("remove_coverage_dirs", Result(Status.NotRun))
+    result = await _actions(ctx).cleanup(CleanupOptions())
+    assert result.status is Status.NotRun, result
+    assert "coverage_dirs_clean" not in [verb for verb, _ in hosts[0].calls]
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_false_while_counters_or_empty_dirs_remain():
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    hosts[0].script("coverage_dirs_clean", False)
+    assert await _actions(ctx).is_clean() is False
+    assert ("coverage_dirs_clean", {"owner": "acme"}) in hosts[0].calls
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_true_when_only_user_files_remain():
+    # The host answers "clean" for a cov_dir that holds only non-coverage files
+    # (otto.host.cov_sweep); the project question takes that answer as is.
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    assert await _actions(ctx).is_clean() is True
+    assert ("coverage_dirs_clean", {"owner": "acme"}) in hosts[0].calls
+
+
+@pytest.mark.asyncio
+async def test_is_clean_refuses_under_a_dry_run():
+    from otto.result import CommandNotRunError
+
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    hosts[0].script("coverage_dirs_clean", CommandNotRunError("h0.coverage_dirs_clean()", "h0"))
+    with pytest.raises(CommandNotRunError):
+        await _actions(ctx).is_clean()
+
+
+# ── cleanup during a coverage collection warns, once (#777) ─────────────────
+
+_CLEANUP_WARNING = (
+    "cleanup removed coverage counters during a coverage run, discarding those collected "
+    'so far; mark coverage suites ensure("uninstalled") to keep them'
+)
+
+
+def _cleanup_warnings(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.getMessage() == _CLEANUP_WARNING]
+
+
+def _collecting_ctx(*hosts):
+    ctx = _FakeCtx(hosts or [_FakeHost("h0", products=[_CovItem("app", "acme")])])
+    ctx.collecting_coverage = True
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_cleanup_warns_once_per_invocation_while_collecting(caplog):
+    ctx = _collecting_ctx()
+    actions = _actions(ctx)
+    with caplog.at_level(logging.WARNING):
+        await actions.cleanup(CleanupOptions())
+        await actions.cleanup(CleanupOptions())
+    [record] = _cleanup_warnings(caplog)
+    assert record.levelno == logging.WARNING
+    assert ctx.policy.coverage.warned is True
+
+
+@pytest.mark.asyncio
+async def test_plain_cleanup_on_a_coverage_lab_does_not_warn(caplog):
+    ctx = _FakeCtx([_FakeHost("h0", products=[_CovItem("app", "acme")])])
+    with caplog.at_level(logging.WARNING):
+        await _actions(ctx).cleanup(CleanupOptions())
+    assert _cleanup_warnings(caplog) == []
+    assert ctx.policy.coverage.warned is False
+
+
+@pytest.mark.asyncio
+async def test_reading_ctx_cov_does_not_arm_the_warning(caplog):
+    ctx = _FakeCtx([_FakeHost("h0", products=[_CovItem("app", "acme")])])
+    ctx.cov_decision = True
+    assert ctx.cov is True  # an instruction asked; no collection is scheduled
+    with caplog.at_level(logging.WARNING):
+        await _actions(ctx).cleanup(CleanupOptions())
+    assert _cleanup_warnings(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_cleanup_does_not_warn_or_claim_the_latch(caplog):
+    ctx = _collecting_ctx()
+    ctx.hosts[0].script("remove_coverage_dirs", Result(Status.NotRun))
+    with caplog.at_level(logging.WARNING):
+        await _actions(ctx).cleanup(CleanupOptions())
+        assert _cleanup_warnings(caplog) == []
+        assert ctx.policy.coverage.warned is False
+        ctx.hosts[0].script("remove_coverage_dirs", Result(Status.Success))
+        await _actions(ctx).cleanup(CleanupOptions())
+    assert len(_cleanup_warnings(caplog)) == 1
+
+
+class _SwitchableContainer(_FakeHost):
+    """A container whose stack is down until a test starts it."""
+
+    running = False
+
+    async def is_running(self):
+        return self.running
+
+
+@pytest.mark.asyncio
+async def test_a_cleanup_that_passes_over_stopped_containers_does_not_warn_or_claim_the_latch(
+    caplog,
+):
+    container = _SwitchableContainer("h0.stack.app", products=[_CovItem("app", "acme")])
+    ctx = _collecting_ctx(container)
+    with caplog.at_level(logging.WARNING):
+        await _actions(ctx).cleanup(CleanupOptions())
+        assert _cleanup_warnings(caplog) == []
+        assert ctx.policy.coverage.warned is False
+        container.running = True
+        await _actions(ctx).cleanup(CleanupOptions())
+    assert len(_cleanup_warnings(caplog)) == 1
+
+
+class _UnknownBuild(_CovItem):
+    """An instrumented-or-not-unknown product: never swept, so never a reason to warn."""
+
+    def instrumented(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_a_cleanup_with_no_eligible_product_does_not_warn_or_claim_the_latch(caplog):
+    host = _FakeHost("h0", products=[_UnknownBuild("app", "acme"), _CovItem("lib", "other")])
+    ctx = _collecting_ctx(host)
+    with caplog.at_level(logging.WARNING):
+        await _actions(ctx).cleanup(CleanupOptions())
+        assert _cleanup_warnings(caplog) == []
+        assert ctx.policy.coverage.warned is False
+        host.products.append(_CovItem("tool", "acme"))
+        await _actions(ctx).cleanup(CleanupOptions())
+    assert len(_cleanup_warnings(caplog)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_sweep_still_warns(caplog):
+    ctx = _collecting_ctx()
+    ctx.hosts[0].script("remove_coverage_dirs", ConnectionResetError("peer reset"))
+    with caplog.at_level(logging.WARNING):
+        result = await _actions(ctx).cleanup(CleanupOptions())
+    assert not result.is_ok
+    assert len(_cleanup_warnings(caplog)) == 1
+
+
+class _CleaningHost(_FakeHost):
+    """A host double whose ``cleanup`` is the REAL host verb, over the recorded steps."""
+
+    cleanup = BaseHost.cleanup
+    _remove_coverage_dirs_warned = BaseHost._remove_coverage_dirs_warned
+
+    async def remove_toolchain_tools(self):
+        return Result(Status.Success)
+
+
+async def _clean_through(entry, ctx, host):
+    """Run one cleanup through *entry*: the project action, or the host verb under ctx's policy."""
+    if entry == "project":
+        await _actions(ctx).cleanup(CleanupOptions())
+        return
+    binding = install_policy(ctx.policy)
+    try:
+        with contextlib.suppress(ConnectionResetError):
+            await host.cleanup()
+    finally:
+        reset_binding(binding)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["project", "host"])
+@pytest.mark.parametrize(
+    ("swept", "warnings"),
+    [
+        pytest.param(Result(Status.Success), 1, id="swept"),
+        pytest.param(Result(Status.NotRun), 0, id="dry-run"),
+        pytest.param(Result(Status.Skipped), 0, id="passed-over"),
+        pytest.param(ConnectionResetError("peer reset"), 1, id="crashed"),
+    ],
+)
+async def test_both_cleanup_entry_points_decide_the_warning_alike(entry, swept, warnings, caplog):
+    """``ProjectActions.cleanup`` and ``Host.cleanup`` share one warning decision.
+
+    The same host, product and sweep outcome, twice in one invocation, through
+    either entry point: the same number of warnings (the latch holds it to one).
+    """
+    host = _CleaningHost("h0", products=[_CovItem("app", "acme")])
+    host.script("remove_coverage_dirs", swept)
+    ctx = _collecting_ctx(host)
+    with caplog.at_level(logging.WARNING):
+        await _clean_through(entry, ctx, host)
+        await _clean_through(entry, ctx, host)
+    assert len(_cleanup_warnings(caplog)) == warnings
 
 
 # ── registration ─────────────────────────────────────────────────────────

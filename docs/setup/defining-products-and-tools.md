@@ -188,7 +188,8 @@ declaration order, so put first a product that another's `install` needs.
 Two entries that would stage files with the same basename into one directory
 on one host are refused at lab load: two artifacts both called `app` need
 different `stage_dir`s. Each product has its own `cov_dir`, `/tmp/<name>` by
-default, so their counters never mix. The same product built differently for
+default, so their counters never mix; two products on one host whose
+`cov_dir`s are equal or nested are refused at lab load. The same product built differently for
 two hosts keeps one `name` in two entries, each with its own `match`; on
 each host the first entry that matches wins. A different `name` is a
 different product in every report.
@@ -198,8 +199,8 @@ The verbs that act on the whole lab act on all of these at once:
 `ensure("installed")` marker ({ref}`--recover-partial <recover-partial>`). In a test,
 `Host.uninstall()` takes every product off that host, not only the one the test
 is about. Any of these can run every product's `uninstall` in the middle of a
-coverage run, so no product's `uninstall` may delete its `cov_dir`
-({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
+coverage run, which is why an `uninstall` leaves coverage data alone
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 {ref}`teardown-recipe` is the order to take it all down in.
 
 ## Variants

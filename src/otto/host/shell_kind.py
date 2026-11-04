@@ -17,6 +17,7 @@ import inspect
 import string
 import types
 import typing
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -58,6 +59,13 @@ def str_param(
 
 _COVERAGE_PARAMS = ("cov_dir", "debug_log_globs", "instrumented")
 _PLACEHOLDERS = ("cov_dir", "name")
+_UNINSTALL_PLACEHOLDERS = tuple(p for p in _PLACEHOLDERS if p != "cov_dir")
+"""What a declared ``uninstall`` may name: uninstall leaves coverage data alone (#777)."""
+_UNINSTALL_HINTS = {
+    "cov_dir": "`{cov_dir}` in `uninstall` deletes the counters otto collects at run end; "
+    "uninstall leaves coverage data alone, and `otto run cleanup` removes it."
+}
+"""Why a placeholder legal elsewhere is refused in ``uninstall``, keyed by its name."""
 _VALID = "artifact, stage_dir, install, uninstall, check, cov_dir, debug_log_globs, instrumented"
 
 RETIRED_PARAMS = {"dest_dir": "stage_dir"}
@@ -99,20 +107,42 @@ def stage_dir_param(entry: DeclaredEntry, params: dict[str, Any]) -> Path:
 _FORMATTER = string.Formatter()
 
 
-def _placeholder_error(entry: DeclaredEntry, key: str, offending: str) -> ValueError:
-    """Build the one named-placeholder-error message, for either failure site."""
-    return ValueError(
+def _placeholder_error(
+    entry: DeclaredEntry,
+    key: str,
+    offending: str,
+    allowed: Collection[str],
+    hint: str | None = None,
+) -> ValueError:
+    """Build the one named-placeholder-error message, for either failure site.
+
+    The "valid:" list is *allowed*, so a key with a narrower set names only
+    what it accepts; *hint*, when given, is appended as its own sentence.
+    """
+    message = (
         f"[[{entry.seam}]] {entry.name!r}: {key!r} has an unknown placeholder "
         f"({offending!r}); "
-        f"valid: {', '.join('{' + p + '}' for p in _PLACEHOLDERS)} — write a literal "
+        f"valid: {', '.join('{' + p + '}' for p in allowed)} — write a literal "
         "brace as {{ or }}"
     )
+    return ValueError(f"{message}. {hint}" if hint else message)
 
 
 def substitute_placeholders(
-    entry: DeclaredEntry, key: str, command: str | None, values: dict[str, str]
+    entry: DeclaredEntry,
+    key: str,
+    command: str | None,
+    values: dict[str, str],
+    *,
+    allowed: Collection[str] = _PLACEHOLDERS,
+    hints: Mapping[str, str] | None = None,
 ) -> str | None:
     """Expand ``{cov_dir}``/``{name}`` in one command string, strictly.
+
+    *allowed* narrows the names *key* accepts (``uninstall`` takes every
+    placeholder but ``cov_dir``), and *hints* explains, per refused name,
+    why it is refused there. A name outside *allowed* is refused by the walk
+    below, before ``format_map`` could raise a bare ``KeyError``.
 
     Shared by every built-in kind that takes command text (see
     :mod:`otto.host.kmod_kind`).
@@ -138,11 +168,11 @@ def substitute_placeholders(
     try:
         fields = list(_FORMATTER.parse(command))
     except ValueError as e:
-        raise _placeholder_error(entry, key, str(e)) from e
+        raise _placeholder_error(entry, key, str(e), allowed) from e
     for _literal, field_name, format_spec, conversion in fields:
         if field_name is None:
             continue  # a chunk of literal text with no field in it
-        if field_name in _PLACEHOLDERS and conversion is None and not format_spec:
+        if field_name in allowed and conversion is None and not format_spec:
             continue
         offending = "{" + field_name
         if conversion is not None:
@@ -150,7 +180,8 @@ def substitute_placeholders(
         if format_spec:
             offending += f":{format_spec}"
         offending += "}"
-        raise _placeholder_error(entry, key, offending)
+        hint = (hints or {}).get(field_name)
+        raise _placeholder_error(entry, key, offending, allowed, hint)
     return command.format_map(values)
 
 
@@ -344,7 +375,14 @@ def build_declared(
     if entry.seam == "products":
         values = placeholder_values(entry, cov.cov_dir)
         install = substitute_placeholders(entry, "install", install, values)
-        uninstall = substitute_placeholders(entry, "uninstall", uninstall, values)
+        uninstall = substitute_placeholders(
+            entry,
+            "uninstall",
+            uninstall,
+            values,
+            allowed=_UNINSTALL_PLACEHOLDERS,
+            hints=_UNINSTALL_HINTS,
+        )
         check = substitute_placeholders(entry, "check", check, values)
     return cls(
         # Local path: forward slashes in TOML, anchored to the declaring project's root

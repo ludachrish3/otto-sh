@@ -16,7 +16,8 @@ The bind mount is the whole coverage story: an instrumented binary inside
 the container writing under ``GCOV_PREFIX=<cov_dir>`` writes onto the
 daemon host, where the fetcher and the default hooks already work — docker
 creates a missing bind-mount source directory itself, root-owned, so the
-reset's delete is elevated (:func:`~otto.host.product.sudo_gcda_delete`) and
+kind's ``cov_dir`` is root-owned (:attr:`~otto.host.product.Product.cov_dir_root_owned`):
+the reset's delete and cleanup's sweep run elevated, and
 a non-root container image needs its ``cov_dir`` pre-created and writable
 (the fixture suite's own install does this) or nothing lands in it.
 ``docker logs`` is hauled as ``debug/container.log`` — that is PID 1's
@@ -33,7 +34,7 @@ import logging
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from typing_extensions import override
 
@@ -54,7 +55,6 @@ from .product import (
     ensure_stage_dir,
     planned_stage_dir,
     stage_lines,
-    sudo_gcda_delete,
 )
 from .shell_kind import (
     bool_param,
@@ -82,6 +82,9 @@ _PULL_TIMEOUT = 900.0
 @dataclass
 class DockerImageProduct(ShellProduct):
     """A ``kind = "docker_image"`` entry's runtime form."""
+
+    cov_dir_root_owned: ClassVar[bool] = True
+    """docker creates the bind-mount source as root, and the container writes as its own user."""
 
     image: str = ""
     """The reference to run, or the tarball path as declared (see :attr:`is_tarball`)."""
@@ -371,11 +374,6 @@ class DockerImageProduct(ShellProduct):
         """
         inspected = await inspect_container(host, self.container_name)
         return inspected.state is not None and inspected.state.running
-
-    @override
-    async def reset_coverage(self, host: "Host") -> Result:
-        """Delete the .gcda files under sudo: the container wrote them as root."""
-        return await sudo_gcda_delete(self, host)
 
     @override
     async def get_debug_logs(self, host: "Host", dest: Path) -> Result:

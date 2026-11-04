@@ -1133,7 +1133,7 @@ class Host(Protocol):
         ...
 
     async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
-        """Uninstall, then remove dev tools and toolchain tools (best-effort)."""
+        """Uninstall, remove coverage data, then dev tools and toolchain tools (best-effort)."""
         ...
 
     async def is_installed(self, owner: str | None = None) -> bool:
@@ -1145,7 +1145,7 @@ class Host(Protocol):
         ...
 
     async def is_clean(self) -> bool:
-        """Return ``True`` iff no product, dev tool, or toolchain tool is present."""
+        """Return ``True`` iff no product, coverage data, dev tool, or toolchain tool is present."""
         ...
 
     def log_dest(self, dest: "Path | None" = None) -> Path:
@@ -1182,6 +1182,14 @@ class Host(Protocol):
 
     async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
         """Remove every dev tool (best-effort), narrowed to *owner*'s when given."""
+        ...
+
+    async def remove_coverage_dirs(self, owner: str | None = None) -> Result:
+        """Remove the ``.gcda`` counters and emptied dirs under each instrumented ``cov_dir``."""
+        ...
+
+    async def coverage_dirs_clean(self, owner: str | None = None) -> bool:
+        """Return ``True`` iff no ``.gcda`` counter or empty dir is left under any ``cov_dir``."""
         ...
 
     async def install_toolchain_tools(self) -> Result:
@@ -2807,12 +2815,14 @@ class BaseHost(ABC):
 
     @cli_exposed
     async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
-        """Uninstall, then remove dev tools and toolchain tools (best-effort).
+        """Uninstall, remove coverage data, then dev tools and toolchain tools (best-effort).
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
-        dev tool may be what a product's uninstall needs), then the tooling.
-        The log flags are forwarded to :meth:`uninstall`, which owns the log
-        ordering. Project-specific remnant removal belongs in an override.
+        dev tool may be what a product's uninstall needs), then the coverage
+        data they left (:meth:`remove_coverage_dirs`: uninstall unloads,
+        cleanup removes what otto placed), then the tooling. The log flags are
+        forwarded to :meth:`uninstall`, which owns the log ordering.
+        Project-specific remnant removal belongs in an override.
 
         HOST-GLOBAL, and takes no ``owner``: its last step removes the
         toolchain tools, which one host shares with every owner on it. A project
@@ -2835,16 +2845,38 @@ class BaseHost(ABC):
                 first_failure = result
 
         note(await self.uninstall(get_product_logs=get_product_logs, get_debug_logs=get_debug_logs))
+        note(await self._remove_coverage_dirs_warned())
         note(await self.uninstall_dev_tools())
         note(await self.remove_toolchain_tools())
         return first_failure if first_failure is not None else Result(Status.Success)
 
+    async def _remove_coverage_dirs_warned(self) -> Result:
+        """:meth:`remove_coverage_dirs`, then the shared discarded-counters decision.
+
+        :func:`~otto.host.cov_sweep.warn_if_counters_discarded` on the run's
+        policy, as :meth:`otto.project.ProjectActions.cleanup` calls it, so a
+        test's ``await host.cleanup()`` during a coverage run warns as
+        ``otto run cleanup`` does. A crashed sweep is decided too, then re-raised.
+        """
+        from ..invocation import current_policy
+        from .cov_sweep import warn_if_counters_discarded
+
+        try:
+            swept = await self.remove_coverage_dirs()
+        except BaseException as crashed:
+            warn_if_counters_discarded(
+                current_policy(), [(cast("Host", self), self.products, crashed)]
+            )
+            raise
+        warn_if_counters_discarded(current_policy(), [(cast("Host", self), self.products, swept)])
+        return swept
+
     @cli_exposed(output_dir=False)
     async def is_clean(self) -> bool:
-        """No products installed, no dev tools installed, no toolchain tools present.
+        """No products installed, no coverage data, no dev tools, no toolchain tools present.
 
         The matching question to :meth:`cleanup`, and it ASKS rather than
-        infers: the toolchain probe refuses under a dry run
+        infers: the coverage and toolchain probes refuse under a dry run
         (:func:`refuse_declined_fact`) instead of reporting a host clean that
         nobody looked at.
         """
@@ -2853,6 +2885,8 @@ class BaseHost(ABC):
         for tool in self.dev_tools:
             if await tool.is_installed(cast("Host", self)):
                 return False
+        if not await self.coverage_dirs_clean():
+            return False
         return await self.toolchain_tools_absent()
 
     ####################
@@ -3082,6 +3116,59 @@ class BaseHost(ABC):
             if not result.is_ok and first_failure is None:
                 first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
+
+    @cli_exposed(
+        help_=(
+            "Remove the .gcda counters and emptied dirs under each instrumented product's "
+            "cov_dir, best-effort; `--owner PROJECT` limits it to PROJECT's products."
+        )
+    )
+    async def remove_coverage_dirs(self, owner: str | None = None) -> Result:
+        """Remove what coverage placed under each instrumented product's ``cov_dir``.
+
+        Only ``.gcda`` regular files and the directories they leave empty: a
+        ``cov_dir`` that holds anything else keeps it, and its parents. One
+        batched command per elevation (:func:`~otto.host.cov_sweep.remove_coverage`),
+        then a probe that proves what is left. Scoped by *owner* the way
+        :meth:`uninstall_dev_tools` is, and for the same reason: one project's
+        cleanup never sweeps a neighbour's counters. :meth:`cleanup` runs it
+        after :meth:`uninstall`; ``uninstall`` never does — uninstall unloads,
+        cleanup removes what otto placed.
+
+        Eligible products are :func:`~otto.host.product.cov_dir_products`':
+        the instrumented ones, and none on an embedded board. A host with none
+        is sent nothing.
+        """
+        from .cov_sweep import remove_coverage
+        from .product import cov_dir_products
+
+        return await remove_coverage(
+            cast("Host", self), cov_dir_products(self, self._owned_products(owner))
+        )
+
+    @cli_exposed(
+        output_dir=False,
+        help_=(
+            "Report whether no .gcda counter and no empty dir is left under any instrumented "
+            "product's cov_dir; `--owner PROJECT` limits it to PROJECT's products."
+        ),
+    )
+    async def coverage_dirs_clean(self, owner: str | None = None) -> bool:
+        """Whether no ``.gcda`` counter and no empty directory is left under any ``cov_dir``.
+
+        The matching question to :meth:`remove_coverage_dirs`, over the same
+        products: a ``cov_dir`` that is absent, or holds only other files, is
+        clean. Asked unelevated first; a root-owned kind's dir is asked again
+        under sudo only when that failed. Refuses under a dry run, and raises
+        when a probe cannot tell, rather than guess.
+        """
+        from .cov_sweep import coverage_left
+        from .product import cov_dir_products
+
+        left = await coverage_left(
+            cast("Host", self), cov_dir_products(self, self._owned_products(owner))
+        )
+        return not left
 
     @cli_exposed
     async def install_toolchain_tools(self) -> Result:

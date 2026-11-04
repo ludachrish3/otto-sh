@@ -192,7 +192,9 @@ def passes(built, tmp_path_factory):
     finally:
         teardown = root / "cleanup"
         teardown.mkdir()
-        _run(["run", "cleanup"], xdir=teardown)
+        # The lab's tunnels and impairments belong to the other groups using
+        # it at the same time; this teardown removes only what this flow placed.
+        _run(["run", "cleanup", "--no-reset-impairments", "--no-remove-tunnels"], xdir=teardown)
 
 
 def _record(store: CoverageStore, rel: str) -> FileRecord:

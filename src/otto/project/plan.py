@@ -13,7 +13,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..host.host import BaseHost
-from ..host.product import ProductPlan
+from ..host.product import (
+    ProductPlan,
+    cov_dir_of,
+    cov_dir_products,
+    gcda_remove_dirs,
+    gcda_remove_files,
+)
 from ..host.toolchain import toolchain_removal_command
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
 from ..params import OptionsSource
@@ -86,7 +92,7 @@ _HOST_VERBS: dict[str, list[str]] = {
     "uninstall": ["uninstall"],
     "install-tools": ["install_dev_tools"],
     "uninstall-tools": ["uninstall_dev_tools"],
-    "cleanup": ["uninstall", "uninstall_dev_tools"],
+    "cleanup": ["uninstall", "remove_coverage_dirs", "uninstall_dev_tools"],
 }
 """The ``BaseHost`` methods a real run of each instruction dispatches to; an
 override of any of them on the host's class is a gap."""
@@ -208,10 +214,34 @@ def _docker_staging_gap(host: "Host", project: "Project") -> str | None:
     return f"docker staging: {'; '.join(removals)}"
 
 
+def _coverage_sweep_gap(host: "Host", owner: str) -> str | None:
+    """Say what cleanup's coverage sweep runs on *host* for *owner*'s products, or None.
+
+    One entry per product with a ``cov_dir`` to sweep
+    (:func:`~otto.host.product.cov_dir_products`, the predicate the sweep
+    asks): the ``.gcda`` removal, then the empty-dir removal, built by the
+    same two functions the run sends, marked ``(elevated)`` for a kind whose
+    ``cov_dir`` is root-owned. A host class that replaces
+    :meth:`~otto.host.host.BaseHost.remove_coverage_dirs` is named instead.
+    """
+    products = cov_dir_products(host, _owned(host.products, owner))
+    if not products:
+        return None
+    replaced = _replaced(host, "remove_coverage_dirs")
+    if replaced is not None:
+        return f"coverage data: {replaced}; its steps are not previewed"
+    sweeps = []
+    for product in products:
+        cov_dir = cov_dir_of(product)
+        elevated = " (elevated)" if type(product).cov_dir_root_owned else ""
+        sweeps.append(f"{gcda_remove_files(cov_dir)}, then {gcda_remove_dirs(cov_dir)}{elevated}")
+    return f"coverage data: {'; '.join(sweeps)}"
+
+
 def _cleanup_host_plan(
     host: "Host", project: "Project", *, uninstall_replaced: bool, product_logs: bool
 ) -> HostPlan:
-    """Plan ``cleanup``'s three steps on *host*: *project*'s products, dev tools, docker staging.
+    """Plan ``cleanup``'s steps on *host*: *project*'s products, coverage data, dev tools, staging.
 
     The product half is ``self.uninstall(...)``, so a project override of
     ``uninstall`` (*uninstall_replaced*) leaves it unpreviewed and the project
@@ -228,6 +258,9 @@ def _cleanup_host_plan(
             host_plan.gaps += _add_entries(host, _owned(host.products, owner), host_plan.products)
             if product_logs:
                 host_plan.gaps.append(_PRODUCT_LOGS_GAP)
+    sweep = _coverage_sweep_gap(host, owner)
+    if sweep is not None:
+        host_plan.gaps.append(sweep)
     replaced = _host_override(host, "uninstall-tools")
     if replaced is not None:
         host_plan.gaps.append(replaced)

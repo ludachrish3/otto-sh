@@ -60,10 +60,10 @@ A command-line tool the tests run once each needs nothing about coverage in
 `install`: each test sets the variables itself
 ({ref}`a tool run once per test <coverage-run-per-test-case>`).
 
-`{cov_dir}` and `{name}` are the two placeholders `install`, `uninstall`, and
-`check` accept; anything else is refused when settings load. An `uninstall`
-must leave `cov_dir` in place, because otto clears and collects it on its own
-schedule ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
+`{cov_dir}` and `{name}` are the two placeholders `install` and `check`
+accept; `uninstall` takes `{name}` only, and anything else is refused when
+settings load. Coverage data is otto's to clear, collect and remove
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 A literal brace — `awk '{{print $1}}'`, a shell `${{VAR}}` — is written
 doubled. See {doc}`../configuration/declared-products-tools` for the whole
 `shell` kind.

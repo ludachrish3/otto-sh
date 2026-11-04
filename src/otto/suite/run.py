@@ -363,7 +363,8 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
       ``open_context()`` (see the Cookbook's Python library page).
     - **Active context**: point its policy's ``output_dir`` at *log_dir* when
       it has none (the same assignment the CLI preamble makes; one it already
-      has is left alone), and restore ``output_dir``, ``cov_decision`` and the verb
+      has is left alone), and restore ``output_dir``, ``cov_decision``,
+      ``collecting_coverage``, the cleanup-warning latch and the verb
       binding (:meth:`~otto.context.OttoContext.verb_binding_preserved` --
       :func:`run_tests` binds ``test``) afterwards — the run's per-session
       state never outlives the run on a context the caller owns.
@@ -401,7 +402,7 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
     if active.policy.output_dir is None:
         active.policy.output_dir = log_dir
     try:
-        with active.verb_binding_preserved():
+        with active.verb_binding_preserved(), active.coverage_collection_preserved():
             yield active
     finally:
         active.policy.output_dir, active.cov_decision = prior_output_dir, prior_cov
@@ -567,7 +568,7 @@ def _cov_command_label(opts: RunOptions, command: str) -> str:
     return f"{command} {flag}" if flag else command
 
 
-async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> None:
+async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> "CleanReport | None":
     """Pre-run cleanup of coverage counters on the lab's hosts, when --cov and --cov-clean.
 
     Called once per invocation, never once per project inside the session loop.
@@ -578,16 +579,24 @@ async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> Non
     naming the host and product, which ends the run before any test runs (the
     ``pytest.exit`` wrapper around this call, in :meth:`_Sessions._before_tests`,
     carries it out).
+
+    Returns the clean's report, ``None`` when no clean ran. It records which
+    ``cov_dir`` existed just before the reset
+    (:attr:`~otto.coverage.reports.CleanReport.present_at_reset`): the
+    invocation's ``_Sessions`` keeps it (:attr:`_Sessions.pre_clean`) and
+    hands it to the post-run collection, which warns for a dir that was
+    there at the reset and is gone at the fetch.
     """
     if not (opts.cov and opts.cov_clean):
-        return
+        return None
     from ..coverage.collect import clean_coverage
     from ..coverage.errors import CoverageCleanError
 
-    report = await clean_coverage(projects)
+    report = await clean_coverage(projects, record_presence=True)
     if not report.ok:
         raise CoverageCleanError(report)
     _log_clean_summary(report, "before the run")
+    return report
 
 
 def _log_clean_summary(report: "CleanReport", when: str) -> None:
@@ -608,6 +617,7 @@ def _post_run_coverage_beside(
     taking_part: "list[tuple[_ProjectRun, _SessionOutcome]]",
     log_dir: Path,
     opts: RunOptions,
+    pre_clean: "CleanReport | None",
 ) -> None:
     """Collect the coverage of the tests that ran, never hiding the error that ended the run.
 
@@ -618,7 +628,7 @@ def _post_run_coverage_beside(
     from ..lifecycle import run_command
 
     try:
-        run_command(_post_run_coverage(projects, log_dir, opts))
+        run_command(_post_run_coverage(projects, log_dir, opts, pre_clean))
     except Exception:
         if in_flight is None:
             raise
@@ -626,7 +636,9 @@ def _post_run_coverage_beside(
         logger.exception("coverage collection for %s failed after the run already failed", ran)
 
 
-async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: RunOptions) -> None:
+async def _post_run_coverage(
+    projects: "list[Project]", log_dir: Path, opts: RunOptions, pre_clean: "CleanReport | None"
+) -> None:
     """Post-run coverage collection and optional HTML report, shared by both run paths.
 
     Collection runs through :func:`otto.coverage.collect.collect_coverage` (the
@@ -640,6 +652,10 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
     library re-run is swallowed here like any other report failure.
     Everything is imported lazily to avoid a load-time cost for non-coverage
     runs and to keep the existing patch points valid.
+
+    *pre_clean* is this invocation's pre-run reset (``None`` under
+    ``--no-cov-clean``); its presence evidence goes to the fetcher, so a
+    ``cov_dir`` that existed then and is gone now is a WARNING.
     """
     if not (opts.cov or opts.cov_report):
         # Nothing to do — and skipping the lazy import below keeps a
@@ -666,7 +682,10 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
 
         clean = None
         try:
-            clean = (await collect_coverage(cov_dir, projects=projects)).clean
+            evidence = frozenset() if pre_clean is None else pre_clean.present_at_reset
+            clean = (
+                await collect_coverage(cov_dir, projects=projects, present_at_reset=evidence)
+            ).clean
         except CoverageCaptureError as e:
             # One loud line per product that was not collected, a failed fetch
             # worded apart from a failed capture; the products that captured
@@ -1446,17 +1465,22 @@ class _Sessions:
         names: list[str],
         opts: RunOptions,
         home: Path,
+        ctx: "OttoContext | None" = None,
     ) -> None:
         self.projects = projects
         self.runs = runs
         self.names = names
         self.opts = opts
         self.home = home
+        self.ctx = ctx
+        """The invocation's context: :meth:`_before_tests` marks its coverage collection."""
         self.interrupted: int | None = None
         self.failed: int | None = None
         """The exit code of the collection that could not finish, which ended the run."""
         self._cleaned = False
         self._clean_error: BaseException | None = None
+        self.pre_clean: "CleanReport | None" = None
+        """This invocation's pre-run reset, the one owner of its presence evidence."""
         self._logged: set[tuple[str, str]] = set()
         """(project, file) pairs whose collection failure this run already logged."""
 
@@ -1601,8 +1625,12 @@ class _Sessions:
         if self._cleaned:
             return
         self._cleaned = True
+        if self.opts.cov and self.ctx is not None:
+            # Committed to tests, so to the post-run collection: a cleanup
+            # from here on removes counters this run will want.
+            self.ctx.collecting_coverage = True
         try:
-            run_command(_pre_run_cov_clean(self.projects, self.opts))
+            self.pre_clean = run_command(_pre_run_cov_clean(self.projects, self.opts))
         except (Exception, SystemExit) as exc:  # noqa: BLE001 — re-raised by _session
             self._clean_error = exc
             pytest.exit(f"coverage pre-clean failed: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
@@ -1811,7 +1839,7 @@ def run_tests(
                 project_test_dirs=project_test_dirs,
             )
             runs.append(_ProjectRun(project=project, known=known, setup=setup))
-        sessions = _Sessions(projects, runs, names, opts, home)
+        sessions = _Sessions(projects, runs, names, opts, home, session_ctx)
         taking_part: list[tuple[_ProjectRun, _SessionOutcome]] = []
         in_flight: BaseException | None = None
         try:
@@ -1839,7 +1867,9 @@ def run_tests(
             # project's session then raises (a refused registration); an
             # interrupt means STOP: no further projects, no post-coverage.
             if sessions.interrupted is None and taking_part:
-                _post_run_coverage_beside(in_flight, projects, taking_part, log_dir, opts)
+                _post_run_coverage_beside(
+                    in_flight, projects, taking_part, log_dir, opts, sessions.pre_clean
+                )
         if sessions.interrupted is not None:
             raise SystemExit(128 + sessions.interrupted)
         if not taking_part and sessions.failed is None:

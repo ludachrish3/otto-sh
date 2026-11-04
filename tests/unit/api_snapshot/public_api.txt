@@ -205,8 +205,11 @@ member	otto.context:OttoContext.__eq__	method	sync	PK:other:-
 member	otto.context:OttoContext.admissible_ids	method	sync	PK:owner:N KO:require_nonempty:B:true
 member	otto.context:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
 member	otto.context:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
+member	otto.context:OttoContext.claim_cleanup_warning	method	sync	-
+member	otto.context:OttoContext.collecting_coverage	property:gs-
 member	otto.context:OttoContext.cov	property:g--
 member	otto.context:OttoContext.cov_decision	field
+member	otto.context:OttoContext.coverage_collection_preserved	method	sync	-
 member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto.context:OttoContext.dry_run	property:g--
 member	otto.context:OttoContext.exclude_projects	field
@@ -237,6 +240,7 @@ name	otto.context:RunPolicy	class
 mro	otto.context:RunPolicy	-
 call	otto.context:RunPolicy	sync	PK:dry_run:B:false PK:log_command_output:B:true PK:output_dir:N PK:variant:S:"debug" PK:teardown_deadline:F:0x1.4000000000000p+3
 member	otto.context:RunPolicy.__eq__	method	sync	PK:other:-
+member	otto.context:RunPolicy.coverage	field
 member	otto.context:RunPolicy.dry_run	field
 member	otto.context:RunPolicy.log_command_output	field
 member	otto.context:RunPolicy.output_dir	field
@@ -270,7 +274,7 @@ call	otto.coverage:CaptureFailedError	sync	@builtin:builtins.RuntimeError
 abstract	otto.coverage:CaptureFailedError	-
 name	otto.coverage:CleanReport	class
 mro	otto.coverage:CleanReport	-
-call	otto.coverage:CleanReport	sync	PK:hosts:-
+call	otto.coverage:CleanReport	sync	PK:hosts:- PK:present_at_reset:O
 member	otto.coverage:CleanReport.__eq__	method	sync	PK:other:-
 member	otto.coverage:CleanReport.__hash__	method	sync	-
 member	otto.coverage:CleanReport.cleared	property:g--
@@ -278,6 +282,7 @@ member	otto.coverage:CleanReport.failed	property:g--
 member	otto.coverage:CleanReport.hosts	field
 member	otto.coverage:CleanReport.not_run	property:g--
 member	otto.coverage:CleanReport.ok	property:g--
+member	otto.coverage:CleanReport.present_at_reset	field
 abstract	otto.coverage:CleanReport	-
 name	otto.coverage:CollectResult	class
 mro	otto.coverage:CollectResult	-
@@ -355,7 +360,7 @@ member	otto.coverage:FailedReset.result	field
 abstract	otto.coverage:FailedReset	-
 name	otto.coverage:GcdaFetcher	class
 mro	otto.coverage:GcdaFetcher	-
-call	otto.coverage:GcdaFetcher	sync	PK:staging_root:- PK:pattern:N
+call	otto.coverage:GcdaFetcher	sync	PK:staging_root:- PK:pattern:N KO:present_at_reset:Z:[]
 member	otto.coverage:GcdaFetcher.fetch_all	method	coroutine	KO:failures:-
 abstract	otto.coverage:GcdaFetcher	-
 name	otto.coverage:GetReport	class
@@ -414,9 +419,9 @@ member	otto.coverage:TierConfig.products	field
 member	otto.coverage:TierConfig.toolchain	field
 abstract	otto.coverage:TierConfig	-
 name	otto.coverage:clean_coverage	function
-call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N KO:pairs:N
+call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N KO:pairs:N KO:record_presence:B:false
 name	otto.coverage:collect_coverage	function
-call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true
+call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true KO:present_at_reset:Z:[]
 name	otto.coverage:get_coverage	function
 call	otto.coverage:get_coverage	coroutine	PK:output_dir:N KO:tier:N KO:ticket:N KO:note:N KO:tester_name:N KO:tester_email:N KO:clean:B:false KO:projects:N
 name	otto.coverage:resolve_get_tier	function
@@ -1076,6 +1081,7 @@ name	otto.host.product:Product	class
 mro	otto.host.product:Product	-
 call	otto.host.product:Product	sync	-
 member	otto.host.product:Product.cov_dir	attribute
+member	otto.host.product:Product.cov_dir_root_owned	attribute
 member	otto.host.product:Product.debug_log_globs	attribute
 member	otto.host.product:Product.get_debug_logs	method	coroutine	PK:host:- PK:dest:-
 member	otto.host.product:Product.get_logs	method	coroutine	PK:host:- PK:dest:-
@@ -1111,6 +1117,7 @@ call	otto.host.product:ShellProduct	sync	PK:artifact:- PK:name:S:"" PK:stage_dir
 member	otto.host.product:ShellProduct.__eq__	method	sync	PK:other:-
 member	otto.host.product:ShellProduct.artifact	field
 member	otto.host.product:ShellProduct.cov_dir	field
+member	otto.host.product:ShellProduct.cov_dir_root_owned	attribute
 member	otto.host.product:ShellProduct.debug_log_globs	field
 member	otto.host.product:ShellProduct.get_debug_logs	method	coroutine	PK:host:- PK:dest:-
 member	otto.host.product:ShellProduct.get_logs	method	coroutine	PK:host:- PK:dest:-
@@ -1426,6 +1433,7 @@ member	otto.host:BaseHost.as_user	method	asyncgen	PK:user:S:"root" PK:password:N
 member	otto.host:BaseHost.cleanup	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true
 member	otto.host:BaseHost.close	method	coroutine	-
 member	otto.host:BaseHost.configured_login_user	method	sync	-
+member	otto.host:BaseHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:BaseHost.current_user	property:g--
 member	otto.host:BaseHost.debug_log_globs	field
 member	otto.host:BaseHost.dev_tools	field
@@ -1460,6 +1468,7 @@ member	otto.host:BaseHost.products	field
 member	otto.host:BaseHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:mode:N PK:user:N PK:show_progress:B:true PK:recursive:B:false PK:concurrent:B:true
 member	otto.host:BaseHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:BaseHost.rebuild_connections	method	sync	-
+member	otto.host:BaseHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:BaseHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:BaseHost.resources	field
 member	otto.host:BaseHost.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
@@ -1604,6 +1613,7 @@ member	otto.host:DeclaredProduct.__eq__	method	sync	PK:other:-
 member	otto.host:DeclaredProduct.artifact	field
 member	otto.host:DeclaredProduct.check_cmd	field
 member	otto.host:DeclaredProduct.cov_dir	field
+member	otto.host:DeclaredProduct.cov_dir_root_owned	attribute
 member	otto.host:DeclaredProduct.debug_log_globs	field
 member	otto.host:DeclaredProduct.get_debug_logs	method	coroutine	PK:host:- PK:dest:-
 member	otto.host:DeclaredProduct.get_logs	method	coroutine	PK:host:- PK:dest:-
@@ -1658,6 +1668,7 @@ member	otto.host:DockerContainerHost.compose_project	field
 member	otto.host:DockerContainerHost.configured_login_user	method	sync	-
 member	otto.host:DockerContainerHost.container_id	field
 member	otto.host:DockerContainerHost.container_path	method	sync	PK:parent_path:-
+member	otto.host:DockerContainerHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:DockerContainerHost.cp	method	coroutine	PK:src:- PK:dst:- PK:recursive:B:false
 member	otto.host:DockerContainerHost.current_user	property:g--
 member	otto.host:DockerContainerHost.debug_log_globs	field
@@ -1707,6 +1718,7 @@ member	otto.host:DockerContainerHost.put	method	coroutine	PK:src_files:- PK:dest
 member	otto.host:DockerContainerHost.read_file	method	coroutine	PK:path:-
 member	otto.host:DockerContainerHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:DockerContainerHost.rebuild_connections	method	sync	-
+member	otto.host:DockerContainerHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:DockerContainerHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:DockerContainerHost.resources	field
 member	otto.host:DockerContainerHost.rm	method	coroutine	PK:path:- PK:recursive:B:false PK:force:B:false
@@ -1777,6 +1789,7 @@ member	otto.host:EmbeddedHost.configured_login_user	method	sync	-
 member	otto.host:EmbeddedHost.connections	property:g--
 member	otto.host:EmbeddedHost.console_endpoint	method	sync	-
 member	otto.host:EmbeddedHost.console_options	field
+member	otto.host:EmbeddedHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:EmbeddedHost.cp	method	coroutine	PK:src:- PK:dst:- PK:recursive:B:false
 member	otto.host:EmbeddedHost.creds	field
 member	otto.host:EmbeddedHost.current_user	property:g--
@@ -1836,6 +1849,7 @@ member	otto.host:EmbeddedHost.rack	field
 member	otto.host:EmbeddedHost.read_file	method	coroutine	PK:path:-
 member	otto.host:EmbeddedHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:EmbeddedHost.rebuild_connections	method	sync	-
+member	otto.host:EmbeddedHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:EmbeddedHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:EmbeddedHost.resources	field
 member	otto.host:EmbeddedHost.rm	method	coroutine	PK:path:- PK:recursive:B:false PK:force:B:false
@@ -1973,6 +1987,7 @@ member	otto.host:Host.app_shell	method	sync	PK:shell_cls:- KO:user:N KO:timeout:
 member	otto.host:Host.as_user	method	sync	PK:user:S:"root" PK:password:N
 member	otto.host:Host.cleanup	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true
 member	otto.host:Host.close	method	coroutine	-
+member	otto.host:Host.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:Host.current_user	property:g--
 member	otto.host:Host.debug_log_globs	field
 member	otto.host:Host.dev_tools	field
@@ -2006,6 +2021,7 @@ member	otto.host:Host.power_control	field
 member	otto.host:Host.products	field
 member	otto.host:Host.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:mode:N PK:user:N PK:show_progress:B:true PK:recursive:B:false PK:concurrent:B:true
 member	otto.host:Host.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:Host.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:Host.remove_toolchain_tools	method	coroutine	-
 member	otto.host:Host.resources	field
 member	otto.host:Host.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
@@ -2024,7 +2040,7 @@ member	otto.host:Host.uninstall	method	coroutine	PK:get_product_logs:B:true PK:g
 member	otto.host:Host.uninstall_dev_tools	method	coroutine	PK:owner:N
 member	otto.host:Host.wait_until_down	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
 member	otto.host:Host.wait_until_up	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
-requires	otto.host:Host	__aenter__ __aexit__ app_shell as_user cleanup close current_user debug_log_globs dev_tools element exec expect get get_debug_logs get_logs get_product_logs has_bash id install install_dev_tools install_toolchain_tools install_tools inventory_ref is_clean is_installed is_reachable is_uninstalled lab_info log log_dest login logout name open_session power power_control products put reboot remove_toolchain_tools resources run run_login run_logout send shadowed_dev_tools shadowed_products shutdown source_lab stage switch_user toolchain toolchain_tools_absent uninstall uninstall_dev_tools wait_until_down wait_until_up
+requires	otto.host:Host	__aenter__ __aexit__ app_shell as_user cleanup close coverage_dirs_clean current_user debug_log_globs dev_tools element exec expect get get_debug_logs get_logs get_product_logs has_bash id install install_dev_tools install_toolchain_tools install_tools inventory_ref is_clean is_installed is_reachable is_uninstalled lab_info log log_dest login logout name open_session power power_control products put reboot remove_coverage_dirs remove_toolchain_tools resources run run_login run_logout send shadowed_dev_tools shadowed_products shutdown source_lab stage switch_user toolchain toolchain_tools_absent uninstall uninstall_dev_tools wait_until_down wait_until_up
 name	otto.host:HostBuild	class
 mro	otto.host:HostBuild	-
 call	otto.host:HostBuild	sync	PK:inputs:- PK:context:- PK:selections:- PK:power:-
@@ -2211,6 +2227,7 @@ member	otto.host:LocalHost.capabilities	attribute
 member	otto.host:LocalHost.cleanup	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true
 member	otto.host:LocalHost.close	method	coroutine	-
 member	otto.host:LocalHost.configured_login_user	method	sync	-
+member	otto.host:LocalHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:LocalHost.cp	method	coroutine	PK:src:- PK:dst:- PK:recursive:B:false
 member	otto.host:LocalHost.current_user	property:g--
 member	otto.host:LocalHost.debug_log_globs	field
@@ -2253,6 +2270,7 @@ member	otto.host:LocalHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:
 member	otto.host:LocalHost.read_file	method	coroutine	PK:path:-
 member	otto.host:LocalHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:LocalHost.rebuild_connections	method	sync	-
+member	otto.host:LocalHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:LocalHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:LocalHost.resources	field
 member	otto.host:LocalHost.rm	method	coroutine	PK:path:- PK:recursive:B:false PK:force:B:false
@@ -2386,6 +2404,7 @@ name	otto.host:Product	class
 mro	otto.host:Product	-
 call	otto.host:Product	sync	-
 member	otto.host:Product.cov_dir	attribute
+member	otto.host:Product.cov_dir_root_owned	attribute
 member	otto.host:Product.debug_log_globs	attribute
 member	otto.host:Product.get_debug_logs	method	coroutine	PK:host:- PK:dest:-
 member	otto.host:Product.get_logs	method	coroutine	PK:host:- PK:dest:-
@@ -2466,6 +2485,7 @@ member	otto.host:RemoteHost.configured_login_user	method	sync	-
 member	otto.host:RemoteHost.connections	property:g--
 member	otto.host:RemoteHost.console_endpoint	method	sync	-
 member	otto.host:RemoteHost.console_options	field
+member	otto.host:RemoteHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:RemoteHost.creds	field
 member	otto.host:RemoteHost.current_user	property:g--
 member	otto.host:RemoteHost.debug_log_globs	field
@@ -2515,6 +2535,7 @@ member	otto.host:RemoteHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK
 member	otto.host:RemoteHost.rack	field
 member	otto.host:RemoteHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:RemoteHost.rebuild_connections	method	sync	-
+member	otto.host:RemoteHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:RemoteHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:RemoteHost.resources	field
 member	otto.host:RemoteHost.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
@@ -2630,6 +2651,7 @@ call	otto.host:ShellProduct	sync	PK:artifact:- PK:name:S:"" PK:stage_dir:O PK:co
 member	otto.host:ShellProduct.__eq__	method	sync	PK:other:-
 member	otto.host:ShellProduct.artifact	field
 member	otto.host:ShellProduct.cov_dir	field
+member	otto.host:ShellProduct.cov_dir_root_owned	attribute
 member	otto.host:ShellProduct.debug_log_globs	field
 member	otto.host:ShellProduct.get_debug_logs	method	coroutine	PK:host:- PK:dest:-
 member	otto.host:ShellProduct.get_logs	method	coroutine	PK:host:- PK:dest:-
@@ -2793,6 +2815,7 @@ member	otto.host:UnixHost.configured_login_user	method	sync	-
 member	otto.host:UnixHost.connections	property:g--
 member	otto.host:UnixHost.console_endpoint	method	sync	-
 member	otto.host:UnixHost.console_options	field
+member	otto.host:UnixHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:UnixHost.cp	method	coroutine	PK:src:- PK:dst:- PK:recursive:B:false
 member	otto.host:UnixHost.cred	method	sync	PK:login:-
 member	otto.host:UnixHost.creds	field
@@ -2862,6 +2885,7 @@ member	otto.host:UnixHost.rack	field
 member	otto.host:UnixHost.read_file	method	coroutine	PK:path:-
 member	otto.host:UnixHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:UnixHost.rebuild_connections	method	sync	-
+member	otto.host:UnixHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:UnixHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:UnixHost.resources	field
 member	otto.host:UnixHost.rm	method	coroutine	PK:path:- PK:recursive:B:false PK:force:B:false
@@ -3066,6 +3090,7 @@ member	otto.host:ZephyrHost.configured_login_user	method	sync	-
 member	otto.host:ZephyrHost.connections	property:g--
 member	otto.host:ZephyrHost.console_endpoint	method	sync	-
 member	otto.host:ZephyrHost.console_options	field
+member	otto.host:ZephyrHost.coverage_dirs_clean	method	coroutine	PK:owner:N
 member	otto.host:ZephyrHost.cp	method	coroutine	PK:src:- PK:dst:- PK:recursive:B:false
 member	otto.host:ZephyrHost.creds	field
 member	otto.host:ZephyrHost.current_user	property:g--
@@ -3125,6 +3150,7 @@ member	otto.host:ZephyrHost.rack	field
 member	otto.host:ZephyrHost.read_file	method	coroutine	PK:path:-
 member	otto.host:ZephyrHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
 member	otto.host:ZephyrHost.rebuild_connections	method	sync	-
+member	otto.host:ZephyrHost.remove_coverage_dirs	method	coroutine	PK:owner:N
 member	otto.host:ZephyrHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:ZephyrHost.resources	field
 member	otto.host:ZephyrHost.rm	method	coroutine	PK:path:- PK:recursive:B:false PK:force:B:false
@@ -5790,8 +5816,11 @@ member	otto:OttoContext.__eq__	method	sync	PK:other:-
 member	otto:OttoContext.admissible_ids	method	sync	PK:owner:N KO:require_nonempty:B:true
 member	otto:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
 member	otto:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
+member	otto:OttoContext.claim_cleanup_warning	method	sync	-
+member	otto:OttoContext.collecting_coverage	property:gs-
 member	otto:OttoContext.cov	property:g--
 member	otto:OttoContext.cov_decision	field
+member	otto:OttoContext.coverage_collection_preserved	method	sync	-
 member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto:OttoContext.dry_run	property:g--
 member	otto:OttoContext.exclude_projects	field

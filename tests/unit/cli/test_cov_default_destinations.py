@@ -39,7 +39,9 @@ def _test_cov_defaults(run):
         patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
         patch.object(reporter_module, "run_coverage_report", report),
     ):
-        asyncio.run(run_module._post_run_coverage([], run, RunOptions(cov=True, cov_report=True)))
+        asyncio.run(
+            run_module._post_run_coverage([], run, RunOptions(cov=True, cov_report=True), None)
+        )
     return collect.await_args.args[0], report.await_args.args[0], report.await_args.args[1]
 
 

@@ -76,17 +76,41 @@ def _run_otto(argv, *, xdir, timeout):
 
 @pytest.fixture(scope="module")
 def coverage_run(tmp_path_factory):
+    """Run TestCovContainer under ``--cov`` and report it; list test3's daemon right after.
+
+    Returns ``(store, cov_dir, log_dir, listings)``. The ``docker ps -a`` and
+    ``docker images`` listings are taken inside the same ``docker_host_lease()``,
+    straight after the run, so the hygiene test reads what TestCovContainer
+    itself left, whatever other test (and its uninstalls) runs before it.
+    """
     tmp = tmp_path_factory.mktemp("docker_image_e2e")
     xdir = tmp / "xdir"
     xdir.mkdir()
+    # The listings' own xdir, not this one: xdir/test is the directory the
+    # glob below unpacks a single child from.
+    hygiene = tmp / "hygiene"
+    hygiene.mkdir()
     report_dir = tmp / "report"
     # TestCovContainer loads, runs and removes images on test3's daemon, which
     # the docker e2e tests list whole: they hold its lease, so this run does too.
     with docker_host_lease():
         _run_otto(["test", "--cov", "--cov-clean", "TestCovContainer"], xdir=xdir, timeout=900)
+        listings = {
+            "containers": _run_otto(
+                ["host", "test3", "exec", "docker ps -a --format '{{.Names}}'"],
+                xdir=hygiene,
+                timeout=120,
+            ).stdout,
+            "images": _run_otto(
+                ["host", "test3", "exec", "docker images --format '{{.Repository}}:{{.Tag}}'"],
+                xdir=hygiene,
+                timeout=120,
+            ).stdout,
+        }
     (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    return CoverageStore.load(report_dir / "store.json"), layout.cov_dir(log_dir), log_dir
+    store = CoverageStore.load(report_dir / "store.json")
+    return store, layout.cov_dir(log_dir), log_dir, listings
 
 
 @pytest.mark.integration
@@ -95,7 +119,7 @@ class TestDockerImageCoverage:
     def test_container_products_land_only_on_test3(self, coverage_run):
         # TestCovContainer's own fixture installs only on test3 — otto test
         # never touches a product verb, so no other host's leaf can appear.
-        _, cov_dir, _ = coverage_run
+        _, cov_dir, *_ = coverage_run
         hosts = {d.name for d in cov_dir.iterdir() if d.is_dir() and not d.name.startswith(".")}
         assert hosts == {"test3"}
         assert not (cov_dir / ".otto-stage").exists(), "staging outlived collection"
@@ -126,39 +150,89 @@ class TestDockerImageCoverage:
         prints nothing), not what `docker exec` ran inside it — so an empty
         container.log is the correct pin here, not merely the weakest one.
         """
-        _, _, log_dir = coverage_run
+        _, _, log_dir, _ = coverage_run
         for name in PRODUCTS:
             log = log_dir / "logs" / "test3" / name / "debug" / "container.log"
             assert log.is_file(), f"missing {log}"
             assert log.read_text() == "", f"{log}: expected empty, got {log.read_text()!r}"
 
-    def test_the_bed_is_clean_afterwards(self, coverage_run, tmp_path):
-        # Its own xdir, not coverage_run's: that xdir/test is the very
-        # directory coverage_run's own fixture glob-unpacks a single child
-        # from, and writing a second entry into it would break that on any
-        # re-evaluation.
-        xdir = tmp_path / "hygiene"
-        xdir.mkdir()
-        containers = _run_otto(
-            ["host", "test3", "exec", "docker ps -a --format '{{.Names}}'"], xdir=xdir, timeout=120
-        )
-        assert "cov_container" not in containers.stdout
-        images = _run_otto(
-            ["host", "test3", "exec", "docker images --format '{{.Repository}}:{{.Tag}}'"],
-            xdir=xdir,
-            timeout=120,
-        )
+    def test_the_bed_is_clean_afterwards(self, coverage_run):
+        listings = coverage_run[3]
+        assert "cov_container" not in listings["containers"]
         # No repository filter in the command itself (unlike `docker images
         # otto-cov-demo`, which would put the very name being checked for
         # into otto's own echoed-command log line, making the substring
         # check below pass vacuously) — list every image and check none of
         # them is ours, the same shape as the container check above.
-        assert "otto-cov-demo" not in images.stdout
+        assert "otto-cov-demo" not in listings["images"]
         # A presence anchor: the base image the tarball was built FROM stays
         # in the daemon's cache (only the loaded reference's own rmi runs),
         # so an all-absent listing (a broken `docker images` call, a wrong
         # host) reads the same as a genuinely clean one without this.
-        assert "alpine:3.20" in images.stdout
+        assert "alpine:3.20" in listings["images"]
+
+    def test_cleanup_removes_the_root_owned_cov_dirs_through_sudo(self, tmp_path):
+        """#777: cleanup sweeps the root-owned bind-mount ``cov_dir``s, elevated.
+
+        All preconditions first, then one cleanup, then all postconditions.
+        It needs no earlier run: the precondition makes each ``cov_dir``
+        itself. The cleanup is scoped to test3 by the docker3 overlay lab, so
+        no other host's products are uninstalled under this module, and it
+        leaves the lab's tunnels and impairments to the other groups using
+        them. The probe and removal observables are cov_sweep's DEBUG lines,
+        read from the captured output (``coverage-dirs-clean`` writes no
+        output dir) at a console wide enough that none wraps.
+
+        The fetch already took the counters, and a flat ``cov_dir`` left empty
+        is clean by the spec, so the precondition plants what gcov leaves
+        under a prefix: a root-owned empty subdirectory (as the container's
+        root user creates them) in each ``cov_dir``. Root runs the removal, so
+        each ``cov_dir`` itself goes too.
+        """
+        overlay = docker3_overlay_project(tmp_path / "overlays")
+        env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(overlay)]), **LISTING_ENV}
+        xdir = tmp_path / "xdir"
+        xdir.mkdir()
+        plant = " && ".join(
+            f"sudo -n mkdir -p /var/cov/{name}/otto-bed-777" for name in sorted(PRODUCTS)
+        )
+        gone = " && ".join(f"test ! -e /var/cov/{name}" for name in sorted(PRODUCTS))
+        unelevated_probe = (
+            "coverage probe on test3: 2 product(s) answered unelevated, 0 re-probed elevated"
+        )
+
+        def otto(argv: "list[str]", timeout: int = 300) -> "subprocess.CompletedProcess[str]":
+            return run_otto(
+                argv,
+                xdir=xdir,
+                roots=PROJECT5,
+                lab=DOCKER3_LAB,
+                extra_argv_prefix=["--log-level", "DEBUG"],
+                extra_env=env,
+                timeout=timeout,
+            )
+
+        def flat(result: "subprocess.CompletedProcess[str]") -> str:
+            return " ".join((result.stdout + result.stderr).split())
+
+        with docker_host_lease():
+            planted = otto(["host", "test3", "exec", plant])
+            assert planted.returncode == 0, _said(planted)
+            dirty = otto(["host", "test3", "coverage-dirs-clean"])
+            assert dirty.returncode == 1, _said(dirty)
+            assert unelevated_probe in flat(dirty), _said(dirty)
+
+            cleanup = otto(
+                ["run", "cleanup", "--no-reset-impairments", "--no-remove-tunnels"], timeout=900
+            )
+            assert cleanup.returncode == 0, _said(cleanup)
+            assert "coverage removal on test3: 0 plain, 2 elevated" in flat(cleanup), _said(cleanup)
+
+            absent = otto(["host", "test3", "exec", gone])
+            assert absent.returncode == 0, _said(absent)
+            clean = otto(["host", "test3", "coverage-dirs-clean"])
+            assert clean.returncode == 0, _said(clean)
+            assert unelevated_probe in flat(clean), _said(clean)
 
 
 # --- #783: `otto run install` over a stopped container of the same name -----

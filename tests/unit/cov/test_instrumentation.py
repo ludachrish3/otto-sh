@@ -47,6 +47,13 @@ def test_instrumented_products_filters_by_true_only():
     assert instrumented_products(_host("h", a, b, c)) == [a]
 
 
+def test_instrumented_products_filters_a_given_subset():
+    a, b, c = _product("a", True), _product("b", False), _product("c", True)
+    host = _host("h", a, b, c)
+    assert instrumented_products(host, [b, c]) == [c]
+    assert instrumented_products(host, None) == [a, c]
+
+
 def test_describe_labels_unknown_with_the_remedy():
     text = detect([_host("h1", _product("app", None))]).describe()
     assert "h1" in text

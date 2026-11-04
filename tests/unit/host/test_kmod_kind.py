@@ -418,17 +418,25 @@ async def test_kmod_none_and_kernel_methods_never_touch_the_library():
 
 
 @pytest.mark.asyncio
-async def test_kmod_none_method_inherits_the_default_hooks():
+async def test_kmod_none_method_resets_elevated_because_root_ownership_is_per_class():
+    """Root ownership is the kind's (``KmodProduct.cov_dir_root_owned``), not the method's.
+
+    The spec makes it a class attribute that the reset's sudo path and the
+    cleanup sweep both read, so a ``coverage = "none"`` module resets its
+    ``cov_dir`` elevated too: one decision about the dir, not one per method.
+    Its prepare still sends nothing.
+    """
     host = _KmodHost()
     p = _build(host, cov_dir="/var/cov/demo")
     assert (await p.prepare_coverage(host)).is_ok
     assert host.run_calls == []
     assert host.exec_calls == []
     await p.reset_coverage(host)
-    assert host.exec_calls == [
-        (_expected_delete_line("/var/cov/demo"), {"timeout": 60}),
-        (_expected_check_line("/var/cov/demo"), {"timeout": 60}),
+    assert host.run_calls == [
+        (_expected_sudo_delete_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
+        (_expected_sudo_check_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
     ]
+    assert host.exec_calls == []
 
 
 @pytest.mark.asyncio

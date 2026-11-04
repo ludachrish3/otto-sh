@@ -408,19 +408,67 @@ def test_shell_kind_reads_cov_dir_and_debug_globs():
     assert built.debug_log_globs == ["/var/log/fw/*.log"]
 
 
-def test_shell_kind_substitutes_cov_dir_and_name_in_commands():
+def test_cov_dir_stays_legal_in_install_and_check():
     built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(
             cov_dir="/var/cov/fw",
             install="GCOV_PREFIX={cov_dir} ./{name} &",
             check="test -d {cov_dir}",
-            uninstall="rm -rf {cov_dir}",
+            uninstall="pkill {name}",
         ),
         _host(),
     )
     assert built.install_cmd == "GCOV_PREFIX=/var/cov/fw ./fw &"
     assert built.check_cmd == "test -d /var/cov/fw"
-    assert built.uninstall_cmd == "rm -rf /var/cov/fw"
+    assert built.uninstall_cmd == "pkill fw"
+
+
+def _class_entry(**params):
+    """A ``class =`` products entry: the same build_declared path as ``kind = "shell"``."""
+    params.setdefault("artifact", "build/fw.bin")
+    return DeclaredEntry(
+        name="fw",
+        kind=None,
+        seam="products",
+        owner="declrepo",
+        base_dir=Path("/project"),
+        match={},
+        params=params,
+        cls="tests._fixtures.class_products:OverridesInstall",
+    )
+
+
+def _build_shell(**params):
+    return resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(_shell_entry(**params), _host())
+
+
+def _build_class(**params):
+    from otto.host import shell_kind as shell_kind_mod
+
+    return shell_kind_mod.class_entry(_class_entry(**params), _host())
+
+
+@pytest.mark.parametrize("build", [_build_shell, _build_class], ids=["shell", "class"])
+def test_cov_dir_in_uninstall_is_refused_by_name_with_the_hint(build):
+    # Uninstall unloads; it never touches coverage data (#777). A bare KeyError
+    # from format_map would name nothing, so the walk refuses it first.
+    with pytest.raises(ValueError, match=r"'uninstall'") as caught:
+        build(uninstall="rm -rf {cov_dir}")
+    message = str(caught.value)
+    assert "[[products]] 'fw'" in message
+    assert "{cov_dir}" in message
+    assert "valid: {name} " in message
+    assert "otto run cleanup" in message
+
+
+def test_an_escaped_cov_dir_in_uninstall_is_literal():
+    assert _build_shell(uninstall="echo {{cov_dir}}").uninstall_cmd == "echo {cov_dir}"
+
+
+def test_install_still_lists_both_placeholders():
+    with pytest.raises(ValueError, match=r"valid: \{cov_dir\}, \{name\} ") as caught:
+        _build_shell(install="echo {x}")
+    assert "otto run cleanup" not in str(caught.value)
 
 
 def test_shell_kind_substitutes_the_default_cov_dir_when_unset():

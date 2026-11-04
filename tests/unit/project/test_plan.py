@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from otto.context import OttoContext
+from otto.host.docker_image_kind import DockerImageProduct
 from otto.host.host import BaseHost
 from otto.host.product import ProductPlan
 from otto.host.toolchain import Toolchain
@@ -27,6 +28,9 @@ class _Planned:
     def plan(self, host):
         del host
         return self._plan
+
+    def instrumented(self):
+        return None  # unknown: never a coverage sweep's concern
 
 
 class _Host(BaseHost):
@@ -539,6 +543,75 @@ def test_cleanup_names_no_docker_staging_on_a_parent_without_a_staging_root(monk
     [plan] = plan_instruction("cleanup", ctx, {"product_logs": False})
 
     assert plan.hosts[0].gaps == []
+
+
+class _CovPlanned(_Planned):
+    """An instrumented product of *kind* with a ``cov_dir``: the cleanup sweep's subject."""
+
+    cov_dir_root_owned = False
+
+    def __init__(self, name, owner, cov_dir, kind="shell"):
+        super().__init__(name, owner, _plan(uninstall=[f"sh uninstall {name}"]))
+        self.cov_dir, self.kind = cov_dir, kind
+
+    def instrumented(self):
+        return True
+
+
+class _CovImage(_CovPlanned):
+    """The docker_image kind's ownership, read from the kind itself."""
+
+    cov_dir_root_owned = DockerImageProduct.cov_dir_root_owned
+
+
+def test_cleanup_lists_the_coverage_sweep_per_instrumented_product(monkeypatch):
+    from otto.host.product import gcda_remove_dirs, gcda_remove_files
+
+    app = _CovPlanned("app", "r1", "/tmp/app-cov")
+    image = _CovImage("api", "r1", "/var/cov/api", kind="docker_image")
+    theirs = _CovPlanned("lib", "r2", "/tmp/lib-cov")
+    ctx = _Ctx([_Host("h1", products=[app, image, theirs])])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {"product_logs": False})
+    [host] = project.hosts
+    assert host.gaps == [
+        (
+            "coverage data: "
+            "find /tmp/app-cov -name '*.gcda' -type f -exec rm -f {} \\;, then "
+            "find /tmp/app-cov -depth -type d -exec rmdir {} \\;; "
+            "find /var/cov/api -name '*.gcda' -type f -exec rm -f {} \\;, then "
+            "find /var/cov/api -depth -type d -exec rmdir {} \\; (elevated)"
+        )
+    ]
+    # The same two functions the run sends: the preview cannot drift from them.
+    assert gcda_remove_files("/tmp/app-cov") in host.gaps[0]
+    assert gcda_remove_dirs("/var/cov/api") + " (elevated)" in host.gaps[0]
+
+
+def test_cleanup_lists_no_sweep_without_an_instrumented_product(monkeypatch):
+    embedded = _CovPlanned("fw", "r1", "/tmp/fw", kind="embedded")
+    ctx = _Ctx([_cleanup_host(), _Host("h2", products=[embedded])])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {"product_logs": False})
+    assert [h.gaps for h in project.hosts] == [[], []]
+
+
+def test_a_remove_coverage_dirs_override_is_named_not_previewed(monkeypatch):
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(Status.Success)
+
+    host_cls = type("_OwnSweep", (_Host,), {"remove_coverage_dirs": _replacement})
+    ctx = _Ctx([host_cls("h1", products=[_CovPlanned("app", "r1", "/tmp/app-cov")])])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {"product_logs": False})
+    [host] = project.hosts
+    assert [e.name for e in host.products] == ["app"]
+    assert host.gaps == [
+        (
+            f"coverage data: `{host_cls.__module__}.{host_cls.__qualname__}."
+            "remove_coverage_dirs` replaces the default; its steps are not previewed"
+        )
+    ]
 
 
 def test_cleanup_walks_projects_in_reverse(monkeypatch):

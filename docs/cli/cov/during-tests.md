@@ -41,7 +41,7 @@ cleaned. How the process stops decides whether it writes anything:
 So stop a daemon with its own stop command or a signal it handles, and write
 its `uninstall` the same way, since otto runs `uninstall` in the middle of a
 run (an `ensure` marker, `--recover-partial`) as well as in `run uninstall`
-and `run cleanup` ({ref}`when otto clears and collects <cov-dir-lifecycle>`). A
+and `run cleanup` ({ref}`the coverage lifecycle <cov-dir-lifecycle>`). A
 `docker_image` product's container needs more steps:
 {ref}`coverage-container-stop-to-flush`.
 
@@ -124,7 +124,7 @@ a teardown that destroys more than the product's own `uninstall` does: an
 `/tmp`), or the unload of an embedded product, whose counters live in its
 memory ({ref}`coverage-embedded-reset`). A product whose `uninstall` leaves
 `cov_dir` alone needs no branch: uninstalling it under coverage loses nothing
-({ref}`when otto clears and collects <cov-dir-lifecycle>`).
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
 - **Under `otto test`** it is the run's own decision after resolving
   `--cov`, `--no-cov` or auto. It is also `True` when an auto run turned

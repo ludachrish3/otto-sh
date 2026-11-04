@@ -93,7 +93,8 @@ project's products on, switch that project off for the run with `-E`
 takes every product on it off ({doc}`../host/index`).
 
 `cleanup` is strictly more than `uninstall`: each project also gives up its own dev
-tools, the host-global toolchain tools come off, and the lab's own leftovers go
+tools and its products' coverage counters
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`), the host-global toolchain tools come off, and the lab's own leftovers go
 with them — netem impairments are reset and every otto tunnel is reaped. See
 [What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
 those last two do and do not touch, and `otto --lab my_lab -n run cleanup` to
@@ -109,9 +110,9 @@ installed lab is a skip, and an uninstalled one is installed. A partially
 installed lab is not topped up: with `--recover-partial` (on by default) otto
 runs `uninstall` over the whole lab, every project and every product, then
 installs everything again. If that uninstall fails, nothing is installed.
-`--no-recover-partial` goes straight to the install instead. Each product's own
-`uninstall` runs in that recovery, so keep `cov_dir` out of it
-({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
+`--no-recover-partial` goes straight to the install instead. That recovery runs
+`uninstall`, never `cleanup`, so it leaves coverage data alone
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
 ## What a run prints
 
@@ -467,7 +468,7 @@ is unset; see
 {func}`~otto.docker.compose.get_user_compose_project`), so a deployment made
 under another suffix, or under an explicit compose project name, is not
 found. `--full` and `ensure_clean` ask the same question: a tree `cleanup`
-would remove makes its project's `products, dev tools & staging` row dirty,
+would remove makes its project's `products, coverage data, dev tools & staging` row dirty,
 and a kept stack's tree does not.
 
 Do not run `cleanup` while the same stack is being deployed or built: the same
@@ -489,7 +490,6 @@ above. These stay on the hosts:
 - whatever a product's own `uninstall` does not remove. A `shell` product
   with no `uninstall` command keeps its staged file, and the directories
   staging created stay;
-- every product's `cov_dir` ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`);
 - docker images. otto removes no image it built, and a `docker_image` product
   removes only an image it loaded from a tarball ({ref}`docker-image-kind`).
   Remove the rest with {doc}`../docker/image/rm`;
@@ -501,15 +501,15 @@ above. These stay on the hosts:
 
 Take a lab down in this order:
 
-1. `otto --lab my_lab run uninstall` takes every project's products off
-   ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>` says what it must leave).
+1. `otto --lab my_lab run uninstall` takes every project's products off and
+   leaves their coverage data ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 2. `otto --lab my_lab run uninstall-tools` takes their dev tools off.
 3. `otto --lab my_lab docker compose down <use-case>`, for each use-case you
    brought up ({doc}`../docker/compose/down`). `cleanup` never takes a stack
    down, so this comes before it. Steps 1 and 2 come before this one, while
    the products and tools on the stack's containers can still be reached.
-4. `otto --lab my_lab run cleanup` removes the rest: the toolchain tools, the
-   docker staging, impairments and tunnels.
+4. `otto --lab my_lab run cleanup` removes the rest: the coverage counters, the
+   toolchain tools, the docker staging, impairments and tunnels.
 
 Without a compose stack, step 4 alone does all of this, since `cleanup` also
 takes the products and dev tools off. Steps 1 and 2 matter only because step 3
@@ -666,13 +666,13 @@ axis — everything [`cleanup` takes off the lab](#what-cleanup-takes-off-the-la
 ```text
 acme     installed
 widgets  uninstalled
-products, dev tools & staging  acme     clean
-                               widgets  dirty
-toolchain tools                test1    clean
-                               test2    unknown — the toolchain probe did not answer: …
-impairments                    core     dirty — a->b
-                               edge     clean
-tunnels                        lab      unknown — the scan could not reach test2
+products, coverage data, dev tools & staging  acme     clean
+                                              widgets  dirty
+toolchain tools                               test1    clean
+                                              test2    unknown — the toolchain probe did not answer: …
+impairments                                   core     dirty — a->b
+                                              edge     clean
+tunnels                                       lab      unknown — the scan could not reach test2
 lab is dirty — otto run cleanup takes it off
 lab is partially installed; otto run install --ensure recovers it
 ```

@@ -9,7 +9,7 @@ from otto.config.project import Project
 from otto.config.scope import EmptySelectionError
 from otto.coverage.collect import clean_coverage
 from otto.coverage.errors import NoCoverageHostsError
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.project_scaffold import make_project
@@ -313,3 +313,91 @@ async def test_no_pairs_is_nothing_to_clean(lab):
     assert report.hosts == {}
     assert report.ok
     app.reset_coverage.assert_not_awaited()
+
+
+# ── the presence evidence (#777 §3) ──────────────────────────────────────────
+
+
+def _probed_host(host_id, *products, cls=None, present=()):
+    """A host whose ``exec`` answers the presence probe; every call lands in ``order``.
+
+    The answer is framed the way the probe's script frames it
+    (``otto.host.cov_sweep``), restated so a change to the script turns this RED.
+    """
+    order: list[str] = []
+    host = _host(host_id, *products, cls=cls)
+
+    async def _exec(cmd, **kw):
+        order.append("probe")
+        lines = [
+            f"otto-cov {i} {'present' if p.name in present else 'absent'}"
+            for i, p in enumerate(products)
+        ]
+        value = "\notto-cov-presence\n" + "\n".join(lines) + "\n"
+        return CommandResult(Status.Success, value=value, command=cmd, retcode=0)
+
+    host.exec = AsyncMock(side_effect=_exec)
+    for p in products:
+        p.kind = "shell"
+        p.cov_dir = f"/var/cov/{p.name}"
+        result = p.reset_coverage.return_value
+
+        async def _reset(_host, name=p.name, result=result):
+            order.append(f"reset {name}")
+            return result
+
+        p.reset_coverage = AsyncMock(side_effect=_reset)
+    host.order = order
+    return host
+
+
+@pytest.mark.asyncio
+async def test_record_presence_probes_before_the_reset_and_reports_it(lab):
+    app, lib = _product("app", Result(Status.Success)), _product("lib", Result(Status.Success))
+    host = _probed_host("t1", app, lib, present={"app"})
+    lab(host)
+    report = await clean_coverage([_project()], record_presence=True)
+    assert host.order == ["probe", "reset app", "reset lib"]
+    assert report.present_at_reset == frozenset({("t1", "app")})
+    assert report.ok
+
+
+@pytest.mark.asyncio
+async def test_clean_without_record_presence_sends_no_probe(lab):
+    host = _probed_host("t1", _product("app", Result(Status.Success)), present={"app"})
+    lab(host)
+    report = await clean_coverage([_project()])
+    assert host.order == ["reset app"]
+    host.exec.assert_not_awaited()
+    assert report.present_at_reset == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_an_embedded_host_is_reset_but_never_probed(lab):
+    from otto.host.embedded_host import EmbeddedHost
+
+    host = _probed_host(
+        "zephyr", _product("ext", Result(Status.Success)), cls=EmbeddedHost, present={"ext"}
+    )
+    lab(host)
+    report = await clean_coverage([_project()], record_presence=True)
+    assert host.order == ["reset ext"]
+    assert report.present_at_reset == frozenset()
+    assert report.cleared == [("zephyr", "ext")]
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_raises_gives_no_evidence_and_fails_that_host(lab):
+    host = _probed_host("t1", _product("app", Result(Status.Success)), present={"app"})
+    host.exec = AsyncMock(side_effect=ConnectionResetError("peer reset"))
+    other = _probed_host("t2", _product("lib", Result(Status.Success)), present={"lib"})
+    lab(host, other)
+    report = await clean_coverage([_project()], record_presence=True)
+    assert report.present_at_reset == frozenset({("t2", "lib")})
+    assert "ConnectionResetError" in report.hosts["t1"]["app"].msg
+
+
+def test_present_at_reset_defaults_empty_so_hosts_only_construction_still_works():
+    from otto.coverage.reports import CleanReport
+
+    assert CleanReport(hosts={}).present_at_reset == frozenset()

@@ -1440,7 +1440,8 @@ def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
 
-    def _clean_and_record(projects: object) -> CleanReport:
+    def _clean_and_record(projects: object, *, record_presence: bool) -> CleanReport:
+        assert record_presence, "the pre-run reset records which cov_dir existed"
         shell_a.ran.write_text("PRECLEAN\n")
         return CleanReport(hosts={})
 
@@ -1788,3 +1789,56 @@ def test_split_names_on_cold_projects_collect_each_project_at_most_twice(
         ("project_a", "run"),
         ("project_b", "run"),
     ]
+
+
+# ── the coverage-collection flag and the cleanup latch (#777) ─────────────────
+
+
+def test_a_second_library_invocation_inherits_neither_flag_nor_latch(tmp_path):
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.labs.loader import Lab
+    from otto.suite.run import _session_context
+
+    ctx = OttoContext(lab=Lab(name="test"))
+    token = set_context(ctx)
+    try:
+        with _session_context(tmp_path) as active:
+            assert active is ctx
+            active.collecting_coverage = True
+            assert active.claim_cleanup_warning() is True
+        assert ctx.collecting_coverage is False
+        assert ctx.policy.coverage.warned is False
+    finally:
+        reset_context(token)
+
+
+@pytest.mark.parametrize(
+    ("opts", "collecting"),
+    [
+        pytest.param(RunOptions(cov=True, cov_clean=True), True, id="cov"),
+        pytest.param(RunOptions(cov=True, cov_clean=False), True, id="cov-no-clean"),
+        pytest.param(RunOptions(cov=False), False, id="no-cov"),
+    ],
+)
+def test_before_tests_sets_collecting_coverage_only_under_cov(
+    tmp_path, monkeypatch, opts, collecting
+):
+    from unittest.mock import AsyncMock
+
+    import otto.suite.run as run_module
+    from otto.context import OttoContext
+    from otto.labs.loader import Lab
+
+    clean = AsyncMock(return_value=None)
+    seen: list[bool] = []
+
+    async def _pre_clean(projects, run_opts):
+        seen.append(ctx.collecting_coverage)  # set before the pre-clean runs
+        return await clean(projects, run_opts)
+
+    monkeypatch.setattr(run_module, "_pre_run_cov_clean", _pre_clean)
+    ctx = OttoContext(lab=Lab(name="test"))
+    sessions = run_module._Sessions([], [], [], opts, tmp_path, ctx)
+    sessions._before_tests()
+    assert ctx.collecting_coverage is collecting
+    assert seen == [collecting]

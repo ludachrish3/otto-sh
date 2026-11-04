@@ -489,6 +489,52 @@ class OttoContext:
         self._bootstrap_refusal = None
         self._scope_verdicts = None
 
+    @contextmanager
+    def coverage_collection_preserved(self) -> "Generator[None, None, None]":
+        """Restore :attr:`collecting_coverage` and the cleanup-warning latch on exit.
+
+        ``run_tests`` on a context the caller owns (:func:`otto.suite.run.run_tests`)
+        wraps its run in this, so the next library invocation on the same
+        context inherits neither the flag nor a claimed latch.
+        """
+        prior = (self.policy.coverage.collecting, self.policy.coverage.warned)
+        try:
+            yield
+        finally:
+            # The live object, read at exit: the state hosts read is the policy's own.
+            state = self.policy.coverage
+            state.collecting, state.warned = prior
+
+    @property
+    def collecting_coverage(self) -> bool:
+        """Whether this invocation has scheduled a post-run coverage collection.
+
+        ``otto test`` sets it once it is committed to running tests under
+        ``--cov`` (the collection follows the run, ``--cov-clean`` or not), and
+        restores it when the run ends. It is neither :attr:`cov` nor
+        :attr:`cov_decision`: an instruction may read ``ctx.cov`` with no
+        collection scheduled. Stored on :attr:`policy` (its
+        :attr:`~otto.context.RunPolicy.coverage`), so a host's ``cleanup``
+        reads the same state as a project's: a cleanup that removes coverage
+        counters while it is set warns once
+        (:func:`otto.host.cov_sweep.warn_if_counters_discarded`).
+        """
+        return self.policy.coverage.collecting
+
+    @collecting_coverage.setter
+    def collecting_coverage(self, value: bool) -> None:
+        self.policy.coverage.collecting = value
+
+    def claim_cleanup_warning(self) -> bool:
+        """Return ``True`` exactly once per invocation while :attr:`collecting_coverage` is set.
+
+        The latch for the WARNING a cleanup logs when it removed coverage
+        counters during a coverage run: the first claim wins it, every later
+        one (and any claim while no collection is scheduled) is ``False``.
+        The policy's :meth:`~otto.invocation.CoverageCollection.claim_warning`.
+        """
+        return self.policy.coverage.claim_warning()
+
     @property
     def dry_run(self) -> bool:
         """Whether this run declines device-changing commands, read live off :attr:`policy`.

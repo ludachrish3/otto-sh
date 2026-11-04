@@ -36,7 +36,7 @@ artifact = "build/src/app/app"
 stage_dir = "/tmp"
 cov_dir = "/tmp/otto-hier-cov-app"
 check = "test -x /tmp/app"
-uninstall = "rm -rf /tmp/app {cov_dir}"
+uninstall = "rm -rf /tmp/app"
 match = { id = "test1" }
 
 [[products]]
@@ -46,7 +46,7 @@ artifact = "build/src/tool/tool"
 stage_dir = "/tmp"
 cov_dir = "/tmp/otto-hier-cov-tool"
 check = "test -x /tmp/tool"
-uninstall = "rm -rf /tmp/tool {cov_dir}"
+uninstall = "rm -rf /tmp/tool"
 match = { id = "test1" }
 
 [coverage]

@@ -1,4 +1,4 @@
-"""The coverage counter reset under every BusyBox row (#842).
+"""The coverage counter reset and the cleanup sweep under every BusyBox row (#842, #777).
 
 otto's counter reset (``otto.host.product.gcda_delete_cmd``) runs on whatever
 userland the device has. ``find -delete`` is a GNU/BusyBox extension that a
@@ -20,13 +20,20 @@ by name, at setup of a selected test (``sweep_release``), so deselecting it or
 collecting this module elsewhere stays clean.
 """
 
+import os
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
-from otto.host.product import classify_gcda_check, gcda_check_cmd, gcda_delete_cmd
+from otto.host import cov_sweep
+from otto.host.product import (
+    GcdaFindError,
+    classify_gcda_check,
+    gcda_check_cmd,
+    gcda_delete_cmd,
+)
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.busybox._rows import ARTIFACT_ROWS, SWEEP_APPLETS, SYSTEM_BUILD, run_in_busybox_sh
@@ -143,3 +150,76 @@ def test_the_reset_survives_more_paths_than_one_command_line_holds(
     assert rc == 0, f"rc {rc}: {_first_line(done)!r}"
     left = _gcda_left(cov)
     assert left == [], f"{len(left)} of 22000 counters survived ({elapsed:.0f}s)"
+
+
+# ── the cleanup sweep (#777): the probe and the removal scripts, verbatim ─────
+
+
+def _probe(release, applets: Path, dirs: list[str]):
+    """Run the sweep's probe script under *release*; parse it as otto does."""
+    done = run_in_busybox_sh(release, applets, cov_sweep._probe_script(dirs))
+    return cov_sweep._parse_probe(done.stdout, dirs, done.returncode)
+
+
+def _remove(release, applets: Path, dirs: list[str]):
+    """Run the sweep's removal script under *release*; parse it as otto does."""
+    done = run_in_busybox_sh(release, applets, cov_sweep._remove_script(dirs))
+    return cov_sweep._parse_removal(done.stdout, dirs, done.returncode)
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize("sweep_release", _SWEEP_ROWS, indirect=True)
+def test_the_sweep_removes_counters_and_emptied_dirs_and_nothing_else(
+    sweep_release, applet_dir, tmp_path
+):
+    only = tmp_path / "only counters"
+    (only / "sub").mkdir(parents=True)
+    (only / "a.gcda").write_bytes(b"")
+    (only / "sub" / "b.gcda").write_bytes(b"")
+    user = _coverage_tree(tmp_path)
+    (user / "emptied").mkdir()
+    healthy = tmp_path / "healthy"
+    healthy.mkdir()
+    (healthy / "notes.txt").write_text("user data")
+    absent = tmp_path / "absent" / "it's gone"
+    dirs = [str(only), str(user), str(healthy), str(absent)]
+    d = applet_dir(sweep_release, SWEEP_APPLETS)
+
+    before = _probe(sweep_release, d, dirs)
+    assert sorted(before[0]) == [str(only / "a.gcda"), str(only / "sub" / "b.gcda")]
+    assert set(before[1]) == {
+        str(user / "a.gcda"),
+        str(user / "sub" / "b c.gcda"),
+        str(user / "sub" / "deeper" / "d.gcda"),
+        str(user / "emptied"),
+    }
+    # The empty-dir probe is silent on a healthy non-empty dir, and BusyBox's
+    # ENOENT rendering parses as absent.
+    assert before[2:] == [[], "absent"]
+
+    assert _remove(sweep_release, d, dirs) == [None, None, None, None]
+
+    assert not only.exists()
+    assert (user / "sub" / "keep.txt").read_text() == "user data"
+    assert _gcda_left(user) == []
+    assert (healthy / "notes.txt").exists()
+    assert _probe(sweep_release, d, dirs) == ["absent", [], [], "absent"]
+
+
+@pytest.mark.busybox
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a chmod 000 dir")
+@pytest.mark.parametrize("sweep_release", _SWEEP_ROWS, indirect=True)
+def test_the_sweep_probe_reports_an_unreadable_dir(sweep_release, applet_dir, tmp_path):
+    cov = tmp_path / "cov"
+    (cov / "locked").mkdir(parents=True)
+    (cov / "locked").chmod(0)
+    d = applet_dir(sweep_release, SWEEP_APPLETS)
+    try:
+        [answer] = _probe(sweep_release, d, [str(cov)])
+    finally:
+        (cov / "locked").chmod(0o755)
+    # BusyBox's find never runs -exec on a dir it cannot read under -depth,
+    # so no `otto-ls-failed` line appears (GNU's does, tests/unit/host); its
+    # own diagnostic and status make the answer an error all the same.
+    assert isinstance(answer, GcdaFindError), answer
+    assert str(cov / "locked") in answer.detail

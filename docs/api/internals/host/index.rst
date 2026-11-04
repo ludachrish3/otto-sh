@@ -38,6 +38,7 @@ host internals
    daemon
    address
    shell_quote
+   cov_sweep
    toolchain
    userland
    interface

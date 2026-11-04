@@ -46,7 +46,7 @@ composes = ["tools"]
 # doc: begin compose-products
 # wordcount and shout are installed into the compose container. A container
 # host has no default staging directory, so stage_dir is absolute. uninstall
-# removes only the tool: otto clears and collects cov_dir itself.
+# removes only the tool and leaves cov_dir; otto run cleanup removes it.
 [[products]]
 name = "wordcount"
 kind = "shell"

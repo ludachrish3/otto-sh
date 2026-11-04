@@ -897,7 +897,7 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
         cov_tickets_json=tickets_json,
         report_title="Firmware",
     )
-    asyncio.run(_post_run_coverage([project], log_dir, opts))
+    asyncio.run(_post_run_coverage([project], log_dir, opts, None))
 
     assert tickets_json.exists(), (
         "tickets.json was not written — ticket_spec never reached the store"
@@ -943,7 +943,7 @@ def test_post_run_coverage_warns_on_an_unresolvable_unit_toolchain(tmp_path, mon
     log_dir.mkdir()
 
     with caplog.at_level("WARNING"):
-        asyncio.run(_post_run_coverage([project], log_dir, RunOptions(cov_report=True)))
+        asyncio.run(_post_run_coverage([project], log_dir, RunOptions(cov_report=True), None))
 
     assert any(
         "Coverage report generation failed" in r.getMessage()

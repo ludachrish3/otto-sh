@@ -899,3 +899,67 @@ class TestPollutedBuildTree:
         assert "failed to capture" in flat, combined[-3000:]
         assert "rebuilt" in flat, combined[-3000:]  # the likely cause...
         assert "otto test --cov" in flat, combined[-3000:]  # ...and the remedy
+
+
+# ---------------------------------------------------------------------------
+# Cleanup owns the coverage data (#777)
+# ---------------------------------------------------------------------------
+
+# project1's declared `cov_dir` for PRODUCT, on every EXPECTED_HOST_IDS host.
+PRODUCT_COV_DIR = "/var/coverage/product"
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestCleanupRemovesCoverage:
+    """``otto run cleanup`` removes the coverage data under each product's ``cov_dir``.
+
+    Its cleanup uninstalls the product and sweeps the ``cov_dir`` that
+    ``coverage_run``'s install made; a later run here installs again. All
+    preconditions on every host first, then ONE fleet-wide cleanup, then all
+    postconditions: a per-host loop that cleaned inside the loop would let
+    host 1's fleet-wide cleanup satisfy host 2's postcondition unchecked. The
+    cleanup leaves the lab's tunnels and impairments to the other groups
+    using them.
+
+    The fetch already took the counters, and a flat ``cov_dir`` left empty is
+    clean by the spec, so the precondition plants what gcov leaves under a
+    prefix: a counter in a subdirectory, and an empty subdirectory. The
+    ``cov_dir`` itself sits under a root-owned parent the session user cannot
+    write, so cleanup may keep it, empty; that is clean too (spec ruling I1).
+    """
+
+    def test_cleanup_removes_every_cov_dir_and_the_host_is_clean(self, coverage_run, tmp_path):
+        xdir = tmp_path / "xdir"
+        xdir.mkdir()
+        planted = f"{PRODUCT_COV_DIR}/otto-bed-777"
+        plant = f"mkdir -p {planted}/counters {planted}/empty && touch {planted}/counters/x.gcda"
+        swept = (
+            f"test ! -e {planted} && "
+            f'{{ test ! -e {PRODUCT_COV_DIR} || test -z "$(ls -A {PRODUCT_COV_DIR})"; }}'
+        )
+
+        def otto(argv: list[str], timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            return run_otto(argv, xdir=xdir, roots=PROJECT1, lab=_LAB, timeout=timeout)
+
+        def said(result: subprocess.CompletedProcess[str]) -> str:
+            return f"exited {result.returncode}\n{result.stdout}\n{result.stderr}"
+
+        hosts = sorted(EXPECTED_HOST_IDS)
+        for host in hosts:
+            seeded = otto(["host", host, "exec", plant])
+            assert seeded.returncode == 0, f"{host}: {said(seeded)}"
+            dirty = otto(["host", host, "coverage-dirs-clean"])
+            assert dirty.returncode == 1, f"{host}: {said(dirty)}"
+
+        cleanup = otto(
+            ["run", "cleanup", "--no-reset-impairments", "--no-remove-tunnels"], timeout=900
+        )
+        assert cleanup.returncode == 0, said(cleanup)
+
+        for host in hosts:
+            gone = otto(["host", host, "exec", swept])
+            assert gone.returncode == 0, f"{host}: {said(gone)}"
+            clean = otto(["host", host, "is-clean"])
+            assert clean.returncode == 0, f"{host}: {said(clean)}"
+            assert "True" in clean.stdout, f"{host}: {said(clean)}"

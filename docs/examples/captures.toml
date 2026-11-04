@@ -459,14 +459,6 @@ record = false
 timeout = 300
 argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]
 
-# cleanup leaves each tool's cov_dir. Remove them, so the next run's
-# qs-shell-cov-get-manual still prints otto-no-cov-dir for wordcount.
-[[capture]]
-id = "qs-shell-sweep-cov-dirs"
-project = "quickstart-shell"
-record = false
-argv = ["{otto}", "--lab", "example_lab", "host", "dut", "exec", "rm -rf /tmp/wordcount /tmp/shout"]
-
 # ---- Kernel-module track (docs/setup/tracks/kmod.md) -------------------------
 # One ordered set, listed under [ordered]. In a fresh copy of the example it
 # runs init, then copies the sentinels, commits, builds the library, the
@@ -1154,9 +1146,11 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
 # It arms the teardown (arms_teardown): the always tail runs only after this
 # run's preflight succeeded, so a refused preflight, or a failure in an earlier
 # set, leaves the docker host untouched. The tail takes the use-case down, runs
-# cleanup (which removes the staging once the stack has no containers, and the
-# banner's container), sweeps what otto leaves by design (the images, and the
-# root-owned cov_dir the bind mount made) and anything a failure left, prunes
+# cleanup (which removes the staging once the stack has no containers, the
+# banner's container, and its cov_dir's counters and empty dirs), sweeps what
+# otto leaves by design (the images, and the root-owned /tmp/quickstart-docker
+# parent the bind mount made, which is outside the cov_dir) and anything a
+# failure left, prunes
 # only the cache records the run added, and checks that everything is gone and
 # the base image unchanged. Only that check removes the baseline, so when it
 # fails the baseline stays and the next preflight refuses: what is left is for

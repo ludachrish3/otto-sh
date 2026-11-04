@@ -27,12 +27,13 @@ deliberately **not** supported.
 """
 
 import logging
+import posixpath
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn
 
 from typing_extensions import TypeIs, override
 
@@ -205,14 +206,20 @@ def unplanned(obj: object) -> ProductPlan:
     )
 
 
-def _refuse_relative(stage_dir: Path, who: str) -> None:
-    """Refuse a staging directory that is not absolute, naming *who* declared it."""
+_STAGE_DIR_REMEDY = (
+    "A relative path (or a '~' the transfer layer never expands) means a different "
+    "directory to the transfer that puts the artifact and to the command that names it "
+    "afterwards. Leave it empty to stage in the host's default_dest_dir, or in the login "
+    "user's home when the host declares none."
+)
+
+
+def _refuse_relative(
+    value: "Path | str", who: str, *, field: str = "stage_dir", remedy: str = _STAGE_DIR_REMEDY
+) -> NoReturn:
+    """Refuse a host directory *field* that is not absolute, naming *who* declared it."""
     raise ValueError(
-        f"{who}: 'stage_dir' must be an absolute path on the host, got {str(stage_dir)!r}. "
-        "A relative path (or a '~' the transfer layer never expands) means a different "
-        "directory to the transfer that puts the artifact and to the command that names it "
-        "afterwards. Leave it empty to stage in the host's default_dest_dir, or in the login "
-        "user's home when the host declares none."
+        f"{who}: {field!r} must be an absolute path on the host, got {str(value)!r}. {remedy}"
     )
 
 
@@ -384,7 +391,24 @@ class Product(ABC):
     (it only ever appears in shell commands), distinct from the CLI's local
     ``--cov-dir`` staging root. ``None`` means the default ``/tmp/<name>``,
     which ingest stamps (:func:`stamp_cov_dir`) so a code product can read
-    ``self.cov_dir`` when composing its install or run command."""
+    ``self.cov_dir`` when composing its install or run command.
+
+    It must be absolute, normalized and at least two components deep
+    (``/tmp/x``, never ``/tmp``), and no two products on one host may share
+    it or nest one inside the other: ingest refuses the lab otherwise
+    (:func:`validate_cov_dir`, :func:`~otto.host.factory.check_cov_dir_overlaps`).
+    Uninstall leaves it alone; cleanup removes the ``.gcda`` counters under
+    it and the directories they leave empty (:mod:`otto.host.cov_sweep`)."""
+
+    cov_dir_root_owned: ClassVar[bool] = False
+    """Whether this kind's :attr:`cov_dir` is written as root, so it is cleared elevated.
+
+    A property of the kind, never of one product: ``docker_image`` (docker
+    creates the bind-mount source as root) and ``kmod`` (the kernel writes
+    the counters) set it. The counter reset (:meth:`reset_coverage`) and the
+    cleanup sweep both read it, so the dir has one answer to "who may delete
+    here". The sweep's probe still asks unelevated first: a readable
+    root-owned dir needs no sudo to look into."""
 
     kind: str = "code"
     """The declared kind that built this product (``"shell"``, ``"kmod"``, ...),
@@ -534,7 +558,7 @@ class Product(ABC):
             ValueError: :attr:`name` is not a single safe path segment;
                 checked before any command is issued.
         """
-        return await _clear_gcda(self, host, sudo=False)
+        return await _clear_gcda(self, host)
 
 
 def cov_dir_of_name(name: str) -> str:
@@ -547,20 +571,74 @@ def cov_dir_of(product: Product) -> str:
     return product.cov_dir or cov_dir_of_name(product.name)
 
 
-def instrumented_products(host: Any) -> list[Product]:
+def instrumented_products(host: Any, products: Iterable[Product] | None = None) -> list[Product]:
     """*host*'s products whose build is known to be instrumented.
 
     ``instrumented() is True`` only: a product that cannot tell (``None``)
     is not counted. The counter reset, the fetch and the cleanup sweep all
-    ask this one predicate.
+    ask this one predicate. *products* narrows the question to a subset of
+    the host's products (one owner's, say); ``None`` means all of them.
     """
-    return [p for p in host.products if p.instrumented() is True]
+    return [
+        p for p in (host.products if products is None else products) if p.instrumented() is True
+    ]
+
+
+def cov_dir_products(host: Any, products: Iterable[Product]) -> list[Product]:
+    """Those of *products* that have a ``cov_dir`` on *host* for coverage to probe or sweep.
+
+    :func:`instrumented_products` first, then the two exclusions the counter
+    reset does not need: an :class:`~otto.host.embedded_host.EmbeddedHost`
+    has no host directory at all (its counters live in the firmware), and
+    neither does a ``kind = "embedded"`` product. The presence probe, the
+    leftover probe, the cleanup sweep and its preview all ask this one
+    predicate, so a shell command never reaches a Zephyr console.
+    """
+    from .embedded_host import EmbeddedHost  # function-local: off the host import path
+
+    if isinstance(host, EmbeddedHost):
+        return []
+    return [p for p in instrumented_products(host, products) if p.kind != "embedded"]
 
 
 def stamp_cov_dir(product: Product) -> None:
     """Make :attr:`Product.cov_dir` concrete (ingest does this once per product)."""
     if product.cov_dir is None:
         product.cov_dir = cov_dir_of(product)
+
+
+_COV_DIR_MIN_PARTS = 3
+"""``/`` plus two components: ``PurePosixPath("/tmp/x").parts`` is ``("/", "tmp", "x")``."""
+
+
+def validate_cov_dir(cov_dir: str, who: str) -> None:
+    """Refuse a :attr:`Product.cov_dir` that is not absolute, normalized and two components deep.
+
+    Ingest calls it right after :func:`stamp_cov_dir`, for every product.
+    The rule keeps the coverage sweep's start path the directory the product
+    meant: no ``..``, ``.``, ``//`` or trailing slash for ``find`` to read
+    differently, and never ``/`` or a top-level directory such as ``/tmp``,
+    whose counters could belong to anything on the host.
+    """
+    if not cov_dir.startswith("/"):
+        _refuse_relative(
+            cov_dir,
+            who,
+            field="cov_dir",
+            remedy=(
+                "Give the absolute host directory the product writes its counters under, "
+                "for example /tmp/<name>."
+            ),
+        )
+    if (
+        cov_dir != posixpath.normpath(cov_dir)
+        or cov_dir.startswith("//")
+        or len(PurePosixPath(cov_dir).parts) < _COV_DIR_MIN_PARTS
+    ):
+        raise ValueError(
+            f"{who}: 'cov_dir' must be absolute, normalized, at least two components "
+            f"(e.g. /tmp/x), got {cov_dir!r}: no '..', '.', '//' or trailing '/'"
+        )
 
 
 def gcda_find_cmd(cov_dir: str) -> str:
@@ -610,6 +688,32 @@ def gcda_delete_cmd(cov_dir: str) -> str:
     return f"! test -d {path_operand(cov_dir)} || {gcda_remove_files(cov_dir)}"
 
 
+def gcda_list_cmd(cov_dir: str) -> str:
+    """``find <cov_dir> -name '*.gcda' -type f -print``: list the counters under *cov_dir*.
+
+    The one spelling of the listing, unguarded: the reset's check
+    (:func:`gcda_check_cmd`) and the cleanup sweep's probe
+    (:mod:`otto.host.cov_sweep`) both run it.
+    """
+    return f"{gcda_find_cmd(cov_dir)} -print"
+
+
+def gcda_remove_dirs(cov_dir: str) -> str:
+    r"""Remove every directory under *cov_dir*, *cov_dir* included, that is empty.
+
+    ``find <cov_dir> -depth -type d -exec rmdir {} \;``: children first
+    (``-depth``), so a tree that held only counters goes up to and including
+    *cov_dir*. ``rmdir`` refuses a non-empty directory, which is the point:
+    a dir that still holds anything stays, and so do its parents. Cleanup
+    only (:func:`~otto.host.cov_sweep.remove_coverage`), after
+    :func:`gcda_remove_files`; the counter reset never runs it. Its status
+    is meaningless (every refusal fails it) and is never read.
+    """
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    return f"find {path_operand(cov_dir)} -depth -type d -exec rmdir {{}} \\;"
+
+
 def marker_cmd(mark: str) -> str:
     r"""Build ``printf '\n%s\n' <mark>``: the line that opens a framed answer.
 
@@ -657,7 +761,7 @@ def gcda_check_cmd(cov_dir: str) -> str:
     ``LC_ALL=C`` keeps the "No such file or directory" text that
     :func:`enoent_for_start` matches.
     """
-    return f"{marker_cmd(_GCDA_CHECK_MARK)}; LC_ALL=C {gcda_find_cmd(cov_dir)} -print 2>&1"
+    return f"{marker_cmd(_GCDA_CHECK_MARK)}; LC_ALL=C {gcda_list_cmd(cov_dir)} 2>&1"
 
 
 _FIND_ENOENT = re.compile(r"^(?P<prog>\S+): (?P<path>.*): No such file or directory$")
@@ -701,21 +805,47 @@ class GcdaFindError:
     """What ``find`` printed, or ``exit <rc>, no output`` when silent (:func:`failure_detail`)."""
 
 
+def path_under(line: str, cov_dir: str) -> bool:
+    """Whether *line* is a path strictly below *cov_dir*, by path component."""
+    return line.startswith(cov_dir.rstrip("/") + "/")
+
+
+def classify_gcda_listing(
+    cov_dir: str, lines: "list[str]", retcode: int
+) -> "list[str] | Literal['absent'] | GcdaFindError":
+    """Read ``find <cov_dir> -name '*.gcda' -type f -print``'s answer, fail-closed.
+
+    The one reading of a counter listing (:func:`gcda_list_cmd`), shared by
+    the reset's postcondition (:func:`classify_gcda_check`) and cleanup's
+    probe (:mod:`otto.host.cov_sweep`). *lines* are ``find``'s non-empty
+    output lines, *retcode* its exit status:
+
+    - exit 0: the counters left (empty means clean), provided EVERY line is a
+      path under *cov_dir* (:func:`path_under`) ending ``.gcda``; any other
+      line is a :class:`GcdaFindError`, never a phantom counter;
+    - non-zero, and exactly one line for which :func:`enoent_for_start`
+      holds: ``"absent"``, nothing to check;
+    - anything else: a :class:`GcdaFindError` carrying ``find``'s output.
+    """
+    text = "\n".join(lines)
+    if retcode == 0:
+        if all(path_under(line, cov_dir) and line.endswith(".gcda") for line in lines):
+            return lines
+        return GcdaFindError(text)
+    if len(lines) == 1 and enoent_for_start(lines[0], cov_dir):
+        return "absent"
+    return GcdaFindError(failure_detail(text, retcode))
+
+
 def classify_gcda_check(
     cov_dir: str, cmd: "CommandResult"
 ) -> "list[str] | Literal['absent'] | GcdaFindError":
     """Read the answer to :func:`gcda_check_cmd` for *cov_dir*, fail-closed.
 
     Only what follows the check's marker (:func:`after_marker`) is read; no
-    marker at all is a :class:`GcdaFindError` carrying the whole output. After
-    it:
-
-    - exit 0: the counters left (empty means clean), provided EVERY line is a
-      path under *cov_dir* (by path component) ending ``.gcda``; any other
-      line is a :class:`GcdaFindError`, never a phantom counter;
-    - non-zero, and exactly one line for which :func:`enoent_for_start`
-      holds: ``"absent"``, nothing to check;
-    - anything else: a :class:`GcdaFindError` carrying ``find``'s output.
+    marker at all is a :class:`GcdaFindError` carrying the whole output, and
+    so is a zero exit otto marked failed. What follows the marker is
+    :func:`classify_gcda_listing`'s to read.
 
     A :class:`~otto.result.NotRunResult` has no output to read: the caller
     handles a decline before asking.
@@ -723,28 +853,25 @@ def classify_gcda_check(
     body = after_marker(cmd.value, _GCDA_CHECK_MARK)
     if body is None:
         return GcdaFindError(failure_detail(cmd.value, cmd.retcode))
-    lines = [line for line in body.splitlines() if line]
-    if cmd.retcode == 0 and cmd.is_ok:
-        under = cov_dir.rstrip("/") + "/"
-        if all(line.startswith(under) and line.endswith(".gcda") for line in lines):
-            return lines
-        return GcdaFindError(body.strip())
-    if cmd.retcode != 0 and len(lines) == 1 and enoent_for_start(lines[0], cov_dir):
-        return "absent"
-    return GcdaFindError(failure_detail(body, cmd.retcode))
+    if cmd.retcode == 0 and not cmd.is_ok:
+        return GcdaFindError(failure_detail(body, cmd.retcode))
+    return classify_gcda_listing(cov_dir, [line for line in body.splitlines() if line], cmd.retcode)
 
 
-_LEFTOVERS_SHOWN = 3
-"""How many surviving counters a failed reset names."""
+LEFTOVERS_SHOWN = 3
+"""How many leftovers a failed reset or cleanup sweep names per product."""
 
 
 # Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md
-async def _clear_gcda(product: Product, host: "Host", *, sudo: bool) -> Result:
+async def _clear_gcda(product: Product, host: "Host") -> Result:
     """Reset the counters: remove every ``.gcda`` under the product's ``cov_dir``, then check.
 
     Validates :attr:`Product.name` first. Runs :func:`gcda_delete_cmd`, then
-    :func:`gcda_check_cmd`, both through the same runner — ``host.exec`` or,
-    with *sudo*, :func:`~otto.host.privilege.run_sh_elevated` — so the check
+    :func:`gcda_check_cmd`, both through the same runner — ``host.exec``, or
+    for a kind whose :attr:`~Product.cov_dir_root_owned` is set,
+    :func:`~otto.host.privilege.run_sh_elevated`, which wraps each line whole
+    in ``sh -c`` (sudo takes an argv tail, so unwrapped it would run only
+    ``!`` and the ``find`` after ``||`` would run unelevated) — so the check
     sees what the removal could. A ``--dry-run`` decline of either answers
     :attr:`~otto.utils.Status.NotRun`, never Error
     (:doc:`/extend/dry-run-contract`). Success means the removal ran **and**
@@ -754,6 +881,7 @@ async def _clear_gcda(product: Product, host: "Host", *, sudo: bool) -> Result:
     """
     layout.validate_product_name(product.name)
     cov_dir = cov_dir_of(product)
+    sudo = type(product).cov_dir_root_owned
 
     async def _run(script: str) -> "CommandResult | None":
         """*script*'s one command result, or ``None`` when the session declined it."""
@@ -780,29 +908,10 @@ async def _clear_gcda(product: Product, host: "Host", *, sudo: bool) -> Result:
         return Result(Status.Error, msg=f"checking .gcda under {cov_dir} failed: {answer.detail}")
     if answer == "absent" or not answer:
         return Result(Status.Success)
-    shown = ", ".join(answer[:_LEFTOVERS_SHOWN])
+    shown = ", ".join(answer[:LEFTOVERS_SHOWN])
     return Result(
         Status.Error, msg=f"deleting .gcda under {cov_dir} left {len(answer)} file(s): {shown}"
     )
-
-
-async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
-    """Reset *product*'s counters elevated: ``_clear_gcda`` through sudo.
-
-    Shared by kinds whose counters are written as root — a kernel module's
-    are the kernel's own (:mod:`otto.host.kmod_kind`), a container's are
-    whatever user its process ran as (:mod:`otto.host.docker_image_kind`).
-    The same removal and check as the unelevated default
-    (:meth:`Product.reset_coverage`), each wrapped whole in ``sh -c`` by
-    :func:`~otto.host.privilege.run_sh_elevated`: sudo takes an argv tail
-    and the line is appended to it raw, so unwrapped, sudo would run only
-    ``!`` and the ``find`` after ``||`` would run unelevated.
-
-    Raises:
-        ValueError: :attr:`Product.name` is not a single safe path segment;
-            checked before any command is issued.
-    """
-    return await _clear_gcda(product, host, sudo=True)
 
 
 INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")

@@ -96,6 +96,7 @@ async def clean_coverage(
     *,
     host_ids: "list[str] | None" = None,
     pairs: "list[ProductKey] | None" = None,
+    record_presence: bool = False,
 ) -> "CleanReport":
     """Zero every instrumented product's counters on the lab's coverage hosts.
 
@@ -118,6 +119,15 @@ async def clean_coverage(
     keeps its counters. A named product the host does not carry as an
     instrumented product is reported failed, never skipped. An empty *pairs*
     is nothing to clean: an empty report, no host touched.
+
+    *record_presence* asks each host, before its reset, which of those
+    products' ``cov_dir`` exist (one unelevated batched ``test -d``,
+    :func:`~otto.host.cov_sweep.probe_presence`), and returns the answer as
+    :attr:`~otto.coverage.reports.CleanReport.present_at_reset`. Only the
+    pre-run reset of ``otto test --cov`` asks: that evidence is what makes a
+    ``cov_dir`` gone at the fetch a WARNING rather than a quiet DEBUG. An
+    embedded host is reset but never probed, and a host whose probe fails
+    contributes no evidence.
 
     Raises:
         CoverageConfigError: no ``[coverage]`` section, or a malformed
@@ -188,7 +198,7 @@ async def clean_coverage(
 
     scoped = re.compile("^(?:" + "|".join(re.escape(h.id) for h in hosts) + ")$")
     outcomes = await do_for_all_hosts(
-        _reset_products, named, pattern=scoped, include_containers=True
+        _reset_products, named, record_presence, pattern=scoped, include_containers=True
     )
 
     def _all_failed(host: "Any", reason: str) -> "dict[str, Result]":
@@ -211,6 +221,7 @@ async def clean_coverage(
         }
 
     by_host: dict[str, dict[str, Result]] = {}
+    present: set[tuple[str, str]] = set()
     for host in hosts:
         if host.id not in outcomes:
             # A gap between this scoped re-derivation and the walk
@@ -224,37 +235,46 @@ async def clean_coverage(
                 raise outcome
             by_host[host.id] = _all_failed(host, f"{type(outcome).__name__}: {outcome}")
         else:
-            by_host[host.id] = outcome
-    return CleanReport(hosts=by_host)
+            by_host[host.id], evidence = outcome
+            present.update((host.id, name) for name in evidence)
+    return CleanReport(hosts=by_host, present_at_reset=frozenset(present))
 
 
 async def _reset_products(
-    host: "Any", named: "dict[str, set[str]] | None" = None
-) -> "dict[str, Result]":
-    """Reset *host*'s instrumented products, in declaration order.
+    host: "Any", named: "dict[str, set[str]] | None" = None, record_presence: bool = False
+) -> "tuple[dict[str, Result], frozenset[str]]":
+    """Reset *host*'s instrumented products, in declaration order; return the results and evidence.
 
     With *named*, only the products it names for this host; a named product
-    the host does not carry instrumented is reported failed.
+    the host does not carry instrumented is reported failed. With
+    *record_presence*, the products about to be reset that have a host
+    ``cov_dir`` (:func:`~otto.host.product.cov_dir_products`) are probed
+    first, and the names whose dir exists come back beside the results; a
+    probe that gives no answer is no evidence (an empty set).
     """
     from .. import layout
-    from ..host.product import instrumented_products
+    from ..host.cov_sweep import probe_presence
+    from ..host.product import cov_dir_products, instrumented_products
     from ..result import Result
     from ..utils import Status
 
     wanted = None if named is None else named.get(host.id, set())
-    results = {}
-    for product in instrumented_products(host):
-        if wanted is not None and product.name not in wanted:
-            continue
-        # Before the hook runs, not after: a name that is not a single safe
-        # path segment must never reach a host.
+    products = [p for p in instrumented_products(host) if wanted is None or p.name in wanted]
+    for product in products:
+        # Before any command: a name that is not a single safe path segment
+        # must never reach a host.
         layout.validate_product_name(product.name)
+    evidence: frozenset[str] = frozenset[str]()
+    if record_presence:
+        evidence = await probe_presence(host, cov_dir_products(host, products)) or frozenset[str]()
+    results = {}
+    for product in products:
         results[product.name] = await product.reset_coverage(host)
     for name in sorted((wanted or set()) - set(results)):
         results[name] = Result(
             Status.Error, msg=f"{name!r} is not an instrumented product on {host.id!r}"
         )
-    return results
+    return results, evidence
 
 
 async def collect_coverage(
@@ -267,6 +287,7 @@ async def collect_coverage(
     tester: dict[str, str] | None = None,
     display_names: dict[str, str] | None = None,
     clean_after_fetch: bool = True,
+    present_at_reset: frozenset[tuple[str, str]] = frozenset(),
 ) -> CollectResult:
     """Collect each host's instrumented products' ``.gcda`` into ``cov_dir``.
 
@@ -341,6 +362,13 @@ async def collect_coverage(
             :class:`~otto.coverage.errors.CoverageCaptureError`'s (``None``
             when this is ``False`` or nothing captured); a failed reset is
             never swallowed here — it is the caller's to act on.
+        present_at_reset: ``(host id, product name)`` for every ``cov_dir``
+            the invocation's pre-run reset saw exist
+            (:attr:`~otto.coverage.reports.CleanReport.present_at_reset`).
+            A listed product whose ``cov_dir`` is gone at the fetch is a
+            WARNING; without evidence (the default: ``--no-cov-clean``, a
+            standalone ``otto cov get``) a missing dir stays DEBUG. The clean
+            after the fetch never probes and never replaces it.
 
     Returns:
         A :class:`CollectResult` with the destination, per-product dirs, and
@@ -418,7 +446,7 @@ async def collect_coverage(
         # No reconnect step: a host whose connection belonged to one of
         # pytest's closed loops drops it on first use here and reconnects on
         # this loop (BaseHost._claim_loop).
-        fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern)
+        fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern, present_at_reset=present_at_reset)
         fetched = await fetcher.fetch_all(failures=fetch_failures)
         product_dirs.update(fetched)
 
