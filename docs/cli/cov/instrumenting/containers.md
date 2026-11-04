@@ -1,7 +1,7 @@
 # Container-image products
 
 A `kind = "docker_image"` product is a docker image, installed with `docker
-run -d` and removed with `docker rm -f` instead of copied onto the host and
+run -d` and removed with `docker rm -f -v` instead of copied onto the host and
 run directly. Its coverage story reuses the ordinary `GCOV_PREFIX` machinery
 this page's siblings already rely on — the only new problem is getting the
 counters out of the container and onto the host otto already knows how to
@@ -53,7 +53,7 @@ and writes its counters only when it exits
 ({ref}`how it must exit <coverage-process-exit>`). An exec-form `CMD`
 (`CMD ["prog", ...]`) runs as the container's PID 1, which ignores a SIGTERM
 it does not handle, so `docker stop` kills it with SIGKILL after its timeout
-and nothing is written. `uninstall` is no way out: its `docker rm -f` writes
+and nothing is written. `uninstall` is no way out: its `docker rm -f -v` writes
 nothing either. One coverage run of such a product goes in this order:
 
 1. Make the `CMD` handle SIGTERM by calling `exit()`.
@@ -87,8 +87,8 @@ nothing either. One coverage run of such a product goes in this order:
    otto --lab <lab> host <parent> exec 'docker start <container_name>'
    ```
 
-   A stopped container answers not installed, and its name blocks the next
-   install. Started, it answers installed again.
+   A stopped container answers not installed until the next install replaces
+   it ({ref}`docker-image-kind`). Started, it answers installed again.
 5. Report: `otto --lab <lab> cov report <run dir>`. For an image named by
    reference, the unit tier reads the product's objects from its running
    container, and a stopped one refuses the whole report

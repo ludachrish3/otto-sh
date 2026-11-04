@@ -37,13 +37,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
+from ..host.docker_cli import missing, said
 from ..host.product import ARCHIVE_SUFFIXES
 from ..host.shell_quote import path_operand, shell_operand
 
 if TYPE_CHECKING:
     from ..host.host import Host
     from ..host.product import Product
-    from ..result import Result
 
 logger = logging.getLogger(__name__)
 
@@ -288,15 +288,15 @@ class ObjectListCache:
         state = await host.exec(_INSPECT_COMMAND + shlex.quote(container), timeout=60)
         if state.status is Status.NotRun:
             return self._unavailable(product, _DRY_RUN, kind="dry-run")
-        if not state.status.is_ok and not _no_such_container(state):
+        if not state.status.is_ok and not missing(state, "container"):
             # the daemon is down, its socket refused us, or docker is missing
             return self._unavailable(
                 product,
-                f"could not inspect container {container} on {host.id}: {_said(state)}",
+                f"could not inspect container {container} on {host.id}: {said(state)}",
                 kind="unreadable",
             )
-        said = str(state.value).strip() if state.status.is_ok else ""
-        running, _, image = said.partition(" ")
+        answer = str(state.value).strip() if state.status.is_ok else ""
+        running, _, image = answer.partition(" ")
         if running != "true" or not image.strip():
             return self._unavailable(
                 product,
@@ -352,7 +352,7 @@ class ObjectListCache:
         if not scan.status.is_ok:
             return self._unavailable(
                 product,
-                f"could not scan container {container}: {_said(scan)}",
+                f"could not scan container {container}: {said(scan)}",
                 kind="unreadable",
             )
         if parsed.errors:
@@ -385,7 +385,7 @@ class ObjectListCache:
                     product.name,
                     container,
                     host.id,
-                    _said(reaped),
+                    said(reaped),
                 )
 
     async def _fetch(
@@ -408,7 +408,7 @@ class ObjectListCache:
             if not hostdir:
                 return self._unavailable(
                     product,
-                    f"could not make a temp dir on {host.id}: {_said(made)}",
+                    f"could not make a temp dir on {host.id}: {said(made)}",
                     kind="unreadable",
                 )
             return await self._copy_out(product, host, container, paths, hostdir)
@@ -423,7 +423,7 @@ class ObjectListCache:
                             product.name,
                             where,
                             host.id,
-                            _said(removed),
+                            said(removed),
                         )
 
     async def _copy_out(
@@ -443,7 +443,7 @@ class ObjectListCache:
             if not copied.status.is_ok:
                 return self._unavailable(
                     product,
-                    f"could not copy {path} out of container {container}: {_said(copied)}",
+                    f"could not copy {path} out of container {container}: {said(copied)}",
                     kind="unreadable",
                 )
             staged.append(Path(dest))
@@ -455,7 +455,7 @@ class ObjectListCache:
             for src, path in zip(staged, paths, strict=True):
                 one = per_file.get(src)
                 if not got.status.is_ok or (one is not None and not one.status.is_ok):
-                    why = _said(one) if one is not None else _said(got)
+                    why = said(one) if one is not None else said(got)
                     return self._unavailable(
                         product,
                         f"could not fetch {path} (container {container}) from {host.id}: {why}",
@@ -683,20 +683,6 @@ def _make_temp_dir_command(token: str) -> str:
 _SCAN_TIMEOUT = 600
 _COPY_TIMEOUT = 120
 _DRY_RUN = "dry run: the container was not read"
-
-
-def _no_such_container(result: "Result") -> bool:
-    """Return whether a failed inspect says the container does not exist."""
-    value = result.value
-    said = f"{result.msg} {value if isinstance(value, str) else ''}"
-    return "no such container" in said.lower()
-
-
-def _said(result: "Result") -> str:
-    """Return what a failed host command reported, its message first."""
-    value = result.value
-    said = result.msg or (value.strip() if isinstance(value, str) else "")
-    return said or f"status {result.status.name}"
 
 
 def _archive_suffix(name: str) -> str | None:

@@ -184,6 +184,33 @@ CLANG_LCOV_ARGS = ["--ignore-errors", "source"]
 OVERLAY_ELEMENTS = ("test1", "test2")
 
 
+LISTING_ENV = {"COLUMNS": "400"}
+"""A console wide enough that a long otto line or table row is never wrapped or elided.
+
+Under a pipe otto already renders 200 columns with literal ids (#785); this
+pins a wider width so a long ``--list-products`` row or DEBUG record read
+back by a test never depends on that default.
+"""
+
+
+def listed_products(stdout: str) -> dict[str, list[str]]:
+    """Each product in an ``otto --lab <lab> --list-products`` table, mapped to its hosts.
+
+    Only the lab's own table is read: the "not used in this lab:" lines that
+    follow it name the entries no host gets, which are not the lab's products.
+    Read *stdout* from a run with :data:`LISTING_ENV`.
+    """
+    table = stdout.split("not used in this lab:", 1)[0]
+    products: dict[str, list[str]] = {}
+    for line in table.splitlines():
+        cells = [cell.strip() for cell in line.split("│")[1:-1]]
+        if len(cells) != 8 or cells[0] in ("", "name"):
+            continue
+        assert not any(cell.endswith("…") for cell in cells), f"an elided cell: {line}"
+        products[cells[0]] = cells[5].split(", ")
+    return products
+
+
 def running_kernel_kdir() -> Path:
     return Path("/lib/modules") / os.uname().release / "build"
 
@@ -381,13 +408,58 @@ def overlay_project(tc: Toolchain, root: Path) -> "Path | None":
     lab = overlay_lab(tc, root)
     if lab is None:
         return None
+    return _overlay(root, "kmodcov_overlay", lab_sources=[lab])
+
+
+def _overlay(
+    root: Path, name: str, *, lab_sources: list[Path] | None = None, products: str = ""
+) -> Path:
+    """The one overlay-project builder: *name* under *root*, layered over project5 by OTTOPATH.
+
+    It declares one json ``[[lab.sources]]`` per *lab_sources* file and the
+    ``[[products]]`` text *products*, and nothing else: no tests and no project
+    block, so it can never shadow project5's own.
+    """
+    sources = "".join(
+        f'[[lab.sources]]\nbackend = "json"\npaths = ["{lab}"]\n' for lab in lab_sources or []
+    )
+    extra = "\n".join(part for part in (sources, products) if part)
     return make_project(
-        root / "kmodcov_overlay",
-        name="kmodcov_overlay",
+        root / name,
+        name=name,
         known_hosts=root / "known_hosts",
         version="1.0.0",
-        extra=f'[[lab.sources]]\nbackend = "json"\npaths = ["{lab}"]\n',
+        extra=extra,
     )
+
+
+DOCKER3_LAB = "docker3"
+"""The lab :func:`docker3_overlay_project` declares: test3 alone."""
+
+
+def docker3_overlay_project(root: Path) -> Path:
+    """A project under *root* declaring the lab ``docker3``, whose one host is test3.
+
+    ``otto run install`` installs every project's products on every fleet host,
+    and its CLI has no product filter, so a test3-only proof scopes it by
+    configuration: ``otto --lab docker3`` (with ``OTTOPATH=<project5>:<this>``)
+    reaches test3 alone. Membership is the element's own ``labs`` list, so the
+    lab file redeclares test3's element under its own name (the host id comes
+    from the element name) with ``docker3`` added to that list; the same-name
+    element replaces project5's, and ``unix`` keeps its hosts.
+    """
+    fixture = json.loads((LAB_DATA / "lab.json").read_text())
+    (element,) = [e for e in fixture["elements"] if e["name"] == "test3"]
+    element["labs"] = [*element["labs"], DOCKER3_LAB]
+    root.mkdir(parents=True, exist_ok=True)
+    lab = root / "docker3_lab.json"
+    lab.write_text(
+        json.dumps(
+            {"labs": {DOCKER3_LAB: {"resources": ["test3"]}}, "elements": [element]}, indent=4
+        )
+        + "\n"
+    )
+    return _overlay(root, "docker3_overlay", lab_sources=[lab])
 
 
 def kmod_artifacts_are_stale(artifacts: list[Path], sources: list[Path], tc: Toolchain) -> bool:
