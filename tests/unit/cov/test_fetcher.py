@@ -24,8 +24,9 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
     p.instrumented = MagicMock(return_value=verdict)
 
     # The real defaults, bound to the mock: prepare touches nothing, reset
-    # issues the find -delete the clean tests assert on. The side_effect must
-    # itself be a coroutine function (not a lambda returning one) — AsyncMock
+    # issues the `find -exec rm` removal (then its `-print` check) the clean
+    # tests assert on. The side_effect must itself be a coroutine function
+    # (not a lambda returning one) — AsyncMock
     # only awaits a side_effect it recognises via iscoroutinefunction; a
     # lambda wrapping a coroutine function hands back an un-awaited coroutine.
     async def _prepare_coverage(host: object) -> Result:
@@ -477,7 +478,7 @@ class TestGcdaFetcher:
         archive = host.exec.call_args_list[0].args[0]
         assert archive.startswith("! test -d '/opt/My App/cov' ")
         assert "&& cd '/opt/My App/cov' && tar -cf \"$t\" .)" in archive
-        # The clean path's own quoting (a `find … -delete`) is
+        # The clean path's own quoting (a `find … -exec rm -f {} \;`) is
         # ``Product.reset_coverage``'s default, pinned directly in
         # tests/unit/host/test_product.py.
 

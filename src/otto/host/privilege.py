@@ -71,7 +71,29 @@ from .userland import UserlandHost
 if TYPE_CHECKING:
     from typing_extensions import Never
 
-    from .host import Expect
+    from ..result import Results
+    from .host import Expect, Host
+
+
+async def run_sh_elevated(host: "Host", script: str, *, timeout: float | None = None) -> "Results":
+    """Run *script* elevated on *host*, wrapped whole in ``sh -c``.
+
+    The one place an elevated coverage script is wrapped. sudo takes an argv
+    tail and ``_elevate`` appends the command to it raw, so a script with a
+    redirection, a pipe or a ``||`` would otherwise run only its first word
+    elevated (``echo 1 > /sys/x`` would open the file as the session user).
+    The script is quoted once, with :func:`shlex.quote`, and run through
+    ``host.run(..., sudo=True)``, whose ``_elevate`` decides the mechanism.
+
+    Returns ``host.run``'s :class:`~otto.result.Results` unchanged: a
+    ``--dry-run`` decline (:attr:`~otto.utils.Status.NotRun`) is passed
+    through as-is, and each caller keeps its own message for a failure.
+    """
+    command = f"sh -c {shlex.quote(script)}"
+    if timeout is None:
+        return await host.run(command, sudo=True)
+    return await host.run(command, sudo=True, timeout=timeout)
+
 
 _ELEVATING_MECHANISMS = frozenset({"sudo", "su"})
 """The resolved ``Userland.elevation`` values that elevate; any other (``"none"``) cannot."""

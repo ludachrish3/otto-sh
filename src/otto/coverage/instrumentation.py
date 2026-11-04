@@ -36,7 +36,6 @@ from .errors import CoverageNotInstrumentedError
 if TYPE_CHECKING:
     from ..config.coverage_settings import CoverageConfigError
     from ..config.project import Project
-    from ..host.product import Product
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +109,6 @@ class InstrumentationReport:
         if not self.rows:
             return "no products on any coverage host"
         return _rows_text(self.rows)
-
-
-def instrumented_products(host: Any) -> "list[Product]":
-    """*host*'s products whose build is known to be instrumented."""
-    return [p for p in host.products if p.instrumented() is True]
 
 
 def detect(hosts: Iterable[Any]) -> InstrumentationReport:

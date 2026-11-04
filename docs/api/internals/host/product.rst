@@ -27,7 +27,23 @@ and the reference can link them. The public names are on :doc:`/api/host/product
 
 .. autofunction:: otto.host.product.gcda_find_cmd
 
+.. autofunction:: otto.host.product.gcda_remove_files
+
 .. autofunction:: otto.host.product.gcda_delete_cmd
+
+.. autofunction:: otto.host.product.marker_cmd
+
+.. autofunction:: otto.host.product.after_marker
+
+.. autofunction:: otto.host.product.failure_detail
+
+.. autofunction:: otto.host.product.gcda_check_cmd
+
+.. autofunction:: otto.host.product.enoent_for_start
+
+.. autoclass:: otto.host.product.GcdaFindError
+
+.. autofunction:: otto.host.product.classify_gcda_check
 
 .. autofunction:: otto.host.product.sudo_gcda_delete
 

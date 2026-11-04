@@ -16,6 +16,7 @@ from otto.host.docker_image_kind import DockerImageProduct, _loaded_reference
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
+from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
 
 
 def _entry(**params):
@@ -71,7 +72,7 @@ class _DockerHost(SimpleNamespace):
         if status is Status.NotRun:
             return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.id)
         retcode = 0 if status is Status.Success else 1
-        return CommandResult(status, value=output, command=cmd, retcode=retcode)
+        return CommandResult(status, value=framed(cmd, output), command=cmd, retcode=retcode)
 
     async def run(self, cmd, **kw):
         self.run_calls.append((cmd, kw))
@@ -80,7 +81,8 @@ class _DockerHost(SimpleNamespace):
             entry = NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.id)
         else:
             retcode = 0 if status is Status.Success else 1
-            entry = CommandResult(command=cmd, value=output, status=status, retcode=retcode)
+            value = framed(cmd, output)
+            entry = CommandResult(command=cmd, value=value, status=status, retcode=retcode)
         return Results.collect([entry])
 
 
@@ -508,8 +510,12 @@ async def test_injection_shaped_values_are_quoted_not_executed():
     assert host.exec_calls[-1] == expected_run
     assert (await p.reset_coverage(host)).is_ok
     cov_q = shlex.quote(nasty_cov)
-    line = f"! test -d {cov_q} || find {cov_q} -name '*.gcda' -type f -delete"
-    assert host.run_calls[-1] == (f"sh -c {shlex.quote(line)}", {"sudo": True})
+    delete = f"! test -d {cov_q} || find {cov_q} -name '*.gcda' -type f -exec rm -f {{}} \\;"
+    check = f"{CHECK_PREFIX}LC_ALL=C find {cov_q} -name '*.gcda' -type f -print 2>&1"
+    assert host.run_calls[-2:] == [
+        (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
+        (f"sh -c {shlex.quote(check)}", {"sudo": True, "timeout": 60}),
+    ]
 
 
 # ── dry-run declines propagate, never crash and never become Error ─────────
@@ -603,9 +609,31 @@ async def test_reset_coverage_deletes_under_sudo():
     host = _DockerHost()
     p = _build(host, image="app:1", cov_dir="/var/cov/app")
     assert (await p.reset_coverage(host)).is_ok
-    line = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -delete"
-    assert host.run_calls == [(f"sh -c {shlex.quote(line)}", {"sudo": True})]
+    delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
+    check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
+    assert host.run_calls == [
+        (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
+        (f"sh -c {shlex.quote(check)}", {"sudo": True, "timeout": 60}),
+    ]
     assert host.exec_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_fails_when_the_check_fails_after_a_successful_removal():
+    host = _DockerHost(answers={"-print": (Status.Error, "find: '/var/cov': Permission denied")})
+    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host)
+    assert result.status is Status.Error
+    assert result.msg == (
+        "checking .gcda under /var/cov/app failed: find: '/var/cov': Permission denied"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_fails_naming_a_counter_the_removal_left():
+    host = _DockerHost(answers={"-print": (Status.Success, "/var/cov/app/a.gcda")})
+    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host)
+    assert result.status is Status.Error
+    assert result.msg == "deleting .gcda under /var/cov/app left 1 file(s): /var/cov/app/a.gcda"
 
 
 @pytest.mark.asyncio
