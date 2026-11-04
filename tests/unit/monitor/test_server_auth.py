@@ -408,3 +408,36 @@ class TestAccessKeyNeverWrittenToLogFiles:
                 assert server.key not in text, f"access key leaked into {name}:\n{text}"
         finally:
             management.reset()
+
+
+@pytest.mark.parametrize("count", [1, 2], ids=["one-url", "several-urls"])
+def test_the_announced_urls_print_literally(monkeypatch, count):
+    """#785: a URL is copied by the reader, so it prints as written, on one line, at any width."""
+    from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+    urls = [f"http://h/{HOSTILE}?key=k", "http://b:smile:/?key=k"][:count]
+    server = MonitorServer(_collector(), host="127.0.0.1", port=0)
+    monkeypatch.setattr(MonitorServer, "urls", property(lambda self: urls))
+    monkeypatch.setattr(CONSOLE, "_width", 40)
+
+    class _FakeSocket:
+        def getsockname(self):
+            return ("127.0.0.1", 54321)
+
+    class _FakeBound:
+        def __init__(self):
+            self.sockets = [_FakeSocket()]
+
+    async def _fake_uvicorn_serve(inner_self, sockets=None):
+        inner_self.started = True
+        inner_self.servers = [_FakeBound()]
+
+    monkeypatch.setattr("uvicorn.Server.serve", _fake_uvicorn_serve)
+    with CONSOLE.capture() as cap:
+        asyncio.run(server.serve())
+    text = cap.get()
+    if count == 1:
+        assert_one_verbatim_line(text, f"Server running at {urls[0]}")
+    else:
+        for url in urls:
+            assert_one_verbatim_line(text, f"  {url}")

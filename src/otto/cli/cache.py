@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich import box
 from rich import print as rprint
-from rich.markup import escape
 
 from ..config.cache_maintenance import DEFAULT_MAX_AGE_DAYS
 
@@ -198,6 +197,7 @@ def info() -> None:
     from ..config.cache_maintenance import iter_workspaces
     from ..config.home import otto_home
     from ..config.user_settings import cache_enabled
+    from ..console import id_column, literal_cell
     from ..models.settings import OttoEnvSettings
 
     typer.echo(_cache_state_line(cache_enabled()))
@@ -218,7 +218,7 @@ def info() -> None:
 
     now = time.time()
     table = Table(box=box.ROUNDED)
-    table.add_column("key")
+    id_column(table, "key")
     table.add_column("cache size", justify="right")
     table.add_column("cache age", justify="right")
     table.add_column("env?")
@@ -240,7 +240,7 @@ def info() -> None:
             if age > DEFAULT_MAX_AGE_DAYS * 86400:
                 over_threshold += 1
         table.add_row(
-            escape(ws.key),
+            literal_cell(ws.key),
             _fmt_bytes(ws.cache_bytes),
             age_cell,
             "yes" if ws.has_env else "",

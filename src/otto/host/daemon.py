@@ -191,16 +191,45 @@ _PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 they are restricted to characters that are inert in BOTH contexts."""
 
 
-def ps_scan_command(prefix: str) -> str:
-    r"""Portable ``ps`` scan for daemons whose argv[0] starts with ``<prefix>:``.
+PS_FAILED = "@ps-failed"
+"""The line a failure-marking :func:`ps_listing` prints when ``ps`` itself failed, so
+found-nothing and could-not-look read differently. The tunnel and link checks'
+sweeps print it."""
+
+_PS_FIELDS = "-eo pid= -eo etime= -eo args="
+
+
+def ps_listing(*, mark_failure: bool) -> str:
+    """Build the one portable ``ps`` listing every scan pipes into its ``grep``: pid, age, argv.
 
     Each field is its own ``-eo`` flag rather than one comma-joined
     ``-eo pid=,etime=,args=`` (found via live-bed e2e against a centos:7
     container): procps-ng 3.3.10 silently mis-parses the comma-combined form
     (columns bleed into each other), while the separate-flag form produces
     identical output on modern procps (4.x) too. Formatted ``etime`` (not
-    ``etimes``) keeps 2.6.32-era userland working; ``|| true`` so a no-match
-    grep (exit 1) is not a command failure.
+    ``etimes``) keeps 2.6.32-era userland working.
+
+    ``-ww`` first, then the same listing without it: procps cuts ``args`` to
+    ``COLUMNS`` when stdout is a pipe, and to the pty width on a telnet
+    console, which turns a long sentinel into an undecodable stub, so a daemon
+    vanishes from list and reap. BusyBox ``ps`` rejects ``-w`` but never cuts,
+    so it takes the second leg (measured on every pinned BusyBox build).
+    Without that fallback a rejected flag would read as an empty, falsely clean
+    scan.
+
+    With *mark_failure*, a ``ps`` that fails both legs (a BusyBox built without
+    its desktop options rejects the fields) prints :data:`PS_FAILED` instead of
+    nothing, so a sweep can say it could not look.
+    """
+    marker = f" || echo {PS_FAILED}" if mark_failure else ""
+    return f"{{ ps -ww {_PS_FIELDS} 2>/dev/null || ps {_PS_FIELDS} 2>/dev/null{marker}; }}"
+
+
+def ps_scan_command(prefix: str) -> str:
+    r"""Portable ``ps`` scan for daemons whose argv[0] starts with ``<prefix>:``.
+
+    The listing is :func:`ps_listing`'s (see it for the fields and ``-ww``);
+    ``|| true`` so a no-match grep (exit 1) is not a command failure.
 
     ``\grep`` (backslash-escaped) is load-bearing: sessions that run an
     interactive login shell (telnet terms) apply the distro alias
@@ -223,7 +252,7 @@ def ps_scan_command(prefix: str) -> str:
             f"daemon sentinel prefix {prefix!r} must match [A-Za-z0-9][A-Za-z0-9-]* — "
             "it is spliced into a single-quoted grep pattern"
         )
-    return f"ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' {prefix}:' || true"
+    return f"{ps_listing(mark_failure=False)} | \\grep -a ' {prefix}:' || true"
 
 
 def etime_seconds(text: str) -> int | None:

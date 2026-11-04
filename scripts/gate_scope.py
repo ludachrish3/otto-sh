@@ -269,6 +269,9 @@ UNIT_TREES = {
     # top-level modules, used everywhere: the whole unit tree, plus the bed tree their
     # stem names
     "console": ["tests/unit", "tests/e2e/console"],
+    # the usable-terminal decision: the CLI's width default, the console pin and a
+    # login's remote terminal size
+    "_terminal": ["tests/unit", "tests/e2e/console", "tests/e2e/host/test_interact_e2e.py"],
     "result": ["tests/unit"],
     "errors": ["tests/unit"],
     "filesystem": ["tests/unit"],

@@ -31,6 +31,53 @@ Imports nothing from otto at module scope.
 import os
 import sys
 
+NON_TTY_COLUMNS = 200
+"""The width the CLI renders at when no terminal is attached and ``COLUMNS`` is unset."""
+
+
+def _default_columns(
+    environ: "dict[str, str]", stdout_columns: "int | None", other_columns: "int | None"
+) -> "str | None":
+    """Return the value ``COLUMNS`` should hold for the CLI's run; ``None`` means unset.
+
+    *stdout_columns* is stdout's width when it is a usable terminal, and
+    *other_columns* the width of stdin or stderr when one is. In order:
+
+    1. a usable ``COLUMNS`` (ASCII digits, at least 1) is kept, whatever the
+       descriptors are;
+    2. an unusable one is dropped, so ``COLUMNS=0`` never reaches a consumer;
+    3. a terminal on stdout sets nothing: Rich and ``shutil`` see it;
+    4. else a terminal on stdin or stderr gives its width;
+    5. else no terminal gives :data:`NON_TTY_COLUMNS`.
+    """
+    from ._terminal import usable_columns
+
+    if usable_columns(environ.get("COLUMNS")) is not None:
+        return environ["COLUMNS"]
+    if stdout_columns is not None:
+        return None
+    if other_columns is not None:
+        return str(other_columns)
+    return str(NON_TTY_COLUMNS)
+
+
+def _apply_columns_default() -> None:
+    """Read the descriptors and set, keep or pop ``COLUMNS`` per :func:`_default_columns`."""
+    from ._terminal import first_usable_terminal_size, usable_terminal_size
+
+    stdout = usable_terminal_size(1)
+    # Stdin before stderr: Rich's own probe order. Stdout is step 3's alone.
+    other = first_usable_terminal_size((0, 2))
+    value = _default_columns(
+        dict(os.environ),
+        None if stdout is None else stdout.columns,
+        None if other is None else other.columns,
+    )
+    if value is None:
+        os.environ.pop("COLUMNS", None)
+    else:
+        os.environ["COLUMNS"] = value
+
 
 def _drop_script_dir() -> None:
     """Take the console script's own directory off ``sys.path``.
@@ -114,6 +161,18 @@ def main() -> None:
     # keeps a value the user already set: an empty PYDANTIC_DISABLE_PLUGINS
     # turns the plugins, and the scan, back on.
     os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "__all__")
+
+    # The CLI's width: with no terminal attached and no usable COLUMNS, Rich,
+    # Typer and pytest all fall back to 80 columns, cutting tables, help and
+    # test summaries. The CLI sets COLUMNS for its run instead (a usable value
+    # the user set is kept; an unusable one is dropped). It is set here, not
+    # in `otto/__init__.py`, so library use of otto never changes the caller's
+    # environment, and every process the CLI starts inherits it, as it would
+    # under `export COLUMNS=200`. It is a launch-time snapshot: a later
+    # resize of a terminal on stdin or stderr is not followed. THE ORDER IS
+    # LOAD-BEARING: Rich reads COLUMNS once, in `Console.__init__`, so this
+    # runs before the CLI graph can build its first console.
+    _apply_columns_default()
 
     from .cli.main import entry
 

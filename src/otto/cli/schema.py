@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich import print as rprint
 
 schema_app = typer.Typer(
     name="schema",
@@ -65,14 +64,15 @@ def export(
     # Developer note: custom host classes are already loaded by the time this
     # runs (the otto package applies project settings at import), which is why they
     # appear without any extra step.
-    from rich.markup import escape
+    from rich.text import Text
 
+    from ..console import print_literal
     from ..models.jsonschema import write_schemas
 
     result = write_schemas(out, builtins_only=builtins_only)
     for path in result.written:
-        rprint(f"  wrote [cyan]{path.name}[/cyan]")
+        print_literal(Text.assemble("  wrote ", (path.name, "cyan")))
     for path in result.pruned:
-        # escape(): a pruned name came from the directory, not from otto.
-        rprint(f"  pruned [yellow]{escape(path.name)}[/yellow]")
-    rprint(f"[green]Wrote schemas to[/green] {out}")
+        # A pruned name came from the directory, not from otto.
+        print_literal(Text.assemble("  pruned ", (path.name, "yellow")))
+    print_literal(Text.assemble(("Wrote schemas to", "green"), " ", str(out)))

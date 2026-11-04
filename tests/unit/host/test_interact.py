@@ -998,6 +998,50 @@ class TestRunSshLoginCommandBranch:
         bridge.assert_awaited_once()
 
 
+class TestRunSshLoginTerminalSize:
+    """#785: the remote pty follows the real terminal, never an injected ``COLUMNS``.
+
+    The CLI sets ``COLUMNS`` for its run when stdout is redirected, a
+    launch-time snapshot; a login sized from it would freeze the remote pty
+    at the launch width through every resize.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_pty_and_every_resize_read_the_terminal(self, monkeypatch):
+        from tests._fixtures.terminals import fake_terminals
+
+        monkeypatch.setenv("COLUMNS", "200")
+        fake_terminals(monkeypatch, {0: (100, 30)})
+        proc = _fake_process()
+        conn = MagicMock()
+        conn.create_process = AsyncMock(return_value=proc)
+
+        with (
+            patch.dict(sys.modules, {"asyncssh": _make_fake_asyncssh()}),
+            patch.object(interact, "_run_bridge", new=AsyncMock()) as bridge,
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_ssh_login(conn=conn, host_name="h")
+
+        assert conn.create_process.await_args.kwargs["term_size"] == (100, 30)
+
+        handlers: list = []
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "add_signal_handler", lambda _sig, h: handlers.append(h))
+        monkeypatch.setattr(loop, "remove_signal_handler", lambda _sig: True)
+        remove = bridge.await_args.kwargs["install_sigwinch"]()
+        fake_terminals(monkeypatch, {0: (120, 40)})
+        [handler] = handlers
+        handler()
+        remove()
+        proc.change_terminal_size.assert_called_with(120, 40)
+
+
 # ---------------------------------------------------------------------------
 # Task 9: _BridgeProxyIO — send() newline translation, expect() buffering
 # ---------------------------------------------------------------------------

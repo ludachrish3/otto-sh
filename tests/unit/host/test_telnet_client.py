@@ -679,3 +679,41 @@ async def test_close_after_failed_open_is_bounded(monkeypatch, case, path):
     assert client._released.is_set()
     await asyncio.wait_for(real_close(client), 0.5)
     assert not telnet_mod._live_console_transports
+
+
+class TestNawsSize:
+    """#785: NAWS reports the real terminal, never an injected ``COLUMNS``."""
+
+    def test_the_resize_fanout_reads_the_terminal(self, monkeypatch):
+        from tests._fixtures.terminals import fake_terminals
+
+        sent: list[tuple[int, int]] = []
+        recorder = MagicMock()
+        recorder._send_naws = lambda c, r: sent.append((c, r))
+        monkeypatch.setattr(telnet_mod, "_naws_subscribers", {recorder})
+        monkeypatch.setenv("COLUMNS", "200")
+        fake_terminals(monkeypatch, {0: (100, 30)})
+        telnet_mod._sigwinch_fanout()
+        assert sent == [(100, 30)]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_terminal_sends_the_configured_size(self, monkeypatch):
+        from otto.host.options import TelnetOptions
+        from tests._fixtures.terminals import fake_terminals
+
+        sent: list[tuple[int, int]] = []
+        monkeypatch.setattr(TelnetClient, "_send_naws", lambda self, c, r: sent.append((c, r)))
+        monkeypatch.setattr(telnet_mod, "_install_sigwinch_handler", lambda: None)
+        monkeypatch.setattr(telnet_mod, "_naws_subscribers", set())
+        monkeypatch.setattr(telnet_mod.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setenv("COLUMNS", "200")
+        _opener(monkeypatch, [fake_stream([])])
+        client = TelnetClient(
+            host="h",
+            user="u",
+            password="p",
+            options=TelnetOptions(login=False, auto_window_resize=True, cols=400, rows=24),
+        )
+        fake_terminals(monkeypatch, {0: OSError(5, "Input/output error")})
+        await client.connect(interactive=True)
+        assert sent[0] == (400, 24)

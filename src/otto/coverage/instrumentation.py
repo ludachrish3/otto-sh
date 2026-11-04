@@ -94,13 +94,15 @@ class InstrumentationReport:
         validated as single path segments, which does not exclude a bracket,
         so they go through the same door rather than relying on that.
         """
+        from ..console import id_column, literal_cell
+
         caption = escape(_REMEDY) if any(r.verdict is None for r in self.rows) else None
         table = Table(box=box.ROUNDED, title="coverage instrumentation", caption=caption)
-        table.add_column("host")
-        table.add_column("product")
+        id_column(table, "host")
+        id_column(table, "product")
         table.add_column("instrumented")
         for row in self.rows:
-            table.add_row(escape(row.host_id), escape(row.product), _LABEL[row.verdict])
+            table.add_row(literal_cell(row.host_id), literal_cell(row.product), _LABEL[row.verdict])
         return table
 
     def describe(self) -> str:

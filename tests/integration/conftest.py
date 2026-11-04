@@ -27,6 +27,7 @@ from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
 from tests._fixtures.docker_reap import reap_docker
+from tests._fixtures.env_guard import preserved_env_var
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_project_root
 from tests._fixtures.run_state import preserved_run_state
@@ -87,13 +88,9 @@ def _default_ottopath_env_impl():
     Plain generator (the ``_hygiene_bracket_impl`` pattern) so the unit-lane
     pin can drive set-and-restore directly.
     """
-    prior = os.environ.get(OTTOPATH_ENV_VAR)
-    os.environ.setdefault(OTTOPATH_ENV_VAR, default_project_root())
-    yield
-    if prior is None:
-        os.environ.pop(OTTOPATH_ENV_VAR, None)
-    else:
-        os.environ[OTTOPATH_ENV_VAR] = prior
+    with preserved_env_var(OTTOPATH_ENV_VAR):
+        os.environ.setdefault(OTTOPATH_ENV_VAR, default_project_root())
+        yield
 
 
 @pytest.fixture(autouse=True)

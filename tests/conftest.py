@@ -2490,6 +2490,27 @@ def _isolate_sys_path():
 
 
 @pytest.fixture(autouse=True)
+def _restore_columns():
+    """Put ``COLUMNS`` back to exactly what it was after every test, absence included.
+
+    The CLI's shim sets ``COLUMNS`` for its run (``otto._shim._apply_columns_default``),
+    and a test that runs it in-process runs that code in THIS worker:
+    ``tests/unit/test_shim.py`` and ``tests/unit/shim/*`` (``_shim.main()`` in
+    ``test_pydantic_plugins.py`` and ``test_refresh_spawn.py``,
+    ``_apply_columns_default()`` in ``test_default_columns.py``). Other callers
+    run the shim in a subprocess. On a no-tty worker each would leave
+    ``COLUMNS=200`` behind for every later test and subprocess. Snapshot and
+    restore, never pop: an ambient value still reaches the tests that rely on it.
+    Lives in the ROOT conftest per the #132/#133 rule (see ``_isolate_registries``):
+    the environment is process-global and its writers span trees.
+    """
+    from tests._fixtures.env_guard import preserved_env_var
+
+    with preserved_env_var("COLUMNS"):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _drop_richs_cached_console():
     """Discard ``rich``'s global ``Console`` around each test — it CACHES the width.
 

@@ -62,8 +62,9 @@ The versions otto has been proven on are listed on {doc}`../known-good`.
 Everything [`otto tunnel add` needs](endpoints.md#host-requirements): `bash`
 and `socat` on every hop. The probes also use `cksum`, `mktemp`, `head`, `tr`
 and `wc`, standard tools most userlands include, and otto finds its own
-echoes with `ps -eo pid= -eo etime= -eo args=`, which a busybox `ps` built
-without `-o` support can't run (see [Cleanup and
+echoes with `ps -ww -eo pid= -eo etime= -eo args=`. A `ps` that rejects `-ww`
+(busybox) is asked again without it, and a busybox `ps` built without `-o`
+support can't run either (see [Cleanup and
 leftovers](#cleanup-and-leftovers)). otto runs everything as the login user
 from the host's `creds`; nothing in this check needs root.
 

@@ -270,23 +270,21 @@ def _add_section(console: Console, section: CheckSection, *, verbose: bool) -> N
         console.print(f"hint: {shown_hint}", markup=False, highlight=False)
     console.print()
 
-    table = Table(
-        "feature",
-        *section.columns,
-        "detail",
-        box=None,
-        pad_edge=False,
-        padding=(0, 2, 0, 0),
-    )
+    from ..console import id_column, literal_cell
+
+    table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
+    id_column(table, "feature")
+    for column in (*section.columns, "detail"):
+        table.add_column(column)
     multi_column = len(section.columns) > 1
     blank = [""] * len(section.columns)
     previous_hints: list[str] = []
     for row in section.rows:
         cell_words = [cell.verdict.value if cell is not None else "n/a" for cell in row.cells]
         detail = _row_detail(section.columns, row.cells)
-        table.add_row(row.label, *cell_words, detail.text)
+        table.add_row(literal_cell(row.label), *cell_words, detail.text)
         for line in detail.continuation:
-            table.add_row("", *blank, line)
+            table.add_row(literal_cell(""), *blank, line)
         evidence = _row_evidence(section, row, shown_hint, verbose=verbose)
         # The hint(s) the row before just printed, whatever their number, are
         # not printed again: a cascade of skipped rows says its one cause (or,

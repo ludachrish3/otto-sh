@@ -115,8 +115,8 @@ host behind it.
 `--list-products` and `--list-tools` print a table of the products or dev tools
 your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
-A narrow terminal truncates the table's columns; widen it with `COLUMNS=200`
-([Environment variables](#environment-variables)).
+A narrow terminal folds long cells onto more lines rather than cutting them
+(see `COLUMNS` under [Environment variables](#environment-variables)).
 
 Without `--lab` the table is what the projects **declare** — one row per
 `[[products]]` (or `[[dev_tools]]`) entry, in project then declaration order, with
@@ -198,8 +198,13 @@ flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
 | `OTTO_INIT_TIMEOUT` | *(no flag)* | Seconds a newly opened shell has to answer otto's readiness probe, for every host without its own `init_timeout`; replaces the default of `10` (`15` on an embedded host). What it accepts and what beats it: [Shell readiness timeout](../configuration/host-options.md#shell-readiness-timeout) |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`); `3` logs raw packets, passwords included — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
-| `COLUMNS` | *(no flag)* | The width otto's help, tables and log lines render at. When output is not a terminal (piped, captured, CI) and `COLUMNS` is unset, it is 80 columns, so wide tables truncate their cells and long paths wrap. Set `COLUMNS=200` when you capture or script otto's output |
+| `COLUMNS` | *(no flag)* | The width otto's help, tables and on-screen log lines render at (log files render at a fixed width, whatever `COLUMNS` is). Unless you set a usable value (a positive whole number), the CLI sets `COLUMNS` for its run: to your terminal's launch-time width when stdout is redirected but stdin or stderr is still a terminal, else to 200 when no terminal is attached. An unusable value is dropped. Every process the CLI starts inherits it, including the tests `otto test` runs in-process. A usable value you set is always kept; to keep 80 columns in your own tests, set `COLUMNS=80`. Importing otto as a library leaves it alone. A login's remote terminal still follows your real terminal's size. A narrow width folds table cells instead of ending them in "…" (a space on a fold, or a double-width character in a narrow cell, can still be dropped), and a path otto prints on its own line is never wrapped. One exception, with forced color and `TERM=dumb`, is described under the table |
 | `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
+
+The `COLUMNS` exception: when output is forced to a terminal and `TERM` is
+`dumb` or `unknown`, Rich renders 80 columns unless `LINES` is also set to a
+number. The forcing variables are `FORCE_COLOR` or `TTY_COMPATIBLE=1`, and, for
+otto's help and error output, `PY_COLORS` or `GITHUB_ACTIONS`.
 
 ## Shell completion
 

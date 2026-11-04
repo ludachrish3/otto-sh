@@ -53,9 +53,8 @@ directory it is staged to; neither list command contacts a host. See
 [Inspecting what a lab holds](../cli/index.md#inspecting-what-a-lab-holds)
 and {ref}`list-products-flag`.
 
-Output that is piped or captured renders at 80 columns, so wide tables
-truncate. Set `COLUMNS=200` when you capture or script otto
-([Environment variables](../cli/index.md#environment-variables)).
+How wide otto renders when its output is piped or captured is set by
+`COLUMNS` ([Environment variables](../cli/index.md#environment-variables)).
 
 ## Is it installed?
 

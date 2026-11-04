@@ -3,6 +3,7 @@ host that stops answering or a check that is interrupted part way.
 """
 
 import asyncio
+import subprocess
 
 import pytest
 
@@ -922,3 +923,24 @@ class TestAKilledEchoGetsTimeToExit:
         [settled] = waited
         bound = _tunnel_echoes.KILL_SETTLE_S + _tunnel_echoes._READY_INTERVAL_S
         assert _tunnel_echoes.KILL_SETTLE_S <= settled <= bound
+
+
+def test_the_sweep_marks_a_ps_that_fails(tmp_path) -> None:
+    """Run the sweep in a real shell whose ``ps`` rejects every argv: both legs fail, it says so.
+
+    The tunnel twin of ``tests/unit/link/test_check_live.py``'s
+    ``test_the_scan_marks_a_ps_that_fails``: a sweep that could not list must
+    print the marker, never an empty (falsely clean) answer.
+    """
+    fake_ps = tmp_path / "ps"
+    fake_ps.write_text("#!/bin/sh\necho 'ps: invalid option' >&2\nexit 1\n")
+    fake_ps.chmod(0o755)
+    scanned = subprocess.run(
+        ["/bin/sh", "-c", SWEEP_COMMAND],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=20,
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
+    assert scanned.stdout.splitlines() == ["@ps-failed"]

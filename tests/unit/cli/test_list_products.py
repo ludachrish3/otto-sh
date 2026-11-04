@@ -352,3 +352,26 @@ def test_a_name_defined_in_data_and_by_a_provider_fails_the_lab_load_naming_both
     text = result.output + str(result.exception or "")
     assert "[[products]] 'agent' (project test_project) is also defined by provider" in text
     assert f"{products.__module__}:{products.__qualname__}" in text
+
+
+def test_a_listing_line_prints_hostile_text_literally(monkeypatch, capsys):
+    """#785: ``_print_line`` is a trampoline into ``print_literal``: no emoji, no wrap."""
+    from otto.cli import listing
+    from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    listing._print_line(HOSTILE)
+    assert_one_verbatim_line(capsys.readouterr().out, HOSTILE)
+
+
+def test_identifier_cells_are_literal_and_fold_whole_at_60_columns(listing_world):
+    """#785 D3: the name and artifact cells print ``[red]`` and ``:smile:`` as written,
+    and a long space-free artifact folds over lines rather than ending in "…"."""
+    from tests._fixtures.literal_text import rejoin_column
+
+    artifact = "out/[red]a:smile:/" + "q" * 120
+    listing_world.declared_products = [_entry(listing_world, "[red]n:smile:", artifact=artifact)]
+    result = _invoke("--list-products", env={"COLUMNS": "60"})
+    assert result.exit_code == 0, result.output
+    assert rejoin_column(result.output, 0) == "[red]n:smile:"
+    assert rejoin_column(result.output, 6) == artifact

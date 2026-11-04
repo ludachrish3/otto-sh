@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 _DEAD = frozenset({"login-failed", "service-mismatch", "closed"})
 _COLUMNS = ["protocol", "kind", "port", "state", "tier", "vantage", "detail"]
+_ID_COLUMNS = frozenset({"protocol", "vantage"})
+"""The identifier columns of :data:`_COLUMNS`: a protocol name, and ``controller`` or a
+hop's host id. They fold rather than end in "…" (``otto.console.id_column``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,17 +38,22 @@ class DriftRow:
 
 def protocol_table(survey: "Survey") -> Table:
     """Build the ``protocols`` table: one row per verdict, in survey order."""
+    from ...console import id_column, literal_cell
+
     table = Table(title="protocols", box=box.ROUNDED)
     for name in _COLUMNS:
-        table.add_column(name)
+        if name in _ID_COLUMNS:
+            id_column(table, name)
+        else:
+            table.add_column(name)
     for v in survey.verdicts:
         table.add_row(
-            Text(v.protocol),
+            literal_cell(v.protocol),
             Text(v.kind),
             Text(str(v.port) if v.port else "—"),
             Text(v.state),
             Text(v.tier),
-            Text(v.vantage),
+            literal_cell(v.vantage),
             Text(v.detail),
         )
     return table
@@ -122,11 +130,14 @@ def drift_table(rows: list[DriftRow]) -> "Table | None":
     """Build the ``drift`` table, or ``None`` when there are no rows to show."""
     if not rows:
         return None
+    from ...console import id_column, literal_cell
+
     table = Table(title="drift", box=box.ROUNDED)
-    for name in ("protocol", "kind", "drift", "detail"):
+    id_column(table, "protocol")
+    for name in ("kind", "drift", "detail"):
         table.add_column(name)
     for r in rows:
-        table.add_row(Text(r.protocol), Text(r.kind), Text(r.drift), Text(r.detail))
+        table.add_row(literal_cell(r.protocol), Text(r.kind), Text(r.drift), Text(r.detail))
     return table
 
 

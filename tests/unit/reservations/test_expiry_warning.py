@@ -11,8 +11,6 @@ Announcing never fetches: the report already holds the rows, behind
 is what keeps a lab needing no reservation usable while the scheduler is down.
 """
 
-import os
-import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -25,6 +23,7 @@ from otto.reservations.check import (
     reset_expiry_warnings,
 )
 from otto.reservations.report import build_report
+from tests._fixtures.env_guard import preserved_timezone, set_timezone
 
 NOW = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
 NEEDED = {"rack3"}
@@ -171,22 +170,12 @@ def far_east_timezone():
     no-op and dropping it changes nothing. Kiritimati is the largest offset
     there is and has no DST, so the rendered clock time is stable.
 
-    ``TZ`` carries no ``OTTO_`` prefix, so the suite's ambient-env strip leaves
-    it alone; ``tzset()`` is what makes ``time``/``datetime`` re-read it, and it
-    has to run again on the way out or the new zone leaks into every later test
-    in this process.
+    ``preserved_timezone`` restores ``TZ`` and re-runs ``tzset()``, so the zone
+    cannot leak.
     """
-    previous = os.environ.get("TZ")
-    os.environ["TZ"] = "Pacific/Kiritimati"
-    time.tzset()
-    try:
+    with preserved_timezone():
+        set_timezone("Pacific/Kiritimati")
         yield
-    finally:
-        if previous is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = previous
-        time.tzset()
 
 
 def test_the_warning_renders_the_end_in_the_viewers_local_zone(caplog, far_east_timezone):

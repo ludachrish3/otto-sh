@@ -267,8 +267,10 @@ def test_table_escapes_rich_markup_in_the_caption_and_the_cells():
     assert caption == escape(caption.replace("\\", ""))
     assert "[[products]]" in caption.replace("\\", "")
 
+    # The host and product cells are identifier cells (#785): literal Text, never markup.
+    from rich.text import Text
+
     bracketed = detect([_host("h[1]", _product("a[pp]", True))]).table()
-    assert [cell for col in bracketed.columns for cell in col._cells][:2] == [
-        escape("h[1]"),
-        escape("a[pp]"),
-    ]
+    cells = [cell for col in bracketed.columns for cell in col._cells][:2]
+    assert all(isinstance(cell, Text) for cell in cells)
+    assert [cell.plain for cell in cells] == ["h[1]", "a[pp]"]

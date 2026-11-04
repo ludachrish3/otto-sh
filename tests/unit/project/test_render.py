@@ -68,3 +68,32 @@ def test_the_project_cleanliness_slug_is_project():
     from otto.project import CleanlinessKind
 
     assert CleanlinessKind.PROJECT.value == "project"
+
+
+def test_the_scoping_table_folds_long_lab_and_host_ids_whole(capsys, monkeypatch) -> None:
+    """#785 D3: a lab id or host id wider than its cell folds, never ends in "…"."""
+    from otto.project.render import _print_scoping
+    from otto.project.state import ProjectScopeSummary
+
+    monkeypatch.setenv("COLUMNS", "60")
+    lab = "l" * 90
+    host = "h" * 90
+    row = ProjectScopeSummary(applicable=True, applicable_labs=(lab,), universe=(host,))
+    _print_scoping({"acme": row})
+    out = capsys.readouterr().out
+    assert "…" not in out
+    heading, *lines = out.splitlines()
+    assert heading == "fleet of interest"
+    # Borderless, so read each column at the offsets its first line puts it.
+    labs_at, hosts_at = lines[0].index("labs:"), lines[0].index("hosts:")
+    assert "".join(ln[labs_at:hosts_at].strip() for ln in lines) == f"labs:{lab}"
+    assert "".join(ln[hosts_at:].strip() for ln in lines) == f"hosts:{host}"
+
+
+@pytest.mark.asyncio
+async def test_a_project_name_prints_literally_in_the_status_table(capsys, monkeypatch) -> None:
+    monkeypatch.setenv("COLUMNS", "60")
+    state = InstallState.INSTALLED
+    report = ProjectStatus(overall=state, projects={"[red]p": state}, scoping={})
+    await render_status(report, OptionsSource.from_kwargs({"full": False}))
+    assert "[red]p" in capsys.readouterr().out

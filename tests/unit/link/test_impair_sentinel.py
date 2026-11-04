@@ -62,7 +62,9 @@ class TestWireGolden:
         # scan on telnet-term hosts — see TestPsScanCommand in
         # tests/unit/host/test_daemon.py for the full story.
         assert IMPAIR_PS_COMMAND == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-impair:' || true"
+            "{ ps -ww -eo pid= -eo etime= -eo args= 2>/dev/null"
+            " || ps -eo pid= -eo etime= -eo args= 2>/dev/null; }"
+            " | \\grep -a ' otto-impair:' || true"
         )
 
     def test_encode_produces_the_exact_v1_bytes(self):

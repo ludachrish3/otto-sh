@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, parse_elapsed_ms
-from ..host.daemon import encode_token, launch_command, split_token
+from ..host.daemon import PS_FAILED, encode_token, launch_command, ps_listing, split_token
 from ..host.shell_quote import bash_script, socat_host
 from .model import CHECK_ECHO_READ_VERSIONS, CHECK_ECHO_WRITE_VERSIONS
 
@@ -34,21 +34,16 @@ CHECK_PREFIX = "otto-check"
 
 Unpacked from ``CHECK_ECHO_WRITE_VERSIONS`` (``otto.tunnel.model``), so a
 second write version fails at import until the writer chooses."""
-PS_FAILED = "@ps-failed"
-"""The line :data:`SWEEP_COMMAND` prints when ``ps`` itself failed, so found-nothing and
-could-not-look read differently (the marker ``otto link check``'s sweep prints too)."""
 SWEEP_COMMAND = (
-    f"{{ ps -eo pid= -eo etime= -eo args= 2>/dev/null || echo {PS_FAILED}; }} | "
-    f"\\grep -a -e ' {CHECK_PREFIX}:' -e '^{PS_FAILED}$' || true"
+    f"{ps_listing(mark_failure=True)} | \\grep -a -e ' {CHECK_PREFIX}:' -e '^{PS_FAILED}$' || true"
 )
 """Portable ``ps`` scan for this check's own tagged echoes, with their pid and age.
 
-The same scan as :func:`~otto.host.daemon.ps_scan_command` (see it for the
-separate ``-eo`` flags, ``etime`` and ``\\grep``), except that a ``ps`` that
-rejects those fields (a busybox one built without its desktop options) prints
-:data:`PS_FAILED` instead of nothing: the check then says it could not look,
-never that no echo runs there. ``tunnel list``'s discovery keeps the shared
-scan.
+The listing is :func:`~otto.host.daemon.ps_listing`'s, with its failure
+marker: a ``ps`` that fails it prints :data:`~otto.host.daemon.PS_FAILED`
+instead of nothing, so the check says it could not look, never that no echo
+runs there. ``tunnel list``'s discovery keeps the unmarked
+:func:`~otto.host.daemon.ps_scan_command`.
 
 Its ``' otto-check:'`` needle never matches the link check's
 ``otto-check-<6hex>`` tags — those have a hyphen where this has a colon."""

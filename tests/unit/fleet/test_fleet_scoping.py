@@ -725,6 +725,33 @@ def test_the_otto_host_available_listing_ignores_the_universe(tmp_path, scoped_c
     assert "h2" in listed
 
 
+def test_the_available_hosts_listing_prints_each_id_literally(
+    tmp_path, scoped_context, capsys, monkeypatch
+):
+    """#785: a host id is user data, so ``  - <id>`` prints it as written, on one line.
+
+    The fixture's factory slugs an element into its id, so the hostile keys are
+    planted in the lab's mapping, the one this listing reads.
+    """
+    import typer
+
+    from otto.cli.host import _resolve_host
+    from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
+
+    monkeypatch.setenv("COLUMNS", "40")
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[".*"])])
+    lab.hosts[HOSTILE] = lab.hosts.pop("h1")
+    lab.hosts["b:smile:"] = lab.hosts.pop("h2")
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve_host("nope")
+    assert excinfo.value.exit_code == 1
+    listed = capsys.readouterr().out
+    assert_one_verbatim_line(listed, f"  - {HOSTILE}")
+    assert_one_verbatim_line(listed, "  - b:smile:")
+
+
 # ── no config, no scoping ─────────────────────────────────────────────────────
 
 

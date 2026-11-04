@@ -1861,6 +1861,94 @@ these ties in mind:
   The docs declare nothing. To teach a new name, add it to its namespace's
   `__all__` first ({doc}`api/stability`).
 
+## Printing to the console
+
+### Literal text
+
+A path, a host id, a link or tunnel id, an argv or a URL is text the reader
+may copy, and Rich would change it three ways on its way to the screen: it
+reads `[red]` as a style tag and deletes it, turns `:smile:` into an emoji,
+and wraps a long line mid-token at the console width. Pick the helper by
+what the text is:
+
+- **`otto.console.print_literal(text, *, console=None)`** prints a line
+  exactly as written, on one line, whatever the width. Use it for any line
+  that carries a user's or a host's text. It prints through Rich's global
+  console unless you pass `console=` (the output-directory and monitor URL
+  lines pass `CONSOLE`).
+- **`otto.cli.invoke.print_error`** is for an error message: it renders otto's
+  own red markup around the message and escapes the message's brackets.
+- **`otto.logger.relay.escape_relayed`** is for foreign text that must stay a
+  markup string, because it travels through a log record or a progress
+  description.
+
+To style a prefix, build a `rich.text.Text` with `Text.assemble` and
+pass that: its styles survive, and the user's text stays a plain span
+(`otto.console` is internal, so the docs never teach its import line;
+`check-api-teaching` holds them to `api/public.toml`):
+
+```python
+from rich.text import Text
+
+print_literal(Text.assemble(("Wrote schemas to", "green"), " ", str(path)))
+```
+
+The four flags that make a print literal (`markup=False, emoji=False,
+highlight=False, soft_wrap=True`) live only in `print_literal`. Don't spell
+them at a call site: a copy that drops one (`emoji=False` was the one that
+went missing) is the bug this helper exists to prevent. A CLI module imports
+`otto.console` inside the function that prints, beside its other Rich
+imports, so no verb's `--help` loads `rich.console`.
+
+### Identifier columns
+
+Every table column whose cells hold an identifier, a path, an address or a
+value echoed from config is added with `otto.console.id_column(table,
+header, **kwargs)`, and every cell in it goes in through
+`otto.console.literal_cell(value)`. The promise is narrow: the cell is
+literal (no markup, no `:emoji:` codes), and a cell too wide for its column
+folds onto more lines instead of ending in "…". It does not stay on one
+line; for a token that must, print it on its own line with `print_literal`.
+Columns of otto's own prose keep `add_column` and their usual cells.
+
+Rich's wrapping has two limits that apply at any width, so a reader can
+still lose a character:
+
+- a space that lands exactly on a fold is dropped (`"ab cd"` in a 2-wide
+  column renders `ab` / `cd`);
+- a double-width character cannot render in a column one cell wide, and is
+  dropped.
+
+`tests/unit/test_console_literal.py::test_rich_fold_limits_are_pinned` pins
+both, so a Rich upgrade that changes them is noticed.
+
+### The width default
+
+The `otto` command's shim (`otto._shim._apply_columns_default`) sets
+`COLUMNS` before the CLI imports anything that builds a Rich console: Rich
+reads `COLUMNS` once, in `Console.__init__`. The rule the user sees is the
+`COLUMNS` row in [Environment variables](cli/index.md#environment-variables);
+the "is this a usable terminal" decision behind it is `otto._terminal`'s, shared
+with the `CONSOLE` size pin in `otto.console` and the login's remote terminal
+size. Keep both of those in that one module.
+
+- **In-process tests never pass through the shim.** A test that calls the
+  Typer app (a `CliRunner`, an in-process `pytest.main`) gets whatever
+  `COLUMNS` the worker has, not the shim's default. A test about the default
+  width runs otto as a subprocess.
+- **The root guard.** A test that does call `_shim.main()` in-process would
+  leave `COLUMNS` set in the worker for every later test, so the root
+  conftest's autouse `_restore_columns` puts it back to exactly what it was,
+  absence included. Restore environment variables through
+  `tests/_fixtures/env_guard.py` (`preserved_env_var`, `preserved_timezone`)
+  rather than a hand-rolled save-and-restore.
+- **Width tests run otto through `run_otto`.** It builds the child's
+  environment from scratch, so `TERM` is absent unless a test passes one
+  (CI sets `TERM=dumb`, which pins Rich to 80 columns under a forced
+  terminal), and it attaches stdin to `/dev/null`, so the child sees no
+  terminal on any descriptor. A test that needs the old narrow width passes
+  `extra_env={"COLUMNS": "80"}`.
+
 ## Coverage reports
 
 ### From pytest

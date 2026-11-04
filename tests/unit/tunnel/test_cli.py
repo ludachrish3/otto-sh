@@ -40,6 +40,7 @@ from otto.tunnel.socat import NoFreePortError
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
+from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
 from tests.conftest import active_context
 
 runner = DispatchRunner()
@@ -1137,3 +1138,78 @@ def test_bracketed_host_text_survives_end_to_end():
         result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
     assert result.exit_code == 0, result.output
     assert "eth0[dataplane]" in result.output
+
+
+# ── literal output (#785) ────────────────────────────────────────────────────
+#
+# Every host id, path and argv these lines carry is user data: printed through
+# `otto.console.print_literal`, a `[red]` tag, a `:smile:` code and a 300-
+# character run all come out as written, on one line, under a 40-column console.
+
+_DRY_HEADER = "dry run {}: no device was contacted — nothing was read and nothing was changed"
+
+
+def test_rows_and_dry_run_lines_print_hostile_text_verbatim(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "40")
+    tunnel_cli._row(HOSTILE)
+    tunnel_cli._print_dry_run_plan(HOSTILE, DryRunPlan(would=[HOSTILE], unchecked=["x"]))
+    tunnel_cli._print_check_dry_run(HOSTILE, [HOSTILE])
+    out = capsys.readouterr().out
+    assert_one_verbatim_line(out, HOSTILE)
+    assert_one_verbatim_line(out, _DRY_HEADER.format(HOSTILE))
+    assert_one_verbatim_line(out, f"  would: {HOSTILE}")
+    assert_one_verbatim_line(out, f"dry run {HOSTILE}:")
+    assert_one_verbatim_line(out, f"  {HOSTILE}")
+
+
+def test_list_partial_scan_names_hostile_hosts_verbatim(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "40")
+    discovery = TunnelDiscovery(tunnels=[], unreachable=[HOSTILE, "b:smile:"])
+    with (
+        patch("otto.fleet.get_lab", return_value=object()),
+        patch("otto.declared.get_projects", return_value=[]),
+        patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
+        patch("otto.cli.tunnel.record_tunnel_ids"),
+    ):
+        result = runner.invoke(tunnel_app, ["list"])
+    assert result.exit_code == 0, result.output
+    joined = ", ".join(sorted([HOSTILE, "b:smile:"]))
+    assert_one_verbatim_line(result.output, f"partial scan — could not reach: {joined}")
+
+
+def test_remove_could_not_reach_names_hostile_hosts_verbatim(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "40")
+    report = RemovedReport(
+        removed_ids=["tun-abc-161"], killed={}, unreachable=[HOSTILE, "b:smile:"], survivors=[]
+    )
+    with (
+        patch("otto.fleet.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
+        patch("otto.cli.tunnel.record_tunnel_ids"),
+        patch("otto.declared.get_projects", return_value=[]),
+    ):
+        result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
+    assert result.exit_code == 1, result.output
+    assert_one_verbatim_line(result.output, f"could not reach: {HOSTILE}, b:smile:")
+
+
+def test_the_added_line_names_hostile_hosts_verbatim(monkeypatch):
+    """The ``added`` headline interpolates host ids too, so it prints them literally."""
+    monkeypatch.setenv("COLUMNS", "40")
+    tunnel = Tunnel(
+        protocol="tcp",
+        service_port=161,
+        path=(TunnelHop(host=HOSTILE), TunnelHop(host="b:smile:")),
+    )
+    added = AddedTunnel(tunnel=tunnel, carrier_fwd=49200, carrier_rev=49201)
+    with (
+        patch("otto.fleet.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", AsyncMock(return_value=added)),
+    ):
+        result = runner.invoke(tunnel_app, ["add", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert_one_verbatim_line(
+        result.output,
+        f"added {tunnel.id} ({HOSTILE} <-> b:smile:, via {tunnel_cli._fmt_via(tunnel)}, "
+        "carriers 49200/49201)",
+    )

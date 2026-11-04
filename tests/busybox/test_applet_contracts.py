@@ -40,12 +40,16 @@ from pathlib import Path
 
 import pytest
 
+from otto.host.daemon import PS_FAILED
+from otto.link import check_live
+from otto.tunnel.check_probes import SWEEP_COMMAND
 from otto.utils import wait_for
 from tests._fixtures.busybox import (
     BUSYBOX_MATRIX,
     busybox_binary,
     probe_banner,
 )
+from tests._fixtures.ps_scans import PS_SCAN_CASES, assert_the_scan_reads_the_argv_whole, run_scan
 
 # BusyBox switched `timeout` from `-t SECS PROG` to the coreutils-compatible
 # `SECS PROG` in 1.30. Pinned here as the matrix's discriminating transition:
@@ -926,3 +930,35 @@ def test_a_dash_n_less_sender_is_terminated_by_the_receivers_close(release, tmp_
         f"success signal) -- a change here is a finding about the artifact, and the "
         f"TERMINATION asserted above is the half otto depends on"
     )
+
+
+# The `ps` scans (#785). Every scan asks `ps -ww` first and, when that is
+# rejected, `ps` without it: procps cuts `args` to COLUMNS on a pipe unless
+# given `-ww`, and BusyBox rejects `-w` (measured: every pinned row answers
+# `invalid option -- w` or `unrecognized option: w`) but never cuts. The five
+# pinned rows accept the separate `-eo pid= -eo etime= -eo args=` fields, so
+# they are the SUPPORTED builds: the fallback leg must find a long argv whole.
+@pytest.mark.busybox
+@pytest.mark.parametrize("release", _ROWS[:-1])
+@pytest.mark.parametrize("case", list(PS_SCAN_CASES.values()), ids=list(PS_SCAN_CASES))
+def test_every_ps_scan_reads_a_long_argv_whole(release, case, applet_dir):
+    """A BusyBox `ps` that rejects `-ww` still lists the planted daemon whole."""
+    d = applet_dir(release, ["ps"])
+    assert_the_scan_reads_the_argv_whole(case, {"PATH": f"{d}:/usr/bin:/bin", "COLUMNS": "60"})
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize("release", _ROWS[-1:])
+def test_an_unsupported_ps_marks_both_sweeps_failed(release, applet_dir):
+    """A BusyBox `ps` that rejects the fields too (the distro build) makes both sweeps say so.
+
+    Ubuntu's BusyBox 1.36.1 rejects `-w` and also `etime`
+    (`ps: bad -o argument 'etime'`), so both legs fail and each sweep prints
+    its could-not-look marker. The daemon scan has no marker and answers empty
+    on such a build: a pre-existing behaviour of unsupported builds that #785
+    makes neither better nor worse.
+    """
+    d = applet_dir(release, ["ps"])
+    env = {"PATH": f"{d}:/usr/bin:/bin"}
+    for command in (SWEEP_COMMAND, check_live.SWEEP_SCAN):
+        assert run_scan(command, env).splitlines() == [PS_FAILED], command

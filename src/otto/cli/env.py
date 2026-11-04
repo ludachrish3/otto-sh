@@ -85,6 +85,7 @@ def show() -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from ..console import id_column, literal_cell
     from ..env.manage import env_status
 
     status = env_status()
@@ -105,8 +106,8 @@ def show() -> None:
         typer.echo(_last_sync(status.meta))
 
     table = Table(box=box.ROUNDED)
-    table.add_column("project")
-    table.add_column("distribution")
+    id_column(table, "project")
+    id_column(table, "distribution")
     table.add_column("installed")
     table.add_column("state")
     for project in status.projects:
@@ -115,5 +116,7 @@ def show() -> None:
         else:
             installed = {True: "yes", False: "no", None: "?"}[project.installed]
             state = "stale — run `otto env sync`" if project.stale else "current"
-        table.add_row(project.name, project.dist_name or "—", installed, state)
+        table.add_row(
+            literal_cell(project.name), literal_cell(project.dist_name or "—"), installed, state
+        )
     console.print(table)

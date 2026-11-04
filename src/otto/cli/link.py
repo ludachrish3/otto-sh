@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich import get_console
 from rich import print as rprint
-from rich.markup import escape
 
 from ..config.completion_cache import collect_link_ids
 from ..link.manage import (
@@ -34,6 +33,8 @@ from .completers import completion_source, lab_scoped_host_ids, selected_lab_nam
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
+    from rich.text import Text
+
     from ..link.check import LinkCheckReport
 
 link_app = typer.Typer(
@@ -103,16 +104,16 @@ def _parse_params(given: dict[str, str | None]) -> ImpairmentParams:
     return ImpairmentParams(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
-def _row(text: str) -> None:
-    """Print one detail row verbatim: no markup parsing, no width wrapping.
+def _row(text: "str | Text") -> None:
+    """Print one detail row literally, through ``otto.console.print_literal``.
 
-    Shared by ``list``'s rows and the ``--dry-run`` plan rows below, and for
-    the same reason: every field on them is user-supplied lab data (a link
-    name, a host id, a netdev) or a shell command built from it, and rich
-    would read ``eth0[dataplane]`` as a style tag and print ``eth0`` — naming
-    an interface that does not exist.
+    Shared by ``list``'s rows and the ``--dry-run`` plan rows below: every
+    field on them is user-supplied lab data (a link name, a host id, a netdev)
+    or a shell command built from it.
     """
-    get_console().print(text, markup=False, soft_wrap=True)
+    from ..console import print_literal
+
+    print_literal(text)
 
 
 def _print_dry_run_plan(link_id: str, plan: DryRunPlan) -> None:
@@ -126,10 +127,13 @@ def _print_dry_run_plan(link_id: str, plan: DryRunPlan) -> None:
     be resolved without the middlebox's live address table; the header still
     prints, so the command never answers with silence.
     """
-    get_console().print(
-        f"[cyan]dry run[/cyan] {escape(link_id)}: no device was contacted — "
-        f"nothing was read and nothing was changed",
-        soft_wrap=True,
+    from rich.text import Text
+
+    _row(
+        Text.assemble(
+            ("dry run", "cyan"),
+            f" {link_id}: no device was contacted — nothing was read and nothing was changed",
+        )
     )
     for line in plan.would:
         _row(f"  would: {line}")
@@ -138,6 +142,8 @@ def _print_dry_run_plan(link_id: str, plan: DryRunPlan) -> None:
 
 
 def _print_impair_report(report: ImpairReport) -> None:
+    from rich.text import Text
+
     if report.plan is not None:
         # A dry run applied nothing, so there is nothing for the loop below to
         # render — and `applied` being empty is exactly why the preview cannot
@@ -149,9 +155,12 @@ def _print_impair_report(report: ImpairReport) -> None:
         desc = applied.params.describe() or "cleared"
         if applied.selector is not None:
             desc = f"{applied.selector.describe()} {desc}"
-        rprint(
-            f"[green]impaired[/green] {report.link_id} {placement.direction.value} "
-            f"on {placement.host_id}/{placement.netdev}: {desc}"
+        _row(
+            Text.assemble(
+                ("impaired", "green"),
+                f" {report.link_id} {placement.direction.value} "
+                f"on {placement.host_id}/{placement.netdev}: {desc}",
+            )
         )
 
 
@@ -245,6 +254,8 @@ async def impair(  # noqa: PLR0913 — CLI command params
 
 
 def _print_repair_report(report: RepairReport) -> None:
+    from rich.text import Text
+
     if report.plan is not None:
         # Never the line below under a dry run: `cleared (nothing to clear),
         # timers cancelled 0` is three claims and none of them was measured.
@@ -254,12 +265,13 @@ def _print_repair_report(report: RepairReport) -> None:
     # "partially repaired", not a green "repaired" with a warning under it: the
     # headline is the part an operator reads, and a repair that could not look
     # at one end has not repaired the link.
-    headline = (
-        "[yellow]partially repaired[/yellow]" if report.unreachable else "[green]repaired[/green]"
-    )
-    rprint(
-        f"{headline} {report.link_id}: cleared {cleared or '(nothing to clear)'}, "
-        f"timers cancelled {report.timers_cancelled}"
+    headline = ("partially repaired", "yellow") if report.unreachable else ("repaired", "green")
+    _row(
+        Text.assemble(
+            headline,
+            f" {report.link_id}: cleared {cleared or '(nothing to clear)'}, "
+            f"timers cancelled {report.timers_cancelled}",
+        )
     )
     for entry in report.unreachable:
         print_error(f"  could not reach {entry}")
@@ -424,6 +436,8 @@ def _selector_rows(state: LinkState) -> list[str]:
 @link_app.command(name="list")
 async def list_links() -> None:
     """List every static link's current impairment state."""
+    from rich.text import Text
+
     from ..fleet import get_lab
 
     lab = get_lab()
@@ -466,12 +480,14 @@ async def list_links() -> None:
             _row(row)
     unreachable_ids = sorted(state.link.id for state in states if state.unreachable)
     if unreachable_ids:
-        # Markup ON here — the emphasis is otto's own, and the interpolation
-        # is escaped rather than turning the parser off for the whole line.
-        get_console().print(
-            f"[yellow bold]partial scan[/yellow bold] — could not fully read: "
-            f"{escape(', '.join(unreachable_ids))}",
-            soft_wrap=True,
+        # The emphasis is otto's own, so it is a styled span; the ids stay
+        # literal (no markup, no emoji), like every `_row`.
+        _row(
+            Text.assemble(
+                ("partial scan", "yellow bold"),
+                " — could not fully read: ",
+                ", ".join(unreachable_ids),
+            )
         )
     read_failed_ids = sorted(state.link.id for state in states if state.read_failed)
     if read_failed_ids:
@@ -479,10 +495,12 @@ async def list_links() -> None:
         # answered. Folding them into "could not fully read" is what sent an
         # operator to check the network for a link whose host simply has no
         # working tc.
-        get_console().print(
-            f"[yellow bold]read failed[/yellow bold] — host reachable, read command failed: "
-            f"{escape(', '.join(read_failed_ids))}",
-            soft_wrap=True,
+        _row(
+            Text.assemble(
+                ("read failed", "yellow bold"),
+                " — host reachable, read command failed: ",
+                ", ".join(read_failed_ids),
+            )
         )
     if any(state.not_measured for state in states):
         # A THIRD summary line, and the one that has to say what the cells
@@ -519,7 +537,9 @@ def _print_check_dry_run(link_id: str, plan: list[str]) -> None:
     way: every line is lab/host data (a netdev, a host id), and rich would eat
     a bracketed one (see ``_row``'s docstring).
     """
-    get_console().print(f"[cyan]dry run[/cyan] {escape(link_id)}:", soft_wrap=True)
+    from rich.text import Text
+
+    _row(Text.assemble(("dry run", "cyan"), f" {link_id}:"))
     for line in plan:
         _row(f"  {line}")
 

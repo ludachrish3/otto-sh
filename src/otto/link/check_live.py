@@ -55,7 +55,7 @@ from ..check.sweep import (
     swept_note,
 )
 from ..check.verdict import FeatureResult, Verdict
-from ..host.daemon import etime_seconds, kill_command
+from ..host.daemon import PS_FAILED, etime_seconds, kill_command, ps_listing
 from ..host.errors import UnsupportedOnUserlandError
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
@@ -94,24 +94,19 @@ _ROUND_TRIP_S = 1.0
 
 _TAG_RE = re.compile(r"otto-check-[0-9a-f]{6}")
 """Every ``otto-check-*`` tag: a sandbox namespace's name, or a listener's."""
-PS_FAILED = "@ps-failed"
-"""The line :data:`SWEEP_SCAN` prints when ``ps`` itself failed, so found-nothing and
-could-not-look read differently."""
 SWEEP_SCAN = (
-    f"{{ ps -eo pid= -eo etime= -eo args= 2>/dev/null || echo {PS_FAILED}; }} | "
+    f"{ps_listing(mark_failure=True)} | "
     "\\grep -aE "
     f"{shlex.quote(rows.kill_pattern('otto-check-') + '[0-9a-f]{6}|^' + PS_FAILED + '$')} || true"
 )
 """Every process carrying an ``otto-check-<6 hex>`` tag, with its pid and age.
 
-The fields are separate ``-eo`` flags and ``etime``, not ``etimes``, for the
-same old procps :func:`~otto.host.daemon.ps_scan_command` supports. A ``ps``
-that rejects them (busybox built without its desktop options) prints
-:data:`PS_FAILED` instead, so the sweep says it could not look rather than
-that it found nothing. The pattern's ``[o]`` keeps ``grep`` from matching its
-own command line, or the ``sudo`` and shell around it (see
-``otto.link._check_rows.kill_pattern``), and ``\\grep`` skips a colouring
-alias."""
+The listing is :func:`~otto.host.daemon.ps_listing`'s, with its failure
+marker: a ``ps`` that fails it prints :data:`~otto.host.daemon.PS_FAILED`, so
+the sweep says it could not look rather than that it found nothing. The
+pattern's ``[o]`` keeps ``grep`` from matching its own command line, or the
+``sudo`` and shell around it (see ``otto.link._check_rows.kill_pattern``), and
+``\\grep`` skips a colouring alias."""
 _MIN_SCAN_FIELDS = 3
 
 
