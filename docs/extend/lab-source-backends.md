@@ -106,7 +106,11 @@ just make it a decision rather than an omission.
   Otto also bounds how long it will wait for your backend during completion
   (2 seconds by default). If yours is legitimately slower, raise
   `OTTO_COMPLETION_HOST_TIMEOUT`; otto logs a warning naming it rather than
-  hanging the user's shell.
+  hanging the user's shell. Completion then offers none of your backend's
+  hosts, and that incomplete answer stays in the completion cache for at most
+  five minutes ({doc}`../architecture/subsystems/completion-cache`,
+  "Freshness"). A source that is regularly slower than the default should have
+  the timeout raised, not rely on the cache asking again every five minutes.
 
 ## Writing a custom backend
 

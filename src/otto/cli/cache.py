@@ -404,6 +404,13 @@ def _print_this_workspace() -> None:
         if not isinstance(drop, dict):
             continue
         typer.echo(f"    [{drop.get('project')}] {drop.get('where')}: {drop.get('reason')}")
+        if drop.get("timed_out") is True and status.state == "fresh":
+            # The TTL the writer stored for this entry, capped because of this drop.
+            # Only a fresh entry is being served, so only it carries the promise.
+            typer.echo(
+                f"      a deadline: this answer is served for at most {_fmt_age(status.ttl)}, "
+                "then a TAB asks again"
+            )
 
 
 @cache_app.command("clear")

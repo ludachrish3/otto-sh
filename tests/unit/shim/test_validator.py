@@ -295,6 +295,13 @@ def test_a_failed_touch_is_ignored(workspace, monkeypatch):
         (lambda d: d.__setitem__("schema", 17), "schema"),
         (lambda d: d["sections"]["shim"].__setitem__("tainted", True), "tainted"),
         (lambda d: d["sections"]["shim"].__setitem__("generated_at", 0), "expired"),
+        # The TTL must be a non-bool int, as ``cache_sections.stored_ttl_seconds`` reads it.
+        (lambda d: d["sections"]["shim"].__setitem__("ttl_seconds", True), "expired"),
+        (lambda d: d["sections"]["shim"].__setitem__("ttl_seconds", 86400.0), "expired"),
+        (lambda d: d["sections"]["names"].__setitem__("ttl_seconds", True), "expired"),
+        (lambda d: d["sections"]["names"].__setitem__("ttl_seconds", 86400.0), "expired"),
+        (lambda d: d["sections"]["names"].__setitem__("generated_at", 0), "expired"),
+        (lambda d: d["sections"]["names"].__setitem__("tainted", True), "tainted"),
         (lambda d: d["sections"].pop("names"), "names"),
         (
             lambda d: d["sections"]["shim"]["payload"].__setitem__("inventory", {"kind": "opaque"}),

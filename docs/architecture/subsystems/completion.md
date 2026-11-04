@@ -50,10 +50,14 @@ its payload (built by `otto.config.completion_tree.build_shim_payload`):
 - `inventory` — the inventory's freshness as a stat check can verify it:
   `none`, `stat` with the triples of the files a file-derived backend read,
   or `opaque`, which always hands over (`inventory_block`);
-- `ttl_seconds` — the TTL the writer applied;
 - `tables` — the project roots whose tables in the test-names cache a
   test-name or `-m` TAB reads, in order;
 - `tree` — described next.
+
+The payload holds no TTL. The shim enforces the taint and the `ttl_seconds`
+the writer stored with the `shim` entry and with the `names` entry it also
+serves from, as every reader of a section does ({doc}`completion-cache`,
+"Freshness").
 
 At a test-name or `-m` site the shim answers from those projects' tables in
 the test-names cache (the cache file's `__collected_tests__` namespace),

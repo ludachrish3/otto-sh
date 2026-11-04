@@ -24,9 +24,16 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from otto import layout
+from otto.config.completion_cache import HOST_SUMMARY_DEADLINE_ENV_VAR
 from otto.logger.management import _LOG_DIR_NAME_RE
 from tests._ambient_env import ambient
 from tests._fixtures.paths import CHECKOUT_ROOT
+
+#: The completion host deadline every otto child gets. A cold enumeration under a
+#: slow coverage tracer (3.14's ``sysmon`` core: a 30 s+ seed) misses the 2 s
+#: default, and these tests are about what completion offers, not about the
+#: deadline (#744). A test that probes the deadline overrides it via ``extra_env``.
+_CHILD_HOST_SUMMARY_DEADLINE = "60"
 
 PROJECT1 = CHECKOUT_ROOT / "tests" / "project1"
 PROJECT2 = CHECKOUT_ROOT / "tests" / "project2"
@@ -168,6 +175,10 @@ def otto_subprocess_env(
     ``OTTO_INIT_TIMEOUT`` passes through when set, so a slow machine's raised
     readiness deadline reaches the otto under test, not only the test process.
 
+    ``OTTO_COMPLETION_HOST_TIMEOUT`` is pinned generous
+    (:data:`_CHILD_HOST_SUMMARY_DEADLINE`): setting it around ``pytest`` would
+    not reach the child, whose environment is built from scratch here.
+
     Installer config is isolated (:func:`_isolate_installer_config`), so a
     ``pip``/``uv`` the child spawns resolves from ``--find-links`` alone.
     """
@@ -183,6 +194,7 @@ def otto_subprocess_env(
     init_timeout = ambient("OTTO_INIT_TIMEOUT")
     if init_timeout:
         env["OTTO_INIT_TIMEOUT"] = init_timeout
+    env[HOST_SUMMARY_DEADLINE_ENV_VAR] = _CHILD_HOST_SUMMARY_DEADLINE
     _isolate_installer_config(env)
     if extra_env:
         env.update(extra_env)

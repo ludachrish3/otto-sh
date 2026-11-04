@@ -53,7 +53,8 @@ it was generated, and a taint flag::
                     "instructions": [{"name": "install", "options": [...]}, ...],
                     "hosts": ["test1", "test2", ...],
                     "hosts_by_lab": {"unix": ["test1", "test2"], ...},
-                    "host_drops": [{"project": "sut", "where": "...", "reason": "..."}],
+                    "host_drops": [{"project": "sut", "where": "...", "reason": "...",
+                                    "timed_out": false}],
                     "docker_hosts": ["test1", ...],
                     "docker_use_cases": ["integration", ...],
                     "docker_images": ["api", ...],
@@ -252,7 +253,13 @@ CACHE_FILENAME = "completion_cache.json"
 #      ``cache.enabled`` turns off. A v28 entry lacks that key and would keep
 #      answering after ``otto cache disable``, which deletes nothing, until
 #      another key moved or the TTL ran out. Every workspace rebuilds once.
-SCHEMA_VERSION = 29
+# v30: each ``host_drops`` entry carries ``timed_out``, and a write whose
+#      ``names`` payload holds a deadline drop is stored on the short TTL
+#      (#744); the shim reads that stored TTL off its entry, not its payload.
+#      A v29 writer stored a host enumeration that missed its deadline, as
+#      ``hosts: ["local"]``, for the full TTL. The bump drops EVERY v29 entry,
+#      poisoned or not, so every workspace rebuilds once.
+SCHEMA_VERSION = 30
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -276,6 +283,9 @@ CACHE_TTL_SECONDS = 24 * 60 * 60
 # run on the completion fast path, and querying a possibly-networked backend
 # there is exactly the cost this cache exists to avoid — it would make every
 # TAB keystroke depend on the inventory service being reachable.
+#
+# `write_sections` also caps an entry's TTL at this tier when its payload holds
+# a host source that missed its deadline (`_payload_hit_a_deadline`).
 UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 
 
@@ -450,9 +460,8 @@ def _has_unresolved_init_module(project: "Project") -> bool:
     read as "nothing declared", not raise — while the digest enumerators
     above deliberately fail by name on such a double.
 
-    Its stats go through :func:`~otto.config.corpus_snapshot.stat`: a cache
-    write asks for the TTL class twice (the shim payload, then each stored
-    entry), and inside the rebuild's scope the second ask is free.
+    Its stats go through :func:`~otto.config.corpus_snapshot.stat`, so inside
+    the rebuild's scope a repeated ask is free.
     """
     libs = getattr(project, "libs", [])
     for init_mod in getattr(project, "init", []):
@@ -542,6 +551,8 @@ def _cache_ttl_seconds(projects: list["Project"]) -> int:
     Shortened when any project's completion data comes from a source the
     fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
     Writer-only: a reader uses the class stored with the entry.
+    :func:`write_sections` can cap the result further for a payload that hit a
+    deadline (:func:`_payload_hit_a_deadline`).
 
     Applies to the sections only. The per-file test tables keep the long
     TTL (:data:`CACHE_TTL_SECONDS`): each validates itself by one ``stat`` per
@@ -1153,7 +1164,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     commands: list[dict[str, Any]] | None = None,
     labs: list[str] | None = None,
     hosts_by_lab: dict[str, list[str]] | None = None,
-    host_drops: list[dict[str, str]] | None = None,
+    host_drops: list[dict[str, Any]] | None = None,
     host_classes_by_id: dict[str, str] | None = None,
     projects: list[str] | None = None,
     links: list[dict[str, Any]] | None = None,
@@ -1195,8 +1206,9 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
 
     *tainted* marks every written section unservable — pass
     ``bool(result.errors)`` from the composition root, so a partial workspace
-    is stored (it still records what the digests were) but never served. See
-    :func:`write_sections`.
+    is stored (it still records what the digests were) but never served. A
+    *host_drops* entry marked ``timed_out`` shortens the write's TTL to
+    :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`. See :func:`write_sections`.
     """
     payloads: dict[str, dict[str, Any]] = {
         "names": {
@@ -1230,6 +1242,21 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         tainted=tainted,
         digests=digests,
     )
+
+
+def _payload_hit_a_deadline(payloads: dict[str, dict[str, Any]]) -> bool:
+    """Whether the ``names`` payload's host enumeration missed its deadline (#744).
+
+    A deadline is no full answer: the source may be fine and merely slow (a
+    cold start under a slow tracer was enough). Stored for the normal TTL, its
+    ``hosts: ["local"]`` left ``otto host <TAB>`` offering only ``local`` for a
+    day; :func:`write_sections` therefore caps such a write's TTL at
+    :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`. Read off the payload's
+    ``host_drops`` (their ``timed_out`` marker, never the reason text), so
+    every writer reaches the same decision.
+    """
+    drops = payloads.get("names", {}).get("host_drops") or []
+    return any(isinstance(drop, dict) and drop.get("timed_out") is True for drop in drops)
 
 
 def _tainted_entry_is_already_current(
@@ -1299,7 +1326,12 @@ def write_sections(
 
     Each written entry stores its TTL class (``ttl_seconds``) and, for a
     lab-keyed section, its lab key paths (``lab_key_paths``), computed here
-    from the prepared lab sources, so a warm reader recomputes neither.
+    from the prepared lab sources, so a warm reader recomputes neither. This
+    is the one place the TTL is decided: :func:`_cache_ttl_seconds`, capped at
+    :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS` for every section of a write
+    whose ``names`` payload holds a host enumeration that missed its deadline
+    (:func:`_payload_hit_a_deadline`). The shim enforces the same stored
+    value, so the two cannot disagree.
     """
     from .cache_sections import (
         SECTIONS,
@@ -1364,6 +1396,8 @@ def write_sections(
         return
     now = int(time.time())
     ttl = _cache_ttl_seconds(projects)
+    if _payload_hit_a_deadline(payloads):
+        ttl = min(ttl, UNFINGERPRINTED_CACHE_TTL_SECONDS)
     for section in chosen:
         entry: dict[str, Any] = {
             "fingerprint": fresh[section.name],
@@ -1545,7 +1579,9 @@ def _bounded(
             f"Raise {HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
         )
         logging.getLogger(__name__).warning(f"[completion] {project.root}: {reason}")
-        return ProjectEnumeration(drops=[HostDrop(where=str(project.root), reason=reason)])
+        return ProjectEnumeration(
+            drops=[HostDrop(where=str(project.root), reason=reason, timed_out=True)]
+        )
     # `or ProjectEnumeration()` rather than `box[0]`: a work() returning None
     # would otherwise hand every caller a None to read attributes off.
     return (box[0] if box else None) or ProjectEnumeration()
@@ -1721,21 +1757,29 @@ def _enumerate_host_summaries(
     return ProjectEnumeration(summaries=summaries, drops=list(dict.fromkeys(drops)))
 
 
-def collect_host_drops(projects: list["Project"]) -> list[dict[str, str]]:
+def collect_host_drops(projects: list["Project"]) -> list[dict[str, Any]]:
     """Everything host enumeration left out, per project: the ``names`` payload's ``host_drops``.
 
-    ``[{"project", "where", "reason"}, ...]``, JSON-shaped for the cache. Read
-    back by ``otto cache info``, which is the outlet: a TAB stays silent by
-    contract, and this is where its silence gets explained. Enumerates
-    nothing of its own — it reads the same memo the id collectors filled.
+    ``[{"project", "where", "reason", "timed_out"}, ...]``, JSON-shaped for the
+    cache. Read back by ``otto cache info``, which is the outlet: a TAB stays
+    silent by contract, and this is where its silence gets explained.
+    ``timed_out`` carries :attr:`~otto.labs.drops.HostDrop.timed_out` to the
+    writer, which stores a payload holding one on the short TTL
+    (:func:`_payload_hit_a_deadline`). Enumerates nothing of its own — it reads
+    the same memo the id collectors filled.
     """
     resolution = resolve_process_inventory(projects)
     profiles = _profiles(projects)
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for project in projects:
         label = getattr(project, "name", None) or str(project.root)
         out.extend(
-            {"project": str(label), "where": drop.where, "reason": drop.reason}
+            {
+                "project": str(label),
+                "where": drop.where,
+                "reason": drop.reason,
+                "timed_out": drop.timed_out,
+            }
             for drop in project_host_drops(project, resolution, profiles=profiles)
         )
     return out

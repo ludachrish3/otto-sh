@@ -1196,6 +1196,31 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
     assert any("did not answer within" in r.message for r in caplog.records), caplog.text
 
 
+def test_the_deadline_drop_carries_a_structured_marker(monkeypatch) -> None:
+    """The deadline's drop is marked ``timed_out`` (#744).
+
+    The cache writer must tell a deadline (an incomplete answer: served for
+    the short TTL only) from a skip or a failure (an answer, cached with its
+    reason for the full TTL) without matching the reason text, which is
+    worded for people. Every other drop keeps the default, ``False``.
+    """
+    import time
+
+    def _slow(_project, _inventory, _profiles, _abandoned=None):
+        time.sleep(0.5)
+        return cc.ProjectEnumeration()  # pragma: no cover — abandoned before it returns
+
+    monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, "0.01")
+    monkeypatch.setattr(cc, "_enumerate_host_summaries", _slow)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    project = MagicMock()
+    project.root = Path("/nowhere-slow")
+    [drop] = cc.project_host_drops(
+        project, cc.InventoryResolution(), profiles=ProfileContext.empty()
+    )
+    assert drop.timed_out is True
+
+
 def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None:
     """The bound must not cost the normal path its answer."""
     from otto.labs import HostSummary

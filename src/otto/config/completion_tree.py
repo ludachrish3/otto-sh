@@ -324,7 +324,6 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
     import typer
 
     from .cache_sections import section_by_name, writer_key_paths
-    from .completion_cache import _cache_ttl_seconds
     from .user_settings import user_settings_path, user_settings_stat
 
     tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
@@ -339,7 +338,6 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
         for p in sorted({*writer_key_paths(names, projects), settings_path})
     ]
     return {
-        "ttl_seconds": _cache_ttl_seconds(projects),
         "keys": triples,
         "tables": [str(project.root) for project in projects],
         "inventory": inventory_block(projects),

@@ -114,7 +114,8 @@ a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by
 - Its readers are {func}`otto.cli.main.entry`, which installs it for the
   completers and for the root help screen, the shim, which reads its values
   when a TAB completes one of them, and `otto cache info`, which reads
-  `host_drops` (each entry names its `project`, the `where` and the `reason`)
+  `host_drops` (each entry names its `project`, the `where`, the `reason` and
+  whether it is the enumeration's own deadline, `timed_out`)
   and the host lists.
 - Its key set is small: each project's `.otto/settings.toml`, the files of its
   init modules and its lab key paths (below), plus every directory those were
@@ -123,13 +124,12 @@ a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by
 
 **`shim`** holds what the console-script shim needs to answer a TAB without
 importing otto's CLI: the serialised command `tree`, the stat triples of the
-`names` key set (`keys`), an `inventory` block, the effective `ttl_seconds`,
-and `tables`, the project roots whose tables a test-name or `-m` TAB
-reads. Its only reader is `otto._shim_complete`.
-{doc}`completion` describes each field from the shim's side. It has no key
-set of its own: it describes the same registrations as `names`, so it is
-stale exactly when `names` is, and its digest is composed from `names`'s
-(below).
+`names` key set (`keys`), an `inventory` block, and `tables`, the project
+roots whose tables a test-name or `-m` TAB reads. Its only reader is
+`otto._shim_complete`. {doc}`completion` describes each field from the shim's
+side. It has no key set of its own: it describes the same registrations as
+`names`, so it is stale exactly when `names` is, and its digest is composed
+from `names`'s (below).
 
 **Test names have no section.** A section is rebuilt by a process that has
 just bootstrapped, which imports no test file, and its digest covers a
@@ -201,6 +201,22 @@ when any project has one of these:
 Each of these feeds completion data that the digest cannot track, so the TTL
 is the only thing that bounds it.
 
+**A host source that missed its deadline** shortens the TTL too. Each
+project's host enumeration is bounded by `OTTO_COMPLETION_HOST_TIMEOUT`
+({doc}`../../extend/lab-source-backends` gives its default and when to raise
+it). A source past it contributes no hosts, and its `host_drops` entry
+carries `"timed_out": true`. Such a source may only be slow, as on a cold
+start, so `hosts` is an incomplete answer: the slow source's hosts are
+missing. Stored for a day, it would miss them for that day. The one writer,
+`write_sections`,
+reads the marker and caps the TTL of every section it writes at
+`UNFINGERPRINTED_CACHE_TTL_SECONDS`. The entry is still served, so:
+
+- every TAB is still answered from the cache;
+- the host list may be incomplete for at most five minutes;
+- a source that stays slow costs at most one slow TAB per five minutes,
+  the rebuild after the entry expires.
+
 Nothing is written at all when the inventory cannot report its freshness, or
 when asking it raised. A digest built from such an answer is not stable, so
 every write would add an entry that is never served.
@@ -218,9 +234,10 @@ workspace does not rewrite the file on every TAB.
 needs `hashlib` over every path, and it runs with the standard library alone.
 It compares the stored `keys` triples with `os.stat` directly, checks the
 `inventory` block (`none`, `stat` with its own triples, or `opaque`, which
-always hands over), and checks `ttl_seconds`. A successful stat pass is
-remembered for up to a minute by the `names` marker file beside the cache;
-the rules are in {doc}`completion`, section "The window".
+always hands over), and checks the entry's stored `ttl_seconds`. A
+successful stat pass is remembered for up to a minute by the `names` marker
+file beside the cache; the rules are in {doc}`completion`, section "The
+window".
 
 **Why stat-based rather than content-based.** Hashing contents costs an open
 and a full read of every key file, on every check. That is the cost the cache
