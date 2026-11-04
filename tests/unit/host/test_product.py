@@ -14,6 +14,7 @@ from otto.host.product import Product, ShellProduct
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
+from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
 
 
 class _DummyShellProduct(ShellProduct):
@@ -577,7 +578,7 @@ class _ExecHost:
 
     async def exec(self, cmd, **kwargs):
         self.exec_calls.append((cmd, kwargs))
-        return CommandResult(self._status, value="", command=cmd, retcode=0)
+        return CommandResult(self._status, value=framed(cmd, ""), command=cmd, retcode=0)
 
 
 @pytest.mark.asyncio
@@ -596,9 +597,16 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
     assert result.is_ok
     assert host.exec_calls == [
         (
-            "! test -d '/opt/My App/cov' || find '/opt/My App/cov' -name '*.gcda' -type f -delete",
+            (
+                "! test -d '/opt/My App/cov' || "
+                "find '/opt/My App/cov' -name '*.gcda' -type f -exec rm -f {} \\;"
+            ),
             {"timeout": 60},
-        )
+        ),
+        (
+            CHECK_PREFIX + "LC_ALL=C find '/opt/My App/cov' -name '*.gcda' -type f -print 2>&1",
+            {"timeout": 60},
+        ),
     ]
 
 
@@ -606,9 +614,10 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
 async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
     host = _ExecHost()
     await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
-    assert host.exec_calls[0][0] == (
-        "! test -d /tmp/app || find /tmp/app -name '*.gcda' -type f -delete"
-    )
+    assert [cmd for cmd, _ in host.exec_calls] == [
+        "! test -d /tmp/app || find /tmp/app -name '*.gcda' -type f -exec rm -f {} \\;",
+        f"{CHECK_PREFIX}LC_ALL=C find /tmp/app -name '*.gcda' -type f -print 2>&1",
+    ]
 
 
 @pytest.mark.asyncio
@@ -641,7 +650,8 @@ class _RunHost:
             entry = NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.id)
         else:
             retcode = 0 if self._status.is_ok else 1
-            entry = CommandResult(self._status, value=self._output, command=cmd, retcode=retcode)
+            value = framed(cmd, self._output)
+            entry = CommandResult(self._status, value=value, command=cmd, retcode=retcode)
         return Results.collect([entry])
 
 
@@ -651,8 +661,12 @@ async def test_sudo_gcda_delete_deletes_under_sudo():
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
     result = await sudo_gcda_delete(p, host)
     assert result.is_ok
-    line = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -delete"
-    assert host.run_calls == [(f"sh -c {shlex.quote(line)}", {"sudo": True})]
+    delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
+    check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
+    assert host.run_calls == [
+        (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
+        (f"sh -c {shlex.quote(check)}", {"sudo": True, "timeout": 60}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -702,11 +716,14 @@ class _ShellHost:
     OTTO_TEST_ELEVATED=1``, which (like sudo) execs only the first word of
     what follows. Anything after a top-level ``||`` therefore runs unelevated,
     exactly as it would on a real host. ``bin_dir`` goes first on PATH so a
-    test can stand in its own ``find``.
+    test can stand in its own ``find``. ``noise`` is prefixed to every
+    command's output, the way a session's merged stream carries what sudo,
+    PAM or a login shell prints before the command runs.
     """
 
-    def __init__(self, bin_dir: Path | None = None):
+    def __init__(self, bin_dir: Path | None = None, noise: str = ""):
         self.id = "h1"
+        self._noise = noise
         self._env = dict(os.environ)
         if bin_dir is not None:
             self._env["PATH"] = f"{bin_dir}{os.pathsep}{self._env.get('PATH', '')}"
@@ -721,7 +738,8 @@ class _ShellHost:
         )
         out, _ = await proc.communicate()
         status = Status.Success if proc.returncode == 0 else Status.Error
-        return CommandResult(status, value=out.decode(), command=line, retcode=proc.returncode)
+        value = self._noise + out.decode()
+        return CommandResult(status, value=value, command=line, retcode=proc.returncode)
 
     async def exec(self, cmd, **kwargs):
         return await self._sh(cmd)
@@ -731,14 +749,19 @@ class _ShellHost:
         return Results.collect([await self._sh(f"env {_ELEVATED_MARK}=1 {cmd}")])
 
 
+def _fake_bin(tmp_path: Path, name: str, body: str) -> Path:
+    """Write a *name* stand-in into the test's bin dir and return that dir."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    tool = bin_dir / name
+    tool.write_text(f"#!/bin/sh\n{body}\n")
+    tool.chmod(0o755)
+    return bin_dir
+
+
 def _fake_find(tmp_path: Path, body: str) -> Path:
     """Write a ``find`` stand-in into a fresh bin dir and return that dir."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    find = bin_dir / "find"
-    find.write_text(f"#!/bin/sh\n{body}\n")
-    find.chmod(0o755)
-    return bin_dir
+    return _fake_bin(tmp_path, "find", body)
 
 
 def _failing_find(tmp_path: Path) -> Path:
@@ -763,7 +786,9 @@ async def test_reset_coverage_default_fails_when_find_fails_on_a_present_cov_dir
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
     result = await p.reset_coverage(host)
     assert result.status is Status.Error
-    assert "permission denied" in result.value
+    # The plain path answers with the same adapter message as the elevated one.
+    assert result.msg.startswith(f"deleting .gcda under {present} failed")
+    assert "permission denied" in result.msg
 
 
 @pytest.mark.asyncio
@@ -807,9 +832,211 @@ async def test_sudo_gcda_delete_runs_the_whole_guarded_line_elevated(tmp_path):
     assert not (present / "a.gcda").exists()
 
 
+# ── the reset's postcondition: every reset re-checks with `find -print` ─────
+#
+# `find -exec rm -f {} \;` does not carry rm's status, so a zero exit proves
+# nothing: every reset, plain and elevated, re-runs the files-only check and
+# fails, naming what is left, when a counter survives or the check itself
+# fails. These drive both paths with the same inputs.
+
+
+async def _reset(product, host, path):
+    """Run the plain default reset or the elevated one, by *path*."""
+    if path == "plain":
+        return await product.reset_coverage(host)
+    return await sudo_gcda_delete(product, host)
+
+
+_PATHS = ["plain", "elevated"]
+
+
+class _CheckHost:
+    """The removal succeeds; the check (the ``-print`` line) answers ``(rc, output)``."""
+
+    def __init__(self, check_rc, check_out):
+        self.id = "h1"
+        self.calls: list[str] = []
+        self._check = (check_rc, check_out)
+
+    def _answer(self, cmd):
+        self.calls.append(cmd)
+        rc, out = self._check if "-print" in cmd else (0, "")
+        status = Status.Success if rc == 0 else Status.Failed
+        return CommandResult(status, value=framed(cmd, out), command=cmd, retcode=rc)
+
+    async def exec(self, cmd, **kwargs):
+        return self._answer(cmd)
+
+    async def run(self, cmd, **kwargs):
+        return Results.collect([self._answer(cmd)])
+
+
+def _find_failing_only_the_check(tmp_path: Path, message: str) -> Path:
+    """A ``find`` that runs the real one for the removal and fails the ``-print`` check."""
+    real_find = shutil.which("find")
+    assert real_find is not None
+    return _fake_find(
+        tmp_path,
+        'case " $* " in *" -print "*) '
+        f"echo {shlex.quote(message)}; exit 1;; esac\n"
+        f'exec {real_find} "$@"',
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_fails_when_a_failed_check_prints_absent(path):
+    # The sentinel is a tag, never text: a failed check whose output is
+    # exactly `absent` is an error, not an absent cov_dir.
+    host = _CheckHost(1, "absent")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    result = await _reset(p, host, path)
+    assert result.status is Status.Error, result
+    assert result.msg == "checking .gcda under /var/cov/app failed: absent"
+    assert len(host.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_succeeds_when_the_check_says_the_cov_dir_is_absent(path):
+    line = "find: '/var/cov/app': No such file or directory"
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    result = await _reset(p, _CheckHost(1, line), path)
+    assert result.status is Status.Success, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads through a chmod 000 dir, so it cannot be made unreadable"
+)
+async def test_reset_check_fails_on_an_inaccessible_ancestor_plain(tmp_path):
+    # `test -d` is false for a dir behind an unreadable parent, so the guarded
+    # removal exits 0 without looking. The check has no guard: it must say
+    # what stopped it, never report "clean" for a dir nobody could look into.
+    parent = tmp_path / "locked"
+    cov = parent / "cov"
+    cov.mkdir(parents=True)
+    (cov / "a.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    parent.chmod(0)
+    try:
+        result = await p.reset_coverage(_ShellHost())
+    finally:
+        parent.chmod(0o755)
+    assert result.status is Status.Error, result
+    assert result.msg.startswith(f"checking .gcda under {cov} failed: ")
+    assert "Permission denied" in result.msg
+    assert (cov / "a.gcda").exists()
+
+
+@pytest.mark.asyncio
+async def test_reset_check_fails_on_an_inaccessible_ancestor_elevated(tmp_path):
+    # chmod cannot deny the root-like double, so a fake find stands in for
+    # what an unreadable ancestor makes the real one print.
+    parent = tmp_path / "locked"
+    cov = parent / "cov"
+    cov.mkdir(parents=True)
+    (cov / "a.gcda").write_bytes(b"")
+    bin_dir = _find_failing_only_the_check(tmp_path, f"find: '{parent}': Permission denied")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await sudo_gcda_delete(p, _ShellHost(bin_dir=bin_dir))
+    assert result.status is Status.Error, result
+    assert result.msg.startswith(f"checking .gcda under {cov} failed: ")
+    assert "Permission denied" in result.msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_fails_when_the_check_fails_after_a_successful_removal(tmp_path, path):
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    (cov / "a.gcda").write_bytes(b"")
+    bin_dir = _find_failing_only_the_check(tmp_path, f"find: '{cov}': Permission denied")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, _ShellHost(bin_dir=bin_dir), path)
+    assert not (cov / "a.gcda").exists()  # the removal ran and worked
+    assert result.status is Status.Error, result
+    assert result.msg == f"checking .gcda under {cov} failed: find: '{cov}': Permission denied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_fails_when_a_counter_survives_the_removal(tmp_path, path):
+    # An `rm` that fails and deletes nothing: `-exec rm -f {} \;` hides its
+    # status, so only the check can see the counter that is still there.
+    bin_dir = _fake_bin(tmp_path, "rm", "exit 1")
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    survivor = cov / "a.gcda"
+    survivor.write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, _ShellHost(bin_dir=bin_dir), path)
+    assert survivor.exists()
+    assert result.status is Status.Error, result
+    assert result.msg == f"deleting .gcda under {cov} left 1 file(s): {survivor}"
+
+
+@pytest.mark.asyncio
+async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_path):
+    # A find that only works elevated and logs each call: the elevated reset
+    # passes only if the check ran elevated too.
+    real_find = shutil.which("find")
+    assert real_find is not None
+    log = tmp_path / "find.log"
+    bin_dir = _fake_find(
+        tmp_path,
+        f'echo "${_ELEVATED_MARK} $*" >> {shlex.quote(str(log))}\n'
+        f'[ "${_ELEVATED_MARK}" = 1 ] || {{ echo "find: not elevated" >&2; exit 1; }}\n'
+        f'exec {real_find} "$@"',
+    )
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    (cov / "a.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await sudo_gcda_delete(p, _ShellHost(bin_dir=bin_dir))
+    assert result.status is Status.Success, result.msg
+    calls = log.read_text().splitlines()
+    assert len(calls) == 2
+    assert calls[0].startswith("1 ")  # the removal ran elevated
+    assert "-exec rm -f {} ;" in calls[0]
+    assert calls[1].startswith("1 ")  # and so did its check
+    assert calls[1].endswith("-print")
+
+
+# What sudo prints before it execs the command lands in the same stream: a
+# warning, and the answered prompt, which has no trailing newline when the
+# session's stdin is a pipe (LocalHost).
+_SUDO_NOISE = (
+    "sudo: unable to resolve host h1: Name or service not known\notto-sudo-AAAAAAAAAAAAAAAA:"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_ignores_what_the_session_printed_before_the_check_ran(tmp_path, path):
+    host = _ShellHost(noise=_SUDO_NOISE)
+    # A clean cov_dir is clean, and an absent one is absent, noise or not.
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    (cov / "a.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await _reset(p, host, path)).status is Status.Success
+    assert not (cov / "a.gcda").exists()
+    absent = _DummyShellProduct(
+        artifact=Path("/b/app"), name="app", cov_dir=str(tmp_path / "never-created")
+    )
+    assert (await _reset(absent, host, path)).status is Status.Success
+    # A real survivor is still named, and the noise is never counted as one.
+    survivor = cov / "b.gcda"
+    survivor.write_bytes(b"")
+    noisy_rm = _ShellHost(bin_dir=_fake_bin(tmp_path, "rm", "exit 1"), noise=_SUDO_NOISE)
+    result = await _reset(p, noisy_rm, path)
+    assert result.msg == f"deleting .gcda under {cov} left 1 file(s): {survivor}"
+
+
 @pytest.mark.asyncio
 async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
-    from otto.host.product import gcda_delete_cmd
+    from otto.host.product import classify_gcda_check, gcda_check_cmd, gcda_delete_cmd
 
     async def sh(line):
         proc = await asyncio.create_subprocess_shell(
@@ -831,6 +1058,17 @@ async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
     rc, out = await sh(gcda_delete_cmd(str(cov)))
     assert (rc, out) == (0, "")
     assert sorted(p.name for p in cov.rglob("*") if p.is_file()) == ["a.gcno"]
+    # POSIX only: `-delete` is an extension BusyBox builds compile out (#842).
+    assert "-delete" not in gcda_delete_cmd(str(cov))
+
+    # The real-GNU leg of the rendering pin: an absent cov_dir, however its
+    # name must be quoted, is recognised as absent from find's own line.
+    for name in ("plain", "with space", "it's gone", "back\\slash"):
+        absent = str(tmp_path / "absent" / name)
+        rc, out = await sh(gcda_check_cmd(absent))
+        status = Status.Success if rc == 0 else Status.Failed
+        cmd = CommandResult(status, value=out, command="find", retcode=rc)
+        assert classify_gcda_check(absent, cmd) == "absent", (name, rc, out)
 
 
 @pytest.mark.asyncio

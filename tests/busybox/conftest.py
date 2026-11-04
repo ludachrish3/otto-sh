@@ -60,6 +60,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.busybox import require_interpreter
+from tests.busybox._rows import binary_for
 
 _BUSYBOX_ROOT = Path(__file__).parent
 
@@ -123,3 +124,18 @@ def pytest_collection_modifyitems(config, items):
 # collects items and executes none) fired it too (issue #264). The one-probe
 # bound now lives in ``tests._fixtures.busybox.busybox_binary``, the consumer,
 # where it fires exactly when an artifact is about to be fetched.
+
+
+@pytest.fixture
+def applet_dir(tmp_path):
+    """Build a PATH dir of applet symlinks to one row's binary: ``applet_dir(release, names)``."""
+
+    def _make(release, applets):
+        binary = binary_for(release)
+        d = tmp_path / f"applets-{release.version}"
+        d.mkdir()
+        for name in applets:
+            (d / name).symlink_to(binary)
+        return d
+
+    return _make

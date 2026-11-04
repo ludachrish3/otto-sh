@@ -30,12 +30,8 @@ spelling) is substantiated instead by the live bed's real
 `md5sum` round trips over the matrix.
 """
 
-import functools
-import re
-import shutil
 import socket
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -44,12 +40,8 @@ from otto.host.daemon import PS_FAILED
 from otto.link import check_live
 from otto.tunnel.check_probes import SWEEP_COMMAND
 from otto.utils import wait_for
-from tests._fixtures.busybox import (
-    BUSYBOX_MATRIX,
-    busybox_binary,
-    probe_banner,
-)
 from tests._fixtures.ps_scans import PS_SCAN_CASES, assert_the_scan_reads_the_argv_whole, run_scan
+from tests.busybox._rows import ROWS, SYSTEM_BUSYBOX, binary_for, run_via_dash, version_tuple
 
 # BusyBox switched `timeout` from `-t SECS PROG` to the coreutils-compatible
 # `SECS PROG` in 1.30. Pinned here as the matrix's discriminating transition:
@@ -66,72 +58,6 @@ _COREUTILS_STYLE_FROM = (1, 30)
 _BASE64_APPLET_FROM = (1, 21)
 
 
-# The distro's own BusyBox — the sixth matrix row, and the only one that is a
-# real DISTRO BUILD with distro config rather than an upstream defconfig
-# prebuild. That is exactly the spec's point that behaviour is a function of
-# version AND build config, so it is the row most able to contradict the other
-# five. It is deliberately not a `busybox_binary()` artifact: there is nothing
-# to fetch, nothing to pin (its bytes are whatever the distro shipped, and its
-# updates are the distro's), and it needs no interpreter because it is built
-# for this machine. Resolved through `which` rather than hardcoded, so the row
-# exercises the binary a shell on this host would actually reach.
-_SYSTEM_BUSYBOX = shutil.which("busybox")
-
-
-@functools.cache
-def _banner_version(path: Path) -> str:
-    """The version a local build REPORTS. Read, never declared.
-
-    Cached because it costs a process and the answer cannot change inside a
-    session, and read lazily rather than at import: this module is collected
-    (and then deselected) by every catch-all lane, and an import-time
-    subprocess would be paid by all of them.
-    """
-    banner = probe_banner(path)
-    # Identity before form. `vX.Y.Z` is a shape a great many binaries print, so
-    # matching it alone would let any `busybox` on PATH — a wrapper script, a
-    # toybox symlink, something a distro renamed — feed a row of the measured
-    # table that six product decisions in `src/otto/host/userland.py` rest on.
-    # Only bites the `[system]` row: the other five are hash-pinned artifacts.
-    if "BusyBox" not in banner:
-        pytest.fail(
-            f"{path} announced {banner!r}, which is not a BusyBox banner — this "
-            f"row measures applet behaviour and attributes it to BusyBox"
-        )
-    match = re.search(r"\bv(\d+\.\d+\.\d+)", banner)
-    if not match:
-        pytest.fail(f"{path} announced {banner!r}, which carries no vX.Y.Z version")
-    return match.group(1)
-
-
-@dataclass(frozen=True)
-class _LocalBuild:
-    """A matrix row backed by a local binary, quacking like a BusyBoxRelease."""
-
-    path: Path
-
-    @property
-    def version(self) -> str:
-        return _banner_version(self.path)
-
-
-_ROWS = [pytest.param(release, id=release.version) for release in BUSYBOX_MATRIX] + [
-    pytest.param(
-        _LocalBuild(Path(_SYSTEM_BUSYBOX)) if _SYSTEM_BUSYBOX else None,
-        id="system",
-        marks=pytest.mark.skipif(
-            _SYSTEM_BUSYBOX is None,
-            reason=(
-                "no `busybox` on PATH: this row measures the DISTRO's own build "
-                "(Ubuntu ships it in `busybox-static`, which is not installed by "
-                "default), so it is skipped rather than failed — unlike the five "
-                "pinned artifacts, nothing can fetch it"
-            ),
-        ),
-    )
-]
-
-
 @pytest.mark.busybox
 def test_the_system_busybox_is_the_standalone_counterexample():
     """The only `True` in the standalone-shell story, pinned rather than prose.
@@ -144,7 +70,7 @@ def test_the_system_busybox_is_the_standalone_counterexample():
     `CONFIG_FEATURE_SH_STANDALONE`, every docstring citing this contrast —
     including the reason this module drives applets from dash rather than
     `busybox sh` — would go false at once, and nothing here would notice.
-    This is that assertion, on the same `system` build `_ROWS` already
+    This is that assertion, on the same `system` build `ROWS` already
     exercises, skipped the same way when nothing is installed to test.
 
     Invokes `busybox sh` directly, the ONE construction this module's own
@@ -157,14 +83,14 @@ def test_the_system_busybox_is_the_standalone_counterexample():
     from a directory that happens to contain a file named `ls` would pass for
     the wrong reason regardless of which shell is running it.
     """
-    if _SYSTEM_BUSYBOX is None:
+    if SYSTEM_BUSYBOX is None:
         pytest.skip(
             "no `busybox` on PATH: this pins the DISTRO's own build, same as "
             "the `system` row above — nothing can fetch it"
         )
     result = subprocess.run(
         [
-            _SYSTEM_BUSYBOX,
+            SYSTEM_BUSYBOX,
             "sh",
             "-c",
             (
@@ -192,51 +118,15 @@ def test_the_system_busybox_is_the_standalone_counterexample():
     )
 
 
-def _binary_for(release) -> Path:
-    """The artifact under test: fetched for a pinned row, local for the system."""
-    return release.path if isinstance(release, _LocalBuild) else busybox_binary(release)
-
-
-def _version_tuple(version: str) -> tuple:
-    return tuple(int(p) for p in version.split("."))
-
-
-def _run_via_dash(applets: Path, script: str) -> subprocess.CompletedProcess:
-    """Run *script* under dash with PATH scoped to the applet shims."""
-    return subprocess.run(
-        ["/bin/sh", "-c", script],
-        env={"PATH": str(applets)},
-        capture_output=True,
-        text=True,
-        timeout=60,
-        # Every caller here is MEASURING an exit status, so a raise would
-        # destroy the answer rather than report a problem.
-        check=False,
-    )
-
-
-@pytest.fixture
-def applet_dir(tmp_path):
-    def _make(release, applets):
-        binary = _binary_for(release)
-        d = tmp_path / f"applets-{release.version}"
-        d.mkdir()
-        for name in applets:
-            (d / name).symlink_to(binary)
-        return d
-
-    return _make
-
-
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_the_timeout_convention_matches_the_version(release, applet_dir):
     """`-t SECS` before 1.30, bare `SECS` from 1.30 — measured, not assumed."""
     d = applet_dir(release, ["timeout", "true"])
-    coreutils = _run_via_dash(d, "timeout 1 true")
-    dash_t = _run_via_dash(d, "timeout -t 1 true")
+    coreutils = run_via_dash(d, "timeout 1 true")
+    dash_t = run_via_dash(d, "timeout -t 1 true")
 
-    expects_coreutils = _version_tuple(release.version) >= _COREUTILS_STYLE_FROM
+    expects_coreutils = version_tuple(release.version) >= _COREUTILS_STYLE_FROM
     if expects_coreutils:
         assert coreutils.returncode == 0, (
             f"BusyBox {release.version} rejected coreutils-style `timeout 1 true`: "
@@ -264,7 +154,7 @@ def test_the_timeout_convention_matches_the_version(release, applet_dir):
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_which_decode_spelling_base64_accepts(release, applet_dir):
     """The `shell` transfer needs a decode spelling that works on the target.
 
@@ -278,10 +168,10 @@ def test_which_decode_spelling_base64_accepts(release, applet_dir):
     was built for. Neither may pass quietly.
     """
     d = applet_dir(release, ["base64", "echo"])
-    short = _run_via_dash(d, "echo aGk= | base64 -d")
-    gnu_long = _run_via_dash(d, "echo aGk= | base64 --decode")
+    short = run_via_dash(d, "echo aGk= | base64 -d")
+    gnu_long = run_via_dash(d, "echo aGk= | base64 --decode")
 
-    if _version_tuple(release.version) >= _BASE64_APPLET_FROM:
+    if version_tuple(release.version) >= _BASE64_APPLET_FROM:
         # The DECODED VALUE, not the exit status: an applet that echoed its
         # input back, or printed nothing at all, would exit 0 and corrupt a
         # transfer silently. `hi` is what `aGk=` must become.
@@ -327,7 +217,7 @@ _SIZE_PROBE_BYTES = 12345
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_which_stat_spelling_reports_a_files_size(release, applet_dir, tmp_path):
     """Which spelling yields a file's size in bytes, per version.
 
@@ -340,10 +230,10 @@ def test_which_stat_spelling_reports_a_files_size(release, applet_dir, tmp_path)
     payload.write_bytes(b"x" * _SIZE_PROBE_BYTES)
     size = str(_SIZE_PROBE_BYTES)
 
-    short = _run_via_dash(d, f"{_STAT_SHORT_FORMAT} {payload}")
-    gnu_long = _run_via_dash(d, f"{_STAT_GNU_LONG_FORMAT} {payload}")
-    redirected = _run_via_dash(d, f"wc -c < {payload}")
-    with_operand = _run_via_dash(d, f"wc -c {payload}")
+    short = run_via_dash(d, f"{_STAT_SHORT_FORMAT} {payload}")
+    gnu_long = run_via_dash(d, f"{_STAT_GNU_LONG_FORMAT} {payload}")
+    redirected = run_via_dash(d, f"wc -c < {payload}")
+    with_operand = run_via_dash(d, f"wc -c {payload}")
 
     assert short.stdout.strip() == size, (
         f"BusyBox {release.version} `{_STAT_SHORT_FORMAT}` gave "
@@ -389,7 +279,7 @@ _STAT_GET_FORMAT = "stat -L -c '%s %F'"
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_the_get_prefetch_spelling_reports_the_targets_size_and_type(release, applet_dir, tmp_path):
     """`stat -L -c '%s %F'` answers "SIZE TYPE" for what `< src` will send, per row.
 
@@ -407,10 +297,10 @@ def test_the_get_prefetch_spelling_reports_the_targets_size_and_type(release, ap
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
 
-    via_link = _run_via_dash(d, f"{_STAT_GET_FORMAT} {link}")
-    bare = _run_via_dash(d, f"{_STAT_SHORT_FORMAT} {link}")
-    empty_answer = _run_via_dash(d, f"{_STAT_GET_FORMAT} {empty}")
-    device = _run_via_dash(d, f"{_STAT_GET_FORMAT} /dev/null")
+    via_link = run_via_dash(d, f"{_STAT_GET_FORMAT} {link}")
+    bare = run_via_dash(d, f"{_STAT_SHORT_FORMAT} {link}")
+    empty_answer = run_via_dash(d, f"{_STAT_GET_FORMAT} {empty}")
+    device = run_via_dash(d, f"{_STAT_GET_FORMAT} /dev/null")
 
     assert via_link.stdout.strip() == f"{_SIZE_PROBE_BYTES} regular file", (
         f"BusyBox {release.version} `{_STAT_GET_FORMAT}` gave {via_link.stdout.strip()!r} "
@@ -432,7 +322,7 @@ def test_the_get_prefetch_spelling_reports_the_targets_size_and_type(release, ap
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 @pytest.mark.parametrize("with_stat", [True, False], ids=["stat", "ls-fallback"])
 def test_the_staging_root_probe_reads_type_owner_and_mode(release, applet_dir, tmp_path, with_stat):
     """otto's private-root probe, run by this row's applets, reads back right.
@@ -454,7 +344,7 @@ def test_the_staging_root_probe_reads_type_owner_and_mode(release, applet_dir, t
     link.symlink_to(tmp_path)
     paths = [root, link, tmp_path / "absent"]
 
-    done = _run_via_dash(d, _ownership_command(paths, root))
+    done = run_via_dash(d, _ownership_command(paths, root))
     probe = _read_ownership(done.stdout, paths)
 
     assert probe is not None, (
@@ -482,7 +372,7 @@ _NC_DIFFERENTIAL = '[ "$(nc 2>&1 </dev/null)" = "$(nc -N 2>&1 </dev/null)" ]'
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_no_row_accepts_the_dash_n_the_nc_backend_once_sent_with(release, applet_dir):
     """The `nc` backend's GET used to ask the device to send with `nc -N`. No row can.
 
@@ -516,10 +406,10 @@ def test_no_row_accepts_the_dash_n_the_nc_backend_once_sent_with(release, applet
     """
     d = applet_dir(release, ["nc"])
 
-    bare = _run_via_dash(d, "nc </dev/null")
-    with_n = _run_via_dash(d, "nc -N </dev/null")
-    differential = _run_via_dash(d, _NC_DIFFERENTIAL)
-    control = _run_via_dash(d, _NC_DIFFERENTIAL.replace("nc -N 2>&1", "nc -Q 2>&1"))
+    bare = run_via_dash(d, "nc </dev/null")
+    with_n = run_via_dash(d, "nc -N </dev/null")
+    differential = run_via_dash(d, _NC_DIFFERENTIAL)
+    control = run_via_dash(d, _NC_DIFFERENTIAL.replace("nc -N 2>&1", "nc -Q 2>&1"))
 
     assert differential.returncode != 0, (
         f"BusyBox {release.version} answered `nc` and `nc -N` identically, so this "
@@ -793,7 +683,7 @@ def _wait_for_exit(proc, release, stderr_path: Path) -> int:
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_the_listener_accepts_dash_l_dash_p_and_exits_on_the_peers_close(release, tmp_path):
     """`-l -p PORT` binds, receives, and exits rc 0 at the peer's close -- per row.
 
@@ -810,11 +700,11 @@ def test_the_listener_accepts_dash_l_dash_p_and_exits_on_the_peers_close(release
     harness, and neither half of that is a departure from the module
     docstring's rule. The rule forbids resolving an applet through a SHELL
     whose resolution is a build-config property; naming the applet as argv[1]
-    of the binary asks no resolution question at all. And `_run_via_dash` is a
+    of the binary asks no resolution question at all. And `run_via_dash` is a
     blocking `subprocess.run`, which cannot express a process that has to be
     ALIVE while this test connects to it.
     """
-    binary = _binary_for(release)
+    binary = binary_for(release)
     received = tmp_path / "received.bin"
     errors = tmp_path / "listener.err"
     port = _free_port()
@@ -858,7 +748,7 @@ def test_the_listener_accepts_dash_l_dash_p_and_exits_on_the_peers_close(release
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("release", ROWS)
 def test_a_dash_n_less_sender_is_terminated_by_the_receivers_close(release, tmp_path):
     """Reading exactly N bytes and closing ends `nc HOST PORT < file` -- per row.
 
@@ -879,7 +769,7 @@ def test_a_dash_n_less_sender_is_terminated_by_the_receivers_close(release, tmp_
     transfer, and reading exactly `len(_PAYLOAD)` and closing is the same loop
     `_get_files_nc` runs against `sizes[src]`.
     """
-    binary = _binary_for(release)
+    binary = binary_for(release)
     source = tmp_path / "payload.bin"
     source.write_bytes(_PAYLOAD)
     errors = tmp_path / "sender.err"
@@ -939,7 +829,7 @@ def test_a_dash_n_less_sender_is_terminated_by_the_receivers_close(release, tmp_
 # pinned rows accept the separate `-eo pid= -eo etime= -eo args=` fields, so
 # they are the SUPPORTED builds: the fallback leg must find a long argv whole.
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS[:-1])
+@pytest.mark.parametrize("release", ROWS[:-1])
 @pytest.mark.parametrize("case", list(PS_SCAN_CASES.values()), ids=list(PS_SCAN_CASES))
 def test_every_ps_scan_reads_a_long_argv_whole(release, case, applet_dir):
     """A BusyBox `ps` that rejects `-ww` still lists the planted daemon whole."""
@@ -948,7 +838,7 @@ def test_every_ps_scan_reads_a_long_argv_whole(release, case, applet_dir):
 
 
 @pytest.mark.busybox
-@pytest.mark.parametrize("release", _ROWS[-1:])
+@pytest.mark.parametrize("release", ROWS[-1:])
 def test_an_unsupported_ps_marks_both_sweeps_failed(release, applet_dir):
     """A BusyBox `ps` that rejects the fields too (the distro build) makes both sweeps say so.
 

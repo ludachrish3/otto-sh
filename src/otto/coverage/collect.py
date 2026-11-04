@@ -136,10 +136,10 @@ async def clean_coverage(
     from ..declared import current_projects
     from ..errors import is_containable
     from ..fleet import all_hosts, do_for_all_hosts
+    from ..host.product import instrumented_products
     from ..result import Result
     from ..utils import Status
     from .errors import NoCoverageHostsError
-    from .instrumentation import instrumented_products
     from .reports import CleanReport
 
     if projects is None:
@@ -237,9 +237,9 @@ async def _reset_products(
     the host does not carry instrumented is reported failed.
     """
     from .. import layout
+    from ..host.product import instrumented_products
     from ..result import Result
     from ..utils import Status
-    from .instrumentation import instrumented_products
 
     wanted = None if named is None else named.get(host.id, set())
     results = {}
@@ -356,12 +356,12 @@ async def collect_coverage(
     from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
+    from ..host.product import instrumented_products
     from .capture import gitio
     from .capture.produce import ProduceResult, ProductCapture, produce_captures
     from .errors import CoverageCaptureError
     from .fetcher.embedded import collect_embedded_coverage
     from .fetcher.remote import GcdaFetcher
-    from .instrumentation import instrumented_products
     from .tree import ProductKey
 
     if projects is None:

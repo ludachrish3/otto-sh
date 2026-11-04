@@ -90,11 +90,6 @@ _VALID = (
 _MODULE_VERBS = ("load", "unload", "lsmod")
 
 
-def _sudo_sh(script: str) -> str:
-    """Wrap *script* as one sudo-able command (redirections included)."""
-    return f"sh -c {shlex.quote(script)}"
-
-
 @dataclass
 class KmodProduct(ShellProduct):
     """A ``kind = "kmod"`` entry's runtime form."""
@@ -364,8 +359,9 @@ class KmodProduct(ShellProduct):
         (:mod:`otto.coverage.fetcher.remote`) treats it as a dry run rather
         than a failure.
         """
-        needs_sh = any(ch in script for ch in "><|;")
-        result = await host.run(_sudo_sh(script) if needs_sh else script, sudo=True)
+        from .privilege import run_sh_elevated  # function-local: off the host import path
+
+        result = await run_sh_elevated(host, script)
         if result.status is Status.NotRun:
             return Result(Status.NotRun)
         if result.is_ok:
@@ -406,7 +402,7 @@ class KmodProduct(ShellProduct):
         # otherwise exit 0 via the trailing `while` loop's own status —
         # nothing to iterate is not the same as "reached the path". Paths are
         # individually quoted (path_operand); the whole script is wrapped once
-        # more by _run_sudo when it needs `sh -c`.
+        # more in `sh -c` by run_sh_elevated (through _run_sudo).
         gcov_root = path_operand(KERNEL_GCOV_DEBUGFS)
         rel_q = path_operand(rel)
         dest = path_operand(cov_dir)

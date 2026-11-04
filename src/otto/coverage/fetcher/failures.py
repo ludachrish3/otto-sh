@@ -134,7 +134,7 @@ async def fetch_from_hosts(
 
 def list_products(host: Any, failures: FetchFailures) -> "list[Product] | None":
     """Return *host*'s instrumented products; ``None`` when they cannot be listed (recorded)."""
-    from ..instrumentation import instrumented_products
+    from ...host.product import instrumented_products
 
     try:
         return instrumented_products(host)

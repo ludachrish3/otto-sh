@@ -15,6 +15,7 @@ from otto.host.kmod_kind import KMODCOV_SYSFS_ROOT, KmodProduct
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
+from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
 
 
 def _entry(**params):
@@ -56,14 +57,13 @@ class _KmodHost(SimpleNamespace):
     async def run(self, cmd, **kw):
         self.run_calls.append((cmd, kw))
         retcode = 0 if self._run_status is Status.Success else 1
-        result = CommandResult(
-            command=cmd, value=self._run_value, status=self._run_status, retcode=retcode
-        )
+        value = framed(cmd, self._run_value)
+        result = CommandResult(command=cmd, value=value, status=self._run_status, retcode=retcode)
         return Results.collect([result])
 
     async def exec(self, cmd, **kw):
         self.exec_calls.append((cmd, kw))
-        return CommandResult(self._run_status, value="", command=cmd, retcode=0)
+        return CommandResult(self._run_status, value=framed(cmd, ""), command=cmd, retcode=0)
 
 
 def _build(host=None, **params) -> KmodProduct:
@@ -120,26 +120,40 @@ def _expected_module_write_cmd(module_name: str, action: str) -> str:
     return f"sh -c {shlex.quote(script)}"
 
 
-def _expected_kernel_reset_cmds(gcov_path: str, cov_dir: str) -> tuple[str, str]:
-    """Independently reconstruct the two commands the kernel ``reset_coverage`` branch emits."""
+def _expected_kernel_reset_cmds(gcov_path: str, cov_dir: str) -> list[str]:
+    """Independently reconstruct the three commands the kernel ``reset_coverage`` branch emits.
+
+    The zeroing script, then the shared elevated delete and its check.
+    """
     path_q = shlex.quote(gcov_path)
     reset_script = (
         f'test -d {path_q} && find {path_q} -name "*.gcda" -type f | '
         'while read -r f; do echo 1 > "$f" || exit 1; done'
     )
     reset_cmd = f"sh -c {shlex.quote(reset_script)}"
-    return reset_cmd, _expected_sudo_delete_cmd(cov_dir)
+    return [reset_cmd, _expected_sudo_delete_cmd(cov_dir), _expected_sudo_check_cmd(cov_dir)]
 
 
 def _expected_delete_line(cov_dir: str) -> str:
     """Independently reconstruct the guarded delete line: a missing cov_dir is a no-op."""
     dest_q = shlex.quote(cov_dir)
-    return f"! test -d {dest_q} || find {dest_q} -name '*.gcda' -type f -delete"
+    return f"! test -d {dest_q} || find {dest_q} -name '*.gcda' -type f -exec rm -f {{}} \\;"
+
+
+def _expected_check_line(cov_dir: str) -> str:
+    """Independently reconstruct the reset's files-only check: its marker, then find, unguarded."""
+    find = f"LC_ALL=C find {shlex.quote(cov_dir)} -name '*.gcda' -type f -print 2>&1"
+    return CHECK_PREFIX + find
 
 
 def _expected_sudo_delete_cmd(cov_dir: str) -> str:
     """The guarded delete line, wrapped whole in ``sh -c`` so sudo elevates all of it."""
     return f"sh -c {shlex.quote(_expected_delete_line(cov_dir))}"
+
+
+def _expected_sudo_check_cmd(cov_dir: str) -> str:
+    """The check line, elevated exactly as the delete it verifies."""
+    return f"sh -c {shlex.quote(_expected_check_line(cov_dir))}"
 
 
 # ── builder ──────────────────────────────────────────────────────────────────
@@ -411,8 +425,10 @@ async def test_kmod_none_method_inherits_the_default_hooks():
     assert host.run_calls == []
     assert host.exec_calls == []
     await p.reset_coverage(host)
-    expected = (_expected_delete_line("/var/cov/demo"), {"timeout": 60})
-    assert host.exec_calls == [expected]
+    assert host.exec_calls == [
+        (_expected_delete_line("/var/cov/demo"), {"timeout": 60}),
+        (_expected_check_line("/var/cov/demo"), {"timeout": 60}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -549,10 +565,11 @@ async def test_kmod_module_reset_writes_reset_then_deletes_under_sudo():
     host = _KmodHost(loaded=["otto_kmod_demo"])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     assert (await p.reset_coverage(host)).is_ok
-    cmds = [c for c, _ in host.run_calls]
-    assert cmds[0] == _expected_module_write_cmd("otto_kmod_demo", "reset")
-    assert cmds[1] == _expected_sudo_delete_cmd("/var/cov/demo")
-    assert all(kw == {"sudo": True} for _, kw in host.run_calls)
+    assert host.run_calls == [
+        (_expected_module_write_cmd("otto_kmod_demo", "reset"), {"sudo": True}),
+        (_expected_sudo_delete_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
+        (_expected_sudo_check_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
+    ]
     assert host.exec_calls == []
 
 
@@ -588,7 +605,10 @@ async def test_kmod_module_reset_skips_the_sysfs_write_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     await p.reset_coverage(host)
-    assert [c for c, _ in host.run_calls] == [_expected_sudo_delete_cmd("/var/cov/demo")]
+    assert [c for c, _ in host.run_calls] == [
+        _expected_sudo_delete_cmd("/var/cov/demo"),
+        _expected_sudo_check_cmd("/var/cov/demo"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -710,7 +730,7 @@ async def test_kmod_kernel_reset_emits_the_exact_quoted_scripts_never_the_global
     p = _build(host, coverage="kernel", gcov_path=gcov_path, cov_dir=cov_dir)
     assert (await p.reset_coverage(host)).is_ok
     cmds = [c for c, _ in host.run_calls]
-    assert cmds == list(_expected_kernel_reset_cmds(gcov_path, cov_dir))
+    assert cmds == _expected_kernel_reset_cmds(gcov_path, cov_dir)
     assert "/sys/kernel/debug/gcov/reset" not in cmds[0]
 
 
@@ -734,7 +754,8 @@ async def test_kmod_kernel_reset_propagates_a_dry_run_decline_but_still_deletes(
     result = await p.reset_coverage(host)
     assert result.status is Status.NotRun
     cmds = [c for c, _ in host.run_calls]
-    assert cmds == list(_expected_kernel_reset_cmds(gcov_path, cov_dir))
+    # The declined delete ends the reset: no check follows a decline.
+    assert cmds == _expected_kernel_reset_cmds(gcov_path, cov_dir)[:2]
 
 
 @pytest.mark.asyncio

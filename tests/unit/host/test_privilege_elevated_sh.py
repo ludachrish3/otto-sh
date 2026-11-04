@@ -1,0 +1,111 @@
+"""``run_sh_elevated``: the one core that wraps a script in ``sh -c`` and runs it elevated.
+
+sudo takes an argv tail, so a script with a redirection, a pipe or a ``||`` must
+reach it whole, inside ``sh -c``. Every elevated coverage script goes through
+this one function, so the wrapping is decided once.
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from otto.declared import DeclaredEntry
+from otto.host import kmod_kind, privilege
+from otto.host import product as product_mod
+from otto.host.product import ShellProduct, gcda_check_cmd, gcda_delete_cmd, sudo_gcda_delete
+from otto.registry import resolved
+from otto.result import CommandResult, Result, Results
+from otto.utils import Status
+from tests.unit.host._gcda_frame import framed
+
+
+class _RunHost:
+    """Records ``run(cmd, **kw)`` and answers one successful command."""
+
+    def __init__(self):
+        self.id = "h1"
+        self.run_calls: list[tuple[str, dict]] = []
+
+    async def run(self, cmd, **kwargs):
+        self.run_calls.append((cmd, kwargs))
+        return Results.collect([CommandResult(Status.Success, value="", command=cmd, retcode=0)])
+
+
+class _DummyShellProduct(ShellProduct):
+    async def install(self, host):
+        return Result(Status.Success)
+
+    async def uninstall(self, host):
+        return Result(Status.Success)
+
+    async def is_installed(self, host):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_run_sh_elevated_wraps_once_and_runs_through_sudo():
+    host = _RunHost()
+    result = await privilege.run_sh_elevated(host, "echo 1 > /sys/x")
+    assert result.is_ok
+    assert host.run_calls == [("sh -c 'echo 1 > /sys/x'", {"sudo": True})]
+
+
+@pytest.mark.asyncio
+async def test_run_sh_elevated_passes_timeout_only_when_given():
+    host = _RunHost()
+    await privilege.run_sh_elevated(host, "true", timeout=60)
+    assert host.run_calls == [("sh -c true", {"sudo": True, "timeout": 60})]
+
+
+def _kmod_product() -> kmod_kind.KmodProduct:
+    host = SimpleNamespace(
+        id="h1",
+        default_dest_dir=Path(),
+        load=AsyncMock(),
+        unload=AsyncMock(),
+        lsmod=AsyncMock(),
+        dev_tools=[],
+        products=[],
+    )
+    entry = DeclaredEntry(
+        name="demo",
+        kind="kmod",
+        seam="products",
+        owner="r",
+        base_dir=Path("/project"),
+        match={},
+        params={"artifact": "build/demo/otto_kmod_demo.ko"},
+    )
+    return resolved(product_mod.PRODUCT_KINDS.get("kmod").factory)(entry, host)
+
+
+@pytest.mark.asyncio
+async def test_every_elevated_coverage_caller_goes_through_the_core(monkeypatch):
+    seen: list[tuple[object, str, dict]] = []
+
+    async def _recorder(host, script, **kwargs):
+        seen.append((host, script, kwargs))
+        value = framed(script, "")
+        return Results.collect(
+            [CommandResult(Status.Success, value=value, command=f"sh -c {script}", retcode=0)]
+        )
+
+    monkeypatch.setattr(privilege, "run_sh_elevated", _recorder)
+    host = _RunHost()
+
+    shell = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    assert (await sudo_gcda_delete(shell, host)).is_ok
+    assert (await _kmod_product()._run_sudo(host, "echo 1 > /x")).is_ok
+
+    scripts = [script for _, script, _ in seen]
+    # The reset sends its removal and its check, both through the core.
+    assert scripts == [
+        gcda_delete_cmd("/var/cov/app"),
+        gcda_check_cmd("/var/cov/app"),
+        "echo 1 > /x",
+    ]
+    assert all(h is host for h, _, _ in seen)
+    # Nothing bypassed the core: the host's own run() was never reached.
+    assert host.run_calls == []

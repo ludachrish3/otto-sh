@@ -27,12 +27,12 @@ deliberately **not** supported.
 """
 
 import logging
-import shlex
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeIs, override
 
@@ -52,6 +52,7 @@ from ..utils import Status
 from .log_haul import haul_globs
 
 if TYPE_CHECKING:
+    from ..result import CommandResult
     from .file_ops import PosixFileOps
     from .host import Host
 
@@ -519,19 +520,21 @@ class Product(ABC):
     async def reset_coverage(self, host: "Host") -> Result:
         """Zero this product's counters on *host*.
 
-        Default: delete every ``.gcda`` under :attr:`cov_dir` — the pre-run
-        ``--cov-clean``, the post-fetch clean and ``otto cov clean`` all come
-        through here. A :attr:`cov_dir` that does not exist yet has nothing
-        to clear and succeeds (see :func:`~otto.host.product.gcda_delete_cmd`). A kind whose
-        counters also live elsewhere overrides this to zero them first, then
-        awaits this default to finish.
+        Default: delete every ``.gcda`` under :attr:`cov_dir`, then check that
+        none is left — the pre-run ``--cov-clean``, the post-fetch clean and
+        ``otto cov clean`` all come through here. A :attr:`cov_dir` that does
+        not exist yet has nothing to clear and succeeds (see
+        :func:`~otto.host.product.gcda_delete_cmd`); a counter that survives
+        the removal, or a check that fails, is an Error naming it
+        (:func:`~otto.host.product.gcda_check_cmd`). A kind whose counters
+        also live elsewhere overrides this to zero them first, then awaits
+        this default to finish.
 
         Raises:
             ValueError: :attr:`name` is not a single safe path segment;
                 checked before any command is issued.
         """
-        layout.validate_product_name(self.name)
-        return await host.exec(gcda_delete_cmd(cov_dir_of(self)), timeout=60)
+        return await _clear_gcda(self, host, sudo=False)
 
 
 def cov_dir_of_name(name: str) -> str:
@@ -544,6 +547,16 @@ def cov_dir_of(product: Product) -> str:
     return product.cov_dir or cov_dir_of_name(product.name)
 
 
+def instrumented_products(host: Any) -> list[Product]:
+    """*host*'s products whose build is known to be instrumented.
+
+    ``instrumented() is True`` only: a product that cannot tell (``None``)
+    is not counted. The counter reset, the fetch and the cleanup sweep all
+    ask this one predicate.
+    """
+    return [p for p in host.products if p.instrumented() is True]
+
+
 def stamp_cov_dir(product: Product) -> None:
     """Make :attr:`Product.cov_dir` concrete (ingest does this once per product)."""
     if product.cov_dir is None:
@@ -553,8 +566,9 @@ def stamp_cov_dir(product: Product) -> None:
 def gcda_find_cmd(cov_dir: str) -> str:
     """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
 
-    The quoting is load-bearing on the reset path (:func:`gcda_delete_cmd`),
-    which appends ``-delete``:
+    The one spelling of "the counters under *cov_dir*": the removal
+    (:func:`gcda_remove_files`) appends ``-exec rm``, the reset's check
+    (:func:`gcda_check_cmd`) appends ``-print``. The quoting is load-bearing:
     an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
     the second of them relative to the shell's cwd.
     """
@@ -563,56 +577,232 @@ def gcda_find_cmd(cov_dir: str) -> str:
     return f"find {path_operand(cov_dir)} -name '*.gcda' -type f"
 
 
-def gcda_delete_cmd(cov_dir: str) -> str:
-    """Delete every ``.gcda`` under *cov_dir*; one shell line, one exit status.
+def gcda_remove_files(cov_dir: str) -> str:
+    r"""Remove every ``.gcda`` regular file under *cov_dir*, one ``rm`` per file.
 
-    ``! test -d <cov_dir> || find <cov_dir> -name '*.gcda' -type f -delete``:
+    ``find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \;``. POSIX
+    ``-exec``, never ``-delete``: that is a GNU/BusyBox extension a BusyBox
+    build may compile out (the distro's 1.36.1 does, #842). ``{} \;``, never
+    ``{} +``: BusyBox 1.36.1's ``+`` ignores ``ARG_MAX``, passes a fraction of
+    a large tree's paths and still exits 0 (measured; see the 2026-11-04
+    coverage and docker bed batch spec). ``\;`` does not carry ``rm``'s
+    status, so a zero exit proves nothing: every caller verifies afterwards
+    (:func:`gcda_check_cmd`).
+    """
+    return f"{gcda_find_cmd(cov_dir)} -exec rm -f {{}} \\;"
+
+
+def gcda_delete_cmd(cov_dir: str) -> str:
+    r"""Build the counter reset's removal line: :func:`gcda_remove_files`, guarded.
+
+    ``! test -d <cov_dir> || find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \;``:
     a directory that does not exist yet has nothing to clear and exits 0 —
     the default ``/tmp/<name>`` is gone after a reboot, and gcov only creates
-    it when the product first exits. A directory that is there gets
-    ``find``'s own exit status, so a delete that fails (permission denied)
-    is still a failure. The line uses ``!`` and ``||``, so it needs a shell;
-    an elevated caller must wrap it whole (:func:`sudo_gcda_delete`).
+    it when the product first exits. A ``find`` that cannot start (a
+    permission error on *cov_dir*) still exits non-zero; a counter that
+    ``rm`` could not remove does not, which is what the reset's check
+    (:func:`gcda_check_cmd`) is for. The line uses ``!`` and ``||``, so it
+    needs a shell; an elevated caller must wrap it whole
+    (:func:`~otto.host.privilege.run_sh_elevated`).
     """
     from .shell_quote import path_operand  # function-local: off the host import path
 
-    return f"! test -d {path_operand(cov_dir)} || {gcda_find_cmd(cov_dir)} -delete"
+    return f"! test -d {path_operand(cov_dir)} || {gcda_remove_files(cov_dir)}"
+
+
+def marker_cmd(mark: str) -> str:
+    r"""Build ``printf '\n%s\n' <mark>``: the line that opens a framed answer.
+
+    A command's output on a host session is one merged stream, and whatever
+    runs before the script (sudo's warnings, its answered prompt, PAM, a
+    login shell) lands in it first. A framed script prints *mark* before its
+    real answer, and :func:`after_marker` discards everything up to it. The
+    leading newline puts a prompt that has no newline of its own (sudo on a
+    LocalHost, whose stdin is a pipe) on a line apart from the answer.
+    """
+    return f"printf '\\n%s\\n' {mark}"
+
+
+def after_marker(value: str, mark: str) -> str | None:
+    """Return what follows the FIRST occurrence of *mark* in *value*; ``None`` if it never appears.
+
+    The occurrence is matched anywhere, never as a whole line: a prompt
+    without a trailing newline can share the marker's line. What precedes it
+    was printed before the script ran, so it is never the script's answer.
+    The reader of what follows classifies it fail-closed.
+    """
+    index = value.find(mark)
+    return None if index < 0 else value[index + len(mark) :]
+
+
+def failure_detail(output: str, retcode: int) -> str:
+    """Render a failed command for a message: its output, or ``exit <rc>, no output``."""
+    return output.strip() or f"exit {retcode}, no output"
+
+
+_GCDA_CHECK_MARK = "otto-gcda-check"
+"""The marker :func:`gcda_check_cmd` prints before ``find``'s answer."""
+
+
+def gcda_check_cmd(cov_dir: str) -> str:
+    r"""Build the reset's postcondition: list the ``.gcda`` files left under *cov_dir*.
+
+    ``printf '\n%s\n' otto-gcda-check; LC_ALL=C find <cov_dir> -name '*.gcda'
+    -type f -print 2>&1``. The marker (:func:`marker_cmd`) frames the answer
+    so what the session printed first is never read as ``find``'s; the exit
+    status is still ``find``'s, the last command. There is no ``! test -d …
+    ||`` guard: ``test -d`` is false for a dir behind an unreadable ancestor
+    too, so a guarded check would report "clean" for a dir nobody could look
+    into. ``find`` itself answers, and :func:`classify_gcda_check` reads it.
+    ``LC_ALL=C`` keeps the "No such file or directory" text that
+    :func:`enoent_for_start` matches.
+    """
+    return f"{marker_cmd(_GCDA_CHECK_MARK)}; LC_ALL=C {gcda_find_cmd(cov_dir)} -print 2>&1"
+
+
+_FIND_ENOENT = re.compile(r"^(?P<prog>\S+): (?P<path>.*): No such file or directory$")
+
+
+def _gnu_c_quoted(path: str) -> str:
+    r"""*path* as GNU findutils quotes it in a C-locale diagnostic: ``'it\'s'``, ``'a\\b'``."""
+    return "'" + path.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def enoent_for_start(line: str, cov_dir: str) -> bool:
+    """Whether *line* is ``find`` saying the start path *cov_dir* itself does not exist.
+
+    The one matcher for "absent", shared by every probe of a ``cov_dir``. It
+    accepts ``<prog>: <path>: No such file or directory`` where ``<prog>``
+    is ``find`` or a path ending ``/find`` (GNU prints its ``argv[0]``), and
+    ``<path>`` is *cov_dir* rendered the way a measured ``find`` renders it:
+    bare (BusyBox) or GNU findutils' C-locale quoting (``_gnu_c_quoted``).
+    A descendant's path, another path, or a path that merely contains the
+    text does not match, and neither does a rendering no measured ``find``
+    produces — that reads as an error, never as absent.
+    """
+    match = _FIND_ENOENT.match(line)
+    if match is None:
+        return False
+    prog = match["prog"]
+    if prog != "find" and not prog.endswith("/find"):
+        return False
+    return match["path"] in (cov_dir, _gnu_c_quoted(cov_dir))
+
+
+@dataclass(frozen=True)
+class GcdaFindError:
+    """A ``find`` over a ``cov_dir`` failed: the tagged answer, never a bare string.
+
+    Tagged so no command output — not even one that prints exactly
+    ``absent`` — can collide with :func:`classify_gcda_check`'s ``"absent"``.
+    """
+
+    detail: str
+    """What ``find`` printed, or ``exit <rc>, no output`` when silent (:func:`failure_detail`)."""
+
+
+def classify_gcda_check(
+    cov_dir: str, cmd: "CommandResult"
+) -> "list[str] | Literal['absent'] | GcdaFindError":
+    """Read the answer to :func:`gcda_check_cmd` for *cov_dir*, fail-closed.
+
+    Only what follows the check's marker (:func:`after_marker`) is read; no
+    marker at all is a :class:`GcdaFindError` carrying the whole output. After
+    it:
+
+    - exit 0: the counters left (empty means clean), provided EVERY line is a
+      path under *cov_dir* (by path component) ending ``.gcda``; any other
+      line is a :class:`GcdaFindError`, never a phantom counter;
+    - non-zero, and exactly one line for which :func:`enoent_for_start`
+      holds: ``"absent"``, nothing to check;
+    - anything else: a :class:`GcdaFindError` carrying ``find``'s output.
+
+    A :class:`~otto.result.NotRunResult` has no output to read: the caller
+    handles a decline before asking.
+    """
+    body = after_marker(cmd.value, _GCDA_CHECK_MARK)
+    if body is None:
+        return GcdaFindError(failure_detail(cmd.value, cmd.retcode))
+    lines = [line for line in body.splitlines() if line]
+    if cmd.retcode == 0 and cmd.is_ok:
+        under = cov_dir.rstrip("/") + "/"
+        if all(line.startswith(under) and line.endswith(".gcda") for line in lines):
+            return lines
+        return GcdaFindError(body.strip())
+    if cmd.retcode != 0 and len(lines) == 1 and enoent_for_start(lines[0], cov_dir):
+        return "absent"
+    return GcdaFindError(failure_detail(body, cmd.retcode))
+
+
+_LEFTOVERS_SHOWN = 3
+"""How many surviving counters a failed reset names."""
 
 
 # Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md
+async def _clear_gcda(product: Product, host: "Host", *, sudo: bool) -> Result:
+    """Reset the counters: remove every ``.gcda`` under the product's ``cov_dir``, then check.
+
+    Validates :attr:`Product.name` first. Runs :func:`gcda_delete_cmd`, then
+    :func:`gcda_check_cmd`, both through the same runner — ``host.exec`` or,
+    with *sudo*, :func:`~otto.host.privilege.run_sh_elevated` — so the check
+    sees what the removal could. A ``--dry-run`` decline of either answers
+    :attr:`~otto.utils.Status.NotRun`, never Error
+    (:doc:`/extend/dry-run-contract`). Success means the removal ran **and**
+    the check found no counter (or no ``cov_dir``); a counter left behind,
+    or a check that failed, is an Error naming it, so stale counts never
+    reach the next collection.
+    """
+    layout.validate_product_name(product.name)
+    cov_dir = cov_dir_of(product)
+
+    async def _run(script: str) -> "CommandResult | None":
+        """*script*'s one command result, or ``None`` when the session declined it."""
+        if sudo:
+            from .privilege import run_sh_elevated  # function-local: off the host import path
+
+            results = await run_sh_elevated(host, script, timeout=60)
+            return None if results.status is Status.NotRun else results.only
+        result = await host.exec(script, timeout=60)
+        return None if result.status is Status.NotRun else result
+
+    removal = await _run(gcda_delete_cmd(cov_dir))
+    if removal is None:
+        return Result(Status.NotRun)
+    # No product name in the messages: every consumer prefixes `<host>/<product>: `.
+    if not removal.is_ok:
+        detail = failure_detail(removal.value, removal.retcode)
+        return Result(Status.Error, msg=f"deleting .gcda under {cov_dir} failed: {detail}")
+    check = await _run(gcda_check_cmd(cov_dir))
+    if check is None:
+        return Result(Status.NotRun)
+    answer = classify_gcda_check(cov_dir, check)
+    if isinstance(answer, GcdaFindError):
+        return Result(Status.Error, msg=f"checking .gcda under {cov_dir} failed: {answer.detail}")
+    if answer == "absent" or not answer:
+        return Result(Status.Success)
+    shown = ", ".join(answer[:_LEFTOVERS_SHOWN])
+    return Result(
+        Status.Error, msg=f"deleting .gcda under {cov_dir} left {len(answer)} file(s): {shown}"
+    )
+
+
 async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
-    """Delete every ``.gcda`` under *product*'s :attr:`~Product.cov_dir`, elevated.
+    """Reset *product*'s counters elevated: ``_clear_gcda`` through sudo.
 
     Shared by kinds whose counters are written as root — a kernel module's
     are the kernel's own (:mod:`otto.host.kmod_kind`), a container's are
     whatever user its process ran as (:mod:`otto.host.docker_image_kind`).
-    Validates :attr:`Product.name` first, exactly as the unelevated default
-    (:meth:`Product.reset_coverage`) does, then runs the same
-    :func:`gcda_delete_cmd` line through ``host.run(..., sudo=True)``, inside
-    ``sh -c``: sudo takes an argv tail and the line is appended to it raw, so
-    unwrapped, sudo would run only ``!`` and the ``find`` after ``||`` would
-    run unelevated. A missing :attr:`~Product.cov_dir` is therefore a
-    success here too. A host declining under
-    ``--dry-run`` answers :attr:`~otto.utils.Status.NotRun`; that is
-    returned as-is, never mapped to :attr:`~otto.utils.Status.Error` — the
-    dry-run contract requires a decline to reach the fetcher unchanged
-    (:doc:`/extend/dry-run-contract`).
+    The same removal and check as the unelevated default
+    (:meth:`Product.reset_coverage`), each wrapped whole in ``sh -c`` by
+    :func:`~otto.host.privilege.run_sh_elevated`: sudo takes an argv tail
+    and the line is appended to it raw, so unwrapped, sudo would run only
+    ``!`` and the ``find`` after ``||`` would run unelevated.
 
     Raises:
         ValueError: :attr:`Product.name` is not a single safe path segment;
             checked before any command is issued.
     """
-    layout.validate_product_name(product.name)
-    cov_dir = cov_dir_of(product)
-    result = await host.run(f"sh -c {shlex.quote(gcda_delete_cmd(cov_dir))}", sudo=True)
-    if result.status is Status.NotRun:
-        return Result(Status.NotRun)
-    if result.is_ok:
-        return Result(Status.Success)
-    failure = result.first_failure
-    detail = f": {failure.value.strip()}" if failure is not None else ""
-    # No product name in the message: every consumer prefixes `<host>/<product>: `.
-    return Result(Status.Error, msg=f"deleting .gcda under {cov_dir} failed{detail}")
+    return await _clear_gcda(product, host, sudo=True)
 
 
 INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")

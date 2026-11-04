@@ -13,8 +13,8 @@ from otto.coverage.instrumentation import (
     decide_coverage,
     detect,
     detect_for_lab,
-    instrumented_products,
 )
+from otto.host.product import instrumented_products
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 
