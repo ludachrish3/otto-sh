@@ -463,26 +463,26 @@ def prepare_command_target(
 
 
 def print_error(message: object, *, soft_wrap: bool = False) -> None:
-    """Print *message* as a user-facing error, with rich markup ESCAPED.
+    """Print *message* as a user-facing error, in red, exactly as written.
 
-    The one place a CLI command renders a failure, so the escaping happens
-    once instead of at a dozen call sites that each had to remember it.
-    ``coverage/`` and ``suite/run.py`` reached the same conclusion
-    independently and call :func:`rich.markup.escape` inline at ten more
-    sites; consolidating those is a separate pass, not a claim to make here.
+    The one place a CLI command renders a failure. The message reaches the
+    console as a :class:`~rich.text.Text` (``otto.console.literal_cell``), so
+    Rich never parses it: no markup, no ``:emoji:`` codes. That is
+    load-bearing, not hygiene. Rich reads ``[word]`` as a style tag and
+    DELETES it, so ``list[str]`` would print as ``list``, an install hint like
+    ``otto-sh[monitor]`` as ``otto-sh`` (a runnable command for the wrong
+    thing), and a pydantic detail like ``[type=missing, input_value={}]``
+    would vanish; a host id ``:smile:`` would print as an emoji. Every message
+    that reaches here interpolates something a user, a path, or a library
+    supplied, so none can be assumed free of either.
 
-    Escaping is load-bearing, not hygiene. Rich reads ``[word]`` as a style
-    tag and DELETES it, so ``list[str]`` prints as ``list``, an install hint
-    like ``otto-sh[monitor]`` prints as ``otto-sh`` — a runnable command for
-    the wrong thing — and a pydantic detail like
-    ``[type=missing, input_value={}]`` vanishes entirely. Every message that
-    reaches here interpolates something a user, a path, or a library supplied,
-    so none can be assumed bracket-free. Numeric subscripts (``argv[1]``)
-    happen to survive; that is not a rule worth relying on.
-
-    Lives here rather than in ``otto.console`` because it renders otto's own
-    red markup around the message; text that must print exactly as written
-    goes through ``otto.console.print_literal`` instead.
+    Red is the BASE style, so a caller that wants part of the message styled
+    passes a ``Text.assemble(...)``: its spans survive on top of the red. A
+    ``Text`` has no parse step to guard, which is why this is not
+    ``emoji=False`` on an escaped string: that would be the same decision
+    spelled a second way, with an ``escape()`` still left to forget. Unlike
+    ``otto.console.print_literal`` the message still folds at the console
+    width, because an error is prose (see *soft_wrap*).
 
     *soft_wrap* turns the hard word-wrap off for messages that carry a token
     the reader is meant to COPY. Rich folds at the console width, and it folds
@@ -512,7 +512,9 @@ def print_error(message: object, *, soft_wrap: bool = False) -> None:
     """
     from rich import get_console
 
-    get_console().print(f"[red]{escape(str(message))}[/red]", soft_wrap=soft_wrap or None)
+    from ..console import literal_cell
+
+    get_console().print(literal_cell(message), style="red", soft_wrap=soft_wrap or None)
 
 
 def render_instrumentation_refusal(error: BaseException) -> str:
@@ -557,9 +559,9 @@ def fail(message: object, code: int = 1, *, soft_wrap: bool = False) -> "NoRetur
     """Render *message* as a user-facing error and exit with *code*.
 
     The exiting half of :func:`print_error`: one place that decides what a
-    failing command looks like, so a new command cannot accidentally ship an
-    unescaped one (``.ast-grep/rules/error-render-through-helper.yml`` keeps
-    that true).
+    failing command looks like, so a new command cannot accidentally ship one
+    Rich parses as markup (``.ast-grep/rules/error-render-through-helper.yml``
+    keeps that true).
 
     *soft_wrap* is threaded straight through -- see :func:`print_error` for
     when to ask for it. Keyword-only, and defaulted off, so every existing
@@ -629,6 +631,7 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
     listing (``error: ...``, unfolded, exit 1).
     """
     from rich import print as rprint
+    from rich.text import Text
 
     from ..reservations.check import ReservationBackendError
     from ..session.errors import LabBuildError
@@ -655,16 +658,24 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
             raise typer.Exit(code=1)
         detail = err.detail or ""
         if kind == "sources":
-            rprint(f"[bold red]Host source unavailable:[/bold red] {escape(detail)}")
+            rprint(Text.assemble(("Host source unavailable:", "bold red"), " ", detail))
         elif kind == "inventory":
-            rprint(f"[bold red]Inventory unavailable:[/bold red] {escape(detail)}")
+            rprint(Text.assemble(("Inventory unavailable:", "bold red"), " ", detail))
         else:
             assert_never(kind)
         raise typer.Exit(code=1)
     if isinstance(err, ReservationBackendError):
         rprint(
-            f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(err))}\n"
-            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check."  # noqa: E501 — long rich markup string
+            Text.assemble(
+                ("Reservation backend unavailable:", "bold red"),
+                " ",
+                str(err),
+                "\nPass ",
+                ("--skip-reservation-check", "bold"),
+                " / ",
+                ("-R", "bold"),
+                " to proceed without the check.",
+            )
         )
         raise typer.Exit(code=1)
     # Unreachable for a well-typed caller. A stray error is handed back to the
@@ -1132,10 +1143,11 @@ def present_reservation_gate(ctx: typer.Context) -> None:
     returns a :class:`~otto.reservations.check.ReservationGateResult` whose
     ``warning`` is deliberately plain text (the library has no Typer/rich
     dependency); this function OWNS the presentation of that text — it is
-    the single place that wraps it in ``[bold red]...[/bold red]`` markup.
+    the single place that styles it bold red (as a literal ``Text``, so a
+    holder name in it prints as written).
     Both CLI call sites (``command_preamble`` here and the live branch of
-    ``otto monitor``) delegate to this one function rather than composing
-    the markup themselves.
+    ``otto monitor``) delegate to this one function rather than styling it
+    themselves.
 
     ``MissingReservationError`` (raised by ``evaluate()`` when a required
     resource isn't held) is not caught here — it propagates to the caller
@@ -1147,8 +1159,9 @@ def present_reservation_gate(ctx: typer.Context) -> None:
     outcome = res.evaluate()
     if outcome.warning:
         from rich import print as rprint
+        from rich.text import Text
 
-        rprint(f"[bold red]{escape(outcome.warning)}[/bold red]")
+        rprint(Text.assemble((outcome.warning, "bold red")))
 
 
 def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
@@ -1239,7 +1252,7 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
         # interpolates a lab list and the literal table name `[project]`, and rich
         # DELETES `[word]` as markup unless it is escaped -- the demotion warning
         # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
-        # for exactly this reason. `print_error` escapes; the
+        # for exactly this reason. `print_error` prints it literally; the
         # `error-render-through-helper` ast-grep rule keeps this route the only one.
         # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
         # folds between WORDS at the console width, so at 80 columns an ordinary
@@ -1343,7 +1356,7 @@ def refuse_unsatisfied_dependencies() -> None:
         # Through `fail`, never a hand-rolled `[red]` f-string. A requirement
         # carries brackets whenever it names an extra (`otto-sh[monitor] >= 1`) and
         # rich DELETES `[word]` as markup -- printing a runnable command for the
-        # wrong package. `print_error` escapes; the `error-render-through-helper`
+        # wrong package. `print_error` prints it literally; the `error-render-through-helper`
         # ast-grep rule keeps this route the only one. soft_wrap because both fix
         # lines are meant to be PASTED, and rich folds between words at the console
         # width.
@@ -1997,13 +2010,14 @@ def _render_dry_run_decline(value: Any) -> None:
     accurate from a function that cannot see the probe.
     """
     from rich import print as rprint
+    from rich.text import Text
 
     if value.msg:
-        rprint(f"[magenta]{escape(str(value.msg))}[/magenta]")
+        rprint(Text.assemble((str(value.msg), "magenta")))
         return
     command = str(getattr(value, "command", "") or "")
-    detail = f" ({escape(command)})" if command else ""
-    rprint(f"[magenta]{escape(DRY_RUN_DECLINE)}{detail}[/magenta]")
+    detail = f" ({command})" if command else ""
+    rprint(Text.assemble((f"{DRY_RUN_DECLINE}{detail}", "magenta")))
 
 
 def _has_rich_renderable(items: "list[Any]") -> bool:
@@ -2035,6 +2049,7 @@ def _rprint_each(items: "list[Any]", *, literal: bool = False) -> None:
 def _render_ok_result(value: "Result", success: "str | None", *, literal: bool = False) -> None:
     """Render a successful ``Result``: the success message, or its payload."""
     from rich import print as rprint
+    from rich.text import Text
 
     from ..result import CommandResult, Results
     from ..utils import Status
@@ -2044,7 +2059,7 @@ def _render_ok_result(value: "Result", success: "str | None", *, literal: bool =
     if value.status is Status.Skipped and value.msg:
         # A skip is a pass that did nothing; the generic success line would
         # read as though the work ran.
-        rprint(f"[yellow]skipped: {escape(str(value.msg))}[/yellow]")
+        rprint(Text.assemble((f"skipped: {value.msg}", "yellow")))
         return
     if success:
         rprint(f"[green]{success}[/green]")

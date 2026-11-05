@@ -250,6 +250,7 @@ def _print_doctor(doctor: "DoctorReport", root: Path, *, scaffolded: set[str]) -
     from rich import print as rprint
     from rich.markup import escape
     from rich.table import Table
+    from rich.text import Text
 
     table = Table(title=f"otto init — {root}", show_header=True)
     table.add_column("area")
@@ -267,15 +268,15 @@ def _print_doctor(doctor: "DoctorReport", root: Path, *, scaffolded: set[str]) -
         table.add_row(verdict.name, status, escape("\n".join(verdict.problems) or verdict.detail))
     rprint(table)
     if doctor.inventory_label is not None:
-        rprint(f"inventory: {escape(doctor.inventory_label)}")
+        rprint(Text.assemble("inventory: ", doctor.inventory_label))
     if doctor.creds_label is not None:
-        rprint(f"creds:     {escape(doctor.creds_label)}")
+        rprint(Text.assemble("creds:     ", doctor.creds_label))
     if doctor.warnings:
         # Advisory only — printed after the verdict table, never folded into
         # it, and never part of the exit code.
         rprint("\n[bold yellow]Warnings[/bold yellow]")
         for warning in doctor.warnings:
-            rprint(f"  [yellow]•[/yellow] {escape(warning)}")
+            rprint(Text.assemble("  ", ("•", "yellow"), f" {warning}"))
 
 
 _COMPLETION_SCRIPT = "~/.bash_completions/otto.sh"

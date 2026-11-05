@@ -285,11 +285,11 @@ def print_probe_report(results: "list[ProbeResult]") -> None:
     log level or a capture filter.
     """
     from rich import print as rprint
-    from rich.markup import escape
+    from rich.text import Text
 
     if not results:
-        rprint(f"[magenta]{escape(PROBE_NO_HOSTS)}[/magenta]")
+        rprint(Text.assemble((PROBE_NO_HOSTS, "magenta")))
         return
-    rprint(f"[magenta]{escape(PROBE_HEADLINE)}[/magenta]")
+    rprint(Text.assemble((PROBE_HEADLINE, "magenta")))
     for line in probe_report_lines(results):
-        rprint(f"  {escape(line)}")
+        rprint(Text.assemble("  ", line))

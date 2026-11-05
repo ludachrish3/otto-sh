@@ -129,8 +129,8 @@ def test_gate_checked_true_prints_nothing(preamble_gate, capsys):
 # assert on the literal, unrendered argument instead.
 
 
-class TestPresentReservationGateMarkup:
-    def test_warning_is_wrapped_in_bold_red_markup(self):
+class TestPresentReservationGateStyle:
+    def test_warning_is_a_literal_bold_red_text(self):
         warning = "some plain-text warning, no markup of its own"
         mock_gate = MagicMock()
         mock_gate.evaluate.return_value = ReservationGateResult(
@@ -141,10 +141,15 @@ class TestPresentReservationGateMarkup:
         with patch("rich.print") as mock_print:
             invoke.present_reservation_gate(ctx)  # ty: ignore[invalid-argument-type]
 
-        # Pins the EXACT composition — f"[bold red]{warning}[/bold red]" — so
-        # dropping (or altering) the markup fails this test even though a
-        # capsys-based assertion could not tell the difference.
-        mock_print.assert_called_once_with(f"[bold red]{warning}[/bold red]")
+        # Pins the EXACT composition (the warning as one literal Text span,
+        # styled bold red) so dropping or altering the style fails this test
+        # even though a capsys-based assertion could not tell the difference.
+        mock_print.assert_called_once()
+        (text,) = mock_print.call_args.args
+        assert text.plain == warning
+        assert [(span.start, span.end, span.style) for span in text.spans] == [
+            (0, len(warning), "bold red")
+        ]
 
     def test_no_warning_means_rich_print_never_called(self):
         mock_gate = MagicMock()

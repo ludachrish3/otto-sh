@@ -1,7 +1,7 @@
 id: error-render-through-helper
 language: python
 severity: error
-message: Red-markup f-string interpolates unescaped text. Use `otto.cli.invoke.print_error` / `fail`, or wrap the interpolation in `rich.markup.escape`.
+message: Red-markup f-string interpolates unescaped text. Use `otto.cli.invoke.print_error` / `fail`, or print a `rich.text.Text` built with `Text.assemble` (its user text is never parsed).
 note: >
   Rich reads `[word]` as a style tag and DELETES it. Every one of these
   messages interpolates something a user, a path, or a library supplied, so
@@ -29,9 +29,12 @@ note: >
 
   - A plain (non-f) string carries only otto's own literals, so `[red]…[/red]`
     with nothing interpolated is fine.
-  - An f-string whose interpolations are all `escape(...)` is fine; that is
-    what `print_error` itself does, and what a site keeping deliberate
-    `[bold]` emphasis around foreign text should do.
+  - An f-string whose interpolations are all `escape(...)` is exempt: the
+    markup is safe, though `:emoji:` codes still render. A printed line no
+    longer takes this form at all (`print_error` prints a `Text`, and a styled
+    status line is `Text.assemble`, guarded by
+    tests/unit/cli/test_literal_status_lines.py); the exemption remains for a
+    markup string that must stay one, such as an opted-in log record.
   - Colours other than red are untouched: today they carry otto's own
     literals. If a `[yellow]` warning ever interpolates foreign text it has
     the same hazard and this rule will not see it.

@@ -1876,8 +1876,11 @@ what the text is:
   that carries a user's or a host's text. It prints through Rich's global
   console unless you pass `console=` (the output-directory and monitor URL
   lines pass `CONSOLE`).
-- **`otto.cli.invoke.print_error`** is for an error message: it renders otto's
-  own red markup around the message and escapes the message's brackets.
+- **`otto.cli.invoke.print_error`** prints the message as a `Text` in red, so
+  user text in it is literal and a caller styles a part with `Text.assemble`.
+  A prose line that interpolates user text is
+  `rprint(Text.assemble((own, style), user))`, never `escape()` inside a
+  markup string.
 - **`otto.logger.relay.escape_relayed`** is for foreign text that must stay a
   markup string, because it travels through a log record or a progress
   description.

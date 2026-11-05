@@ -124,7 +124,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from rich.markup import escape as escape_markup
 
 if TYPE_CHECKING:
     # Type-only: never executed, so it carries no runtime import cost and
@@ -608,6 +607,7 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
     A reset a dry run declined is printed as not run and is not a failure.
     """
     from rich import print as rprint
+    from rich.text import Text
 
     from ..coverage.tree import ProductKey
     from ..utils import Status
@@ -615,13 +615,13 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
 
     for host, products in cleaned.hosts.items():
         if not products:
-            rprint(f"[dim]{escape_markup(f'{host}: no instrumented products')}")
+            rprint(Text.assemble((f"{host}: no instrumented products", "dim")))
         for product, result in products.items():
             label = ProductKey(host, product).label
             if result.status is Status.NotRun:
-                rprint(f"[dim]{escape_markup(f'{label}: not run (dry run)')}")
+                rprint(Text.assemble((f"{label}: not run (dry run)", "dim")))
             elif result.is_ok:
-                rprint(f"[green]{escape_markup(f'{label}: counters cleared')}")
+                rprint(Text.assemble((f"{label}: counters cleared", "green")))
     for failed in cleaned.failed:
         print_error(f"{failed.key.label}: {failed.reason}")
     if not cleaned.ok:

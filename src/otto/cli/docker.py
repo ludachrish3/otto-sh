@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 import typer
 from rich import print as rprint
-from rich.markup import escape
+from rich.text import Text
 
 from .completers import completion_source
 from .invoke import fail, print_error
@@ -472,7 +472,7 @@ def _print_displacements(displaced: "list[Displacement]") -> None:
     """
     for d in displaced:
         line = f"docker: {d.describe()}"
-        rprint(f"[yellow]{escape(line)}")
+        rprint(Text.assemble((line, "yellow")))
 
 
 def _print_stack_report(stack: "UseCaseStack") -> None:
@@ -482,17 +482,17 @@ def _print_stack_report(stack: "UseCaseStack") -> None:
         # participates, and a `services=` narrowing that matches nothing is
         # refused in the library) — but if it ever is, it says so rather than
         # exiting 0 having printed nothing at all.
-        msg = escape(f"docker: {stack.use_case} registered no container on any host")
-        rprint(f"[yellow]{msg}")
+        msg = f"docker: {stack.use_case} registered no container on any host"
+        rprint(Text.assemble((msg, "yellow")))
         return
     for host_id, hosts in stack.by_host.items():
         compose = stack.projects.get(host_id, "?")
         headline = (
             f"{stack.use_case} on {host_id} ({compose}): {len(hosts)} container(s) registered:"
         )
-        rprint(f"[green]{escape(headline)}")
+        rprint(Text.assemble((headline, "green")))
         for host in hosts.values():
-            rprint(f"  - {escape(host.id)}  →  {escape(host.container_id[:12])}")
+            rprint(Text.assemble(f"  - {host.id}  →  {host.container_id[:12]}"))
 
 
 class _Declined:
@@ -562,7 +562,7 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
             # class. If one ever escapes a REAL deployment, swallowing it here
             # would report success for a stack nobody brought up.
             raise
-        rprint(f"[magenta]{escape(str(e))}[/magenta]")
+        rprint(Text.assemble((str(e), "magenta")))
         return _DECLINED
     except UseCaseResolutionError as e:
         fail(e)
@@ -579,13 +579,13 @@ def _render_build_report(report: "BuildReport") -> None:
                 f"docker: {entry.project} declares no [[docker.images]] — "
                 f"nothing to build on {entry.host}"
             )
-            rprint(f"[yellow]{escape(msg)}")
+            rprint(Text.assemble((msg, "yellow")))
             continue
         for name, built in entry.images.items():
             if built.is_ok:
                 refs = ", ".join(built.references)
-                line = escape(f"{entry.project}/{name}: built {refs}  {built.image_id}")
-                rprint(f"[green]{line}  ({entry.host})")
+                line = f"{entry.project}/{name}: built {refs}  {built.image_id}  ({entry.host})"
+                rprint(Text.assemble((line, "green")))
             else:
                 failed = f"{entry.project}/{name}: FAILED on {entry.host}"
                 if built.result.command:
@@ -602,7 +602,7 @@ def _render_host_report(report: "HostReport", *, done: str) -> None:
         if bad:
             print_error(f"{host}: FAILED — {bad[0].command}: {bad[0].value}")
         else:
-            rprint(f"[green]{escape(f'{host}: {done}')}")
+            rprint(Text.assemble((f"{host}: {done}", "green")))
     if not report.ok:
         raise typer.Exit(1)
 
@@ -1010,7 +1010,8 @@ def _use_cases(
     projects = get_projects()
     declared = declared_use_cases(projects)
     if not declared:
-        rprint(f"[yellow]{escape('otto docker: no active project declares [[docker.use_cases]].')}")
+        none_declared = "otto docker: no active project declares [[docker.use_cases]]."
+        rprint(Text.assemble((none_declared, "yellow")))
         return
 
     # A filter naming nothing is a USER error about the argument, not a state
@@ -1090,7 +1091,7 @@ def _use_cases(
         # cell is unreadable at any terminal width.
         _print_displacements(displaced)
         for problem in problems:
-            rprint(f"[yellow]{escape(problem)}")
+            rprint(Text.assemble((problem, "yellow")))
 
 
 def _env_key_names(frag: "DockerUseCase") -> str:

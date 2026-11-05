@@ -523,9 +523,10 @@ async def test_up_deploys_the_named_use_case_and_reports_it(tmp_path):
 
     assert deploy.call_args.args == ("integration",)
     assert deploy.call_args.kwargs["services"] is None
-    printed = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "[green]" in printed
-    assert "container(s) registered" in printed
+    lines = [c.args[0] for c in mock_rprint.call_args_list]
+    printed = " ".join(line.plain for line in lines)
+    headline = next(line for line in lines if "container(s) registered" in line.plain)
+    assert [span.style for span in headline.spans] == ["green"]
     assert "unix-integration-u" in printed
     assert "abcdef123456" in printed
 
@@ -798,9 +799,9 @@ def test_a_stack_that_registered_nothing_says_so_rather_than_printing_nothing():
     with patch.object(docker_cli, "rprint", mock_rprint):
         docker_cli._print_stack_report(empty)  # no typer.Exit
 
-    printed = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "[yellow]" in printed
-    assert "registered no container on any host" in printed
+    (line,) = [c.args[0] for c in mock_rprint.call_args_list]
+    assert [span.style for span in line.spans] == ["yellow"]
+    assert "registered no container on any host" in line.plain
 
 
 @pytest.mark.asyncio
