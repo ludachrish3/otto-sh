@@ -156,9 +156,8 @@ changes, is in {ref}`Vendoring embedded-gcov, and the modern-GCC
 patch <coverage-embedded-vendoring>`.
 
 The example's `.gitignore` lists `third_party/`, because `init` writes it
-there, and the build's `build/`. In a project of your own, the `.gitignore`
-that `otto init` writes lists only `otto-output/`, so add the example's other
-lines:
+there, and the build's `build/`. `otto init` writes no `.gitignore`, so in a
+project of your own add the example's lines:
 
 ```{literalinclude} ../../examples/quickstart-embedded/.gitignore
 :language: text

@@ -459,9 +459,9 @@ def test_subcommand_help_needs_no_lab_and_makes_no_output_dir(tmp_path, monkeypa
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
 
-    from otto.logger import management
+    from otto import layout
 
-    made = [p for p in tmp_path.rglob("*") if management._LOG_DIR_NAME_RE.match(p.name)]
+    made = [p for p in tmp_path.rglob("*") if layout.RUN_DIR_NAME_RE.match(p.name)]
     assert made == [], f"expected no output dir under {tmp_path}, found: {made}"
 
 

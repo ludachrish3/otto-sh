@@ -8,7 +8,9 @@ project initialization.
 The `.otto` name is shared by three directories holding three different
 kinds of thing.  This page is about the **project's** `.otto/` — source
 config, committed with the code.  The xdir holds run outputs, and
-`~/.otto` — otto's user-level home — holds derived state otto can rebuild.
+`~/.otto` — otto's user-level home — holds derived state otto can rebuild,
+beside the default run tree `otto-xdir/` and the `tls/` convention, which it
+cannot.
 See [The workspace home](../cli/index.md#the-workspace-home).
 ```
 

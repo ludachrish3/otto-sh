@@ -16,7 +16,8 @@ LOG_RICH_ENV_VAR = "OTTO_LOG_RICH"
 # OTTO_SSH_DEBUG is read only by the host layer: SSH_DEBUG_ENV_VAR lives in
 # otto.host.connections, beside apply_ssh_debug_level.
 XDIR_ENV_VAR = "OTTO_XDIR"
-HOME_ENV_VAR = "OTTO_HOME"
+# OTTO_HOME is read only by otto.home_root, below this layer: HOME_ENV_VAR
+# lives there, beside otto_home().
 # OTTO_INIT_TIMEOUT is read only by the host layer: INIT_TIMEOUT_ENV_VAR lives
 # in otto.host.session, beside resolve_init_timeout.
 

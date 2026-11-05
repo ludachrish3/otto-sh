@@ -98,8 +98,8 @@ def main_mocks(tmp_path):
 
     # Clear OTTO_* env vars so Typer envvar= defaults aren't overridden
     # by the user's shell environment; point OTTO_XDIR at tmp_path so logger
-    # side-effects land there instead of the project root (--xdir is optional
-    # and defaults to CWD, which we don't want tests writing to).
+    # side-effects land there (--xdir is optional and defaults to
+    # $OTTO_HOME/otto-xdir, which these tests should not share).
     clean_env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
@@ -569,16 +569,16 @@ class TestLoggerArguments:
         assert management._state.xdir == custom_xdir
 
     def test_xdir_default_when_neither_flag_nor_env(self, real_main_mocks, monkeypatch):
-        """--xdir is optional: with neither flag nor OTTO_XDIR it defaults to CWD.
+        """--xdir is optional: with neither flag nor OTTO_XDIR it is ``$OTTO_HOME/otto-xdir``.
 
-        The CWD default is safe because ``remove_old_logs`` only rmtree's entries
-        matching otto's timestamped log-dir name pattern (see management.py), so a
-        CWD-pointed xdir can no longer walk foreign trees at startup.
+        The one default the library calls share (``otto.home_root.default_xdir``),
+        read per invocation.
         """
         monkeypatch.delenv("OTTO_XDIR", raising=False)
+        monkeypatch.setenv("OTTO_HOME", str(real_main_mocks["tmp_path"] / "home"))
         result = _invoke([])
         assert result.exit_code == 0
-        assert management._state.xdir == Path()
+        assert management._state.xdir == real_main_mocks["tmp_path"] / "home" / "otto-xdir"
 
 
 # ── The [logging.levels] noise floor ─────────────────────────────────────────

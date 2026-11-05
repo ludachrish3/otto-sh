@@ -2441,8 +2441,9 @@ def _collect_child_command(home: Path, *, mode: str = DUMP_TESTS_STORED) -> _Chi
     """
     import sys
 
+    from ..home_root import HOME_ENV_VAR
     from ..utils import _PATH_LIST_SEP, collapse_path_list, kept_path_spelling
-    from .env import HOME_ENV_VAR, OTTOPATH_ENV_VAR, XDIR_ENV_VAR
+    from .env import OTTOPATH_ENV_VAR, XDIR_ENV_VAR
 
     otto_bin = Path(sys.executable).parent / "otto"
     if not otto_bin.exists():

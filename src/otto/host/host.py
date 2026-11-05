@@ -1149,7 +1149,11 @@ class Host(Protocol):
         ...
 
     def log_dest(self, dest: "Path | None" = None) -> Path:
-        """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``."""
+        """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
+
+        *base* is *dest*, else the run's output directory, else a library run
+        dir under the default xdir (:func:`otto.output_dir.resolve_output_dir`).
+        """
         ...
 
     async def get_logs(
@@ -2896,21 +2900,27 @@ class BaseHost(ABC):
     def log_dest(self, dest: "Path | None" = None) -> Path:
         """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
 
-        *base* is *dest* when given, else the installed run policy's output
-        directory, else the CWD. The subtree below is the run-tree contract in
-        :mod:`otto.layout` (``<product>/product/``, ``<product>/debug/``,
-        ``debug/``), the mirror of the coverage tree's keying, so consumers may
-        read it by path.
+        *base* is :func:`otto.output_dir.resolve_output_dir`'s answer: *dest*
+        when given, else the installed run policy's output directory, else this
+        process's ``host/<ts>_get_logs/`` run dir under the default xdir
+        (``$OTTO_HOME/otto-xdir``). A pure query: it creates nothing. The
+        subtree below is the run-tree contract in :mod:`otto.layout`
+        (``<product>/product/``, ``<product>/debug/``, ``debug/``), the mirror
+        of the coverage tree's keying, so consumers may read it by path.
         """
-        from ..invocation import current_policy
+        from ..output_dir import LIBRARY_LOGS, resolve_output_dir
 
-        output_dir = current_policy().output_dir
-        base = dest if dest is not None else (output_dir or Path.cwd())
-        return layout.host_logs_dir(base, self.id)
+        return layout.host_logs_dir(resolve_output_dir(dest, entry=LIBRARY_LOGS), self.id)
 
     def _log_base(self, dest: "Path | None") -> Path:
-        """Return the run dir :meth:`log_dest` resolved — what :mod:`otto.layout` keys from."""
-        return layout.run_dir_of(self.log_dest(dest))
+        """Return the run dir :meth:`log_dest` resolved, created when it is a library run dir.
+
+        The base every log writer keys from (:mod:`otto.layout`); the writers
+        create their own subdirectories below it.
+        """
+        from ..output_dir import materialize_output_dir
+
+        return materialize_output_dir(layout.run_dir_of(self.log_dest(dest)))
 
     @cli_exposed
     async def get_product_logs(

@@ -965,7 +965,9 @@ CURRENT_LANDING = "P9b"
 # A third, otto.config.corpus_snapshot (the one stat classification, which the json
 # sources' fingerprints share with the completion cache), makes it 77. A fourth,
 # otto._terminal (the one usable-terminal decision the shim, the console pin and the
-# host's logins share), makes it 78.
+# host's logins share), makes it 78. otto.home_root (the one reader of OTTO_HOME and
+# the default xdir) and otto.output_dir (the one library output-directory resolver)
+# make it 80.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -977,7 +979,7 @@ LAYERED_AT = {
     "P7": 55,
     "P8": 56,
     "P9a": 62,
-    "P9b": 78,
+    "P9b": 80,
 }
 CYCLE_AT = {
     "P1a": 22,
@@ -1463,10 +1465,10 @@ def test_the_landing_anchor_allows_a_landing_in_progress_only() -> None:
     assert landing_problems(43, 13, "P4") == []
     assert "bump CURRENT_LANDING to P5" in landing_problems(48, 11, "P3")[0]
     assert landing_problems(70, 0, "P9a") == []
-    assert "bump CURRENT_LANDING to P9b" in landing_problems(78, 0, "P9a")[0]
-    assert landing_problems(78, 0, "P9b") == []
-    for counts in [[77, 0], [79, 0], [78, 1]]:
-        assert "the last landing, has exactly [78, 0]" in landing_problems(*counts, "P9b")[0]
+    assert "bump CURRENT_LANDING to P9b" in landing_problems(80, 0, "P9a")[0]
+    assert landing_problems(80, 0, "P9b") == []
+    for counts in [[79, 0], [81, 0], [80, 1]]:
+        assert "the last landing, has exactly [80, 0]" in landing_problems(*counts, "P9b")[0]
     assert "'P0' is not one of LANDINGS" in landing_problems(19, 22, "P0")[0]
 
 

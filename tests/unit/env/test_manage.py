@@ -18,6 +18,7 @@ from otto.errors import OttoError
 _UV = Path("/o/uv")
 _VERSION = "0.13.6"
 _PASSTHROUGH = ["--find-links", "/w"]
+_REAL_ENV_PATH = manage.env_path
 
 
 class _Project:
@@ -246,3 +247,26 @@ def test_a_uv_spelled_through_the_env_but_outside_it_is_not_refused(
 
     operation(env)
     assert exec_seam, "the operation ran its installs"
+
+
+def test_a_forced_env_rebuild_spares_otto_xdir(acquired, monkeypatch, tmp_path):
+    """``otto env create --force`` removes the workspace's ``env/`` and nothing beside it.
+
+    The run tree, ``$OTTO_HOME/otto-xdir/``, is the one thing under the home
+    that is not derived state.
+    """
+    from otto.home_root import default_xdir
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    real_env = _REAL_ENV_PATH()
+    monkeypatch.setattr(manage, "env_path", lambda: real_env)
+    (real_env / "bin").mkdir(parents=True)
+    (real_env / "bin" / "stale").write_text("old\n")
+    run = default_xdir() / "test" / "20200101_000000_000"
+    run.mkdir(parents=True)
+    (run / "x.log").write_text("kept\n")
+
+    create_env(force=True)
+
+    assert not (real_env / "bin" / "stale").exists()
+    assert (run / "x.log").read_text() == "kept\n"

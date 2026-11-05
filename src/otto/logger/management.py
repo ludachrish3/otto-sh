@@ -32,7 +32,6 @@ import atexit
 import contextlib
 import copy
 import logging
-import re
 import sys
 import threading
 import time
@@ -64,11 +63,6 @@ from .formatters import (
 
 if TYPE_CHECKING:
     from rich.console import ConsoleRenderable
-
-# Matches the timestamp directory names ``create_output_dir`` writes:
-# ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Fail-safe so
-# a misconfigured ``xdir`` can't lead to rmtree'ing unrelated subtrees.
-_LOG_DIR_NAME_RE = re.compile(r"^\d{8}_\d{6}_\d{3}(_.+)?$")
 
 # Max wall-clock seconds ``remove_old_logs`` may spend scanning per call — a
 # safety valve against stat storms on large/slow (e.g. NFS) trees; a backlog
@@ -983,11 +977,11 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     if _state.xdir is None:
         raise RuntimeError("init_cli_logging() must run before create_output_dir() (xdir unset)")
 
-    # Name the dir down to the millisecond (%f is microseconds; drop last 3).
-    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    sub = f"_{layout.command_dir_name(subcommand)}" if subcommand is not None else ""
-    output_dir = layout.command_output_dir(_state.xdir, command) / f"{timestamp}{sub}"
-    output_dir.mkdir(parents=True)
+    # The one run-dir builder and the one creator (it writes the marker the
+    # prune is fenced on). No exist_ok: two runs never share a dir; a missing
+    # xdir is created, parents included.
+    output_dir = layout.run_output_dir(_state.xdir, layout.RunEntry(command, subcommand))
+    layout.make_run_dir(output_dir)
     _state.last_output_dir = output_dir
 
     # Print the final output dir once at exit (atexit is LIFO; registering this
@@ -1384,6 +1378,28 @@ def attach_console_suppress_filter(filt: Filter) -> None:
         h.addFilter(filt)
 
 
+def _children(directory: Path) -> "list[Path]":
+    """Return the entries of *directory*, or none when it cannot be listed (missing, gone)."""
+    try:
+        return list(directory.iterdir())
+    except OSError:
+        return []
+
+
+def _is_old_run_dir(path: Path, oldest: float) -> bool:
+    """Whether the prune may delete *path*: a real dir otto made whose mtime is before *oldest*.
+
+    The free test first: :func:`otto.layout.is_run_dir` matches the name before
+    it reads the marker, so an entry not named like a run (every child of a
+    project's ``node_modules/`` under ``--xdir .``) costs no file operation.
+    Any filesystem error (the entry vanished, cannot be read) answers no.
+    """
+    try:
+        return layout.is_run_dir(path) and path.stat().st_mtime < oldest
+    except OSError:
+        return False
+
+
 def remove_old_logs(
     seconds: float,
     *,
@@ -1391,13 +1407,19 @@ def remove_old_logs(
 ) -> None:
     """Remove otto's run dirs older than ``seconds``, time-boxed to ``time_budget``.
 
-    Only children of :func:`otto.layout.output_root`'s command directories
-    whose names match otto's run-name pattern are removed; nothing outside
-    that directory is ever walked.
+    Walks ``<xdir>/<command>/`` and removes a child only when otto made it
+    (:func:`otto.layout.is_run_dir`: the run-name pattern, a real directory
+    rather than a symlink, AND the ``.otto-run`` marker) and its mtime is old.
+    Under ``--xdir .`` the walk meets a project's own top-level directories,
+    and the marker is what keeps their contents safe; a symlinked command
+    directory is never entered. Every filesystem error skips that one entry:
+    pruning never fails the command.
 
     When the budget is exceeded the scan stops early and resumes on the next
     call, bounding the per-run cost on large/slow (e.g. NFS) trees.
     """
+    from ..utils import is_real_dir
+
     # Deliberately the literal 'otto' logger, not getLogger(__name__): this
     # module's whole job is configuring *that* logger's handlers (see the
     # module docstring), and its own emitted records (below) are otto-CLI
@@ -1406,41 +1428,43 @@ def remove_old_logs(
     logger = getLogger("otto")
     if _state.xdir is None:
         return
-    # Only otto's own directory is walked: a project's ./docker or ./test
-    # beside it is never otto's, whatever its children are named.
-    root = layout.output_root(_state.xdir)
-    if not root.is_dir():
-        return
 
     oldest = (datetime.now(tz=timezone.utc) - timedelta(seconds=seconds)).timestamp()
     logged_deletion = False
     start = time.monotonic()
     budget_hit = False
 
-    for cmd_dir in root.iterdir():
-        if budget_hit:
+    for cmd_dir in _children(_state.xdir):
+        if budget_hit or time.monotonic() - start > time_budget:
+            budget_hit = True
             break
-        if not cmd_dir.is_dir():
+        try:
+            if not is_real_dir(cmd_dir):
+                continue
+        except OSError:  # a stale mount or an I/O error on one child skips it
             continue
-        for output_dir in cmd_dir.iterdir():
+        for output_dir in _children(cmd_dir):
             if time.monotonic() - start > time_budget:
                 budget_hit = True
                 break
-            if not _LOG_DIR_NAME_RE.match(output_dir.name):
+            if not _is_old_run_dir(output_dir, oldest):
                 continue
-            if not output_dir.is_dir():
-                continue
-            if output_dir.stat().st_mtime < oldest:
-                if not logged_deletion:
-                    days = seconds / 60 / 60 / 24
-                    days_str = f"{days:0.0f} {'day' if days == 1 else 'days'}"
-                    logger.info(
-                        f"[magenta]Deleting log directories that are more than {days_str} old",
-                        extra={"markup": True},
-                    )
-                    logged_deletion = True
+            if not logged_deletion:
+                days = seconds / 60 / 60 / 24
+                days_str = f"{days:0.0f} {'day' if days == 1 else 'days'}"
+                logger.info(
+                    f"[magenta]Deleting log directories that are more than {days_str} old",
+                    extra={"markup": True},
+                )
+                logged_deletion = True
+            try:
+                # A verified real directory: rmtree removes the links inside
+                # it, never what they point at.
                 rmtree(output_dir)
-                logger.debug(f"Removed {output_dir}")
+            except OSError as e:
+                logger.debug(f"Could not remove {output_dir}: {e}")
+                continue
+            logger.debug(f"Removed {output_dir}")
 
     if budget_hit:
         logger.debug(

@@ -339,6 +339,7 @@ def test_warm_tab_is_answered_without_the_cli_or_config_packages(tmp_path):
         "otto",
         "otto._shim",
         "otto._shim_complete",
+        "otto.home_root",
     }, err
     # The resolver's own imports: no dataclasses (+inspect) and no pathlib; `typing`
     # is already loaded by otto/__init__ (TYPE_CHECKING), so it is free.
@@ -429,6 +430,9 @@ def _shim_imports(filename: str) -> tuple:
     return module_level, deferred
 
 
+_FIRST_PARTY = f"{_SHIM_PACKAGE}."
+
+
 def test_the_resolver_imports_exactly_the_eight_cheap_stdlib_modules():
     """`otto/_shim_complete.py` imports these and nothing else, deferred or not.
 
@@ -438,11 +442,50 @@ def test_the_resolver_imports_exactly_the_eight_cheap_stdlib_modules():
     resolver's path work instead, which is why this file carries a per-file
     `PTH` exemption in .ruff.toml. `subprocess` is the one deferred import: only
     the refresh behind a test-name TAB starts a process, after the answer.
+
+    First-party imports have their own exact allowlist: `otto.home_root`, the
+    one derivation of otto's home, which imports only `os` and `typing` at
+    module level and `pathlib` only inside its `Path`-returning functions
+    (pinned by the next test), so reaching it costs the TAB one small file.
     """
     module_level, deferred = _shim_imports("_shim_complete.py")
 
-    assert module_level == {"hashlib", "json", "os", "re", "shlex", "sys", "time", "typing"}
+    stdlib = {name for name in module_level if not name.startswith(_FIRST_PARTY)}
+    first_party = module_level - stdlib
+    assert stdlib == {"hashlib", "json", "os", "re", "shlex", "sys", "time", "typing"}
+    assert first_party == {"otto.home_root"}
     assert deferred == {"subprocess"}
+
+
+def _module_level_imports_outside_type_checking(filename: str) -> "tuple[set, set]":
+    """Return ``(runtime, type_checking_only)`` module-level import roots of ``src/otto/<file>``."""
+    tree = ast.parse((_SHIM_SRC / filename).read_text(encoding="utf-8"))
+    runtime: set = set()
+    typing_only: set = set()
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            runtime.update(_imported_names(node, filename))
+        elif isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING":
+            for child in ast.walk(node):
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    typing_only.update(_imported_names(child, filename))
+    return runtime, typing_only
+
+
+def test_home_root_imports_only_os_and_typing():
+    """`otto/home_root.py` is reached on every TAB through the resolver, so it is as bare.
+
+    `os` and `typing` at module level, `pathlib` only under `TYPE_CHECKING`
+    (for annotations) and inside the functions that return a `Path`. `home_dir`,
+    the one the shim calls, works in `os.path` and so pays for nothing more.
+    """
+    module_level, deferred = _shim_imports("home_root.py")
+    runtime, typing_only = _module_level_imports_outside_type_checking("home_root.py")
+
+    assert runtime == {"os", "typing"}
+    assert typing_only <= {"pathlib", "collections"}
+    assert module_level == runtime | typing_only
+    assert deferred == {"pathlib"}
 
 
 def test_the_shim_entry_imports_only_stdlib_at_module_level():

@@ -21,10 +21,10 @@ close the question:
   xdir even deliberately.
 * MEASURED 2026-08-24: one hermetic contract over all 8 cells (0.73s) added
   ZERO paths to the checkout's tree -- a ``find -maxdepth 3`` listing diffed before
-  and after came back identical. The ``run/`` and ``logs/`` directories a dev
-  checkout carries are an otto CLI invocation's leavings from the e2e tree
-  (``<xdir>/<command>/<stamp>/`` per ``create_output_dir``, and
-  ``<xdir>/logs/<host id>/`` per ``BaseHost.log_dest``), not this suite's.
+  and after came back identical. Run output with no run directory set goes to
+  the default xdir, ``$OTTO_HOME/otto-xdir`` (``<xdir>/<command>/<stamp>/``
+  per ``create_output_dir``, and ``<xdir>/host/<stamp>_get_logs/logs/<host id>/``
+  per ``BaseHost.log_dest``), never into the checkout.
 
 So the run output directory is CHOSEN here rather than inherited:
 :func:`observations_dir`, ``reports/conformance-observations/`` under

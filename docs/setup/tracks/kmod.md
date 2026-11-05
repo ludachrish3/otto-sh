@@ -109,8 +109,8 @@ module in place with absolute paths, which is all {ref}`the one build
 requirement <coverage-build-requirement>` asks.
 
 The build writes only files the example's `.gitignore` lists, so the git
-repository stays clean. A project you scaffold with `otto init` ignores only
-`otto-output/`, so add the build's lines to its `.gitignore` yourself:
+repository stays clean. `otto init` writes no `.gitignore`, so in a project
+of your own add the build's lines yourself:
 
 ```{literalinclude} ../../examples/quickstart-kmod/.gitignore
 :language: text

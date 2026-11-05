@@ -158,10 +158,13 @@ REFUSALS = [
         "--ticket",
     ),
     (
-        ["get"],
+        ["get", "-o", "/o"],
         "otto.coverage.get.get_coverage",
         CoverageInputError(
-            "no output directory was given and none is set for this invocation",
+            "/o/cov holds counters not yet captured (h1/app) whose tier and commit no "
+            "metadata records; this collection is tier 'system' at commit abc123, and "
+            "reusing the directory would capture them under the wrong one — collect "
+            "into a fresh output directory",
             field="output_dir",
         ),
         "--output",

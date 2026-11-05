@@ -3,7 +3,8 @@
 Three contracts meet here:
 
 * ``log_dest`` — ``<base>/logs/<host-id>``, where *base* is an explicit
-  ``dest``, else the active command's output directory, else the CWD. The
+  ``dest``, else the active command's output directory, else the process's
+  ``host/<ts>_get_logs/`` run dir under the default xdir. The
   subtree below it (``<product>/product/``, ``<product>/debug/`` and the
   host-level ``debug/``) is API, not an implementation detail: it is the
   run-tree contract of :mod:`otto.layout`, the mirror of the coverage tree's
@@ -20,9 +21,8 @@ scripted shell round-trip. ``embedded_recording_host`` is the same double
 WITHOUT the posix file-ops family, i.e. with no ``glob`` at all.
 
 Every test that calls a log verb without an explicit ``dest`` installs an
-``active_context(output_dir=tmp_path)`` — the fallback is the CWD, and a test
-that leaked the tree into the project would be doing exactly the thing the design
-prevents in production.
+``active_context(output_dir=tmp_path)``, except the ones about the library
+default, which pin their own ``OTTO_HOME``.
 """
 
 import os
@@ -153,12 +153,56 @@ def test_log_dest_defaults_to_the_active_commands_output_dir(recording_host, tmp
         assert recording_host.log_dest() == tmp_path / "run-1" / "logs" / "h1"
 
 
-def test_log_dest_falls_back_to_cwd_when_the_context_has_no_output_dir(
+def test_log_dest_with_no_run_dir_uses_the_library_logs_run_dir(
     recording_host, tmp_path, monkeypatch
 ):
+    # Kills: the bare-CWD fallback (#758). With no dest and no run directory the
+    # base is the process's `host/<ts>_get_logs/` run dir under the default xdir.
+    from otto import layout
+    from otto.home_root import default_xdir
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
     with active_context(output_dir=None):
-        assert recording_host.log_dest() == Path.cwd() / "logs" / "h1"
+        got = recording_host.log_dest()
+    run = layout.run_dir_of(got)
+    assert got == layout.host_logs_dir(run, "h1")
+    assert run.parent == layout.command_output_dir(default_xdir(), "host")
+    assert layout.RUN_DIR_NAME_RE.match(run.name)
+    assert run.name.endswith("_get_logs")
+
+
+def test_log_dest_as_a_query_creates_nothing(recording_host, tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    with active_context(output_dir=None):
+        recording_host.log_dest()
+        recording_host.log_dest()
+    assert not (tmp_path / "home").exists()
+
+
+@pytest.mark.asyncio
+async def test_logs_written_with_no_run_dir_are_found_through_log_dest(
+    recording_host, tmp_path, monkeypatch
+):
+    """The write and the read agree: the memoised run dir is the one both see.
+
+    Product logs land under it, the debug haul targets it, and the project
+    action's reader (a glob under ``log_dest()``) finds what was written.
+    """
+    from otto import layout
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+
+    product = _LoggingProduct("app", writes="app.log")
+    recording_host.products = [product]
+    with active_context(output_dir=None):
+        assert (await recording_host.get_product_logs()).is_ok
+        run = layout.run_dir_of(recording_host.log_dest())
+        assert (await recording_host.get_debug_logs()).is_ok
+        found = sorted(recording_host.log_dest().glob("*/product/*.log"))
+    assert layout.is_run_dir(run)
+    assert found == [layout.product_logs_dir(run, "h1", product.name) / "app.log"]
+    assert layout.host_debug_dir(run, "h1").is_dir()
 
 
 def test_explicit_dest_beats_the_context(recording_host, tmp_path):

@@ -23,7 +23,7 @@ These options are available on every `otto` command:
 | Option | Env var | Default | Description |
 | ------ | ------- | ------- | ----------- |
 | `--lab, -l` | `OTTO_LAB` | *(required)* | Lab name(s); combine several with `+` (e.g. `tech1+overlay`) |
-| `--xdir, -x` | `OTTO_XDIR` | current dir | Output directory for logs and artifacts |
+| `--xdir, -x` | `OTTO_XDIR` | `$OTTO_HOME/otto-xdir` | Output directory for logs and artifacts (created if missing) — see [Output directories](#output-directories) |
 | `--include-projects, -I` | | | Force these projects active for this invocation, overriding lab inference — see {doc}`projects` |
 | `--exclude-projects, -E` | | | Switch these projects off for this invocation, overriding lab inference — see {doc}`projects` |
 | `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Install each product's field or debug variant — a `[[products]]` entry's `variant`; see {ref}`product-variants` |
@@ -191,13 +191,13 @@ flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
 | Variable | Backs | Notes |
 | --- | --- | --- |
 | `OTTO_LAB` | `--lab` / `-l` | Combine several with `+` |
-| `OTTO_XDIR` | `--xdir` / `-x` | Defaults to the current directory |
+| `OTTO_XDIR` | `--xdir` / `-x` | Defaults to `$OTTO_HOME/otto-xdir` |
 | `OTTO_FIELD_PRODUCTS` | `--field` / `--debug` | |
 | `OTTO_LOG_DAYS` | `--log-days` | |
 | `OTTO_LOG_LEVEL` | `--log-level` | |
 | `OTTO_LOG_RICH` | `--rich-log-file` | |
 | `OTTOPATH` | *(no flag)* | The project roots under test. Required when a development project is under test. See [Projects, project roots and OTTOPATH](../overview.md#projects-project-roots-and-ottopath) |
-| `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTOPATH` set — see [The workspace home](#the-workspace-home) |
+| `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTOPATH` set, and `otto-xdir/`, the default run tree — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
 | `OTTO_INIT_TIMEOUT` | *(no flag)* | Seconds a newly opened shell has to answer otto's readiness probe, for every host without its own `init_timeout`; replaces the default of `10` (`15` on an embedded host). What it accepts and what beats it: [Shell readiness timeout](../configuration/host-options.md#shell-readiness-timeout) |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`); `3` logs raw packets, passwords included — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
@@ -315,39 +315,42 @@ reports are used for.
 (invocation-output-directory)=
 ## Output directories
 
-Most commands create a per-invocation output directory under `--xdir`
+Most commands create a per-invocation output directory under the xdir
 before the command body runs; the run's log files and artifacts are
 written there, and the path is printed at the end of the run
-(`Output directory: ...`). Every run's directory sits under one fixed
-directory of the xdir, `otto-output/`, whatever the command and whether
-`--xdir` was given or defaulted:
+(`Output directory: ...`). Every run's directory sits under its command's
+directory in the xdir:
 
 ```text
-<xdir>/otto-output/<command>/<timestamp>_<subcommand>/
+<xdir>/<command>/<timestamp>[_<subcommand>]/
 ```
 
-`--xdir` defaults to the current directory, so without it (or `OTTO_XDIR`) a
-run started from a project root writes into the project's `otto-output/`.
-otto writes nothing else at the top of the xdir, so a project's own `docker/`
-or `test/` directory is never written into, and `otto init` adds
-`otto-output/` to the project's `.gitignore` and `.dockerignore`
-({doc}`init`).
-
-`otto init` adds that line only when it scaffolds a project's settings, so a
-project whose `.otto/settings.toml` already existed never gets it: add
-`otto-output/` to its `.gitignore`, and to its `.dockerignore` if it builds
-images with the project root as the context, yourself.
+The xdir is `--xdir` (or `OTTO_XDIR`), created if it is missing. Without
+either it is `$OTTO_HOME/otto-xdir` (`~/.otto/otto-xdir` by default), one tree
+for every project you run, outside them all. Library calls with no output
+directory of their own write into the same tree — see
+[Where a library call writes its output](../extend/python-library.md#where-a-library-call-writes-its-output).
+To keep a run's output in the project instead, pass `--xdir .`: the runs then
+land in `./test/`, `./host/` and so on, beside the project's own files, so add
+a line to the project's `.gitignore` (and to its `.dockerignore` if it builds
+images with the project root as the context) for each command directory you
+run, such as `/test/` or `/run/`.
 
 - `<command>` is the top-level subcommand (`run`, `test`, `host`, ...)
   and `<subcommand>` is the leaf — the instruction name or {doc}`host verb <host/index>`.
   Commands with no distinct leaf (`test`, `monitor`) omit the suffix:
-  `otto-output/test/<timestamp>/`.
+  `test/<timestamp>/`.
 - `<timestamp>` is UTC with millisecond precision
   (`YYYYMMDD_HHMMSS_mmm`), so directories sort chronologically.
 - Hyphens in command names become underscores (`write-file` →
   `write_file`).
-- Log retention (`--log-days`) deletes only the timestamped directories
-  inside `otto-output/` that are older than the limit; nothing outside it.
+- Every run directory otto creates holds an empty marker file, `.otto-run`.
+  Log retention (`--log-days`) deletes a directory only when it has a run's
+  name AND that marker and is older than the limit, so a project's own
+  `test/20200101_000000_000/` under `--xdir .` is never touched. It never
+  follows a symbolic link, and an entry it cannot read is skipped. Run
+  directories made before otto wrote the marker (including any old
+  `otto-output/` tree) carry none and are never pruned: delete them by hand.
 
 Read-only commands create no directory: `otto reservation`, `otto inventory`,
 `otto schema`, and `otto init` opt out entirely, as do `otto cov clean` and
@@ -368,6 +371,7 @@ and they share one shape below `<kind>/<host_id>/`:
 
 ```text
 <run>/
+  .otto-run                            the marker: otto made this run directory
   logs/<host_id>/<product>/product/    each product's own get_logs output
   logs/<host_id>/<product>/debug/      that product's debug_log_globs haul
   logs/<host_id>/debug/                the host's own debug_log_globs haul
@@ -410,7 +414,8 @@ thing:
 
 - a project's `.otto/` holds **source config** — `settings.toml`, coverage
   overrides, the schemas `otto init` scaffolds.  Committed, shared by the team.
-- the xdir holds **run outputs** — the per-invocation directories above.
+- the xdir holds **run outputs** — the per-invocation directories above; by
+  default `$OTTO_HOME/otto-xdir/`.
 - the **workspace home** holds everything otto derived and can rebuild.
 
 The third is otto's user-level home (`~/.otto`, relocatable wholesale with
@@ -425,6 +430,7 @@ you run them:
     remote_completion_cache.json
     pycache/                        # bytecode of what otto's pytest sessions import
     pytest-cache/                   # pytest's cache for otto test runs
+  otto-xdir/                        # the default xdir: run outputs, not derived state
   tls/                              # a convention, not derived state — see below
 ```
 
@@ -442,12 +448,17 @@ than a `.pytest_cache/` in pytest's rootdir. That covers the sessions, not
 all of `otto test`: your project's init modules, which otto imports when it
 starts, compile into a `__pycache__` beside themselves as any Python module
 does, unless you set `PYTHONPYCACHEPREFIX`; and a run's output directory is
-under `otto-output/` in `--xdir`, which is the current directory unless you
-choose another ([Output directories](#output-directories)).
+in the xdir, `$OTTO_HOME/otto-xdir` unless you choose another
+([Output directories](#output-directories)).
 
 Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.
 `OTTO_HOME` moves all of it at once.
+
+Two things under the home are not derived state: `otto-xdir/` and `tls/`
+(below). `otto-xdir/` holds your runs' logs and artifacts. No `otto cache`
+command and no environment rebuild touches it (a workspace key starts with eight hex digits, so it can
+never be `otto-xdir`); only `--log-days` retention prunes it, inside itself.
 
 Nothing here shrinks on its own: every distinct `OTTOPATH` set gets its
 own workspace directory, and none is ever removed automatically.
@@ -455,7 +466,7 @@ own workspace directory, and none is ever removed automatically.
 growth — see {doc}`../architecture/startup-performance` for what it costs to keep this
 home on a network filesystem instead of local disk.
 
-`tls/` is the exception on both counts.  otto never creates it and never
+`tls/` is the other exception, and on both counts.  otto never creates it and never
 rebuilds it: it is the conventional per-user location a committed
 `[monitor]` table points its `tls_cert` / `tls_key` at (see
 {doc}`monitor/serving`).  Those settings spell the path `~/.otto/tls/`

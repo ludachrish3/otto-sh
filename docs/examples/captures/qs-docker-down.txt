@@ -41,4 +41,4 @@ INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Removing
 INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Removed
 docker-host: quickstart torn down
 
-Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_down
+Output directory: /tmp/otto-gs/xdir/docker/<run>_down

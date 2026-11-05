@@ -3,7 +3,9 @@
 Specified in section 4 of the shim-completion spec. This
 module is imported by ``otto._shim`` BEFORE anything else in otto, on every TAB,
 so it imports ``hashlib``, ``json``, ``os``, ``re``, ``shlex``, ``sys``, ``time``
-and ``typing`` (already loaded by ``otto/__init__``, so free) and nothing else: not
+and ``typing`` (already loaded by ``otto/__init__``, so free), plus one sibling,
+:mod:`otto.home_root` (the one derivation of otto's home, which itself imports
+only ``os`` and ``typing``), and nothing else: not
 ``dataclasses`` (which drags in ``inspect``, ``dis`` and ``ast``; measured +74 file
 syscalls per TAB on an NFS home) and not ``pathlib`` (``os.path`` by design;
 ``.ruff.toml`` exempts this file from ``PTH``). ``subprocess`` is imported only by
@@ -40,6 +42,8 @@ import sys
 import time
 from typing import Any
 
+from .home_root import HOME_ENV_VAR, home_dir
+
 CACHE_FILENAME = "completion_cache.json"
 SCHEMA = 30
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
@@ -75,7 +79,7 @@ UNREADABLE_SIZE = "unreadable"
 that could not be stat'ed (``[path, None, "unreadable"]``; absent is ``[path, None, None]``)."""
 COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
 OTTOPATH_VAR = "OTTOPATH"
-_CHILD_PATH_VARS = (OTTOPATH_VAR, "OTTO_XDIR", "OTTO_HOME")
+_CHILD_PATH_VARS = (OTTOPATH_VAR, "OTTO_XDIR", HOME_ENV_VAR)
 _NORMALIZE_RE = re.compile(r"[-_.]+")
 _PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
 """``otto.utils._PATH_LIST_SEP``: path lists split on ``os.pathsep`` only."""
@@ -819,8 +823,7 @@ def locate_cache(environ: dict[str, str]) -> str:
     roots = collapse_path_list([kept_path_spelling(p) for p in _PATH_LIST_SEP.split(raw) if p])
     if not roots:
         raise Handover("no OTTOPATH roots")
-    home = environ.get("OTTO_HOME") or os.path.join(os.path.expanduser("~"), ".otto")
-    return os.path.join(os.path.expanduser(home), workspace_key(roots), CACHE_FILENAME)
+    return os.path.join(home_dir(environ), workspace_key(roots), CACHE_FILENAME)
 
 
 def servable_shim(data: Any, now: float) -> dict[str, Any]:

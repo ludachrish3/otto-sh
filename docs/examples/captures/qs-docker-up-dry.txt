@@ -10,4 +10,4 @@ is the command itself, not a description of it. On docker-host, with the env lau
 example_lab-quickstart-docs -f
 /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0/tools.yml up -d --remove-orphans
 
-Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_up
+Output directory: /tmp/otto-gs/xdir/docker/<run>_up

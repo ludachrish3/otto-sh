@@ -2,7 +2,7 @@
 
 Exercises the test-run engine as a plain library call — no Typer context, no
 ``ctx.meta``. Covers the public surface (``RunOptions``, ``SuiteRunResult``,
-``run_tests``, ``resolve_output_dir``) plus the internal exit-code mapping
+``run_tests``) plus the internal exit-code mapping
 (``_final_exit_code``) that folds a stability threshold violation into the
 invocation's exit code.
 """
@@ -21,7 +21,6 @@ from otto.suite.run import (
     RunOptions,
     SuiteRunResult,
     _final_exit_code,
-    resolve_output_dir,
     run_tests,
 )
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, patch_bootstrap
@@ -101,26 +100,26 @@ def test_final_exit_code_pytest_rc_wins_over_stability():
     assert _final_exit_code(rc=1, unstable=True) == 1
 
 
-def test_resolve_output_dir_explicit_wins(tmp_path):
-    assert resolve_output_dir(tmp_path) == tmp_path
+def test_run_tests_without_output_dir_writes_under_the_default_xdir(tmp_path, monkeypatch):
+    """No ``output_dir`` and no run directory: a ``test/<ts>/`` run dir under
+    ``$OTTO_HOME/otto-xdir`` (#758), created with otto's marker; the CWD stays empty."""
+    import contextvars
 
+    from otto.home_root import default_xdir
 
-def test_resolve_output_dir_falls_back_to_cwd(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    # no explicit dir, no context output_dir
-    assert resolve_output_dir(None) == tmp_path
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    _use_project(monkeypatch, _stub_project(tmp_path / "proj"))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
 
+    result = contextvars.Context().run(run_tests, [_ALPHA])
 
-def test_resolve_output_dir_uses_context_output_dir(tmp_path):
-    from otto.context import OttoContext, reset_context, set_context
-    from otto.invocation import RunPolicy
-    from otto.labs.loader import Lab
-
-    token = set_context(OttoContext(lab=Lab(name="test"), policy=RunPolicy(output_dir=tmp_path)))
-    try:
-        assert resolve_output_dir(None) == tmp_path
-    finally:
-        reset_context(token)
+    assert result.output_dir.parent == layout.command_output_dir(default_xdir(), "test")
+    assert layout.RUN_DIR_NAME_RE.match(result.output_dir.name)
+    assert layout.is_run_dir(result.output_dir)
+    assert list(work.iterdir()) == []
 
 
 # ── run_tests: pytest.main argument wiring ───────────────────────────────────

@@ -10,4 +10,4 @@ INFO     @docker-host   | docker exec -i <id> sh -c 'GCOV_PREFIX=/tmp/wordcount
 INFO     @docker-host > | 2
 INFO     @docker-host > | 2
 
-Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/host/<run>_exec

@@ -1,11 +1,13 @@
 """otto's user-level home, and the workspace key that shards it.
 
-``~/.otto`` (relocatable wholesale via ``OTTO_HOME``) is where otto keeps
-EVERYTHING IT DERIVED AND CAN REBUILD. That is the whole contract, and it is
-the third line of a three-line taxonomy: a project root's ``.otto/`` holds source
-config, the xdir holds run outputs, this holds derived state. One consequence
-worth stating: anything under here may be deleted at any time, and otto must
-rebuild it without complaint.
+``~/.otto`` (relocatable wholesale via ``OTTO_HOME``) sits in a three-line
+taxonomy: a project root's ``.otto/`` holds source config, the xdir holds run
+outputs (by default ``$OTTO_HOME/otto-xdir/``), and the home holds derived
+state. Everything under the home is rebuildable and may be deleted at any time,
+otto rebuilding it without complaint, EXCEPT ``otto-xdir/`` (the default run
+tree, which only ``--log-days`` retention prunes, inside itself) and ``tls/``
+(the per-user certificate location a ``[monitor]`` table points at, which otto
+never creates).
 
 The top level is keyed by WORKSPACE -- the normalized ``OTTOPATH`` set --
 rather than flat, so per-workspace reset is one ``rm -rf`` and there is one
@@ -13,15 +15,20 @@ answer to "where do my otto caches live". The key is two parts with two jobs:
 an 8-character hash that makes it CORRECT (distinct workspaces cannot collide,
 including two whose directories happen to share basenames), and a slug that
 makes it LEGIBLE (an operator running ``ls ~/.otto`` can tell which workspace
-is which without decoding a hash).
+is which without decoding a hash). A key starts with eight lowercase hex
+characters, so it can never be ``otto-xdir``.
 
-This module is the one owner of both. Nothing else derives a path under the
+:mod:`otto.home_root` owns the home root and ``otto-xdir`` (it is the one
+reader of ``OTTO_HOME``, low enough for the host layer to use); this module
+owns the workspace keying below it. Nothing else derives a path under the
 home -- a second derivation is how the two completion caches would drift apart
 again, which is the wart the relocation exists to remove.
 """
 
 import hashlib
 from pathlib import Path
+
+from ..home_root import otto_home
 
 _EMPTY_SLUG = "no-projects"
 """Slug for an empty ``OTTOPATH`` -- the bare-lab-directory case.
@@ -52,19 +59,6 @@ PYTEST_CACHE_DIRNAME = "pytest-cache"
 
 pytest otherwise writes ``.pytest_cache/`` into its rootdir, which can be a
 test directory."""
-
-
-def otto_home() -> Path:
-    """Return otto's user-level home: ``$OTTO_HOME`` if set, else ``~/.otto``.
-
-    PURE -- never creates the directory. Creation belongs to whoever writes
-    into it, at the moment it writes, so a read-only code path (completion,
-    ``--help``) can ask where the home *would* be without making one.
-    """
-    from ..models.settings import OttoEnvSettings
-
-    home = OttoEnvSettings().home
-    return home.expanduser() if home is not None else Path.home() / ".otto"
 
 
 DIGEST_SALT_FILENAME = "secret_salt"

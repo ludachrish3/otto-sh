@@ -231,8 +231,8 @@ def real_main_mocks(tmp_path):
     project = Project(root=root)
 
     # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
-    # point OTTO_XDIR at tmp_path so init_cli_logging never writes to the project
-    # root (--xdir is optional and defaults to CWD, which we don't want here).
+    # point OTTO_XDIR at tmp_path so init_cli_logging writes there (--xdir is
+    # optional and defaults to $OTTO_HOME/otto-xdir, shared by the worker).
     clean_env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 

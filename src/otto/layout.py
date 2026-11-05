@@ -1,33 +1,34 @@
 """The run-tree contract: where each run's directory sits, and what lands in it.
 
-Every run's directory sits under one fixed directory of the xdir
-(:func:`command_output_dir`), and every path below it that is keyed by host or
-product comes from here too, so writers and readers of either level cannot
-drift apart. Pure: nothing here touches the filesystem.
+Every run's directory sits under its command's directory in the xdir
+(:func:`command_output_dir`, :func:`run_output_dir`), and every path below it
+that is keyed by host or product comes from here too, so writers and readers of
+either level cannot drift apart. The path builders are pure: they touch no
+filesystem. Two named helpers do: :func:`is_run_dir` (inspection: it reads a
+run dir's marker) and :func:`make_run_dir` (creation: the one creator of a run
+dir, which writes the marker).
 
 .. code-block:: text
 
-    <xdir>/otto-output/<command>/<timestamp>[_<subcommand>]/   = <run>, below
+    <xdir>/<command>/<timestamp>[_<subcommand>]/   = <run>, below
 
     <run>/
+      .otto-run                           the marker: otto made this run dir
       logs/<host_id>/<product>/product/   Product.get_logs output
       logs/<host_id>/<product>/debug/     the product's debug_log_globs haul
       logs/<host_id>/debug/               the host's debug_log_globs haul
       cov/<host_id>/<product>/            .gcda, board.info, capture.json
       cov_report/                         the HTML coverage report (no destination given)
 
+The xdir defaults to ``$OTTO_HOME/otto-xdir`` (:func:`otto.home_root.default_xdir`).
 ``debug`` is reserved as a product name because it is a sibling of the
 product directories under ``logs/<host_id>/``.
 """
 
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-
-OUTPUT_DIR = "otto-output"
-"""The one directory under the xdir that holds every run, whatever the command.
-
-Run output never lands straight in the xdir: ``--xdir`` defaults to the current
-directory, and a project root already has directories named like commands
-(``docker/``, ``test/``)."""
 
 LOGS_DIR = "logs"
 COV_DIR = "cov"
@@ -61,24 +62,91 @@ def validate_product_name(name: str) -> None:
         )
 
 
-def output_root(xdir: Path) -> Path:
-    """``<xdir>/otto-output`` — the directory every run's directory sits under."""
-    return xdir / OUTPUT_DIR
-
-
 def command_dir_name(command: str) -> str:
     """Return the directory name of *command* (or a subcommand): hyphens become underscores."""
     return command.replace("-", "_")
 
 
 def command_output_dir(xdir: Path, command: str) -> Path:
-    """``<xdir>/otto-output/<command>`` — where each run of *command* gets its directory.
+    """``<xdir>/<command>`` — where each run of *command* gets its directory.
 
-    The one place a command's directory is spelled: the writer
-    (:func:`otto.logger.management.create_output_dir`), its pruning and any
-    reader that looks for a run all start here.
+    The one place a command's directory is spelled: the writers
+    (:func:`otto.logger.management.create_output_dir`, the library default in
+    :mod:`otto.output_dir`), the pruning and any reader that looks for a run
+    all start here.
     """
-    return output_root(xdir) / command_dir_name(command)
+    return xdir / command_dir_name(command)
+
+
+RUN_DIR_NAME_RE: "re.Pattern[str]" = re.compile(r"^\d{8}_\d{6}_\d{3}(_.+)?$")
+"""Matches exactly the names :func:`run_dir_name` writes: ``YYYYMMDD_HHMMSS_mmm[_<sub>]``."""
+
+RUN_MARKER = ".otto-run"
+"""The empty dotfile at the top of every run dir otto allocates (:func:`make_run_dir`).
+
+``--log-days`` deletes a directory only when it has otto's run name AND this
+marker (:func:`is_run_dir`), so a project's own ``test/20200101_000000_000/``
+under ``--xdir .`` is never touched. A dotfile, so ``ls`` of a run dir does
+not show it."""
+
+
+@dataclass(frozen=True)
+class RunEntry:
+    """The CLI command (and subcommand) a run belongs to: what names its directories."""
+
+    command: str
+    subcommand: "str | None" = None
+
+
+def run_dir_name(started: datetime, subcommand: "str | None" = None) -> str:
+    """Return a run dir's name: *started* in UTC to the millisecond, then ``_<subcommand>``."""
+    # %f is microseconds; the name keeps milliseconds (drop the last 3 digits).
+    stamp = started.astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    return stamp if subcommand is None else f"{stamp}_{command_dir_name(subcommand)}"
+
+
+def run_output_dir(xdir: Path, entry: RunEntry, *, started: "datetime | None" = None) -> Path:
+    """``<xdir>/<command>/<timestamp>[_<subcommand>]`` — one run's directory, not created.
+
+    The one builder of a run dir's path, for the CLI and library calls alike;
+    *started* defaults to now.
+    """
+    when = started if started is not None else datetime.now(tz=timezone.utc)
+    return command_output_dir(xdir, entry.command) / run_dir_name(when, entry.subcommand)
+
+
+def make_run_dir(path: Path, *, exist_ok: bool = False) -> Path:
+    """Create the run dir *path* (parents too) and write its :data:`RUN_MARKER`; return it.
+
+    The ONE place a run dir is created and marked. *exist_ok* is the sanctioned
+    variation: the CLI refuses a collision (``False``), a library call reuses
+    its memoised dir (``True``).
+
+    Raises:
+        FileExistsError: *path* exists and *exist_ok* is false.
+    """
+    path.mkdir(parents=True, exist_ok=exist_ok)
+    (path / RUN_MARKER).touch()
+    return path
+
+
+def is_run_dir(path: Path) -> bool:
+    """Whether *path* is a run dir otto made: run-named, not a symlink, and marked.
+
+    The one test of "this is a run", for the ``--log-days`` prune and every
+    reader that looks for runs. The name is matched first and costs nothing;
+    only a run-named entry is asked about the filesystem. A symlink is never a
+    run (:func:`otto.utils.is_real_dir`, the one rule a deleting walk enters
+    by), so a walk that trusts this answer cannot reach through a link into
+    another tree.
+    """
+    from .utils import is_real_dir
+
+    return (
+        bool(RUN_DIR_NAME_RE.match(path.name))
+        and is_real_dir(path)
+        and (path / RUN_MARKER).is_file()
+    )
 
 
 def host_logs_dir(base: Path, host_id: str) -> Path:

@@ -283,3 +283,29 @@ class TestStabilityReport:
         report_text = (tmp_path / "stability_report.txt").read_text()
         assert "50 iterations" in report_text
         assert "120s duration" in report_text
+
+
+def test_a_library_stability_run_with_redirected_junit_writes_its_report(tmp_path, monkeypatch):
+    """With JUnit sent elsewhere and no output dir, the report still has a dir to land in.
+
+    ``stability_report.txt`` is written straight into the run's directory, so a
+    library run creates its default run dir (#758) even when nothing else of
+    its output lands there.
+    """
+    import contextvars
+
+    from otto import layout
+    from otto.suite.run import RunOptions, run_tests
+    from tests._fixtures.bootstrap_seam import patch_bootstrap
+    from tests._fixtures.run_projects import DOUBLE_TEST_NAME, project_double, pytest_main_returning
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    patch_bootstrap(monkeypatch, [project_double(tmp_path / "proj")])
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    opts = RunOptions(iterations=1, results=str(tmp_path / "elsewhere" / "junit.xml"))
+
+    result = contextvars.Context().run(run_tests, [DOUBLE_TEST_NAME], run_options=opts)
+
+    assert result.stability_report == result.output_dir / "stability_report.txt"
+    assert result.stability_report.is_file()
+    assert layout.is_run_dir(result.output_dir)
