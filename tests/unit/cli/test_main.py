@@ -265,6 +265,52 @@ class TestArgumentValidation:
         assert result.exit_code == 0
 
 
+class TestMisplacedGlobalOption:
+    """A root option typed after the subcommand gets a placement hint (#684)."""
+
+    @staticmethod
+    def _flat(args: list[str]) -> tuple[int, str]:
+        result = runner.invoke(app, args)
+        return result.exit_code, " ".join(result.output.replace("│", " ").split())
+
+    def test_a_global_option_after_the_subcommand_is_hinted(self):
+        code, flat = self._flat(["--lab", "test_lab", "_main_probe", "--xdir", "d"])
+        assert code == 2
+        assert "No such option: --xdir" in flat
+        assert "global options go before the subcommand: otto --xdir ... _main_probe" in flat
+
+    def test_the_short_spelling_is_hinted_too(self):
+        code, flat = self._flat(["--lab", "test_lab", "_main_probe", "-x", "d"])
+        assert code == 2
+        assert "No such option: -x" in flat
+        assert "global options go before the subcommand: otto -x ... _main_probe" in flat
+
+    def test_an_option_nobody_knows_gets_no_hint(self):
+        code, flat = self._flat(["_main_probe", "--bogus"])
+        assert code == 2
+        assert "No such option: --bogus" in flat
+        assert "global option" not in flat
+
+    def test_the_equals_spelling_is_hinted_by_its_name(self):
+        code, flat = self._flat(["_main_probe", "--xdir=d"])
+        assert code == 2
+        assert "No such option: --xdir" in flat
+        assert "otto --xdir ... _main_probe" in flat
+
+    def test_a_local_option_sharing_a_root_spelling_is_accepted(self):
+        # --dry-run is both a root option and `cache prune`'s own.
+        code, flat = self._flat(["cache", "prune", "--dry-run", "--help"])
+        assert code == 0
+        assert "No such option" not in flat
+        assert "global option" not in flat
+
+    def test_an_unknown_option_at_the_root_gets_no_hint(self):
+        code, flat = self._flat(["--bogus", "_main_probe"])
+        assert code == 2
+        assert "No such option: --bogus" in flat
+        assert "global option" not in flat
+
+
 # ── Lab-free subcommands ──────────────────────────────────────────────────────
 
 
