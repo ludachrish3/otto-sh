@@ -567,7 +567,8 @@ def test_check_without_lab_exits_with_usage_error(capsys):
         check(ctx)
     assert exc.value.exit_code == 2
     assert (
-        capsys.readouterr().err == "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').\n"
+        capsys.readouterr().err
+        == "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB'). See otto --list-labs.\n"
     )
 
 

@@ -117,8 +117,6 @@ INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
          "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
 INFO     Coverage data collected to /tmp/otto-gs/xdir/quickstart-docker/e2e/cov (3 product dir(s))
 INFO     === Capturing docker-host/banner ===
-INFO     banner: object list unavailable: image quickstart-banner:latest is a reference, not a local
-         tarball
 INFO     lcov capture: 2 file(s) ->
          /tmp/otto-gs/xdir/quickstart-docker/e2e/cov/docker-host/banner/board.info
 INFO     docker-host/banner: skipped 5 source file(s) outside the project root

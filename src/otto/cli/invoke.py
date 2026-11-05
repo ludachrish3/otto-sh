@@ -641,7 +641,10 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
             # Plain stderr, not rich: click's own usage-error stream. (A *real*
             # click.UsageError would escape Typer 0.26's vendored click fork
             # uncaught, hence the manual message.)
-            typer.echo("Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True)
+            typer.echo(
+                "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB'). See otto --list-labs.",
+                err=True,
+            )
             raise typer.Exit(code=2)
         if kind == "unknown_lab":
             raise err

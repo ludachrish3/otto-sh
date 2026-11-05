@@ -109,8 +109,9 @@ a tarball is staged and loaded with `docker load -i`; a reference with
 it is `docker pull`ed on every install instead.
 
 A reference has no local file to read the image's objects from, so capturing
-its counters logs one INFO line, `<product>: object list unavailable: image
-<ref> is a reference, not a local tarball`. It needs no action: each `.gcda` is
+its counters logs one DEBUG line, visible with `--log-level debug`:
+`<product>: object list unavailable: image <ref> is a reference, not a local
+tarball`. It needs no action: each `.gcda` is
 then paired with its notes by its own path, under the project root
 ({ref}`coverage-pairing-errors` lists what can go wrong there).
 

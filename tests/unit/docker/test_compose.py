@@ -1860,7 +1860,7 @@ def test_project_parent_host_no_candidate_raises():
     """No parent= and no docker-capable host in the lab: the rule refuses."""
     lab = Lab(name="test")
 
-    with pytest.raises(DockerVerbError, match="has no docker-capable unix host") as exc:
+    with pytest.raises(DockerVerbError, match="is marked docker_capable") as exc:
         _project_parent_host(lab, parent=None)
     assert exc.value.field == "parent"
 

@@ -314,6 +314,18 @@ def test_reference_form_docker_image_is_unavailable_to_the_local_read(tmp_path):
     assert result.kind == "reference"
 
 
+def test_a_reference_image_is_logged_at_debug_not_info(tmp_path, caplog):
+    """The state is expected and needs no action, so only --log-level debug shows it."""
+    with caplog.at_level(logging.INFO, logger="otto.coverage.objects"):
+        ObjectListCache(tmp_path).read(_Img("redis:7", tarball=False))
+    assert [r for r in caplog.records if "object list unavailable" in r.getMessage()] == []
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="otto.coverage.objects"):
+        ObjectListCache(tmp_path).read(_Img("redis:7", tarball=False))
+    (record,) = [r for r in caplog.records if "object list unavailable" in r.getMessage()]
+    assert record.levelno == logging.DEBUG
+
+
 @pytest.mark.skipif(not _HAS_ZSTD, reason="no zstd decompressor importable")
 def test_corrupt_zst_is_unavailable(tmp_path):
     art = tmp_path / "app.zst"

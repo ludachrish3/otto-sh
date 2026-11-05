@@ -95,7 +95,9 @@ def test_docker_parents_is_every_capable_host_in_lab_order_or_the_one_named(lab)
 
 def test_docker_parents_refuses_a_lab_with_no_docker_capable_host_rather_than_answering_silence():
     lab = _lab(_plain("test2", "10.10.200.12"))
-    with pytest.raises(DockerVerbError, match=r"lab '.*' has no docker-capable unix host") as exc:
+    with pytest.raises(
+        DockerVerbError, match=r"no host in lab '.*' is marked docker_capable"
+    ) as exc:
         docker_parents(lab, None)
     assert exc.value.field == "parent"
 

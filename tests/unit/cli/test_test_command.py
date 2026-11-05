@@ -516,6 +516,18 @@ def test_an_untyped_secret_flag_is_not_echoed(otto_test_cli, one_project):
     assert "*****" not in help_text
 
 
+def test_cov_help_says_what_auto_looks_for(otto_test_cli, monkeypatch):
+    """`test --help` explains what `--cov` auto-detects, whole, in an 80-column terminal.
+
+    Rendered, not read off the option: the help column is about 19 cells wide,
+    and a long hyphenated token there is cut to an ellipsis.
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+    out = otto_test_cli(["test", "--help"], lab=None).output
+    flat = " ".join(out.replace("│", " ").split())
+    assert "on when a product built with coverage counters is detected" in flat
+
+
 def test_dry_run_probe_announces_even_with_no_hosts(otto_test_cli, one_project, monkeypatch):
     """A previewing leaf never drops ``--probe``: its announcement prints, no hosts included."""
     from otto.cli.probe import PROBE_NO_HOSTS

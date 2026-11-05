@@ -188,6 +188,15 @@ def test_the_registered_set_is_exactly_the_declared_set(registered):
     assert registered_here == FIRST_PARTY_INSTRUCTIONS
 
 
+def test_cleanup_help_says_it_cleans_the_whole_lab(registered):
+    """`run cleanup --help` leads with its scope: the lab, not one project.
+
+    Asserted on the registered help string; the rendered 80-column row may wrap.
+    """
+    (command,) = build_instruction_app(INSTRUCTIONS.get("cleanup")).registered_commands
+    assert "whole lab" in command.help
+
+
 # ── Collision policy ─────────────────────────────────────────────────────────
 
 

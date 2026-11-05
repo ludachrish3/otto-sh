@@ -874,7 +874,10 @@ class ObjectListCache:
     def _unavailable(
         self, product: "Product", reason: str, *, kind: UnavailableKind
     ) -> Unavailable:
-        logger.info("%s: object list unavailable: %s", product.name, reason)
+        # A reference image has no local tarball to read, which is its normal
+        # state and needs no action; the other kinds are worth an INFO line.
+        level = logging.DEBUG if kind == "reference" else logging.INFO
+        logger.log(level, "%s: object list unavailable: %s", product.name, reason)
         return Unavailable(product=product.name, reason=reason, kind=kind)
 
     def _cached(self, reader: str, path: Path, compute: Callable[[Path], list[str]]) -> list[str]:

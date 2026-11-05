@@ -11,8 +11,8 @@ def test_no_labs_is_the_plain_missing_option_line(capsys):
     with pytest.raises(typer.Exit) as exc:
         report_lab_context_error(LabBuildError("x", field="labs", kind="no_labs"))
     assert exc.value.exit_code == 2
-    assert (
-        capsys.readouterr().err == "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').\n"
+    assert capsys.readouterr().err == (
+        "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB'). See otto --list-labs.\n"
     )
 
 

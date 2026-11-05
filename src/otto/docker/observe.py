@@ -46,6 +46,11 @@ def capable_ids(lab: "Lab") -> "list[str]":
     return sorted(hid for hid, _ in _capable(lab))
 
 
+def _no_capable_host(lab: "Lab") -> DockerVerbError:
+    """Build the refusal for a lab with no docker-capable host (both entry points raise it)."""
+    return DockerVerbError(f"no host in lab {lab.name!r} is marked docker_capable", field="parent")
+
+
 def default_docker_parent(lab: "Lab") -> UnixHost:
     """Return the parent a docker verb uses when none is named: the one rule.
 
@@ -56,7 +61,7 @@ def default_docker_parent(lab: "Lab") -> UnixHost:
     """
     capable = [host for _, host in _capable(lab)]
     if not capable:
-        raise DockerVerbError(f"lab {lab.name!r} has no docker-capable unix host", field="parent")
+        raise _no_capable_host(lab)
     if len(capable) == 1:
         return capable[0]
     top = max(h.docker_priority for h in capable)
@@ -97,7 +102,7 @@ def docker_parents(lab: "Lab", parent: "str | None") -> "list[UnixHost]":
         return [docker_parent(lab, parent)]
     parents = [host for _, host in _capable(lab)]
     if not parents:
-        raise DockerVerbError(f"lab {lab.name!r} has no docker-capable unix host", field="parent")
+        raise _no_capable_host(lab)
     return parents
 
 
