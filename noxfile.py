@@ -786,8 +786,9 @@ def dashboard(session: nox.Session, browser: str) -> None:
     entrypoint) carries the same prerequisite —
     and, unlike this session, rebuilds a dist that has gone stale against
     web/src/ rather than only one that is missing.
-    Each engine's browser system libraries are installed by that job via
-    `playwright install --with-deps <browser>` ahead of this session.
+    That job runs in Playwright's image (tagged from uv.lock), which already
+    carries each engine and its system libraries, so the `playwright install`
+    below finds the engine in place; locally it downloads the engine.
     """
     session.run("playwright", "install", browser)
     session.run(

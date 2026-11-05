@@ -221,6 +221,27 @@ jobs:
       - name: Every canary leg succeeded
         run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-canary.result }}" = success
 
+  # The Playwright image the browser jobs run in, named by
+  # scripts/playwright_version.py from the playwright version locked in
+  # uv.lock: the one place that reads the lock and spells the image, so a
+  # Dependabot bump of the lock moves the image with it. The helper needs only
+  # tomli, so `--no-project` keeps the project out of this job.
+  playwright-version:
+    name: playwright-version
+    needs: [gate-admission]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.lock.outputs.version }}
+      image: ${{ steps.lock.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+      - id: lock
+        run: uv run --no-project --with tomli python scripts/playwright_version.py uv.lock
+
   # One parallel job per browser engine (Blink/Gecko/Safari) — the nox
   # `dashboard` session is parametrized by browser, and this matrix runs each
   # variant on its own runner so wall-clock is a single engine's runtime, not
@@ -229,9 +250,21 @@ jobs:
   # is @only_browser("webkit"), so it runs only in the webkit leg and skips on
   # the others.
   dashboard:
-    needs: [gate-admission]
+    needs: [gate-admission, playwright-version]
     name: dashboard-e2e (${{ matrix.browser }})
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.playwright-version.outputs.image }}
+      # --ipc=host: Chromium shares memory through /dev/shm, which a container
+      # sizes at 64 MB by default; --init reaps the zombie browser processes
+      # a test run leaves. Both are Playwright's own guidance for its image.
+      options: --ipc=host --init
+    env:
+      # GitHub mounts /github/home as HOME in a container job, owned by
+      # another user than root; Firefox refuses to start as root with such a
+      # HOME. Playwright points at HOME=/root, and the job-level env applies
+      # before checkout.
+      HOME: /root
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +279,20 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.10
+      # The image ships git and the browsers (PLAYWRIGHT_BROWSERS_PATH) but
+      # not make or jq, which `make web` below needs (jq for
+      # scripts/typecheck_web.sh). Only the missing ones are installed. It
+      # runs as root: no sudo.
+      - name: Install the build tools the Playwright image lacks (make, jq)
+        run: missing=""; for tool in make jq; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done; [ -z "$missing" ] || { apt-get update && apt-get install -y --no-install-recommends $missing; }
+      # actions/checkout trusts the workspace (git safe.directory) only in a
+      # throwaway HOME. This container runs as root in a workspace the
+      # runner's user owns, so without this every later git command refuses
+      # the checkout, and `make web`'s `git diff --exit-code a b` silently
+      # turns into a --no-index diff of the two files against each other.
+      # HOME=/root (above) makes the global config last for every step.
+      - name: Trust the checkout for git (the container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Post-cutover, the browser suite exercises the built React dashboard
       # (src/otto/_webassets/monitor/dist/) through a real MonitorServer — there
       # is no legacy static fallback anymore, so `dist/` must exist before
@@ -259,15 +306,14 @@ jobs:
       - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
       # Unit tests + coverage run in the dedicated check-ts job; this job
-      # builds the dashboard purely for the browser e2e that follows. Install
-      # only this leg's engine (+ its system libs). --with-deps runs apt-get
-      # update, which refreshes every source on the runner image — including a
-      # Google Chrome repo we never use — so a mirror sync there can fail this
-      # step before a single test runs (issue #129). Drop it first.
-      - name: Install ${{ matrix.browser }} with system dependencies
-        run: |
-          scripts/ci_drop_unused_apt_sources.sh
-          uv run --group dev playwright install --with-deps ${{ matrix.browser }}
+      # builds the dashboard purely for the browser e2e that follows. There is
+      # no browser install step: the Playwright image (tagged from uv.lock)
+      # already carries every engine and its system libraries, so the nox
+      # session's `playwright install <browser>` finds the engine in place and
+      # downloads nothing. That replaces `--with-deps`, whose `apt-get update`
+      # refreshed every source on the runner image, including a Google Chrome
+      # repo we never use, so a mirror sync there could fail the job before a
+      # single test ran (issue #129).
       - name: Run dashboard browser e2e (${{ matrix.browser }})
         env:
           # Per-file xdist groups for the audited browser suites (see
@@ -675,7 +721,7 @@ jobs:
   # the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [gate-admission, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
+    needs: [gate-admission, playwright-version, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -689,7 +735,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of gate-admission / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
+            echo "Check the job logs to see which of gate-admission / playwright-version / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
           } > issue-body.md
 
       - name: Create issue from file
