@@ -1105,7 +1105,7 @@ def test_bracketed_host_text_survives_end_to_end():
     """A tunnel path can legally include a netdev name like ``eth0[dataplane]``,
     which rich reads as a style tag and eats. Both the refusal header (built by
     joining ``result.path``, printed via ``print_error``) and the
-    ``--dry-run`` header/plan (``_print_check_dry_run``) must survive it end
+    ``--dry-run`` header/plan (``print_check_dry_run``) must survive it end
     to end — asserted through ``runner.invoke``'s REAL render path, not an
     isolated helper call that could pass while the wiring rots."""
     refusal_report = _check_report(
@@ -1146,20 +1146,12 @@ def test_bracketed_host_text_survives_end_to_end():
 # `otto.console.print_literal`, a `[red]` tag, a `:smile:` code and a 300-
 # character run all come out as written, on one line, under a 40-column console.
 
-_DRY_HEADER = "dry run {}: no device was contacted — nothing was read and nothing was changed"
 
-
-def test_rows_and_dry_run_lines_print_hostile_text_verbatim(monkeypatch, capsys):
+def test_rows_print_hostile_text_verbatim(monkeypatch, capsys):
     monkeypatch.setenv("COLUMNS", "40")
     tunnel_cli._row(HOSTILE)
-    tunnel_cli._print_dry_run_plan(HOSTILE, DryRunPlan(would=[HOSTILE], unchecked=["x"]))
-    tunnel_cli._print_check_dry_run(HOSTILE, [HOSTILE])
     out = capsys.readouterr().out
     assert_one_verbatim_line(out, HOSTILE)
-    assert_one_verbatim_line(out, _DRY_HEADER.format(HOSTILE))
-    assert_one_verbatim_line(out, f"  would: {HOSTILE}")
-    assert_one_verbatim_line(out, f"dry run {HOSTILE}:")
-    assert_one_verbatim_line(out, f"  {HOSTILE}")
 
 
 def test_list_partial_scan_names_hostile_hosts_verbatim(monkeypatch):

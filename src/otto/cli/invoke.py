@@ -576,6 +576,57 @@ def fail(message: object, code: int = 1, *, soft_wrap: bool = False) -> "NoRetur
     raise typer.Exit(code) from None
 
 
+def print_dry_run_plan(header: str, would: list[str], unchecked: list[str]) -> None:
+    """Render one ``--dry-run`` preview: what would happen, and what was not checked.
+
+    The one renderer for ``otto link`` and ``otto tunnel``. It takes the two
+    line lists rather than a plan because the two ``DryRunPlan`` classes are
+    unrelated and a plan-typed signature would need a cross-package import.
+    Every line is user-supplied lab data (a link name, a host id, a netdev, a
+    shell command built from them), so each prints literally.
+
+    BOTH SECTIONS, ALWAYS. ``would`` alone reads as a verified promise: every
+    command line in it is the one a CLEAN device would get (or a carrier port
+    picked without probing a host), and the refusals that could stop the call
+    outright have not run. ``not checked`` alone is a dry run with no preview,
+    which is useless rather than safe. The ``would`` section is legitimately
+    short or empty (an in-path link, or a chain with a container endpoint,
+    whose commands cannot be built without a live lookup); the header still
+    prints, so the command never answers with silence.
+    """
+    from rich.text import Text
+
+    from ..console import print_literal
+
+    print_literal(
+        Text.assemble(
+            ("dry run", "cyan"),
+            f" {header}: no device was contacted — nothing was read and nothing was changed",
+        )
+    )
+    for line in would:
+        print_literal(f"  would: {line}")
+    for line in unchecked:
+        print_literal(f"  not checked: {line}")
+
+
+def print_check_dry_run(header: str, lines: list[str]) -> None:
+    """Render a ``check --dry-run`` preview: the plan, and nothing else.
+
+    Unlike :func:`print_dry_run_plan`'s ``would``/``unchecked`` split, a
+    check hands back one flat, already-ordered line list, so there is nothing
+    to split, only to print literally: every line is lab/host data (a netdev,
+    a host id, a socat argv).
+    """
+    from rich.text import Text
+
+    from ..console import print_literal
+
+    print_literal(Text.assemble(("dry run", "cyan"), f" {header}:"))
+    for line in lines:
+        print_literal(f"  {line}")
+
+
 def report_project_selection_error(err: "ProjectSelectionError") -> "NoReturn":
     """Render a project-switch refusal in today's words.
 

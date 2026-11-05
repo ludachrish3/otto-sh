@@ -17,7 +17,6 @@ from rich import print as rprint
 from ..config.completion_cache import collect_link_ids
 from ..link.manage import (
     DirectionState,
-    DryRunPlan,
     ImpairReport,
     LinkState,
     RepairReport,
@@ -30,7 +29,7 @@ from ..link.manage import (
 from ..link.params import ImpairmentParams, Selector, parse_percent, parse_rate, parse_time_ms
 from ..link.placement import FlowDirection
 from .completers import completion_source, lab_scoped_host_ids, selected_lab_names
-from .invoke import fail, print_error
+from .invoke import fail, print_check_dry_run, print_dry_run_plan, print_error
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -116,31 +115,6 @@ def _row(text: "str | Text") -> None:
     print_literal(text)
 
 
-def _print_dry_run_plan(link_id: str, plan: DryRunPlan) -> None:
-    """Render one link's ``--dry-run`` preview: what would happen, and what was not checked.
-
-    BOTH SECTIONS, ALWAYS. ``would`` alone reads as a verified promise — every
-    command line in it is the one a CLEAN netdev would get, and the refusals
-    that could stop the call outright have not run. ``not checked`` alone is a
-    dry run with no preview, which is useless rather than safe. The ``would``
-    section is legitimately empty for an in-path link, whose placements cannot
-    be resolved without the middlebox's live address table; the header still
-    prints, so the command never answers with silence.
-    """
-    from rich.text import Text
-
-    _row(
-        Text.assemble(
-            ("dry run", "cyan"),
-            f" {link_id}: no device was contacted — nothing was read and nothing was changed",
-        )
-    )
-    for line in plan.would:
-        _row(f"  would: {line}")
-    for line in plan.unchecked:
-        _row(f"  not checked: {line}")
-
-
 def _print_impair_report(report: ImpairReport) -> None:
     from rich.text import Text
 
@@ -148,7 +122,7 @@ def _print_impair_report(report: ImpairReport) -> None:
         # A dry run applied nothing, so there is nothing for the loop below to
         # render — and `applied` being empty is exactly why the preview cannot
         # be left to it.
-        _print_dry_run_plan(report.link_id, report.plan)
+        print_dry_run_plan(report.link_id, report.plan.would, report.plan.unchecked)
         return
     for applied in report.applied:
         placement = applied.placement
@@ -259,7 +233,7 @@ def _print_repair_report(report: RepairReport) -> None:
     if report.plan is not None:
         # Never the line below under a dry run: `cleared (nothing to clear),
         # timers cancelled 0` is three claims and none of them was measured.
-        _print_dry_run_plan(report.link_id, report.plan)
+        print_dry_run_plan(report.link_id, report.plan.would, report.plan.unchecked)
         return
     cleared = ", ".join(f"{p.host_id}/{p.netdev}" for p in report.cleared)
     # "partially repaired", not a green "repaired" with a warning under it: the
@@ -296,6 +270,8 @@ async def repair(
     ),
 ) -> None:
     """Clear a link's impairment(s) and cancel its timers, or repair --all."""
+    from rich.text import Text
+
     from ..fleet import get_lab
 
     # This usage-error exit is deliberately kept OUT of the try/except below,
@@ -327,11 +303,14 @@ async def repair(
             for planned in sweep.planned:
                 _print_repair_report(planned)
             rprint(
-                f"[cyan]dry run[/cyan] — previewed {len(sweep.planned)} link(s); "
-                f"nothing was read and nothing was changed"
+                Text.assemble(
+                    ("dry run", "cyan"),
+                    f" — previewed {len(sweep.planned)} link(s); "
+                    "nothing was read and nothing was changed",
+                )
             )
         else:
-            rprint(f"[green]repaired[/green] {len(sweep.repaired)} link(s)")
+            rprint(Text.assemble(("repaired", "green"), f" {len(sweep.repaired)} link(s)"))
         if sweep.skipped:
             # Named, and deliberately BEFORE the failures block so it prints
             # even on the success path: a skip used to be a silent `continue`,
@@ -339,13 +318,17 @@ async def repair(
             # "repaired 0 link(s)" and exit 0 with nothing said about it.
             # Exit code unchanged — declining a link otto never impaired is
             # not a failure.
-            rprint(f"[yellow]skipped[/yellow] {len(sweep.skipped)} link(s):")
+            rprint(Text.assemble(("skipped", "yellow"), f" {len(sweep.skipped)} link(s):"))
             for skip in sweep.skipped:
                 print_error(f"  {skip}")
         if sweep.out_of_scope:
             # A decline, like a skip: the loaded ends were cleared, and the
             # other end is on a host this lab scope does not load.
-            rprint(f"[yellow]outside this lab scope[/yellow] {len(sweep.out_of_scope)} link(s):")
+            rprint(
+                Text.assemble(
+                    ("outside this lab scope", "yellow"), f" {len(sweep.out_of_scope)} link(s):"
+                )
+            )
             for entry in sweep.out_of_scope:
                 print_error(f"  {describe_out_of_scope(entry)}")
         if sweep.failures:
@@ -528,22 +511,6 @@ def _parse_features(given: str | None) -> list[str] | None:
     return [f.strip() for f in given.split(",") if f.strip()]
 
 
-def _print_check_dry_run(link_id: str, plan: list[str]) -> None:
-    """Render ``check_link``'s ``--dry-run`` preview: the plan, and nothing else.
-
-    Unlike ``impair``/``repair``'s ``DryRunPlan`` (a ``would``/``unchecked``
-    split), ``check_link`` hands back one flat, already-ordered line list — so
-    there is nothing to split here, only to print through ``_row`` the same
-    way: every line is lab/host data (a netdev, a host id), and rich would eat
-    a bracketed one (see ``_row``'s docstring).
-    """
-    from rich.text import Text
-
-    _row(Text.assemble(("dry run", "cyan"), f" {link_id}:"))
-    for line in plan:
-        _row(f"  {line}")
-
-
 @link_app.command()
 async def check(
     link: str = typer.Argument(..., help="Link id or name.", autocompletion=_link_completer),
@@ -619,7 +586,7 @@ async def check(
     except (ValueError, RuntimeError) as e:
         fail(e)
     if result.dry_run_plan:
-        _print_check_dry_run(result.link_id, result.dry_run_plan)
+        print_check_dry_run(result.link_id, result.dry_run_plan)
         write_report(result)
         raise typer.Exit(0)
     if result.refusal is not None:

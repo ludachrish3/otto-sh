@@ -18,14 +18,13 @@ from ..tunnel.discovery import discover_tunnels
 from ..tunnel.manage import add_tunnel, remove_all_tunnels, remove_tunnel
 from ..utils import complete_separated_list
 from .completers import completion_source
-from .invoke import fail, print_error
+from .invoke import fail, print_check_dry_run, print_dry_run_plan, print_error
 
 if TYPE_CHECKING:
     from rich.text import Text
 
     from ..config.project import Project
     from ..tunnel.check import TunnelCheckReport
-    from ..tunnel.manage import DryRunPlan
     from ..tunnel.model import Tunnel
 
 tunnel_app = typer.Typer(
@@ -187,48 +186,6 @@ def _row(text: "str | Text") -> None:
     print_literal(text)
 
 
-def _print_dry_run_plan(header: str, plan: "DryRunPlan") -> None:
-    """Render one command's ``--dry-run`` preview: what would happen, and what was not checked.
-
-    BOTH SECTIONS, ALWAYS. ``would`` alone reads as a verified promise — the
-    carrier ports in every argv were picked without probing a host, and the
-    refusals that could stop the call outright have not run. ``not checked``
-    alone is a dry run with no preview, which is useless rather than safe. The
-    ``would`` section is legitimately short for a chain with a container
-    endpoint, whose argv cannot be built without ``docker inspect``; the header
-    still prints, so the command never answers with silence.
-    """
-    from rich.text import Text
-
-    _row(
-        Text.assemble(
-            ("dry run", "cyan"),
-            f" {header}: no device was contacted — nothing was read and nothing was changed",
-        )
-    )
-    for line in plan.would:
-        _row(f"  would: {line}")
-    for line in plan.unchecked:
-        _row(f"  not checked: {line}")
-
-
-def _print_check_dry_run(path: str, plan: list[str]) -> None:
-    """Render ``check_tunnel``'s ``--dry-run`` preview: the plan, and nothing else.
-
-    Unlike ``add``/``remove``'s ``DryRunPlan`` (a ``would``/``unchecked``
-    split), ``check_tunnel`` hands back one flat, already-ordered line list —
-    so there is nothing to split here, only to print through ``_row`` the same
-    way: every line is lab/host data (a netdev, a host id, a socat argv), and
-    rich would eat a bracketed one (see ``_row``'s docstring). Mirrors
-    ``otto.cli.link._print_check_dry_run``.
-    """
-    from rich.text import Text
-
-    _row(Text.assemble(("dry run", "cyan"), f" {path}:"))
-    for line in plan:
-        _row(f"  {line}")
-
-
 @tunnel_app.command()
 async def add(
     hosts: str = typer.Option(
@@ -277,7 +234,9 @@ async def add(
         # it holds — none of them measured. `carrier_fwd`/`carrier_rev` are
         # None here by construction; the provisional pair is in the plan,
         # marked as provisional.
-        _print_dry_run_plan(f"{t.path[0].host} <-> {t.path[-1].host}", added.plan)
+        print_dry_run_plan(
+            f"{t.path[0].host} <-> {t.path[-1].host}", added.plan.would, added.plan.unchecked
+        )
         return
     from rich.text import Text
 
@@ -373,7 +332,7 @@ async def check(
         fail(e)
     path = " → ".join(result.path)
     if result.dry_run_plan:
-        _print_check_dry_run(path, result.dry_run_plan)
+        print_check_dry_run(path, result.dry_run_plan)
         write_report(result)
         raise typer.Exit(0)
     if result.refusal is not None:
@@ -514,17 +473,19 @@ async def remove(
         # byte-identically to a real reap of a clean lab. The cache is left
         # alone for the same reason `list` leaves it alone — invalidating it
         # here would make a preview change state a real run changes.
-        _print_dry_run_plan("--all" if all_ else (tunnel_id or ""), report.plan)
+        print_dry_run_plan(
+            "--all" if all_ else (tunnel_id or ""), report.plan.would, report.plan.unchecked
+        )
         return
+    from rich.text import Text
+
     record_tunnel_ids(get_projects(), [])  # invalidate; next scan refreshes
     removed = ", ".join(report.removed_ids) if report.removed_ids else "(none found)"
-    rprint(f"[green]removed[/green] {removed}")
+    rprint(Text.assemble(("removed", "green"), " ", removed))
     if report.survivors:
         pretty = ", ".join(f"{h}/{pid}" for h, pid in report.survivors)
         print_error(f"still running after kill: {pretty}")
         raise typer.Exit(1)
     if report.unreachable:
-        from rich.text import Text
-
         _row(Text.assemble(("could not reach:", "yellow"), " ", ", ".join(report.unreachable)))
         raise typer.Exit(1)

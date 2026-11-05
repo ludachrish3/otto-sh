@@ -10,6 +10,7 @@ The new interfaces are imported inside each test, so collection never fails.
 import ast
 import asyncio
 import contextlib
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -423,3 +424,94 @@ def test_no_status_line_escapes_into_a_markup_string():
             if _escapes_inside(node.args[0]):
                 offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == [], f"escape() inside a printed line: {offenders}"
+
+
+# ── the markup-f-string guard (#844) ────────────────────────────────────────
+
+_MARKUP_TAG = re.compile(r"\[/?[A-Za-z#]")
+
+_MARKUP_FSTRING_ALLOWLIST = {
+    ("invoke.py", "f'[green]{success}[/green]'"): (
+        "`success` is the command author's own success message, not lab or user data"
+    ),
+    ("invoke.py", "f'[green]{policy.none_message}[/green]'"): (
+        "the command author's declared none-message, not lab or user data"
+    ),
+    ("test.py", "f'[magenta]{DRY_RUN_TESTS_HEADLINE}[/magenta]'"): (
+        "otto's own headline constant, shared with the docs"
+    ),
+}
+"""A printed markup f-string that is knowingly legitimate: ``(file, unparsed f-string)`` to why."""
+
+
+def _markup_fstring_offenders(source: str, filename: str) -> list[str]:
+    """Printer calls in *source* with an f-string argument that holds a tag and a value.
+
+    The shape that let user text slip into markup (``rprint(f"[red]{x}[/red]")``,
+    and the two-step ``msg = escape(x); rprint(f"[tag]{msg}")``): any argument
+    of a printer call, not just the first, that is an f-string with a literal
+    ``[tag`` and an interpolation. ``print_literal`` is not a printer here: it
+    never parses markup.
+    """
+    offenders = []
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not (isinstance(node, ast.Call) and _callee(node) in _PRINTERS):
+            continue
+        for arg in node.args:
+            if not isinstance(arg, ast.JoinedStr):
+                continue
+            if not any(isinstance(part, ast.FormattedValue) for part in arg.values):
+                continue
+            literal = "".join(
+                part.value
+                for part in arg.values
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            )
+            if not _MARKUP_TAG.search(literal):
+                continue
+            if (filename, ast.unparse(arg)) in _MARKUP_FSTRING_ALLOWLIST:
+                continue
+            offenders.append(f"{filename}:{node.lineno} {ast.unparse(arg)}")
+    return offenders
+
+
+def test_no_status_line_interpolates_into_a_markup_fstring():
+    """No CLI line interpolates a value into a printed ``[tag]`` f-string.
+
+    A value there is parsed as markup unless something escaped it, and
+    escaping still leaves its ``:emoji:`` codes. Carry the value as a
+    :class:`~rich.text.Text` span (``Text.assemble``) instead. A site that is
+    genuinely author text goes on :data:`_MARKUP_FSTRING_ALLOWLIST` with its reason.
+    """
+    offenders = []
+    for path in sorted(CLI_DIR.glob("*.py")):
+        offenders += _markup_fstring_offenders(path.read_text(), path.name)
+    assert offenders == [], f"interpolation into a markup f-string: {offenders}"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param('rprint(f"[red]{who}[/red]")', id="first-arg"),
+        pytest.param('console.print("x", f"[bold]{who}")', id="later-arg"),
+        pytest.param('print_error(f"[yellow]{who}")', id="print-error"),
+        pytest.param('msg = escape(who)\nrprint(f"[yellow]{msg}")', id="two-step"),
+        pytest.param('fail(f"{who} [/dim]")', id="closing-tag"),
+    ],
+)
+def test_the_markup_fstring_guard_flags_each_shape(source):
+    assert _markup_fstring_offenders(source, "synthetic.py") != []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param('rprint(Text.assemble(("ok", "green"), f" {who}"))', id="text-span"),
+        pytest.param('rprint(f"{who} done")', id="no-tag"),
+        pytest.param('rprint("[green]done[/green]")', id="no-interpolation"),
+        pytest.param('print_literal(f"[red]{who}")', id="print-literal"),
+        pytest.param('log(f"[red]{who}")', id="not-a-printer"),
+    ],
+)
+def test_the_markup_fstring_guard_passes_clean_sources(source):
+    assert _markup_fstring_offenders(source, "synthetic.py") == []
