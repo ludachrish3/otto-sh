@@ -22,9 +22,10 @@ from .areas import (
     instruction_libs,
     kmodcov_entries,
     lab_file_groups,
+    tests_dirs,
 )
 from .errors import InitInputError
-from .settings_file import declared_init, settings_data, settings_path, settings_paths
+from .settings_file import declared_init, settings_data, settings_path
 
 if TYPE_CHECKING:
     # Annotation-only: importing ``otto.inventory`` for real pulls ~77 otto
@@ -542,10 +543,8 @@ def _validate_tests(root: Path) -> list[str]:
     """
     import ast
 
-    paths = settings_paths(root)
-    tests_dirs = paths["tests"] if paths is not None else [root / "tests"]
     problems: list[str] = []
-    for tests_dir in tests_dirs:
+    for tests_dir in tests_dirs(root):
         if not tests_dir.is_dir():
             problems.append(f"tests dir not found: {tests_dir}")
             continue

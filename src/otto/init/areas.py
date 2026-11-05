@@ -214,10 +214,51 @@ def _detect_lab(root: Path) -> bool:
         return True
 
 
-def _detect_tests(root: Path) -> bool:
+TEMPLATE_TEST_FILE = "test_example.py"
+"""The file name of the example tests ``otto init`` scaffolds into a test directory."""
+TEMPLATE_TEST_CLASS = "TestExample"
+"""The example test class that file defines, and that ``init``'s next steps suggest."""
+TEMPLATE_TEST_FUNCTION = "test_example_function"
+"""The example test function that file defines, and that ``init``'s next steps suggest."""
+
+
+def tests_dirs(root: Path) -> list[Path]:
+    """Return the project's test directories: the configured ones, else ``root/tests``.
+
+    The one place that decides them: area detection, the doctor's tests check
+    and :func:`template_tests_present` all read it.
+    """
     paths = settings_paths(root)
-    tests_dirs = paths["tests"] if paths is not None else [root / "tests"]
-    return any(next(tests_dir.glob("test_*.py"), None) is not None for tests_dir in tests_dirs)
+    return paths["tests"] if paths is not None else [root / "tests"]
+
+
+def template_tests_present(root: Path) -> bool:
+    """Report whether a test directory holds the file ``init`` scaffolds, names intact.
+
+    True when a :data:`TEMPLATE_TEST_FILE` there defines, at top level, a class
+    :data:`TEMPLATE_TEST_CLASS` and a function :data:`TEMPLATE_TEST_FUNCTION`.
+    Read leniently without importing: an unreadable or unparsable file, a
+    renamed definition, or a name only in a comment or string counts as absent.
+    """
+    import ast
+
+    for tests_dir in tests_dirs(root):
+        example = tests_dir / TEMPLATE_TEST_FILE
+        try:
+            tree = ast.parse(example.read_bytes(), filename=str(example))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        classes = {n.name for n in tree.body if isinstance(n, ast.ClassDef)}
+        functions = {
+            n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if TEMPLATE_TEST_CLASS in classes and TEMPLATE_TEST_FUNCTION in functions:
+            return True
+    return False
+
+
+def _detect_tests(root: Path) -> bool:
+    return any(next(d.glob("test_*.py"), None) is not None for d in tests_dirs(root))
 
 
 def _detect_instructions(root: Path) -> bool:
@@ -407,7 +448,7 @@ def _scaffold_tests(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa:
     example = TEST_EXAMPLE_TEMPLATE.format(init_module=tests_init_module(config.root, config))
     return AreaWrite(
         [
-            write_file(tests_dir / "test_example.py", example, "user"),
+            write_file(tests_dir / TEMPLATE_TEST_FILE, example, "user"),
             write_file(tests_dir / "conftest.py", CONFTEST_TEMPLATE, "user"),
         ]
     )
