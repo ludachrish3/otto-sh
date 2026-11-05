@@ -8,6 +8,7 @@ quickstart-embedded
   test4
   not checked:
     dut: mathops: the device's answer to the load and to each unload round (at most 16 rounds)
+    dut: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
 dry run: no command body was run and no device was contacted
   would run: otto run install
   options:

@@ -13,6 +13,8 @@ quickstart-docker
   not checked:
     docker-host: banner: that docker is on docker-host's PATH (command -v docker)
     docker-host: banner: that quickstart-banner:latest is present on docker-host (docker image inspect); a missing image fails the install unless the entry sets `pull = true`
+    docker-host: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
+    docker-host.quickstart.tools: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
 dry run: no command body was run and no device was contacted
   would run: otto run install
   options:

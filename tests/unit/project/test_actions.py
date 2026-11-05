@@ -17,6 +17,7 @@ from otto import layout
 from otto.context import OttoContext, ProjectContextView
 from otto.errors import OttoError
 from otto.host.host import BaseHost
+from otto.host.local_host import LocalHost
 from otto.invocation import RunPolicy, install_policy, reset_binding
 from otto.labs.loader import Lab
 from otto.project import (
@@ -308,6 +309,27 @@ async def test_install_reduces_a_captured_host_exception():
     assert not result.is_ok
     assert "h0" in result.msg
     assert "ssh died" in result.msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["host", "project"])
+async def test_an_installed_product_is_skipped_through_every_install_entry(entry):
+    """#367: the library verb and the `otto run install` walk share one skip.
+
+    The project entry runs the REAL ``ProjectActions`` -> ``_dispatch_install``
+    seam onto a real host, so a skip restated at either entry (or missing from
+    one) makes the two parametrizations disagree.
+    """
+    done, fresh = _FakeItem("p0", "acme", installed=True), _FakeItem("p1", "acme")
+    host = LocalHost()
+    host.products = [done, fresh]
+    if entry == "host":
+        result = await host.install(owner="acme")
+    else:
+        result = await _actions(_FakeCtx([host])).install(InstallOptions())
+    assert result.is_ok
+    assert [v for v, _ in done.calls] == ["is_installed"]
+    assert [v for v, _ in fresh.calls] == ["is_installed", "stage", "install"]
 
 
 # ── uninstall / cleanup ──────────────────────────────────────────────────

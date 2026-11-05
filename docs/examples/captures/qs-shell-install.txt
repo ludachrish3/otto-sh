@@ -1,5 +1,7 @@
 $ otto --lab example_lab run install
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+INFO     @dut   | test -x /tmp/quickstart/wordcount
+INFO     @dut   | test -x /tmp/quickstart/shout
 INFO     @dut   | mkdir -p /tmp/quickstart
 dut wordcount ━━━━ 151.9/151.9 kB <rate>
 INFO     @dut   | wordcount: staged

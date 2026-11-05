@@ -108,6 +108,11 @@ otto --lab example_lab run install
 :language: text
 ```
 
+The two `test -x` lines are the products' `check` commands. Install runs them
+first and passes over a product whose check passes, so a second
+`otto run install` prints `skipped — already installed` instead of copying
+the tools again.
+
 {doc}`../../configuration/declared-products-tools` documents every field of a
 product entry.
 

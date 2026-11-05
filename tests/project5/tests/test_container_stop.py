@@ -54,14 +54,14 @@ class TestContainerReinstall:
     @pytest.mark.integration
     async def test_install_over_stopped_containers_succeeds(self) -> None:
         host = _test3()
-        await install_products(host, PRODUCTS)
+        await install_products(host, "project5")
         stopped = await host.exec(f"docker stop {' '.join(PRODUCTS)}", timeout=120)
         assert stopped.status.is_ok, stopped.value
         for name in PRODUCTS:
             inspected = await inspect_container(host, name)
             assert inspected.state is not None, (name, inspected.result)
             assert inspected.state.status == "exited", (name, inspected.state)
-        await install_products(host, PRODUCTS)
+        await install_products(host, "project5")
         for name in PRODUCTS:
             product = next(p for p in host.products if p.name == name)
             assert await product.is_installed(host), name
@@ -84,7 +84,7 @@ class TestContainerStopFlow:
         build = project5_root() / "docker" / "build-bind" / "product"
         put = await host.put(build, Path(BIND_SRC), mode=0o755, show_progress=False)
         assert put.is_ok, put.msg
-        await install_products(host, STOP_PRODUCTS)
+        await install_products(host, None)  # STOP_PRODUCTS: project5 and the bind overlay
         await exec_in(host, "cov_container_ref", "add", "2", "3")
         yield
         for name in STOP_PRODUCTS:

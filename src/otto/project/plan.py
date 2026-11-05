@@ -171,6 +171,12 @@ def _toolchain_removal_gap(host: "Host") -> str:
     return f"toolchain tools: removed once after every project (--toolchain): {', '.join(removals)}"
 
 
+_ALREADY_INSTALLED_GAP = (
+    "already installed: each product's is_installed is read first; an installed "
+    "product is neither staged nor installed"
+)
+"""The install preview's word for ``BaseHost._not_installed``: the probe needs the host."""
+
 _PRODUCT_LOGS_GAP = (
     "product logs: each product's get_logs files and its debug_log_globs are "
     "collected before anything is removed"
@@ -382,10 +388,13 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
             if override is not None:
                 host_plan.gaps.append(override)
             elif dispatches:
-                for item in _attached(host, name, project.name):
+                attached = _attached(host, name, project.name)
+                for item in attached:
                     plan = item.plan(host)
                     entries.append(ProductPlanEntry(item.name, plan))
                     host_plan.gaps += [f"{item.name}: {line}" for line in plan.unchecked]
+                if name == "install" and attached:
+                    host_plan.gaps.append(_ALREADY_INSTALLED_GAP)
             if isinstance(tools, InstallToolsOptions) and tools.toolchain:
                 host_plan.gaps.append(
                     "toolchain tools: installed on this host once after every project "

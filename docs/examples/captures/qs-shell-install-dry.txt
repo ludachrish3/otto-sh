@@ -7,6 +7,8 @@ quickstart-shell
                         PUT /tmp/otto-gs/quickstart-shell/build/src/wordcount/wordcount -> /tmp/quickstart
     stage    shout      mkdir -p /tmp/quickstart
                         PUT /tmp/otto-gs/quickstart-shell/build/src/shout/shout -> /tmp/quickstart
+  not checked:
+    dut: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
 dry run: no command body was run and no device was contacted
   would run: otto run install
   options:

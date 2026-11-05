@@ -37,7 +37,7 @@ _HOST = re.compile(r"test3")
 
 
 async def _install(host: UnixHost) -> None:
-    await install_products(host, PRODUCTS)
+    await install_products(host, "project5")
 
 
 async def _exercise(host: UnixHost) -> dict[str, str]:

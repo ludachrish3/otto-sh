@@ -296,6 +296,7 @@ project1
     test1: kcov: the login home — product 'kcov' declares no stage_dir and test1 no default_dest_dir
     test1: kcov: whether kcov is resident on test1 (cat /proc/modules): uninstall runs rmmod only then
     test1: kcov: sudo is assumed because the login user is not root; a real run measures how test1 elevates
+    test1: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
 dry run: no command body was run and no device was contacted
   would run: otto run install
   options:
@@ -328,7 +329,8 @@ example leaves out `bench`'s other two hosts), and a local path is anchored to
 the project that declared it. The lines' vocabulary, `<login home>` included, is
 {ref}`the product-kind contract's <product-kind-plan>`. Everything under `not checked:` is a fact a real run reads off the host (or a
 decision it takes from a flag) that a dry run cannot: `--ensure`'s "is the lab
-already installed" check, a project or host class that replaces the default verb,
+already installed" check, each product's installed check (which decides whether
+`install` passes over it), a project or host class that replaces the default verb,
 `--toolchain`, the log hauls, and each product's own unchecked reads, prefixed
 with its name. A kernel-module load shows `sudo` only for a host whose
 configured login user is not root, the same test the real `load` applies. A gap that holds for the whole lab prints

@@ -20,8 +20,9 @@ from otto.utils import Status
 class _Product(Product):
     """A product whose verbs return scripted results, one per verb name."""
 
-    def __init__(self, name, **results):
+    def __init__(self, name, installed=False, **results):
         self.name = name
+        self.installed = installed
         self.results = results
         self.calls: list[str] = []
 
@@ -39,7 +40,8 @@ class _Product(Product):
         return self._answer("uninstall")
 
     async def is_installed(self, host):
-        return True
+        # Not recorded in `calls`: those are the verbs that changed the host.
+        return self.installed
 
 
 class _Tool(DevTool):
@@ -114,6 +116,55 @@ async def test_line_carries_the_host_preamble(caplog_host):
     [record] = [r for r in caplog_host.records if r.name == "otto.host.host"]
     assert record.getMessage().startswith(f"[bold]@{host.name}")
     assert record.host is host  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_an_installed_product_is_neither_staged_nor_installed(caplog_host):
+    a, b = _Product("a", installed=True), _Product("b")
+    result = await _host(products=[a, b]).install()
+    assert result.status is Status.Success
+    assert a.calls == []
+    assert b.calls == ["stage", "install"]
+    assert _lines(caplog_host) == [
+        (logging.INFO, "a: skipped — already installed"),
+        (logging.INFO, "b: staged"),
+        (logging.INFO, "b: installed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_every_product_installed_is_a_success_that_did_nothing(caplog_host):
+    a, b = _Product("a", installed=True), _Product("b", installed=True)
+    result = await _host(products=[a, b]).install()
+    assert result.status is Status.Success
+    assert a.calls == b.calls == []
+
+
+@pytest.mark.asyncio
+async def test_stage_only_passes_over_an_installed_product_too(caplog_host):
+    a, b = _Product("a", installed=True), _Product("b")
+    await _host(products=[a, b]).install(stage_only=True)
+    assert a.calls == []
+    assert b.calls == ["stage"]
+
+
+@pytest.mark.asyncio
+async def test_the_stage_verb_still_stages_an_installed_product(caplog_host):
+    a = _Product("a", installed=True)
+    await _host(products=[a]).stage()
+    assert a.calls == ["stage"]
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_raises_stops_the_install_before_anything_is_staged(caplog_host):
+    class _Down(_Product):
+        async def is_installed(self, host):
+            raise RuntimeError("probe failed")
+
+    first = _Product("first")
+    with pytest.raises(RuntimeError, match="probe failed"):
+        await _host(products=[first, _Down("down")]).install()
+    assert first.calls == []  # the whole probe pass runs before any stage
 
 
 @pytest.mark.asyncio

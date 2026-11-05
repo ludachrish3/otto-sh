@@ -103,12 +103,30 @@ def test_install_lists_every_owned_product_in_declaration_order_and_lifts_its_ga
                         ProductPlanEntry("agent", agent.plan(None)),
                         ProductPlanEntry("kcov", kcov.plan(None)),
                     ],
-                    ["kcov: the login home"],
+                    ["kcov: the login home", _ALREADY_INSTALLED],
                 )
             ],
             [],
         )
     ]
+
+
+_ALREADY_INSTALLED = (
+    "already installed: each product's is_installed is read first; an installed "
+    "product is neither staged nor installed"
+)
+
+
+def test_install_preview_says_installed_products_are_passed_over(monkeypatch):
+    # #367: the probe runs on the host, so a preview cannot know the answer; it names it.
+    product = _Planned("agent", "r1", _plan(install=["sh a"]))
+    ctx = _Ctx([_Host("h1", [product]), _Host("h2")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [install] = plan_instruction("install", ctx, {})
+    assert install.hosts[0].gaps == [_ALREADY_INSTALLED]
+    assert install.hosts[1].gaps == []  # nothing to check on a host with no products
+    [uninstall] = plan_instruction("uninstall", ctx, {"product_logs": False, "debug_logs": False})
+    assert _ALREADY_INSTALLED not in uninstall.hosts[0].gaps
 
 
 def test_uninstall_walks_projects_in_reverse(monkeypatch):

@@ -265,8 +265,10 @@ otto --lab example_lab run install
 :language: text
 ```
 
-Install loads the extension over the console, then runs `cov_init`, which
-registers the extension's counters with the runtime.
+Install first asks the board which extensions are loaded (`llext list`); a
+loaded one is passed over as `skipped — already installed`. It then loads the
+extension over the console and runs `cov_init`, which registers the
+extension's counters with the runtime.
 {doc}`../../configuration/declared-products-tools` documents every field of
 the entry.
 

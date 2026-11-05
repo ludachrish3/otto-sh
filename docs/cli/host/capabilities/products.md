@@ -31,8 +31,25 @@ the project-specific halves:
 `host.run` / `host.put` handed back. The *failing* product's result is
 returned whole, so the command's own retcode and output reach the process exit
 code; a run where every product succeeds collapses to a bare success, since
-with several products there is no single result to hand back.
-`is_installed` is a plain predicate.
+with several products there is no single result to hand back. That includes a
+run that passed over every product because each was already installed: the
+per-product lines below say what was done.
+
+`is_installed` is a plain predicate, and `host.install()` reads it for every
+product before it stages anything:
+
+- **True** skips the product. It is neither staged nor installed, and the run
+  prints `<product>: skipped — already installed`.
+- **False** permits installing it. That includes a False because the probe could
+  not read the host. Whether the install that follows reports a failure depends
+  on the product: one whose install is a no-op reports nothing.
+- **An exception** stops the install before any product is staged.
+
+Because it runs before staging, a product's own `is_installed` must be safe to
+call then: it should only read the host, and it must not depend on the staged
+artifact being present.
+
+There is no force mode. To install a product again, uninstall it first.
 
 ## Injecting products
 
@@ -43,8 +60,8 @@ with several products there is no single result to hand back.
 
 | Method | `owner=` | Behavior |
 |--------|----------|----------|
-| `await host.stage()` | yes | Stage every product (no install). |
-| `await host.install(stage_only=False)` | yes | Stage, then install (unless `stage_only`). |
+| `await host.stage()` | yes | Stage every product (no install), installed or not. |
+| `await host.install(stage_only=False)` | yes | Pass over every installed product, then stage and install the rest (stage only, with `stage_only`). |
 | `await host.uninstall()` | yes | Product logs, uninstall every product, debug logs (best-effort). |
 | `await host.is_installed()` | yes | True iff ≥1 product and all installed. |
 | `await host.is_uninstalled()` | yes | Inverse of `is_installed()`. |
@@ -110,3 +127,8 @@ otto host <HOST_ID> install [--stage-only]
 | Option | Description |
 | ------ | ----------- |
 | `--stage-only / --no-stage-only` | Transfer products but skip the install step |
+
+A product whose `is_installed` answers True is passed over, with or without
+`--stage-only`: it is neither staged nor installed, and the command prints
+`<product>: skipped — already installed`. To install it again, uninstall it
+first (`otto host <HOST_ID> uninstall`), then install.
