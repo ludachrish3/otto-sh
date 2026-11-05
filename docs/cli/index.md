@@ -57,6 +57,9 @@ command, not the subcommand.  For example:
 The same rule applies to `--dry-run`, `--xdir`, `--log-level`, and every
 other option listed above.  Subcommand-specific options (like `--firmware`
 for `otto test`, or `--interval` for `monitor`) go **after** the subcommand.
+Placed after the subcommand, a global option is rejected with a message that
+says so: `otto test -x dir` fails with "`-x` is a global option; global
+options go before the subcommand: `otto -x ... test`".
 ```
 
 ## Selecting a lab

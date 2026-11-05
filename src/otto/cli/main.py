@@ -370,6 +370,25 @@ class _OttoGroup(TyperGroup):
         )
         return result
 
+    @override
+    def invoke(self, ctx: Any) -> Any:
+        # One root invoke wraps every subcommand's parse, so a root option typed
+        # after the subcommand is hinted here rather than in each command class.
+        # Lazy import: the vendored click exceptions stay off the import budget.
+        from typer._click.exceptions import NoSuchOption
+
+        try:
+            return super().invoke(ctx)
+        except NoSuchOption as e:
+            global_opts = {o for p in self.params for o in (*p.opts, *p.secondary_opts)}
+            target = self._dispatch_target(ctx)
+            if target is not None and e.option_name in global_opts:
+                e.message = (
+                    f"{e.message}. {e.option_name} is a global option; "
+                    f"global options go before the subcommand: otto {e.option_name} ... {target}"
+                )
+            raise
+
     def _dispatch_target(self, ctx: Any) -> str | None:
         """Return the subcommand name pending dispatch, if any."""
         pending = ctx.meta.get(PENDING_SUBCMD_ARGS_KEY) or []
