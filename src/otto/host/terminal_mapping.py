@@ -85,9 +85,10 @@ def measure(reply: str, ready: str) -> Measurement:
 
     *ready* is the session's READY marker. The calibration output is the text
     immediately before the LAST occurrence of it, which is the line the shell
-    printed. The handshake types READY split, so an echoed copy of the typed
-    line (echo still on) does not carry it; one that did would come earlier
-    and read ``echo <READY>``.
+    printed. The typed line never carries READY, because the handshake splits
+    it across a variable (:func:`~otto.host.command_frame.whole_line_echo`),
+    so an echoed copy of the typed line (echo still on) cannot be mistaken
+    for the output.
     """
     at = reply.rfind(ready)
     head = reply[:at] if at != -1 else reply

@@ -38,9 +38,9 @@ class PyReplFrame(CommandFrame):
     type_name = "pyrepl"
     streams_output_live = False
 
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         """Silence the prompts, define the helper, then emit the readiness token."""
-        return f"import sys; sys.ps1 = ''; sys.ps2 = ''\n{_HELPER}print({m.ready!r})\n"
+        return f"{prefix}import sys; sys.ps1 = ''; sys.ps2 = ''\n{_HELPER}print({m.ready!r})\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         """Hand ``cmd`` to the helper as one REPL line, with the sentinels to print."""

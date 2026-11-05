@@ -806,7 +806,7 @@ call	otto.host.command_frame:BashFrame	sync	-
 member	otto.host.command_frame:BashFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host.command_frame:BashFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:-
+member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host.command_frame:BashFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host.command_frame:BashFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:BashFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -824,7 +824,7 @@ call	otto.host.command_frame:CommandFrame	sync	-
 member	otto.host.command_frame:CommandFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host.command_frame:CommandFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:-
+member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host.command_frame:CommandFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host.command_frame:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:CommandFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -842,7 +842,7 @@ call	otto.host.command_frame:RawFrame	sync	-
 member	otto.host.command_frame:RawFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host.command_frame:RawFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:-
+member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host.command_frame:RawFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host.command_frame:RawFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:RawFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -871,7 +871,7 @@ call	otto.host.command_frame:ZephyrFrame	sync	-
 member	otto.host.command_frame:ZephyrFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host.command_frame:ZephyrFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host.command_frame:ZephyrFrame.handshake	method	sync	PK:m:-
+member	otto.host.command_frame:ZephyrFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host.command_frame:ZephyrFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host.command_frame:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:ZephyrFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -1495,7 +1495,7 @@ call	otto.host:BashFrame	sync	-
 member	otto.host:BashFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:BashFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:BashFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host:BashFrame.handshake	method	sync	PK:m:-
+member	otto.host:BashFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host:BashFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host:BashFrame.measures_terminal_mapping	attribute
 member	otto.host:BashFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -1513,7 +1513,7 @@ call	otto.host:CommandFrame	sync	-
 member	otto.host:CommandFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:CommandFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host:CommandFrame.handshake	method	sync	PK:m:-
+member	otto.host:CommandFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host:CommandFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host:CommandFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -2452,7 +2452,7 @@ call	otto.host:RawFrame	sync	-
 member	otto.host:RawFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:RawFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:RawFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host:RawFrame.handshake	method	sync	PK:m:-
+member	otto.host:RawFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host:RawFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host:RawFrame.measures_terminal_mapping	attribute
 member	otto.host:RawFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
@@ -3059,7 +3059,7 @@ call	otto.host:ZephyrFrame	sync	-
 member	otto.host:ZephyrFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:ZephyrFrame.frame	method	sync	PK:cmd:- PK:m:-
-member	otto.host:ZephyrFrame.handshake	method	sync	PK:m:-
+member	otto.host:ZephyrFrame.handshake	method	sync	PK:m:- PK:prefix:S:""
 member	otto.host:ZephyrFrame.marks_begin	method	sync	PK:data:- PK:m:-
 member	otto.host:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host:ZephyrFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-

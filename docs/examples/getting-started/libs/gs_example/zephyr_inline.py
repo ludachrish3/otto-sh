@@ -27,7 +27,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 
     type_name = "zephyr-inline"
 
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         """Disable shell echo, then emit the readiness probe.
 
         Unlike 3.7+, the Zephyr 2.7 telnet shell echoes input by default. Left
@@ -39,7 +39,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         still echoes back via the shell's error handler — that is shell
         *output*, not input echo, so the handshake probe is unaffected.
         """
-        return f"shell echo off\r{m.ready}\n"
+        return f"{prefix}shell echo off\r{m.ready}\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         """Bracket ``cmd`` with the BEGIN/END sentinels; no ``retval`` line.

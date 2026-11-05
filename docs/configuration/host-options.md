@@ -706,13 +706,17 @@ the history file at exit.
 ## Session setup
 
 otto runs two commands of its own on every shell it opens — the readiness
-handshake (`stty -echo; echo; printf 'X\r\nY\nZ\rW\n'; echo <marker>` on
-bash) and, on Unix hosts, history suppression — and then, by default, nothing
-else. The `printf` is the handshake's calibration line: how its known bytes
-come back shows how the session's terminal translates line endings, which is
-what lets otto return a command's output exactly
-({ref}`command-output-contract`). It costs no extra round trip, and a target
-without `printf` still completes the handshake. A host that needs
+handshake (`__otto_probe=_READY__; stty -echo; echo; printf 'X\r\nY\nZ\rW\n';
+echo __OTTO_<id>${__otto_probe-}` on bash) and, on Unix hosts, history
+suppression — and then, by default, nothing else. The `printf` is the
+handshake's calibration line: how its known bytes come back shows how the
+session's terminal translates line endings, which is what lets otto return a
+command's output exactly ({ref}`command-output-contract`). It costs no extra
+round trip, and a target without `printf` still completes the handshake. The
+line holds the end of its marker in a variable that its first statement sets,
+so a line cut short by a login that flushes a console's input prints only half
+the marker, and otto sends it again whole. History suppression rides behind
+that statement. A host that needs
 more before its shell is fit to use names a **session setup**: a registered
 async callable that runs once per shell session, after the handshake and
 after every login-proxy hop, with a real session handle.

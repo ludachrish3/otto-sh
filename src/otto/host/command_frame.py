@@ -60,6 +60,13 @@ __all__ = [
 ]
 
 
+READY_SUFFIX = "_READY__"
+"""The fixed end of :attr:`SessionMarkers.ready`, where :func:`whole_line_echo` splits it."""
+
+RECOVER_SUFFIX = "_RECOVER__"
+"""The fixed end of :attr:`SessionMarkers.recover`, where :func:`whole_line_echo` splits it."""
+
+
 @dataclass(frozen=True)
 class SessionMarkers:
     """Per-session sentinel tokens a ``CommandFrame`` renders into commands and scans on parsing.
@@ -84,12 +91,19 @@ class SessionMarkers:
 
     @classmethod
     def for_session(cls, session_id: str) -> "SessionMarkers":
-        """Build the marker set for a session id."""
+        """Build the marker set for a session id.
+
+        *session_id* must be shell word characters (``[0-9A-Za-z_]``): the
+        markers are typed into shell lines unquoted (see
+        :func:`whole_line_echo`), where any other character could expand,
+        split or glob. Not validated here; every id otto mints is a
+        truncated ``uuid4().hex``.
+        """
         return cls(
             begin=f"__OTTO_{session_id}_BEGIN__",
             end_prefix=f"__OTTO_{session_id}_END__",
-            ready=f"__OTTO_{session_id}_READY__",
-            recover=f"__OTTO_{session_id}_RECOVER__",
+            ready=f"__OTTO_{session_id}{READY_SUFFIX}",
+            recover=f"__OTTO_{session_id}{RECOVER_SUFFIX}",
         )
 
 
@@ -153,7 +167,7 @@ class CommandFrame(ABC):
     # --- render half: command -> bytes to write ---
 
     @abstractmethod
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         """Readiness-probe payload, echoing :attr:`SessionMarkers.ready`.
 
         The READY marker must begin a line of the shell's OUTPUT in every echo
@@ -163,6 +177,12 @@ class CommandFrame(ABC):
         merely echoes the probe cannot pass. A dialect with no probe to render
         returns ``""`` instead — what :class:`RawFrame` does, and what
         ``ShellSession._handshake`` reads as "nothing to confirm".
+
+        *prefix* is the statements that must share this first line (history
+        suppression, from :meth:`CommandFrame.quiet_history`; ``""`` for a dialect with no
+        history). The frame composes the whole line, so it places *prefix*
+        itself: after anything that has to open the line (bash's anchor, see
+        :func:`whole_line_echo`) and before the probe.
         """
         ...
 
@@ -185,11 +205,11 @@ class CommandFrame(ABC):
         call sites. Zephyr keeps its history in a RAM ring buffer, so the
         inherited empty default is already correct for it.
 
-        The result is prepended to the *first line written into a fresh
-        shell* (the readiness handshake, and the resync probe after a
-        login-proxy hop), so an override MUST emit no output of its own and
-        MUST be idempotent — ``confirm_live`` resends those payloads on a
-        loop until one lands.
+        The result is placed after the line's anchor in the *first line
+        written into a fresh shell* (the readiness handshake, and the resync
+        probe after a login-proxy hop), so an override MUST emit no output of
+        its own and MUST be idempotent — ``confirm_live`` resends those
+        payloads on a loop until one lands.
         """
         return ""
 
@@ -250,15 +270,50 @@ class CommandFrame(ABC):
         return re.compile(re.escape(m.recover))
 
 
-def _typed_apart(marker: str) -> str:
-    """Return *marker* as shell text that prints it whole but never contains it.
+_PROBE_VAR = "__otto_probe"
+"""The shell variable a probe line holds the end of its marker in (see :func:`whole_line_echo`)."""
 
-    The empty quote after the first character goes in quote removal, so
-    ``echo`` prints *marker* intact while the typed line, and so any echo of
-    it, carries it split. Every POSIX shell (bash, dash, BusyBox ash, ksh, zsh)
-    treats ``''`` this way.
+
+def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str = "") -> str:
+    """Render a probe line that prints *marker* only when the shell ran it from its first byte.
+
+    The line's first statement sets ``__otto_probe`` to *suffix*, the
+    marker's fixed end (:data:`READY_SUFFIX` or :data:`RECOVER_SUFFIX`).
+    *statements* follow it, and the closing echo prints the marker's head
+    followed by the variable, then *after*; the line ends by unsetting the
+    variable. A console server that delivers input in pieces lets login(1)
+    or su flush a line's start, so the shell may run only a tail of it (#761):
+
+    * the typed line never contains *marker*, so no echo of it and no error
+      message quoting it can carry the marker;
+    * only the statement at offset 0 assigns the variable, so every tail
+      reaches the echo with it empty and prints the head alone;
+    * the variable is never stale: every whole line unsets it, it is never
+      exported, and ``${…-}`` is safe under ``set -u``;
+    * the anchor and the echo add no quote, so a tail cut inside them never
+      leaves one open. (Quotes inside *statements*, such as the calibration's
+      ``printf``, still can: #853.) Under ``sh -c`` an open quote is only
+      a syntax error, but a login shell on a pty reads interactively, and
+      there it is a continuation (PS2): every whole line resent after it
+      would join the open word, and the shell would never answer.
+
+    The marker's id must be shell word characters (see
+    :meth:`SessionMarkers.for_session`), so neither the assignment nor the
+    echo word needs quoting against expansion or globbing. *after* is
+    expanded unquoted as well: ``$?__$(id -un)__`` is safe for any user name
+    made of word characters, dots and dashes (no blanks, no glob
+    characters).
+
+    Raises:
+        ValueError: *marker* does not end in *suffix*, or has nothing before it.
     """
-    return f"{marker[:1]}''{marker[1:]}"
+    head = marker.removesuffix(suffix)
+    if not marker.endswith(suffix) or not head:
+        raise ValueError(f"marker {marker!r} does not end in {suffix!r} after a non-empty head")
+    return (
+        f"{_PROBE_VAR}={suffix}; {statements}"
+        f"echo {head}${{{_PROBE_VAR}-}}{after}; unset {_PROBE_VAR}\n"
+    )
 
 
 def _runs_something(cmd: str) -> bool:
@@ -283,7 +338,7 @@ class BashFrame(CommandFrame):
     measures_terminal_mapping = True  # the handshake carries the calibration line
 
     @override
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         # Silence echo so the probe command text doesn't come back, then print
         # the READY marker on a line of its own. The bare `echo` is
         # load-bearing: the session matches READY line-anchored (a failed
@@ -300,13 +355,16 @@ class BashFrame(CommandFrame):
         # immediately before READY, so the session reads it from the output
         # copy and never from an echo of the typed line.
         #
-        # READY is typed split by an empty quote (_typed_apart), so the echo of
-        # the typed line never carries it whole. A long line that wraps echoes
-        # a carriage return where it wrapped, and one landing right before the
-        # marker would otherwise put READY at a line start in the echo: the
-        # handshake would stop there and measure the echo instead of the output.
-        return (
-            f"stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; echo {_typed_apart(m.ready)}\n"
+        # whole_line_echo holds READY's end in a variable that only the line's
+        # first statement sets (#761). login(1) can flush the start of this
+        # line on a console that delivers input in pieces, and the shell then
+        # runs a tail: one that skipped `stty -echo` or the calibration (or
+        # half the history prefix, which rides after the anchor) prints only
+        # READY's head, so confirm_live sends the line again whole. The typed
+        # line never carries READY, so neither does its echo, even where a
+        # wrap puts a carriage return right before the marker.
+        return whole_line_echo(
+            m.ready, READY_SUFFIX, f"{prefix}stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; "
         )
 
     @override
@@ -384,8 +442,9 @@ class BashFrame(CommandFrame):
         #   noise anyway; harmless, as the read-until-pattern discards
         #   anything preceding the marker.)
         #
-        # `|| :` — pins $? to 0. This payload also prefixes the resync probe
-        #   (`echo "…RECOVER__$?__"`), and without it dash/busybox report
+        # `|| :` — pins $? to 0. This payload also rides after the anchor in
+        #   the resync probe (`…RECOVER__$?__$(id -un)__`, see
+        #   login_proxy._identity_probe), and without it dash/busybox report
         #   RECOVER__2__/__1__ — harmless to the liveness regex, which only
         #   needs digits, but it reads as a failure in a debug log.
         #
@@ -591,10 +650,11 @@ class ZephyrFrame(CommandFrame):
     _console_safety.py``, which serializes this tree's access for that reason."""
 
     @override
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         # An unknown token: the shell's error handler echoes it back, which is
-        # all the readiness probe needs. No `stty`, no `echo`.
-        return f"{m.ready}\n"
+        # all the readiness probe needs. No `stty`, no `echo`. *prefix* is
+        # always "" here: Zephyr has no history to suppress.
+        return f"{prefix}{m.ready}\n"
 
     @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
@@ -699,8 +759,8 @@ class ZephyrSerialFrame(ZephyrFrame):
     type_name = "zephyr-serial"
 
     @override
-    def handshake(self, m: SessionMarkers) -> str:
-        return f"shell echo off\r{m.ready}\n"
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+        return f"{prefix}shell echo off\r{m.ready}\n"
 
     @override
     def restore_interactive(self) -> str | None:
@@ -735,7 +795,7 @@ class RawFrame(CommandFrame):
     streams_output_live = False
 
     @override
-    def handshake(self, m: SessionMarkers) -> str:  # no probe to render
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:  # no probe to render
         return ""
 
     @override

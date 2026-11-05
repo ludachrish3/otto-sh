@@ -26,6 +26,7 @@ from otto.host.command_frame import BashFrame, SessionMarkers, ZephyrFrame
 from otto.host.session import HostSession, ready_pattern
 from otto.host.terminal_mapping import CALIBRATION_COMMAND, measure
 from otto.utils import wait_for_async
+from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host.test_session import MockSession
 
 M = SessionMarkers.for_session("cafef00d")
@@ -99,7 +100,8 @@ class TestBashHandshakeCarriesTheCalibrationLine:
     def test_calibration_runs_before_ready(self):
         hs = BashFrame().handshake(M)
         assert CALIBRATION_COMMAND in hs
-        assert hs.index(CALIBRATION_COMMAND) < hs.index(f"echo {R[:1]}''{R[1:]}")
+        assert probe_marker(hs) == R
+        assert hs.index("stty -echo") < hs.index(CALIBRATION_COMMAND) < hs.rindex("echo ")
 
     def test_the_calibration_command_is_silent_when_printf_is_missing(self):
         assert CALIBRATION_COMMAND.endswith("2>/dev/null")

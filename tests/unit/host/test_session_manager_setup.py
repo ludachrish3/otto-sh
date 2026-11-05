@@ -466,7 +466,8 @@ async def test_frame_entry_carries_the_target_frames_history_prefix():
         writes = h.shells[0].writes
         assert len(writes) == 1, writes
         assert "_READY__" in writes[0]
-        assert writes[0].startswith(BashFrame().quiet_history())
+        # Behind the line's anchor (whole_line_echo), which has to open it.
+        assert writes[0].index(BashFrame().quiet_history()) < writes[0].index("stty -echo")
         assert RawFrame().quiet_history() == ""  # the landing could not have supplied it
     finally:
         h.unregister()

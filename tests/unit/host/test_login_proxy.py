@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from otto.host import login_proxy
-from otto.host.command_frame import BashFrame
+from otto.host.command_frame import RECOVER_SUFFIX, BashFrame
 from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
@@ -23,7 +23,7 @@ from otto.host.login_proxy import (
 from otto.host.secret_wire import reveal
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
-from tests._fixtures.fake_shell import ModelIO, ShellModel
+from tests._fixtures.fake_shell import ModelIO, ShellModel, probe_marker
 
 
 @pytest.fixture(autouse=True)
@@ -40,26 +40,26 @@ def _fast_resync_settle(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # Every run_proxy/run_undo call now ends with a post-transition resync (a
-# confirm_live probe rendered by BashFrame.recover — an
-# `echo "__OTTO_<id>_RECOVER__$?__"` send) — see
+# confirm_live probe printing `__OTTO_<id>_RECOVER__<rc>__<user>__`) — see
 # otto.host.login_proxy._resync_shell. Filter it out of `sent` before
 # asserting on the exact send sequence a test cares about, so these
 # assertions stay meaningful (and don't just re-pin the resync's own noise).
-_RESYNC_ECHO_PREFIX = 'echo "__OTTO_'
 
 # The settle as SHIPPED, read at import time -- the autouse fixture above
 # zeroes the module's copy, and one test needs the real window back.
 _REAL_SETTLE = login_proxy._RESYNC_SETTLE
 
+# The resync probe's anchor: the line's first statement (#761).
+_RESYNC_ANCHOR = f"__otto_probe={RECOVER_SUFFIX}; "
+
 
 def _is_resync(text: str) -> bool:
     """Whether *text* is the engine's post-transition resync probe.
 
-    Substring rather than prefix match: history suppression prepends a
-    ``HISTFILE=…`` statement to the probe line, so the echo is no longer
-    first on it.
+    Read through :func:`probe_marker`, the one double that knows how the
+    product spells an anchored probe, so this never restates the spelling.
     """
-    return _RESYNC_ECHO_PREFIX in text
+    return (probe_marker(text) or "").endswith(RECOVER_SUFFIX)
 
 
 def _without_resync(
@@ -524,16 +524,27 @@ async def test_resync_shell_raises_login_proxy_error_when_deadline_elapses(
 _QUIET = BashFrame().quiet_history()
 
 
+def _anchored_and_quiet(probe: str) -> bool:
+    """The probe opens with its anchor, and suppression rides right after it."""
+    return (
+        probe.startswith(_RESYNC_ANCHOR)
+        and probe.index(_QUIET) == len(_RESYNC_ANCHOR)
+        and probe.endswith("$?__$(id -un)__; unset __otto_probe\n")
+    )
+
+
 @pytest.mark.asyncio
-async def test_resync_probe_carries_suppression_when_requested():
+async def test_resync_probe_opens_with_the_anchor_and_carries_suppression_after_it():
     # `su` spawns a NEW shell that re-reads rc files, so HISTFILE resets to its
     # default. The payload has to RIDE the probe: sent afterwards, otto's own
-    # resync echoes would already be in the elevated user's history.
+    # resync echoes would already be in the elevated user's history. It rides
+    # AFTER the anchor, so a probe whose head su flushed prints no marker at
+    # all and is sent again whole, suppression included (#761).
     io = RecorderIO(["Password:"])
     await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
     probes = io.resync_probes()
     assert probes
-    assert all(p.startswith(_QUIET) for p in probes)
+    assert all(_anchored_and_quiet(p) for p in probes), probes
 
 
 @pytest.mark.asyncio
@@ -543,17 +554,19 @@ async def test_resync_probe_still_ends_in_the_echo_proof_probe():
     await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
     # Still echo-proof ($? cannot be faked by an echo of the probe text), and
     # now also identity-bearing -- both must survive the suppression prefix.
-    assert all(p.rstrip("\n").endswith('$?__$(id -un)__"') for p in io.resync_probes())
+    assert all(
+        p.rstrip("\n").endswith("$?__$(id -un)__; unset __otto_probe") for p in io.resync_probes()
+    )
 
 
 @pytest.mark.asyncio
 async def test_resync_probe_untouched_by_default():
-    # Every existing caller keeps the byte-identical probe it had before.
+    # With history kept, the probe is the anchor and the echo, nothing else.
     io = RecorderIO(["Password:"])
     await run_proxy(io, MYSQL, via=ADMIN, host_id="h1")
     probes = io.resync_probes()
     assert probes
-    assert all(p.startswith(_RESYNC_ECHO_PREFIX) for p in probes)
+    assert all(p.startswith(_RESYNC_ANCHOR) and "HISTFILE" not in p for p in probes)
 
 
 @pytest.mark.asyncio
@@ -563,7 +576,7 @@ async def test_undo_resync_also_carries_suppression():
     # rather than special-casing direction.
     io = RecorderIO()
     await run_undo(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
-    assert all(p.startswith(_QUIET) for p in io.resync_probes())
+    assert all(_anchored_and_quiet(p) for p in io.resync_probes())
 
 
 @pytest.mark.asyncio
@@ -573,7 +586,7 @@ async def test_perform_switch_threads_suppression_through_every_hop():
     await perform_switch(io, [ADMIN, MYSQL], "mysql", None, "admin", "h1", history_prefix=_QUIET)
     probes = io.resync_probes()
     assert probes
-    assert all(p.startswith(_QUIET) for p in probes)
+    assert all(_anchored_and_quiet(p) for p in probes)
 
 
 @pytest.mark.asyncio
@@ -738,9 +751,8 @@ class _SlowPromptIO:
         if not any(t.strip() == "sqlpw" for t in self.sent):
             return None
         for text in reversed(self.sent):
-            found = re.search(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)', text)
-            if found:
-                reply = f"{found.group(1)}0__{self.target}__"
+            if _is_resync(text):
+                reply = f"{probe_marker(text)}0__{self.target}__"
                 return reply if pattern.search(reply) else None
         return None
 
