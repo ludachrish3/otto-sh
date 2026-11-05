@@ -1249,3 +1249,35 @@ def test_a_failing_kmodcov_area_does_not_fail_the_embedded_gcov_verdict(tmp_path
     report = check_project(tmp_path)
     assert report.verdict("kmodcov").state == "failed"
     assert report.verdict("embedded-gcov").state == "ok"
+
+
+@pytest.mark.parametrize("configured", [True, False])
+def test_every_tests_dir_consumer_reads_the_same_dirs(tmp_path: Path, configured: bool) -> None:
+    from otto.init.areas import template_tests_present
+    from otto.init.doctor import _validate_tests
+
+    _scaffold(tmp_path, "settings", "lab", "tests")
+    home, other = tmp_path / "tests", tmp_path / "checks"
+    settings = tmp_path / ".otto" / "settings.toml"
+    if configured:
+        settings.write_text(  # scaffold-exempt: retargeting the scaffolded tests dir
+            settings.read_text().replace('tests = ["tests"]', 'tests = ["checks"]', 1)
+        )
+        home, other = other, home
+    else:
+        settings.unlink()  # no settings file: every consumer falls back to root/tests
+    home.mkdir(exist_ok=True)
+    other.mkdir(exist_ok=True)
+    if home != tmp_path / "tests":
+        shutil.move(str(other / "test_example.py"), str(home / "test_example.py"))
+
+    def reads(root: Path) -> tuple[bool, bool, bool]:
+        return (
+            "tests" in detect_areas(root),
+            template_tests_present(root),
+            _validate_tests(root) == [],
+        )
+
+    assert reads(tmp_path) == (True, True, True)
+    shutil.move(str(home / "test_example.py"), str(other / "test_example.py"))
+    assert reads(tmp_path) == (False, False, False)

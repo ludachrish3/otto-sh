@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from otto.init.config import InitConfig
 from otto.init.next_steps import try_it_commands
 from otto.init.scaffolder import scaffold
@@ -82,3 +84,53 @@ def test_a_custom_embedded_gcov_dir_is_the_one_checked(tmp_path: Path) -> None:
     assert try_it_commands(tmp_path, "third_party/otto_kmodcov", "vendor/egcov", cwd=tmp_path) == [
         "otto cov embedded-gcov check vendor/egcov"
     ]
+
+
+def _example_cmds(cmds: list[str]) -> list[str]:
+    return [c for c in cmds if "TestExample" in c or "test_example_function" in c]
+
+
+def _tries(root: Path) -> list[str]:
+    return try_it_commands(
+        root, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=root
+    )
+
+
+def test_a_project_with_its_own_tests_is_not_told_to_run_template_names(tmp_path: Path) -> None:
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["settings", "lab"])
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    (tmp_path / "tests" / "test_math.py").write_text("class TestMathops: ...\n")
+    cmds = _tries(tmp_path)
+    assert "otto test --list-tests" in cmds
+    assert not _example_cmds(cmds)
+
+
+def _unreadable(path: Path) -> None:
+    path.unlink()
+    path.mkdir()  # a directory named test_example.py: globbed, not readable
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "def test_other(): pass\n",
+        "class TestExampleOld: ...\ndef test_example_function_old(): ...\n",
+        "# class TestExample:\n# def test_example_function(): ...\n",
+        "def TestExample(): ...\nclass test_example_function: ...\n",
+        "class TestExample(:\n",
+        None,
+    ],
+    ids=["edited", "renamed", "commented-out", "swapped-kinds", "invalid-syntax", "unreadable"],
+)
+def test_an_example_file_without_the_exact_template_names_is_not_suggested(
+    tmp_path: Path, body: str | None
+) -> None:
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["settings", "lab", "tests", "instructions"])
+    example = tmp_path / "tests" / "test_example.py"
+    if body is None:
+        _unreadable(example)
+    else:
+        example.write_text(body)
+    cmds = _tries(tmp_path)
+    assert "otto test --list-tests" in cmds
+    assert not _example_cmds(cmds)

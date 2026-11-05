@@ -8,7 +8,15 @@ kmodcov library and embedded-gcov patch. The CLI draws the answer
 import json
 from pathlib import Path
 
-from .areas import detect_areas, lab_files, library_present, patch_present
+from .areas import (
+    TEMPLATE_TEST_CLASS,
+    TEMPLATE_TEST_FUNCTION,
+    detect_areas,
+    lab_files,
+    library_present,
+    patch_present,
+    template_tests_present,
+)
 from .templates import EXAMPLE_LAB_NAME
 
 
@@ -57,9 +65,9 @@ def try_it_commands(
         commands.append(f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts")
     if "tests" in areas:
         commands.append("otto test --list-tests")
-        if lab:
-            commands.append(f"otto --lab {EXAMPLE_LAB_NAME} test TestExample")
-            commands.append(f"otto --lab {EXAMPLE_LAB_NAME} test test_example_function")
+        if lab and template_tests_present(root):
+            commands.append(f"otto --lab {EXAMPLE_LAB_NAME} test {TEMPLATE_TEST_CLASS}")
+            commands.append(f"otto --lab {EXAMPLE_LAB_NAME} test {TEMPLATE_TEST_FUNCTION}")
     if lab and "instructions" in areas:
         commands.append(f"otto --lab {EXAMPLE_LAB_NAME} run smoke")
     library = root / kmodcov_dir
