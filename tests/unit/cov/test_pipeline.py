@@ -482,6 +482,32 @@ class TestE2eDirtyTreeRemap:
         # The dirty-tree remap warning fired (names the omission of edited lines).
         assert any("uncommitted changes" in rec.message for rec in caplog.records)
 
+    @pytest.mark.asyncio
+    async def test_a_dirty_tree_warning_names_the_docs_section(self, tmp_path, caplog):
+        project = _init_git_repo(tmp_path)
+        cap = Capture(
+            tier="system",
+            product="app",
+            base_commit=head_commit(project),
+            files={"f.c": CaptureFileCov(lines={1: 5})},
+        )
+        cov = tmp_path / "out" / "cov"
+        cap.save(cov / "board1" / "app" / "capture.json")
+        (project / "f.c").write_text("int NEW;\nint a;\nint b;\nint c;\n")
+
+        with caplog.at_level("WARNING"):
+            await run_coverage_report(
+                [cov],
+                tmp_path / "report",
+                ReportInputs(
+                    project_root=project,
+                    tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
+                ),
+            )
+
+        (warning,) = [r.getMessage() for r in caplog.records if "uncommitted changes" in r.message]
+        assert 'See "A dirty tree at report time" (cli/cov/report in the docs).' in warning
+
 
 _UNIT_COV = {
     "tiers": {"unit": {"kind": "unit", "precedence": 1, "products": {"core": ["build/tests"]}}}

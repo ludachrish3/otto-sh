@@ -929,7 +929,9 @@ def _assert_cli_says(case: Case, verdict: Exception, run: CliRun) -> None:
         assert run.stderr == ""
     elif isinstance(verdict, LabBuildError) and verdict.kind == "no_labs":
         assert verdict.field == "labs"
-        assert run.stderr == "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').\n"
+        assert run.stderr == (
+            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB'). See otto --list-labs.\n"
+        )
     else:  # pragma: no cover — a new refusal joined the table without its rendering check
         pytest.fail(f"no rendering check for {verdict!r}")
 

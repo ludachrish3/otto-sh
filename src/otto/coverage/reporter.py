@@ -497,7 +497,8 @@ class CoverageReporter:
             logger.warning(
                 "Project root %s has uncommitted changes; e2e capture hits are being "
                 "remapped from HEAD to the working tree, and hits on locally-modified "
-                "lines are omitted.",
+                'lines are omitted. See "A dirty tree at report time" '
+                "(cli/cov/report in the docs).",
                 self.project_root,
             )
         for cap_path in self.capture_paths:

@@ -397,8 +397,9 @@ otto --lab example_lab test --cov --cov-dir ~/otto-runs/quickstart-docker/e2e/co
 The run clears every product's counters before the first test and again
 after collection. `banner`'s are cleared through `sudo`, because its
 container wrote them as root. Here too the parent's lines and the
-container's interleave differently on each run. `object list unavailable` is
-expected for `banner`: the report reads its binary from its container
+container's interleave differently on each run. The DEBUG line
+`object list unavailable` (shown with `--log-level debug`) is expected for
+`banner`: the report reads its binary from its container
 instead (below).
 
 `--cov-dir` refuses a directory that is not empty, so a second run adds

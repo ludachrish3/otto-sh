@@ -572,6 +572,44 @@ class TestHostExec:
         assert result.exit_code == 2
         assert "unexpected extra argument" in result.output
 
+    def test_a_split_command_is_told_to_quote_it(self):
+        """`exec -- pfctl show` leaves a second positional; the error says how to join it."""
+        with patch("otto.fleet.get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", "exec", "--", "pfctl", "show"])
+        assert result.exit_code == 2
+        flat = " ".join(result.output.replace("│", " ").split())
+        assert "exec takes its command as one quoted argument" in flat
+        assert "otto host <host_id> exec '<command>'" in flat
+
+    @pytest.mark.parametrize(
+        ("verb", "args", "noun"),
+        [("glob", ["*.c", "*.h"], "pattern"), ("ls", ["/a", "/b"], "path")],
+    )
+    def test_the_hint_names_the_verbs_own_positional(self, verb, args, noun):
+        """The sentence is true of the verb: `glob` takes a pattern, not a command."""
+        with patch("otto.fleet.get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", verb, *args])
+        assert result.exit_code == 2
+        flat = " ".join(result.output.replace("│", " ").split())
+        assert f"{verb} takes its {noun} as one quoted argument" in flat
+        assert f"otto host <host_id> {verb} '<{noun}>'" in flat
+        assert "pfctl" not in flat
+
+    def test_a_two_positional_command_gets_no_quoting_hint(self):
+        """Only a verb whose one positional is the command is told to quote it."""
+        from typer._click.exceptions import UsageError
+
+        from otto.cli.expose import _synthesize_command
+
+        def two(a: str, b: str) -> None:  # pragma: no cover - never reached
+            pass
+
+        cmd = _synthesize_command("two", "two", "", two)
+        with pytest.raises(UsageError) as exc:
+            cmd.main(["x", "y", "z"], standalone_mode=False)
+        assert "unexpected extra argument" in exc.value.message
+        assert "one quoted argument" not in exc.value.message
+
     def test_exec_closes_host_on_exception(self):
         mock_host = _make_host()
         mock_host.exec = AsyncMock(side_effect=RuntimeError("boom"))

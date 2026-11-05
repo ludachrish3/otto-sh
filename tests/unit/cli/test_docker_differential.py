@@ -378,7 +378,7 @@ REFUSALS = [
     (
         ["ps"],
         "otto.docker.observe.list_containers",
-        DockerVerbError("lab 'unix' has no docker-capable unix host", field="parent"),
+        DockerVerbError("no host in lab 'unix' is marked docker_capable", field="parent"),
         "--parent",
     ),
     (

@@ -357,7 +357,7 @@ def _next_steps_lines(
     tried = try_it_commands(root, kmodcov_dir, embedded_gcov_dir, cwd=Path.cwd())
     try_it = [blank, heading("3. Try it:"), blank, *commands(*tried)] if tried else []
     bashrc = [
-        "`otto --install-completion` already added the `source` line to",
+        "Step 1's `otto --install-completion` adds the `source` line to",
         "~/.bashrc, so completion needs nothing more there." + (" Add only:" if export else ""),
     ]
     return [

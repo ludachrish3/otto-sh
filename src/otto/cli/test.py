@@ -489,7 +489,8 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             "--cov/--no-cov",
             help=(
                 "Collect coverage from the lab's instrumented products after the run "
-                "finishes. Default: auto — on when an instrumented product is detected "
+                "finishes. Default: auto — on when a product built with coverage counters "
+                "is detected "
                 "and \\[coverage] is configured. --cov forces it on (an error if nothing is "
                 "instrumented); --no-cov forces it off."
             ),

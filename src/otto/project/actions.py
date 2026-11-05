@@ -560,7 +560,10 @@ class ProjectActions:
 
     @instruction(
         options=CleanupOptions,
-        help="Clean the lab: every project, the debug logs, the toolchain, impairments, tunnels.",
+        help=(
+            "Clean the whole lab, not one project: every project, debug logs, "
+            "the toolchain, impairments, tunnels."
+        ),
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,

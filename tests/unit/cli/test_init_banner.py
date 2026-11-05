@@ -67,6 +67,15 @@ def test_both_shells_are_covered_and_completion_is_sourced_after_install(tmp_pat
     assert text.count("source ~/.bash_completions/otto.sh") == 2
 
 
+def test_the_bashrc_note_speaks_from_before_the_installer_ran(tmp_path: Path) -> None:
+    """The reader has not run step 1 yet, so the note says what it will do, not "already added"."""
+    root = tmp_path.resolve()
+    _scaffold_all(root)
+    flat = " ".join(_render(root, "").replace("│", " ").split())
+    assert "adds the `source` line" in flat
+    assert "already added" not in flat
+
+
 def test_exports_are_omitted_when_the_root_is_already_active(tmp_path: Path) -> None:
     root = tmp_path.resolve()
     for roots in (str(root), f"/elsewhere{os.pathsep}{root}/"):

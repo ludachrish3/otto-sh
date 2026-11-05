@@ -19,7 +19,7 @@ from typing_extensions import override
 from .invoke import RENDER_POLICY_KEY, RenderPolicy, fail
 
 if TYPE_CHECKING:
-    from typer.core import TyperGroup
+    from typer.core import TyperCommand, TyperGroup
 
 
 def collect_exposed_methods(cls: type) -> dict[str, str]:
@@ -360,9 +360,41 @@ def _synthesize_command(
     setattr(cmd_fn, DRY_RUN_PREVIEW_ATTR, getattr(sample_func, DRY_RUN_PREVIEW_ATTR, False))
     setattr(cmd_fn, DRY_RUN_REFS_ATTR, host_dry_run_references)
     tmp = typer.Typer()
-    tmp.command(name=cli_name, help=help_text or None)(cmd_fn)
+    tmp.command(name=cli_name, help=help_text or None, cls=_make_verb_command())(cmd_fn)
     converted: Any = typer.main.get_command(tmp)
     return converted.commands[cli_name] if hasattr(converted, "commands") else converted
+
+
+def _make_verb_command() -> "type[TyperCommand]":
+    """Build the synthesized-verb command class lazily (defers ``TyperCommand`` subclassing)."""
+    from typer._click.exceptions import UsageError
+    from typer.core import TyperArgument, TyperCommand
+
+    class HostVerbCommand(TyperCommand):
+        """A host verb whose click parse error names the one-quoted-argument rule.
+
+        ``exec -- pfctl show`` leaves ``show`` as a second positional, and
+        click's own "unexpected extra argument" does not say the command is one
+        quoted argument. The sentence is added here, the one site every
+        synthesized verb passes through, for any verb with exactly one positional.
+        """
+
+        @override
+        def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+            try:
+                return super().parse_args(ctx, args)
+            except UsageError as e:
+                positionals = [p for p in self.params if isinstance(p, TyperArgument)]
+                if len(positionals) == 1 and e.message.startswith("Got unexpected extra argument"):
+                    # The name the Usage line above shows (exec's metavar is COMMAND).
+                    noun = (positionals[0].metavar or positionals[0].name or "").lower()
+                    e.message += (
+                        f"\n{self.name} takes its {noun} as one quoted argument: "
+                        f"otto host <host_id> {self.name} '<{noun}>'"
+                    )
+                raise
+
+    return HostVerbCommand
 
 
 def _make_host_group() -> "type[TyperGroup]":

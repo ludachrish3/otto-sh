@@ -47,7 +47,7 @@ creds:     json:/tmp/otto-gs/acme/lab_data/creds.json
 │  2. Activate otto in future shells:                                        │
 │                                                                            │
 │     ~/.bashrc                                                              │
-│        `otto --install-completion` already added the `source` line to      │
+│        Step 1's `otto --install-completion` adds the `source` line to      │
 │        ~/.bashrc, so completion needs nothing more there. Add only:        │
 │                                                                            │
 │          export OTTOPATH=/tmp/otto-gs/acme                                 │

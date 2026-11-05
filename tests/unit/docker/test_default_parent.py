@@ -58,7 +58,7 @@ def test_a_tie_between_the_top_two_refuses_even_with_a_third_below():
 
 def test_no_docker_capable_host_refuses():
     lab = _lab(dut1=(False, 0))
-    with pytest.raises(DockerVerbError, match="no docker-capable unix host") as exc:
+    with pytest.raises(DockerVerbError, match="is marked docker_capable") as exc:
         default_docker_parent(lab)
     assert exc.value.field == "parent"
 

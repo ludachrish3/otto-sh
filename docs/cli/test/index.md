@@ -119,7 +119,7 @@ under Extend.
 | `--duration, -d SECONDS` | `0` | Repeat tests for SECONDS in one setup/teardown cycle |
 | `--threshold FLOAT` | `100.0` | Minimum per-test pass rate percent when repeating with `--iterations`/`--duration` (0-100) |
 | `--results PATH` | auto | JUnit XML output path |
-| `--cov / --no-cov` | auto | Collect gcov coverage from remotes after the run; with neither flag, on when an instrumented product is found ({ref}`coverage-tristate`) |
+| `--cov / --no-cov` | auto | Collect gcov coverage from remotes after the run; with neither flag, on when a product built with coverage counters is found ({ref}`coverage-tristate`) |
 | `--cov-dir PATH` | `<run dir>/cov` | Override coverage destination (implies `--cov`) |
 | `--overwrite-cov-dir` | off | Allow `--cov-dir` to clear an existing non-empty dir |
 | `--cov-clean / --no-cov-clean` | on | Reset every instrumented product's counters before the run, each its own way (see {doc}`../cov/clean`) |
