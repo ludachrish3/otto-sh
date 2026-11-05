@@ -125,6 +125,16 @@ def test_lookup_unknown_key_exits_1_with_the_error(project):
     assert "inventory key 'zz' not found in inventory 'json:" in result.output
 
 
+def test_an_inventory_error_prints_its_key_verbatim(project):
+    """The key reaches the terminal as typed: not escaped twice, no tag eaten, no emoji (#843)."""
+    hostile_id = "[bold]x[/bold]:smile:"
+    result = _run(["lookup", hostile_id])
+    assert result.exit_code == 1
+    flat = " ".join(result.output.split())
+    assert f"inventory key '{hostile_id}' not found" in flat, result.output
+    assert "\\[" not in flat
+
+
 def test_lookup_reports_supplies(project):
     result = _run(["lookup", "test2"])
     assert result.exit_code == 0, result.output

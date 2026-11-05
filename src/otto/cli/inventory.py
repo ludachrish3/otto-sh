@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 from rich import box
 from rich import print as rprint
-from rich.markup import escape
 
 from .invoke import fail
 
@@ -121,8 +120,10 @@ def _inventory(code: int = 1) -> "Inventory":
     try:
         inventory = build_inventory(get_projects())
     except InventoryError as e:
+        from rich.text import Text
+
         fail(
-            f"[bold red]Inventory unavailable:[/bold red] {escape(str(e))}",
+            Text.assemble(("Inventory unavailable:", "bold red"), " ", str(e)),
             code,
             soft_wrap=True,
         )
@@ -145,7 +146,7 @@ def _records(inventory: "Inventory", code: int = 1) -> "dict[str, InventoryRecor
     try:
         records = {key: inventory.lookup(key) for key in inventory.list_keys()}
     except InventoryError as e:
-        fail(escape(str(e)), code, soft_wrap=True)
+        fail(e, code, soft_wrap=True)
     _stale_row(inventory)
     return records
 
@@ -247,7 +248,7 @@ def lookup(
         # reading a three-day-old snapshot" are the same sentence, and the
         # second is the answer to the first.
         _stale_row(inventory)
-        fail(escape(str(e)), soft_wrap=True)
+        fail(e, soft_wrap=True)
     _stale_row(inventory)
 
     # The provenance a referencing host carries as `host.inventory_ref`: the
@@ -343,7 +344,7 @@ def export(
     # an operator who mistyped a path should not pay a NetBox round trip to
     # find out.
     if path.exists() and not force:
-        fail(f"{escape(str(path))} exists; pass --force to overwrite it", soft_wrap=True)
+        fail(f"{path} exists; pass --force to overwrite it", soft_wrap=True)
     from ..inventory.snapshot import records_to_document, write_document_atomically
 
     doc = records_to_document(_records(inventory))
@@ -358,7 +359,7 @@ def export(
     try:
         write_document_atomically(path, doc)
     except OSError as e:
-        fail(f"{escape(str(path))}: {escape(str(e))}", soft_wrap=True)
+        fail(f"{path}: {e}", soft_wrap=True)
     _row(f"wrote {len(doc)} record(s) from {inventory.label} to {path}")
 
 
@@ -380,7 +381,7 @@ def _document_records(path: Path) -> "dict[str, InventoryRecord]":
     # binary file (an image, a gzip, a UTF-16 export) escaped both arms and
     # reached the operator as a traceback.
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        fail(f"{escape(str(path))}: {escape(str(e))}", _CANNOT_ANSWER, soft_wrap=True)
+        fail(f"{path}: {e}", _CANNOT_ANSWER, soft_wrap=True)
     try:
         # Every record field the FILE may carry, not this inventory's
         # `supplies`: an older export may hold a field this deployment no
@@ -388,7 +389,7 @@ def _document_records(path: Path) -> "dict[str, InventoryRecord]":
         # parse error that hides it.
         return document_to_records(data, source=str(path), supplies=FILLABLE_INVENTORY_FIELDS)
     except InventoryError as e:
-        fail(escape(str(e)), _CANNOT_ANSWER, soft_wrap=True)
+        fail(e, _CANNOT_ANSWER, soft_wrap=True)
 
 
 _ABSENT = "absent"
@@ -480,7 +481,7 @@ def refresh() -> None:
         # did not get one, and `otto inventory refresh && <next step>` must
         # not proceed as though the inventory had just been re-read.
         fail(
-            f"inventory {escape(inventory.label)} is not cached — nothing to refresh: "
+            f"inventory {inventory.label} is not cached — nothing to refresh: "
             f"{_not_cached_reason(inventory)}",
             soft_wrap=True,
         )
@@ -491,7 +492,7 @@ def refresh() -> None:
     try:
         result = cache.refresh()
     except InventoryError as e:
-        fail(escape(str(e)), soft_wrap=True)
+        fail(e, soft_wrap=True)
     _row(f"refreshed {inventory.label}: {result.count} record(s)")
     if result.previous_age is None:
         _row("no previous snapshot")

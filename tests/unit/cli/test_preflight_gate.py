@@ -218,7 +218,7 @@ class TestRendering:
     ) -> None:
         """Rich reads ``[word]`` as a style tag and DELETES it, so an unescaped
         ``uv pip install 'otto-sh[monitor]'`` hands the reader a command for the
-        WRONG package. ``fail`` escapes; a hand-rolled ``[red]`` f-string would
+        WRONG package. ``fail`` prints it literally; a hand-rolled ``[red]`` f-string would
         not -- which is what the ``error-render-through-helper`` rule enforces.
         """
         _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT}[labjack] >= 0.1")])

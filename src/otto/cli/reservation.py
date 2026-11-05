@@ -17,7 +17,7 @@ from pathlib import Path
 
 import typer
 from rich import print as rprint
-from rich.markup import escape
+from rich.text import Text
 
 from ..reservations.check import (
     MissingReservationError,
@@ -82,7 +82,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
             cwd_fallback=Path.cwd(),
         )
     except ReservationBackendError as e:
-        rprint(f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(e))}")
+        rprint(Text.assemble(("Reservation backend unavailable:", "bold red"), " ", str(e)))
         raise typer.Exit(1) from e
     ctx.meta["otto_reservation"] = gate
     return gate
@@ -103,10 +103,11 @@ def whoami(ctx: typer.Context) -> None:
     opts = maybe_root_options(ctx)
     labs = LAB_SEPARATOR.join(opts.labs) if opts is not None and opts.labs else "<none>"
     rprint(
-        f"username: [bold]{info.username}[/bold]\n"
-        f"source:   {info.source}\n"
-        f"backend:  {info.backend_name}\n"
-        f"lab:      {labs}"
+        Text.assemble(
+            "username: ",
+            (info.username, "bold"),
+            f"\nsource:   {info.source}\nbackend:  {info.backend_name}\nlab:      {labs}",
+        )
     )
 
 
