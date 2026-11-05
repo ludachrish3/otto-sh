@@ -25,7 +25,6 @@ from pathlib import Path
 
 from otto import layout
 from otto.config.completion_cache import HOST_SUMMARY_DEADLINE_ENV_VAR
-from otto.logger.management import _LOG_DIR_NAME_RE
 from tests._ambient_env import ambient
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -276,16 +275,17 @@ def run_otto(
 # ---------------------------------------------------------------------------
 #
 # otto writes each real invocation's output dir as
-# ``<xdir>/otto-output/<command>/<timestamp>_<subcommand>/`` (see
+# ``<xdir>/<command>/<timestamp>_<subcommand>/`` (see
 # ``otto.logger.management.create_output_dir``; the command's directory comes
 # from ``otto.layout.command_output_dir`` on both sides).  The e2e policy is that a
 # command creates such a dir only when it does real work on a host — help /
 # discovery / schema and the no-remote commands (cov, reservation) must not.
 # These helpers let every e2e test assert the presence or absence of that dir.
 #
-# Everything under ``otto-output/`` is otto's own, so no command list is kept
-# here: a test's scratch dirs elsewhere in the xdir (e.g. ``back/`` / ``dest/``
-# in transfer tests) can never register, and a run of any command does.
+# A run is recognised by ``otto.layout.is_run_dir`` (otto's run name AND its
+# ``.otto-run`` marker), so no command list is kept here: a test's scratch dirs
+# in the xdir (e.g. ``back/`` / ``dest/`` in transfer tests), even one holding a
+# timestamp-named child, can never register, and a run of any command does.
 
 
 def output_dirs(xdir: Path, command: str | None = None) -> list[Path]:
@@ -293,17 +293,16 @@ def output_dirs(xdir: Path, command: str | None = None) -> list[Path]:
 
     With *command* given, only that command's dirs; otherwise every command's.
     """
+    from otto.utils import is_real_dir
+
     if command is not None:
         roots = [layout.command_output_dir(xdir, command)]
     else:
-        out = layout.output_root(xdir)
-        roots = sorted(p for p in out.iterdir() if p.is_dir()) if out.is_dir() else []
+        roots = sorted(p for p in xdir.iterdir() if is_real_dir(p)) if xdir.is_dir() else []
     found: list[Path] = []
     for root in roots:
-        if root.is_dir():
-            # Match only real per-invocation dirs (``YYYYMMDD_HHMMSS_mmm[_sub]``)
-            # against otto's own naming rule.
-            found.extend(p for p in root.iterdir() if p.is_dir() and _LOG_DIR_NAME_RE.match(p.name))
+        if is_real_dir(root):
+            found.extend(p for p in root.iterdir() if layout.is_run_dir(p))
     return found
 
 

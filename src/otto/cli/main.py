@@ -626,14 +626,15 @@ def main(  # noqa: PLR0913 — CLI command params
         ),
     ] = None,
     xdir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--xdir",
             "-x",
             envvar=XDIR_ENV_VAR,
-            help="Directory in which to store logs and artifacts.",
+            show_default="$OTTO_HOME/otto-xdir",
+            help="Directory in which to store logs and artifacts (created if missing).",
         ),
-    ] = Path(),
+    ] = None,
     field: Annotated[
         bool,
         typer.Option(
@@ -838,6 +839,13 @@ def main(  # noqa: PLR0913 — CLI command params
     deadline = discovered_teardown_deadline()  # after installing: a failed discovery leaves 10 s
     if deadline is not None:
         policy.teardown_deadline = deadline
+
+    if xdir is None:
+        # Read per invocation, never at import: OTTO_HOME may change between
+        # two invocations in one process.
+        from .. import home_root
+
+        xdir = home_root.default_xdir()
 
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,

@@ -8,7 +8,8 @@ Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
 splitting and completion helpers, the dry-run headlines, deadline polling
 (:func:`wait_for`, :func:`wait_for_async`), write-then-rename
-(:func:`atomic_write_bytes`), and a stdout only the answer reaches
+(:func:`atomic_write_bytes`), the real-directory test of every deleting walk
+(:func:`is_real_dir`), and a stdout only the answer reaches
 (:func:`answer_channel`).
 """
 
@@ -130,6 +131,17 @@ def collapse_path_list(entries: list[str]) -> list[str]:
 def ottopath_entries(value: str) -> list[str]:
     """Return the roots an ``OTTOPATH`` value names: split, kept spelling, repeats collapsed."""
     return collapse_path_list([kept_path_spelling(e) for e in _PATH_LIST_SEP.split(value) if e])
+
+
+def is_real_dir(path: Path) -> bool:
+    """Whether *path* is a directory itself, not a symlink to one.
+
+    The one rule for what a deleting walk may enter or empty: the cache
+    maintenance passes under otto's home and the ``--log-days`` prune of the
+    xdir. Following a symlinked directory would let either reach files outside
+    the tree it was asked to tend.
+    """
+    return path.is_dir() and not path.is_symlink()
 
 
 def atomic_write_bytes(

@@ -63,7 +63,7 @@ INFO     @docker-host   | docker exec -e GCOV_PREFIX_STRIP=3 quickstart-banner
          /opt/quickstart/banner hello docker world
 INFO     @docker-host > | [3] hello docker world
 
-------- generated xml file: /tmp/otto-gs/xdir/otto-output/test/<run>/junit.xml -------
+------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
 === 5 passed in <t>s ===
 INFO     Archiving .gcda for banner on docker-host:/tmp/quickstart-docker/banner
 INFO     Archiving .gcda for wordcount on docker-host.quickstart.tools:/tmp/wordcount
@@ -151,4 +151,4 @@ INFO
 INFO     @docker-host > | otto-gcda-check
 INFO     coverage counters cleared after collection on 3 product(s) across 2 host(s)
 
-Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>
+Output directory: /tmp/otto-gs/xdir/test/<run>

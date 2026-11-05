@@ -19,6 +19,7 @@ could satisfy) precisely so it can be mutation-proven — see the fix-round-1
 report for the six-mutation sweep these assertions were built to catch.
 """
 
+import pytest
 from typer.testing import CliRunner
 
 from tests._fixtures.cache_workspace import OLD, YOUNG, _mk_workspace
@@ -143,8 +144,8 @@ def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch, tmp_pat
 
 
 def test_info_home_line_treats_empty_otto_home_as_unset(monkeypatch, tmp_path):
-    """`OttoEnvSettings` (`env_ignore_empty=True`) treats `OTTO_HOME=""` as
-    unset, same as `otto_home()` itself does -- this is the nuance a naive
+    """`otto.home_root` treats `OTTO_HOME=""` as unset, for the origin label
+    and `otto_home()` alike -- this is the nuance a naive
     "is the var present in os.environ" check would get wrong. Pinning it to
     the empty string, rather than deleting it, is what makes this test
     different from the unset case above. HOME is pinned for the same reason
@@ -160,6 +161,33 @@ def test_info_home_line_treats_empty_otto_home_as_unset(monkeypatch, tmp_path):
     (home_line,) = [ln for ln in result.output.splitlines() if ln.startswith("home:")]
     assert home_line.endswith("(default)")
     assert "(from $OTTO_HOME)" not in result.output
+
+
+@pytest.mark.parametrize("case", ["set", "empty", "unset"])
+def test_the_home_origin_label_agrees_with_otto_home(monkeypatch, tmp_path, case):
+    """The label and the home printed beside it come from the one reader of OTTO_HOME.
+
+    Whatever ``otto_home()`` resolves, ``info`` prints, and it says "from
+    $OTTO_HOME" exactly when ``home_from_env()`` saw a value.
+    """
+    from otto.cli.cache import cache_app
+    from otto.home_root import home_from_env, otto_home
+
+    monkeypatch.setenv("HOME", str(tmp_path / "user"))
+    if case == "set":
+        monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    elif case == "empty":
+        monkeypatch.setenv("OTTO_HOME", "")
+    else:
+        monkeypatch.delenv("OTTO_HOME", raising=False)
+
+    result = runner.invoke(cache_app, ["info"])
+
+    assert result.exit_code == 0
+    origin = "from $OTTO_HOME" if home_from_env() is not None else "default"
+    assert origin == ("from $OTTO_HOME" if case == "set" else "default")
+    (home_line,) = [ln for ln in result.output.splitlines() if ln.startswith("home:")]
+    assert home_line == f"home: {otto_home()} ({origin})"
 
 
 def test_info_lists_workspaces_oldest_first(tmp_path, monkeypatch):

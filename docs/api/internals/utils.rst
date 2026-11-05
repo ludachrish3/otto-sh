@@ -11,6 +11,8 @@ and the reference can link them. The public names are on :doc:`/api/utils`.
 
 .. autofunction:: otto.utils.atomic_write_bytes
 
+.. autofunction:: otto.utils.is_real_dir
+
 .. autofunction:: otto.utils.answer_channel
 
 .. autofunction:: otto.utils.point_at_devnull

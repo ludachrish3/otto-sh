@@ -70,7 +70,7 @@ export OTTO_XDIR=~/otto-runs
 ```
 
 The project is a git repository because coverage records the commit a run
-measured. Each command's output then goes under `~/otto-runs/otto-output/`
+measured. Each command's output then goes under `~/otto-runs/`
 ({ref}`invocation-output-directory`). Check that otto reaches your host, as
 in {ref}`the shared setup's first success <shared-setup-first-success>`.
 `--list-hosts` already lists `docker-host.quickstart.tools`: a declared

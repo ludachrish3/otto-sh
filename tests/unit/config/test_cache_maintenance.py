@@ -484,3 +484,56 @@ def test_a_file_that_cannot_be_removed_is_reported_as_a_failure(tmp_path):
     assert report.files_removed == []
     assert ws / "completion_cache.json" in report.failures
     assert (ws / "completion_cache.json").is_file()
+
+
+# ── otto-xdir/ is the one thing under the home no cache pass reaches ─────────
+
+
+def _populated_xdir(home):
+    """A default run tree under *home*, old enough that any age-based pass would take it."""
+    from otto.home_root import XDIR_DIRNAME
+
+    run = home / XDIR_DIRNAME / "test" / "20200101_000000_000"
+    run.mkdir(parents=True)
+    (run / ".otto-run").touch()
+    log = run / "x.log"
+    log.write_text("kept\n")
+    past = time.time() - OLD
+    for path in (log, run, run.parent, run.parent.parent):
+        os.utime(path, (past, past))
+    return log
+
+
+def test_prune_spares_otto_xdir(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    log = _populated_xdir(tmp_path)
+    ws = _mk_workspace(tmp_path, workspace_key([tmp_path / "proj"]), cache_age=OLD)
+    report = prune(tmp_path)
+    assert ws / "completion_cache.json" in report.files_removed  # the pass did run
+    assert log.read_text() == "kept\n"
+
+
+def test_prune_age_blind_spares_otto_xdir(tmp_path):
+    # `otto cache clear --all` is prune(age_blind=True).
+    from otto.config.cache_maintenance import prune
+
+    log = _populated_xdir(tmp_path)
+    ws = _mk_workspace(tmp_path, workspace_key([tmp_path / "proj"]), cache_age=YOUNG)
+    report = prune(tmp_path, age_blind=True)
+    assert ws / "completion_cache.json" in report.files_removed
+    assert log.read_text() == "kept\n"
+
+
+def test_clear_workspace_never_reaches_the_home_level(tmp_path, monkeypatch):
+    from otto.config.cache_maintenance import clear_workspace
+    from otto.config.home import workspace_home
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    roots = [tmp_path / "proj"]
+    ws = _mk_workspace(tmp_path, workspace_key(roots), cache_age=OLD, sidecar=True)
+    assert workspace_home(roots) == ws
+    log = _populated_xdir(tmp_path)
+    report = clear_workspace(workspace_home(roots))
+    assert ws / "completion_cache.json" in report.files_removed
+    assert log.read_text() == "kept\n"

@@ -195,19 +195,16 @@ def info() -> None:
     from rich.table import Table
 
     from ..config.cache_maintenance import iter_workspaces
-    from ..config.home import otto_home
     from ..config.user_settings import cache_enabled
     from ..console import id_column, literal_cell
-    from ..models.settings import OttoEnvSettings
+    from ..home_root import home_from_env, otto_home
 
     typer.echo(_cache_state_line(cache_enabled()))
     home = otto_home()
-    # Mirrors otto_home()'s OWN condition for "did $OTTO_HOME determine this"
-    # exactly -- OttoEnvSettings().home is not None (env_ignore_empty=True
-    # means an empty OTTO_HOME counts as unset, same as otto_home() sees it).
-    # A parallel presence-in-environ check here could drift from otto_home()'s
-    # the moment either changes; this stays coupled to the one source of truth.
-    origin = "from $OTTO_HOME" if OttoEnvSettings().home is not None else "default"
+    # Asks the one reader of OTTO_HOME whether it decided the home (an empty
+    # OTTO_HOME counts as unset there, as it does for otto_home()), rather than
+    # a parallel presence-in-environ check that could drift from it.
+    origin = "from $OTTO_HOME" if home_from_env() is not None else "default"
     typer.echo(f"home: {home} ({origin})")
 
     workspaces = iter_workspaces(home)

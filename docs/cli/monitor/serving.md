@@ -133,9 +133,10 @@ chmod 600 ~/.otto/tls/monitor-key.pem
 ```
 
 ```{warning}
-`~/.otto/tls/` is the one thing under `~/.otto` that otto cannot rebuild.  The
-workspace directories beside it hold derived state and are safe to delete (see
-[The workspace home](../index.md#the-workspace-home)); your leaf key is not.
+`~/.otto/tls/` is not derived state: otto cannot rebuild it.  Neither can it
+rebuild `~/.otto/otto-xdir/`, your runs' output; only the workspace directories
+beside them are safe to delete (see
+[The workspace home](../index.md#the-workspace-home)).  Your leaf key is not.
 Deleting it means regenerating the cert, not a slower next run.
 ```
 

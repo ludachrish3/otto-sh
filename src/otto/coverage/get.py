@@ -83,12 +83,17 @@ async def get_coverage(
     nothing instrumented
     (:class:`~otto.coverage.errors.CoverageNotInstrumentedError`); a project root that
     is not a git checkout
-    (:class:`~otto.coverage.capture.gitio.GitUnavailableError`); no
-    *output_dir* and no context to take one from (``CoverageInputError``,
-    ``field="output_dir"``); an output directory still holding counters not
-    yet captured from a collection at another tier or commit (also
-    ``field="output_dir"``). After collection, no capture produced is
+    (:class:`~otto.coverage.capture.gitio.GitUnavailableError`); an output
+    directory still holding counters not yet captured from a collection at
+    another tier or commit (``CoverageInputError``, ``field="output_dir"``).
+    After collection, no capture produced is
     :class:`~otto.coverage.errors.NoCoverageDataError`.
+
+    With no *output_dir*, the counters and captures go to the run's output
+    directory, else to this process's ``cov/<ts>_get/`` run dir under the
+    default xdir, ``$OTTO_HOME/otto-xdir``
+    (:func:`otto.output_dir.resolve_output_dir`), resolved after every
+    validation above, so a refused call creates nothing.
 
     A manual-kind tier's captures are also written into the project's committed
     manual store, attributed to *tester_name*/*tester_email* (defaults: the
@@ -112,7 +117,7 @@ async def get_coverage(
     from ..config.scope import EmptySelectionError
     from ..declared import current_projects
     from ..fleet import all_hosts
-    from ..run_context import try_get_context
+    from ..output_dir import LIBRARY_COV_GET, materialize_output_dir, resolve_output_dir
     from . import collect
     from .capture.gitio import head_commit
     from .capture.model import Capture
@@ -150,17 +155,10 @@ async def get_coverage(
     decide_coverage(True, detect(hosts), cov_config_missing=None, command="otto cov get")
     head_commit(cov_project.root)
 
-    if output_dir is None:
-        ctx = try_get_context()
-        output_dir = ctx.output_dir if ctx is not None else None
-        if output_dir is None:
-            raise CoverageInputError(
-                "no output directory was given and none is set for this invocation",
-                field="output_dir",
-            )
     from .. import layout
 
-    cov_dir = layout.cov_dir(output_dir.resolve())
+    run_dir = materialize_output_dir(resolve_output_dir(output_dir, entry=LIBRARY_COV_GET))
+    cov_dir = layout.cov_dir(run_dir.resolve())
 
     tester = (
         _resolve_tester(tester_name, tester_email, cov_project.root)

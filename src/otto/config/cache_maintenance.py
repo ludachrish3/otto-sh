@@ -203,9 +203,12 @@ def _is_real_dir(path: Path) -> bool:
 
     The one rule for what a pass may enter or empty: a workspace, a session
     directory, or a directory inside one. Following a symlinked one would
-    let a pass reach files outside the home entirely.
+    let a pass reach files outside the home entirely. The rule itself is
+    :func:`otto.utils.is_real_dir`, shared with the ``--log-days`` prune.
     """
-    return path.is_dir() and not path.is_symlink()
+    from ..utils import is_real_dir
+
+    return is_real_dir(path)
 
 
 def _candidates(home: Path) -> "list[Path]":

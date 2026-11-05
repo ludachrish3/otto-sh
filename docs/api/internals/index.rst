@@ -22,6 +22,7 @@ of these pages.
    errors
    examples
    fleet
+   home_root
    host/index
    init/index
    instruction_catalog
@@ -36,6 +37,7 @@ of these pages.
    logger
    models/index
    monitor/index
+   output_dir
    params
    project
    registry

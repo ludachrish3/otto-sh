@@ -29,10 +29,6 @@ reports/
 !tests/unit/cov/data/*.gcda
 !tests/unit/cov/data/*.gcno
 
-# otto's run output — every invocation's timestamped directory, under one
-# directory of the xdir (the current directory unless OTTO_XDIR says otherwise).
-/otto-output/
-
 # Performance files
 profile.txt
 

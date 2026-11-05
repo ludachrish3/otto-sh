@@ -470,18 +470,56 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
     assert isinstance(collect_mock.await_args.kwargs["tier"], TierConfig)
 
 
-@pytest.mark.asyncio
-async def test_no_output_dir_and_no_context_is_refused(all_hosts_of, git_sut):
-    """No ``output_dir`` and no context (a bare programmatic call) fails clean —
-    after config/tier/ticket/instrumentation/repository validation, so those
-    never get masked by it."""
-    project = _project({"hosts": ".*"}, root=git_sut)
-    board = _embedded_board("board1")
-    all_hosts_of(board)
+def _collect_into_cov_dir():
+    """A collect engine that reports one capture under whatever cov dir it is handed."""
 
-    with pytest.raises(CoverageInputError) as exc:
+    async def collect(cov_dir, **_kw):
+        cap = cov_dir / "board1" / "app" / "capture.json"
+        return CollectResult(
+            cov_dir=cov_dir,
+            product_dirs={ProductKey("board1", "app"): cap.parent},
+            produce=_produced(cap),
+        )
+
+    return AsyncMock(side_effect=collect)
+
+
+@pytest.mark.asyncio
+async def test_no_output_dir_and_no_context_collects_into_a_fresh_cov_get_run_dir(
+    all_hosts_of, git_sut, tmp_path, monkeypatch
+):
+    """A bare programmatic call is not refused (#758): it collects into this
+    process's ``cov/<ts>_get/`` run dir under the default xdir, created with
+    otto's marker."""
+    from otto.home_root import default_xdir
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    project = _project({"hosts": ".*"}, root=git_sut)
+    all_hosts_of(_embedded_board("board1"))
+
+    with patch("otto.coverage.collect.collect_coverage", _collect_into_cov_dir()):
+        report = await _with_nothing_installed(get_coverage(projects=[project]))
+
+    run = report.cov_dir.parent
+    assert run.parent == layout.command_output_dir(default_xdir(), "cov").resolve()
+    assert layout.RUN_DIR_NAME_RE.match(run.name)
+    assert run.name.endswith("_get")
+    assert layout.is_run_dir(run)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_get_creates_no_run_dir(all_hosts_of, tmp_path, monkeypatch):
+    """Every validation runs before the output directory is resolved: a refusal
+    (here, a project that is not a git checkout) leaves the default xdir untouched."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    not_a_git_repo = tmp_path / "not_a_git_repo"
+    not_a_git_repo.mkdir()
+    project = _project({"hosts": ".*"}, root=not_a_git_repo)
+    all_hosts_of(_embedded_board("board1"))
+
+    with pytest.raises(GitUnavailableError):
         await _with_nothing_installed(get_coverage(projects=[project]))
-    assert exc.value.field == "output_dir"
+    assert not (tmp_path / "home").exists()
 
 
 @pytest.mark.asyncio
@@ -675,7 +713,7 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
 
 @pytest.mark.asyncio
 async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_path):
-    """Configuration, tier, ticket, instrumentation, repository, destination:
+    """Configuration, tier, ticket, instrumentation, repository:
     in that order — none of them ever calls ``collect_coverage``/``clean_coverage``."""
     project_git_repo = TmpGitRepo(tmp_path / "sut")
     project_git_repo.write("f.c", "int a;\n")
@@ -714,28 +752,18 @@ async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_p
             {},
             GitUnavailableError,
         ),
-        (
-            _project({"hosts": ".*"}, root=git_sut),
-            [_embedded_board("board1")],
-            {},
-            CoverageInputError,  # output_dir refusal, with no context installed
-        ),
     ]
 
-    for i, (project, hosts, kwargs, expected) in enumerate(scenarios):
+    for project, hosts, kwargs, expected in scenarios:
         collect_mock = AsyncMock()
         clean_mock = AsyncMock()
         all_hosts_of(*hosts)
         with (
             patch("otto.coverage.collect.collect_coverage", collect_mock),
             patch("otto.coverage.collect.clean_coverage", clean_mock),
+            pytest.raises(expected),
         ):
-            if i == len(scenarios) - 1:
-                with pytest.raises(expected):
-                    await _with_nothing_installed(get_coverage(projects=[project], **kwargs))
-            else:
-                with pytest.raises(expected):
-                    await get_coverage(output_dir=tmp_path, projects=[project], **kwargs)
+            await get_coverage(output_dir=tmp_path, projects=[project], **kwargs)
         collect_mock.assert_not_awaited()
         clean_mock.assert_not_awaited()
 

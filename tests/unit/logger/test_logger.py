@@ -75,8 +75,8 @@ def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
     cmd_dir = layout.command_output_dir(management._state.xdir, "pytest")
     olds = []
     for i in range(6):
-        d = cmd_dir / f"20200101_0000{i:02d}_000"
-        d.mkdir()
+        # A run dir otto made: the name AND the marker the prune is fenced on.
+        d = layout.make_run_dir(cmd_dir / f"20200101_0000{i:02d}_000")
         _backdate(d, seconds=3600)
         olds.append(d)
 
@@ -100,8 +100,7 @@ def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
 def test_remove_old_logs_no_budget_message_on_normal_run(caplog):
     """A small tree finishes well under budget — no truncation message."""
     cmd_dir = layout.command_output_dir(management._state.xdir, "pytest")
-    d = cmd_dir / "20200101_000000_000"
-    d.mkdir()
+    d = layout.make_run_dir(cmd_dir / "20200101_000000_000")
     _backdate(d, seconds=3600)
 
     with caplog.at_level("DEBUG", logger="otto"):

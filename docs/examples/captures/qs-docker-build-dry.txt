@@ -11,4 +11,4 @@ BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build -t quickstart-banner:latest -f
 /tmp/otto-docker-vagrant/otto-quickstart-docker-docs/build/quickstart-banner. No context was staged
 and no image was built.
 
-Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_build
+Output directory: /tmp/otto-gs/xdir/docker/<run>_build

@@ -281,18 +281,6 @@ class _SessionOutcome:
     stop_reason: str | None = None
 
 
-def resolve_output_dir(output_dir: Path | None) -> Path:
-    """Explicit param → context output_dir → CWD (xdir-defaults-to-CWD philosophy)."""
-    if output_dir is not None:
-        return output_dir
-    from ..run_context import try_get_context
-
-    ctx = try_get_context()
-    if ctx is not None and ctx.output_dir is not None:
-        return ctx.output_dir
-    return Path.cwd()
-
-
 ASYNCIO_LOOP_ARGS: list[str] = [
     "-o",
     "asyncio_default_test_loop_scope=session",
@@ -1731,6 +1719,9 @@ def run_tests(
     session had nothing to run takes no part in the result. When more than
     one project has a test directory, each project's artifacts go under
     ``<output_dir>/<project name>/`` and its JUnit file is ``junit_<project>.xml``.
+    With no *output_dir*, the run writes into the run's output directory, else
+    into this process's ``test/<ts>/`` run dir under the default xdir,
+    ``$OTTO_HOME/otto-xdir`` (:func:`otto.output_dir.resolve_output_dir`).
 
     *options* are instances of classes registered for the ``test`` verb
     (:func:`otto.params.register_options`); they are bound on the context, so
@@ -1773,12 +1764,17 @@ def run_tests(
     import pytest
 
     from ..config.home import workspace_home
+    from ..output_dir import LIBRARY_TEST, materialize_output_dir, resolve_output_dir
     from ..params import flatten_option_instances
     from .layout import ArtifactLayout
 
     flat = flatten_option_instances(list(options or []), verb="test")
     opts = run_options
-    log_dir = resolve_output_dir(output_dir)
+    # The stability report is written straight into the dir (even with JUnit
+    # redirected), so the run creates it: a library run dir with its marker,
+    # any other dir as a plain directory.
+    log_dir = materialize_output_dir(resolve_output_dir(output_dir, entry=LIBRARY_TEST))
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     with _session_context(log_dir) as session_ctx:
         # The context first, then its projects: an inherited context's snapshot, or

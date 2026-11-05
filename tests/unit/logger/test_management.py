@@ -84,20 +84,13 @@ def test_verbose_floor():
 def test_remove_old_logs_respects_time_budget(tmp_path, monkeypatch):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
     cmd_dir = layout.command_output_dir(tmp_path, "test")
-    cmd_dir.mkdir(parents=True, exist_ok=True)
-    import os
-
-    olds = []
-    for i in range(6):
-        d = cmd_dir / f"20200101_0000{i:02d}_000"
-        d.mkdir()
-        past = 10_000.0
-        os.utime(d, (d.stat().st_atime - past, d.stat().st_mtime - past))
-        olds.append(d)
+    olds = [_old_run(cmd_dir, f"20200101_0000{i:02d}_000") for i in range(6)]
     ticks = iter([float(n) for n in range(1000)])
     monkeypatch.setattr(management.time, "monotonic", lambda: next(ticks))
     management.remove_old_logs(seconds=60, time_budget=2.5)
-    assert [d for d in olds if d.exists()], "budget should stop before removing all"
+    survivors = [d for d in olds if d.exists()]
+    assert survivors, "budget should stop before removing all"
+    assert len(survivors) < len(olds), "a prune that removes nothing passes no budget test"
 
 
 def test_library_import_attaches_nullhandler():
@@ -692,62 +685,250 @@ _TS = r"\d{8}_\d{6}_\d{3}"
 @pytest.mark.parametrize(
     ("command", "sub", "rel", "leaf"),
     [
-        ("docker", None, "otto-output/docker", rf"{_TS}"),
-        ("run", "write-file", "otto-output/run", rf"{_TS}_write_file"),
+        ("docker", None, "docker", rf"{_TS}"),
+        ("run", "write-file", "run", rf"{_TS}_write_file"),
     ],
     ids=["command", "command-and-subcommand"],
 )
-def test_an_explicit_xdir_puts_the_run_under_otto_output(tmp_path, command, sub, rel, leaf):
+def test_an_explicit_xdir_puts_the_run_straight_under_its_command(
+    tmp_path, command, sub, rel, leaf
+):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
     out = management.create_output_dir(command, sub)
     assert out.parent == tmp_path / rel
     assert re.fullmatch(leaf, out.name), out.name
-    # Nothing else lands in the xdir: no bare `<xdir>/<command>/`.
-    assert [p.name for p in tmp_path.iterdir()] == ["otto-output"]
+    # No `otto-output/` level: the command directory is the xdir's only child.
+    assert [p.name for p in tmp_path.iterdir()] == [rel]
+    assert layout.is_run_dir(out)
 
 
-@pytest.mark.parametrize(
-    ("command", "sub", "rel"),
-    [("test", None, "otto-output/test"), ("host", "exec", "otto-output/host")],
-    ids=["command", "command-and-subcommand"],
-)
-def test_the_defaulted_xdir_puts_the_run_under_otto_output_in_the_cwd(
-    tmp_path, monkeypatch, command, sub, rel
-):
-    # --xdir defaults to Path() (the CWD): the run lands in ./otto-output, so a
-    # project root's own ./test or ./docker is never written into.
-    monkeypatch.chdir(tmp_path)
-    management.init_cli_logging(xdir=Path(), log_level="INFO", keep_days=7)
-    out = management.create_output_dir(command, sub)
-    assert out.parent == Path(rel)
-    assert (tmp_path / rel / out.name).is_dir()
-    assert [p.name for p in tmp_path.iterdir()] == ["otto-output"]
+def test_a_missing_explicit_xdir_is_created(tmp_path):
+    xdir = tmp_path / "new" / "d"
+    management.init_cli_logging(xdir=xdir, log_level="INFO", keep_days=7)
+    out = management.create_output_dir("test")
+    assert out.parent == xdir / "test"
+    assert layout.is_run_dir(out)
 
 
-def _old_otto_named_dir(parent: Path, name: str = "20200101_000000_000") -> Path:
+def test_two_runs_never_share_a_run_dir(tmp_path, monkeypatch):
+    # The CLI refuses a collision (make_run_dir without exist_ok), as it always did.
+    from datetime import datetime, timezone
+
+    fixed = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
+    real = layout.run_output_dir
+    monkeypatch.setattr(
+        "otto.layout.run_output_dir", lambda xdir, entry, **_kw: real(xdir, entry, started=fixed)
+    )
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    management.create_output_dir("test")
+    with pytest.raises(FileExistsError):
+        management.create_output_dir("test")
+
+
+def _aged(path: Path) -> Path:
+    past = time.time() - 3600
+    os.utime(path, (past, past))
+    return path
+
+
+def _old_run(parent: Path, name: str = "20200101_000000_000") -> Path:
+    """An old run dir otto made: the run name AND the marker (layout.make_run_dir)."""
+    return _aged(layout.make_run_dir(parent / name))
+
+
+def _old_lookalike(parent: Path, name: str = "20200101_000000_000") -> Path:
+    """An old directory with otto's run name but no marker: a project's own."""
     d = parent / name
     d.mkdir(parents=True)
-    past = time.time() - 3600
-    os.utime(d, (past, past))
-    return d
+    (d / "keep.txt").write_text("mine\n")
+    return _aged(d)
 
 
-def test_prune_removes_old_runs_under_otto_output_only(tmp_path):
+def test_log_days_prunes_an_old_marked_run_dir(tmp_path):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    old_run = _old_otto_named_dir(tmp_path / "otto-output" / "test")
-    # A user's own ./docker and ./test beside otto-output/, each holding a
-    # child that happens to match otto's run-name pattern and is old enough:
-    # neither is otto's, so neither may be touched.
-    users_docker = _old_otto_named_dir(tmp_path / "docker")
-    users_test = _old_otto_named_dir(tmp_path / "test", "20200101_000000_000_suite")
+    old = _old_run(layout.command_output_dir(tmp_path, "test"))
+    management.remove_old_logs(seconds=60)
+    assert not old.exists()
+
+
+def test_log_days_keeps_an_old_pattern_matching_dir_without_the_marker(tmp_path, monkeypatch):
+    # `--xdir .`: the walk meets the project's own top-level directories.
+    monkeypatch.chdir(tmp_path)
+    management.init_cli_logging(xdir=Path(), log_level="INFO", keep_days=7)
+    project_own = _old_lookalike(tmp_path / "test")
+    management.remove_old_logs(seconds=60)
+    assert (project_own / "keep.txt").read_text() == "mine\n"
+
+
+def test_log_days_keeps_young_runs_and_non_run_dirs(tmp_path):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    cmd = layout.command_output_dir(tmp_path, "test")
+    young = layout.make_run_dir(cmd / "20200101_000000_000")
+    # Marked, old, but not named like a run: the name check is half the fence.
+    notes = cmd / "notes"
+    notes.mkdir()
+    (notes / ".otto-run").touch()
+    _aged(notes)
+    management.remove_old_logs(seconds=60)
+    assert young.is_dir()
+    assert notes.is_dir()
+
+
+def test_prune_removes_old_marked_runs_and_never_unmarked_lookalikes(tmp_path):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    old_run = _old_run(layout.command_output_dir(tmp_path, "test"), "20200101_000000_001")
+    # A user's own ./docker and ./test, each holding an old child named like
+    # one of otto's runs but carrying no marker: neither is otto's.
+    users_docker = _old_lookalike(tmp_path / "docker")
+    users_test = _old_lookalike(tmp_path / "test", "20200101_000000_000_suite")
     management.remove_old_logs(seconds=60)
     assert not old_run.exists()
     assert users_docker.is_dir()
     assert users_test.is_dir()
 
 
-def test_prune_without_an_otto_output_dir_touches_nothing(tmp_path):
-    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    users_docker = _old_otto_named_dir(tmp_path / "docker")
+def test_log_days_never_follows_a_symlinked_command_dir(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    old = _old_run(outside)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "archive").symlink_to(outside)
+    monkeypatch.chdir(project)
+    management.init_cli_logging(xdir=Path(), log_level="INFO", keep_days=7)
     management.remove_old_logs(seconds=60)
-    assert users_docker.is_dir()
+    assert layout.is_run_dir(old)
+
+
+def test_log_days_never_deletes_a_symlinked_run_dir(tmp_path):
+    target = _old_run(tmp_path / "elsewhere")
+    management.init_cli_logging(xdir=tmp_path / "xdir", log_level="INFO", keep_days=7)
+    cmd = layout.command_output_dir(tmp_path / "xdir", "test")
+    cmd.mkdir(parents=True)
+    link = cmd / "20200101_000000_000"
+    link.symlink_to(target)
+    management.remove_old_logs(seconds=60)
+    assert link.is_symlink()
+    assert layout.is_run_dir(target)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 directory")
+@pytest.mark.parametrize("where", ["project-root", "home-root"])
+def test_log_days_survives_an_unreadable_child(tmp_path, monkeypatch, where):
+    if where == "home-root":
+        monkeypatch.setenv("HOME", str(tmp_path / "user"))
+        xdir = Path.home()
+    else:
+        xdir = tmp_path / "project"
+    xdir.mkdir(parents=True)
+    locked = xdir / "locked"
+    locked.mkdir()
+    old = _old_run(layout.command_output_dir(xdir, "test"))
+    locked.chmod(0)
+    try:
+        management.init_cli_logging(xdir=xdir, log_level="INFO", keep_days=7)
+        management.remove_old_logs(seconds=60)
+    finally:
+        locked.chmod(0o755)
+    assert not old.exists()
+
+
+def test_log_days_survives_a_command_dir_whose_stat_fails(tmp_path, monkeypatch):
+    """`--xdir .` meets a stale network mount: its stat raises, the walk goes on."""
+    import errno
+
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    stale = tmp_path / "mnt"
+    stale.mkdir()
+    old = _old_run(layout.command_output_dir(tmp_path, "test"))
+    real_stat = Path.stat
+
+    def stat_fails_on_the_mount(self, *args, **kwargs):
+        if self == stale:
+            raise OSError(errno.ESTALE, "Stale file handle", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_fails_on_the_mount)
+    management.remove_old_logs(seconds=60)
+    assert not old.exists()
+
+
+def test_log_days_survives_an_entry_that_vanishes_mid_walk(tmp_path, monkeypatch):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    cmd = layout.command_output_dir(tmp_path, "test")
+    gone = _old_run(cmd, "20200101_000000_000")
+    kept_old = _old_run(cmd, "20200101_000000_001")
+    real_iterdir = Path.iterdir
+
+    def iterdir_then_vanish(self):
+        entries = list(real_iterdir(self))
+        if self == cmd:
+            import shutil
+
+            shutil.rmtree(gone)
+        return iter(entries)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir_then_vanish)
+    management.remove_old_logs(seconds=60)
+    assert not gone.exists()
+    assert not kept_old.exists()
+
+
+def test_log_days_spends_no_stat_on_an_entry_without_a_run_name(tmp_path, monkeypatch):
+    """Perf is file operations: the free name check comes before any stat.
+
+    Under ``--xdir .`` or ``--xdir ~`` the walk meets every entry of every
+    top-level directory (``node_modules/``, ``build/``); an entry not named like
+    a run must cost the listing and nothing else.
+    """
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    for name in ("node_modules", "src"):
+        for i in range(50):
+            (tmp_path / name / f"entry{i}").mkdir(parents=True)
+    old = _old_run(layout.command_output_dir(tmp_path, "test"))
+    command_dirs = 3
+
+    calls = []
+    real_stat, real_lstat = Path.stat, Path.lstat
+
+    def counting_stat(self, *args, **kwargs):
+        calls.append(("stat", self))
+        return real_stat(self, *args, **kwargs)
+
+    def counting_lstat(self, *args, **kwargs):
+        calls.append(("lstat", self))
+        return real_lstat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", counting_stat)
+    monkeypatch.setattr(Path, "lstat", counting_lstat)
+    management.remove_old_logs(seconds=60)
+    monkeypatch.undo()
+
+    assert not old.exists()
+    # is_real_dir per command dir: is_dir's stat and is_symlink's lstat (which
+    # Python 3.10's pathlib spells as a second stat call, so up to 3 counted).
+    # Every other call is on the one run-named entry: its marker, the real-dir
+    # test, the age, then rmtree's walk of it.
+    walked = [c for c in calls if old not in (c[1], *c[1].parents)]
+    assert len(walked) <= 3 * command_dirs, walked
+    assert len(calls) - len(walked) >= 1
+    assert not [c for c in calls if c[1].name.startswith("entry")], "a non-run entry was statted"
+
+
+def test_the_time_budget_is_checked_between_command_dirs(tmp_path, monkeypatch):
+    """A long run of empty or unlistable xdir children still consults the budget."""
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    for i in range(10):
+        (tmp_path / f"empty{i}").mkdir()
+    listed = []
+    real_children = management._children
+
+    def recording(directory):
+        listed.append(directory)
+        return real_children(directory)
+
+    ticks = iter([float(n) for n in range(1000)])
+    monkeypatch.setattr(management.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(management, "_children", recording)
+    management.remove_old_logs(seconds=60, time_budget=2.5)
+    # The xdir itself, then only the command dirs listed before the budget ran out.
+    assert 1 < len(listed) < 11, listed

@@ -1180,13 +1180,16 @@ class TestCovGetLeaf:
         assert "Invalid value for --tier" in out
         assert "sys_a, sys_b" in out
 
-    def test_no_output_dir_anywhere_names_the_output_flag(self):
+    def test_a_stale_output_dir_names_the_output_flag(self):
         err = CoverageInputError(
-            "no output directory was given and none is set for this invocation",
+            "/o/cov holds counters not yet captured (h1/app) whose tier and commit no "
+            "metadata records; this collection is tier 'system' at commit abc123, and "
+            "reusing the directory would capture them under the wrong one — collect "
+            "into a fresh output directory",
             field="output_dir",
         )
         with patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)):
-            result = runner.invoke(cov_app, ["get"])
+            result = runner.invoke(cov_app, ["get", "-o", "/o"])
         assert result.exit_code == 2
         assert "Invalid value for --output" in _flat(result.output)
 

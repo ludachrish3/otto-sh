@@ -32,7 +32,12 @@ def test_every_field_error_is_a_value_error_and_a_field_error(cls):
             {"tier": "--tier", "ticket": "--ticket"},
             "--ticket",
         ),
-        ("no output directory was given", "output_dir", {"output_dir": "--output"}, "--output"),
+        (
+            "/o/cov holds counters not yet captured",
+            "output_dir",
+            {"output_dir": "--output"},
+            "--output",
+        ),
         ("nothing to build", None, {"tier": "--tier"}, None),
     ],
 )

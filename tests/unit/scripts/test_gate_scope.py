@@ -73,6 +73,8 @@ collect_marker_sets = _lane_invariants.collect_marker_sets
         ("tests/e2e/_otto_subprocess.py", None),
         ("src/otto/cli/expose.py", gs.SRC_LEAF),
         ("src/otto/console.py", gs.SRC_LEAF),
+        ("src/otto/home_root.py", gs.SRC_LEAF),
+        ("src/otto/output_dir.py", gs.SRC_LEAF),
         ("src/otto/kmodcov/kmodcov.c", gs.SRC_LEAF),
         ("src/otto/py.typed", gs.ESCALATE),
         ("src/otto/__init__.py", gs.ESCALATE),
@@ -451,6 +453,20 @@ def test_a_src_leaf_change_maps_to_its_unit_and_bed_trees_with_the_riders():
         *gs.GUARD_RIDERS,
     }
     assert scope.bed_lanes == ["make conformance-bed"]
+
+
+@pytest.mark.parametrize("module", ["home_root", "output_dir"])
+def test_output_dir_and_home_root_run_the_unit_tree(module):
+    """Both are top-level leaves every output writer and the CLI root reach: the whole unit tree."""
+    path = f"src/otto/{module}.py"
+    scope = _scope(
+        [gs.Change(path, "M")],
+        {("head", path): "x = 1\n"},
+        head_paths={path, "tests/unit/test_x.py"},
+    )
+    assert scope.classes == [gs.SRC_LEAF]
+    assert scope.src_packages == [module]
+    assert "tests/unit" in scope.quick_paths
 
 
 def test_a_src_tree_whose_tests_are_gone_drops_the_root_and_is_full_when_none_remain():

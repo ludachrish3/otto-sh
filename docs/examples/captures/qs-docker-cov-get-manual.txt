@@ -39,15 +39,15 @@ INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/shout && ech
 INFO     @docker-host > | otto-no-cov-dir
 INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
          "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
-INFO     Coverage data collected to /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov (1
-         product dir(s))
+INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
+         dir(s))
 INFO     === Capturing docker-host.quickstart.tools/wordcount ===
 INFO     lcov capture: 2 file(s) ->
-         /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/
-         wordcount/board.info
+         /tmp/otto-gs/xdir/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount/bo
+         ard.info
 INFO     docker-host.quickstart.tools/wordcount: skipped 5 source file(s) outside the project root
 INFO     Coverage captures produced: 1 board(s)
-/tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount/capture.json
-Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov
+/tmp/otto-gs/xdir/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/cov/<run>_get/cov
 
-Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_get
+Output directory: /tmp/otto-gs/xdir/cov/<run>_get

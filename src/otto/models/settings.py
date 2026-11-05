@@ -1284,6 +1284,8 @@ class OttoEnvSettings(BaseSettings):
     The six CLI-option vars are read by Typer's ``envvar=`` at parse time; this model
     documents the whole surface and is the reader for the non-CLI reads:
     ottopath (read from OTTOPATH), compose_suffix, and the completion-cache xdir.
+    ``OTTO_HOME`` is the exception: :func:`otto.home_root.otto_home` is its one
+    reader, in a foundation leaf the host layer can reach.
 
     The existence check on ottopath's roots is done by ``config.env.load_otto_env``, so a
     missing root raises ``FileNotFoundError`` (not a wrapped ValidationError).
@@ -1301,7 +1303,6 @@ class OttoEnvSettings(BaseSettings):
     ottopath: Annotated[list[Path], NoDecode] = Field([], alias="OTTOPATH")
     lab: str | None = None
     xdir: Path | None = None
-    home: Path | None = None
     log_days: int = 30
     log_level: str = "INFO"
     log_rich: bool = False

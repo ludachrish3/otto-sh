@@ -1538,6 +1538,29 @@ def _reset_tunnel_add_locks():
 
 
 @pytest.fixture(autouse=True)
+def _reset_library_output_dirs():
+    """Clear ``otto.output_dir``'s memo of library run dirs between tests.
+
+    A library call with no destination and no run directory resolves ONE run
+    dir per ``(default xdir, entry)`` for the life of the process, so the
+    logs ``log_dest`` wrote are found through it again. Left uncleared, the
+    first test to resolve one would hand its directory to every later test on
+    the worker, and an assertion about a fresh run dir would pass or fail on
+    collection ORDER.
+
+    The memo is module-global, so the guard lives in the ROOT conftest. Lazy
+    ``sys.modules.get``: a test that never imports the module pays nothing.
+    Clearing the memo does not remove the run dirs earlier tests left in the
+    worker's shared ``OTTO_HOME``; a test that counts runs there pins its own
+    ``OTTO_HOME``.
+    """
+    yield
+    resolver = sys.modules.get("otto.output_dir")
+    if resolver is not None:
+        resolver.forget_library_output_dirs()
+
+
+@pytest.fixture(autouse=True)
 def _reset_inventory_stale_warnings():
     """Clear ``otto.inventory.cache._warned_snapshots`` between tests.
 

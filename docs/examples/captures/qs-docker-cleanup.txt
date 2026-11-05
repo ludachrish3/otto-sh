@@ -58,4 +58,4 @@ INFO     @docker-host   | if c=$(docker ps -aq --filter
 skipped: cleanup declined in project 'quickstart-docker': host 'docker-host.quickstart.tools':
 container not running
 
-Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_cleanup
+Output directory: /tmp/otto-gs/xdir/run/<run>_cleanup

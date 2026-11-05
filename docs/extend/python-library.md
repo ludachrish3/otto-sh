@@ -347,6 +347,39 @@ network, so this runs as-is:
 The trailing `reset_context` restores the prior active context — always pair it
 with `set_context` (or use `otto.open_context`, which does both for you).
 
+(library-output)=
+## Where a library call writes its output
+
+Three library calls write files: a host's log verbs (`get_logs`,
+`get_product_logs`, `get_debug_logs`, and `log_dest()`, which names their
+root), {func}`~otto.suite.run.run_tests` and
+{func}`~otto.coverage.get.get_coverage`. Each picks its directory the same way,
+through {func}`otto.output_dir.resolve_output_dir`:
+
+1. the destination you pass (`dest=` / `output_dir=`), as given;
+2. else the run's output directory: the one the CLI made for this invocation,
+   or the `output_dir=` you gave `open_context()`;
+3. else a run directory of its own under the default xdir,
+   `$OTTO_HOME/otto-xdir`, named the way the CLI names the run of the matching
+   command:
+
+| Call | Run directory | As the CLI's |
+| --- | --- | --- |
+| a host's log verbs, `log_dest()` | `host/<timestamp>_get_logs/` | `otto host <id> get-logs` |
+| `run_tests` | `test/<timestamp>/` | `otto test` |
+| `get_coverage` | `cov/<timestamp>_get/` | `otto cov get` |
+
+There is one such directory per kind of call per process, so the logs a script
+fetches are found again through `log_dest()`, however many times it asks. It is
+created by the first call that writes into it; asking `log_dest()` alone
+creates nothing. Without an explicit destination or a run's output directory,
+these calls no longer fall back to the current directory. A library
+call never prunes old run directories: only an `otto` CLI run's `--log-days`
+retention on the same xdir does, so a script that runs often without the CLI
+leaves `$OTTO_HOME/otto-xdir` to grow. The tree
+these directories share with the CLI is described in
+[Output directories](../cli/index.md#output-directories).
+
 ## Running tests from Python
 
 `otto test` is a thin CLI wrapper around {func}`~otto.suite.run.run_tests`,
@@ -413,17 +446,10 @@ for junit in result.junit_paths:
 ### `output_dir` precedence
 
 `run_tests` writes `junit.xml` (and, in stability mode,
-`stability_report.txt`) under an output directory resolved in this order:
-
-1. The `output_dir=` keyword argument, if given.
-2. The active context's `output_dir` (`get_context().output_dir`), if a
-   context is open.
-3. The current working directory.
-
-This is the same default the CLI's `--xdir` has (see
-[Output directories](../cli/index.md#output-directories)) — pass
-`output_dir=` explicitly, or open a context first, if a script shouldn't drop
-artifacts next to whatever its caller's CWD happens to be.
+`stability_report.txt`) into the directory
+[every library call resolves the same way](#library-output): `output_dir=`,
+else the run's output directory, else a `test/<timestamp>/` run directory under
+`$OTTO_HOME/otto-xdir`.
 
 ### Context handling
 
@@ -676,10 +702,10 @@ assert cleared.ok, cleared.failed
 ```
 
 Every input rule is the library's: an unknown tier, a manual-kind tier without a
-ticket, or no output directory raises
-{class}`~otto.coverage.errors.CoverageInputError` with a `field`. `output_dir`
-may be left out only inside an otto invocation, which supplies its own output
-directory; a standalone script passes one, as above. A failed
+ticket, or an output directory still holding counters from another tier or
+commit raises {class}`~otto.coverage.errors.CoverageInputError` with a `field`.
+Left out, `output_dir` is resolved as for
+[every library call](#library-output). A failed
 counter reset is never a warning: `clean_coverage` reports it, and `otto test`
 raises {class}`~otto.coverage.errors.CoverageCleanError`.
 

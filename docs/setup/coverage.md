@@ -196,8 +196,8 @@ destination, the pre-run counter cleanup, the inline report.
 ## Where it lands
 
 `otto test` writes its run into a fresh per-invocation directory under
-`--xdir` — the directory you ran it from, unless you said otherwise — named
-`otto-output/test/<timestamp>/`, and prints the path when the run ends. Counters
+the xdir — `$OTTO_HOME/otto-xdir`, unless `--xdir` says otherwise — named
+`test/<timestamp>/`, and prints the path when the run ends. Counters
 are fetched into that directory, one directory per host per product, mirroring
 the `logs/` layout. {ref}`The run tree <run-tree>` is the shape, and it is the
 same tree the logs pipeline writes into.

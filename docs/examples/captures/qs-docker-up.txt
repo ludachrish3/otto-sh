@@ -37,4 +37,4 @@ INFO     @docker-host > | <id>       []
 quickstart on docker-host (example_lab-quickstart-docs): 1 container(s) registered:
   - docker-host.quickstart.tools  →  <id>
 
-Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_up
+Output directory: /tmp/otto-gs/xdir/docker/<run>_up

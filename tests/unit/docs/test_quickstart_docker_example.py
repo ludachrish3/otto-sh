@@ -203,10 +203,6 @@ def test_the_e2e_helper_derives_the_strip_count_from_the_project_root():
         assert not re.search(r"GCOV_PREFIX_STRIP=\d", path.read_text()), path
 
 
-def test_run_output_is_never_committed():
-    assert "otto-output/" in (EXAMPLE / ".gitignore").read_text().splitlines()
-
-
 def test_the_archive_holds_every_required_file_and_nothing_built(tmp_path):
     archives = build(EXAMPLES, tmp_path, checkout=CHECKOUT_ROOT)
     built = next((p for p in archives if p.name == "quickstart-docker.tar.gz"), None)

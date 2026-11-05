@@ -4231,7 +4231,6 @@ name	otto.models:OttoEnvSettings	model
 mro	otto.models:OttoEnvSettings	-
 input	otto.models:OttoEnvSettings	S:"compose_suffix"	optional	N	S:"compose_suffix"
 input	otto.models:OttoEnvSettings	S:"field_products"	optional	N	S:"field_products"
-input	otto.models:OttoEnvSettings	S:"home"	optional	N	S:"home"
 input	otto.models:OttoEnvSettings	S:"lab"	optional	N	S:"lab"
 input	otto.models:OttoEnvSettings	S:"log_days"	optional	I:30	S:"log_days"
 input	otto.models:OttoEnvSettings	S:"log_level"	optional	S:"INFO"	S:"log_level"
@@ -4241,7 +4240,6 @@ input	otto.models:OttoEnvSettings	S:"teardown_deadline"	optional	F:0x1.400000000
 input	otto.models:OttoEnvSettings	S:"xdir"	optional	N	S:"xdir"
 member	otto.models:OttoEnvSettings.compose_suffix	field
 member	otto.models:OttoEnvSettings.field_products	field
-member	otto.models:OttoEnvSettings.home	field
 member	otto.models:OttoEnvSettings.lab	field
 member	otto.models:OttoEnvSettings.log_days	field
 member	otto.models:OttoEnvSettings.log_level	field

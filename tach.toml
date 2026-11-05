@@ -130,7 +130,7 @@ layer = "entry"
 # cov_report_dir). Function-local, like otto.labs.
 # otto.console: print_literal, the one "print this exactly" decision for paths,
 # ids and argvs. Function-local, so no verb's `--help` loads rich.console.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.config.corpus_snapshot", "otto.declared", "otto.fleet", "otto.layout", "otto.console"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.config.corpus_snapshot", "otto.declared", "otto.fleet", "otto.layout", "otto.console", "otto.home_root"]
 
 [[modules]]
 path = "otto.config"
@@ -181,6 +181,8 @@ depends_on = [
     # otto.config.corpus_snapshot: the one stat classification every digest
     # and stored stat triple uses.
     "otto.config.corpus_snapshot",
+    # otto.home_root: the OTTO_HOME variable's name, beside its one reader.
+    "otto.home_root",
 ]
 
 [[modules]]
@@ -197,11 +199,12 @@ depends_on = []
 [[modules]]
 path = "otto.config.home"
 layer = "specs"
-# otto's user-level home and the workspace key that shards it: the one owner of
-# every path under ~/.otto (spec 2026-10-11 placement-and-phases §2.2, §3.6).
-# A module of its own, so the inventory and the suite read it without importing
-# otto.config. It reads OTTO_HOME and OTTOPATH through the env settings
-# model, and normalizes the workspace slug, inside its functions. Its ancestor
+# The workspace key that shards otto's user-level home, and every path keyed
+# by it (spec 2026-10-11 placement-and-phases §2.2, §3.6). otto.home_root owns
+# the home root and otto-xdir (it is the one reader of OTTO_HOME); this module
+# imports otto_home from it. A module of its own, so the inventory and the
+# suite read it without importing otto.config. It reads OTTOPATH through the
+# env settings model, and normalizes the workspace slug, inside its functions. Its ancestor
 # otto/config/__init__.py stays lazy (§4.3) bar one eager import,
 # otto.config.env, so importing this module loads that too.
 depends_on = [
@@ -210,6 +213,8 @@ depends_on = [
     # otto.utils: _normalized() keys the workspace through kept_path_spelling and
     # the cached root_key, function-scope; a foundation leaf, so no cycle closes.
     "otto.utils",
+    # otto.home_root: otto_home(), the home root this module keys below.
+    "otto.home_root",
 ]
 
 [[modules]]
@@ -309,10 +314,13 @@ depends_on = [
     # values for the CleanReport. otto.result is a leaf (otto.utils,
     # otto.errors) that otto.docker already depends on, so no cycle.
     "otto.result",
-    # get_coverage reads try_get_context() for the per-invocation output
-    # directory, function-locally, as otto.suite.run already does.
-    # otto.context does not depend on otto.coverage, so no cycle.
+    # otto.run_context: the reporter and the unit filter read the active
+    # context, function-locally. otto.context does not depend on
+    # otto.coverage, so no cycle.
     "otto.run_context",
+    # otto.output_dir: get_coverage's output directory when none is given
+    # (the one library resolver), function-locally.
+    "otto.output_dir",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
     # otto.logger: the lcov capture runs quiet (LogMode) and names the
@@ -456,8 +464,6 @@ depends_on = [
     # otto.coverage.embedded_gcov: the embedded-gcov area exports, detects and
     # compares the shipped patch through library.py.
     "otto.coverage.embedded_gcov",
-    # otto.layout: the run-output directory the scaffolded ignore files name.
-    "otto.layout",
     # otto.config.user_settings: the doctor reads the user settings file.
     "otto.config.user_settings",
 ]
@@ -580,6 +586,9 @@ depends_on = [
     "otto.invocation",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    # otto.output_dir: log_dest's base when no dest and no run directory is set
+    # (the one library resolver), function-locally.
+    "otto.output_dir",
     # The ingest gate: product.py and dev_tool.py judge a provider's project with
     # otto.config.scope's project_targets, after otto.declared's scope_for_project names
     # its declaration; the declared-entry kinds and listing read otto.declared.
@@ -741,8 +750,9 @@ depends_on = []
 [[modules]]
 path = "otto.logger"
 layer = "foundation"
-# otto.layout: where each run's directory goes (command_output_dir) and the
-# one directory pruning walks (output_root). A pure leaf, so no cycle.
+# otto.layout: where each run's directory goes (run_output_dir, make_run_dir)
+# and what the --log-days prune may delete (is_run_dir: the run-name pattern
+# and the .otto-run marker, the fence on its walk of the xdir). A leaf, so no cycle.
 # otto.utils: a broken process pipe is pointed at /dev/null
 # (point_at_devnull), the one sequence a completing TAB uses too.
 depends_on = ["otto.console", "otto.layout", "otto.utils"]
@@ -1045,7 +1055,7 @@ layer = "root"
 # run's projects for cov_tickets_json, so that read composes them as it always did
 # (spec 2026-10-11 placement-and-phases §3.12). Same layer: root to root.
 # otto.layout: the run dir's default cov/ and cov_report/ (cov_dir, cov_report_dir).
-depends_on = ["otto.run_context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet", "otto.layout"]
+depends_on = ["otto.run_context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet", "otto.layout", "otto.output_dir"]
 
 [[modules]]
 path = "otto.testing"
@@ -1105,17 +1115,37 @@ depends_on = []
 path = "otto.layout"
 layer = "foundation"
 # The run-tree contract: where each run's directory sits under the xdir, and
-# where per-host and per-product artifacts land in it. Pure, and imports no
-# other otto module. otto.logger, otto.host, otto.coverage, otto.models,
-# otto.project and otto.init read it.
+# where per-host and per-product artifacts land in it. The path builders are
+# pure; two named helpers touch the filesystem: is_run_dir (inspection: reads
+# the .otto-run marker) and make_run_dir (creation: the one creator of a run
+# dir). Its one otto import is is_run_dir's function-local otto.utils
+# (is_real_dir, the one symlink rule a deleting walk enters by). otto.logger,
+# otto.host, otto.coverage, otto.models, otto.project and otto.output_dir read it.
+depends_on = ["otto.utils"]
+
+[[modules]]
+path = "otto.home_root"
+layer = "foundation"
+# otto's home root and the default xdir ($OTTO_HOME/otto-xdir): the one reader
+# of OTTO_HOME. A leaf low enough for the host layer, imported by the
+# completion shim on every TAB, so it imports only os and typing at module level.
 depends_on = []
+
+[[modules]]
+path = "otto.output_dir"
+layer = "foundation"
+# The one resolver of a library call's output directory: an explicit dest,
+# else the run policy's output_dir, else a memoised run dir under the default
+# xdir built by the CLI's own layout builder.
+depends_on = ["otto.home_root", "otto.invocation", "otto.layout"]
 
 [[modules]]
 path = "otto._shim_complete"
 layer = "foundation"
 # The TAB answerer: standard library only, imported by the console shim before
-# anything else in otto on every TAB. `otto cache` inspects it.
-depends_on = []
+# anything else in otto on every TAB. `otto cache` inspects it. otto.home_root:
+# the one derivation of otto's home (os and typing only, like this module).
+depends_on = ["otto.home_root"]
 
 [[modules]]
 path = "otto._terminal"

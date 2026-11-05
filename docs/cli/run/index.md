@@ -42,14 +42,14 @@ Instruction names tab-complete from the registry:
 
 ## Logging and artifacts
 
-Every `otto run` invocation creates an output directory under `--xdir`:
+Every `otto run` invocation creates an output directory in the xdir:
 
 ```text
-<xdir>/otto-output/run/<timestamp>_<instruction_name>/
+<xdir>/run/<timestamp>_<instruction_name>/
 ```
 
 The timestamp is UTC with millisecond precision (e.g.
-`otto-output/run/20260702_143512_042_deploy/`), so directories sort chronologically —
+`run/20260702_143512_042_deploy/`), so directories sort chronologically —
 see the [CLI reference](../index.md#output-directories) for the
 layout every command uses.  Use the active context's `output_dir` to
 write artifacts there:

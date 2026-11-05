@@ -122,7 +122,10 @@ lookup of a class given by `Ref`), not at load; see
 ## Settings and environment
 
 `OttoEnvSettings` (pydantic-settings) is the single reader of `OTTOPATH` and
-the `OTTO_*` variables. Project `settings.toml` files are parsed during bootstrap phase 1
+the `OTTO_*` variables, with three exceptions read below the configuration
+layer: `OTTO_HOME`, read by `otto.home_root.otto_home()` (a foundation leaf,
+so the host layer and the completion shim can reach it), and the host layer's
+`OTTO_INIT_TIMEOUT` and `OTTO_SSH_DEBUG`. Project `settings.toml` files are parsed during bootstrap phase 1
 into `Project` objects ({doc}`../lifecycle`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
 have spec models. `otto.models.settings` must not import `otto.config` at
