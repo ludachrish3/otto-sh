@@ -9,8 +9,9 @@ requested protocol and one row per feature.
 
 A completed report only: a refusal or a dry run never reaches here — the CLI
 layer renders those the same way ``otto link check``'s CLI does (see
-``otto.cli.link``'s ``_print_check_dry_run``/``refusal`` handling), because
-neither one is a *result* with hops, columns or a proven line to lay out.
+``otto.cli.invoke.print_check_dry_run`` and the refusal handling in
+``otto.cli.link``), because neither one is a *result* with hops, columns or
+a proven line to lay out.
 
 The table's rows are keyed by a protocol-neutral display label. Every row
 name is identical across a report's columns except the bulk payload rows,

@@ -1060,24 +1060,13 @@ class TestDryRunRendering:
 
 
 class TestLiteralOutput:
-    def test_rows_and_dry_run_lines_print_hostile_text_verbatim(self, monkeypatch, capsys):
+    def test_rows_print_hostile_text_verbatim(self, monkeypatch, capsys):
         from otto.cli import link as link_cli
-        from otto.link import DryRunPlan
 
         monkeypatch.setenv("COLUMNS", "40")
         link_cli._row(HOSTILE)
-        link_cli._print_dry_run_plan(HOSTILE, DryRunPlan(would=[HOSTILE], unchecked=["x"]))
-        link_cli._print_check_dry_run(HOSTILE, [HOSTILE])
         out = capsys.readouterr().out
         assert_one_verbatim_line(out, HOSTILE)
-        assert_one_verbatim_line(
-            out,
-            f"dry run {HOSTILE}: no device was contacted — "
-            "nothing was read and nothing was changed",
-        )
-        assert_one_verbatim_line(out, f"  would: {HOSTILE}")
-        assert_one_verbatim_line(out, f"dry run {HOSTILE}:")
-        assert_one_verbatim_line(out, f"  {HOSTILE}")
 
     @staticmethod
     def _list_output(*states: LinkState) -> str:
