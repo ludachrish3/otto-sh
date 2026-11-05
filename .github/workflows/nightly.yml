@@ -212,15 +212,48 @@ jobs:
       - name: Repeat tests/unit in one process (test-isolation leak guard)
         run: uv run nox -s tests_unit_repeat
 
+  # The Playwright image the browser jobs run in, named by
+  # scripts/playwright_version.py from the playwright version locked in
+  # uv.lock: the one place that reads the lock and spells the image, so a
+  # Dependabot bump of the lock moves the image with it. The helper needs only
+  # tomli, so `--no-project` keeps the project out of this job.
+  playwright-version:
+    name: playwright-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.lock.outputs.version }}
+      image: ${{ steps.lock.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+      - id: lock
+        run: uv run --no-project --with tomli python scripts/playwright_version.py uv.lock
+
   # Browser e2e is the flakiest lane — real Playwright engines, timing-
   # sensitive DOM — so nightly re-runs the full 3-engine matrix under
   # pytest-repeat, the same flake-flush unit-matrix does for the hostless
-  # suite. Mirrors ci.yml's per-push `dashboard` job (build the dist with
-  # `make web`, install just this engine's system libs), then loops the
+  # suite. Mirrors ci.yml's per-push `dashboard` job (the Playwright image
+  # tagged from uv.lock, then the dist built with `make web`), then loops the
   # session with --count.
   dashboard:
+    needs: [playwright-version]
     name: dashboard-e2e (${{ matrix.browser }})
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.playwright-version.outputs.image }}
+      # --ipc=host: Chromium shares memory through /dev/shm, which a container
+      # sizes at 64 MB by default; --init reaps the zombie browser processes
+      # a test run leaves. Both are Playwright's own guidance for its image.
+      options: --ipc=host --init
+    env:
+      # GitHub mounts /github/home as HOME in a container job, owned by
+      # another user than root; Firefox refuses to start as root with such a
+      # HOME. Playwright points at HOME=/root, and the job-level env applies
+      # before checkout.
+      HOME: /root
     strategy:
       fail-fast: false
       matrix:
@@ -235,12 +268,22 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.10
+      # The image ships git and the browsers (PLAYWRIGHT_BROWSERS_PATH) but
+      # not make or jq, which `make web` below needs (jq for
+      # scripts/typecheck_web.sh). Only the missing ones are installed. It
+      # runs as root: no sudo.
+      - name: Install the build tools the Playwright image lacks (make, jq)
+        run: missing=""; for tool in make jq; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done; [ -z "$missing" ] || { apt-get update && apt-get install -y --no-install-recommends $missing; }
+      # actions/checkout trusts the workspace (git safe.directory) only in a
+      # throwaway HOME. This container runs as root in a workspace the
+      # runner's user owns, so without this every later git command refuses
+      # the checkout, and `make web`'s `git diff --exit-code a b` silently
+      # turns into a --no-index diff of the two files against each other.
+      # HOME=/root (above) makes the global config last for every step.
+      - name: Trust the checkout for git (the container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
-      - name: Install ${{ matrix.browser }} with system dependencies
-        run: |
-          scripts/ci_drop_unused_apt_sources.sh
-          uv run --group dev playwright install --with-deps ${{ matrix.browser }}
       - name: Run dashboard browser e2e (${{ matrix.browser }}) ${{ inputs.nox_count || '5' }}x
         env:
           # Per-file browser-suite shard groups — see ci.yml's dashboard job.
@@ -718,8 +761,21 @@ jobs:
   # (docs/contributing.md's stability-lanes rule); nightly runs it once, in a
   # browser, so a regression surfaces without waiting for a release campaign.
   dashboard-soak:
+    needs: [playwright-version]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    container:
+      image: ${{ needs.playwright-version.outputs.image }}
+      # --ipc=host: Chromium shares memory through /dev/shm, which a container
+      # sizes at 64 MB by default; --init reaps the zombie browser processes
+      # a test run leaves. Both are Playwright's own guidance for its image.
+      options: --ipc=host --init
+    env:
+      # GitHub mounts /github/home as HOME in a container job, owned by
+      # another user than root; Firefox refuses to start as root with such a
+      # HOME. Playwright points at HOME=/root, and the job-level env applies
+      # before checkout.
+      HOME: /root
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -739,12 +795,25 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
+      # The image ships git and the browsers (PLAYWRIGHT_BROWSERS_PATH) but
+      # not make or jq, which `make web` below needs (jq for
+      # scripts/typecheck_web.sh). Only the missing ones are installed. It
+      # runs as root: no sudo.
+      - name: Install the build tools the Playwright image lacks (make, jq)
+        run: missing=""; for tool in make jq; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done; [ -z "$missing" ] || { apt-get update && apt-get install -y --no-install-recommends $missing; }
+      # actions/checkout trusts the workspace (git safe.directory) only in a
+      # throwaway HOME. This container runs as root in a workspace the
+      # runner's user owns, so without this every later git command refuses
+      # the checkout, and `make web`'s `git diff --exit-code a b` silently
+      # turns into a --no-index diff of the two files against each other.
+      # HOME=/root (above) makes the global config last for every step.
+      - name: Trust the checkout for git (the container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
 
-      - name: Install Playwright Chromium
-        run: uv run playwright install --with-deps chromium
-
+      # No browser install: the Playwright image already carries Chromium.
       - name: Dashboard soak
         run: make dashboard-soak
 
@@ -754,6 +823,7 @@ jobs:
     name: Open issue on failure
     needs:
       [
+        playwright-version,
         stability-matrix,
         unit-matrix,
         unit-repeat,
@@ -782,7 +852,7 @@ jobs:
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability-matrix /"
-            echo "unit-matrix / unit-repeat / dashboard / dashboard-soak / chaos-tier2 / chaos-docker /"
+            echo "playwright-version / unit-matrix / unit-repeat / dashboard / dashboard-soak / chaos-tier2 / chaos-docker /"
             echo "conformance-hermetic / busybox-upstream-drift / python-canary),"
             echo "the Python version or browser, and the pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"

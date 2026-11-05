@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Direct dependencies stay as they were. playwright is indirect (the
+    # dev group reaches it through pytest-playwright), but its locked version
+    # names the Playwright image the browser CI jobs run in
+    # (scripts/playwright_version.py), so it is updated too.
+    allow:
+      - dependency-type: "direct"
+      - dependency-name: "playwright"
+        dependency-type: "all"
     labels:
       - "dependencies"
       - "python"
