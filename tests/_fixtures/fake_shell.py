@@ -31,12 +31,33 @@ import shlex
 
 from pydantic import SecretBytes, SecretStr
 
+from otto.host.command_frame import _PROBE_VAR, RECOVER_SUFFIX
 from otto.host.secret_wire import reveal, reveal_bytes
 from otto.logger.mode import LogMode
 
-_PROBE_RE = re.compile(r"__OTTO_([0-9a-f]+)_RECOVER__")
+# An anchored probe line (otto.host.command_frame.whole_line_echo): the
+# variable is set by the line's FIRST statement, and the echo prints the
+# marker's head followed by it. Both built from the product's own name.
+_PROBE_ASSIGN_RE = re.compile(rf"{_PROBE_VAR}=(\w+); ")
+_PROBE_ECHO_RE = re.compile(rf"echo ([^\s$]+)\$\{{{_PROBE_VAR}-\}}")
 _SWITCH_RE = re.compile(r"^\s*(?:sudo\s+)?su\b(.*)$", re.MULTILINE)
 _EXIT_RE = re.compile(r"^\s*exit\s*$", re.MULTILINE)
+
+
+def probe_marker(text: str) -> str | None:
+    """The marker a POSIX shell prints when it runs *text* as a whole probe line.
+
+    ``None`` when *text* is not an anchored probe, or does not open with its
+    anchor: a line the shell ran only the tail of prints no whole marker,
+    which is the property the anchor exists for. The one place the doubles
+    read the anchored spelling, pinned to the product by a round-trip test
+    (``test_the_double_reads_what_the_shell_prints``).
+    """
+    assign = _PROBE_ASSIGN_RE.match(text)
+    echo = _PROBE_ECHO_RE.search(text)
+    if assign is None or echo is None:
+        return None
+    return echo.group(1) + assign.group(1)
 
 
 class ShellModel:
@@ -123,10 +144,9 @@ class ShellModel:
         if self._pending_prompt:
             return "Password:"
         for text in reversed(self.writes):
-            probe = _PROBE_RE.search(text)
-            if probe is None:
+            marker = probe_marker(text)
+            if marker is None or not marker.endswith(RECOVER_SUFFIX):
                 continue
-            marker = probe.group(0)
             if marker in self._answered:
                 return None  # already answered once; a real shell does not repeat
             self._answered.add(marker)

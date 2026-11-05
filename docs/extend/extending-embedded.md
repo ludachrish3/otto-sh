@@ -41,7 +41,7 @@ Subclass `CommandFrame` and implement seven methods — a *render half* (command
 
 | Method | Half | Responsibility |
 |--------|------|----------------|
-| `handshake(m)` | render | Readiness-probe payload echoing `m.ready`. |
+| `handshake(m, prefix="")` | render | Readiness-probe payload printing `m.ready`, with `prefix` (history suppression; empty for a dialect without history) placed in the same line, after anything that has to open it. |
 | `frame(cmd, m)` | render | Full payload that runs `cmd` bracketed by the sentinels. |
 | `recover(m)` | render | Post-timeout re-sync payload echoing `m.recover`. |
 | `end_pattern(m)` | parse | Regex marking the end of a command's output (the session compiles it once and uses it to detect completion and bound parsing). |
@@ -68,11 +68,11 @@ from the default:
 
 | Member | Default | Override when |
 |--------|---------|---------------|
-| `quiet_history()` | `""`: nothing to suppress | Your shell keeps a persistent command history. Return a statement prefix that stops it recording. otto prepends it to the first line written into a fresh shell and resends that line until it lands, so it must print nothing and be safe to repeat. |
+| `quiet_history()` | `""`: nothing to suppress | Your shell keeps a persistent command history. Return a statement prefix that stops it recording. otto hands it to `handshake` as `prefix`, to place in the first line written into a fresh shell, and resends that line until it lands, so it must print nothing and be safe to repeat. |
 | `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. Waiting for the line to go quiet before closing it is the host's setting, not this one: `telnet_options.single_client_console` ({ref}`single-client-console`). |
-| `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. |
+| `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. Such an override should build its line with {func}`otto.host.command_frame.whole_line_echo`, as `BashFrame` does, so a line the shell ran only the tail of never prints READY. |
 
 The getting-started example's `PyReplFrame`
 (`docs/examples/getting-started/libs/gs_example/pyrepl_frame.py`) overrides
@@ -92,8 +92,8 @@ from otto.host.command_frame import CommandFrame, SessionMarkers, register_comma
 class MyShellFrame(CommandFrame):
     type_name = "myshell"
 
-    def handshake(self, m: SessionMarkers) -> str:
-        return f"{m.ready}\n"
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+        return f"{prefix}{m.ready}\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # The braces and the newline before "}" keep a command ending in "&"

@@ -21,6 +21,7 @@ from pydantic import SecretStr
 
 from otto import lifecycle
 from otto.host import interact
+from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.element import Element
 from otto.host.interact import (
     _ESCAPE_BYTE,
@@ -43,7 +44,7 @@ from otto.host.login_proxy import (
 )
 from otto.host.secret_wire import reveal_bytes
 from otto.logger.mode import LogMode
-from tests._fixtures.fake_shell import replay
+from tests._fixtures.fake_shell import probe_marker, replay
 
 # ---------------------------------------------------------------------------
 # _strip_ansi
@@ -1247,18 +1248,17 @@ class TestBridgeProxyIOExpect:
 # meaningful by filtering the probe's own noise back out.
 # ---------------------------------------------------------------------------
 
-_RESYNC_ECHO_PREFIX = b'echo "__OTTO_'
-
 
 def _is_resync_probe(write: bytes) -> bool:
     """Whether *write* is the login-proxy engine's post-transition resync probe."""
-    return write.startswith(_RESYNC_ECHO_PREFIX)
+    return (probe_marker(write.decode()) or "").endswith(RECOVER_SUFFIX)
 
 
 def _resync_reply(sent: list[bytes]) -> bytes:
     """Build a read_remote() reply that satisfies expect() for the last probe.
 
-    The probe is ``echo "<recover>$?__$(id -un)__"\n``; a real shell prints
+    The probe prints ``<recover>$?__$(id -un)__``, its marker split across a
+    variable (:func:`~otto.host.command_frame.whole_line_echo`); a real shell prints
     the expanded form ``<recover>0__<user>__``, which is what the resync
     pattern matches — echoing the probe text back verbatim (with its literal
     ``$?`` and ``$(id -un)``) does not. The USER half matters as much as the
@@ -1269,10 +1269,10 @@ def _resync_reply(sent: list[bytes]) -> bytes:
     constant. A pinned one answers every hop with the same name — which passes
     only while nothing reads it, and goes stale the moment a test grows a hop.
     """
-    m = re.search(rb'"(.*?)\$\?__', sent[-1])
-    marker = m.group(1)
+    marker = probe_marker(sent[-1].decode())
+    assert marker is not None, sent[-1]
     user = replay(sent).user.encode()
-    return b"\n" + marker + b"0__" + user + b"__\n"
+    return b"\n" + marker.encode() + b"0__" + user + b"__\n"
 
 
 def _drop_resync_probes(writes: list[bytes]) -> list[bytes]:
@@ -1526,9 +1526,8 @@ class TestResyncSoundInBothEchoModes:
         async def read_remote() -> bytes:
             nonlocal reads
             reads += 1
-            probe = sent[-1].decode("utf-8")  # 'echo "<recover>$?__$(id -un)__"\n'
-            m = re.search(r'"(.*?)\$\?__', probe)
-            marker = m.group(1)
+            probe = sent[-1].decode("utf-8")
+            marker = probe_marker(probe)
             if reads == 1:
                 # Only the echoed probe comes back — literal "$?", not
                 # digits. recover_pattern (`<recover>(\d+)__`) must reject it.
@@ -1560,9 +1559,7 @@ class TestResyncSoundInBothEchoModes:
             sent.append(data)
 
         async def read_remote() -> bytes:
-            probe = sent[-1].decode("utf-8")
-            m = re.search(r'"(.*?)\$\?__', probe)
-            marker = m.group(1)
+            marker = probe_marker(sent[-1].decode("utf-8"))
             # Echo-off: no echoed probe; the shell's digit-form output glues
             # onto a fake prompt.
             return f"test@test1:/home/vagrant$ {marker}0__mysql__\r\n".encode()

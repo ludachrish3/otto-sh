@@ -25,7 +25,7 @@ from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..models.base import Cred, cred_identity
 from ..registry import Registry, registration_boundary
-from .command_frame import BashFrame, SessionMarkers
+from .command_frame import RECOVER_SUFFIX, BashFrame, SessionMarkers, whole_line_echo
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .identity import ROOT_LOGIN, is_root
 from .shell_liveness import confirm_live
@@ -442,10 +442,11 @@ _PROMPT_WATCH = 5.0
 _RESYNC_FRAME = BashFrame()
 
 
-# The resync probe carries an IDENTITY assertion as well as a liveness one:
-# `echo "<recover>$?__$(id -un)__"`. Liveness alone cannot tell "the switch
-# worked" from "the switch failed and the shell I am talking to is the one I
-# started in" -- a rejected `su` password prints `Authentication failure` and
+# The resync probe carries an IDENTITY assertion as well as a liveness one: it
+# prints `<recover>$?__$(id -un)__`, with the marker split across a variable
+# the line's first statement sets (see _identity_probe). Liveness alone cannot
+# tell "the switch worked" from "the switch failed and the shell I am talking
+# to is the one I started in" -- a rejected `su` password prints `Authentication failure` and
 # EXITS back to the via shell, which then answers the probe perfectly well. So
 # every hop proves WHO it is talking to, not merely that someone is there.
 # `id -un` is portable to every userland otto drives (measured on BusyBox
@@ -463,8 +464,14 @@ _IDENTITY_TAIL = r"(\d+)__(.*?)__"
 
 
 def _identity_probe(m: SessionMarkers, history_prefix: str) -> str:
-    """Render the liveness+identity probe for markers *m*."""
-    return f'{history_prefix}echo "{m.recover}$?__$(id -un)__"\n'
+    """Render the liveness+identity probe for markers *m*.
+
+    Anchored like the handshake (:func:`~otto.host.command_frame.whole_line_echo`):
+    su flushes the tty the same way login(1) does, and a probe whose head
+    was flushed must print no identity reply, or otto would accept a shell
+    that skipped the history suppression riding after the anchor.
+    """
+    return whole_line_echo(m.recover, RECOVER_SUFFIX, history_prefix, after="$?__$(id -un)__")
 
 
 def _identity_pattern(m: SessionMarkers) -> re.Pattern[str]:

@@ -11,6 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from otto.host import host as host_module
+from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.host import CredentialExpect, ElevatedCommand
@@ -22,7 +23,7 @@ from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
-from tests._fixtures.fake_shell import ShellModel
+from tests._fixtures.fake_shell import ShellModel, probe_marker
 
 _SUDO_LINE = re.compile(r"SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S (.*)", re.DOTALL)
 """The sudo line ``_elevate`` builds: group 1 the per-command prompt, group 2 sudo's argv."""
@@ -55,12 +56,11 @@ def _without_resync(sent: list[str]) -> list[str]:
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact send sequence a test cares about.
 
-    Substring rather than prefix match: on a host with history suppression on
-    (the ``UnixHost`` default) the probe line is preceded by a ``HISTFILE=…``
-    statement, so the echo is no longer first on it.
+    Read through :func:`~tests._fixtures.fake_shell.probe_marker`, the one
+    double that knows how the product spells an anchored probe.
     """
     wire = [reveal(s) for s in sent]  # a password send arrives as SecretStr
-    return [s for s in wire if 'echo "__OTTO_' not in s]
+    return [s for s in wire if not (probe_marker(s) or "").endswith(RECOVER_SUFFIX)]
 
 
 def _model_io(*, prompts: bool = True, user: str = "admin", **model_kw):

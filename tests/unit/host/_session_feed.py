@@ -27,6 +27,7 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING
 
 from otto.utils import wait_for_async
+from tests._fixtures.fake_shell import probe_marker
 
 if TYPE_CHECKING:
     from otto.host.command_frame import CommandFrame
@@ -115,7 +116,8 @@ def onlcr_handshake_reply(ready: str) -> str:
 def writes_handshake(data: str, ready: str) -> bool:
     """Whether *data* is a handshake that prints the READY marker *ready*.
 
-    The bash handshake types READY split by an empty quote (the shell prints
-    it whole), so a double that answers handshakes looks for the typed form.
+    The bash handshake types READY split across a variable (the shell prints
+    it whole), so a double that answers handshakes reads the marker the
+    shell would print, through :func:`~tests._fixtures.fake_shell.probe_marker`.
     """
-    return f"{ready[:1]}''{ready[1:]}" in data
+    return probe_marker(data) == ready

@@ -16,7 +16,8 @@ one: a shell that answered the other dialect's readiness probe would confirm
 frame entry into a console it is not in, which is the exact failure
 ``SessionManager``'s post-hook confirmation exists to catch. So the READY
 answers are anchored — bash's marker is answered only when it arrives as
-``echo <marker>`` (what ``BashFrame.handshake`` renders) and Zephyr's only
+the anchored probe line ``BashFrame.handshake`` renders (read through
+:func:`~tests._fixtures.fake_shell.probe_marker`) and Zephyr's only
 when the bare token is the whole line — because that is what the real shells
 do: a bash marker typed at a Zephyr prompt comes back as
 ``stty: command not found`` with no marker in it, and a Zephyr marker typed
@@ -51,19 +52,16 @@ import re
 
 from pydantic import SecretStr
 
+from otto.host.command_frame import _PROBE_VAR, READY_SUFFIX, RECOVER_SUFFIX
 from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
-from tests._fixtures.fake_shell import replay
+from tests._fixtures.fake_shell import probe_marker, replay
 
-# The handshake types READY split by an empty quote (`_''_OTTO_<id>_READY__`)
-# and the shell prints it whole, so group 1 is the typed text.
-_BASH_READY_RE = re.compile(r"echo (_''_OTTO_[0-9a-f]+_READY__)\n")
 _BASH_FRAME_RE = re.compile(
     r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"',
     re.DOTALL,
 )
-_BASH_IDENTITY_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__\$\(id -un\)__"')
 _BASH_RECOVER_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__"')
 _ZEPHYR_FRAME_RE = re.compile(
     r"(__OTTO_[0-9a-f]+_BEGIN__)\r(.*)\rretval\r(__OTTO_[0-9a-f]+_END__)\r"
@@ -140,13 +138,14 @@ class DialectShell:
         if (m := _BASH_FRAME_RE.search(text)) is not None:
             self.commands.append(("bash", m.group(2)))
             return f"{self._prompt()}{m.group(1)}\nbash:{m.group(2)}\n{m.group(3)}0__\n"
-        if (m := _BASH_IDENTITY_RE.search(text)) is not None:
+        marker = probe_marker(text)
+        if marker is not None and marker.endswith(RECOVER_SUFFIX):
             user = replay(self.writes, user=self.user).user
-            return f"{self._prompt()}{m.group(1)}0__{user}__\n"
+            return f"{self._prompt()}{marker}0__{user}__\n"
         if (m := _BASH_RECOVER_RE.search(text)) is not None:
             return f"{self._prompt()}{m.group(1)}0__\n"
-        if (m := _BASH_READY_RE.search(text)) is not None:
-            return self._bash_handshake_reply(text, m.group(1))
+        if marker is not None and marker.endswith(READY_SUFFIX):
+            return self._bash_handshake_reply(text, marker)
         return None
 
     def _prompt(self) -> str:
@@ -158,7 +157,7 @@ class DialectShell:
         """
         return "" if self.echo_on else self.ps1
 
-    def _bash_handshake_reply(self, payload: str, typed_ready: str) -> str:
+    def _bash_handshake_reply(self, payload: str, ready: str) -> str:
         """Answer the readiness payload the way a real bash terminal would.
 
         Echo on (the first handshake): the typed line comes back, newline and
@@ -175,20 +174,22 @@ class DialectShell:
         """
         lead = payload.rstrip("\r\n") + "\r\n" if self.echo_on else self._prompt()
         self.echo_on = False  # the payload's own `stty -echo`
-        ready = typed_ready.replace("''", "")  # quote removal, as the shell does it
-        return f"{lead}{self._printed_before(payload, typed_ready)}{ready}\r\n"
+        return f"{lead}{self._printed_before(payload)}{ready}\r\n"
 
     @staticmethod
-    def _printed_before(payload: str, typed_ready: str) -> str:
+    def _printed_before(payload: str) -> str:
         """What the clauses preceding the marker's clause print, on an ``onlcr`` terminal.
 
         One empty line per bare ``echo``, and the terminal-mapping calibration
         line as a default Linux tty returns it, so a session on this fake
-        measures ``onlcr``.
+        measures ``onlcr``. The marker's clause is the one carrying the probe
+        variable's expansion; the anchor's assignment, the history prefix and
+        the trailing ``unset`` print nothing.
         """
         clauses = [c.strip() for c in payload.split(";")]
-        marker_clause = f"echo {typed_ready}"
-        before = clauses[: clauses.index(marker_clause)] if marker_clause in clauses else clauses
+        expansion = "${" + _PROBE_VAR + "-}"
+        at = next((i for i, c in enumerate(clauses) if expansion in c), len(clauses))
+        before = clauses[:at]
         printed = {"echo": "\r\n", CALIBRATION_COMMAND: "X\r\r\nY\r\nZ\rW\r\n"}
         return "".join(printed.get(c, "") for c in before)
 

@@ -1,9 +1,10 @@
 """The first line otto writes into a fresh shell must be silent on every POSIX shell.
 
-otto prepends :meth:`~otto.host.command_frame.BashFrame.quiet_history` to the
-first line it writes into a fresh shell — the readiness handshake, and the
-resync probe after a login-proxy hop. Two properties have to hold on *every*
-shell otto might land on, old or new, glibc or busybox:
+otto places :meth:`~otto.host.command_frame.BashFrame.quiet_history` in the
+first line it writes into a fresh shell, right after the line's anchor — the
+readiness handshake, and the resync probe after a login-proxy hop. Two
+properties have to hold on *every* shell otto might land on, old or new, glibc
+or busybox:
 
 1. **Silence.** A session's stdout and stderr are one merged stream on a PTY,
    so a single "unrecognized option" complaint would be parsed as command
@@ -25,9 +26,9 @@ shells gets more coverage and a runner with fewer never silently loses the
 baseline.
 
 THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
-bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo; echo <READY>``
+bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo; …; echo <READY>``
 (the bare ``echo`` puts READY at the start of a line whatever the terminal's
-echo state), and suppression rides in front of it, so the three share one line
+echo state), and suppression rides in front of it, so they share one line
 and one failure mode: anything that aborts the line strands READY and takes a
 working host offline. The stty half was measured inside a chrooted BusyBox
 root while that harness existed (it could delete ``/bin/stty`` because the
@@ -38,12 +39,18 @@ measured.
 """
 
 import os
+import pty
+import select
 import shutil
 import subprocess
 
 import pytest
 
 from otto.host.command_frame import BashFrame, SessionMarkers
+from otto.host.login_proxy import _identity_pattern, _identity_probe
+from otto.host.session import ready_pattern
+from otto.host.terminal_mapping import ONLCR, measure
+from otto.utils import WaitTimeoutError, wait_for
 
 PAYLOAD = BashFrame().quiet_history()
 
@@ -99,7 +106,7 @@ SHELLS = _available()
 
 
 def _run(
-    argv: list[str], script: str, env: "dict[str, str] | None" = None
+    argv: list[str], script: str, env: "dict[str, str] | None" = None, *, merge: bool = False
 ) -> subprocess.CompletedProcess[str]:
     """Run *script* under *argv*, optionally in a replacement environment.
 
@@ -107,16 +114,23 @@ def _run(
     environment the stty section hands in has an empty ``PATH`` — the same
     variable ``subprocess`` searches to find the shell binary itself, so a
     bare name would fail to launch rather than fail to find ``stty``.
+
+    *merge* folds stderr into stdout, which is what a PTY does. Bytes in,
+    ``.decode()`` out: no newline translation, so :func:`measure` sees
+    ``\r\n`` and a lone ``\r`` exactly as the shell wrote them.
     """
     if env is not None:
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
-    return subprocess.run(
+    proc = subprocess.run(
         [*argv, "-c", script],
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT if merge else subprocess.PIPE,
         timeout=10,
         check=False,  # a non-zero exit IS the thing under test
         env=env,
+    )
+    return subprocess.CompletedProcess(
+        proc.args, proc.returncode, proc.stdout.decode(), (proc.stderr or b"").decode()
     )
 
 
@@ -158,15 +172,17 @@ def test_payload_does_not_abort_the_shell(name: str, argv: list[str]):
 
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
 def test_payload_leaves_a_zero_exit_status(name: str, argv: list[str]):
-    """$? must be 0 afterwards — the payload also prefixes the resync probe.
+    """$? must be 0 afterwards — the payload rides in the resync probe too.
 
-    ``BashFrame.recover`` bakes ``$?`` into its own marker, so a non-zero
-    status here surfaces as ``…RECOVER__2__`` on dash / ``__1__`` on busybox.
-    Harmless to the liveness regex (it only needs digits) but it reads as a
-    failure in a debug log.
+    The resync probe (``login_proxy._identity_probe``) bakes ``$?`` into its
+    reply right after the payload, so a non-zero status here surfaces as
+    ``…RECOVER__2__`` on dash / ``__1__`` on busybox. Harmless to the
+    identity regex (it only needs digits) but it reads as a failure in a
+    debug log.
     """
-    proc = _run(argv, PAYLOAD + 'echo "__OTTO_ab_RECOVER__$?__"')
-    assert proc.stdout.strip() == "__OTTO_ab_RECOVER__0__", f"{name}: {proc.stdout!r}"
+    m = SessionMarkers.for_session("cafef00d")
+    proc = _run(argv, _identity_probe(m, PAYLOAD))
+    assert f"{m.recover}0__" in proc.stdout, f"{name}: {proc.stdout!r}"
 
 
 def test_history_recording_is_actually_disabled_in_bash():
@@ -249,27 +265,26 @@ def test_payload_survives_errexit_and_nounset(name: str, argv: list[str]):
 
 
 def test_payload_composes_onto_a_handshake_without_splitting_the_line():
-    """Concatenation with the dialect handshake yields exactly one command line."""
-    from otto.host.command_frame import SessionMarkers
-
+    """The frame composes suppression into its handshake as exactly one command line."""
     m = SessionMarkers.for_session("cafef00d")
-    composed = PAYLOAD + BashFrame().handshake(m)
+    composed = BashFrame().handshake(m, PAYLOAD)
+    assert PAYLOAD in composed
     assert composed.count("\n") == 1
     assert composed.endswith("\n")
 
 
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
 def test_the_split_ready_marker_prints_whole_on_a_line_of_its_own(name: str, argv: list[str]):
-    """The handshake types READY split by an empty quote; every shell prints it whole.
+    """The handshake types READY split across a variable; every shell prints it whole.
 
-    The split keeps READY out of the echo of the typed line. It only works if
-    each shell's quote removal joins the halves again, so the shell's output
-    has the marker as the last line.
+    The split keeps READY out of the typed line, and so out of any echo of
+    it. It only works if each shell joins the halves again, so the shell's
+    output has the marker as the last line.
     """
     m = SessionMarkers.for_session("cafef00d")
-    handshake = BashFrame().handshake(m)
+    handshake = BashFrame().handshake(m, PAYLOAD)
     assert m.ready not in handshake
-    proc = _run(argv, PAYLOAD + handshake)
+    proc = _run(argv, handshake)
     assert proc.stdout.endswith(f"\n{m.ready}\n"), f"{name}: stdout {proc.stdout!r}"
 
 
@@ -444,3 +459,183 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
     for name, argv in _OPTIONAL_SHELLS.items():
         if shutil.which(argv[0]):
             assert name in tested, f"{name} is installed here but missing from the matrix"
+
+
+# ---------------------------------------------------------------------------
+# A probe line cut short (#761)
+#
+# A console server that delivers input in pieces lets login(1) (or su) flush
+# the start of otto's first line, so the shell runs only its tail. The line
+# holds the end of its marker in a variable that only its FIRST statement
+# sets, so a tail can print half a marker at most, and otto sends the line
+# again whole. These sweeps run every tail of the real line and prove none of
+# them answers, on stdout or stderr, plain or under nounset.
+# ---------------------------------------------------------------------------
+
+M = SessionMarkers.for_session("cafef00d")
+LINE = BashFrame().handshake(M, PAYLOAD)  # the session's real first line, history suppressed
+RESYNC = _identity_probe(M, PAYLOAD)  # the su/sudo/exit resync line
+_ANCHOR_SPAN = LINE.index("; ") + 2 + 30  # the assignment plus the start of what follows
+
+
+def _assert_no_tail_answers(argv, line, marker, pattern, offsets, nounset):
+    shell = [*argv, "-u"] if nounset else argv
+    bad = {}
+    for k in offsets:
+        out = _run(shell, line[k:], merge=True).stdout
+        if marker in out or pattern.search(out):
+            bad[k] = out
+    assert bad == {}, f"{argv}: tails that answered: {bad}"
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(
+    ("name", "argv"), list(_REQUIRED_SHELLS.items()), ids=list(_REQUIRED_SHELLS)
+)
+def test_a_handshake_cut_anywhere_never_answers(name, argv, nounset):
+    """login(1) can flush a probe's head; no tail the shell then runs may print READY (#761)."""
+    _assert_no_tail_answers(
+        argv, LINE, M.ready, ready_pattern(M, line_ending=True), range(1, len(LINE)), nounset
+    )
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(
+    ("name", "argv"), list(_REQUIRED_SHELLS.items()), ids=list(_REQUIRED_SHELLS)
+)
+def test_a_resync_probe_cut_anywhere_never_answers(name, argv, nounset):
+    """su flushes the tty the same way; no tail of the resync probe may answer it (#761)."""
+    _assert_no_tail_answers(
+        argv, RESYNC, M.recover, _identity_pattern(M), range(1, len(RESYNC)), nounset
+    )
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_a_cut_inside_the_anchor_never_answers_on_any_shell(name, argv, nounset):
+    """The anchor region is where shells differ most, so every installed shell runs it."""
+    # Offsets 1.._ANCHOR_SPAN cover a suffix-named assignment, `=_READY__` and
+    # `_READY__` run as commands, and the first statement after the anchor.
+    _assert_no_tail_answers(
+        argv, LINE, M.ready, ready_pattern(M, line_ending=True), range(1, _ANCHOR_SPAN), nounset
+    )
+
+
+def test_the_bed_tail_answers_nothing():
+    """The exact tail the bed ran, from inside the calibration's ``2>/dev/null``."""
+    k = LINE.rindex("dev/null; echo")
+    out = _run(["bash"], LINE[k:], merge=True).stdout
+    assert M.ready not in out
+    assert not ready_pattern(M, line_ending=True).search(out)
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_the_whole_line_prints_ready_last_calibrated_and_leaves_nothing_set(name, argv, nounset):
+    """Run whole, the line prints READY last, calibrated, and unsets its variable."""
+    shell = [*argv, "-u"] if nounset else argv
+    proc = _run(shell, LINE + 'echo "[${__otto_probe-unset}]"\n')
+    assert proc.stdout.endswith(f"\n{M.ready}\n[unset]\n"), f"{name}: {proc.stdout!r}"
+    assert measure(proc.stdout.removesuffix("[unset]\n"), M.ready).mapping == "identity"
+
+
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_the_whole_resync_line_answers_with_digits_and_the_user(name, argv):
+    """Run whole, the resync probe answers with its exit code and the user."""
+    assert _identity_pattern(M).search(_run(argv, RESYNC).stdout)
+
+
+# ---------------------------------------------------------------------------
+# The same cut, typed into an INTERACTIVE shell on a pty
+#
+# The sweeps above run `sh -c`, where an unbalanced quote is a syntax error.
+# A login shell on a pty reads the line interactively instead, and there an
+# unbalanced quote is a CONTINUATION: the shell prints PS2 and joins every
+# following line into the open word. A tail cut inside a quoted echo word
+# would then swallow every whole line otto resends (each carries an even
+# number of quotes, so the word never closes) and the shell would never
+# become ready. So the probe's echo word carries no quotes at all, and this
+# arm types a tail cut inside it, then resends the whole line the way
+# confirm_live does, into `bash -i` on a real pty.
+# ---------------------------------------------------------------------------
+
+_PTY_PROBE_INTERVAL = 0.5  # the session's own resend interval (_init_probe_interval)
+
+
+def _interactive_answer(tail: str, line: str, answered) -> str:
+    """Type *tail* into ``bash -i`` on a pty, then resend *line* until *answered*(output).
+
+    Returns everything the terminal printed. A shell that never answers
+    fails the test with what it printed (a run of PS2 ``> `` is the wedge).
+    """
+    controller, terminal = pty.openpty()
+    env = {"PATH": os.environ["PATH"], "PS1": "$ ", "PS2": "> ", "TERM": "dumb"}
+    shell = subprocess.Popen(
+        ["bash", "--norc", "--noprofile", "-i"],
+        stdin=terminal,
+        stdout=terminal,
+        stderr=terminal,
+        env=env,
+        start_new_session=True,
+    )
+    os.close(terminal)
+    out = bytearray()
+
+    def drain() -> str:
+        while select.select([controller], [], [], 0)[0]:
+            try:
+                chunk = os.read(controller, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out.extend(chunk)
+        return out.decode(errors="replace")
+
+    def resend_until_answered() -> bool:
+        if answered(drain()):
+            return True
+        os.write(controller, line.encode())
+        return False
+
+    try:
+        wait_for(
+            lambda: drain().endswith("$ "),
+            5,
+            interval=0.05,
+            on_timeout=lambda: f"bash -i never prompted: {drain()!r}",
+        )
+        os.write(controller, tail.encode())
+        try:
+            wait_for(
+                resend_until_answered,
+                5,
+                interval=_PTY_PROBE_INTERVAL,
+                on_timeout="the shell never answered the resent line",
+            )
+        except WaitTimeoutError:
+            pytest.fail(f"no answer after the cut tail {tail!r}; the terminal: {drain()[-300:]!r}")
+        return drain()
+    finally:
+        shell.kill()
+        shell.wait(timeout=5)
+        os.close(controller)
+
+
+_NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash on a pty")
+
+
+@_NEEDS_BASH
+def test_a_handshake_cut_inside_the_echo_word_does_not_wedge_an_interactive_shell():
+    """A tail cut inside the echo word leaves the next whole line runnable, calibrated (#761)."""
+    pattern = ready_pattern(M, line_ending=True)
+    out = _interactive_answer(LINE[LINE.index("__OTTO_") + 3 :], LINE, pattern.search)
+    found = pattern.search(out)
+    assert found is not None
+    assert measure(out[: found.end()], M.ready).mapping == ONLCR
+
+
+@_NEEDS_BASH
+def test_a_resync_probe_cut_inside_the_echo_word_does_not_wedge_an_interactive_shell():
+    """The resync probe's echo word takes the same cut; the whole probe still answers."""
+    _interactive_answer(RESYNC[RESYNC.index("__OTTO_") + 3 :], RESYNC, _identity_pattern(M).search)

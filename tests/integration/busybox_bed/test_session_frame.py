@@ -170,7 +170,7 @@ async def test_history_suppression_runs_and_sets_histfile(guest):
     """The frame's history payload runs under real ash, sets HISTFILE, says nothing.
 
     THE SENTINEL IS LOAD-BEARING, not scaffolding. otto's own readiness
-    handshake already prepends this payload to the first line it writes into a
+    handshake already carries this payload in the first line it writes into a
     fresh shell, so HISTFILE is ALREADY ``/dev/null`` on every session in this
     directory -- measured. Asserting that without first setting HISTFILE to
     something else is a guard that passes with the payload deleted: it would

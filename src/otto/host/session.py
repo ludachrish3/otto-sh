@@ -629,15 +629,17 @@ class ShellSession(ABC):
     def _handshake_payload(self, m: SessionMarkers) -> str:
         """Render the complete first line written into a fresh shell.
 
-        The dialect's readiness probe, prefixed by history suppression when
-        the host asked for it. Suppression rides this existing line rather
-        than being a command of its own: the payload is silent and
-        idempotent, so it costs no extra round-trip and stays invisible to
-        the frame parser even though ``confirm_live`` resends the probe on a
-        loop. It has to be on the FIRST line the shell executes — anything
-        written before it is already in the history list.
+        The dialect's readiness probe, carrying history suppression when the
+        host asked for it. Suppression rides this existing line rather than
+        being a command of its own: the payload is silent and idempotent, so
+        it costs no extra round-trip and stays invisible to the frame parser
+        even though ``confirm_live`` resends the probe on a loop. It has to be
+        on the FIRST line the shell executes — anything written before it is
+        already in the history list. The frame places it in the line
+        (:meth:`~otto.host.command_frame.CommandFrame.handshake`), after the
+        anchor that has to open it.
         """
-        return history_prefix(self._frame, self._shell_history) + self._frame.handshake(m)
+        return self._frame.handshake(m, history_prefix(self._frame, self._shell_history))
 
     async def _ensure_initialized(self) -> None:
         """Open the transport, then run the dialect handshake. Idempotent.
@@ -664,7 +666,7 @@ class ShellSession(ABC):
     async def _handshake(self, timeout: float | None = None) -> None:
         """Confirm the current frame's shell is at a prompt; the dialect half of open.
 
-        Renders the frame's readiness payload (history suppression prefixed)
+        Renders the frame's readiness payload (history suppression included)
         and resends it via :func:`~otto.host.shell_liveness.confirm_live`
         until the READY marker comes back or *timeout* (default
         ``_init_timeout``) passes; a failure tears the session down through
@@ -672,15 +674,20 @@ class ShellSession(ABC):
         contract :class:`~otto.host.command_frame.RawFrame` relies on — and
         marks the session ready without writing a byte.
 
-        On bash that payload is ``stty -echo; echo; <calibration>; echo <READY
-        marker>``, read back until the marker and its line ending return: the
-        deterministic readiness check that replaced telnet login's
-        silence-drain — prompt-independent and content-independent. The
-        calibration line (:data:`~otto.host.terminal_mapping.CALIBRATION_COMMAND`)
-        is how the session learns its terminal's line-ending mapping, recorded
-        as ``terminal_mapping``. READY is typed split by an empty quote, so an
-        echo of the typed line (echo is still on at the first handshake) never
-        matches, even where a wrapped echo puts a carriage return before it.
+        On bash that payload is ``__otto_probe=_READY__; stty -echo; echo;
+        <calibration>; echo __OTTO_<id>${__otto_probe-}``, read back until
+        the marker and its line ending return: the deterministic readiness
+        check that replaced telnet login's silence-drain — prompt-independent
+        and content-independent. The calibration line
+        (:data:`~otto.host.terminal_mapping.CALIBRATION_COMMAND`) is how the
+        session learns its terminal's line-ending mapping, recorded as
+        ``terminal_mapping``. READY is typed split across a variable that
+        only the line's first statement sets
+        (:func:`~otto.host.command_frame.whole_line_echo`): an echo of the
+        typed line (echo is still on at the first handshake) never carries
+        it, even where a wrapped echo puts a carriage return before it, and a
+        line the shell ran only the tail of prints half the marker, so the
+        line is sent again whole.
 
         The probe is *resent* on a fixed interval rather than written once
         (``confirm_live``'s resend loop). This matters for telnet:

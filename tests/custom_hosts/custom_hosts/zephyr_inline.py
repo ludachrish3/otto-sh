@@ -52,7 +52,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 
     type_name = "zephyr-inline"
 
-    def handshake(self, m: SessionMarkers) -> str:
+    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
         # Unlike 3.7+, the Zephyr 2.7 telnet shell echoes input by default.
         # Left on, the echoed END marker would match otto's read loop *before*
         # the command's real output arrives, desyncing every command by one.
@@ -61,7 +61,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         # assumes. The readiness marker (rejected as an unknown command) still
         # echoes back via the shell's error handler — that is shell *output*,
         # not input echo, so the handshake probe is unaffected.
-        return f"shell echo off\r{m.ready}\n"
+        return f"{prefix}shell echo off\r{m.ready}\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Three CR-separated lines — no `retval`. Every command self-reports its

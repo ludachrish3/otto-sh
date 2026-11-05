@@ -22,7 +22,13 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from otto.errors import OttoError
-from otto.host.command_frame import BashFrame, CommandFrame, ZephyrFrame, ZephyrSerialFrame
+from otto.host.command_frame import (
+    RECOVER_SUFFIX,
+    BashFrame,
+    CommandFrame,
+    ZephyrFrame,
+    ZephyrSerialFrame,
+)
 from otto.host.local_host import LocalHost
 from otto.host.secret_wire import reveal
 from otto.host.session import (
@@ -37,7 +43,7 @@ from otto.host.shell_quote import shell_operand
 from otto.utils import Status, wait_for_async
 from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures.clock import stepped_loop_clock
-from tests._fixtures.fake_shell import ShellModel
+from tests._fixtures.fake_shell import ShellModel, probe_marker
 from tests.unit.host._session_feed import (
     FeedAfterWriteMixin,
     handshake_reply,
@@ -768,7 +774,8 @@ class TestShellHistorySuppression:
     async def test_suppressed_session_neutralizes_histfile_before_probing(self):
         s, probe = await self._first_probe(shell_history=False)
         assert "HISTFILE=/dev/null" in probe
-        assert probe.index("HISTFILE=/dev/null") < probe.index(f"echo {s._ready_marker[:1]}''")
+        assert probe.index("HISTFILE=/dev/null") < probe.index("stty -echo")
+        assert probe_marker(probe) == s._ready_marker
 
     @pytest.mark.asyncio
     async def test_suppression_costs_no_extra_round_trip(self):
@@ -776,7 +783,7 @@ class TestShellHistorySuppression:
         # a command of its own — one line, still ending in the READY probe.
         s, probe = await self._first_probe(shell_history=False)
         assert probe.count("\n") == 1
-        assert probe.endswith(f"echo {s._ready_marker[:1]}''{s._ready_marker[1:]}\n")
+        assert probe_marker(probe) == s._ready_marker
 
     @pytest.mark.asyncio
     async def test_suppression_preserves_the_echo_silencing(self):
@@ -815,9 +822,8 @@ class TestSessionInit:
         # handshake took exactly one write to do it.
         assert len(s.written) == 1
         assert "stty -echo" in s.written[0]
-        # READY is typed split by an empty quote; the shell prints it whole.
-        ready = s._ready_marker
-        assert f"echo {ready[:1]}''{ready[1:]}" in s.written[0]
+        # READY is typed split across a variable; the shell prints it whole.
+        assert probe_marker(s.written[0]) == s._ready_marker
 
         assert s.alive
         assert s._initialized
@@ -1768,7 +1774,7 @@ def _without_resync_writes(writes: list[str]) -> list[str]:
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact write sequence a test cares about.
     """
-    return [w for w in writes if not w.startswith('echo "__OTTO_')]
+    return [w for w in writes if not (probe_marker(w) or "").endswith(RECOVER_SUFFIX)]
 
 
 class TestLoginProxyAtSessionEstablishment:

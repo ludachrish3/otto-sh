@@ -17,6 +17,7 @@ import pytest
 
 from otto.host.command_frame import (
     FRAME_CLASSES,
+    READY_SUFFIX,
     AshFrame,
     BashFrame,
     CommandFrame,
@@ -27,10 +28,13 @@ from otto.host.command_frame import (
     build_command_frame,
     history_prefix,
     register_command_frame,
+    whole_line_echo,
 )
 from otto.host.errors import RawLandingError
+from otto.host.login_proxy import _identity_probe
 from otto.host.session import ready_pattern
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
+from tests._fixtures.fake_shell import probe_marker
 
 M = SessionMarkers.for_session("cafef00d")
 
@@ -54,13 +58,27 @@ class TestBashFrame:
     def test_type_name(self):
         assert BashFrame.type_name == "bash"
 
-    def test_handshake_silences_echo_calibrates_and_prints_ready(self):
-        # READY is typed split by an empty quote: the shell prints it whole, and
-        # the typed line (so any echo of it) never carries it.
-        typed_ready = f"{M.ready[:1]}''{M.ready[1:]}"
+    def test_handshake_opens_with_the_anchor_then_silences_echo_calibrates_and_prints_ready(self):
         assert self.frame.handshake(M) == (
-            f"stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; echo {typed_ready}\n"
+            f"__otto_probe=_READY__; stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; "
+            "echo __OTTO_cafef00d${__otto_probe-}; unset __otto_probe\n"
         )
+
+    def test_the_split_ignores_underscores_in_the_id(self):
+        m = SessionMarkers.for_session("a_b")
+        assert whole_line_echo(m.ready, READY_SUFFIX).startswith("__otto_probe=_READY__; ")
+        with pytest.raises(ValueError, match="does not end in"):
+            whole_line_echo("__R__", READY_SUFFIX)
+
+    def test_the_history_prefix_rides_after_the_anchor(self):
+        quiet = self.frame.quiet_history()
+        line = self.frame.handshake(M, quiet)
+        assert line.startswith("__otto_probe=")
+        assert line.index(quiet) < line.index("stty -echo")
+
+    def test_the_double_reads_what_the_shell_prints(self):  # pins probe_marker to the product
+        assert probe_marker(self.frame.handshake(M, self.frame.quiet_history())) == M.ready
+        assert probe_marker(_identity_probe(M, "")) == M.recover
 
     def test_the_typed_handshake_never_carries_ready_whole(self):
         assert M.ready not in self.frame.handshake(M)
@@ -162,7 +180,7 @@ class TestAshFrame:
         to agree today fails the moment BashFrame changes, which is the
         drift worth catching.
         """
-        markers = SessionMarkers(ready="__R__", begin="__B__", end_prefix="__E__", recover="__V__")
+        markers = SessionMarkers.for_session("cafef00d")
         ash, bash = AshFrame(), BashFrame()
 
         assert ash.frame("cmd", markers) == bash.frame("cmd", markers)
@@ -235,6 +253,7 @@ class TestZephyrFrame:
 
     def test_handshake_is_bare_ready_marker(self):
         assert self.frame.handshake(M) == f"{M.ready}\n"
+        assert self.frame.handshake(M, "") == f"{M.ready}\n"
 
     def test_frame_is_four_cr_separated_lines_with_retval(self):
         assert self.frame.frame("kernel version", M) == (
@@ -287,6 +306,7 @@ class TestZephyrSerialFrame:
 
     def test_handshake_disables_echo_then_prints_ready(self):
         assert self.frame.handshake(M) == f"shell echo off\r{M.ready}\n"
+        assert self.frame.handshake(M, "") == f"shell echo off\r{M.ready}\n"
 
     def test_inherits_retval_framing_from_zephyr(self):
         assert self.frame.frame("kernel version", M) == (
@@ -380,7 +400,7 @@ class TestQuietHistory:
         assert payload.index("HISTFILE=/dev/null") < payload.index("set +o history")
 
     def test_bash_payload_is_a_statement_prefix_not_a_line(self):
-        # Prepended to an existing handshake/probe line, so it must terminate
+        # Placed in an existing handshake/probe line, so it must terminate
         # its last statement and must not introduce a newline of its own.
         payload = BashFrame().quiet_history()
         assert payload.endswith("; ")
@@ -396,7 +416,7 @@ class TestQuietHistory:
         class ThirdParty(CommandFrame):
             type_name = "third-party-quiet-test"
 
-            def handshake(self, m):
+            def handshake(self, m, prefix=""):
                 return ""
 
             def frame(self, cmd, m):
@@ -504,6 +524,7 @@ class TestRawFrame:
 
     def test_handshake_is_empty(self):
         assert self.frame.handshake(M) == ""
+        assert self.frame.handshake(M, "") == ""
 
     def test_quiet_history_is_empty_and_restore_is_none(self):
         assert self.frame.quiet_history() == ""
