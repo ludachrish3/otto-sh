@@ -40,21 +40,24 @@ async def exec_in(host: UnixHost, container: str, *args: str) -> str:
     return result.value
 
 
-async def install_products(host: UnixHost, names: Sequence[str]) -> None:
-    """Prepare each product's ``cov_dir`` and install it, in order, unless it is installed."""
-    for name in names:
-        product = next(p for p in host.products if p.name == name)
+async def install_products(host: UnixHost, owner: str | None) -> None:
+    """Prepare each product's ``cov_dir``, then ``host.install`` *owner*'s products.
+
+    *owner* is the project whose products to install, ``None`` for every
+    project's. ``Host.install`` passes over a product that is already installed
+    (a running container), so calling this a second time is safe.
+    """
+    for product in host._owned_products(owner):
         cov_dir = shlex.quote(product.cov_dir)
         prepare = f"sudo mkdir -p {cov_dir} && sudo chmod 777 {cov_dir}"
         prepared = await host.exec(prepare, timeout=30)
         if not prepared.status.is_ok:
             raise RuntimeError(f"{host.id}: preparing {product.cov_dir} failed: {prepared.value}")
-        if not await product.is_installed(host):
-            result = await product.stage(host)
-            if result.is_ok:
-                result = await product.install(host)
-            if not result.is_ok:
-                raise RuntimeError(f"{host.id}: installing {name} failed: {result.msg}")
+    result = await host.install(owner=owner)
+    if not result.is_ok:
+        raise RuntimeError(
+            f"{host.id}: installing {owner or 'every'} products failed: {result.msg}"
+        )
 
 
 async def uninstall_products(host: UnixHost, names: Sequence[str]) -> None:

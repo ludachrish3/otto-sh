@@ -76,11 +76,11 @@ async def _ctl(host: UnixHost, command: str) -> str:
 
 
 async def _install(host: UnixHost) -> None:
-    for product in host.products:  # the demo alone: its install loads the library
-        if not await product.is_installed(host):
-            result = await product.install(host)
-            if not result.is_ok:
-                raise RuntimeError(f"{host.id}: installing {product.name} failed: {result.msg}")
+    # The demo alone: its install loads the library. Host.install passes over
+    # a resident module, so a second call does not insmod it again.
+    result = await host.install()
+    if not result.is_ok:
+        raise RuntimeError(f"{host.id}: installing the products failed: {result.msg}")
 
 
 async def _uninstall_products(host: UnixHost) -> None:
@@ -148,6 +148,10 @@ class TestKmodReload:
             first = await exercise(host)
             await _uninstall_products(host)  # the first unload: its exit dump writes the files
             await _install(host)
+            # #367: a second install over the resident module passes it over
+            # (an insmod would fail with "File exists") and loads nothing.
+            again = await host.install()
+            assert again.is_ok, again.msg
             return [first, await exercise(host)]
 
         lines = await do_for_all_hosts(two_loads, pattern=_HOSTS)

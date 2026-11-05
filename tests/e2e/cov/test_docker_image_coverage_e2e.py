@@ -248,8 +248,9 @@ def reinstall_run(tmp_path_factory) -> "dict[str, subprocess.CompletedProcess[st
 
     ``otto run install`` installs every project's products on every fleet host
     and has no product filter, so the scope is the lab: the docker3 overlay
-    (``OTTOPATH=<project5>:<overlay>``) makes test3 the only host. Only exit
-    codes are read, never ``otto host … exec`` stdout, which echoes its command.
+    (``OTTOPATH=<project5>:<overlay>``) makes test3 the only host. Exit codes
+    are read, and the install over running containers is read for its skip
+    lines; never ``otto host … exec`` stdout, which echoes its command.
     """
     tmp = tmp_path_factory.mktemp("docker_reinstall_e2e")
     overlay = docker3_overlay_project(tmp / "overlays")
@@ -286,6 +287,8 @@ def reinstall_run(tmp_path_factory) -> "dict[str, subprocess.CompletedProcess[st
         try:
             first = otto(["run", "install"])
             assert first.returncode == 0, _said(first)
+            # #367: running containers are passed over, not re-run into a name clash.
+            steps["over_running"] = otto(["run", "install"])
             stop = "docker stop cov_container cov_container_ref"
             stopped = otto(["host", "test3", "exec", stop], timeout=180)
             assert stopped.returncode == 0, _said(stopped)
@@ -300,6 +303,12 @@ def reinstall_run(tmp_path_factory) -> "dict[str, subprocess.CompletedProcess[st
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestInstallOverAStoppedContainer:
+    def test_install_over_running_containers_skips_them(self, reinstall_run):
+        over = reinstall_run["over_running"]
+        assert over.returncode == 0, _said(over)
+        for name in ("cov_container", "cov_container_ref"):
+            assert f"{name}: skipped — already installed" in _said(over), _said(over)
+
     def test_run_install_over_stopped_containers_succeeds(self, reinstall_run):
         assert reinstall_run["reinstall"].returncode == 0, _said(reinstall_run["reinstall"])
 

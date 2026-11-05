@@ -246,6 +246,11 @@ otto --lab example_lab run install
 :language: text
 ```
 
+The `docker container inspect` line is the installed check, and the daemon's
+"No such container" is its "not installed yet" answer. A second
+`otto run install` prints `banner: skipped — already installed` instead of
+running `docker run` again.
+
 Lines tagged `@docker-host:tools` are the container host's own: its name is
 the parent's id and the service. The `docker exec` and `docker cp` lines that
 carry out its work run on the parent, tagged `@docker-host`. otto works on

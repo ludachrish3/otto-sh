@@ -45,6 +45,7 @@ from otto.config.scope import (
 )
 from otto.context import OttoContext
 from otto.errors import OttoError
+from otto.host.local_host import LocalHost
 from otto.invocation import RunPolicy
 from otto.link import (
     DirectionState,
@@ -1792,6 +1793,39 @@ async def test_ensure_installed_recover_partial_false_skips_the_uninstall(monkey
     lab = _wire(monkeypatch, projects=["app"], state=InstallState.PARTIAL)
     await project.ensure_installed(InstallOptions(recover_partial=False))
     assert _verbs(lab.events) == ["install"]
+
+
+class _LifecycleItem(_FakeItem):
+    """A ``_FakeItem`` a real host can stage and install, recording each verb."""
+
+    def __init__(self, name, owner, installed=False):
+        super().__init__(owner, installed)
+        self.name = name
+        self.calls: list[str] = []
+
+    async def stage(self, host):
+        del host
+        self.calls.append("stage")
+        return Result(Status.Success)
+
+    async def install(self, host):
+        del host
+        self.calls.append("install")
+        return Result(Status.Success)
+
+
+@pytest.mark.asyncio
+async def test_ensure_without_recovery_installs_only_the_missing_product(monkeypatch):
+    # #367: a PARTIAL lab with --no-recover-partial reaches the host verb's own
+    # skip, so the product that is already there is not installed a second time.
+    done, missing = _LifecycleItem("p0", "app", installed=True), _LifecycleItem("p1", "app")
+    host = LocalHost()
+    host.products = [done, missing]
+    _wire_lab(monkeypatch, ["app"], _FakeCtx([host]))
+    result = await project.ensure_installed(InstallOptions(recover_partial=False))
+    assert result.is_ok, result.msg
+    assert done.calls == []
+    assert missing.calls == ["stage", "install"]
 
 
 @pytest.mark.asyncio

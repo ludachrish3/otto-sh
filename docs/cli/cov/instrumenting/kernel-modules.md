@@ -461,6 +461,11 @@ it converges the lab after the pre-run reset. Either one loads the library
 on demand, at the module's own `install`. The
 {doc}`kernel-module track <../../../setup/tracks/kmod>` runs both halves.
 
+A module that is still resident is skipped by every install
+(`<name>: skipped — already installed`): nothing is loaded again, so its init
+routine does not run again. To rerun the init routine, unload the module
+first (`otto run uninstall`, or the test's own teardown), then install.
+
 (kmod-init-coverage)=
 ## The init and exit routines
 

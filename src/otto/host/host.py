@@ -1111,11 +1111,17 @@ class Host(Protocol):
         ...
 
     async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
-        """Stage and then install every product on this host.
+        """Stage and then install every product on this host that is not installed yet.
 
-        When *stage_only* is ``True``, stops after staging without installing.
-        *owner* narrows the walk to that project's products. Returns a
-        :class:`~otto.result.Result`, short-circuiting on the first failure.
+        Each product's ``is_installed`` is read first, before anything is
+        staged; an installed product is passed over (neither staged nor
+        installed) with a ``<product>: skipped — already installed`` line, and
+        an exception from a probe propagates before anything is staged. There
+        is no force mode: to reinstall, uninstall first. When *stage_only* is
+        ``True``, stops after staging without installing. *owner* narrows the
+        walk to that project's products. Returns a :class:`~otto.result.Result`,
+        short-circuiting on the first failure; Success when every product was
+        already installed.
         """
         ...
 
@@ -2727,8 +2733,18 @@ class BaseHost(ABC):
         non-ok :class:`~otto.result.Result`; an empty list is a successful no-op.
         *owner* narrows the walk to the products that project attached, so one
         project's default actions never touch another's.
+
+        Unlike :meth:`install`, it does not ask ``is_installed`` first: an
+        installed product is staged again.
         """
-        for product in self._owned_products(owner):
+        return await self._stage_each(self._owned_products(owner))
+
+    async def _stage_each(self, products: "list[Product]") -> Result:
+        """Stage *products* in order, logging each; the first non-ok result is returned whole.
+
+        The one stage walk :meth:`stage` and :meth:`install` share.
+        """
+        for product in products:
             result = await product.stage(cast("Host", self))
             self._log_outcome(product.name, "staged", result)
             if not result.is_ok:
@@ -2737,19 +2753,51 @@ class BaseHost(ABC):
                 return result
         return Result(Status.Success)
 
+    async def _not_installed(self, owner: str | None) -> "list[Product]":
+        """Return the *owner*-scoped products that are not installed, in declaration order.
+
+        THE ONE install-skip decision (#367): every default install entry
+        (``otto host <id> install``, ``otto run install``, ``--ensure``, a
+        library ``await host.install()``) reaches it through :meth:`install`.
+        Each product's ``is_installed`` is read in turn, all of them before
+        anything is staged. True passes the product over and logs
+        ``<product>: skipped — already installed``; False keeps it, including a
+        False because the probe could not read the host (the install that
+        follows may or may not report a failure, depending on the product). An
+        exception propagates, so the install stops before anything is staged.
+        """
+        pending: list[Product] = []
+        for product in self._owned_products(owner):
+            if await product.is_installed(cast("Host", self)):
+                self._log_outcome(
+                    product.name, "installed", Result(Status.Skipped, msg="already installed")
+                )
+            else:
+                pending.append(product)
+        return pending
+
     @cli_exposed
     async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
-        """Stage, then install every product.
+        """Stage, then install every product that is not installed yet.
 
-        Calls :meth:`stage` first; returns early if ``stage_only`` is set or the
-        stage step failed. Otherwise installs each product in declaration order,
-        short-circuiting on the first failure. *owner* scopes both halves.
+        Reads every product's ``is_installed`` first, before anything is
+        staged. An installed product is passed over, neither staged nor
+        installed, and logged as ``<product>: skipped — already installed``;
+        ``stage_only`` passes over it too. There is no force mode: to
+        reinstall a product, uninstall it first. An exception raised by a
+        probe propagates before anything is staged.
+
+        The remaining products are staged; returns early if ``stage_only`` is
+        set or the stage step failed. Otherwise installs each in declaration
+        order, short-circuiting on the first failure. The result is Success
+        when every product was already installed. *owner* scopes every step.
         Projects may override for cross-product ordering/dependencies.
         """
-        stage_result = await self.stage(owner=owner)
+        pending = await self._not_installed(owner)
+        stage_result = await self._stage_each(pending)
         if stage_only or not stage_result.is_ok:
             return stage_result
-        for product in self._owned_products(owner):
+        for product in pending:
             result = await product.install(cast("Host", self))
             self._log_outcome(product.name, "installed", result)
             if not result.is_ok:

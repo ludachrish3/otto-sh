@@ -110,7 +110,9 @@ installed lab is a skip, and an uninstalled one is installed. A partially
 installed lab is not topped up: with `--recover-partial` (on by default) otto
 runs `uninstall` over the whole lab, every project and every product, then
 installs everything again. If that uninstall fails, nothing is installed.
-`--no-recover-partial` goes straight to the install instead. That recovery runs
+`--no-recover-partial` goes straight to the install instead, and that install
+passes over every product that is already installed, so only the missing ones
+are installed. That recovery runs
 `uninstall`, never `cleanup`, so it leaves coverage data alone
 ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
@@ -118,7 +120,10 @@ installs everything again. If that uninstall fails, nothing is installed.
 
 Each host says what became of every product as it goes: `staged`, then
 `installed`, or `skipped — <reason>`, or, at WARNING, the failed status and its
-message. A run over several hosts and products therefore shows which one passed
+message. `install` reads each product's installed check first, so a product
+that is already there prints `skipped — already installed` and is neither
+staged nor installed again. There is no force mode: to install it again, run
+`uninstall` first. A run over several hosts and products therefore shows which one passed
 and which one stopped it. `stage`, `uninstall`, the dev-tool install and the
 dev-tool uninstall report the same way.
 

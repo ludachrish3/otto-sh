@@ -16,6 +16,7 @@ quickstart-kmod
     dut: qs_wordcount: the interface check of /tmp/otto-gs/quickstart-kmod/build/kmodcov/lib/otto_kmodcov.ko (modinfo MODULE_VERSION): a .ko this otto cannot drive is refused before anything is sent
     dut: qs_wordcount: whether qs_wordcount is resident on dut (cat /proc/modules): uninstall runs rmmod only then
     dut: qs_wordcount: sudo is assumed because the login user is not root; a real run measures how dut elevates
+    dut: already installed: each product's is_installed is read first; an installed product is neither staged nor installed
 dry run: no command body was run and no device was contacted
   would run: otto run install
   options:

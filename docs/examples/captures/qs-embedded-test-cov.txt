@@ -10,6 +10,8 @@ INFO     === test_result_is_printed[op_clamp_lo-op_clamp_lo=0] ===
 INFO     Connected to <Peer 127.0.0.1 <port>>
 INFO     @dut   | llext list
 INFO     @dut > | | Name             | Size         |
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
 INFO     @dut   | mathops: staged
 INFO     @dut   | llext call_fn mathops cov_init
 INFO     @dut > | __gcov_init called for

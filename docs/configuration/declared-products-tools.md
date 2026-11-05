@@ -177,8 +177,21 @@ A process that is still running keeps its counts through a clear
 
 Without `install`/`uninstall` those steps are no-op successes (staging
 placed the artifact). Without `check`, `is_installed` answers False — otto
-assumes not installed and re-stages, which is safe for what this kind
-serves.
+assumes not installed, so every install stages and installs the product
+again, which is safe for what this kind serves.
+
+With `check`, every install runs it first, for each product, before anything
+is staged:
+
+- a passing `check` skips the product: it is neither staged nor installed,
+  and the run prints `<name>: skipped — already installed`;
+- a failing `check` lets the install run;
+- an error raised while checking (the host cannot be reached) stops the
+  install before any product is staged.
+
+`check` therefore runs before the artifact is in place. Write it so that is
+safe: it must only read the host, never change it, and it must not depend on
+the staged artifact. To install a product again, uninstall it first.
 
 `install`, `uninstall` and `check` run under the host's default command timeout
 (30 seconds) — the `shell` kind passes no `timeout` to `host.run`. An install
@@ -529,6 +542,10 @@ Before `docker run`, after the load or pull has succeeded, `install` runs
 - "installed" still means *running*: `is_installed` asks the daemon whether
   the container is running, so a stopped one answers not installed until the
   next install replaces it.
+
+A host or lab install reads `is_installed` before it stages anything, so a
+running container is skipped (`<name>: skipped — already installed`) and
+never reaches `docker rm -v`; a stopped one is replaced as above.
 
 Replacing a stopped container has two side effects: its `docker logs` go with
 it, and for a tarball product the image it ran stays loaded but is no longer
