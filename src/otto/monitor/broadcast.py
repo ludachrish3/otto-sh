@@ -41,6 +41,24 @@ SUBSCRIBER_QUEUE_MAX = 1024
 #: napoleon reads that as an attribute's ``type:`` field.)
 LAPSED: Final[dict[str, Any]] = {"type": "lapse"}
 
+#: The end-of-stream sentinel the server hands every open subscriber when its
+#: graceful drain begins (``otto.monitor.server._StreamDrain``). Compared with
+#: ``is``, like :data:`LAPSED`; the route ends the response on reading it.
+ENDED: Final[dict[str, Any]] = {"type": "end"}
+
+
+def end_queue(q: "asyncio.Queue[dict[str, Any]]", sentinel: dict[str, Any]) -> None:
+    """Empty *q* and make *sentinel* its next and last item (overflow: LAPSED; drain: ENDED).
+
+    The caller guarantees nothing is appended afterwards: overflow records the
+    lapse so :meth:`Broadcaster.publish` skips the queue, and the drain
+    unsubscribes it first. Same loop, no await, so the emptied queue always
+    has room for the sentinel.
+    """
+    while not q.empty():
+        q.get_nowait()
+    q.put_nowait(sentinel)
+
 
 class Broadcaster:
     """Holds SSE subscriber queues and pushes JSON-safe payloads to all of them."""
@@ -78,9 +96,7 @@ class Broadcaster:
                 # Not "drop the oldest": every frame this queue held is gone
                 # and the subscriber must resync from the snapshot. Empty it
                 # so the sentinel is the next — and last — thing it reads.
-                while not q.empty():
-                    q.get_nowait()
-                q.put_nowait(LAPSED)
+                end_queue(q, LAPSED)
                 self._lapsed.append(q)
                 continue
             q.put_nowait(payload)
