@@ -24,11 +24,11 @@ import functools
 import json
 import logging
 import secrets
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI
@@ -53,7 +53,7 @@ from ..models.monitor import (
 )
 from ..utils import wait_for_async
 from . import archive_edit
-from .broadcast import LAPSED
+from .broadcast import ENDED, LAPSED, end_queue
 from .collector import MetricCollector
 from .event_ops import EventValidationError, merge_update, resolve_create
 from .events import MonitorEvent
@@ -255,8 +255,13 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     frame: SessionFrame | None = None,
     lab: LabSnapshot | None = None,
     archive_path: Path | None = None,
+    drain: "_StreamDrain | None" = None,
 ) -> FastAPI:
     dist_index = _dist_index_path()
+    # The /api/stream admission this app serves; MonitorServer passes its own
+    # so it can close it when the drain begins. A bare app gets a private,
+    # never-closed one.
+    streams = drain if drain is not None else _StreamDrain(collector)
 
     app = FastAPI(title="Otto Monitor")
     app.add_middleware(_AccessKeyMiddleware, key=key, secure_cookie=secure_cookie)
@@ -384,8 +389,16 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         return Response(content=_require_live_snapshot_body(), media_type="application/json")
 
     @app.get("/api/stream")
-    async def stream(request: Request) -> EventSourceResponse:  # type: ignore[reportUnusedFunction]
+    async def stream(request: Request) -> Response:  # type: ignore[reportUnusedFunction]
+        if streams.closed:
+            # The server is draining: refuse at once, so a request that
+            # arrives after the drain began (keep-alive, or accepted before
+            # the listeners closed) completes instead of holding the drain.
+            return Response(status_code=503)
+        # Subscribe and register with no await between: _StreamDrain.close()
+        # runs on this loop, so it sees either neither or both.
         q = collector.subscribe()
+        streams.queues.add(q)
 
         async def generator() -> AsyncGenerator[dict[str, str], None]:
             # Prime the connection with an immediate comment. Firefox's
@@ -416,8 +429,13 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                         # restores a lost one-shot frame such as chart_map.
                         yield {"comment": "lapsed: resync"}
                         break
+                    if payload is ENDED:
+                        # The server's graceful drain began (_StreamDrain):
+                        # the clean end of the response is the signal.
+                        break
                     yield {"data": json.dumps(payload)}
             finally:
+                streams.queues.discard(q)
                 collector.unsubscribe(q)
 
         return EventSourceResponse(generator())
@@ -706,6 +724,42 @@ class _LifecycleOwnedServer(uvicorn.Server):
         yield
 
 
+class _StreamDrain:
+    """One server's /api/stream admission: open until close(), then every admitted stream ends.
+
+    sse_starlette learns about a shutdown only through uvicorn's signal
+    handling (its patched ``Server.handle_exit``, or a ``Server`` found behind
+    the SIGTERM handler), and :class:`_LifecycleOwnedServer` removes both on
+    purpose. Left alone, an open stream parks in its queue and holds uvicorn's
+    graceful drain until otto's teardown deadline forces past it (#784). So
+    the server ends its own streams when the drain begins.
+
+    Owned by the server, not the collector: a fresh server on the same
+    collector starts with open admission.
+    """
+
+    def __init__(self, collector: MetricCollector) -> None:
+        self._collector = collector
+        self.closed = False
+        self.queues: "set[asyncio.Queue[dict[str, Any]]]" = set()
+
+    def close(self) -> None:
+        """Refuse new streams and end every admitted one (server loop only; idempotent).
+
+        No await, so no request is admitted between setting the flag and
+        ending the queues. Each queue is detached from the broadcaster BEFORE
+        it is handed :data:`~otto.monitor.broadcast.ENDED`, so a later publish
+        can neither append behind the end marker nor replace it with a lapse.
+        """
+        if self.closed:
+            return
+        self.closed = True
+        for q in self.queues:
+            self._collector.unsubscribe(q)
+            end_queue(q, ENDED)
+        self.queues.clear()
+
+
 async def _run_uvicorn_translated(server: uvicorn.Server, bind_host: str, port: int) -> None:
     """Run ``server.serve()`` with the startup ``SystemExit`` translated.
 
@@ -838,6 +892,7 @@ class MonitorServer:
         # it stamps the id here — one place, so no construction site can forget.
         if frame is not None:
             collector.session_id = frame.id
+        self._drain = _StreamDrain(collector)
         self._app = _build_app(
             collector,
             key=self._key,
@@ -848,6 +903,7 @@ class MonitorServer:
             frame=frame,
             lab=lab,
             archive_path=archive_path,
+            drain=self._drain,
         )
         self._server: uvicorn.Server | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -1023,14 +1079,15 @@ class MonitorServer:
             # itself gracefully.
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            # First-signal teardown: ask uvicorn to drain gracefully and
-            # wait for it. This second await is part of the command body's
+            # First-signal teardown: ask uvicorn to drain gracefully (ending
+            # the open streams, which would otherwise hold it) and wait for
+            # it. This second await is part of the command body's
             # unwind, so the lifecycle teardown deadline still bounds it and
             # a second signal (or expiry) forces past it — do NOT shield.
             # Sentinel checks: a cancel delivered before the prologue built
             # the server or spawned the task has nothing to tear down.
             if server is not None:
-                server.should_exit = True
+                self._begin_drain(server)
             if task is not None:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -1050,16 +1107,45 @@ class MonitorServer:
             if server is not None and (task is None or task.done()):
                 await _settle_lifespan(server)
 
+    def _begin_drain(self, server: uvicorn.Server) -> None:
+        """Start uvicorn's graceful drain and close this server's streams (thread-safe).
+
+        The one begin-drain step, shared by :meth:`stop` and the cancellation
+        path of :meth:`serve`. The stream close is scheduled on the server's
+        loop because it touches asyncio queues.
+        """
+        server.should_exit = True
+        self._call_on_loop(self._drain.close)
+
+    def _call_on_loop(self, callback: Callable[[], None]) -> None:
+        """Schedule *callback* on the server's loop from any thread; a no-op once it has closed.
+
+        The one way :meth:`stop` and :meth:`force_stop` reach the server's
+        loop. A server whose loop has closed has nothing left to stop, so a
+        late call stays harmless; only that closed-loop ``RuntimeError`` is
+        tolerated (the loop may close on its own thread between the check and
+        the call), and any other scheduling failure raises.
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(callback)
+        except RuntimeError:
+            if not loop.is_closed():
+                raise
+
     def stop(self) -> None:
-        """Signal the server to shut down (thread-safe)."""
+        """Signal the server to shut down and end its open streams (thread-safe)."""
         if self._server:
-            self._server.should_exit = True
+            self._begin_drain(self._server)
 
     def force_stop(self) -> None:
         """Shut down without waiting for open connections to drain (thread-safe).
 
-        SSE dashboards hold /api/stream open indefinitely, so a graceful
-        shutdown can wait forever. This sets uvicorn's ``force_exit`` (skip the
+        :meth:`stop` ends the open /api/stream responses and lets uvicorn
+        finish every other request; this does not wait for any connection at
+        all. It sets uvicorn's ``force_exit`` (skip the
         drain) and aborts open connection transports on the server's own loop
         (h11 never closes a mid-stream transport, so clients would otherwise
         not see the connection die). Used by test harnesses and Ctrl+C paths;
@@ -1123,5 +1209,5 @@ class MonitorServer:
                         loop.remove_reader(sock.fileno())
                 loop.call_soon(_close_listeners_and_abort)
 
-            loop.call_soon_threadsafe(_stop_accepting)
+            self._call_on_loop(_stop_accepting)
         self.stop()

@@ -162,6 +162,18 @@ than silently showing stale data. Only the live view and live exports age
 out — the DB keeps everything, so a review opened from a `.db` archive is
 always complete.
 
+**Streams end when the server drains.** An open `/api/stream` response
+never finishes on its own, and sse_starlette notices a shutdown only through
+uvicorn's signal handlers, which the server removes so that otto's lifecycle
+owns Ctrl-C. So the server ends its own streams: the moment its graceful
+drain begins (`stop()`, or the first Ctrl-C cancelling `serve()`), it refuses
+new stream requests with `503` and hands every open subscriber queue the
+`otto.monitor.broadcast.ENDED` sentinel, through the same queue-terminal
+helper the lapse uses. The responses end, uvicorn closes the connections, and
+one Ctrl-C with a dashboard tab open exits at once instead of waiting out the
+teardown deadline (#784). A second Ctrl-C still abandons whatever is in
+flight.
+
 ## The dashboard
 
 **Dashboard view state.** "Paused" is *derived* rather than a separately

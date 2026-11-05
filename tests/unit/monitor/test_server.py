@@ -726,6 +726,8 @@ def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
     """
     from collections import deque
 
+    from otto.monitor.server import _StreamDrain
+
     class FakeLoop:
         def __init__(self):
             self._queue = deque()
@@ -735,6 +737,9 @@ def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
 
         def call_soon(self, cb, *args):
             self._queue.append((cb, args))
+
+        def is_closed(self):
+            return False
 
         def run(self, max_turns=200):
             turns = 0
@@ -788,6 +793,7 @@ def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
     server = MonitorServer.__new__(MonitorServer)
     server._server = fake_server
     server._loop = loop
+    server._drain = _StreamDrain(_empty_collector())
 
     server.force_stop()
     loop.run()
@@ -821,6 +827,8 @@ def test_force_stop_completes_every_accepted_connection_before_closing_the_liste
     """
     import types
 
+    from otto.monitor.server import _StreamDrain
+
     loop = asyncio.new_event_loop()
     created: list[asyncio.Protocol] = []
     made: list[asyncio.Protocol] = []
@@ -853,6 +861,7 @@ def test_force_stop_completes_every_accepted_connection_before_closing_the_liste
     server = MonitorServer.__new__(MonitorServer)
     server._server = fake_server
     server._loop = loop
+    server._drain = _StreamDrain(_empty_collector())
 
     # The handshake completes in the kernel: the listener is readable before the
     # loop's next select, so the accept callback joins the same batch as this.
@@ -874,6 +883,55 @@ def test_force_stop_completes_every_accepted_connection_before_closing_the_liste
         listener.close()
         loop.run_until_complete(asyncio.sleep(0))
         loop.close()
+
+
+class _SchedulingFailsLoop:
+    """Loop double whose ``call_soon_threadsafe`` raises *error*.
+
+    *closes_on_raise* models the race ``_begin_drain`` tolerates: the loop is
+    open at the check and closed (by its owner, on another thread) by the time
+    the call lands.
+    """
+
+    def __init__(self, error: RuntimeError, *, closes_on_raise: bool) -> None:
+        self._error = error
+        self._closes_on_raise = closes_on_raise
+        self._closed = False
+
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def call_soon_threadsafe(self, cb, *args):
+        if self._closes_on_raise:
+            self._closed = True
+        raise self._error
+
+
+def _server_on(loop: _SchedulingFailsLoop) -> MonitorServer:
+    import types
+
+    from otto.monitor.server import _StreamDrain
+
+    server = MonitorServer.__new__(MonitorServer)
+    server._server = types.SimpleNamespace(should_exit=False)
+    server._loop = loop
+    server._drain = _StreamDrain(_empty_collector())
+    return server
+
+
+def test_begin_drain_tolerates_a_loop_that_closes_before_scheduling() -> None:
+    loop = _SchedulingFailsLoop(RuntimeError("Event loop is closed"), closes_on_raise=True)
+    server = _server_on(loop)
+    server.stop()
+    assert server._server.should_exit is True
+    assert loop.is_closed(), "the double really raised from call_soon_threadsafe"
+
+
+def test_begin_drain_re_raises_an_unrelated_scheduling_error() -> None:
+    loop = _SchedulingFailsLoop(RuntimeError("unrelated scheduler failure"), closes_on_raise=False)
+    server = _server_on(loop)
+    with pytest.raises(RuntimeError, match="unrelated"):
+        server.stop()
 
 
 class TestDashboardRoute:

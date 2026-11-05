@@ -97,3 +97,18 @@ class TestBoundedQueues:
         assert stalled.get_nowait() is LAPSED
         assert healthy.qsize() == 0
         assert not b.has_lapsed(healthy)
+
+
+def test_end_queue_makes_the_sentinel_the_last_item() -> None:
+    from otto.monitor.broadcast import ENDED, SUBSCRIBER_QUEUE_MAX, Broadcaster, end_queue
+
+    b = Broadcaster()
+    live, full, empty = b.subscribe(), b.subscribe(), b.subscribe()
+    live.put_nowait({"seq": 0})
+    for i in range(SUBSCRIBER_QUEUE_MAX):
+        full.put_nowait({"seq": i})
+    assert empty.empty()
+    for q in (live, full, empty):
+        end_queue(q, ENDED)  # a full queue must not raise QueueFull
+        assert q.get_nowait() is ENDED
+        assert q.empty(), "the sentinel is the last item, nothing behind it"

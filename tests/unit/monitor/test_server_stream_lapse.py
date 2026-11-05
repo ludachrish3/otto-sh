@@ -100,3 +100,60 @@ async def test_a_live_subscriber_keeps_streaming():
     collector = MetricCollector(hosts=[], parsers=[])
     chunks = await _run_stream(_app(collector), collector, overflow=False)
     assert b'"seq": 0' in b"".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_a_stream_request_after_the_drain_closed_is_refused_at_once():
+    """A request reaching the route after the drain began must not park the drain."""
+    from otto.monitor.server import _StreamDrain
+
+    collector = MetricCollector(hosts=[], parsers=[])
+    drain = _StreamDrain(collector)
+    drain.close()
+    app = _build_app(collector, key=_KEY, drain=drain)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/stream",
+        "raw_path": b"/api/stream",
+        "query_string": f"key={_KEY}".encode(),
+        "headers": [(b"host", b"127.0.0.1:8123")],
+        "server": ("127.0.0.1", 8123),
+        "client": ("127.0.0.1", 55555),
+    }
+    messages: list[dict] = []
+    never = asyncio.Event()
+
+    async def receive():
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        messages.append(message)
+
+    await asyncio.wait_for(app(scope, receive, send), timeout=5.0)
+    assert messages[0]["type"] == "http.response.start"
+    assert messages[0]["status"] == 503
+    assert messages[-1]["type"] == "http.response.body"
+    assert not messages[-1].get("more_body", False), "the response completed"
+    assert collector._broadcast._subscribers == [], "a refused request never subscribed"
+
+
+@pytest.mark.asyncio
+async def test_publish_after_close_leaves_ended_last():
+    from otto.monitor.broadcast import ENDED
+    from otto.monitor.server import _StreamDrain
+
+    collector = MetricCollector(hosts=[], parsers=[])
+    drain = _StreamDrain(collector)
+    q = collector.subscribe()
+    drain.queues.add(q)
+    drain.close()
+    for i in range(SUBSCRIBER_QUEUE_MAX + 1):
+        await collector.add_event(f"after-close-{i}")
+    assert q.get_nowait() is ENDED, "overflow did not replace the end marker with LAPSED"
+    assert q.empty(), "nothing was appended behind the end marker"
+    assert drain.queues == set()
