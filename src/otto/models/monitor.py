@@ -39,7 +39,6 @@ already when it lived in the monitor runtime package (spec 2026-07-12
 §monitor-live-streaming).
 """
 
-import re
 from datetime import datetime
 from typing import Any, Literal
 
@@ -55,6 +54,12 @@ from pydantic import (
 )
 
 from .base import OttoModel
+from .event_style import (
+    DEFAULT_EVENT_COLOR,
+    DEFAULT_EVENT_DASH,
+    check_event_dash,
+    normalize_event_color,
+)
 
 
 class MetricPoint(OttoModel):
@@ -204,6 +209,16 @@ class EventRecord(RowModel):
     event *export* stays ``MonitorEvent.to_dict()``. ``timestamp`` is required
     (a row without one is skipped, as before); everything else defaults. ``id``
     is ``None`` when absent so the collector can assign its running id.
+
+    ``color`` and ``dash`` are lenient here, unlike every write boundary: a
+    missing or ``null`` value takes the registry default
+    (:data:`~otto.models.event_style.DEFAULT_EVENT_COLOR` /
+    :data:`~otto.models.event_style.DEFAULT_EVENT_DASH`), and a hex colour is
+    normalised to lowercase ``#rrggbb``. Anything else, such as a CSS name
+    (``"red"``) an older otto wrote, is KEPT UNCHANGED: loading an old file or
+    archive must neither fail nor destroy the value. The dashboard's own
+    import boundary draws such an event in the default colour and keeps the
+    original for export.
     """
 
     id: int | None = None
@@ -213,34 +228,30 @@ class EventRecord(RowModel):
     )
     label: str = ""
     source: str = "manual"
-    color: str = "#888888"
-    dash: str = "dash"
+    color: str = DEFAULT_EVENT_COLOR
+    dash: str = DEFAULT_EVENT_DASH
 
+    @field_validator("color", mode="before")
+    @classmethod
+    def _color(cls, value: object) -> object:
+        if value is None:
+            return DEFAULT_EVENT_COLOR
+        if not isinstance(value, str):
+            return value  # str validation reports it
+        try:
+            return normalize_event_color(value)
+        except ValueError:
+            return value  # a legacy value is kept, never rewritten (class docstring)
 
-VALID_DASH_STYLES = frozenset({"solid", "dot", "dash", "longdash", "dashdot", "longdashdot"})
-"""Legal event dash styles. Lives in this leaf module (not otto.monitor.events,
-which re-imports it) so the HTTP body models below can validate against it
-without this module growing an otto.monitor edge — the same leaf-isolation
-rule this module's docstring describes."""
-
-_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+    @field_validator("dash", mode="before")
+    @classmethod
+    def _dash(cls, value: object) -> object:
+        return DEFAULT_EVENT_DASH if value is None else value
 
 
 def _checked_label(value: str) -> str:
     if not value.strip():
         raise ValueError("label must not be empty")
-    return value
-
-
-def _checked_color(value: str) -> str:
-    if not _HEX_COLOR_RE.match(value):
-        raise ValueError(f"color must be #rrggbb, got {value!r}")
-    return value
-
-
-def _checked_dash(value: str) -> str:
-    if value not in VALID_DASH_STYLES:
-        raise ValueError(f"dash must be one of {sorted(VALID_DASH_STYLES)}, got {value!r}")
     return value
 
 
@@ -276,8 +287,8 @@ class EventCreateBody(OttoModel):
     label: str
     timestamp: datetime | None = None
     end_timestamp: datetime | None = None
-    color: str = "#888888"
-    dash: str = "dash"
+    color: str = DEFAULT_EVENT_COLOR
+    dash: str = DEFAULT_EVENT_DASH
 
     @field_validator("label")
     @classmethod
@@ -287,12 +298,12 @@ class EventCreateBody(OttoModel):
     @field_validator("color")
     @classmethod
     def _color(cls, value: str) -> str:
-        return _checked_color(value)
+        return normalize_event_color(value)
 
     @field_validator("dash")
     @classmethod
     def _dash(cls, value: str) -> str:
-        return _checked_dash(value)
+        return check_event_dash(value)
 
     @model_validator(mode="after")
     def _span_forward(self) -> "EventCreateBody":
@@ -335,12 +346,12 @@ class EventUpdateBody(OttoModel):
     @field_validator("color")
     @classmethod
     def _color(cls, value: str | None) -> str | None:
-        return None if value is None else _checked_color(value)
+        return None if value is None else normalize_event_color(value)
 
     @field_validator("dash")
     @classmethod
     def _dash(cls, value: str | None) -> str | None:
-        return None if value is None else _checked_dash(value)
+        return None if value is None else check_event_dash(value)
 
 
 class LogEventRecord(RowModel):

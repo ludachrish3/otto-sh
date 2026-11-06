@@ -325,6 +325,16 @@ export interface MetricRecord {
  * (a row without one is skipped, as before); everything else defaults. ``id``
  * is ``None`` when absent so the collector can assign its running id.
  *
+ * ``color`` and ``dash`` are lenient here, unlike every write boundary: a
+ * missing or ``null`` value takes the registry default
+ * (:data:`~otto.models.event_style.DEFAULT_EVENT_COLOR` /
+ * :data:`~otto.models.event_style.DEFAULT_EVENT_DASH`), and a hex colour is
+ * normalised to lowercase ``#rrggbb``. Anything else, such as a CSS name
+ * (``"red"``) an older otto wrote, is KEPT UNCHANGED: loading an old file or
+ * archive must neither fail nor destroy the value. The dashboard's own
+ * import boundary draws such an event in the default colour and keeps the
+ * original for export.
+ *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "EventRecord".
  */

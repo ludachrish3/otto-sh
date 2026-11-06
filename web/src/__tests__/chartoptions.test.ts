@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_EVENT_COLOR, type EventDash } from "../api/eventStyle.gen";
 import { createTextMeasure } from "../charts/measure";
 import {
   approxMeasure,
@@ -22,6 +23,8 @@ import {
   zoomToRange,
 } from "../charts/options";
 import { MAX_SERIES_PER_CHART, SERIES_DARK, SERIES_LIGHT } from "../charts/palette";
+import { normalizeEventStyle } from "../data/eventStyle";
+import { parseExportDocument } from "../data/exportDoc";
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
 const theme = chartTheme(false);
@@ -133,8 +136,22 @@ describe("buildStackOption", () => {
 
   it("attaches event markers to the first series only", () => {
     const events = [
-      { id: 1, label: "point", color: "#7c5cff", fromMs: 1_200_000, toMs: null },
-      { id: 2, label: "span", color: "#ff6b6b", fromMs: 1_300_000, toMs: 1_400_000 },
+      {
+        id: 1,
+        label: "point",
+        color: "#7c5cff",
+        fromMs: 1_200_000,
+        toMs: null,
+        dash: "dash" as const,
+      },
+      {
+        id: 2,
+        label: "span",
+        color: "#ff6b6b",
+        fromMs: 1_300_000,
+        toMs: 1_400_000,
+        dash: "dash" as const,
+      },
     ];
     const opt = buildStackOption({
       unit: "",
@@ -244,7 +261,7 @@ describe("eventMarkers", () => {
         color: "#333333",
       },
     ];
-    const marks = eventMarkers(rows, WINDOW); // 1_000_000..2_000_000 ms
+    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW); // 1_000_000..2_000_000 ms
     expect(marks.map((m) => m.id)).toEqual([1, 3]);
     expect(marks[1].toMs).toBe(1_500_000);
   });
@@ -254,7 +271,7 @@ describe("eventMarkers", () => {
       { id: 1, timestamp: "1970-01-01T00:20:00Z", label: "dotted", color: "#111111", dash: "dot" },
       { id: 2, timestamp: "1970-01-01T00:21:00Z", label: "default", color: "#222222" },
     ];
-    const marks = eventMarkers(rows, WINDOW);
+    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW);
     expect(marks[0].dash).toBe("dot");
     expect(marks[1].dash).toBe("dash");
   });
@@ -266,13 +283,55 @@ describe("eventMarkers", () => {
       { id: 1, timestamp: "1970-01-01T00:20:00Z", label: "real-id-1", color: "#111111" },
       { id: null, timestamp: "1970-01-01T00:21:00Z", label: "id-less-second", color: "#222222" },
     ];
-    const marks = eventMarkers(rows, WINDOW);
+    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW);
     const ids = marks.map((m) => m.id);
     // All ids must be unique
     expect(new Set(ids).size).toBe(ids.length);
     // Synthetic id must be negative (never collides with real non-negative ids)
     expect(ids).toContain(1); // real id
     expect(ids.some((id) => id < 0)).toBe(true); // synthetic is negative
+  });
+});
+
+describe("legacy colour is preserved and drawn as the default (#857)", () => {
+  it("a JSON import of a named-colour span draws a translucent default fill", () => {
+    const { sessions } = parseExportDocument(
+      JSON.stringify({
+        format: 1,
+        sessions: [
+          {
+            id: "old",
+            start: "1970-01-01T00:00:00Z",
+            events: [
+              {
+                id: 1,
+                timestamp: "1970-01-01T00:00:01Z",
+                end_timestamp: "1970-01-01T00:00:03Z",
+                label: "legacy",
+                color: "red",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const [event] = nth(sessions).events;
+    expect(event?.color).toBe(DEFAULT_EVENT_COLOR);
+    expect(event?.legacyColor).toBe("red");
+    const markers = eventMarkers(nth(sessions).events, LAYOUT.window);
+    const { markArea } = eventOverlay(
+      markers,
+      { muted: "#999", ink: "#eee", surface: "#fff" },
+      LAYOUT,
+    ) as {
+      markArea: { data: [{ itemStyle: { color: string; borderColor: string } }, unknown][] };
+    };
+    // withAlpha(DEFAULT_EVENT_COLOR, 0.12): the faint fill, not an opaque block.
+    const alpha = Math.round(0.12 * 255)
+      .toString(16)
+      .padStart(2, "0");
+    expect(nth(markArea.data)[0].itemStyle.color).toBe(`${DEFAULT_EVENT_COLOR}${alpha}`);
+    expect(nth(markArea.data)[0].itemStyle.borderColor).toBe(DEFAULT_EVENT_COLOR);
   });
 });
 
@@ -409,8 +468,22 @@ describe("eventOverlay markArea lanes", () => {
 
   it("gives two overlapping span events distinct label positions", () => {
     const events = [
-      { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
-      { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
+      {
+        id: 1,
+        label: "stress run",
+        color: "#ff6b6b",
+        fromMs: 1_000,
+        toMs: 2_000,
+        dash: "dash" as const,
+      },
+      {
+        id: 2,
+        label: "log capture",
+        color: "#2f9e6e",
+        fromMs: 1_500,
+        toMs: 2_500,
+        dash: "dash" as const,
+      },
     ];
     const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
@@ -422,8 +495,8 @@ describe("eventOverlay markArea lanes", () => {
 
   it("non-overlapping span events keep the same (lane-0) label position", () => {
     const events = [
-      { id: 1, label: "a", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
-      { id: 2, label: "b", color: "#2f9e6e", fromMs: 3_000, toMs: 4_000 },
+      { id: 1, label: "a", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000, dash: "dash" as const },
+      { id: 2, label: "b", color: "#2f9e6e", fromMs: 3_000, toMs: 4_000, dash: "dash" as const },
     ];
     const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
@@ -441,8 +514,22 @@ describe("eventOverlay markArea lanes", () => {
     // by baking alpha into the colour (so the dashed border can stay opaque),
     // so the fill CONTAINS the event colour rather than equalling it.
     const events = [
-      { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
-      { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
+      {
+        id: 1,
+        label: "stress run",
+        color: "#ff6b6b",
+        fromMs: 1_000,
+        toMs: 2_000,
+        dash: "dash" as const,
+      },
+      {
+        id: 2,
+        label: "log capture",
+        color: "#2f9e6e",
+        fromMs: 1_500,
+        toMs: 2_500,
+        dash: "dash" as const,
+      },
     ];
     const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ name: string; itemStyle: { color: string } }, unknown][] };
@@ -454,7 +541,16 @@ describe("eventOverlay markArea lanes", () => {
   });
 
   it("leaves markLine (instant-event) behaviour untouched", () => {
-    const events = [{ id: 1, label: "config reload", color: "#7c5cff", fromMs: 1_000, toMs: null }];
+    const events = [
+      {
+        id: 1,
+        label: "config reload",
+        color: "#7c5cff",
+        fromMs: 1_000,
+        toMs: null,
+        dash: "dash" as const,
+      },
+    ];
     const { markLine } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markLine: { data: { xAxis: number; name: string }[] };
     };
@@ -469,7 +565,16 @@ describe("eventOverlay markArea lanes", () => {
 // (no `color` key on the label at all) before the fix lands.
 describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
   it("colors the label with theme.ink so it reads against dark surfaces", () => {
-    const events = [{ id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 }];
+    const events = [
+      {
+        id: 1,
+        label: "stress run",
+        color: "#ff6b6b",
+        fromMs: 1_000,
+        toMs: 2_000,
+        dash: "dash" as const,
+      },
+    ];
     const overlayTheme = { muted: "#999", ink: "#f3f4f6", surface: "#fff" };
     const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { color: string; fontSize: number } }, unknown][] };
@@ -487,7 +592,7 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
 
   it("maps a point event's dash onto the markLine's lineStyle type", () => {
     const events = [
-      { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dot" },
+      { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dot" as const },
     ];
     const { markLine } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markLine: { data: { lineStyle: { type: unknown } }[] };
@@ -497,7 +602,14 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
 
   it("draws the span border in the event's dash type and colour on all four edges", () => {
     const events = [
-      { id: 1, label: "stress", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000, dash: "solid" },
+      {
+        id: 1,
+        label: "stress",
+        color: "#ff6b6b",
+        fromMs: 1_000,
+        toMs: 2_000,
+        dash: "solid" as const,
+      },
     ];
     const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: {
@@ -513,7 +625,7 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
   });
 
   it("maps the non-named plotly dash styles to numeric ECharts dash patterns", () => {
-    const span = (dash: string) =>
+    const span = (dash: EventDash) =>
       eventOverlay(
         [{ id: 1, label: "s", color: "#fff", fromMs: 1_000, toMs: 2_000, dash }],
         overlayTheme,
@@ -536,6 +648,7 @@ describe("layoutWith (#863)", () => {
     color: "#7c5cff",
     fromMs,
     toMs: null,
+    dash: "dash" as const,
   });
   /** The window instant at pixel `px` of a 1000 px plot. */
   const at = (px: number) => (px / 1000) * WIN15.to;
@@ -655,11 +768,31 @@ describe("layoutWith (#863)", () => {
     const rows = (first: string | null) => [
       // An id-less row first in input, tied in time with a wire-id row.
       // Its label is the wider one, so a width-led layout would put it first.
-      { id: null, timestamp: "1970-01-01T00:05:00Z", label: "no id at all", color: "#888888" },
-      { id: 7, timestamp: "1970-01-01T00:05:00Z", label: "wire id", color: "#888888" },
+      {
+        id: null,
+        timestamp: "1970-01-01T00:05:00Z",
+        label: "no id at all",
+        color: "#888888",
+        dash: "dash" as const,
+      },
+      {
+        id: 7,
+        timestamp: "1970-01-01T00:05:00Z",
+        label: "wire id",
+        color: "#888888",
+        dash: "dash" as const,
+      },
       ...(first === null
         ? []
-        : [{ id: null, timestamp: first, label: "early no id", color: "#888888" }]),
+        : [
+            {
+              id: null,
+              timestamp: first,
+              label: "early no id",
+              color: "#888888",
+              dash: "dash" as const,
+            },
+          ]),
     ];
     const tied = eventMarkers(rows(null), WIN15);
     const synthetic = nth(tied.filter((m) => m.id < 0));
@@ -773,6 +906,7 @@ describe("layoutWith (#863)", () => {
       color: "#ff6b6b",
       fromMs: at(260),
       toMs: at(340),
+      dash: "dash" as const,
     };
     const placements = layoutPlacements(
       [span, point(2, at(300), "checkpoint")],
@@ -829,6 +963,7 @@ describe("layoutWith (#863)", () => {
       color: "#f00",
       fromMs: at(100),
       toMs: at(200),
+      dash: "dash" as const,
     };
     const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
     const overlay = eventOverlay([point(4, at(500)), span], theme, layout);
@@ -872,7 +1007,16 @@ describe("layoutWith (#863)", () => {
     }[];
     expect(nth(line).label.formatter()).toBe("A B C D");
     const area = eventOverlay(
-      [{ id: 2, label: "A\nB\nC", color: "#f00", fromMs: at(100), toMs: at(300) }],
+      [
+        {
+          id: 2,
+          label: "A\nB\nC",
+          color: "#f00",
+          fromMs: at(100),
+          toMs: at(300),
+          dash: "dash" as const,
+        },
+      ],
       theme,
       layout,
     ).markArea.data as [{ label: { formatter: () => string } }, unknown][];
@@ -904,6 +1048,7 @@ describe("layoutWith (#863)", () => {
       color: "#f00",
       fromMs: -60_000,
       toMs: at(100),
+      dash: "dash" as const,
     };
     const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
     const p = nth(layoutPlacements([span], WIN15, 1000, measure6));
@@ -922,8 +1067,15 @@ describe("eventOverlay label halo (#863)", () => {
   it("rings every point and span label in the theme surface colour", () => {
     const dark = chartTheme(true);
     const events: EventMarker[] = [
-      { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null },
-      { id: 2, label: "soak", color: "#ff6b6b", fromMs: 2_000, toMs: 3_000 },
+      {
+        id: 1,
+        label: "reload",
+        color: "#7c5cff",
+        fromMs: 1_000,
+        toMs: null,
+        dash: "dash" as const,
+      },
+      { id: 2, label: "soak", color: "#ff6b6b", fromMs: 2_000, toMs: 3_000, dash: "dash" as const },
     ];
     const overlay = eventOverlay(events, dark, LAYOUT);
     const line = nth(overlay.markLine.data as { label: Record<string, unknown> }[]);

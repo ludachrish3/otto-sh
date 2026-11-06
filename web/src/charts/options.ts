@@ -3,6 +3,7 @@
 // are encoded here: 2px lines, no point symbols (hover emphasis only),
 // hairline recessive grid, axis text in muted ink (never series colors),
 // one y-axis per chart, crosshair tooltip on by default.
+import { DEFAULT_EVENT_DASH, type EventDash } from "../api/eventStyle.gen";
 import type { NormalizedSession, TimeRange } from "../data/exportDoc";
 import { parseTs } from "../data/time";
 import { MUTED_SERIES_DARK, MUTED_SERIES_LIGHT, SERIES_DARK, SERIES_LIGHT } from "./palette";
@@ -60,19 +61,17 @@ export interface EventMarker {
   color: string;
   fromMs: number;
   toMs: number | null;
-  /** plotly-style dash name (VALID_DASH_STYLES). eventMarkers always sets it
-   * (defaulting to "dash"); optional so callers building a marker by hand need
-   * not restate the default. */
-  dash?: string;
+  /** The registry's dash style (api/eventStyle.gen.ts), resolved by
+   * normalizeEventStyle where the event entered the store. */
+  dash: EventDash;
 }
 
-/** Maps a plotly-style dash name (otto/models/monitor.py VALID_DASH_STYLES,
- * mirrored in EventEditor's DASH_STYLES) onto the value ECharts' lineStyle.type
- * / itemStyle.borderType accepts: the three named types, or a numeric
- * dash-pattern array for the names ECharts has no word for (longdash etc.).
- * Unknown/absent names fall back to "dashed" — the style markLines always used
- * before the dash field was honored (TODO item 5). */
-const DASH_TO_ECHARTS: Record<string, "solid" | "dashed" | "dotted" | number[]> = {
+/** Maps each registry dash style (api/eventStyle.gen.ts EVENT_DASH_STYLES)
+ * onto the value ECharts' lineStyle.type / itemStyle.borderType accepts: the
+ * three named types, or a numeric dash-pattern array for the names ECharts
+ * has no word for (longdash etc.). Typed on EventDash, so a style added to
+ * the registry fails the type check here until it is mapped. */
+const DASH_TO_ECHARTS: Record<EventDash, "solid" | "dashed" | "dotted" | number[]> = {
   solid: "solid",
   dot: "dotted",
   dash: "dashed",
@@ -81,8 +80,8 @@ const DASH_TO_ECHARTS: Record<string, "solid" | "dashed" | "dotted" | number[]> 
   longdashdot: [14, 4, 2, 4],
 };
 
-function dashType(dash: string | undefined): "solid" | "dashed" | "dotted" | number[] {
-  return DASH_TO_ECHARTS[dash ?? "dash"] ?? "dashed";
+function dashType(dash: EventDash | undefined): "solid" | "dashed" | "dotted" | number[] {
+  return DASH_TO_ECHARTS[dash ?? DEFAULT_EVENT_DASH];
 }
 
 /** Exactly `#rrggbb` — the only shape `withAlpha` can append a byte to. */
@@ -118,10 +117,10 @@ export function eventMarkers(
       // Real wire ids are non-negative; negative synthetics can't collide.
       id: ev.id ?? -1 - out.length,
       label: ev.label ?? "",
-      color: ev.color ?? "#7c5cff",
+      color: ev.color,
       fromMs,
       toMs,
-      dash: ev.dash ?? "dash",
+      dash: ev.dash,
     });
   }
   return out;

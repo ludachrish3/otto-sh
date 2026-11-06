@@ -229,3 +229,27 @@ async def test_db_export_null_end_falls_back_to_last_sample(tmp_path):
 
     assert by_label["crashed"].end == T0 + timedelta(minutes=5)
     assert by_label["empty"].end == by_label["empty"].start == T0 + timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_db_export_keeps_a_legacy_named_event_color(tmp_path):
+    """legacy colour is preserved and drawn as the default (#857): a non-hex
+    colour already in an archive survives the SQLite load unchanged; the
+    import boundary neither fails nor rewrites it, and the dashboard draws it."""
+    import sqlite3
+
+    path = tmp_path / "lab.db"
+    await _write_session(path, "old")
+    with sqlite3.connect(path) as conn:
+        [(session_id,)] = conn.execute("SELECT id FROM sessions").fetchall()
+        conn.execute(
+            "INSERT INTO events (session_id, ts, label, source, color, dash) "
+            "VALUES (?, ?, 'legacy', 'manual', 'red', 'dash')",
+            (session_id, T0.isoformat()),
+        )
+    conn.close()
+
+    (session,) = build_db_export(str(path)).sessions
+
+    [event] = session.events
+    assert event.color == "red"

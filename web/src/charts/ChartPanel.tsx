@@ -369,7 +369,7 @@ export function ChartPanel(props: {
   // on every resize (`plotWidthPx`) and once web fonts load (`fontsReady`).
   // Every marker field the overlay draws is in `markersKey`.
   const markersKey = (markers ?? [])
-    .map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}:${m.label}:${m.color}:${m.dash ?? ""}`)
+    .map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}:${m.label}:${m.color}:${m.dash}`)
     .join("|");
   // The ONE label layout per (markers, window, plot width, fonts-ready): the
   // canvas patch below, the label stamp and the overflow buttons (#920) all

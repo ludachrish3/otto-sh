@@ -37,6 +37,7 @@ import { seriesKey } from "../data/seriesIndex";
 import { buildSeriesTree, collectSeriesPoints, filterTree } from "../data/seriesTree";
 import { displayEndMs, formatClockTime, liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
+import { blankDraft } from "../shell/marking";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
 import { Breadcrumbs } from "../ui/Breadcrumbs";
 import { LIVE_WINDOW_PRESETS } from "../ui/commands";
@@ -191,17 +192,7 @@ export function SubjectPage() {
   // bounds it's drawn against, unlike a +/- zoom button's derived range.
   const onSweep = (r: TimeRange) => {
     disarmSweep();
-    openEventEditor({
-      kind: "draft",
-      draft: {
-        sessionId: session.id,
-        timestampMs: r.from,
-        endTimestampMs: r.to,
-        label: "",
-        color: "#888888",
-        dash: "dash",
-      },
-    });
+    openEventEditor({ kind: "draft", draft: blankDraft(session, r.from, r.to) });
   };
 
   // A crowded label cluster's overflow list opens the editor on a listed

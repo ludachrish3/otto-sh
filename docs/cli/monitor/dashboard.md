@@ -188,10 +188,15 @@ for them to persist to.
 
 **The event editor**, opened from any of the flows above, has a **Label**,
 second-granularity **Start**/**End** date-time fields (clearing **End**
-turns a span back into a point event), a row of color swatches, and a
+turns a span back into a point event), a row of color swatches (**Grey**,
+the default, **Violet**, **Green** and **Red**; the automatic test marks use
+Grey for a start, Green for a pass and Red for a failure), and a
 **Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
 `longdashdot`) applied to the event's chart overlay — a point event's marker
-line and the border drawn around a span. **Save** stays disabled until
+line and the border drawn around a span. An event colour is always a hex
+value. An event from an older capture whose colour is not hex (a name such
+as `red`) is drawn in Grey. Its colour is kept as it was, in the archive and
+in an export, until you pick a new one. **Save** stays disabled until
 **Start** is complete and **End** is either complete or empty; the reason
 shows under the field. Editing or deleting an existing event reuses the
 same panel; **Delete** opens a dialog that names the event ("Delete

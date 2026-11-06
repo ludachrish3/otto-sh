@@ -7,6 +7,7 @@
 // its request (#873): the flow then skips its own follow-up effects, and so
 // does its caller. Each layer re-checks with its own sourceGuard after its
 // await, so an import landing between the layers still counts as stale.
+import { DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH } from "../api/eventStyle.gen";
 import {
   createEvent,
   endEvent,
@@ -60,16 +61,21 @@ export function endSpanReporting(): Promise<void> {
   return endOpenSpan().then(() => undefined, reportMutationFailure("End span"));
 }
 
-/** A blank point draft at the display horizon (displayEndMs), so "Add
- * event…" on a stalled collector pre-fills a time inside the live window
- * (#866), not the last metric's. */
-export function blankDraft(session: NormalizedSession): EventDraft {
+/** The ONE draft builder: a new event in the registry's default style, at the
+ * display horizon (displayEndMs, so "Add event…" on a stalled collector
+ * pre-fills a time inside the live window, #866) or over a swept range
+ * (SubjectPage). */
+export function blankDraft(
+  session: NormalizedSession,
+  fromMs: number = displayEndMs(session),
+  toMs: number | null = null,
+): EventDraft {
   return {
     sessionId: session.id,
-    timestampMs: displayEndMs(session),
-    endTimestampMs: null,
+    timestampMs: fromMs,
+    endTimestampMs: toMs,
     label: "",
-    color: "#888888",
-    dash: "dash",
+    color: DEFAULT_EVENT_COLOR,
+    dash: DEFAULT_EVENT_DASH,
   };
 }
