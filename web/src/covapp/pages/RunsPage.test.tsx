@@ -122,7 +122,38 @@ afterEach(() => {
   delete (window as { __OTTO_COV__?: IndexPayload }).__OTTO_COV__;
 });
 
+/** A CSS colour as the engine resolves it: set on an ATTACHED probe and read
+ * back through `getComputedStyle`, so "yellow", "#ff0" and "rgb(255,255,0)"
+ * compare equal and the comparison is against what is actually painted. */
+function resolved(css: string): string {
+  const probe = document.createElement("div");
+  probe.style.color = css;
+  document.body.appendChild(probe);
+  const out = getComputedStyle(probe).color;
+  probe.remove();
+  return out;
+}
+
 describe("RunsPage", () => {
+  it.each(["yellow", "rgb(255,255,0)", "#ff0"])(
+    "tier chip text never takes the tier colour (%s)",
+    (color) => {
+      renderPage(
+        makeIndex({
+          tier_colors: { system: "green", unit: color },
+          runs: RUNS,
+          run_contrib: CONTRIB,
+        }),
+      );
+      const chip = within(screen.getByTestId("run-row-unit harvest")).getByTestId("tier-chip");
+      expect(chip.style.color).toBe("");
+      expect(chip.textContent).toBe("Unit");
+      const dot = chip.querySelector("span") as HTMLElement;
+      expect(getComputedStyle(dot).backgroundColor).toBe(resolved(color));
+      expect(chip.style.backgroundColor).toContain("color-mix");
+    },
+  );
+
   it("renders one row per context, with meta counting contexts and distinct hosts", () => {
     const index = buildIndex();
     renderPage(index);

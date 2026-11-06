@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .colors import DEFAULT_TIER_COLORS
+from .colors import default_tier_color
 from .errors import CoverageInputError
 from .store.model import TIER_SYSTEM
 
@@ -57,7 +57,7 @@ def _tier_from_spec(name: str, spec: "CoverageTierSpec") -> TierConfig:
         name=name,
         kind=spec.kind,
         precedence=spec.precedence,
-        color=spec.color or DEFAULT_TIER_COLORS[spec.kind],
+        color=spec.color or default_tier_color(spec.kind),
         max_age_days=int(spec.max_age[:-1]) if spec.max_age else None,
         products={product: list(dirs) for product, dirs in spec.products.items()},
         toolchain=None
@@ -92,7 +92,7 @@ def load_tiers(cov_config: dict[str, Any], *, root: Path) -> list[TierConfig]:
                 name=TIER_SYSTEM,
                 kind="e2e",
                 precedence=1,
-                color=DEFAULT_TIER_COLORS["e2e"],
+                color=default_tier_color("e2e"),
             )
         ]
     # Function-local: the settings models are pydantic-heavy, and a tier load

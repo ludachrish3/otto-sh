@@ -28,6 +28,7 @@ import { SearchIcon } from "@/ui/icons";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
+import { TierChip } from "../chrome/TierChip";
 import { type Context, groupContexts, resolveScope, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
 import {
@@ -95,19 +96,6 @@ function FilterChip({
       )}
       {children}
     </button>
-  );
-}
-
-function TierChip({ tier, index }: { tier: string; index: IndexPayload }) {
-  const color = index.tier_colors[tier] ?? "currentColor";
-  return (
-    <span
-      className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
-      style={{ color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }}
-    >
-      <span aria-hidden className="size-2 shrink-0 rounded-sm" style={{ backgroundColor: color }} />
-      {index.tier_labels[tier] ?? tier}
-    </span>
   );
 }
 

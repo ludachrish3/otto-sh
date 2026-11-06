@@ -13,6 +13,7 @@ import { type TreeColumn, TreeView } from "@/ui/TreeView";
 
 import { AppShell } from "../chrome/AppShell";
 import { PctCell } from "../chrome/PctCell";
+import { TierChip } from "../chrome/TierChip";
 import { type FocusScope, resolveScope, scopeTreeLines } from "../contexts";
 import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus, useHashLocation } from "../focus";
@@ -350,35 +351,24 @@ function RunsDisclosure({ index }: { index: IndexPayload }) {
             </tr>
           </thead>
           <tbody>
-            {index.runs.map((run) => {
-              const tierColor = index.tier_colors[run.tier] ?? "currentColor";
-              return (
-                <tr
-                  key={run.id}
-                  data-testid={`run-row-${run.id}`}
-                  className="border-t border-secondary text-tertiary"
-                >
-                  <td className="px-3.5 py-2 font-medium text-primary">{run.label}</td>
-                  <td className="px-3.5 py-2">
-                    <span
-                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-                      style={{
-                        color: tierColor,
-                        backgroundColor: `color-mix(in srgb, ${tierColor} 14%, transparent)`,
-                      }}
-                    >
-                      {index.tier_labels[run.tier] ?? run.tier}
-                    </span>
-                  </td>
-                  <td className="px-3.5 py-2">{run.board}</td>
-                  <td className="px-3.5 py-2">{run.labs.length > 0 ? run.labs.join(", ") : "—"}</td>
-                  <td className="px-3.5 py-2">{run.captured_at}</td>
-                  <td className="px-3.5 py-2">{run.tester?.name ?? "—"}</td>
-                  <td className="px-3.5 py-2">{run.ticket ?? "—"}</td>
-                  <td className="px-3.5 py-2">{run.dirty_remap ? "✎ remapped" : "—"}</td>
-                </tr>
-              );
-            })}
+            {index.runs.map((run) => (
+              <tr
+                key={run.id}
+                data-testid={`run-row-${run.id}`}
+                className="border-t border-secondary text-tertiary"
+              >
+                <td className="px-3.5 py-2 font-medium text-primary">{run.label}</td>
+                <td className="px-3.5 py-2">
+                  <TierChip tier={run.tier} index={index} />
+                </td>
+                <td className="px-3.5 py-2">{run.board}</td>
+                <td className="px-3.5 py-2">{run.labs.length > 0 ? run.labs.join(", ") : "—"}</td>
+                <td className="px-3.5 py-2">{run.captured_at}</td>
+                <td className="px-3.5 py-2">{run.tester?.name ?? "—"}</td>
+                <td className="px-3.5 py-2">{run.ticket ?? "—"}</td>
+                <td className="px-3.5 py-2">{run.dirty_remap ? "✎ remapped" : "—"}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
