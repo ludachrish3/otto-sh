@@ -2,11 +2,13 @@
 // EventColorField (#858): the event editor's named colour swatches. The
 // assertion surface is the accessibility tree -- option roles and names,
 // aria-selected, the tooltip role -- plus the persistent name's testid.
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { MARKER_LINE_WIDTH } from "../charts/markerStyle";
 import { EventColorField } from "../ui/EventColorField";
+import { installPlotSurfaceCss } from "./_plotSurfaceCss";
 
 // jsdom lacks CSS.escape; react-aria's listbox focus utilities call it
 // unconditionally (same polyfill as eventeditor.test.tsx).
@@ -16,6 +18,10 @@ if (typeof globalThis.CSS === "undefined") {
     writable: true,
   });
 }
+
+beforeAll(() => {
+  installPlotSurfaceCss();
+});
 
 afterEach(() => {
   cleanup();
@@ -142,5 +148,229 @@ describe("EventColorField", () => {
   it("no repair note without a legacy colour", () => {
     render(<Host initial="#888888" />);
     expect(screen.queryByTestId("editor-color-legacy")).toBeNull();
+  });
+});
+
+describe("Custom… colour popover (#859)", () => {
+  type User = ReturnType<typeof userEvent.setup>;
+  const HEX_ERROR = "Enter six hexadecimal digits, for example #00abcd";
+
+  async function openCustom(user: User): Promise<HTMLElement> {
+    await user.click(screen.getByTestId("editor-color-custom-open"));
+    return screen.getByTestId("custom-color-dialog");
+  }
+
+  function hexInput(): HTMLInputElement {
+    return screen.getByTestId("custom-color-hex") as HTMLInputElement;
+  }
+
+  function apply(): HTMLButtonElement {
+    return screen.getByTestId("custom-color-apply") as HTMLButtonElement;
+  }
+
+  /** The wheel's hue input, or the area's saturation input (RAC names both
+   * area inputs "Color picker"; the horizontal one is x, saturation). */
+  function slider(dialog: HTMLElement, channel: "hue" | "saturation"): HTMLInputElement {
+    if (channel === "hue") {
+      return within(dialog).getByRole("slider", { name: "Hue" }) as HTMLInputElement;
+    }
+    const area = within(dialog).getAllByRole("slider", { name: "Color picker" });
+    const x = area.find((el) => el.getAttribute("aria-orientation") === "horizontal");
+    if (!x) throw new Error("no saturation input");
+    return x as HTMLInputElement;
+  }
+
+  async function typeHex(user: User, text: string): Promise<void> {
+    await user.clear(hexInput());
+    await user.type(hexInput(), text);
+  }
+
+  it("Custom… is the row's last item and a second tab stop", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#888888" />);
+    const open = screen.getByTestId("editor-color-custom-open");
+    expect(open.textContent).toBe("Custom…");
+    const listbox = screen.getByRole("listbox", { name: "Color" });
+    expect(listbox.parentElement).toBe(open.parentElement);
+    expect(open.parentElement?.lastElementChild).toBe(open);
+    await user.tab();
+    expect(document.activeElement?.getAttribute("role")).toBe("option");
+    await user.tab();
+    expect(document.activeElement).toBe(open);
+  });
+
+  it("opens with the hex field focused and holding the current colour", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#00abcd" />);
+    const dialog = await openCustom(user);
+    expect(dialog.getAttribute("aria-label")).toBe("Custom event colour");
+    expect(document.activeElement).toBe(hexInput());
+    expect(hexInput().value.toLowerCase()).toBe("#00abcd");
+    expect(within(dialog).getByText("Light chart")).toBeTruthy();
+    expect(within(dialog).getByText("Dark chart")).toBeTruthy();
+  });
+
+  it("Use colour sends the typed hex lowercased", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#888888" onChange={onChange} />);
+    await openCustom(user);
+    await typeHex(user, "00ABCD");
+    // Valid typing keeps what was typed; it is not reformatted mid-entry.
+    expect(hexInput().value).toBe("00ABCD");
+    expect(apply().disabled).toBe(false);
+    await user.click(apply());
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("#00abcd");
+    expect(screen.queryByTestId("custom-color-dialog")).toBeNull();
+    expect(screen.getByTestId("editor-color-name").textContent).toBe("· Custom — #00abcd");
+  });
+
+  it("incomplete hex disables Use colour and shows the message", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#888888" onChange={onChange} />);
+    await openCustom(user);
+    await typeHex(user, "#00ab");
+    expect(apply().disabled).toBe(true);
+    const message = screen.getByText(HEX_ERROR);
+    expect(hexInput().getAttribute("aria-describedby")?.split(" ")).toContain(message.id);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("an invalid attempt survives blur and Enter", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#888888" />);
+    await openCustom(user);
+    await typeHex(user, "#00ab");
+    await user.keyboard("{Enter}");
+    // RAC's commit would revert the unparsable text; the field keeps what
+    // the user typed beside the refusal instead.
+    expect(screen.getByTestId("custom-color-dialog")).toBeTruthy();
+    expect(hexInput().value).toBe("#00ab");
+    expect(apply().disabled).toBe(true);
+    expect(screen.getByText(HEX_ERROR)).toBeTruthy();
+    await typeHex(user, "#00ab");
+    await user.tab();
+    expect(hexInput().value).toBe("#00ab");
+    expect(apply().disabled).toBe(true);
+    expect(screen.getByText(HEX_ERROR)).toBeTruthy();
+  });
+
+  it("valid typing clears the refusal", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#888888" />);
+    await openCustom(user);
+    await typeHex(user, "#00ab");
+    expect(apply().disabled).toBe(true);
+    await user.type(hexInput(), "cd");
+    expect(apply().disabled).toBe(false);
+    expect(screen.queryByText(HEX_ERROR)).toBeNull();
+  });
+
+  it("Cancel discards", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#888888" onChange={onChange} />);
+    await openCustom(user);
+    await typeHex(user, "00abcd");
+    await user.click(screen.getByTestId("custom-color-cancel"));
+    expect(screen.queryByTestId("custom-color-dialog")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    await openCustom(user);
+    expect(hexInput().value.toLowerCase()).toBe("#888888");
+  });
+
+  it("Cancel clears a refusal: reopening starts clean", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#888888" />);
+    await openCustom(user);
+    await typeHex(user, "#00ab");
+    await user.click(screen.getByTestId("custom-color-cancel"));
+    await openCustom(user);
+    expect(apply().disabled).toBe(false);
+    expect(screen.queryByText(HEX_ERROR)).toBeNull();
+  });
+
+  it("hue survives passing through grey", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#00abcd" />);
+    const dialog = await openCustom(user);
+    const hueBefore = Number(slider(dialog, "hue").value);
+    const satBefore = slider(dialog, "saturation").value;
+    expect(hueBefore).toBeGreaterThan(0);
+    expect(Number(satBefore)).toBeGreaterThan(0);
+    fireEvent.change(slider(dialog, "saturation"), { target: { value: "0" } });
+    expect(Number(slider(dialog, "saturation").value)).toBe(0);
+    expect(Number(slider(dialog, "hue").value)).toBe(hueBefore);
+    fireEvent.change(slider(dialog, "saturation"), { target: { value: satBefore } });
+    expect(slider(dialog, "saturation").value).toBe(satBefore);
+    expect(Number(slider(dialog, "hue").value)).toBe(hueBefore);
+  });
+
+  it("wheel-only change then Apply sends the wheel colour", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#ff0000" onChange={onChange} />);
+    const dialog = await openCustom(user);
+    fireEvent.change(slider(dialog, "hue"), { target: { value: "120" } });
+    expect(hexInput().value.toLowerCase()).toBe("#00ff00");
+    await user.click(apply());
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("#00ff00");
+  });
+
+  it("typed hex, then a wheel change, then Apply sends the wheel colour", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#888888" onChange={onChange} />);
+    const dialog = await openCustom(user);
+    await typeHex(user, "ff0000");
+    fireEvent.change(slider(dialog, "hue"), { target: { value: "240" } });
+    await user.click(apply());
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("#0000ff");
+  });
+
+  it("a wheel change after an invalid attempt clears it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Host initial="#ff0000" onChange={onChange} />);
+    const dialog = await openCustom(user);
+    await typeHex(user, "#00ab");
+    expect(apply().disabled).toBe(true);
+    fireEvent.change(slider(dialog, "hue"), { target: { value: "120" } });
+    expect(apply().disabled).toBe(false);
+    expect(screen.queryByText(HEX_ERROR)).toBeNull();
+    // The wheel's colour replaces the refused text.
+    expect(hexInput().value.toLowerCase()).toBe("#00ff00");
+    await user.click(apply());
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("#00ff00");
+  });
+
+  it("applying a preset hex selects the preset", async () => {
+    const user = userEvent.setup();
+    render(<Host initial="#888888" />);
+    await openCustom(user);
+    await typeHex(user, "#7C5CFF");
+    await user.click(apply());
+    expect(selected("Violet")).toBe("true");
+    expect(screen.queryByTestId("editor-color-custom")).toBeNull();
+    expect(screen.getByTestId("editor-color-name").textContent).toBe("· Violet");
+  });
+
+  it("both previews draw the marker in the draft colour and dash", async () => {
+    const user = userEvent.setup();
+    render(<EventColorField value="#00abcd" dash="dot" onChange={() => {}} />);
+    await openCustom(user);
+    for (const id of ["custom-color-preview-light", "custom-color-preview-dark"]) {
+      const svg = screen.getByTestId(id);
+      const line = svg.querySelector("[data-marker='point']");
+      expect(line?.getAttribute("stroke")).toBe("#00abcd");
+      expect(line?.getAttribute("stroke-dasharray")).toBe("1");
+      const span = svg.querySelector("[data-marker='span']");
+      expect(span?.getAttribute("fill")).toBe("#00abcd1f");
+      expect(span?.getAttribute("stroke-dasharray")).toBe("1");
+      for (const el of [line, span]) {
+        expect(el?.getAttribute("stroke-width")).toBe(String(MARKER_LINE_WIDTH));
+      }
+    }
   });
 });

@@ -377,8 +377,12 @@ export function EventEditor() {
               />
             </div>
             <EventColorField
+              // Remounts per target, like the InputDates: its custom slot
+              // is per-editor-session state and must not carry over.
+              key={`color:${targetKey}`}
               value={form.color}
               dash={form.dash}
+              isDisabled={gate.pending}
               // Once a colour is picked the repair is made: the note goes.
               {...(!touched.color && legacyColor !== undefined && { legacyColor })}
               onChange={(color) => {

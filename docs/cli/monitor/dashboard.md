@@ -199,8 +199,23 @@ on the selected swatch, the arrow keys move along it, and Space or Enter
 picks one. The selected colour's name also stays beside the label, as in
 **Color · Grey**. An event whose colour is not one of the four keeps it as
 an extra swatch named for its value, such as **Custom — #00abcd**, and you
-can switch to a preset and back to it. Saving an edit sends the colour only
-if you picked one, so changing just the label never rewrites it. An event
+can switch to a preset and back to it.
+
+**Custom…**, after the swatches (the next Tab stop), picks any other colour.
+It opens a popover with a hue wheel around a saturation and brightness
+square, and a **Hex** field for an exact value: six hexadecimal digits, with
+or without the `#`. While the field holds anything else, it keeps what you
+typed, says "Enter six hexadecimal digits, for example #00abcd", and
+**Use colour** stays disabled; moving the wheel or the square replaces the
+text with that colour's hex. Two previews, **Light chart** and **Dark
+chart**, draw the event's marker, dash and span fill in the chosen
+colour over each theme's chart background. **Use colour** puts the
+colour in the editor, selecting a preset swatch if it matches one;
+**Cancel**, Esc or a click outside discards it, and Esc closes only the
+popover. Nothing is sent until you press **Save**.
+
+Saving an edit sends the colour only if you picked one, so changing just the
+label never rewrites it. An event
 colour is always a hex value. An event from an older capture whose colour is
 not hex (a name such as `red`) is drawn in Grey. Its colour is kept as it
 was, in the archive and in an export, until you pick a new one: the editor

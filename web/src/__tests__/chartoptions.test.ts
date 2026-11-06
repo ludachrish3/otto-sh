@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_EVENT_COLOR, type EventDash } from "../api/eventStyle.gen";
+import { MARKER_LINE_WIDTH } from "../charts/markerStyle";
 import { createTextMeasure } from "../charts/measure";
 import {
   approxMeasure,
@@ -597,7 +598,24 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
     const { markLine } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markLine: { data: { lineStyle: { type: unknown } }[] };
     };
-    expect(markLine.data[0].lineStyle.type).toBe("dotted");
+    // A numeric pattern, not ECharts' "dotted": one table (markerStyle.ts)
+    // decides the chart's and the SVG preview's dash, and zrender passes an
+    // array through unscaled -- identical to "dotted" on a 1px line.
+    expect(markLine.data[0].lineStyle.type).toEqual([1]);
+  });
+
+  it("every marker line is MARKER_LINE_WIDTH wide", () => {
+    const events = [
+      { id: 1, label: "p", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dash" as const },
+      { id: 2, label: "s", color: "#7c5cff", fromMs: 1_000, toMs: 2_000, dash: "dash" as const },
+    ];
+    const { markLine, markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
+      markLine: { data: { lineStyle: { width: number; type: unknown } }[] };
+      markArea: { data: [{ itemStyle: { borderWidth: number } }, unknown][] };
+    };
+    expect(markLine.data[0].lineStyle.width).toBe(MARKER_LINE_WIDTH);
+    expect(markLine.data[0].lineStyle.type).toEqual([4, 2]);
+    expect(markArea.data[0][0].itemStyle.borderWidth).toBe(MARKER_LINE_WIDTH);
   });
 
   it("draws the span border in the event's dash type and colour on all four edges", () => {
