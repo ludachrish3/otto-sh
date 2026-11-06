@@ -626,6 +626,26 @@ Dependabot may rebase its pull request (on a conflict, a newer release, or
 an `@dependabot rebase` comment). That makes a new head the status does not
 cover, so gate just before the merge.
 
+`.github/dependabot.yml` sorts the bumps into pull requests by what landing
+them costs. Its comments name the members of each kind and cite the
+history behind each choice:
+
+- **A tool whose new rules fail unchanged code** comes alone on every bump,
+  so it lands with the fixes it asks for.
+- **A framework otto's own code is written against** comes alone. Its break
+  is a product change, so check whether the fix is
+  [breaking](#branching-and-commits).
+- **A lockstep set** moves as one pull request, because no member can pass
+  alone.
+- **`routine`** takes every other patch and minor bump, one pull request a
+  week for Python and one for the dashboard's npm packages. A major outside
+  a lockstep set normally comes alone, though it may wait while a
+  `routine` pull request is open.
+
+When a bump needs code fixes, put them on the Dependabot branch ahead of
+its commit, or land them first in a pull request of your own. Dependabot
+stops rebasing a branch someone else has pushed to.
+
 (gate-class-table)=
 
 Each changed path has a class; a diff takes the union of its paths' classes:
