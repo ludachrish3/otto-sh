@@ -107,7 +107,15 @@ plus a live `GET /api/stream` SSE feed of fragments that grows an
 already-open tab in real time. A fragment is a partial session record in the
 export's vocabulary, but the stream is a versioned format of its own,
 `monitor-live-stream` in `api/public.toml`, numbered apart from the export
-document's `format`. Because the dashboard boots from that
+document's `format`. The server stamps its own clock as `observed_at` on every
+fragment, on each session of the live snapshot and, as the
+`X-Otto-Observed-At` header, on every live event-mutation response (review mode,
+an archive with no live window, sends none). One clock feeds them all:
+`otto.monitor.event_ops.utc_now`, which also stamps a Mark-now timestamp and a
+Stop; `otto.monitor.collector.observed_now` is its ISO string. The dashboard's live
+window ends at the later of that time and the last metric, so a new mark shows
+at once even while the collector is stalled; health still reads the last
+metric alone. Because the dashboard boots from that
 snapshot fetch in live and review mode alike, it also runs from a bare static
 file server with no `/api/*` routes (the docs screenshots and ad-hoc demos):
 any failure falls back to the empty Import screen. With `--db`, each run's

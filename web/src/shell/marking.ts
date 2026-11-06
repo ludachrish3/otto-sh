@@ -10,6 +10,7 @@
 import { createEvent, endEvent, isStale, type StaleResult, sourceGuard } from "../data/eventApi";
 import type { NormalizedSession } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
+import { displayEndMs } from "../data/time";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
 
 function requireActiveSessionId(): string {
@@ -45,10 +46,13 @@ export async function endOpenSpan(): Promise<StaleResult | undefined> {
   return undefined;
 }
 
+/** A blank point draft at the display horizon (displayEndMs), so "Add
+ * event…" on a stalled collector pre-fills a time inside the live window
+ * (#866), not the last metric's. */
 export function blankDraft(session: NormalizedSession): EventDraft {
   return {
     sessionId: session.id,
-    timestampMs: session.endMs,
+    timestampMs: displayEndMs(session),
     endTimestampMs: null,
     label: "",
     color: "#888888",

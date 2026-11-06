@@ -125,7 +125,9 @@ async def test_every_collector_writer_stamps_the_declared_write_version(version)
     published = await _publish_every_kind()
     # metric, event add/update/delete, log events, tunnel scan, scripted tunnels
     assert len(published) == 7
-    assert {k for frag in published for k in frag} - {"format", "session"} == {
+    # Every fragment carries format, session and the server's observed_at.
+    assert all("observed_at" in frag for frag in published)
+    assert {k for frag in published for k in frag} - {"format", "session", "observed_at"} == {
         "metrics",
         "chart_map",
         "meta",

@@ -104,6 +104,7 @@ function rackSession(lastSeen: Record<"tech1" | "tech2" | "tech3", number>): Nor
     note: null,
     startMs: T0 - 3_600_000,
     endMs: T0,
+    observedMs: T0,
     lab: { hosts, links: [], explicitElements: [] },
     meta: {
       interval: INTERVAL_S,
@@ -137,6 +138,7 @@ function liveHostSession(): NormalizedSession {
     note: null,
     startMs: T0 - 3_600_000,
     endMs: T0,
+    observedMs: T0,
     lab: { hosts, links: [], explicitElements: [] },
     meta: {
       interval: INTERVAL_S,

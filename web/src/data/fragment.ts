@@ -3,7 +3,7 @@
 // here: if you find yourself writing one, the wire has drifted from the payload and
 // the fix belongs in the model, not here.
 import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
-import { dropInvalidTimestamps, type NormalizedSession } from "./exportDoc";
+import { dropInvalidTimestamps, type NormalizedSession, parseObservedAt } from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
 
 /**
@@ -67,6 +67,14 @@ export function applyFragment(
   // a list — including [] — replaces the set wholesale. Last known state,
   // expressed on the wire (spec 2026-07-16 §1).
   const hasTunnels = frag.tunnels != null;
+  // The server's clock (#866) only ever raises the display horizon; it never
+  // touches endMs, which stays metric-only for health.
+  const fragObservedMs = parseObservedAt(frag.observed_at);
+  const observedMs =
+    fragObservedMs !== null && fragObservedMs > session.observedMs
+      ? fragObservedMs
+      : session.observedMs;
+  const hasObservation = observedMs !== session.observedMs;
 
   // A heartbeat/no-op fragment (right session, nothing else set) has nothing
   // to mutate or replace below — return the SAME session object rather than
@@ -85,7 +93,8 @@ export function applyFragment(
     deletedIds.length === 0 &&
     !hasMetaPatch &&
     !hasChartMapPatch &&
-    !hasTunnels
+    !hasTunnels &&
+    !hasObservation
   ) {
     return session;
   }
@@ -143,5 +152,5 @@ export function applyFragment(
 
   const tunnels = hasTunnels ? (frag.tunnels as TunnelRecord[]) : session.tunnels;
 
-  return { ...session, events, endMs, meta, chartMap, tunnels };
+  return { ...session, events, endMs, observedMs, meta, chartMap, tunnels };
 }

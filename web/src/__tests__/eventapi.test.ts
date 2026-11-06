@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { createEvent, deleteEvent, EventApiError, endEvent, updateEvent } from "../data/eventApi";
 import { useReviewStore } from "../data/reviewStore";
+import { displayEndMs } from "../data/time";
 
 // minimal.json's first session id — see the fixture; hydrate once per test so
 // the synthetic fragments have a session to land on.
@@ -133,5 +134,46 @@ describe("eventApi", () => {
       `/api/session/${encodeURIComponent(sid)}/event/7/end`,
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  // #866: the response header carries the server's time, so the mutation's
+  // own applied fragment raises the horizon even with the SSE echo withheld.
+  describe("X-Otto-Observed-At", () => {
+    // minimal.json's last sample; the collector has stalled since.
+    const T = Date.parse("2026-07-01T08:30:00Z");
+    const later = new Date(T + 600_000).toISOString();
+    const stamped = (body: unknown, status: number) =>
+      new Response(body === null ? null : JSON.stringify(body), {
+        status,
+        headers: { "X-Otto-Observed-At": later },
+      });
+
+    it("HTTP-only: with SSE withheld, a successful Mark on a stalled collector is visible at once", async () => {
+      const sid = hydrate();
+      const mark = { ...record(7, "mark"), timestamp: later };
+      vi.mocked(fetch).mockResolvedValueOnce(stamped(mark, 201));
+      await createEvent(sid, { label: "mark" });
+      const s = useReviewStore.getState().sessions[0];
+      expect(s.endMs).toBe(T); // metric-only, untouched
+      expect(displayEndMs(s)).toBe(T + 600_000);
+      const windowMs = 300_000;
+      const ts = Date.parse(mark.timestamp);
+      expect(ts).toBeGreaterThanOrEqual(displayEndMs(s) - windowMs);
+      expect(ts).toBeLessThanOrEqual(displayEndMs(s));
+    });
+
+    it("deleteEvent applies the header too", async () => {
+      const sid = hydrate();
+      vi.mocked(fetch).mockResolvedValueOnce(stamped(null, 204));
+      await deleteEvent(sid, 7);
+      expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(T + 600_000);
+    });
+
+    it("a response without the header leaves the horizon alone", async () => {
+      const sid = hydrate();
+      vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+      await createEvent(sid, { label: "deploy" });
+      expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(T);
+    });
   });
 });

@@ -178,6 +178,8 @@ def build_live_export(
     frame: SessionFrame,
     collector: MetricCollector,
     lab: LabSnapshot,
+    *,
+    observed_at: str | None = None,
 ) -> MonitorExport:
     """Wrap one live collector's in-memory state into a format:1 document.
 
@@ -194,6 +196,9 @@ def build_live_export(
         collector: The live (or scripted) collector to snapshot.
         lab: The frozen lab config for this session (see
             :func:`otto.monitor.session.snapshot_lab`).
+        observed_at: The server-observed time to stamp on the session
+            (:func:`otto.monitor.collector.observed_now`), passed in by the
+            caller so this function still never reads the clock itself.
 
     Returns:
         The single-session :class:`~otto.models.monitor.MonitorExport`.
@@ -211,6 +216,7 @@ def build_live_export(
         log_events=_log_event_records(collector),
         chart_map=collector.get_chart_map(),
         tunnels=collector.get_tunnel_records(),
+        observed_at=observed_at,
     )
     return MonitorExport(
         format=EXPORT_FORMAT,  # ty: ignore[invalid-argument-type]

@@ -13,6 +13,7 @@ import {
   type TimeRange,
 } from "./exportDoc";
 import { applyFragment } from "./fragment";
+import { displayEndMs } from "./time";
 
 /** Pure merge step shared by appendFragment/appendFragments: applies each
  * fragment in order to `sessions`, returning the SAME array reference if
@@ -113,7 +114,7 @@ interface ReviewActions {
    * has exactly two cases, keyed on that same `range`:
    *  - Following (`range === null`): set `windowMs` only. `range` STAYS
    *    null — the widened/narrowed window is picked up on the next render
-   *    via `liveRange(session.endMs, windowMs)` (SubjectPage.tsx). Pinning
+   *    via `liveRange(displayEndMs(session), windowMs)` (SubjectPage.tsx). Pinning
    *    `range` here would silently turn "pick a window" into "pause", which
    *    is not what choosing a preset means while following.
    *  - Paused (`range !== null`): re-pin `range` to the new width, ending at
@@ -290,7 +291,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
       const session = sessions.find((s) => s.id === activeSessionId);
       // Freeze the CURRENTLY DERIVED window into an absolute range. Pause and "user
       // picked a custom range" are then the same state, so they cannot disagree.
-      const to = session ? session.endMs : Date.now();
+      const to = session ? displayEndMs(session) : Date.now();
       set({ range: { from: to - windowMs, to } });
     },
     setWindow: (windowMs) => {

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from otto.models.monitor import MonitorSessionFragment
+from otto.monitor import event_ops
 from otto.monitor.server import MonitorServer
 from otto.monitor.session import new_frame
 from tests._fixtures._fake_collector import FakeCollector
@@ -79,6 +80,36 @@ class TestPublishedPayloadsAreFragments:
         assert frag.log_events[0].host == "r1"
         assert frag.log_events[0].tab == "syslog"
         assert frag.log_events[0].fields == {"msg": "up"}
+        collector.unsubscribe(q)
+
+
+class TestPublishedPayloadsCarryObservedAt:
+    @pytest.mark.asyncio
+    async def test_event_fragment_carries_observed_at(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every fragment carries the server-observed time it was published (#866).
+
+        The dashboard's live window follows it, so a mark shows at once even
+        when the collector has published no metric for longer than the window.
+        The field must survive validation AND serialisation: the model is
+        ``extra="ignore"``, so an undeclared field would vanish silently.
+        """
+        fixed = datetime(2030, 6, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+        monkeypatch.setattr(event_ops, "utc_now", lambda: fixed)
+        collector = FakeCollector()
+        collector.session_id = "s1"
+        q = collector.subscribe()
+
+        mark = await collector.add_event("mark")
+        assert mark.timestamp == fixed, "an unstamped mark reads the one server clock"
+        await collector.push("r1", "cpu", 1.0, ts=datetime(2020, 1, 1, tzinfo=timezone.utc))
+        for raw in (q.get_nowait(), q.get_nowait()):
+            frag = MonitorSessionFragment.model_validate(raw)
+            assert frag.observed_at == fixed
+            dumped = frag.model_dump(mode="json")
+            again = MonitorSessionFragment.model_validate(dumped)
+            assert again.observed_at == frag.observed_at
         collector.unsubscribe(q)
 
 

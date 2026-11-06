@@ -38,3 +38,20 @@ def _ts_list(ts: Path, name: str) -> list:
 )
 def test_the_browser_list_mirrors_the_declared_one(ts, name):
     assert _ts_list(DATA / ts, name) == getattr(formats, name)
+
+
+def test_the_browser_observed_at_header_mirrors_the_server_one():
+    """``eventApi.ts`` reads the header ``otto.monitor.server`` stamps (#866).
+
+    The browser cannot import the Python constant, so it spells the name
+    again; a rename on one side alone would silently drop the observation.
+    """
+    from otto.monitor.server import OBSERVED_AT_HEADER
+
+    found = re.search(
+        r'^const OBSERVED_AT_HEADER = "([^"]+)";',
+        (DATA / "eventApi.ts").read_text(),
+        re.MULTILINE,
+    )
+    assert found, "OBSERVED_AT_HEADER is not declared in eventApi.ts"
+    assert found.group(1) == OBSERVED_AT_HEADER

@@ -17,9 +17,18 @@ import type {
 } from "../api/export.gen";
 import { EXPORT_FORMAT, MONITOR_EXPORT_READ_VERSIONS } from "./exportFormat";
 import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
-import { parseTs } from "./time";
+import { displayEndMs, parseTs } from "./time";
 
 export class ExportParseError extends Error {}
+
+/** A wire `observed_at` (the server's clock, #866) as epoch ms, or null when
+ * it is absent or unparsable. Shared by the import path (normalizeSession)
+ * and the live path (fragment.ts's applyFragment). */
+export function parseObservedAt(observedAt: string | null | undefined): number | null {
+  if (observedAt == null) return null;
+  const ms = parseTs(observedAt);
+  return Number.isNaN(ms) ? null : ms;
+}
 
 export interface TimeRange {
   from: number;
@@ -48,7 +57,11 @@ export interface NormalizedSession {
   label: string | null;
   note: string | null;
   startMs: number;
+  /** The last metric sample (or the session's own end): health reads this. */
   endMs: number;
+  /** The server's last observation of the session (`observed_at`), else
+   * `endMs`. Only `displayEndMs` (data/time.ts) reads it. */
+  observedMs: number;
   lab: {
     hosts: HostSnapshot[];
     links: LinkSnapshot[];
@@ -215,6 +228,8 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     if (lastSampleMs === null || t > lastSampleMs) lastSampleMs = t;
   }
   const endMs = parsedEnd ?? lastSampleMs ?? startMs;
+  // An old or imported document has no observed_at: fall back to endMs.
+  const observedMs = parseObservedAt(raw.observed_at) ?? endMs;
 
   const hostIds = new Set<string>();
   for (const h of hosts) {
@@ -229,6 +244,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     note: raw.note ?? null,
     startMs,
     endMs,
+    observedMs,
     lab: { hosts, links, explicitElements },
     meta: {
       interval: raw.meta?.interval ?? null,
@@ -282,6 +298,7 @@ function sessionToRecord(session: NormalizedSession): SessionRecord {
     log_events: session.logEvents,
     chart_map: session.chartMap,
     tunnels: session.tunnels,
+    observed_at: new Date(session.observedMs).toISOString(),
   };
 }
 
@@ -328,8 +345,10 @@ export function parseExportDocument(text: string): ParseResult {
   return { document: typed, sessions, warnings };
 }
 
+/** `to` is the display horizon, so a mark made while the collector stalled
+ * is inside the bounds the charts render and the zoom clamps to (#866). */
 export function sessionBounds(session: NormalizedSession): TimeRange {
-  return { from: session.startMs, to: session.endMs };
+  return { from: session.startMs, to: displayEndMs(session) };
 }
 
 /** minutes=null means Full range → no filter (null). */

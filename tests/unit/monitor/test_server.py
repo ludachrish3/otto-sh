@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -29,12 +29,17 @@ import pytest_asyncio
 from _archive import _make_archive
 
 from otto.models import LabSnapshot, MonitorExport, SessionRecord
+from otto.models.monitor import EventRecord
+from otto.monitor import event_ops
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from otto.monitor.export import build_db_export
-from otto.monitor.server import MonitorServer, _build_app
+from otto.monitor.server import OBSERVED_AT_HEADER, MonitorServer, _build_app
 from otto.monitor.session import new_frame
 from tests._fixtures._fake_collector import FakeCollector
+
+_FIXED_NOW = datetime(2030, 6, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+"""A fixed server clock for patching :func:`otto.monitor.event_ops.utc_now`."""
 
 
 def _empty_collector() -> MetricCollector:
@@ -80,7 +85,18 @@ class _RunningServer:
 async def _request_json(
     handle: _RunningServer, method: str, path: str, payload: dict[str, object] | None
 ) -> tuple[int, dict[str, object]]:
-    """POST/PATCH/DELETE against *handle*'s server, returning ``(status, json-body)``.
+    """POST/PATCH/DELETE against *handle*'s server, returning ``(status, json-body)``."""
+    status, _, body = await _request(handle, method, path, payload)
+    return status, body
+
+
+async def _request(
+    handle: _RunningServer, method: str, path: str, payload: dict[str, object] | None
+) -> tuple[int, dict[str, str], dict[str, object]]:
+    """POST/PATCH/DELETE against *handle*'s server: ``(status, headers, json-body)``.
+
+    Header names are lowercased: HTTP names are case-insensitive, and the
+    server sends them lowercase.
 
     Every route sits behind the access-key middleware (``?key=``), attached
     here so call sites never repeat it. ``urllib`` raises ``HTTPError`` for
@@ -93,15 +109,17 @@ async def _request_json(
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
 
-    def _do() -> tuple[int, dict[str, object]]:
+    def _do() -> tuple[int, dict[str, str], dict[str, object]]:
         try:
             with contextlib.closing(urllib.request.urlopen(req)) as resp:
                 body = resp.read()
-                return resp.status, (json.loads(body) if body else {})
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+                return resp.status, headers, (json.loads(body) if body else {})
         except urllib.error.HTTPError as err:
             with contextlib.closing(err):
                 body = err.read()
-            return err.code, (json.loads(body) if body else {})
+            headers = {k.lower(): v for k, v in err.headers.items()}
+            return err.code, headers, (json.loads(body) if body else {})
 
     return await asyncio.to_thread(_do)
 
@@ -486,6 +504,58 @@ class TestSessionEventRoutes:
         assert status == 204
         status, _ = await delete_(live_server, f"/api/session/{sid}/event/{created['id']}")
         assert status == 404
+
+    @pytest.mark.asyncio
+    async def test_event_routes_send_observed_at_header(
+        self, live_server: _RunningServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Create, end, update and delete each tell the client the server's time (#866).
+
+        The dashboard applies a mutation's response as a fragment, so the
+        header raises the live window's horizon even when the SSE echo is
+        withheld or late: a mark on a stalled collector shows at once. The
+        header, a Mark-now timestamp and a Stop stamp all read the ONE server
+        clock, so a fixed clock makes each of them exactly equal to it.
+        """
+        monkeypatch.setattr(event_ops, "utc_now", lambda: _FIXED_NOW)
+        sid = live_server.collector.session_id
+        base = f"/api/session/{sid}/event"
+
+        def assert_stamped(headers: dict[str, str]) -> None:
+            assert datetime.fromisoformat(headers[OBSERVED_AT_HEADER.lower()]) == _FIXED_NOW
+
+        status, headers, created = await _request(live_server, "POST", base, {"label": "x"})
+        assert status == 201
+        assert_stamped(headers)
+        assert EventRecord.model_validate(created).timestamp == _FIXED_NOW
+        # The fixed clock would stamp end == start, which is refused: end a
+        # span that started an hour earlier instead.
+        started = (_FIXED_NOW - timedelta(hours=1)).isoformat()
+        _, _, span = await _request(live_server, "POST", base, {"label": "s", "timestamp": started})
+        status, headers, ended = await _request(live_server, "POST", f"{base}/{span['id']}/end", {})
+        assert status == 200
+        assert_stamped(headers)
+        assert EventRecord.model_validate(ended).end_timestamp == _FIXED_NOW
+        status, headers, _ = await _request(
+            live_server, "PATCH", f"{base}/{created['id']}", {"label": "y"}
+        )
+        assert status == 200
+        assert_stamped(headers)
+        status, headers, _ = await _request(live_server, "DELETE", f"{base}/{created['id']}", None)
+        assert status == 204
+        assert_stamped(headers)
+
+    @pytest.mark.asyncio
+    async def test_review_mode_responses_carry_no_observed_at(
+        self, review_server: _RunningServer
+    ) -> None:
+        """An archive has no live window: its edits must not move its horizon to today."""
+        assert review_server.document is not None
+        sid = review_server.document.sessions[0].id
+        _, headers, _ = await _request(
+            review_server, "POST", f"/api/session/{sid}/event", {"label": "x"}
+        )
+        assert OBSERVED_AT_HEADER.lower() not in headers
 
     @pytest.mark.asyncio
     async def test_review_mode_mutations_403(self, review_server: _RunningServer) -> None:
@@ -1014,6 +1084,20 @@ class TestMonitorSessionsEndpoint:
         finally:
             server.stop()
             await task
+
+    @pytest.mark.asyncio
+    async def test_snapshot_carries_observed_at(
+        self, live_server: _RunningServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live snapshot stamps the session with the server's time (#866).
+
+        A reload or a resync after a long collector stall must still place
+        the live window at server-now, not at the last metric.
+        """
+        monkeypatch.setattr(event_ops, "utc_now", lambda: _FIXED_NOW)
+        text = await get_text(live_server, "/api/monitor_sessions")
+        export = MonitorExport.model_validate_json(text)
+        assert export.sessions[0].observed_at == _FIXED_NOW
 
     @pytest.mark.asyncio
     async def test_live_mode_with_no_session_returns_404(self) -> None:

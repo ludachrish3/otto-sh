@@ -99,10 +99,26 @@ async function errorMessage(res: Response): Promise<string> {
   return fallback;
 }
 
-function applyRecord(sessionId: string, record: EventRecord): void {
-  useReviewStore
-    .getState()
-    .actions.appendFragment({ format: STREAM_FORMAT, session: sessionId, events: [record] });
+/** The response header carrying the server's clock; OBSERVED_AT_HEADER in
+ * src/otto/monitor/server.py names it on the other side, and
+ * tests/unit/models/test_browser_format_mirrors.py holds the two equal. */
+const OBSERVED_AT_HEADER = "X-Otto-Observed-At";
+
+/** The server's time a mutation's response reports, for the fragment it
+ * applies: the shared apply path raises the live horizon with it, so a mark
+ * on a stalled collector shows at once even with the SSE echo withheld
+ * (#866). Absent (review mode, an older server) means no observation. */
+function observedAt(res: Response): string | null {
+  return res.headers.get(OBSERVED_AT_HEADER);
+}
+
+function applyRecord(sessionId: string, record: EventRecord, observed_at: string | null): void {
+  useReviewStore.getState().actions.appendFragment({
+    format: STREAM_FORMAT,
+    session: sessionId,
+    events: [record],
+    observed_at,
+  });
 }
 
 const jsonInit = (method: string, body: unknown): RequestInit => ({
@@ -135,15 +151,19 @@ async function mutate<T>(
 }
 
 /** A mutation whose response body is the affected event record. */
-function mutateRecord(
+async function mutateRecord(
   sessionId: string,
   path: string,
   init: RequestInit,
 ): Promise<EventRecord | StaleResult> {
-  return mutate(
-    async () => (await (await request(path, init)).json()) as EventRecord,
-    (record) => applyRecord(sessionId, record),
+  const result = await mutate(
+    async () => {
+      const res = await request(path, init);
+      return { record: (await res.json()) as EventRecord, observed: observedAt(res) };
+    },
+    ({ record, observed }) => applyRecord(sessionId, record, observed),
   );
+  return isStale(result) ? result : result.record;
 }
 
 export function createEvent(
@@ -170,14 +190,19 @@ export function updateEvent(
   return mutateRecord(sessionId, `${base(sessionId)}/${eventId}`, jsonInit("PATCH", input));
 }
 
-export function deleteEvent(sessionId: string, eventId: number): Promise<undefined | StaleResult> {
-  return mutate(
-    () => request(`${base(sessionId)}/${eventId}`, { method: "DELETE" }).then(() => undefined),
-    () =>
+export async function deleteEvent(
+  sessionId: string,
+  eventId: number,
+): Promise<undefined | StaleResult> {
+  const result = await mutate(
+    async () => observedAt(await request(`${base(sessionId)}/${eventId}`, { method: "DELETE" })),
+    (observed) =>
       useReviewStore.getState().actions.appendFragment({
         format: STREAM_FORMAT,
         session: sessionId,
         deleted_event_ids: [eventId],
+        observed_at: observed,
       }),
   );
+  return isStale(result) ? result : undefined;
 }

@@ -42,6 +42,7 @@ function liveSession(lastSampleMs: number): NormalizedSession {
     note: null,
     startMs: lastSampleMs - 3_600_000,
     endMs: lastSampleMs,
+    observedMs: lastSampleMs,
     lab: { hosts, links: [], explicitElements: [] },
     meta: { interval: INTERVAL_S, charts: [], tabs: [] },
     metrics,

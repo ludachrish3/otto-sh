@@ -19,7 +19,12 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HostSnapshot, MetricRecord } from "../api/export.gen";
-import { deriveElements, type NormalizedSession } from "../data/exportDoc";
+import {
+  deriveElements,
+  documentFromSessions,
+  type NormalizedSession,
+  parseExportDocument,
+} from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { buildIndex } from "../data/seriesIndex";
 import { SubjectPage } from "../pages/SubjectPage";
@@ -33,7 +38,10 @@ globalThis.ResizeObserver ??= class {
 class FakeChart {
   group = "";
   handlers = new Map<string, (e: unknown) => void>();
-  setOption() {}
+  options: unknown[] = [];
+  setOption(option: unknown) {
+    this.options.push(option);
+  }
   on(event: string, cb: (e: unknown) => void) {
     this.handlers.set(event, cb);
   }
@@ -76,6 +84,7 @@ function liveSession(): NormalizedSession {
     note: null,
     startMs: T0 - SESSION_AGE_MS,
     endMs: T0,
+    observedMs: T0,
     lab: { hosts, links: [], explicitElements: [] },
     meta: {
       interval: 5,
@@ -206,5 +215,72 @@ describe("SubjectPage zoom buttons", () => {
     });
 
     expect(useReviewStore.getState().range).toEqual({ from: T0 - 80_000, to: T0 - 40_000 });
+  });
+});
+
+// #866: a mark made while the collector stalled sits past the last metric.
+// The session's bounds follow the server's observation, so after export →
+// import the mark is inside the rendered range and zooming around it holds.
+describe("SubjectPage bounds past a stalled collector", () => {
+  it("after export → import, a stalled-collector mark is inside the rendered bounds, and zooming around it is accepted", () => {
+    const at = T0 + 600_000;
+    const stalled: NormalizedSession = {
+      ...liveSession(),
+      observedMs: at,
+      events: [{ id: 1, timestamp: new Date(at).toISOString(), label: "stalled-mark" }],
+    };
+    const text = JSON.stringify(documentFromSessions([stalled]));
+    const [imported] = parseExportDocument(text).sessions;
+    useReviewStore.setState({
+      sessions: [imported],
+      activeSessionId: "s",
+      mode: "review",
+      range: null,
+      windowMs: WINDOW_MS,
+    });
+
+    render(<SubjectPage />);
+    expect(instances.length).toBeGreaterThan(0);
+
+    // Review: window_ IS bounds = [T0-120_000, at], span 720_000, so the
+    // last 5% is [T0+564_000, at]: the mark's own instant, accepted.
+    act(() => {
+      instances[0].handlers.get("datazoom")?.({ start: 95, end: 100 });
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(useReviewStore.getState().range).toEqual({ from: T0 + 564_000, to: at });
+  });
+});
+
+// #866: the live window follows the server's clock past a stalled
+// collector. When the stall outlasts the window, no series has a point in
+// view, but the chart must stay: its axes still frame the window, and the
+// new mark's overlay is drawn on it. Dropping every empty chart would hide
+// the very mark the window moved to show.
+describe("SubjectPage live window past a stall longer than the window", () => {
+  it("keeps the chart and draws the mark when no series has a point in the window", () => {
+    const at = T0 + 600_000; // the mark, ten minutes after the last metric
+    const windowMs = 300_000; // a five-minute follow window
+    const stalled: NormalizedSession = {
+      ...liveSession(),
+      observedMs: at,
+      events: [{ id: 1, timestamp: new Date(at - 1_000).toISOString(), label: "stalled-mark" }],
+    };
+    useReviewStore.setState({
+      sessions: [stalled],
+      activeSessionId: "s",
+      mode: "live",
+      range: null,
+      windowMs,
+    });
+
+    render(<SubjectPage />);
+
+    expect(screen.getByTestId("chart-CPU").getAttribute("data-point-count")).toBe("0");
+    expect(instances.length).toBe(1);
+    const options = JSON.stringify(instances[0].options);
+    expect(options).toContain(`"max":${at}`);
+    expect(options).toContain('"name":"stalled-mark"');
   });
 });

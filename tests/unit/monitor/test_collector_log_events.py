@@ -144,6 +144,8 @@ async def test_record_log_events_publishes_one_batched_sse_message() -> None:
     ]
     await collector._record_log_events("host1", "syslog", events)
     msg = q.get_nowait()
+    # Every fragment carries the server's time; test_stream_fragments.py pins it.
+    assert isinstance(msg.pop("observed_at"), str)
     assert msg == {
         "format": 1,
         "session": "",

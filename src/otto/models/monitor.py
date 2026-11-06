@@ -506,6 +506,13 @@ class SessionRecord(RowModel):
     log_events: list[LogEventRecord] = Field(default_factory=list)
     chart_map: dict[str, str] = Field(default_factory=dict)
     tunnels: list[TunnelRecord] = Field(default_factory=list)
+    observed_at: datetime | None = None
+    """When the server last observed this session, on the server's clock.
+
+    A live snapshot stamps it; an archive or an older document leaves it unset.
+    The dashboard's live window follows it, so a mark shows at once even when
+    no metric has arrived for longer than the window (#866).
+    """
 
 
 class MonitorExport(RowModel):
@@ -549,6 +556,10 @@ class MonitorSessionFragment(RowModel):
     precedent, not the append rule): ``None`` means "no tunnel update in this
     fragment"; a list — including ``[]`` — replaces the session's set
     wholesale. That is "last known state" expressed on the wire.
+
+    ``observed_at`` is the server's clock when the fragment was published,
+    the same field as :attr:`SessionRecord.observed_at`. Optional and
+    additive, so the stream stays format 1.
     """
 
     # The Literal's arguments are MONITOR_STREAM_READ_VERSIONS (otto.models.formats,
@@ -563,3 +574,4 @@ class MonitorSessionFragment(RowModel):
     chart_map: dict[str, str] = Field(default_factory=dict)
     meta: SessionMeta | None = None
     tunnels: list[TunnelRecord] | None = None
+    observed_at: datetime | None = None

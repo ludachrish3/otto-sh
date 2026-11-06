@@ -323,6 +323,7 @@ def test_monitor_export_schema_carries_an_unreachable_fragment_def():
         "chart_map",
         "meta",
         "tunnels",
+        "observed_at",
     }
     # Not reachable from the export document's own root shape.
     assert set(doc["required"]) == {"format", "sessions"}

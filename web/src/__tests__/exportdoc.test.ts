@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import kitchenDoc from "../../fixtures/kitchen-sink.json" with { type: "json" };
+import { eventMarkers } from "../charts/options";
 import {
+  documentFromSessions,
   ExportParseError,
   metricsForSubject,
   parseExportDocument,
@@ -396,5 +398,61 @@ describe("a document with more rows than V8 will spread into one call", () => {
     // The series slice had the same shape (`out.push(...sliceSeries(...))`):
     // one series with more points than the spread ceiling must come back whole.
     expect(metricsForSubject(result.sessions[0], "h0", null)).toHaveLength(ROWS);
+  });
+});
+
+// #866: each session carries the server's last observation (`observed_at`).
+// It survives export → import, and a mark made while the collector stalled
+// stays inside the session's bounds.
+describe("observed_at", () => {
+  const T = Date.parse("2026-07-01T08:30:00Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const session = (id: string, observedMs: number | null, events: unknown[] = []) => ({
+    id,
+    start: iso(T - 600_000),
+    metrics: [metric("h1", "cpu", iso(T), 1)],
+    events,
+    ...(observedMs === null ? {} : { observed_at: iso(observedMs) }),
+  });
+  const doc = (...sessions: unknown[]) => JSON.stringify({ format: 1, sessions });
+  const roundTrip = (text: string) =>
+    parseExportDocument(JSON.stringify(documentFromSessions(parseExportDocument(text).sessions)));
+
+  it("an old document without observed_at falls back to endMs", () => {
+    const [s] = parseExportDocument(doc(session("a", null))).sessions;
+    expect(s.observedMs).toBe(T);
+    expect(s.endMs).toBe(T);
+  });
+
+  it("an unparsable observed_at falls back to endMs", () => {
+    const raw = { ...session("a", null), observed_at: "garbage" };
+    const [s] = parseExportDocument(doc(raw)).sessions;
+    expect(s.observedMs).toBe(T);
+  });
+
+  it("observed_at survives dashboard export → import", () => {
+    const [s] = roundTrip(doc(session("a", T + 600_000))).sessions;
+    expect(s.observedMs).toBe(T + 600_000);
+    expect(s.endMs).toBe(T); // metric-only, unchanged
+  });
+
+  it("two sessions with unequal observed_at round-trip export → import unchanged", () => {
+    const text = doc(session("a", T + 60_000), session("b", T + 600_000));
+    const before = parseExportDocument(text).sessions.map((s) => [s.id, s.observedMs, s.endMs]);
+    const after = roundTrip(text).sessions.map((s) => [s.id, s.observedMs, s.endMs]);
+    expect(after).toEqual(before);
+    expect(after).toEqual([
+      ["a", T + 60_000, T],
+      ["b", T + 600_000, T],
+    ]);
+  });
+
+  it("after export → import, a stalled-collector mark is inside the rendered bounds", () => {
+    const at = T + 600_000;
+    const mark = { id: 1, timestamp: iso(at), label: "m", source: "manual" };
+    const [s] = roundTrip(doc(session("a", at, [mark]))).sessions;
+    const bounds = sessionBounds(s);
+    expect(bounds).toEqual({ from: T - 600_000, to: at });
+    expect(eventMarkers(s.events, bounds).map((m) => m.id)).toEqual([1]);
   });
 });

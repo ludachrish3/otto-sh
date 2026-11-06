@@ -33,7 +33,22 @@ pytestmark = [
     pytest.mark.browser,
 ]
 
-NOW = datetime(2026, 7, 12, 10, 0, 0, tzinfo=timezone.utc)
+
+@pytest.fixture
+def now() -> datetime:
+    """The anchor for a test's pushed points, an hour AHEAD of the server's clock.
+
+    The live window ends at the later of the last metric and the server's
+    ``observed_at`` (``displayEndMs``, web/src/data/time.ts; #866). Points dated
+    ahead of the server's time keep that horizon on the last metric, so each
+    window below is pinned by the pushed data, never by when the test runs. A
+    fixed calendar date would fall behind the server's clock, and every point
+    would leave the window. Taken when each test starts, not at import: a
+    module-level anchor goes stale once the run is an hour past collection.
+    """
+    return datetime.now(tz=timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+
+
 _KITCHEN_SINK = CHECKOUT_ROOT / "web" / "fixtures" / "kitchen-sink.json"
 
 
@@ -85,9 +100,9 @@ def _outage_text(elapsed_ms: float) -> str:
 
 
 def test_live_boots_hydrated_without_an_import_step(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
-    _push_tick(live_stream_dash, "r1", NOW, 10.0)
+    _push_tick(live_stream_dash, "r1", now, 10.0)
     page.goto(live_stream_dash.url)
     # No Import front door: live hydrates from /api/monitor_sessions on boot
     # (data/bootstrap.ts's bootstrapFromServer), then opens the SSE stream.
@@ -99,12 +114,12 @@ def test_live_boots_hydrated_without_an_import_step(
 
 
 def test_no_historical_badge_in_live_mode(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
     """Plan 5b final review, Finding C1: the review bar (and its HISTORICAL
     tag) must not render at all in live mode -- live mode gets its own
     "Live"/pause chrome in AppBar instead (ReviewBar.tsx)."""
-    _push_tick(live_stream_dash, "r1", NOW, 10.0)
+    _push_tick(live_stream_dash, "r1", now, 10.0)
     page.goto(live_stream_dash.url)
     # status-text is gone; the pause glyph (live-mode-only) is the AppBar's
     # live signal now.
@@ -114,9 +129,9 @@ def test_no_historical_badge_in_live_mode(
 
 
 def test_streamed_points_grow_the_chart(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
-    _push_tick(live_stream_dash, "r1", NOW, 10.0)
+    _push_tick(live_stream_dash, "r1", now, 10.0)
     page.goto(live_stream_dash.url)
     # "/" is the topology landing now (route swap); subject-link-* lives on
     # the grid (#/hosts).
@@ -127,16 +142,16 @@ def test_streamed_points_grow_the_chart(
 
     before = chart.get_attribute("data-point-count")
     for i in range(1, 6):
-        _push_tick(live_stream_dash, "r1", NOW + timedelta(seconds=5 * i), 10.0 + i)
+        _push_tick(live_stream_dash, "r1", now + timedelta(seconds=5 * i), 10.0 + i)
     # SSE -> coalesced flush (16ms, data/stream.ts) -> store -> re-render.
     # Playwright retries this assertion until it's true.
     expect(chart).not_to_have_attribute("data-point-count", before or "")
 
 
 def test_pause_freezes_the_view_and_resume_follows_again(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
-    _push_tick(live_stream_dash, "r1", NOW, 10.0)
+    _push_tick(live_stream_dash, "r1", now, 10.0)
     page.goto(live_stream_dash.url)
     # "/" is the topology landing now (route swap); subject-link-* lives on
     # the grid (#/hosts).
@@ -148,7 +163,7 @@ def test_pause_freezes_the_view_and_resume_follows_again(
     frozen_window = chart.get_attribute("data-window-to")
 
     for i in range(1, 6):
-        _push_tick(live_stream_dash, "r1", NOW + timedelta(seconds=5 * i), 10.0 + i)
+        _push_tick(live_stream_dash, "r1", now + timedelta(seconds=5 * i), 10.0 + i)
 
     # Pause is a VIEW control (reviewStore.ts's togglePause): ingestion never
     # stops -- points keep arriving behind the frozen window, but the window
@@ -299,7 +314,7 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
 
 
 def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
     """Task 6 (Plan 5b follow-ups): AppBar's live-window preset tabs
     (5m/15m/1h, beside Pause) drives reviewStore.ts's ``setWindow``. Choosing
@@ -315,8 +330,8 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     see reviewStore.ts's doc comment on the two cases) could not go
     unnoticed: it would flip this same label.
 
-    Fully deterministic without a wall clock: every timestamp below is an
-    explicit historical ``ts=`` passed to ``push()``, so ``session.endMs``
+    Deterministic: every timestamp below is an explicit ``ts=`` passed to
+    ``push()``, ahead of the server's clock (see the ``now`` fixture), so ``session.endMs``
     (and so the live-follow window, ``liveRange``) is pinned by the data
     itself, never by when this test happens to run.
 
@@ -336,9 +351,9 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     ``setOption()`` effect (see ChartPanel.tsx), off ``option.series[].data``
     itself -- which can only move when ECharts actually was.
     """
-    _push_tick(live_stream_dash, "r1", NOW - timedelta(minutes=50), 1.0)
-    _push_tick(live_stream_dash, "r1", NOW - timedelta(minutes=10), 2.0)
-    _push_tick(live_stream_dash, "r1", NOW, 3.0)
+    _push_tick(live_stream_dash, "r1", now - timedelta(minutes=50), 1.0)
+    _push_tick(live_stream_dash, "r1", now - timedelta(minutes=10), 2.0)
+    _push_tick(live_stream_dash, "r1", now, 3.0)
     page.goto(live_stream_dash.url)
     # "/" is the topology landing now (route swap); subject-link-* lives on
     # the grid (#/hosts). live-window-* itself lives in SubjectPage's title
@@ -373,7 +388,7 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
 
 
 def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector], now: datetime
 ) -> None:
     """Task 11 regression pin -- against REAL ECharts, not the mocked vitest one.
 
@@ -406,8 +421,8 @@ def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(
     from *inside* that patch effect itself (see ChartPanel.tsx), so it can
     only advance when the real ECharts merge patch actually ran.
     """
-    _push_tick(live_stream_dash, "r1", NOW, 10.0)  # host A: the one we view
-    _push_tick(live_stream_dash, "r2", NOW, 20.0)  # host B: keeps ticking
+    _push_tick(live_stream_dash, "r1", now, 10.0)  # host A: the one we view
+    _push_tick(live_stream_dash, "r2", now, 20.0)  # host B: keeps ticking
     page.goto(live_stream_dash.url)
     # "/" is the topology landing now (route swap); subject-link-* lives on
     # the grid (#/hosts).
@@ -425,7 +440,7 @@ def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(
     before_count = chart.get_attribute("data-point-count")
 
     for i in range(1, 6):
-        _push_tick(live_stream_dash, "r2", NOW + timedelta(seconds=5 * i), 20.0 + i)
+        _push_tick(live_stream_dash, "r2", now + timedelta(seconds=5 * i), 20.0 + i)
 
     # Host A's own series never ticked...
     expect(chart).to_have_attribute("data-point-count", before_count or "")

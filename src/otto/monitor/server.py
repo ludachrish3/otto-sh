@@ -20,15 +20,15 @@ GET  /api/export/json  Download the current data as a ``format:1`` document
 
 import asyncio
 import contextlib
+import dataclasses
 import functools
 import json
 import logging
 import secrets
-from collections.abc import AsyncGenerator, Callable, Generator
-from datetime import datetime, timezone
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, ParamSpec, TypeVar
 
 import uvicorn
 from fastapi import FastAPI
@@ -52,9 +52,9 @@ from ..models.monitor import (
     SessionRecord,
 )
 from ..utils import wait_for_async
-from . import archive_edit
+from . import archive_edit, event_ops
 from .broadcast import ENDED, LAPSED, end_queue
-from .collector import MetricCollector
+from .collector import MetricCollector, observed_now
 from .event_ops import EventValidationError, merge_update, resolve_create
 from .events import MonitorEvent
 from .export import build_live_export, document_json
@@ -63,6 +63,23 @@ from .session import SessionFrame
 _STATIC_DIR = MONITOR
 
 logger = logging.getLogger(__name__)
+
+
+class _AlreadyEndedError(Exception):
+    """An /end resolver found the span already ended (answered 409)."""
+
+
+OBSERVED_AT_HEADER = "X-Otto-Observed-At"
+"""The response header that carries the server's time on every live event mutation.
+
+The dashboard (``web/src/data/eventApi.ts``, which spells the name again;
+tests/unit/models/test_browser_format_mirrors.py holds the two equal)
+puts it on the fragment it applies from the response, so a mark raises the
+live window's horizon at once even when the stream's echo is withheld (#866).
+"""
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R", bound=Response)
 
 
 def _dist_index_path() -> Path:
@@ -337,7 +354,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 "is a programming error: the CLI always supplies both for "
                 "live mode."
             )
-        return document_json(build_live_export(frame, collector, lab))
+        return document_json(build_live_export(frame, collector, lab, observed_at=observed_now()))
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
@@ -466,7 +483,27 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             return JSONResponse({"error": "unknown session"}, status_code=404)
         return None
 
+    def _observed(
+        route: Callable[_P, Awaitable[_R]],
+    ) -> Callable[_P, Awaitable[_R]]:
+        """Stamp a live event route's response, whatever its status, with server time.
+
+        One wrapper for create, end, update and delete, so no route can forget
+        the header. Review mode has no live window, so its responses go out
+        unstamped: an edit to an archive must not move its horizon to today.
+        """
+
+        @functools.wraps(route)
+        async def stamped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            response = await route(*args, **kwargs)
+            if mode == "live":
+                response.headers[OBSERVED_AT_HEADER] = observed_now()
+            return response
+
+        return stamped
+
     @app.post("/api/session/{session_id}/event")
+    @_observed
     async def create_event(session_id: str, body: EventCreateBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
         refused = _mutation_guard(session_id)
         if refused is not None:
@@ -513,28 +550,42 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         return _event_response(event.to_dict(), status_code=201)
 
     async def _apply_live_update(
-        event_id: int, existing: "MonitorEvent", body: EventUpdateBody
+        event_id: int, body: EventUpdateBody, *, refuse_ended: bool = False
     ) -> JSONResponse:
-        """One merge rule for PATCH and /end — event_ops resolves, collector writes."""
-        try:
+        """One merge rule for PATCH and /end — event_ops resolves, collector writes.
+
+        The merge runs INSIDE the collector's one mutation entry point, onto
+        the event as it stands under its lock: a PATCH racing an /end (or a
+        delete) can never merge onto fields read before the other landed.
+        ``refuse_ended`` is /end's "already ended" check, made there too.
+        """
+
+        def resolve(current: "MonitorEvent") -> "MonitorEvent":
+            if refuse_ended and current.end_timestamp is not None:
+                raise _AlreadyEndedError
             fields = merge_update(
                 body,
-                existing_label=existing.label,
-                existing_color=existing.color,
-                existing_dash=existing.dash,
-                existing_timestamp=existing.timestamp,
-                existing_end=existing.end_timestamp,
+                existing_label=current.label,
+                existing_color=current.color,
+                existing_dash=current.dash,
+                existing_timestamp=current.timestamp,
+                existing_end=current.end_timestamp,
             )
+            return dataclasses.replace(
+                current,
+                label=fields.label,
+                color=fields.color,
+                dash=fields.dash,
+                timestamp=fields.timestamp,
+                end_timestamp=fields.end_timestamp,
+            )
+
+        try:
+            updated = await collector.mutate_event(event_id, resolve)
         except EventValidationError as err:
             return JSONResponse({"error": str(err)}, status_code=422)
-        updated = await collector.update_event(
-            event_id,
-            label=fields.label,
-            color=fields.color,
-            dash=fields.dash,
-            timestamp=fields.timestamp,
-            end_timestamp=fields.end_timestamp,
-        )
+        except _AlreadyEndedError:
+            return JSONResponse({"error": "Event already ended"}, status_code=409)
         if updated is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
         return _event_response(updated.to_dict())
@@ -590,6 +641,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         return JSONResponse(record.model_dump(mode="json", exclude_none=True))
 
     @app.post("/api/session/{session_id}/event/{event_id}/end")
+    @_observed
     async def end_event(session_id: str, event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
         """Stamp a span's end with the server clock (the live Stop button)."""
         refused = _mutation_guard(session_id)
@@ -597,7 +649,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             return refused
         # Ending IS a partial update (end_timestamp only) — same seam, not a
         # second resolution path, in either mode.
-        stamp_end = EventUpdateBody(end_timestamp=datetime.now(tz=timezone.utc))
+        stamp_end = EventUpdateBody(end_timestamp=event_ops.utc_now())
         if mode == "review":
             doc_existing = _find_document_event(session_id, event_id)
             if doc_existing is None:
@@ -605,14 +657,10 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             if doc_existing.end_timestamp is not None:
                 return JSONResponse({"error": "Event already ended"}, status_code=409)
             return await _apply_review_update(session_id, event_id, doc_existing, stamp_end)
-        existing = next((e for e in collector.get_events() if e.id == event_id), None)
-        if existing is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
-        if existing.end_timestamp is not None:
-            return JSONResponse({"error": "Event already ended"}, status_code=409)
-        return await _apply_live_update(event_id, existing, stamp_end)
+        return await _apply_live_update(event_id, stamp_end, refuse_ended=True)
 
     @app.patch("/api/session/{session_id}/event/{event_id}")
+    @_observed
     async def update_event(  # type: ignore[reportUnusedFunction]
         session_id: str, event_id: int, body: EventUpdateBody
     ) -> JSONResponse:
@@ -624,12 +672,10 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             if doc_existing is None:
                 return JSONResponse({"error": "Event not found"}, status_code=404)
             return await _apply_review_update(session_id, event_id, doc_existing, body)
-        existing = next((e for e in collector.get_events() if e.id == event_id), None)
-        if existing is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
-        return await _apply_live_update(event_id, existing, body)
+        return await _apply_live_update(event_id, body)
 
     @app.delete("/api/session/{session_id}/event/{event_id}")
+    @_observed
     async def delete_event(session_id: str, event_id: int) -> Response:  # type: ignore[reportUnusedFunction]
         refused = _mutation_guard(session_id)
         if refused is not None:

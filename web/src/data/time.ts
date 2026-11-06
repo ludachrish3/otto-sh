@@ -1,16 +1,27 @@
 /** Time helpers for the review UI. All internal times are epoch ms. */
-import type { TimeRange } from "./exportDoc";
+import type { NormalizedSession, TimeRange } from "./exportDoc";
 
 export function parseTs(iso: string): number {
   return Date.parse(iso);
 }
 
 /** The live window: follow the tail unless the view is pinned. `nowMs` is
- * the reference instant — callers pass the active session's `endMs` (the
- * latest ingested sample) rather than a raw wall clock, so the window
- * advances exactly when new data arrives and never races a real clock. */
+ * the reference instant — callers pass `displayEndMs(session)` rather than a
+ * raw wall clock, so the window advances exactly when the server reports and
+ * never races the browser's clock. */
 export function liveRange(nowMs: number, windowMs: number): TimeRange {
   return { from: nowMs - windowMs, to: nowMs };
+}
+
+/** The session's display horizon: the later of its last metric (`endMs`)
+ * and the server's last observation of it (`observedMs`, from `observed_at`).
+ * The ONE derivation behind the live window, Pause and the session's bounds
+ * (#866): a mark made while the collector stalls is past `endMs`, and would
+ * otherwise wait for the next metric to show. Event timestamps never enter
+ * it, so a far-future event stays off-window until server time reaches it.
+ * Health and freshness read `endMs` alone (data/health.ts). */
+export function displayEndMs(session: NormalizedSession): number {
+  return Math.max(session.endMs, session.observedMs);
 }
 
 /** A row's clock time, wherever a list shows one (the Events panel, a label

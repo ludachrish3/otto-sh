@@ -35,7 +35,7 @@ import { groupRowsFromData, type LogEventRow, logKey, visibleRows } from "../dat
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { seriesKey } from "../data/seriesIndex";
 import { buildSeriesTree, collectSeriesPoints, filterTree } from "../data/seriesTree";
-import { formatClockTime, liveRange } from "../data/time";
+import { displayEndMs, formatClockTime, liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
 import { Breadcrumbs } from "../ui/Breadcrumbs";
@@ -152,16 +152,18 @@ export function SubjectPage() {
   }
 
   const bounds = sessionBounds(session);
-  // range === null in live mode means "follow the tail": the window is
-  // derived from the session's latest ingested sample (endMs), not a raw
-  // wall clock — every appended fragment moves endMs, and that's what
-  // re-renders this page, so the window advances exactly when new data
-  // arrives without this component ever subscribing to the liveness clock
-  // (which stays reserved for health/dimming — see data/clock.ts). Pausing
+  // range === null in live mode means "follow the tail": the window ends
+  // at displayEndMs (data/time.ts), the later of the latest ingested sample
+  // and the server's `observed_at` from each fragment and mutation response,
+  // never a browser wall clock. Every appended fragment moves it, and that's
+  // what re-renders this page, so the window advances exactly when the server
+  // reports, and a mark shows at once even while metrics stall (#866),
+  // without this component ever subscribing to the liveness clock (which
+  // stays reserved for health/dimming — see data/clock.ts). Pausing
   // (reviewStore's togglePause) snapshots a `range`, so this falls through
   // to the frozen branch automatically; review mode is unaffected (mode
   // !== "live" always takes the existing bounds fallback).
-  const window_ = range ?? (mode === "live" ? liveRange(session.endMs, windowMs) : bounds);
+  const window_ = range ?? (mode === "live" ? liveRange(displayEndMs(session), windowMs) : bounds);
   const theme = chartTheme(dark);
   const filtered = filterTree(tree, { search, chips, source });
   // Pass the DERIVED window, not the raw (possibly-null) `range` — while
@@ -317,19 +319,23 @@ export function SubjectPage() {
               // subject's member series ("host/label") happens to already match.
               // Losing host/label by flattening into SeriesInput first (as before)
               // made the revision lookup silently always miss.
-              const entries = shown
-                .map((s) => ({
-                  input: {
-                    key: s.key,
-                    name: s.key === s.label ? s.label : s.host,
-                    slot: muteCores && overallCount === 1 && s.label === "Overall CPU" ? 0 : s.slot,
-                    muted: muteCores && s.label.startsWith("core "),
-                    points: points.get(s.key) ?? [],
-                  } satisfies SeriesInput,
-                  idxKey: seriesKey(s.host, s.label),
-                }))
-                .filter((e) => e.input.points.length > 0);
-              if (entries.length === 0) return null;
+              //
+              // A series with no point in the window stays, with empty data:
+              // the tree only holds series the session has recorded, so an
+              // empty one means "nothing in view", not "never had data". The
+              // chart keeps its axes, and its event overlays, which ride
+              // series[0] (options.ts): a live window that follows the server
+              // past a stall longer than itself still draws the new mark (#866).
+              const entries = shown.map((s) => ({
+                input: {
+                  key: s.key,
+                  name: s.key === s.label ? s.label : s.host,
+                  slot: muteCores && overallCount === 1 && s.label === "Overall CPU" ? 0 : s.slot,
+                  muted: muteCores && s.label.startsWith("core "),
+                  points: points.get(s.key) ?? [],
+                } satisfies SeriesInput,
+                idxKey: seriesKey(s.host, s.label),
+              }));
               const series = entries.map((e) => e.input);
               const revKey = entries
                 .map((e) => `${e.idxKey}:${session.index.rev.get(e.idxKey) ?? 0}`)
@@ -489,8 +495,8 @@ function ChartSection(props: {
   //
   // window_/markers are consumed here too (buildStackOption bakes the window
   // at whatever instant this memo happens to recompute), but NOT tracked as
-  // deps — in live-follow mode `window_` is derived from session.endMs,
-  // which is global (fragment.ts extends it from ANY host's metric), so a
+  // deps — in live-follow mode `window_` is derived from displayEndMs,
+  // which is global (fragment.ts raises it from ANY host's fragment), so a
   // chart whose own series never ticks would otherwise keep a stale x-axis
   // forever. That's handled OUTSIDE this memo: ChartPanel gets `window_`/
   // `markers` as separate props and re-applies just the axis bounds + event
@@ -500,7 +506,7 @@ function ChartSection(props: {
   //
   // `windowMs` IS tracked, though, and deliberately NOT via
   // `window_.from`/`window_.to`. Two different things move the derived
-  // `window_` while following: (a) session.endMs advancing on every live tick
+  // `window_` while following: (a) displayEndMs advancing on every live tick
   // — a pure SLIDE, harmless to skip here, because points that age out of view
   // were already excluded and new ones for THIS chart's own series arrive via
   // `revKey`; and (b) the user picking a wider/narrower preset (the presets
@@ -518,7 +524,7 @@ function ChartSection(props: {
   // is the right proxy for (b) because it changes ONLY on that rare,
   // user-initiated action; `window_.to` would also satisfy (b) but
   // reintroduces (a) — it advances on every single live tick (any host's, via
-  // the shared session.endMs) — which would defeat the whole point of gating
+  // the shared displayEndMs) — which would defeat the whole point of gating
   // the expensive rebuild on `revKey` in the first place. See
   // chart_memo.test.tsx for both directions pinned as mutation-proof tests.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above — deliberately partial
