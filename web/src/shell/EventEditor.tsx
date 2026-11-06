@@ -32,6 +32,7 @@ import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { TextInput } from "../ui/TextInput";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
+import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
 import { editorGateKey, useMutationGate } from "./useMutationGate";
 
@@ -123,7 +124,19 @@ export function EventEditor() {
         ? editorGateKey(editor.sessionId, editor.eventId)
         : editorGateKey(editor.draft.sessionId, null),
   );
-  const [deleteArmed, setDeleteArmed] = useState(false);
+  // The delete dialog names the STORED record, not the unsaved form: the
+  // delete removes what is stored, whatever the label field holds now.
+  const storedLabel = useReviewStore((s) =>
+    editor?.kind === "edit"
+      ? (s.sessions
+          .find((sess) => sess.id === editor.sessionId)
+          ?.events.find((ev) => ev.id === editor.eventId)?.label ?? "")
+      : "",
+  );
+  // The delete confirmation dialog, and the failure it shows (the dialog
+  // owns its own error so it stays open to retry).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [fill, setFill] = useState<Fill>({ start: "complete", end: "empty" });
   // Start was fully cleared (its field called onChange(null)). form.timestampMs
   // keeps the last valid epoch only so the user can retype; it is never saved
@@ -174,7 +187,8 @@ export function EventEditor() {
   // dependency Biome's exhaustive-deps rule needs to see in the array.
   useEffect(() => {
     setError(null);
-    setDeleteArmed(false);
+    setConfirmOpen(false);
+    setDeleteError(null);
     if (editor === null) {
       setForm(null);
       return;
@@ -233,19 +247,17 @@ export function EventEditor() {
       }
     }, SAVE);
 
-  const onDelete = async () => {
+  // Confirm runs through the same gate as Save, so the two stay exclusive.
+  const confirmDelete = () => {
     if (editor.kind !== "edit") return;
-    if (!deleteArmed) {
-      setDeleteArmed(true);
-      return;
-    }
-    await gate.run(async () => {
+    setDeleteError(null);
+    void gate.run(async () => {
       try {
         const current = sourceGuard();
         if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
         closeEventEditor();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setDeleteError(err instanceof Error ? err.message : String(err));
       }
     }, DELETE);
   };
@@ -383,14 +395,12 @@ export function EventEditor() {
               {editor.kind === "edit" && (
                 <Button
                   size="sm"
-                  color={deleteArmed ? "primary-destructive" : "secondary-destructive"}
+                  color="secondary-destructive"
                   data-testid="editor-delete"
-                  isDisabled={gate.pending && gate.pendingAction !== DELETE}
-                  isLoading={gate.pendingAction === DELETE}
-                  showTextWhileLoading
-                  onPress={() => void onDelete()}
+                  isDisabled={gate.pending}
+                  onPress={() => setConfirmOpen(true)}
                 >
-                  {deleteArmed ? "Really delete?" : "Delete"}
+                  Delete
                 </Button>
               )}
             </div>
@@ -416,6 +426,17 @@ export function EventEditor() {
               </Button>
             </div>
           </SlideoutMenu.Footer>
+          <ConfirmDeleteEvent
+            isOpen={confirmOpen}
+            eventLabel={storedLabel}
+            pending={gate.pendingAction === DELETE}
+            error={deleteError}
+            onCancel={() => {
+              setConfirmOpen(false);
+              setDeleteError(null);
+            }}
+            onConfirm={confirmDelete}
+          />
         </Dialog>
       </Modal>
     </ModalOverlay>

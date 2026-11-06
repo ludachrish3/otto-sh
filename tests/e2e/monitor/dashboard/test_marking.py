@@ -779,6 +779,56 @@ def test_cluster_overflow_list_scrolls_at_a_short_viewport(page: Page, live_stre
     expect(_tid(page, "editor-label")).to_have_value("step 59")
 
 
+def _open_editor_for_seeded_event(page: Page, dash, label: str) -> int:
+    """Plant one point event through the API and open its editor from the
+    events panel; returns its wire id."""
+    t0 = datetime.now(tz=timezone.utc)
+    _push_tick(dash, "r1", t0, 10.0)
+    status, body = _post_json(
+        dash.api_url(f"/api/session/{dash.collector.session_id}/event"),
+        {"label": label, "timestamp": (t0 - timedelta(seconds=30)).isoformat()},
+    )
+    assert status == 201, body
+    page.goto(dash.url)
+    page.goto(f"{dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+    _tid(page, "events-button").click()
+    _tid(page, "events-panel").wait_for()
+    _tid(page, f"event-edit-{body['id']}").click()
+    _tid(page, "event-editor").wait_for()
+    return body["id"]
+
+
+def test_delete_asks_and_escape_keeps_the_editor(page: Page, live_stream_dash) -> None:
+    """Delete asks in a dialog that names the event: a double-click deletes
+    nothing, Escape closes only the dialog (focus back on Delete), and Confirm
+    deletes the event and closes both (#869)."""
+    event_id = _open_editor_for_seeded_event(page, live_stream_dash, "soak run")
+    deletes: list[str] = []
+    page.on("request", lambda r: deletes.append(r.url) if r.method == "DELETE" else None)
+
+    _tid(page, "editor-delete").dblclick()
+    dialog = _tid(page, "confirm-delete")
+    expect(dialog).to_be_visible()
+    expect(dialog).to_contain_text("\u201csoak run\u201d will be removed. This can't be undone.")
+    expect(_tid(page, "confirm-delete-cancel")).to_be_focused()
+    assert deletes == []
+
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(_tid(page, "event-editor")).to_be_visible()
+    expect(_tid(page, "editor-delete")).to_be_focused()
+    assert deletes == []
+
+    _tid(page, "editor-delete").click()
+    _tid(page, "confirm-delete-confirm").click()
+    expect(dialog).to_have_count(0)
+    expect(_tid(page, "event-editor")).to_have_count(0)
+    assert len(deletes) == 1
+    assert deletes[0].endswith(f"/event/{event_id}")
+
+
 # --- Visual gate (Task 13 Step 4): span-label legibility, both themes -----
 #
 # Not one of the ten behavior specs above -- legibility can only be judged by
