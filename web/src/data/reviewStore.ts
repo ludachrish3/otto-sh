@@ -9,6 +9,7 @@ import type { MonitorHistoricalExportDocument, MonitorSessionFragment } from "..
 import {
   ExportParseError,
   type NormalizedSession,
+  observedAtMicros,
   parseExportDocument,
   type TimeRange,
 } from "./exportDoc";
@@ -49,6 +50,71 @@ function mergeFragments(
   return next;
 }
 
+/** The fragments applied while each reconnect resync is in flight, keyed by
+ * the token `beginResync` handed out (#868). A snapshot is applied when its
+ * response lands, but the server captured it at some point after the request
+ * started: a fragment applied meanwhile (a Start span's POST response, a
+ * delete) may be newer than it or already reflected in it, so the resync
+ * replays one only when the server ordered it after the capture (see
+ * `orderedAfterCapture`). Not store state: nothing renders it. */
+const resyncLogs = new Map<number, MonitorSessionFragment[]>();
+let lastResyncToken = 0;
+
+/** The part of a fragment a resync may replay: its event upserts and deletes,
+ * with the server stamp that orders them. Metric and log rows are appends,
+ * not idempotent: the stream is closed during a resync, so any that land
+ * meanwhile were published before the snapshot's request, which already
+ * carries them. A fragment with no event change, or no stamp, is never
+ * replayed (a stampless one cannot be ordered, so the snapshot wins), so it
+ * is not logged. */
+function replayable(frag: MonitorSessionFragment): MonitorSessionFragment | null {
+  if (frag.observed_at == null) return null;
+  const out: MonitorSessionFragment = { session: frag.session, observed_at: frag.observed_at };
+  if (frag.format !== undefined) out.format = frag.format;
+  if (frag.events?.length) out.events = frag.events;
+  if (frag.deleted_event_ids?.length) out.deleted_event_ids = frag.deleted_event_ids;
+  return out.events !== undefined || out.deleted_event_ids !== undefined ? out : null;
+}
+
+/** Whether the server ordered `frag` after the snapshot captured its
+ * session: replay iff the fragment's stamp is STRICTLY later than the
+ * snapshot session's. Both come from the server's one clock
+ * (event_ops.utc_now, strictly increasing at microsecond resolution), each
+ * read in the same synchronous step as the state it describes, so the
+ * comparison is the server's own order. A tie or a missing stamp means the
+ * snapshot wins: it may already reflect the change, or a later remote end
+ * or delete of the same event. */
+function orderedAfterCapture(
+  frag: MonitorSessionFragment,
+  captured: ReadonlyMap<string, number | null>,
+): boolean {
+  const fragUs = observedAtMicros(frag.observed_at);
+  const capturedUs = captured.get(frag.session) ?? null;
+  return fragUs !== null && capturedUs !== null && fragUs > capturedUs;
+}
+
+/** Fold a resync's snapshot sessions with what the store held: replay the
+ * logged fragments the server ordered after the capture onto them, and
+ * never lower a kept session's `observedMs` (the server's clock only moves
+ * forward). `captured` holds each snapshot session's own raw `observed_at`.
+ * A replayed row that is dropped as invalid was already warned about when it
+ * first applied, so the replay's own warnings are discarded. */
+function reconcileResync(
+  fresh: NormalizedSession[],
+  held: readonly NormalizedSession[],
+  log: readonly MonitorSessionFragment[],
+  captured: ReadonlyMap<string, number | null>,
+): NormalizedSession[] {
+  const later = log.filter((frag) => orderedAfterCapture(frag, captured));
+  const replayed = mergeFragments(fresh, later, []);
+  return replayed.map((s) => {
+    const before = held.find((h) => h.id === s.id);
+    return before !== undefined && before.observedMs > s.observedMs
+      ? { ...s, observedMs: before.observedMs }
+      : s;
+  });
+}
+
 interface ReviewActions {
   /** Parse + load an export document. Returns false (and sets importError,
    * keeping any previously loaded data) on failure. */
@@ -70,8 +136,20 @@ interface ReviewActions {
    * So this falls back to `sessions[0]` + `range: null`, exactly like a
    * fresh import, ONLY in that case. Returns false (and sets importError,
    * keeping any previously loaded data) on failure, same contract as
-   * importMonitorSessions. */
-  resyncMonitorSessions: (text: string, sourceName: string) => boolean;
+   * importMonitorSessions.
+   *
+   * `token` (from `beginResync`, taken before the snapshot request) makes
+   * the resync replay every fragment applied since onto the snapshot
+   * BEFORE its one store write, so a mutation answered while the snapshot
+   * was in flight is not rewound (#868). With or without it, a kept
+   * session's `observedMs` never decreases. */
+  resyncMonitorSessions: (text: string, sourceName: string, token?: number) => boolean;
+  /** Start logging the fragments `appendFragments` applies, for the resync
+   * whose snapshot request starts now; returns its token. */
+  beginResync: () => number;
+  /** Stop logging for `token`. Idempotent; the resync's own apply ends it
+   * too, so a caller ends it unconditionally once the attempt is over. */
+  endResync: (token: number) => void;
   /** Append a live-stream fragment to the session it addresses. A no-op if
    * that session isn't currently held (e.g. it hasn't loaded yet). */
   appendFragment: (frag: MonitorSessionFragment) => void;
@@ -178,10 +256,12 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
         return false;
       }
     },
-    resyncMonitorSessions: (text, sourceName) => {
+    resyncMonitorSessions: (text, sourceName, token) => {
+      const log = token === undefined ? [] : (resyncLogs.get(token) ?? []);
+      if (token !== undefined) resyncLogs.delete(token);
       try {
         const result = parseExportDocument(text);
-        const { activeSessionId } = get();
+        const { activeSessionId, sessions: held } = get();
         // The ONE condition that decides preserve-vs-fallback: does the
         // CURRENT activeSessionId still resolve against the freshly
         // re-fetched snapshot? If so, `range`/`activeSessionId` are left
@@ -194,7 +274,12 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
         const idStillPresent =
           activeSessionId !== null && result.sessions.some((s) => s.id === activeSessionId);
         set({
-          sessions: result.sessions,
+          sessions: reconcileResync(
+            result.sessions,
+            held,
+            log,
+            new Map(result.document.sessions.map((r) => [r.id, observedAtMicros(r.observed_at)])),
+          ),
           rawMonitorSessions: result.document,
           sourceName,
           warnings: result.warnings,
@@ -212,18 +297,21 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
         return false;
       }
     },
-    appendFragment: (frag) => {
-      const { sessions, warnings } = get();
-      const dropped: string[] = [];
-      const next = mergeFragments(sessions, [frag], dropped);
-      if (next !== sessions || dropped.length > 0) {
-        set({
-          sessions: next,
-          ...(dropped.length > 0 ? { warnings: [...warnings, ...dropped] } : {}),
-        });
-      }
+    // One store write and one notification, whether the door is HTTP or SSE.
+    appendFragment: (frag) => get().actions.appendFragments([frag]),
+    beginResync: () => {
+      lastResyncToken += 1;
+      resyncLogs.set(lastResyncToken, []);
+      return lastResyncToken;
+    },
+    endResync: (token) => {
+      resyncLogs.delete(token);
     },
     appendFragments: (frags) => {
+      if (resyncLogs.size > 0) {
+        const kept = frags.flatMap((f) => replayable(f) ?? []);
+        for (const log of resyncLogs.values()) for (const f of kept) log.push(f);
+      }
       const { sessions, warnings } = get();
       const dropped: string[] = [];
       const next = mergeFragments(sessions, frags, dropped);

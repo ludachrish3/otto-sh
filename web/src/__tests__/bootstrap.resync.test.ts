@@ -23,6 +23,9 @@ vi.mock("../data/stream", () => ({
 // Imported AFTER the mock so bootstrap.ts picks up the mocked module.
 const { bootstrapFromServer } = await import("../data/bootstrap");
 const { useReviewStore } = await import("../data/reviewStore");
+const { installOpenSpanReconciler } = await import("../data/openSpan");
+const { startSpan } = await import("../shell/marking");
+const { useUiStore } = await import("../ui/uiStore");
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MINIMAL = readFileSync(join(__dir, "../../fixtures/minimal.json"), "utf-8");
@@ -115,5 +118,87 @@ describe("bootstrapFromServer's resync (Finding I3)", () => {
     // The resync was NOT a no-op: sessions data itself moved forward.
     expect(state.sessions[0].metrics.length).toBeGreaterThan(metricsBeforeResync);
     expect(state.sessions[0].endMs).toBe(Date.parse("2026-07-01T09:00:00Z"));
+  });
+});
+
+// #868: a reconnect snapshot is captured when its request starts but applied
+// when its response lands. Anything applied in between, such as a Start
+// span's POST response, is newer than the snapshot: the resync replays it
+// onto the snapshot before the one store write, so the new span, its
+// tracking and the server-observed horizon all survive.
+describe("bootstrapFromServer's resync vs a mutation answered meanwhile (#868)", () => {
+  const SID = "2026-07-01T08-00-00-minimal";
+  const OBSERVED = "2026-07-01T09:10:00+00:00"; // the POST response's server stamp
+  const CAPTURED_BEFORE = (() => {
+    const doc = JSON.parse(MINIMAL) as { sessions: Record<string, unknown>[] };
+    for (const session of doc.sessions) session["observed_at"] = "2026-07-01T09:09:59.999999+00:00";
+    return JSON.stringify(doc);
+  })();
+  const span = {
+    id: 9,
+    timestamp: "2026-07-01T09:09:00+00:00",
+    label: "load test",
+    source: "manual",
+    color: "#888888",
+    dash: "dash",
+    end_timestamp: null,
+  };
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+    let resolve: (v: T) => void = () => {};
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("a Start span answered while the snapshot is in flight keeps its event, its tracking and the horizon", async () => {
+    const post = deferred<Response>();
+    const snapshot = deferred<Response>();
+    let snapshots = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/mode") {
+          return Promise.resolve(jsonResponse({ mode: "live", source: null, editable: true }));
+        }
+        if (url === "/api/monitor_sessions") {
+          snapshots += 1;
+          return snapshots === 1
+            ? Promise.resolve(new Response(MINIMAL, { status: 200 }))
+            : snapshot.promise;
+        }
+        if (url === `/api/session/${encodeURIComponent(SID)}/event`) return post.promise;
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    await bootstrapFromServer();
+    const uninstall = installOpenSpanReconciler();
+    try {
+      const started = startSpan("load test");
+      const resynced = capturedResync?.();
+      post.resolve(
+        new Response(JSON.stringify(span), {
+          status: 201,
+          headers: { "content-type": "application/json", "X-Otto-Observed-At": OBSERVED },
+        }),
+      );
+      await started;
+      expect(useUiStore.getState().openSpan).toEqual({ sessionId: SID, eventId: 9 });
+
+      // The snapshot was captured before the POST: it holds no event 9, and
+      // its server stamp is earlier than the POST response's.
+      snapshot.resolve(new Response(CAPTURED_BEFORE, { status: 200 }));
+      await resynced;
+
+      const session = useReviewStore.getState().sessions[0];
+      expect(session.events.map((e) => e.id)).toEqual([9]);
+      expect(useUiStore.getState().openSpan).toEqual({ sessionId: SID, eventId: 9 });
+      expect(session.observedMs).toBe(Date.parse(OBSERVED));
+    } finally {
+      uninstall();
+      useUiStore.setState({ openSpan: null });
+    }
   });
 });

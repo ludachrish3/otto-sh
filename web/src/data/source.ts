@@ -49,6 +49,8 @@ function detachServerSource(): void {
   review.setMode("review");
   review.setEditable(false);
   const ui = useUiStore.getState().actions;
+  // A source switch resets live UI state synchronously: a decision of its
+  // own, apart from data/openSpan.ts's ended-or-vanished rule.
   ui.setOpenSpan(null);
   ui.closeEventEditor();
   ui.disarmSweep();

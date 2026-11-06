@@ -166,7 +166,10 @@ Its dropdown adds:
 
 - **Start span…** / **End span** — opens the same label popover to open a
   span, then closes it (server clock) once you choose **End span**; only
-  one span can be open at a time.
+  one span can be open at a time. The dashboard tracks the span it opened,
+  and **End span** / **Stop** go inactive as soon as that span ends or is
+  deleted, from any source: **End now** on its row, the editor, or another
+  client.
 - **Sweep span on chart** — arms a one-shot drag on the *next* chart you
   drag across: instead of zoom-selecting, that drag becomes the span's
   start and end and opens the full event editor pre-filled with it. Esc

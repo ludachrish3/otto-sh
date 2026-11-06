@@ -49,7 +49,8 @@ export async function endOpenSpan(): Promise<StaleResult | undefined> {
   const current = sourceGuard();
   const result = current(await endEvent(span.sessionId, span.eventId));
   if (isStale(result)) return result;
-  useUiStore.getState().actions.setOpenSpan(null);
+  // No clear here: endEvent applied the ended record to the store, and the
+  // open-span reconciler (data/openSpan.ts) clears the tracked span from that.
   return undefined;
 }
 
