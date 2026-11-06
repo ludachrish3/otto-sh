@@ -24,7 +24,12 @@ def _dump(root, body, names, extra=None):
 def _findings(tmp_path, before, after, names, extra_before=None, extra_after=None):
     old = _dump(tmp_path / "a", before, names, extra_before)
     new = _dump(tmp_path / "b", after, names, extra_after)
-    return api_compat.compare_dumps(old, new)
+    findings = api_compat.compare_dumps(old, new)
+    # Every finding of the corpus names a site of one of the two dumps: `site_of` and
+    # `sites` share the comparison's own spelling of a finding's <where>.
+    known = api_compat.sites(old).keys() | api_compat.sites(new).keys()
+    assert {api_compat.site_of(f) for f in findings} <= known, findings
+    return findings
 
 
 # A callable instance whose __call__ is decorated with functools.wraps: its call kind

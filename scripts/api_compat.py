@@ -160,11 +160,21 @@ def _members(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[st
     return out
 
 
+def _input_site(key: str, sub: str) -> str:
+    """Return the ``<where>`` of the input *sub* of the binding *key*."""
+    return f"{key} input {sub}"
+
+
+def _format_site(name: str) -> str:
+    """Return the ``<where>`` of the versioned format *name*."""
+    return f"format {name}"
+
+
 def _inputs(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
     out = []
     old_inputs, new_inputs = old.inputs_of(key), new.inputs_of(key)
     for sub, orec in old_inputs.items():
-        where = f"{key} input {sub}"
+        where = _input_site(key, sub)
         nrec = new_inputs.get(sub)
         if nrec is None:
             out.append(f"{where}: removed")
@@ -181,7 +191,7 @@ def _inputs(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str
             if r not in api_records.split_list(nroutes)
         ]
     out += [
-        f"{key} input {sub}: new required input"
+        f"{_input_site(key, sub)}: new required input"
         for sub, nrec in new_inputs.items()
         if sub not in old_inputs and nrec.fields[1] == "required"
     ]
@@ -220,14 +230,14 @@ def _formats(old: api_records.Dump, new: api_records.Dump) -> "list[str]":
     for name, orec in sorted(old.formats.items()):
         nrec = new.formats.get(name)
         if nrec is None:
-            out.append(f"format {name}: removed")
+            out.append(f"{_format_site(name)}: removed")
             continue
         for label, ofield, nfield in zip(
             ("reads", "writes"), orec.fields, nrec.fields, strict=True
         ):
             kept = set(api_records.split_list(nfield))
             out += [
-                f"format {name}: {label} no longer has {v}"
+                f"{_format_site(name)}: {label} no longer has {v}"
                 for v in api_records.split_list(ofield)
                 if v not in kept
             ]
@@ -264,7 +274,47 @@ def compare_dumps(old: api_records.Dump, new: api_records.Dump) -> "list[str]":
     return list(dict.fromkeys(out))
 
 
+FORMATS_NAMESPACE = "(formats)"
+
+
+def sites(dump: api_records.Dump) -> "dict[str, str]":
+    """Return every site of *dump*, each with the binding that owns it.
+
+    A site is a binding, a member, an input or a format, spelled as
+    :func:`compare_dumps` spells the ``<where>`` of a finding about it. A
+    binding owns itself, its members and its inputs; a format owns itself.
+    A finding names a site of the older dump, except "new required input",
+    which names an input only the newer dump has.
+    """
+    out = {}
+    for rec in dump.records.values():
+        if rec.kind == "name":
+            out[rec.key] = rec.key
+        elif rec.kind == "member":
+            out[rec.key] = api_records.binding_of(rec)
+        elif rec.kind == "input":
+            out[_input_site(rec.key, rec.fields[0])] = rec.key
+        elif rec.kind == api_records.FORMAT:
+            out[_format_site(rec.key)] = _format_site(rec.key)
+    return out
+
+
+def site_of(finding: str) -> str:
+    """Return the ``<where>`` of *finding*: the site it is about.
+
+    A finding about a binding's bases, obligations or enum members names the
+    binding, so those roll up to it.
+    """
+    return finding.partition(": ")[0]
+
+
 _WHERE = re.compile(r"^(otto(?:\.\w+)*):(\S+)(.*)$")
+
+
+def namespace_of(site: str) -> str:
+    """Return the declared namespace *site* is under, or :data:`FORMATS_NAMESPACE` for a format."""
+    match = _WHERE.match(site)
+    return FORMATS_NAMESPACE if match is None else match.group(1)
 
 
 def group_findings(findings: "list[str]") -> "list[str]":

@@ -269,6 +269,18 @@ def _cliff_rules(config: Path) -> "tuple[list[_Parser], bool]":
     return parsers, bool(git.get("protect_breaking_commits", False))
 
 
+@functools.cache
+def release_tag_glob(config: Path = CLIFF_CONFIG) -> str:
+    """Return the pattern that selects release tags: ``[git].tag_pattern`` in *config*.
+
+    git-cliff reads it as a regular expression and git as a glob (``git
+    describe --match``, ``git tag --list``). ``cliff.toml`` writes it so that
+    both select otto's ``v<digit>...`` tags, and every reader that asks git for
+    a release tag takes the pattern from here.
+    """
+    return tomli.loads(config.read_text(encoding="utf-8"))["git"]["tag_pattern"]
+
+
 def kept_by_cliff(message: str, *, breaking: bool, config: "Path | None" = None) -> bool:
     """Whether git-cliff keeps the commit whose raw *message* this is (first parser wins)."""
     parsers, protect = _cliff_rules(config or CLIFF_CONFIG)
@@ -292,6 +304,11 @@ def is_breaking_commit(subject: str, body: str, *, separated: bool = True) -> bo
     breaking = bool(header["bang"]) or any(f.token in BREAKING_TOKENS for f in footers(body))
     message = f"{subject}\n\n{body}" if body else subject
     return breaking and kept_by_cliff(message, breaking=True)
+
+
+def counts_as_breaking(commit: Commit) -> bool:
+    """Whether git-cliff's census counts *commit* as a breaking change."""
+    return is_breaking_commit(commit.subject, commit.body, separated=commit.separated)
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +408,7 @@ def _commit_problems(repo: Path, commit: Commit) -> "tuple[list[Correction], lis
     A commit's corrections stand or fall together: one bad footer refuses them all.
     """
     claims, reasons = _claims(commit)
-    breaking = is_breaking_commit(commit.subject, commit.body, separated=commit.separated)
+    breaking = counts_as_breaking(commit)
     if (claims or reasons) and not breaking:
         reasons.append(
             "a correction must carry a mark git-cliff counts: `type(scope)!:` or a "
@@ -461,6 +478,6 @@ def release_events(repo: Path, rev_range: str) -> Events:
         if not reasons:
             reasons = _duplicates(claims, claimants)
         result.refusals += [Refusal(commit, reason) for reason in reasons]
-        if is_breaking_commit(commit.subject, commit.body, separated=commit.separated):
+        if counts_as_breaking(commit):
             result.events.append(Event(commit, [] if reasons else claims))
     return result

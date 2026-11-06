@@ -454,6 +454,50 @@ Corrects: 3f9c2a1e5b7d4c8f0a6e2b9d1c4f7a3e5b8d0c2f feat(api): drop Beta
 in `scripts/release_events.py`, which `make release` also reads (see
 [the release process](release_process.md)).
 
+### Measuring interface churn
+
+The number of marked commits in a release says how often a break was marked,
+and the marking rule has changed over time, so two eras' counts do not
+compare. `scripts/interface_churn.py` measures the interface itself. It is a
+report and never a gate:
+
+```bash
+uv run python scripts/interface_churn.py                        # every release, then HEAD
+uv run python scripts/interface_churn.py v0.17.0 v0.18.0 HEAD   # these windows only
+uv run python scripts/interface_churn.py v0.18.0 HEAD --detail --unrecorded
+```
+
+Each consecutive pair of revisions is a window, and each window is one row.
+With no revisions, the windows run between the release tags that `HEAD`
+contains (a tag cut on a branch that never merged is left out), then to `HEAD`.
+
+| Column | Meaning |
+|---|---|
+| `commits`, `marked` | The window's commits, and those that count as breaking by today's `cliff.toml`, whatever the rule was when they landed. |
+| `surface` | The sites the older golden records: every public binding, member, input and versioned format. |
+| `broken`, `churn` | The older golden's sites that broke, and their share of `surface`. A site is broken when a breaking finding names it, when it gained a required input, or when its binding is gone. The findings come from the comparison `make check-breaking` runs on each commit, applied here to the window's two ends. |
+| `findings`, `distinct` | Every breaking finding, and the findings left once those that differ only in namespace are merged. A gap between the two is one change seen under several namespaces: one function exported twice, or one decision restated. |
+| `added` | The sites the newer golden records and the older does not. |
+
+The recorded columns are the net difference between a window's two ends, not
+an audit of marks. A name removed and restored inside one window does not
+show. Neither does a change to `api/public.toml` alone, nor any change of
+behaviour.
+
+A window shows `-` in every recorded column when it is not comparable: either
+revision has no golden, or the two goldens have different schemas. The cutover
+to the API dump is commit `14caec5b6`, inside 0.17.0; pass it as a revision to
+measure the rest of that release. Two goldens of the earlier line format are
+compared by line: `surface` is the older golden's lines, `broken` the lines
+gone or reworded, and `findings` and `distinct` show `-`.
+
+`--detail` lists each window's broken sites by namespace and its distinct
+findings. `--unrecorded` adds the two surfaces no golden records yet, the
+command-line flags and otto's environment variables, approximated by the
+distinct spellings in `src/otto` at each revision. A flag that moved between
+commands, or left one of two, does not show, and a constant that only looks
+like a variable name is counted.
+
 ### Gating a branch before it lands
 
 `make gate-scope` tells you which gates a commit needs. It reads the diff and
