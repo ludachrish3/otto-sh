@@ -40,6 +40,7 @@ export function synthSession(args: {
     note: null,
     startMs: T0,
     endMs: T0 + (ticks - 1) * intervalS * 1000,
+    observedMs: T0 + (ticks - 1) * intervalS * 1000,
     lab: { hosts: labHosts, links: [], explicitElements: [] },
     meta: { interval: intervalS, charts: [], tabs: [] },
     metrics,

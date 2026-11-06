@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
+import { eventMarkers } from "../charts/options";
 import { parseExportDocument } from "../data/exportDoc";
 import { applyFragment } from "../data/fragment";
 import { seriesKey } from "../data/seriesIndex";
+import { displayEndMs, liveRange } from "../data/time";
 import { synthSession } from "./_synth";
 
 const frag = (over: Partial<MonitorSessionFragment>): MonitorSessionFragment =>
@@ -427,5 +429,57 @@ describe("applyFragment with more rows than V8 will spread into one call", () =>
     expect(next.metrics.length).toBe(before + ROWS);
     expect(next.logEvents.length).toBe(ROWS);
     expect(next.endMs).toBe(t0 + (ROWS - 1) * 5000);
+  });
+});
+
+// #866: the live window follows the server's clock, carried on every fragment
+// as `observed_at`. Event timestamps never move the horizon.
+describe("applyFragment observed_at", () => {
+  const base = () => synthSession({ hosts: 1, seriesPerHost: 1, ticks: 2, intervalS: 5 });
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const event = (id: number, ms: number) => ({
+    id,
+    timestamp: iso(ms),
+    label: `ev${id}`,
+    source: "manual",
+    color: "#888888",
+    dash: "dash",
+  });
+
+  it("a fragment's observed_at raises observedMs, never endMs", () => {
+    const s = base();
+    const T = s.endMs;
+    const next = applyFragment(s, frag({ observed_at: iso(T + 60_000) }));
+    // An observation-only fragment is a change: the horizon moved.
+    expect(next).not.toBe(s);
+    expect(next.observedMs).toBe(T + 60_000);
+    expect(next.endMs).toBe(T);
+  });
+
+  it("an older or unparsable observed_at changes nothing", () => {
+    const s = applyFragment(base(), frag({ observed_at: iso(Date.parse("2026-07-12T01:00:00Z")) }));
+    expect(applyFragment(s, frag({ observed_at: iso(s.observedMs - 1) }))).toBe(s);
+    expect(applyFragment(s, frag({ observed_at: "not a time" }))).toBe(s);
+  });
+
+  it("stalled collector: a mark shows", () => {
+    const s = base();
+    const T = s.endMs;
+    const windowMs = 5 * 60_000;
+    const at = T + 10 * 60_000;
+    const next = applyFragment(s, frag({ events: [event(1, at)], observed_at: iso(at) }));
+    const markers = eventMarkers(next.events, liveRange(displayEndMs(next), windowMs));
+    expect(markers.map((m) => m.id)).toEqual([1]);
+  });
+
+  it("future-dated event does not move the horizon", () => {
+    const s = base();
+    const T = s.endMs;
+    const next = applyFragment(
+      s,
+      frag({ events: [event(1, T + 86_400_000)], observed_at: iso(T + 1000) }),
+    );
+    expect(displayEndMs(next)).toBe(T + 1000);
+    expect(eventMarkers(next.events, liveRange(displayEndMs(next), 5 * 60_000))).toEqual([]);
   });
 });

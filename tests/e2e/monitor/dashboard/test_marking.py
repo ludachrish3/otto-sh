@@ -13,14 +13,14 @@ poll, never a flat sleep (5b soak lesson).
 Fixture-timestamp trap (found writing this module, before any test ran):
 ``markNow()``/``startSpan()`` omit ``timestamp``, so the server stamps the
 event at REAL wall-clock now (``event_ops.resolve_create``) -- independent of
-whatever historical instant a test pushes metrics at. A live session's
-follow window tracks ``session.endMs``, which only METRIC fragments extend
-(``fragment.ts``), never events -- so a mark-now event can be real, recorded,
-and permanently outside the visible window if the last pushed metric predates
-it. Every spec below that creates a mark-now/start-span event and then checks
-the chart's marker count pushes a follow-up metric point at a fresh
-``datetime.now(tz=timezone.utc)`` afterward specifically to pull the window's
-``to`` bound past the new event.
+whatever historical instant a test pushes metrics at. The live follow window
+once tracked only ``session.endMs``, which only METRIC fragments extend, so a
+mark-now event could be real, recorded and outside the visible window until
+the next metric arrived (#866). The window now ends at ``displayEndMs``
+(``web/src/data/time.ts``): the later of ``endMs`` and the server's
+``observed_at``, which every fragment, snapshot and event-mutation response
+carries. A spec that marks "now" therefore needs no follow-up metric to see
+its marker, and ``test_mark_now_appears_without_reload`` pins exactly that.
 """
 
 import json
@@ -126,9 +126,9 @@ def test_mark_now_appears_without_reload(page: Page, live_stream_dash) -> None:
     page.keyboard.press("Enter")
     expect(_tid(page, "mark-popover")).to_have_count(0)
 
-    # See the module docstring's "fixture-timestamp trap": pull the live
-    # window's `to` bound past the just-created (real-now) event.
-    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 11.0)
+    # No metric is pushed after the mark: the server's observed_at alone must
+    # bring the real-now event into the window (#866, the module docstring's
+    # "fixture-timestamp trap").
 
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"events-count\"]').innerText !== prev",
@@ -645,8 +645,8 @@ def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) ->
     for label, ts in events:
         status, body = _post_json(url, {"label": label, "timestamp": ts.isoformat()})
         assert status == 201, body
-    # A later tick, so the window's `to` sits just past the right-edge event.
-    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 11.0)
+    # No later tick: the snapshot's observed_at puts the window's `to` just
+    # past the right-edge event (#866).
 
     page.goto(live_stream_dash.url)
     page.goto(f"{live_stream_dash.url}#/hosts")

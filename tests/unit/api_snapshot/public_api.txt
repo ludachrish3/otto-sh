@@ -4331,6 +4331,7 @@ input	otto.models:SessionRecord	S:"log_events"	optional	O	S:"log_events"
 input	otto.models:SessionRecord	S:"meta"	optional	O	S:"meta"
 input	otto.models:SessionRecord	S:"metrics"	optional	O	S:"metrics"
 input	otto.models:SessionRecord	S:"note"	optional	N	S:"note"
+input	otto.models:SessionRecord	S:"observed_at"	optional	N	S:"observed_at"
 input	otto.models:SessionRecord	S:"start"	required	-	S:"start"
 input	otto.models:SessionRecord	S:"tunnels"	optional	O	S:"tunnels"
 member	otto.models:SessionRecord.chart_map	field
@@ -4344,6 +4345,7 @@ member	otto.models:SessionRecord.meta	field
 member	otto.models:SessionRecord.metrics	field
 member	otto.models:SessionRecord.model_config	attribute
 member	otto.models:SessionRecord.note	field
+member	otto.models:SessionRecord.observed_at	field
 member	otto.models:SessionRecord.start	field
 member	otto.models:SessionRecord.tunnels	field
 abstract	otto.models:SessionRecord	-
@@ -4683,6 +4685,7 @@ member	otto.monitor:MetricCollector.get_meta_model	method	sync	-
 member	otto.monitor:MetricCollector.get_series	method	sync	-
 member	otto.monitor:MetricCollector.get_tunnel_records	method	sync	-
 member	otto.monitor:MetricCollector.init_db	method	coroutine	-
+member	otto.monitor:MetricCollector.mutate_event	method	coroutine	PK:event_id:- PK:resolve:-
 member	otto.monitor:MetricCollector.run	method	coroutine	PK:interval:O PK:duration:N
 member	otto.monitor:MetricCollector.spawn_collection	method	coroutine	PK:interval:- PK:duration:N
 member	otto.monitor:MetricCollector.subscribe	method	sync	-

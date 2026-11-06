@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
+import { displayEndMs, liveRange } from "../data/time";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "../shell/marking";
 import { useUiStore } from "../ui/uiStore";
 
@@ -112,7 +113,9 @@ describe("marking", () => {
   });
 
   it("blankDraft anchors a point draft to the session's end with the default styling", () => {
-    const session = { id: "s9", endMs: 12_345 } as Parameters<typeof blankDraft>[0];
+    const session = { id: "s9", endMs: 12_345, observedMs: 12_345 } as Parameters<
+      typeof blankDraft
+    >[0];
     expect(blankDraft(session)).toEqual({
       sessionId: "s9",
       timestampMs: 12_345,
@@ -121,5 +124,17 @@ describe("marking", () => {
       color: "#888888",
       dash: "dash",
     });
+  });
+
+  it("blankDraft on a stalled collector pre-fills the display horizon, inside the window (#866)", () => {
+    const endMs = Date.parse("2026-07-01T08:30:00Z");
+    const session = { id: "s9", endMs, observedMs: endMs + 600_000 } as Parameters<
+      typeof blankDraft
+    >[0];
+    const at = blankDraft(session).timestampMs;
+    expect(at).toBe(displayEndMs(session));
+    const window_ = liveRange(displayEndMs(session), 300_000);
+    expect(at).toBeGreaterThanOrEqual(window_.from);
+    expect(at).toBeLessThanOrEqual(window_.to);
   });
 });

@@ -86,6 +86,7 @@ export type CarriersPresent = number;
 export type CarriersExpected = number;
 export type AgeSeconds = number | null;
 export type Tunnels = TunnelRecord[];
+export type ObservedAt = string | null;
 export type Sessions = SessionRecord[];
 export type Format1 = 1;
 export type Session = string;
@@ -94,6 +95,7 @@ export type Events1 = EventRecord[];
 export type LogEvents1 = LogEventRecord[];
 export type DeletedEventIds = number[];
 export type Tunnels1 = TunnelRecord[] | null;
+export type ObservedAt1 = string | null;
 export type Label5 = string;
 export type Timestamp3 = string | null;
 export type EndTimestamp1 = string | null;
@@ -140,6 +142,7 @@ export interface SessionRecord {
   log_events?: LogEvents;
   chart_map?: ChartMap;
   tunnels?: Tunnels;
+  observed_at?: ObservedAt;
   [k: string]: unknown;
 }
 /**
@@ -412,6 +415,10 @@ export interface TunnelRecord {
  * fragment"; a list — including ``[]`` — replaces the session's set
  * wholesale. That is "last known state" expressed on the wire.
  *
+ * ``observed_at`` is the server's clock when the fragment was published,
+ * the same field as :attr:`SessionRecord.observed_at`. Optional and
+ * additive, so the stream stays format 1.
+ *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "MonitorSessionFragment".
  */
@@ -425,6 +432,7 @@ export interface MonitorSessionFragment {
   chart_map?: ChartMap;
   meta?: SessionMeta | null;
   tunnels?: Tunnels1;
+  observed_at?: ObservedAt1;
   [k: string]: unknown;
 }
 /**

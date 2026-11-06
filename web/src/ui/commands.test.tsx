@@ -16,6 +16,7 @@ const SESSION = {
   note: null,
   startMs: 0,
   endMs: 60_000,
+  observedMs: 60_000,
   meta: { interval: 5 },
   lab: { hosts: [{ id: "test1", element: "rack", board: "qemu-x86", slot: 1 }] },
   elements: [{ id: "rack", type: "physical", description: null, hostIds: ["test1"] }],

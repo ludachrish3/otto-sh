@@ -82,12 +82,14 @@ LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
 # The SSE stream speaks format:1 (plan 5b, Task 2): every message is a
 # MonitorSessionFragment-shaped dict, so its top-level keys are always a
-# subset of {"format", "session", "metrics", "events", "log_events",
-# "deleted_event_ids", "chart_map", "meta"} — never a bare "type" tag.
-SSE_LOG_EVENT_KEYS = {"format", "session", "log_events"}
-SSE_METRIC_KEYS = {"format", "session", "metrics"}
-SSE_EVENT_KEYS = {"format", "session", "events"}
-SSE_EVENT_DELETED_KEYS = {"format", "session", "deleted_event_ids"}
+# subset of {"format", "session", "observed_at", "metrics", "events",
+# "log_events", "deleted_event_ids", "chart_map", "meta"} — never a bare
+# "type" tag. Every published fragment carries the server's observed_at
+# (#866), so it is part of each message's exact key set.
+SSE_LOG_EVENT_KEYS = {"format", "session", "observed_at", "log_events"}
+SSE_METRIC_KEYS = {"format", "session", "observed_at", "metrics"}
+SSE_EVENT_KEYS = {"format", "session", "observed_at", "events"}
+SSE_EVENT_DELETED_KEYS = {"format", "session", "observed_at", "deleted_event_ids"}
 
 
 def _get_json(url: str) -> Any:
@@ -685,6 +687,7 @@ def test_sse_event_lifecycle_wire_contract(
         live_dash.run(live_dash.collector.delete_event(ev.id))
         deleted = _next_sse_payload(resp)
         assert set(deleted) == SSE_EVENT_DELETED_KEYS
+        assert isinstance(deleted.pop("observed_at"), str)
         assert deleted == {"format": 1, "session": "", "deleted_event_ids": [ev.id]}
     finally:
         conn.close()

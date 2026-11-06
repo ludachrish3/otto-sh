@@ -159,6 +159,9 @@ marking controls at all.
 
 **From the app bar.** The **Mark now…** button (**⌘E** / **Ctrl E**) opens
 a small popover for a label and stamps a point event at the current time.
+The live window follows the server's clock, so the mark shows at once, even
+when no metric has arrived for longer than the window. An event dated in the
+future stays off the window until the server's time reaches it.
 Its dropdown adds:
 
 - **Start span…** / **End span** — opens the same label popover to open a

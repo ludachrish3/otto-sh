@@ -354,7 +354,7 @@ export function ChartPanel(props: {
 
   // Cheap incremental patch (bug: window/markers were consumed inside the
   // memoized `option` but never in its dep list — a chart whose own series
-  // didn't tick kept a stale x-axis even though session.endMs (and so
+  // didn't tick kept a stale x-axis even though displayEndMs (and so
   // liveRange) is global and advances on ANY host's fragment). Gated on the
   // window's own bounds rather than `markers`'/`theme`'s object identity —
   // both are fresh values every SubjectPage render — via a content key, so

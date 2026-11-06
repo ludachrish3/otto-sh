@@ -18,7 +18,7 @@ import copy
 import json
 import logging
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -33,6 +33,7 @@ from ..models.monitor import (
     TunnelRecord,
 )
 from ..result import CommandResult, Results
+from . import event_ops
 from .broadcast import Broadcaster
 from .db import MetricDB
 from .events import MonitorEvent
@@ -57,6 +58,17 @@ if TYPE_CHECKING:
 It is the one declared ``monitor-live-stream`` write version, a format of its
 own and not the export document's. Every ``_publish`` payload carries it.
 """
+
+
+def observed_now() -> str:
+    """Return the server's current time as the UTC ISO string the live channels carry.
+
+    The ONE stamp for server-observed time (#866): every published fragment
+    (``MetricCollector._publish``), every live event-mutation response
+    header, and the live snapshot's per-session ``observed_at`` all read it
+    here. It formats ``event_ops.utc_now()``, the one clock.
+    """
+    return event_ops.utc_now().isoformat()
 
 
 class MetricView(Protocol):
@@ -247,6 +259,9 @@ class MetricCollector:
         # are handled naturally without upfront enumeration.
         # In-memory series/chart-map/event bookkeeping — see MetricStore.
         self._store = MetricStore()
+        # The lock that serialises every event mutation (see mutate_event),
+        # with the loop it belongs to; read only through _mutation_lock().
+        self._event_lock: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 
         # SSE fan-out to subscriber queues
         self._broadcast = Broadcaster()
@@ -407,7 +422,7 @@ class MetricCollector:
             *(self._collect_one(target, timeout, commands) for target, commands in entries),
             return_exceptions=True,
         )
-        ts = datetime.now(tz=timezone.utc)
+        ts = event_ops.utc_now()
         for (target, _commands), result in zip(entries, results, strict=True):
             match result:
                 case Results() as res:
@@ -783,6 +798,26 @@ class MetricCollector:
     # Events
     # ------------------------------------------------------------------
 
+    def _mutation_lock(self) -> asyncio.Lock:
+        """Return the lock serialising event mutations, for the running loop.
+
+        One per collector, as events change at human rate. But a suite keeps
+        one session collector while tests mark on narrower loops
+        (suite/plugin.py's class monitor task), and an ``asyncio.Lock`` binds
+        to the first loop it is contended on. So the lock is per loop: a
+        fresh one replaces it when the running loop differs. That replacement
+        is safe only because every caller awaits its mutation to completion on
+        the loop it started on before another loop runs: the suite's loops are
+        sequential runners, never nested, and no background task keeps a
+        mutation suspended across a loop switch. A stopped loop holding a
+        half-finished mutation would break that, so keep event mutations
+        awaited where they are started.
+        """
+        loop = asyncio.get_running_loop()
+        if self._event_lock is None or self._event_lock[0] is not loop:
+            self._event_lock = (loop, asyncio.Lock())
+        return self._event_lock[1]
+
     async def add_event(
         self,
         label: str,
@@ -794,30 +829,80 @@ class MetricCollector:
     ) -> MonitorEvent:
         """Record a labeled event and push it to all dashboard subscribers."""
         event = MonitorEvent(
-            timestamp=timestamp or datetime.now(tz=timezone.utc),
+            timestamp=timestamp or event_ops.utc_now(),
             label=label,
             source=source,
             color=color,
             dash=dash,
             end_timestamp=end_timestamp,
         )
-        rowid = await self._db.write_event(event) if self._db else 0
-        event = self._store.add_event(event, rowid)
-        self._publish(
-            {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
-        )
+        # Under the same lock as every other event mutation (mutate_event),
+        # and in the same order: DB write, then memory and publish together.
+        async with self._mutation_lock():
+            rowid = await self._db.write_event(event) if self._db else 0
+            event = self._store.add_event(event, rowid)
+            self._publish(
+                {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
+            )
         return event
+
+    async def mutate_event(
+        self, event_id: int, resolve: "Callable[[MonitorEvent], MonitorEvent | None]"
+    ) -> "MonitorEvent | None":
+        """Change or delete a stored event: the ONE entry point for both (#868).
+
+        Under one lock, so no two mutations interleave: read the current
+        event, ``resolve`` it (current, as a copy, to the new full record, or
+        ``None`` to delete it), await the DB write, then change memory and
+        publish in one synchronous step. ``resolve`` is where a caller's
+        merge lives (a PATCH's omitted fields, an end's "already ended"
+        refusal), so it always reads the latest state; an exception it raises
+        propagates, as does a DB failure, with memory unchanged.
+
+        The DB write comes first so that the memory change and its publish
+        (which stamps ``observed_at``) are one step: no snapshot sees a change
+        with an earlier stamp. Releasing the lock does not yield to the loop,
+        so the route's response stamp (server.py's ``_observed``) is still read
+        in that same step.
+
+        Returns the stored event after the change, the removed event for a
+        delete, or ``None`` if no event has this id.
+        """
+        async with self._mutation_lock():
+            current = self._store.find_event(event_id)
+            if current is None:
+                return None
+            resolved = resolve(replace(current))
+            if resolved is None:
+                if self._db:
+                    await self._db.delete_event(event_id)
+                self._store.remove_event(event_id)
+                self._publish(
+                    {
+                        "format": STREAM_FORMAT,
+                        "session": self.session_id,
+                        "deleted_event_ids": [event_id],
+                    }
+                )
+                return current
+            edited = replace(resolved, id=current.id, source=current.source)
+            if self._db:
+                await self._db.update_event(edited)
+            current.label = edited.label
+            current.color = edited.color
+            current.dash = edited.dash
+            current.timestamp = edited.timestamp
+            current.end_timestamp = edited.end_timestamp
+            # No separate "updated" kind: the client upserts events by id, so
+            # an edited event is just an event. One merge rule, not two.
+            self._publish(
+                {"format": STREAM_FORMAT, "session": self.session_id, "events": [current.to_dict()]}
+            )
+            return current
 
     async def delete_event(self, event_id: int) -> bool:
         """Remove an event by id. Returns True if found and removed, False otherwise."""
-        if not self._store.remove_event(event_id):
-            return False
-        if self._db:
-            await self._db.delete_event(event_id)
-        self._publish(
-            {"format": STREAM_FORMAT, "session": self.session_id, "deleted_event_ids": [event_id]}
-        )
-        return True
+        return await self.mutate_event(event_id, lambda _current: None) is not None
 
     async def update_event(
         self,
@@ -831,28 +916,24 @@ class MetricCollector:
     ) -> "MonitorEvent | None":
         """Overwrite an event's editable fields. Returns the updated event or None.
 
-        Full-set semantics: the caller (the HTTP route) resolves unchanged
-        fields from the existing event first — this method never guesses.
-        ``timestamp`` is REQUIRED so a call site cannot silently keep passing
-        the old start while believing it edited it (the 5a `interval=None`
-        trap, made structural).
+        Full-set semantics: this method never guesses. A caller that merges
+        onto the CURRENT fields (a partial PATCH, an end) does so in a
+        :meth:`mutate_event` resolver instead, so it reads them under the
+        lock. ``timestamp`` is REQUIRED so a call site cannot silently keep
+        passing the old start while believing it edited it (the 5a
+        `interval=None` trap, made structural).
         """
-        ev = self._store.find_event(event_id)
-        if ev is None:
-            return None
-        ev.label = label
-        ev.color = color
-        ev.dash = dash
-        ev.timestamp = timestamp
-        ev.end_timestamp = end_timestamp
-        if self._db:
-            await self._db.update_event(ev)
-        # No separate "updated" kind: the client upserts events by id, so an
-        # edited event is just an event. One merge rule, not two.
-        self._publish(
-            {"format": STREAM_FORMAT, "session": self.session_id, "events": [ev.to_dict()]}
+        return await self.mutate_event(
+            event_id,
+            lambda current: replace(
+                current,
+                label=label,
+                color=color,
+                dash=dash,
+                timestamp=timestamp,
+                end_timestamp=end_timestamp,
+            ),
         )
-        return ev
 
     # ------------------------------------------------------------------
     # Data access
@@ -977,4 +1058,5 @@ class MetricCollector:
         self._broadcast.unsubscribe(q)
 
     def _publish(self, payload: dict[str, Any]) -> None:
-        self._broadcast.publish(payload)
+        # Stamped here, once, so no publish site can forget it.
+        self._broadcast.publish({**payload, "observed_at": observed_now()})

@@ -103,6 +103,7 @@ function baseSession(overrides: Partial<NormalizedSession>): NormalizedSession {
     note: null,
     startMs: T0,
     endMs: T0 + (TICKS - 1) * TICK_MS,
+    observedMs: T0 + (TICKS - 1) * TICK_MS,
     lab: { hosts: [], links: [], explicitElements: [] },
     meta: { interval: 5, charts: [], tabs: [] },
     metrics: [],

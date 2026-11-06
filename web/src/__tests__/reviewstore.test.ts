@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { MonitorSessionFragment } from "../api/export.gen";
 import { useReviewStore } from "../data/reviewStore";
+import { displayEndMs } from "../data/time";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DRIFT = readFileSync(join(__dir, "../../fixtures/drift.json"), "utf-8");
@@ -362,6 +363,68 @@ describe("reviewStore", () => {
         "earlier warning",
         "mutation failed: archive is locked",
       ]);
+    });
+  });
+
+  // #866: the live window follows the server's observation, so a mark made
+  // while the collector stalls survives a reload, a reconnect and a Pause.
+  describe("server-observed horizon", () => {
+    const T = Date.parse("2026-07-01T08:30:00Z"); // minimal.json's last sample
+    const at = T + 600_000;
+    const markEvent = {
+      id: 7,
+      timestamp: new Date(at).toISOString(),
+      label: "mark",
+      source: "manual",
+      color: "#888888",
+      dash: "dash",
+    };
+    const snapshot = () => {
+      const doc = JSON.parse(MINIMAL) as { sessions: Record<string, unknown>[] };
+      const [first] = doc.sessions;
+      first["end"] = null; // a live session
+      first["events"] = [markEvent];
+      first["observed_at"] = new Date(at).toISOString();
+      return JSON.stringify(doc);
+    };
+    const visible = () => {
+      const s = useReviewStore.getState().sessions[0];
+      const to = displayEndMs(s);
+      return at >= to - useReviewStore.getState().windowMs && at <= to;
+    };
+
+    it("reload and reconnect keep the mark visible while metrics are stalled", () => {
+      const { actions } = useReviewStore.getState();
+      expect(actions.importMonitorSessions(snapshot(), "live")).toBe(true);
+      expect(useReviewStore.getState().sessions[0].endMs).toBe(T);
+      expect(visible()).toBe(true);
+      expect(actions.resyncMonitorSessions(snapshot(), "live")).toBe(true);
+      expect(visible()).toBe(true);
+    });
+
+    it("pause after a mark keeps it visible, and resume follows again", () => {
+      const { actions } = useReviewStore.getState();
+      actions.importMonitorSessions(MINIMAL, "live");
+      actions.setMode("live");
+      const sid = useReviewStore.getState().sessions[0].id;
+      actions.appendFragment({
+        format: 1,
+        session: sid,
+        events: [markEvent],
+        observed_at: new Date(at).toISOString(),
+      });
+      actions.togglePause();
+      const paused = useReviewStore.getState().range;
+      expect(paused?.to).toBe(at);
+      expect(at).toBeGreaterThanOrEqual(paused?.from ?? Number.POSITIVE_INFINITY);
+      actions.togglePause();
+      expect(useReviewStore.getState().range).toBeNull();
+      actions.appendFragment({
+        format: 1,
+        session: sid,
+        observed_at: new Date(at + 60_000).toISOString(),
+      });
+      expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(at + 60_000);
     });
   });
 });

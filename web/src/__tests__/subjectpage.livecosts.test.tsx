@@ -69,6 +69,7 @@ function baseSession(): NormalizedSession {
     note: null,
     startMs: T0 - 3_600_000,
     endMs: T0,
+    observedMs: T0,
     lab: { hosts, links: [], explicitElements: [] },
     meta: {
       interval: 5,

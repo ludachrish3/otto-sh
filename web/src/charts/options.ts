@@ -611,7 +611,7 @@ export function eventOverlay(
 }
 
 /** Cheap incremental patch for a live tick that only moved the window (a
- * DIFFERENT series ticked, but session.endMs — and therefore liveRange — is
+ * DIFFERENT series ticked, but displayEndMs — and therefore liveRange — is
  * global, so this chart's x-axis is stale even though its own series didn't
  * change). Meant for `chart.setOption(patch, { notMerge: false })`: it only
  * touches xAxis bounds and the anchor series' markLine/markArea, never

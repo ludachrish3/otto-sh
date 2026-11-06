@@ -5,7 +5,24 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { formatOutage } from "./time";
+import { synthSession } from "../__tests__/_synth";
+import { displayEndMs, formatOutage } from "./time";
+
+// #866: the live window's horizon is the later of the last metric and the
+// server's last observation. endMs stays metric-only (health reads it).
+describe("displayEndMs", () => {
+  const session = () => synthSession({ hosts: 1, seriesPerHost: 1, ticks: 2, intervalS: 5 });
+
+  it("follows the server's observation past a stalled last metric", () => {
+    const s = session();
+    expect(displayEndMs({ ...s, observedMs: s.endMs + 600_000 })).toBe(s.endMs + 600_000);
+  });
+
+  it("never falls behind the last metric", () => {
+    const s = session();
+    expect(displayEndMs({ ...s, observedMs: s.endMs - 600_000 })).toBe(s.endMs);
+  });
+});
 
 describe("formatOutage", () => {
   it("shows seconds under a minute", () => {
