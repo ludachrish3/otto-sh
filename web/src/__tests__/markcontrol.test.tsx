@@ -3,12 +3,13 @@
 // test.ts's idiom: MarkControl is a thin UI shell over marking.ts + the
 // ui/review stores, so the store IS the assertion surface for openSpan and
 // the popover's own testids are the assertion surface for the rest.
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
 import { MarkControl } from "../shell/MarkControl";
+import { markGateKey, useMutationGate } from "../shell/useMutationGate";
 import { useUiStore } from "../ui/uiStore";
 
 // jsdom lacks CSS.escape; react-aria menus call it (same polyfill as
@@ -200,5 +201,88 @@ describe("MarkControl", () => {
     vi.stubGlobal("fetch", vi.fn());
     const { container } = render(<MarkControl />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("MarkControl pending gate (#867)", () => {
+  function held() {
+    let release!: (r: Response) => void;
+    const promise = new Promise<Response>((res) => {
+      release = res;
+    });
+    return { fetchMock: vi.fn().mockReturnValue(promise), release };
+  }
+
+  it("repeated Enter in the mark popover while pending leaves it open and unchanged", async () => {
+    const user = userEvent.setup();
+    hydrate();
+    const { fetchMock } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MarkControl />);
+    await user.click(screen.getByTestId("mark-button"));
+    const input = await screen.findByTestId("mark-label-input");
+    await user.type(input, "checkpoint{Enter}{Enter}{Enter}");
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("mark-popover")).toBeTruthy();
+    expect((screen.getByTestId("mark-label-input") as HTMLInputElement).value).toBe("checkpoint");
+    expect(screen.getByTestId("mark-submit").hasAttribute("data-loading")).toBe(true);
+  });
+
+  it("a Mark held from the Events panel shuts this session's End span too (one shared gate)", async () => {
+    const user = userEvent.setup();
+    hydrate();
+    const sid = useReviewStore.getState().sessions[0].id;
+    useUiStore.setState({ openSpan: { sessionId: sid, eventId: 3 } });
+    const { fetchMock } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    // Another surface presses Mark on the same session's shared key.
+    const { result } = renderHook(() => useMutationGate(markGateKey(sid)));
+    act(() => {
+      void result.current.run(() => fetch("/x").then(() => undefined), "events-mark");
+    });
+    render(<MarkControl />);
+    await user.click(screen.getByTestId("mark-menu"));
+    const item = await screen.findByTestId("menu-end-span");
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByTestId("mark-button"));
+    const submit = await screen.findByTestId("mark-submit");
+    // Not this control's press: disabled, but not spinning.
+    expect(submit.hasAttribute("data-loading")).toBe(false);
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+
+  it("End span is disabled while its request is pending", async () => {
+    const user = userEvent.setup();
+    hydrate();
+    useUiStore.setState({
+      openSpan: { sessionId: useReviewStore.getState().sessions[0].id, eventId: 3 },
+    });
+    const { fetchMock } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MarkControl />);
+    await user.click(screen.getByTestId("mark-menu"));
+    await user.click(await screen.findByTestId("menu-end-span"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    await user.click(screen.getByTestId("mark-menu"));
+    const item = await screen.findByTestId("menu-end-span");
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("two submit presses send one POST; releasing the held request closes the popover once", async () => {
+    const user = userEvent.setup();
+    hydrate();
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MarkControl />);
+    await user.click(screen.getByTestId("mark-button"));
+    await user.type(await screen.findByTestId("mark-label-input"), "checkpoint");
+    await user.click(screen.getByTestId("mark-submit"));
+    await user.click(screen.getByTestId("mark-submit"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    await act(() => Promise.resolve(release(okJson(record(9, "checkpoint"), 201))));
+    await waitFor(() => expect(screen.queryByTestId("mark-popover")).toBeNull());
+    expect(fetchMock.mock.calls.length).toBe(1);
   });
 });

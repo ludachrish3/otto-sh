@@ -11,11 +11,16 @@ import { Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import { isStale, reportMutationFailure, sourceGuard } from "../data/eventApi";
+import { isStale, sourceGuard } from "../data/eventApi";
 import { useActiveSession } from "../data/reviewStore";
 import { TextInput } from "../ui/TextInput";
 import { useUiStore } from "../ui/uiStore";
-import { blankDraft, endOpenSpan, markNow, startSpan } from "./marking";
+import { blankDraft, endSpanReporting, markNow, startSpan } from "./marking";
+import { markGateKey, useMutationGate } from "./useMutationGate";
+
+/** This control's action names on the shared mark gate. */
+const SUBMIT = "appbar-submit";
+const END_SPAN = "appbar-end-span";
 
 export function MarkControl() {
   const session = useActiveSession();
@@ -27,6 +32,9 @@ export function MarkControl() {
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputElRef = useRef<HTMLInputElement | null>(null);
+  // One request in flight for this session's marking, shared with the Events
+  // compose row and the palette (see useMutationGate.ts's keys).
+  const gate = useMutationGate(markGateKey(session?.id ?? ""));
 
   // Reset the draft label/error each time the popover opens, then focus.
   useEffect(() => {
@@ -40,17 +48,19 @@ export function MarkControl() {
   if (!session) return null;
   const spanOpen = openSpan?.sessionId === session.id;
 
-  const submit = async () => {
-    if (!label.trim()) return;
-    try {
-      // Stale: a file import overtook the request and already closed this.
-      const current = sourceGuard();
-      if (isStale(current(await (markPopover === "start" ? startSpan(label) : markNow(label)))))
-        return;
-      closeMarkPopover();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+  const submit = () => {
+    if (!label.trim()) return Promise.resolve();
+    return gate.run(async () => {
+      try {
+        // Stale: a file import overtook the request and already closed this.
+        const current = sourceGuard();
+        if (isStale(current(await (markPopover === "start" ? startSpan(label) : markNow(label)))))
+          return;
+        closeMarkPopover();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, SUBMIT);
   };
 
   return (
@@ -95,6 +105,9 @@ export function MarkControl() {
               size="sm"
               color="primary"
               data-testid="mark-submit"
+              isLoading={gate.pendingAction === SUBMIT}
+              isDisabled={gate.pending && gate.pendingAction !== SUBMIT}
+              showTextWhileLoading
               onPress={() => void submit()}
             >
               {markPopover === "start" ? "Start" : "Mark"}
@@ -122,11 +135,8 @@ export function MarkControl() {
               <Dropdown.Item
                 id="end-span"
                 label="End span"
-                isDisabled={!spanOpen}
-                onAction={() => {
-                  const onFailure = reportMutationFailure("End span");
-                  void endOpenSpan().catch(onFailure);
-                }}
+                isDisabled={!spanOpen || gate.pending}
+                onAction={() => void gate.run(endSpanReporting, END_SPAN)}
                 data-testid="menu-end-span"
               />
               <Dropdown.Item

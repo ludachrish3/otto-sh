@@ -586,3 +586,78 @@ describe("EventEditor", () => {
     });
   });
 });
+
+describe("EventEditor pending gate (#867)", () => {
+  function held() {
+    let release!: (r: Response) => void;
+    const promise = new Promise<Response>((res) => {
+      release = res;
+    });
+    return { fetchMock: vi.fn().mockReturnValue(promise), release };
+  }
+
+  it("two Save presses while the POST is held send one POST", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({
+      kind: "draft",
+      draft: blankDraft(sid, { label: "canary" }),
+    });
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-save"));
+    await user.click(screen.getByTestId("editor-save"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
+    await act(() => Promise.resolve(release(okJson(record({ id: 101, label: "canary" }), 201))));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+
+  it("two confirmed Delete presses while the DELETE is held send one DELETE", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("editor-delete"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("editor-delete").hasAttribute("data-loading")).toBe(true);
+    await act(() => Promise.resolve(release(new Response(null, { status: 204 }))));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+
+  it("a held Save spins Save alone; the editor's Delete is disabled, not spinning", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    vi.stubGlobal("fetch", held().fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-save"));
+    expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
+    const del = screen.getByTestId("editor-delete");
+    expect(del.hasAttribute("data-loading")).toBe(false);
+    expect(del.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("a Save still pending for one event does not make another event's editor busy (#932)", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    vi.stubGlobal("fetch", held().fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-save"));
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 3 });
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+    );
+    expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(false);
+  });
+});

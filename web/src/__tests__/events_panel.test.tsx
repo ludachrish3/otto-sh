@@ -444,3 +444,80 @@ describe("EventsPanel row affordances", () => {
     expect(screen.queryByTestId("event-endnow--1")).toBeNull();
   });
 });
+
+describe("EventsPanel pending gate (#867)", () => {
+  function held() {
+    const promise = new Promise<Response>(() => {});
+    return vi.fn().mockReturnValue(promise);
+  }
+
+  it.each(["mark", "start"])("two compose %s presses while held send one POST", async (which) => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    load();
+    const fetchMock = held();
+    vi.stubGlobal("fetch", fetchMock);
+    await user.type(screen.getByTestId("events-compose-label"), "x");
+    await user.click(screen.getByTestId(`events-compose-${which}`));
+    await user.click(screen.getByTestId(`events-compose-${which}`));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId(`events-compose-${which}`).hasAttribute("data-loading")).toBe(true);
+  });
+
+  it("two compose Stop presses while held send one POST", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    const { session } = load();
+    act(() => useUiStore.setState({ openSpan: { sessionId: session.id, eventId: 1 } }));
+    const fetchMock = held();
+    vi.stubGlobal("fetch", fetchMock);
+    await user.click(await screen.findByTestId("events-compose-stop"));
+    await user.click(screen.getByTestId("events-compose-stop"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("events-compose-stop").hasAttribute("data-loading")).toBe(true);
+  });
+
+  it("a held Mark survives closing and reopening the panel: a second press sends nothing", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    load();
+    const fetchMock = held();
+    vi.stubGlobal("fetch", fetchMock);
+    await user.type(screen.getByTestId("events-compose-label"), "x");
+    await user.click(screen.getByTestId("events-compose-mark"));
+    cleanup(); // the panel closes: its compose row unmounts mid-request
+    render(<EventsPanel isOpen onClose={() => {}} />);
+    await user.type(await screen.findByTestId("events-compose-label"), "y");
+    await user.click(screen.getByTestId("events-compose-mark"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("events-compose-mark").hasAttribute("data-loading")).toBe(true);
+  });
+
+  it("only the pressed compose button spins; its siblings are disabled", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    const { session } = load();
+    act(() => useUiStore.setState({ openSpan: { sessionId: session.id, eventId: 1 } }));
+    vi.stubGlobal("fetch", held());
+    await user.type(screen.getByTestId("events-compose-label"), "x");
+    await user.click(screen.getByTestId("events-compose-mark"));
+    expect(screen.getByTestId("events-compose-mark").hasAttribute("data-loading")).toBe(true);
+    for (const sibling of ["start", "stop"]) {
+      const button = screen.getByTestId(`events-compose-${sibling}`);
+      expect(button.hasAttribute("data-loading")).toBe(false);
+      expect(button.hasAttribute("disabled")).toBe(true);
+    }
+  });
+
+  it("two End now presses on a row while held send one POST", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    load();
+    const fetchMock = held();
+    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByTestId("event-endnow-1"));
+    await user.click(screen.getByTestId("event-endnow-1"));
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(screen.getByTestId("event-endnow-1").hasAttribute("data-loading")).toBe(true);
+  });
+});
