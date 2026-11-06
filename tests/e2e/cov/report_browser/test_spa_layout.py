@@ -48,7 +48,7 @@ MAX_CHIP_HEIGHT_PX = 28
 
 # Long values swapped into the report's payload (before the app reads it) so
 # the long-name cases exercise truncation, not the fixture's short names.
-LONG_TITLE = "otto example product with a deliberately very long report title " * 2
+LONG_TITLE = "otto example product with a deliberately very long report title " * 5
 LONG_PRODUCT = "firmware-" + "p" * 70
 LONG_TICKET = "PROJ-204-" + "t" * 70
 LONG_QUERY = "checked_add|" + "q" * 70
@@ -159,15 +159,14 @@ def _assert_header_sound(boxes: dict[str, dict], width: int) -> None:
 @pytest.mark.parametrize("width", WIDTHS)
 def test_header_with_long_names_stays_sound(page: Page, report_dir: Path, width: int) -> None:
     _inject_long_values(page, header=True, cells=False)
-    # The ticket's chunk is fetched by id; serve the real PROJ-204 chunk under
-    # the long id so the renamed ticket resolves like the original.
-    chunk = (report_dir / "cov_data" / "tickets" / "PROJ-204.js").read_text()
-    page.route(
-        f"**/cov_data/tickets/{LONG_TICKET}.js",
-        lambda route: route.fulfill(
-            body=chunk.replace("PROJ-204", LONG_TICKET), content_type="text/javascript"
-        ),
-    )
+    # The ticket's chunk is fetched by id; give the real PROJ-204 chunk a copy
+    # under the long id so the renamed ticket resolves like the original. The
+    # report is served from file://, which page.route cannot intercept in
+    # WebKit, so the copy is written beside the original. report_dir is
+    # session-scoped; one extra file in it is harmless to the other tests.
+    tickets = report_dir / "cov_data" / "tickets"
+    chunk = (tickets / "PROJ-204.js").read_text()
+    (tickets / f"{LONG_TICKET}.js").write_text(chunk.replace("PROJ-204", LONG_TICKET))
     _goto(page, report_dir, width, LONG_ROUTE)
     expect(page.locator('[data-testid="product-chip"]')).to_be_visible()
     boxes = _boxes(page, CONTROL_TESTIDS, required=["brand", "app-nav", *CHIP_TESTIDS])
