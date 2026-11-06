@@ -1,5 +1,10 @@
 # Landing enforcement — design
 
+**Superseded in part (2026-11-06):** `BED_REACH` no longer holds for the
+`scripts` class as a whole, only for a changed script the bed half runs on
+(`BED_SCRIPTS` in `scripts/gate_scope.py`). The current rule is in
+`docs/contributing.md`, "Gating a branch before it lands".
+
 ## Why
 
 Two facts about the landing flow of #795 and #797 came together on
