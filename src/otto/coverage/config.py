@@ -18,8 +18,8 @@ from typing import Literal
 
 from ..errors import OttoError
 
-DestinationErrorKind = Literal["not_a_directory", "not_writable", "not_empty"]
-"""The three ways a destination can be unusable; see :class:`DestinationError`."""
+DestinationErrorKind = Literal["not_a_directory", "not_writable", "not_empty", "symlink"]
+"""The four ways a destination can be unusable; see :class:`DestinationError`."""
 
 
 def destination_message(
@@ -35,6 +35,8 @@ def destination_message(
         return f"{subject} target {path} is not empty; {remedy} to clear it."
     if kind == "not_writable":
         return f"{subject} target {path} cannot be written: {reason}."
+    if kind == "symlink":
+        return f"{subject} target {path} is a symlink; replace it with a real directory."
     return f"{subject} target {path} is not a directory."
 
 
@@ -43,8 +45,8 @@ class DestinationError(OttoError, ValueError):
 
     ``field`` names the option the path came from (``cov_dir``,
     ``output_dir``), ``remedy_field`` the option that would allow clearing
-    it, and ``kind`` is one of ``not_a_directory``, ``not_writable`` or
-    ``not_empty``. The message speaks in those field names; the CLI spells
+    it, and ``kind`` is one of ``not_a_directory``, ``not_writable``,
+    ``not_empty`` or ``symlink``. The message speaks in those field names; the CLI spells
     them as flags (:func:`otto.cli.invoke.usage_error_from`). ``reason`` (the
     ``not_writable`` OS-level detail, otherwise empty) is stored too — a
     caller that catches this from a lower-level field name (say,

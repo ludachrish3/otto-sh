@@ -209,8 +209,8 @@ def cov_host_dir(base: Path, host_id: str) -> Path:
 def cov_product_dir_in(cov_dir: Path, host_id: str, product: str) -> Path:
     """``<cov_dir>/<host_id>/<product>`` — one product's dir under an ALREADY-RESOLVED cov dir.
 
-    *cov_dir* is the local staging root a caller already holds: the CLI's
-    ``--cov-dir`` (an arbitrary user path) or ``<run>/cov``. It is the one
+    *cov_dir* is the local staging root a caller already holds, a
+    resolved ``<run>/cov`` (see :func:`cov_dir`). It is the one
     spelling of the ``<host_id>/<product>`` join, so :func:`cov_product_dir`
     — which starts from a run dir instead — delegates here rather than
     repeating it.

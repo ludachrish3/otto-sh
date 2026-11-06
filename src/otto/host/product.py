@@ -388,8 +388,8 @@ class Product(ABC):
     cov_dir: str | None = None
     """Host-side directory this product writes its coverage counters under —
     the value it hands to ``GCOV_PREFIX``. A string in the HOST's path domain
-    (it only ever appears in shell commands), distinct from the CLI's local
-    ``--cov-dir`` staging root. ``None`` means the default ``/tmp/<name>``,
+    (it only ever appears in shell commands), distinct from the local
+    staged ``<run>/cov`` root. ``None`` means the default ``/tmp/<name>``,
     which ingest stamps (:func:`stamp_cov_dir`) so a code product can read
     ``self.cov_dir`` when composing its install or run command.
 

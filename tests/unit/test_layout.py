@@ -46,8 +46,7 @@ def test_logs_and_cov_trees_share_the_host_product_shape():
 
 
 def test_cov_product_dir_in_is_the_same_leaf_from_an_already_resolved_cov_dir():
-    # The fetchers hold the cov dir itself (`--cov-dir` is an arbitrary user
-    # path, so `<run>/cov` cannot be recovered from it). Kills: the two
+    # The fetchers are handed the already-resolved `<run>/cov`. Kills: the two
     # spellings drifting — a leaf reached from a run dir and one reached from
     # a cov dir must be the same directory, and both must validate the name.
     assert layout.cov_product_dir_in(BASE / "cov", "h1", "app") == layout.cov_product_dir(

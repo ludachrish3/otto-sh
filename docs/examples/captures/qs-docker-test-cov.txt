@@ -1,4 +1,4 @@
-$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-docker/e2e/cov --no-random TestTools
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-docker/e2e --no-random TestTools
 INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
 INFO     @docker-host   | printf '\n%s\n' otto-cov-presence

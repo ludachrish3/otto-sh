@@ -37,7 +37,7 @@ RULE_TABLE = [
     (["--cov-report-dir", "{tmp}/report"], {"cov_report": True, "cov": True}),
     (["--cov-tickets-json", "{tmp}/t.json"], {"cov_report": True, "cov": True}),
     (["--cov-report"], {"cov": True}),
-    (["--cov-dir", "{tmp}/cov"], {"cov": True}),
+    (["--cov-dir", "{tmp}/run"], {"cov": True}),
     (["--monitor-output", "{tmp}/m.json"], {"monitor": True}),
     (["--monitor-hosts", "router"], {"monitor": True}),
 ]
@@ -372,22 +372,22 @@ class TestCovDirOption:
 
     def test_cov_dir_nonempty_without_overwrite_aborts(self, capture_cov, tmp_path):
         target = tmp_path / "existing"
-        target.mkdir()
-        (target / "leftover.txt").write_text("stale")
+        (target / "cov").mkdir(parents=True)
+        (target / "cov" / "leftover.txt").write_text("stale")
 
         exit_code, ctx_obj, output = capture_cov(["--cov-dir", str(target)])
         assert exit_code != 0
         assert ctx_obj == {}
         assert "pass --overwrite-cov-dir to clear it" in _flat(output)
         # Stale file preserved when we refuse to proceed.
-        assert (target / "leftover.txt").exists()
+        assert (target / "cov" / "leftover.txt").exists()
 
     def test_overwrite_cov_dir_clears_contents(self, capture_cov, tmp_path):
         target = tmp_path / "to_clear"
-        target.mkdir()
-        (target / "leftover.txt").write_text("stale")
-        (target / "sub").mkdir()
-        (target / "sub" / "nested.txt").write_text("more stale")
+        (target / "cov" / "sub").mkdir(parents=True)
+        (target / "cov" / "leftover.txt").write_text("stale")
+        (target / "cov" / "sub" / "nested.txt").write_text("more stale")
+        (target / "keep.txt").write_text("keep")
 
         exit_code, ctx_obj, output = capture_cov(
             ["--cov-dir", str(target), "--overwrite-cov-dir"],
@@ -396,7 +396,8 @@ class TestCovDirOption:
         assert ctx_obj["cov"] is True
         assert ctx_obj["cov_dir"] == target.resolve()
         assert target.is_dir()
-        assert list(target.iterdir()) == []
+        assert list((target / "cov").iterdir()) == []
+        assert (target / "keep.txt").read_text() == "keep"
 
     def test_cov_dir_pointing_at_file_fails(self, capture_cov, tmp_path):
         target = tmp_path / "not_a_dir"

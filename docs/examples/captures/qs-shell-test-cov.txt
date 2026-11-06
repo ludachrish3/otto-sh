@@ -1,4 +1,4 @@
-$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/e2e/cov --no-random TestTools
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/e2e --no-random TestTools
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
 INFO     @dut   | printf '\n%s\n' otto-cov-presence

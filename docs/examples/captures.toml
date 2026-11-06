@@ -350,7 +350,7 @@ argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email
 id = "qs-shell-test-cov"
 project = "quickstart-shell"
 timeout = 600
-argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/e2e/cov", "--no-random", "TestTools"]
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/e2e", "--no-random", "TestTools"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
@@ -633,7 +633,7 @@ redact = [
 id = "qs-kmod-test-cov"
 project = "quickstart-kmod"
 timeout = 600
-argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-kmod/e2e/cov", "--no-random", "TestWordcount"]
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-kmod/e2e", "--no-random", "TestWordcount"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
@@ -983,7 +983,7 @@ redact = [
 id = "qs-embedded-test-cov"
 project = "quickstart-embedded"
 timeout = 1800
-argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-embedded/e2e/cov", "--no-random", "TestMathops"]
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-embedded/e2e", "--no-random", "TestMathops"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
@@ -1360,7 +1360,7 @@ project = "quickstart-docker"
 unordered = true
 timeout = 900
 env = { OTTO_COMPOSE_SUFFIX = "docs" }
-argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-docker/e2e/cov", "--no-random", "TestTools"]
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-docker/e2e", "--no-random", "TestTools"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
