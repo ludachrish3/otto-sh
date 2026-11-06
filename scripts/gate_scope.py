@@ -320,6 +320,28 @@ BED_LANES = {
 """The lane lines a change to these sources adds to the tip and to a full commit column:
 `make coverage-bed` selects by tier, and a change to these packages is what the beds'
 own lanes exercise."""
+BED_SCRIPTS = frozenset(
+    {
+        "scripts/bed_lease.py",
+        "scripts/bed_reap.py",
+        "scripts/build_busybox_guest_images.py",
+        "scripts/gate_stamp_common.py",
+        "scripts/lab_health.py",
+        "scripts/process_group.py",
+    }
+)
+"""The scripts the bed half runs on: a change to one sends the tip to `make coverage-bed`.
+
+A script is here when a bed-half test module (`in_bed_half`) or a conftest above one
+imports it, directly or through other `tests` and `scripts` modules, or when every bed
+lane's recipe runs it (the lease and the reap). The tests pin the set against the live
+tree by following static absolute imports; a script a bed test reaches another way (a
+subprocess, a dynamic import) is listed here by hand.
+
+Any other script does not select `make coverage-bed`: what it can break, CI can see. That
+includes the scripts that build the web bundle the lane depends on (`make web` runs in
+CI's own jobs). A script with a special row (the docs-capture scripts) still selects that
+row's bed lane."""
 GUARD_RIDERS = [
     "tests/unit/test_error_base.py",
     "tests/unit/test_declared_additions.py",
@@ -1277,12 +1299,14 @@ def static_reach(scope: Scope) -> bool:
 def bed_reach(scope: Scope) -> bool:
     """Report whether the tip earns the bed half (`make coverage-bed`).
 
-    A source, script or escalating change; a changed test module in the bed half; or any
-    `full_at_commit` reason (an unreadable mark, no surviving root), the conservative
-    fallback. A hostless test change takes no lease.
+    A source or escalating change; a changed script the bed half runs on
+    (:data:`BED_SCRIPTS`); a changed test module in the bed half; or any `full_at_commit`
+    reason (an unreadable mark, no surviving root), the conservative fallback. A hostless
+    test change does not reach it, and neither does a change to any other script.
     """
     return (
-        bool(set(scope.classes) & {SRC_LEAF, SCRIPTS, ESCALATE, FULL})
+        bool(set(scope.classes) & {SRC_LEAF, ESCALATE, FULL})
+        or bool(set(scope.changed_paths) & BED_SCRIPTS)
         or bool(scope.bed_modules)
         or bool(scope.full_at_commit)
     )

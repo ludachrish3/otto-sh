@@ -3821,6 +3821,31 @@ class TestCarry:
         assert found.stamp is not None
         assert found.stamp.tree == case.t0
 
+    def test_a_main_delta_of_a_script_carries_unless_the_bed_half_runs_on_the_script(
+        self, tmp_path
+    ):
+        def hostless_script(repo: Path) -> None:
+            _write(repo, "scripts/gate_scope.py", "CHANGED = 1\n")
+
+        def bed_script(repo: Path) -> None:
+            _write(repo, "scripts/lab_health.py", "CHANGED = 1\n")
+
+        for name in ("hostless", "bed"):
+            (tmp_path / name).mkdir()
+        case = _rebased_landing(tmp_path / "hostless", main_change=hostless_script)
+        delta = gs.plan(case.repo, case.b0, case.b1)
+        assert (delta.classes, delta.bed) == (["scripts"], False)
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        assert self._carry(case).stamp is not None
+
+        case = _rebased_landing(tmp_path / "bed", main_change=bed_script)
+        delta = gs.plan(case.repo, case.b0, case.b1)
+        assert (delta.classes, delta.bed) == (["scripts"], True)
+        _stamp_at(gt.stamps_root(case.repo, gt.STORE), case.t0, case.b0)
+        found = self._carry(case)
+        assert found.stamp is None
+        assert "reaches the bed: scripts" in found.reason
+
     def test_a_main_delta_editing_a_measured_matrix_carries(self, tmp_path):
         case = _rebased_landing(tmp_path, main_change=_matrix_change)
         delta = gs.plan(case.repo, case.b0, case.b1)
