@@ -185,9 +185,11 @@ second-granularity **Start**/**End** date-time fields (clearing **End**
 turns a span back into a point event), a row of color swatches, and a
 **Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
 `longdashdot`) applied to the event's chart overlay — a point event's marker
-line and the border drawn around a span. Editing or
-deleting an existing event reuses the same panel; deleting requires
-pressing **Delete** twice ("Really delete?") before it takes effect.
+line and the border drawn around a span. **Save** stays disabled until
+**Start** is complete and **End** is either complete or empty; the reason
+shows under the field. Editing or deleting an existing event reuses the
+same panel; deleting requires pressing **Delete** twice ("Really
+delete?") before it takes effect.
 
 **During a test run.** Neither the `monitor` fixture (see [Monitoring from a
 test](../../setup/test-recipes.md#monitoring-from-a-test)) nor the run-wide

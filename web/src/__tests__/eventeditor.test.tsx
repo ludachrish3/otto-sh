@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import kitchenSink from "../../fixtures/kitchen-sink.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
 import { EventEditor } from "../shell/EventEditor";
+import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
 
 // jsdom lacks CSS.escape; react-aria menus/selects call it unconditionally
@@ -81,6 +82,52 @@ function blankDraft(sessionId: string, overrides: Partial<EventDraft> = {}): Eve
     dash: "dash",
     ...overrides,
   };
+}
+
+// A start instant whose LOCAL day is a single digit (5) in every timezone
+// from UTC-11 to UTC+11, so one Backspace on the day segment clears it
+// (react-aria drops one digit per Backspace; a lone digit clears the segment).
+const DAY5_MS = new Date("2026-07-05T12:00:00Z").getTime();
+
+type User = ReturnType<typeof userEvent.setup>;
+
+function seg(field: string, type: string): HTMLElement | null {
+  return screen.getByTestId(field).querySelector(`[data-type="${type}"]`);
+}
+
+function editableSegments(field: string): HTMLElement[] {
+  return Array.from(
+    screen
+      .getByTestId(field)
+      .querySelectorAll<HTMLElement>('[data-type]:not([data-type="literal"])'),
+  );
+}
+
+function isPlaceholder(el: HTMLElement | null): boolean {
+  return el?.hasAttribute("data-placeholder") ?? false;
+}
+
+// Clears every editable segment of *field* by keyboard, re-querying each
+// segment by type after every keypress (the field re-renders as it goes).
+async function clearField(user: User, field: string): Promise<void> {
+  const types = editableSegments(field).map((el) => el.getAttribute("data-type") as string);
+  for (const type of types) {
+    await user.click(seg(field, type) as HTMLElement);
+    for (let i = 0; i < 6 && !isPlaceholder(seg(field, type)); i++) {
+      await user.keyboard("{Backspace}");
+    }
+  }
+}
+
+async function typeSegment(user: User, field: string, type: string, text: string): Promise<void> {
+  const el = seg(field, type);
+  if (el === null) return; // e.g. no dayPeriod segment under a 24-hour locale
+  await user.click(el);
+  await user.keyboard(text);
+}
+
+function saveDisabled(): boolean {
+  return screen.getByTestId("editor-save").hasAttribute("disabled");
 }
 
 function jsonBody(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0): Record<string, unknown> {
@@ -368,5 +415,174 @@ describe("EventEditor", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = jsonBody(fetchMock);
     expect(body["timestamp"]).toBe(new Date(draft.timestampMs + 5000).toISOString());
+  });
+
+  describe("incomplete and invalid dates (#864)", () => {
+    function openDraft(overrides: Partial<EventDraft> = {}): {
+      fetchMock: ReturnType<typeof vi.fn>;
+    } {
+      const sid = hydrate();
+      useUiStore.getState().actions.openEventEditor({
+        kind: "draft",
+        draft: blankDraft(sid, { timestampMs: DAY5_MS, ...overrides }),
+      });
+      const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<EventEditor />);
+      return { fetchMock };
+    }
+
+    it("clearing one start segment disables Save and explains", async () => {
+      const user = userEvent.setup();
+      const { fetchMock } = openDraft();
+      expect(saveDisabled()).toBe(false);
+      await user.click(seg("editor-start", "day") as HTMLElement);
+      await user.keyboard("{Backspace}");
+      expect(saveDisabled()).toBe(true);
+      expect(screen.getByText("Enter a complete start time.")).toBeTruthy();
+      await user.click(screen.getByTestId("editor-save"));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("the cleared segment stays blank after effects settle", async () => {
+      const user = userEvent.setup();
+      openDraft();
+      await user.click(seg("editor-start", "day") as HTMLElement);
+      await user.keyboard("{Backspace}");
+      await waitFor(() => expect(screen.getByText("Enter a complete start time.")).toBeTruthy());
+      // A completeness report that handed the field a new value identity
+      // would make react-stately reset its display to the old date here.
+      expect(isPlaceholder(seg("editor-start", "day"))).toBe(true);
+      expect(saveDisabled()).toBe(true);
+    });
+
+    it("typing a complete start again re-enables Save", async () => {
+      const user = userEvent.setup();
+      const { fetchMock } = openDraft();
+      await user.click(seg("editor-start", "day") as HTMLElement);
+      await user.keyboard("{Backspace}");
+      await waitFor(() => expect(saveDisabled()).toBe(true));
+      await user.keyboard("15");
+      await waitFor(() => expect(saveDisabled()).toBe(false));
+      expect(screen.queryByText("Enter a complete start time.")).toBeNull();
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const expected = calendarDateTimeToMs(msToCalendarDateTime(DAY5_MS).set({ day: 15 }));
+      expect(jsonBody(fetchMock)["timestamp"]).toBe(new Date(expected).toISOString());
+    });
+
+    it("clearing every Start segment blocks Save", async () => {
+      const user = userEvent.setup();
+      const { fetchMock } = openDraft();
+      await clearField(user, "editor-start");
+      await waitFor(() => expect(screen.getByText("Enter a start time.")).toBeTruthy());
+      // The field calls onChange(null) and resets to its controlled value;
+      // the old date must not reappear.
+      for (const el of editableSegments("editor-start")) expect(isPlaceholder(el)).toBe(true);
+      expect(saveDisabled()).toBe(true);
+      // Typing a full date again re-enables Save.
+      await typeSegment(user, "editor-start", "month", "07");
+      await typeSegment(user, "editor-start", "day", "05");
+      await typeSegment(user, "editor-start", "year", "2026");
+      await typeSegment(user, "editor-start", "hour", "09");
+      await typeSegment(user, "editor-start", "minute", "30");
+      await typeSegment(user, "editor-start", "second", "00");
+      await typeSegment(user, "editor-start", "dayPeriod", "A");
+      await waitFor(() => expect(saveDisabled()).toBe(false));
+      expect(screen.queryByText("Enter a start time.")).toBeNull();
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const expected = calendarDateTimeToMs(
+        msToCalendarDateTime(DAY5_MS).set({ month: 7, day: 5, hour: 9, minute: 30, second: 0 }),
+      );
+      expect(jsonBody(fetchMock)["timestamp"]).toBe(new Date(expected).toISOString());
+    });
+
+    it("clearing every End segment makes a point event", async () => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      // event id 2 has both a start and an end.
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+      const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 2 }), 200));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<EventEditor />);
+      await clearField(user, "editor-end");
+      await waitFor(() => {
+        for (const el of editableSegments("editor-end")) expect(isPlaceholder(el)).toBe(true);
+      });
+      expect(saveDisabled()).toBe(false);
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(jsonBody(fetchMock)).toHaveProperty("end_timestamp", null);
+    });
+
+    it("partially entering an empty End explains, ✕ clears it", async () => {
+      const user = userEvent.setup();
+      const { fetchMock } = openDraft({ endTimestampMs: null });
+      expect(screen.getByTestId("editor-end-clear").hasAttribute("disabled")).toBe(true);
+      await typeSegment(user, "editor-end", "month", "7");
+      await waitFor(() =>
+        expect(screen.getByText("Enter a complete end time, or clear it with ✕.")).toBeTruthy(),
+      );
+      expect(saveDisabled()).toBe(true);
+      await user.click(screen.getByTestId("editor-end-clear"));
+      await waitFor(() => expect(saveDisabled()).toBe(false));
+      expect(screen.queryByText("Enter a complete end time, or clear it with ✕.")).toBeNull();
+      for (const el of editableSegments("editor-end")) expect(isPlaceholder(el)).toBe(true);
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(jsonBody(fetchMock)).not.toHaveProperty("end_timestamp");
+    });
+
+    // A new target with the SAME instants hands the fields equal epochs, so
+    // their memoised values keep their identity: only a remount drops the
+    // previous target's half-typed segments.
+    it.each([
+      { field: "editor-start", end: null },
+      { field: "editor-end", end: DAY5_MS + 3_600_000 },
+    ])("a new target with equal times drops $field's partial segments", async ({ field, end }) => {
+      const user = userEvent.setup();
+      const { fetchMock } = openDraft({ endTimestampMs: end });
+      await user.click(seg(field, "day") as HTMLElement);
+      await user.keyboard("{Backspace}");
+      await waitFor(() => expect(saveDisabled()).toBe(true));
+      const sid = useReviewStore.getState().sessions[0]?.id ?? "";
+      act(() => {
+        useUiStore.getState().actions.openEventEditor({
+          kind: "draft",
+          draft: blankDraft(sid, { timestampMs: DAY5_MS, endTimestampMs: end, label: "second" }),
+        });
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId("editor-label")).toHaveProperty("value", "second"),
+      );
+      for (const el of editableSegments(field)) expect(isPlaceholder(el)).toBe(false);
+      expect(saveDisabled()).toBe(false);
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const body = jsonBody(fetchMock);
+      expect(body["label"]).toBe("second");
+      expect(body["timestamp"]).toBe(new Date(DAY5_MS).toISOString());
+      expect(body["end_timestamp"]).toBe(end === null ? undefined : new Date(end).toISOString());
+    });
+
+    it("end before start explains on the End field", () => {
+      openDraft({ endTimestampMs: DAY5_MS - 1000 });
+      expect(saveDisabled()).toBe(true);
+      expect(screen.getByText("End must be after Start.")).toBeTruthy();
+    });
+
+    it("server error is announced", async () => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409)),
+      );
+      render(<EventEditor />);
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("archive is locked"));
+    });
   });
 });

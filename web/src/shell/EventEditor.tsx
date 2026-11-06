@@ -6,7 +6,7 @@
 // header comment -- the all-in-one `SlideoutMenu` wrapper puts `data-testid`
 // on the outer backdrop ModalOverlay, not the visible Dialog panel.
 import { X } from "@untitledui/icons";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   Modal,
@@ -18,12 +18,21 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
-import { createEvent, deleteEvent, isStale, updateEvent } from "../data/eventApi";
+import type { EventRecord } from "../api/export.gen";
+import {
+  createEvent,
+  deleteEvent,
+  isStale,
+  type StaleResult,
+  sourceGuard,
+  updateEvent,
+} from "../data/eventApi";
 import { useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { TextInput } from "../ui/TextInput";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
+import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
 
 // Default manual grey + the app's event accent + the auto lifecycle colors --
 // mirrors AUTO_EVENT_COLORS (otto/monitor/events.py: start/pass/fail =
@@ -48,6 +57,31 @@ const EVENT_COLOR_SWATCHES = [
 const DASH_STYLES = ["solid", "dot", "dash", "longdash", "dashdot", "longdashdot"] as const;
 
 type Form = EventDraft;
+
+// How filled-in each date field's segments are, as DateFieldCompleteness
+// reports them. The form's epochs cannot say this: a partially cleared
+// field never calls onChange, so its epoch still holds the old instant.
+interface Fill {
+  start: DateFill;
+  end: DateFill;
+}
+
+function startMessage(fill: DateFill, startEmpty: boolean): string | null {
+  if (fill === "partial") return "Enter a complete start time.";
+  if (startEmpty || fill === "empty") return "Enter a start time.";
+  return null;
+}
+
+function endMessage(form: Form, fill: Fill, startEmpty: boolean): string | null {
+  if (fill.end === "partial") return "Enter a complete end time, or clear it with ✕.";
+  // Only judge the range against a Start the user can see: while Start is
+  // incomplete its held epoch is not what the field shows.
+  const startShown = !startEmpty && fill.start === "complete";
+  if (startShown && form.endTimestampMs !== null && form.endTimestampMs <= form.timestampMs) {
+    return "End must be after Start.";
+  }
+  return null;
+}
 
 function formFromRecord(
   sessionId: string,
@@ -75,6 +109,46 @@ export function EventEditor() {
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
+  const [fill, setFill] = useState<Fill>({ start: "complete", end: "empty" });
+  // Start was fully cleared (its field called onChange(null)). form.timestampMs
+  // keeps the last valid epoch only so the user can retype; it is never saved
+  // while this is set, and Start's controlled value is null meanwhile.
+  const [startEmpty, setStartEmpty] = useState(false);
+  // Bumped by the clear-end button: re-keying End's InputDate drops any
+  // partially typed segments along with the value.
+  const [endKey, setEndKey] = useState(0);
+  // Bumped on every reseed, so both InputDates remount per editor target.
+  // A new target whose instants equal the old one's hands the fields
+  // equal epochs, so their memoised values keep their identity and
+  // react-stately would keep the previous target's half-typed segments.
+  // A counter, not the target's ids: two drafts have no ids to tell apart.
+  const [targetKey, setTargetKey] = useState(0);
+
+  // Each field's controlled value is memoised on its epoch: react-stately
+  // resets a field's displayed segments whenever the value's IDENTITY
+  // changes, so a fresh object per render would erase a half-typed edit on
+  // the very re-render a completeness report causes.
+  const timestampMs = form?.timestampMs;
+  const endTimestampMs = form?.endTimestampMs;
+  const startValue = useMemo(
+    () => (timestampMs === undefined ? null : msToCalendarDateTime(timestampMs)),
+    [timestampMs],
+  );
+  const endValue = useMemo(
+    () =>
+      endTimestampMs === undefined || endTimestampMs === null
+        ? null
+        : msToCalendarDateTime(endTimestampMs),
+    [endTimestampMs],
+  );
+  const onStartFill = useCallback(
+    (f: DateFill) => setFill((prev) => (prev.start === f ? prev : { ...prev, start: f })),
+    [],
+  );
+  const onEndFill = useCallback(
+    (f: DateFill) => setFill((prev) => (prev.end === f ? prev : { ...prev, end: f })),
+    [],
+  );
 
   // Reseeds on the TARGET's identity, not on the session -- keying this off
   // a reactive `session` value instead would re-run every time the active
@@ -90,26 +164,32 @@ export function EventEditor() {
       setForm(null);
       return;
     }
+    let next: Form | null;
     if (editor.kind === "draft") {
-      setForm(editor.draft);
-      return;
+      next = editor.draft;
+    } else {
+      const session = useReviewStore.getState().sessions.find((s) => s.id === editor.sessionId);
+      const record = session?.events.find((ev) => ev.id === editor.eventId);
+      next = record ? formFromRecord(editor.sessionId, record) : null;
     }
-    const session = useReviewStore.getState().sessions.find((s) => s.id === editor.sessionId);
-    const record = session?.events.find((ev) => ev.id === editor.eventId);
-    setForm(record ? formFromRecord(editor.sessionId, record) : null);
+    setForm(next);
+    setTargetKey((k) => k + 1);
+    setStartEmpty(false);
+    setFill({ start: "complete", end: next?.endTimestampMs == null ? "empty" : "complete" });
   }, [editor]);
 
   if (editor === null || form === null) return null;
 
-  const invalid =
-    form.label.trim() === "" ||
-    (form.endTimestampMs !== null && form.endTimestampMs <= form.timestampMs);
+  const startMsg = startMessage(fill.start, startEmpty);
+  const endMsg = endMessage(form, fill, startEmpty);
+  const invalid = form.label.trim() === "" || startMsg !== null || endMsg !== null;
 
   const save = async () => {
     try {
       // A stale result: a file import overtook the request and already
       // closed the editor (data/source.ts), so there is nothing left to do.
-      let result: unknown;
+      const current = sourceGuard();
+      let result: EventRecord | StaleResult;
       if (editor.kind === "draft") {
         result = await createEvent(form.sessionId, {
           label: form.label,
@@ -130,7 +210,7 @@ export function EventEditor() {
           dash: form.dash,
         });
       }
-      if (isStale(result)) return;
+      if (isStale(current(result))) return;
       closeEventEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -144,7 +224,8 @@ export function EventEditor() {
       return;
     }
     try {
-      if (isStale(await deleteEvent(editor.sessionId, editor.eventId))) return;
+      const current = sourceGuard();
+      if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
       closeEventEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -181,34 +262,58 @@ export function EventEditor() {
               onChange={(value) => setForm({ ...form, label: value })}
             />
             <InputDate
+              key={targetKey}
               label="Start"
               granularity="second"
               data-testid="editor-start"
-              value={msToCalendarDateTime(form.timestampMs)}
-              onChange={(v) => v && setForm({ ...form, timestampMs: calendarDateTimeToMs(v) })}
+              value={startEmpty ? null : startValue}
+              isInvalid={startMsg !== null}
+              hint={<DateFieldCompleteness onFillChange={onStartFill} message={startMsg} />}
+              onChange={(v) => {
+                // A fully cleared field reports null, then redisplays its
+                // controlled value -- so Start goes null rather than letting
+                // the old date reappear.
+                if (v === null) {
+                  setStartEmpty(true);
+                  return;
+                }
+                setStartEmpty(false);
+                setForm({ ...form, timestampMs: calendarDateTimeToMs(v) });
+              }}
             />
-            <div className="flex items-end gap-2">
-              <div className="grow">
-                <InputDate
-                  label="End"
-                  granularity="second"
-                  data-testid="editor-end"
-                  value={
-                    form.endTimestampMs === null ? null : msToCalendarDateTime(form.endTimestampMs)
-                  }
-                  onChange={(v) =>
-                    v && setForm({ ...form, endTimestampMs: calendarDateTimeToMs(v) })
-                  }
-                />
-              </div>
+            {/* A label / input / hint grid: End's field spans its three rows
+                as a subgrid, so the ✕ in the input row stays level with the
+                input whether or not a message shows under it. */}
+            <div className="grid grid-cols-[1fr_auto] grid-rows-[auto_auto_auto] gap-x-2 gap-y-1.5">
+              <InputDate
+                key={`${targetKey}:${endKey}`}
+                label="End"
+                granularity="second"
+                data-testid="editor-end"
+                className="col-start-1 row-span-3 row-start-1 grid grid-cols-1 grid-rows-subgrid"
+                value={endValue}
+                isInvalid={endMsg !== null}
+                hint={<DateFieldCompleteness onFillChange={onEndFill} message={endMsg} />}
+                // A fully cleared End is a point event, not an error.
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    endTimestampMs: v === null ? null : calendarDateTimeToMs(v),
+                  })
+                }
+              />
               <ButtonUtility
+                className="col-start-2 row-start-2 self-center"
                 aria-label="Clear end (point event)"
                 tooltip="Clear end (point event)"
                 icon={X}
                 size="sm"
                 data-testid="editor-end-clear"
-                isDisabled={form.endTimestampMs === null}
-                onClick={() => setForm({ ...form, endTimestampMs: null })}
+                isDisabled={form.endTimestampMs === null && fill.end !== "partial"}
+                onClick={() => {
+                  setForm({ ...form, endTimestampMs: null });
+                  setEndKey((k) => k + 1);
+                }}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -250,7 +355,7 @@ export function EventEditor() {
               )}
             </Select>
             {error !== null && (
-              <p data-testid="editor-error" className="text-xs text-error-primary">
+              <p data-testid="editor-error" role="alert" className="text-xs text-error-primary">
                 {error}
               </p>
             )}

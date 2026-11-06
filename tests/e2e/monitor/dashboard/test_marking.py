@@ -178,6 +178,67 @@ def test_span_start_stop_flow(page: Page, live_stream_dash) -> None:
     assert "soak" in row.inner_text()
 
 
+def test_incomplete_start_date_blocks_save(page: Page, live_stream_dash) -> None:
+    """Clearing one Start segment leaves the date incomplete: react-aria never
+    calls onChange for that, so the form still holds the old instant. Save
+    must be disabled and say why, not post the old timestamp (#864)."""
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    _tid(page, "mark-menu").click()
+    _tid(page, "menu-add-event").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    _tid(page, "editor-label").fill("half-typed")
+    expect(_tid(page, "editor-save")).to_be_enabled()
+
+    day = _tid(page, "editor-start").locator('[data-type="day"]')
+    day.click()
+    # Each Backspace drops one digit, so two clear a two-digit day; on a
+    # one-digit day the second lands on the blank segment and only moves
+    # focus back, leaving the other segments untouched.
+    page.keyboard.press("Backspace")
+    page.keyboard.press("Backspace")
+    expect(day).to_have_attribute("data-placeholder", "true")
+    expect(_tid(page, "editor-save")).to_be_disabled()
+    expect(editor.get_by_text("Enter a complete start time.")).to_be_visible()
+
+
+def test_end_clear_button_aligns_with_end_input(page: Page, live_stream_dash) -> None:
+    """End's ✕ sits level with End's input row, with or without the message
+    under the field: it must not drop to the hint line (#864)."""
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    _tid(page, "mark-menu").click()
+    _tid(page, "menu-add-event").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    end_input = _tid(page, "editor-end").locator('[role="group"]').first
+    clear = _tid(page, "editor-end-clear")
+
+    def assert_level() -> None:
+        box = end_input.bounding_box()
+        button = clear.bounding_box()
+        assert box is not None
+        assert button is not None
+        centre = button["y"] + button["height"] / 2
+        assert box["y"] <= centre <= box["y"] + box["height"], (box, button)
+
+    assert_level()
+    # A partial End shows its message under the field.
+    _tid(page, "editor-end").locator('[data-type="month"]').click()
+    page.keyboard.type("7")
+    expect(editor.get_by_text("Enter a complete end time, or clear it with ✕.")).to_be_visible()
+    assert_level()
+
+
 def test_drag_zoom_select(page: Page, live_stream_dash) -> None:
     """A plain drag across the chart canvas (no modifier) zoom-selects: the
     window shrinks toward the dragged sub-range and, in live mode, pause
