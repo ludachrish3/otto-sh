@@ -1,10 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createTextMeasure } from "../charts/measure";
 import {
+  approxMeasure,
   assignLanes,
   buildStackOption,
   chartTheme,
+  type EventMarker,
+  type EventOverlay,
   eventMarkers,
   eventOverlay,
+  LABEL_FONT_FAMILY,
+  LABEL_FONT_SIZE,
+  LABEL_LANES_MAX,
+  LABEL_MAX_PX,
+  type LabelPlacement,
+  labelLayout,
+  type MeasureText,
+  windowPatch,
   zoomAbout,
   zoomToRange,
 } from "../charts/options";
@@ -12,6 +24,15 @@ import { MAX_SERIES_PER_CHART, SERIES_DARK, SERIES_LIGHT } from "../charts/palet
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
 const theme = chartTheme(false);
+/** Layout for the pre-#863 eventOverlay cases, whose events sit in 0..5000 ms. */
+const LAYOUT = { window: { from: 0, to: 5_000 }, plotWidthPx: 800, measure: approxMeasure };
+
+/** `xs[i]`, failing the test (rather than the type check) when it is absent. */
+function nth<T>(xs: readonly T[], i = 0): T {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`no element ${i} in a list of ${xs.length}`);
+  return x;
+}
 
 function series(slot: number) {
   return {
@@ -337,14 +358,14 @@ describe("assignLanes", () => {
 });
 
 describe("eventOverlay markArea lanes", () => {
-  const overlayTheme = { muted: "#999", ink: "#eee" };
+  const overlayTheme = { muted: "#999", ink: "#eee", surface: "#fff" };
 
   it("gives two overlapping span events distinct label positions", () => {
     const events = [
       { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
     ];
-    const { markArea } = eventOverlay(events, overlayTheme) as {
+    const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
     };
     const pos0 = markArea.data[0][0].label.position;
@@ -357,12 +378,15 @@ describe("eventOverlay markArea lanes", () => {
       { id: 1, label: "a", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "b", color: "#2f9e6e", fromMs: 3_000, toMs: 4_000 },
     ];
-    const { markArea } = eventOverlay(events, overlayTheme) as {
+    const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
     };
     const pos0 = markArea.data[0][0].label.position;
     const pos1 = markArea.data[1][0].label.position;
-    expect(pos0).toEqual(pos1); // both lane 0 — the common case is unchanged
+    // Both lane 0 — the common case is unchanged. x is relative to each
+    // span's own start, so y (lane 0's top, 4 px) is what pins the lane.
+    expect(pos0?.[1]).toBe(4);
+    expect(pos1?.[1]).toBe(4);
   });
 
   it("keeps the label text and draws the fill in the event colour (now alpha-faded)", () => {
@@ -373,7 +397,7 @@ describe("eventOverlay markArea lanes", () => {
       { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
     ];
-    const { markArea } = eventOverlay(events, overlayTheme) as {
+    const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ name: string; itemStyle: { color: string } }, unknown][] };
     };
     expect(markArea.data[0][0].name).toBe("stress run");
@@ -384,7 +408,7 @@ describe("eventOverlay markArea lanes", () => {
 
   it("leaves markLine (instant-event) behaviour untouched", () => {
     const events = [{ id: 1, label: "config reload", color: "#7c5cff", fromMs: 1_000, toMs: null }];
-    const { markLine } = eventOverlay(events, overlayTheme) as {
+    const { markLine } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markLine: { data: { xAxis: number; name: string }[] };
     };
     expect(markLine.data).toHaveLength(1);
@@ -399,8 +423,8 @@ describe("eventOverlay markArea lanes", () => {
 describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
   it("colors the label with theme.ink so it reads against dark surfaces", () => {
     const events = [{ id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 }];
-    const overlayTheme = { muted: "#999", ink: "#f3f4f6" };
-    const { markArea } = eventOverlay(events, overlayTheme) as {
+    const overlayTheme = { muted: "#999", ink: "#f3f4f6", surface: "#fff" };
+    const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: { data: [{ label: { color: string; fontSize: number } }, unknown][] };
     };
     expect(markArea.data[0][0].label.color).toBe(overlayTheme.ink);
@@ -412,13 +436,13 @@ describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
 // the chart ignored it — markLines were always "dashed" and spans had no
 // border at all. Both now honor the dash (spans on all four edges).
 describe("eventOverlay dash styling (TODO item 5)", () => {
-  const overlayTheme = { muted: "#999", ink: "#f3f4f6" };
+  const overlayTheme = { muted: "#999", ink: "#f3f4f6", surface: "#fff" };
 
   it("maps a point event's dash onto the markLine's lineStyle type", () => {
     const events = [
       { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dot" },
     ];
-    const { markLine } = eventOverlay(events, overlayTheme) as {
+    const { markLine } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markLine: { data: { lineStyle: { type: unknown } }[] };
     };
     expect(markLine.data[0].lineStyle.type).toBe("dotted");
@@ -428,7 +452,7 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
     const events = [
       { id: 1, label: "stress", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000, dash: "solid" },
     ];
-    const { markArea } = eventOverlay(events, overlayTheme) as {
+    const { markArea } = eventOverlay(events, overlayTheme, LAYOUT) as {
       markArea: {
         data: [
           { itemStyle: { borderType: unknown; borderColor: string; borderWidth: number } },
@@ -446,8 +470,323 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
       eventOverlay(
         [{ id: 1, label: "s", color: "#fff", fromMs: 1_000, toMs: 2_000, dash }],
         overlayTheme,
+        LAYOUT,
       ).markArea as { data: [{ itemStyle: { borderType: unknown } }, unknown][] };
     expect(span("longdash").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
     expect(span("dashdot").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
+  });
+});
+
+// #863: one annotation layout for every event label — measured widths, edge
+// clamping, a bounded lane count and an overflow count. `labelLayout` is the
+// pure core; these cases pin its invariants, not its mechanics.
+describe("labelLayout (#863)", () => {
+  const WIN15 = { from: 0, to: 15 * 60_000 };
+  const measure6: MeasureText = (t) => t.length * 6;
+  const point = (id: number, fromMs: number, label = `event ${id}`): EventMarker => ({
+    id,
+    label,
+    color: "#7c5cff",
+    fromMs,
+    toMs: null,
+  });
+  /** The window instant at pixel `px` of a 1000 px plot. */
+  const at = (px: number) => (px / 1000) * WIN15.to;
+
+  /** Invariants 1-3: inside the plot, no same-lane overlap, at most 3 lanes. */
+  function expectInvariants(placements: LabelPlacement[], plotWidthPx: number) {
+    const visible = placements.filter((p) => !p.hidden);
+    for (const p of visible) {
+      expect(p.leftPx, `"${p.text}" left edge`).toBeGreaterThanOrEqual(0);
+      expect(p.leftPx + p.widthPx, `"${p.text}" right edge`).toBeLessThanOrEqual(plotWidthPx);
+      expect(p.lane).toBeGreaterThanOrEqual(0);
+      expect(p.lane).toBeLessThan(LABEL_LANES_MAX);
+    }
+    for (const a of visible) {
+      for (const b of visible) {
+        if (a === b || a.lane !== b.lane) continue;
+        const overlap = a.leftPx < b.leftPx + b.widthPx && b.leftPx < a.leftPx + a.widthPx;
+        expect(overlap, `"${a.text}" and "${b.text}" overprint in lane ${a.lane}`).toBe(false);
+      }
+    }
+  }
+
+  it("three points two seconds apart take three lanes", () => {
+    const markers = [point(1, 60_000), point(2, 62_000), point(3, 64_000)];
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    expect(new Set(placements.map((p) => p.lane))).toEqual(new Set([0, 1, 2]));
+    expect(placements.every((p) => !p.hidden)).toBe(true);
+    expect(placements.map((p) => p.id)).toEqual([1, 2, 3]); // input order
+  });
+
+  it("five coincident points: three visible, one carries (+2)", () => {
+    const markers = [1, 2, 3, 4, 5].map((id) => point(id, 300_000));
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    expect(placements.filter((p) => !p.hidden)).toHaveLength(3);
+    expect(placements.filter((p) => p.hidden)).toHaveLength(2);
+    const counted = placements.filter((p) => p.text.endsWith(" (+2)"));
+    expect(counted).toHaveLength(1);
+    expect(nth(counted).lane).toBe(2);
+    expect(nth(counted).hidden).toBe(false);
+  });
+
+  it("labels near both edges stay inside the plot", () => {
+    const markers = [point(1, WIN15.from, "left edge"), point(2, WIN15.to - 1000, "right edge")];
+    const wide = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(wide, 1000);
+    expect(wide.every((p) => !p.hidden)).toBe(true);
+    // A 30-character label on a 120 px plot, anchored at x = 10.
+    const narrow = labelLayout(
+      [point(3, (10 / 120) * WIN15.to, "x".repeat(30))],
+      WIN15,
+      120,
+      measure6,
+    );
+    expectInvariants(narrow, 120);
+    expect(nth(narrow).hidden).toBe(false);
+    expect(nth(narrow).text.endsWith("…")).toBe(true);
+  });
+
+  it("centres a label on its anchor when it fits", () => {
+    const p = nth(labelLayout([point(1, at(500), "deploy")], WIN15, 1000, measure6));
+    expect(p.leftPx + p.widthPx / 2).toBe(500);
+  });
+
+  it("wide glyphs are measured, not counted", () => {
+    const measure14: MeasureText = (t) => t.length * 14;
+    const label = "部署完成部署完成部署完成";
+    const p = nth(labelLayout([point(1, at(500), label)], WIN15, 1000, measure14));
+    expectInvariants([p], 1000);
+    expect(p.widthPx).toBe(measure14(p.text));
+    expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
+    expect(p.text.endsWith("…")).toBe(true);
+  });
+
+  it("long labels truncate to LABEL_MAX_PX with an ellipsis", () => {
+    const p = nth(labelLayout([point(1, at(500), "a".repeat(80))], WIN15, 1000, measure6));
+    expectInvariants([p], 1000);
+    expect(p.text.endsWith("…")).toBe(true);
+    expect(p.widthPx).toBe(measure6(p.text));
+    expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
+    // A short label is left whole.
+    const q = nth(labelLayout([point(2, at(500), "deploy")], WIN15, 1000, measure6));
+    expect(q.text).toBe("deploy");
+  });
+
+  it("the overflow suffix is placed with its own width", () => {
+    const markers = [1, 2, 3, 4, 5, 6].map((id) =>
+      point(id, WIN15.to - 2000, `${"r".repeat(18)}${id}${id}`),
+    );
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    const counted = placements.filter((p) => p.text.endsWith(" (+3)"));
+    expect(counted).toHaveLength(1);
+    expect(nth(counted).widthPx).toBe(measure6(nth(counted).text));
+  });
+
+  it("caps the overflow count at +99", () => {
+    const markers = Array.from({ length: 110 }, (_, i) => point(i + 1, at(500), "evt"));
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    expect(placements.filter((p) => p.text.endsWith(" (+99)"))).toHaveLength(1);
+  });
+
+  it("adjacent overflow clusters count separately", () => {
+    const markers = [
+      ...[1, 2, 3, 4, 5].map((id) => point(id, at(300), "evt")),
+      ...[6, 7, 8, 9, 10].map((id) => point(id, at(500), "evt")),
+    ];
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    const counted = placements.filter((p) => p.text.endsWith(" (+2)"));
+    expect(counted).toHaveLength(2);
+    expect(counted.some((p) => p.id <= 5)).toBe(true);
+    expect(counted.some((p) => p.id > 5)).toBe(true);
+  });
+
+  it("a plot too narrow for an ellipsis and a count hides every label", () => {
+    const placements = labelLayout([point(1, at(500), "abc")], WIN15, 30, measure6);
+    expect(placements.every((p) => p.hidden)).toBe(true);
+  });
+
+  it("empty label takes no lane", () => {
+    const markers = [point(1, at(300), ""), point(2, at(300), "real"), point(3, at(300), "too")];
+    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    expect(nth(placements, 0).hidden).toBe(true);
+    expect(
+      placements
+        .filter((p) => !p.hidden)
+        .map((p) => p.lane)
+        .sort((a, b) => a - b),
+    ).toEqual([0, 1]);
+  });
+
+  it("a span and a point whose labels overlap take different lanes", () => {
+    const span: EventMarker = {
+      id: 1,
+      label: "soak",
+      color: "#ff6b6b",
+      fromMs: at(260),
+      toMs: at(340),
+    };
+    const placements = labelLayout([span, point(2, at(300), "checkpoint")], WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    expect(nth(placements, 0).lane).not.toBe(nth(placements, 1).lane);
+  });
+
+  it("eventOverlay carries placements", () => {
+    const markers = [1, 2, 3, 4].map((id) => point(id, at(300)));
+    const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
+    const overlay = eventOverlay(markers, theme, layout);
+    const data = overlay.markLine.data as { label: { show: boolean } }[];
+    expect(data).toHaveLength(4); // a hidden label's line still draws
+    expect(data.filter((d) => d.label.show === false)).toHaveLength(1);
+    const patch = windowPatch({
+      window: WIN15,
+      events: markers,
+      theme,
+      anchorSeriesId: "s0",
+      plotWidthPx: 1000,
+      measure: measure6,
+    }) as { series: EventOverlay[] };
+    const built = buildStackOption({
+      unit: "%",
+      yTitle: "CPU %",
+      series: [series(0)],
+      window: WIN15,
+      events: markers,
+      theme,
+      plotWidthPx: 1000,
+      measure: measure6,
+    }) as { series: EventOverlay[] };
+    // JSON drops the formatter closures; compare their output separately.
+    const texts = (o: EventOverlay) =>
+      (o.markLine.data as { label: { formatter: () => string } }[]).map((d) => d.label.formatter());
+    expect(JSON.stringify(nth(patch.series).markLine)).toBe(
+      JSON.stringify(nth(built.series).markLine),
+    );
+    expect(JSON.stringify(nth(patch.series).markArea)).toBe(
+      JSON.stringify(nth(built.series).markArea),
+    );
+    expect(texts(nth(patch.series))).toEqual(texts(nth(built.series)));
+    expect(texts(nth(built.series)).filter((t) => t.endsWith(" (+1)"))).toHaveLength(1);
+  });
+
+  it("draws a point label at its layout offset, inside the plot top", () => {
+    const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
+    const p = nth(labelLayout([point(1, at(995), "right edge")], WIN15, 1000, measure6));
+    const d = nth(
+      eventOverlay([point(1, at(995), "right edge")], theme, layout).markLine.data as {
+        label: Record<string, unknown>;
+      }[],
+    );
+    expect(d.label).toMatchObject({
+      show: true,
+      position: "end",
+      distance: -(4 + p.lane * 14),
+      verticalAlign: "top",
+      align: "left",
+      offset: [p.leftPx - 995, 0],
+      fontSize: LABEL_FONT_SIZE,
+      fontFamily: LABEL_FONT_FAMILY,
+    });
+  });
+
+  it("lays out and draws a multiline label as one line", () => {
+    const measured: string[] = [];
+    const measure: MeasureText = (t) => {
+      measured.push(t);
+      return measure6(t);
+    };
+    const label = "A\nB\r\nC \r \n D";
+    const p = nth(labelLayout([point(1, at(500), label)], WIN15, 1000, measure));
+    expect(p.text).toBe("A B C D");
+    expect(measured.some((t) => /[\r\n]/u.test(t))).toBe(false);
+    const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
+    const line = eventOverlay([point(1, at(500), label)], theme, layout).markLine.data as {
+      label: { formatter: () => string };
+    }[];
+    expect(nth(line).label.formatter()).toBe("A B C D");
+    const area = eventOverlay(
+      [{ id: 2, label: "A\nB\nC", color: "#f00", fromMs: at(100), toMs: at(300) }],
+      theme,
+      layout,
+    ).markArea.data as [{ label: { formatter: () => string } }, unknown][];
+    expect(nth(area)[0].label.formatter()).toBe("A B C");
+  });
+
+  it("truncates a very long label in logarithmically many measurements", () => {
+    let calls = 0;
+    const counting: MeasureText = (t) => {
+      calls += 1;
+      return measure6(t);
+    };
+    const p = nth(labelLayout([point(1, at(500), "x".repeat(10_000))], WIN15, 1000, counting));
+    expect(calls).toBeLessThanOrEqual(64);
+    expect(p.text.endsWith("…")).toBe(true);
+    expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
+    // The longest prefix that fits: one more character would not.
+    const kept = p.text.length - 1;
+    expect(measure6(`${"x".repeat(kept + 1)}…`)).toBeGreaterThan(measure6(p.text));
+    expect(p.text).toBe(
+      nth(labelLayout([point(1, at(500), "x".repeat(80))], WIN15, 1000, measure6)).text,
+    );
+  });
+
+  it("draws a span label relative to its clipped start", () => {
+    const span: EventMarker = {
+      id: 1,
+      label: "soak",
+      color: "#f00",
+      fromMs: -60_000,
+      toMs: at(100),
+    };
+    const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
+    const p = nth(labelLayout([span], WIN15, 1000, measure6));
+    const area = eventOverlay([span], theme, layout).markArea.data as [
+      { label: { position: number[]; align: string; fontFamily: string } },
+      unknown,
+    ][];
+    // Clipped at the window start, x = 0 — ECharts' polygon origin.
+    expect(nth(area)[0].label.position).toEqual([p.leftPx, 4 + p.lane * 14]);
+    expect(nth(area)[0].label.align).toBe("left");
+    expect(nth(area)[0].label.fontFamily).toBe(LABEL_FONT_FAMILY);
+  });
+});
+
+describe("eventOverlay label halo (#863)", () => {
+  it("rings every point and span label in the theme surface colour", () => {
+    const dark = chartTheme(true);
+    const events: EventMarker[] = [
+      { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null },
+      { id: 2, label: "soak", color: "#ff6b6b", fromMs: 2_000, toMs: 3_000 },
+    ];
+    const overlay = eventOverlay(events, dark, LAYOUT);
+    const line = nth(overlay.markLine.data as { label: Record<string, unknown> }[]);
+    const area = nth(overlay.markArea.data as [{ label: Record<string, unknown> }, unknown][]);
+    for (const label of [line.label, area[0].label]) {
+      expect(label["textBorderColor"]).toBe(dark.surface);
+      expect(label["textBorderWidth"]).toBe(3);
+    }
+  });
+});
+
+describe("createTextMeasure (#863)", () => {
+  it("under jsdom makes no console.error call and returns approxMeasure widths", () => {
+    const spy = vi.spyOn(console, "error");
+    const measure = createTextMeasure();
+    expect(measure("abcd")).toBe(approxMeasure("abcd"));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("measures with an injected canvas context at the label font", () => {
+    const ctx = { font: "", measureText: (t: string) => ({ width: t.length * 7 }) };
+    const measure = createTextMeasure(() => ctx as unknown as CanvasRenderingContext2D);
+    expect(measure("abc")).toBe(21);
+    expect(ctx.font).toBe(`${LABEL_FONT_SIZE}px ${LABEL_FONT_FAMILY}`);
   });
 });

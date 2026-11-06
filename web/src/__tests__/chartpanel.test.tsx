@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type BrushArmAction,
@@ -7,12 +7,47 @@ import {
   ChartPanel,
   type SetOptionOpts,
 } from "../charts/ChartPanel";
+import {
+  approxMeasure,
+  DEFAULT_PLOT_WIDTH_PX,
+  type EventMarker,
+  type EventOverlay,
+  GRID,
+  labelLayout,
+} from "../charts/options";
 
-globalThis.ResizeObserver ??= class {
-  observe() {}
+/** Every live observer, so a test can `trigger(width)` a resize: jsdom has
+ * neither ResizeObserver nor layout, so the trigger stamps `clientWidth` on
+ * each observed element and then runs its callback. */
+const observers = new Set<FakeResizeObserver>();
+
+class FakeResizeObserver {
+  targets: Element[] = [];
+  readonly callback: ResizeObserverCallback;
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    observers.add(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
   unobserve() {}
-  disconnect() {}
-} as unknown as typeof ResizeObserver;
+  disconnect() {
+    observers.delete(this);
+  }
+}
+
+globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+
+function trigger(width: number) {
+  act(() => {
+    for (const ro of [...observers]) {
+      for (const t of ro.targets)
+        Object.defineProperty(t, "clientWidth", { configurable: true, value: width });
+      ro.callback([], ro as unknown as ResizeObserver);
+    }
+  });
+}
 
 const instances: FakeChart[] = [];
 
@@ -396,5 +431,125 @@ describe("ChartPanel manual Ctrl-drag pan (Task 13 review fix)", () => {
     fireEvent.mouseMove(el, { ctrlKey: true, buttons: 0, clientX: 10 });
     vi.advanceTimersByTime(250);
     expect(onZoom).not.toHaveBeenCalled();
+  });
+});
+
+// #863: the overlay's label layout is measured — plot width from the
+// ResizeObserver, label widths from `measure` — and re-applied after every
+// full option replacement, so a rebuild never leaves the default-width layout
+// buildStackOption baked in.
+describe("ChartPanel measured label layout (#863)", () => {
+  const MARKERS: EventMarker[] = [
+    // At 90% of the window: centred at 800 px, but pushed in from the right
+    // edge at 296 px, so the offset differs between the two widths.
+    { id: 1, label: "deploy", color: "#7c5cff", fromMs: 1_900_000, toMs: null },
+  ];
+  const THEME = { muted: "#999", ink: "#111", surface: "#fff" };
+
+  beforeEach(() => {
+    instances.length = 0;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  function panel(option: Record<string, unknown>, theme = THEME) {
+    return (
+      <ChartPanel
+        option={option}
+        groupId="g"
+        window={WINDOW}
+        markers={MARKERS}
+        theme={theme}
+        anchorSeriesId="s0"
+        measure={approxMeasure}
+        testId="chart-panel-x"
+      />
+    );
+  }
+
+  /** `xs[i]`, failing the test (rather than the type check) when absent. */
+  function nth<T>(xs: readonly T[], i = 0): T {
+    const x = xs[i];
+    if (x === undefined) throw new Error(`no element ${i} in a list of ${xs.length}`);
+    return x;
+  }
+  function overlayCalls(instance: FakeChart) {
+    return instance.calls.filter((c) => (c.opt as { series?: unknown }).series !== undefined);
+  }
+  /** The label x-offset of the last overlay patch's only point marker. */
+  function lastOffset(instance: FakeChart): number {
+    const last = overlayCalls(instance).at(-1);
+    if (last === undefined) throw new Error("no overlay patch applied");
+    const series = (last.opt as { series: EventOverlay[] }).series;
+    const datum = nth(nth(series).markLine.data as { label: { offset: [number, number] } }[]);
+    return datum.label.offset[0];
+  }
+  function expectedOffset(plotWidthPx: number): number {
+    const p = nth(labelLayout(MARKERS, WINDOW, plotWidthPx, approxMeasure));
+    return p.leftPx - 0.9 * plotWidthPx;
+  }
+
+  it("resize re-lays out labels", () => {
+    const { container } = render(panel({ series: [] }));
+    expect(lastOffset(nth(instances))).toBeCloseTo(expectedOffset(DEFAULT_PLOT_WIDTH_PX));
+    trigger(400); // plot = 400 - GRID.left - GRID.right = 296
+    expect(400 - GRID.left - GRID.right).toBe(296);
+    expect(lastOffset(nth(instances))).toBeCloseTo(expectedOffset(296));
+    expect(expectedOffset(296)).not.toBeCloseTo(expectedOffset(DEFAULT_PLOT_WIDTH_PX));
+    const el = container.querySelector('[data-testid="chart-panel-x"]') as HTMLElement;
+    const p = nth(labelLayout(MARKERS, WINDOW, 296, approxMeasure));
+    expect(JSON.parse(el.dataset["echartsLabelRects"] ?? "null")).toEqual([
+      [p.lane, p.leftPx, p.widthPx],
+    ]);
+    expect(el.dataset["echartsPlotWidth"]).toBe("296");
+  });
+
+  it("fonts-ready re-lays out labels", async () => {
+    let resolve: () => void = () => {};
+    const ready = new Promise<void>((r) => {
+      resolve = r;
+    });
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready } });
+    try {
+      render(panel({ series: [] }));
+      const before = overlayCalls(nth(instances)).length;
+      await act(async () => {
+        resolve();
+        await ready;
+      });
+      expect(overlayCalls(nth(instances)).length).toBeGreaterThan(before);
+    } finally {
+      delete (document as { fonts?: unknown }).fonts;
+    }
+  });
+
+  it("mounts without document.fonts", () => {
+    expect("fonts" in document).toBe(false);
+    expect(() => render(panel({ series: [] }))).not.toThrow();
+  });
+
+  it("an option-only change re-applies the measured layout", () => {
+    const { rerender } = render(panel({ series: [], rev: 1 }));
+    trigger(400);
+    rerender(panel({ series: [], rev: 2 }));
+    const calls = nth(instances).calls;
+    const lastReplace = calls.map((c) => c.opts?.notMerge === true).lastIndexOf(true);
+    expect((nth(calls, lastReplace).opt as { rev: number }).rev).toBe(2);
+    const after = calls.slice(lastReplace + 1);
+    expect(after.some((c) => (c.opt as { series?: unknown }).series !== undefined)).toBe(true);
+    expect(lastOffset(nth(instances))).toBeCloseTo(expectedOffset(296));
+  });
+
+  it("a theme surface change re-applies the overlay with the new halo", () => {
+    const option = { series: [] }; // same identity across renders: only the theme moves
+    const { rerender } = render(panel(option));
+    const before = overlayCalls(nth(instances)).length;
+    rerender(panel(option, { ...THEME, surface: "#030712" }));
+    const calls = overlayCalls(nth(instances));
+    expect(calls.length).toBeGreaterThan(before);
+    const series = (nth(calls, calls.length - 1).opt as { series: EventOverlay[] }).series;
+    const datum = nth(nth(series).markLine.data as { label: { textBorderColor: string } }[]);
+    expect(datum.label.textBorderColor).toBe("#030712");
   });
 });
