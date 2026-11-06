@@ -99,6 +99,15 @@ function KeyRow({
  * tokens `RunsPage.tsx`'s active tier chip and "Focus this context" button
  * already use, so this reads as one consistent "brand pin" treatment
  * rather than a one-off. */
+/** The one look every header pin/search chip shares: a single line (never
+ * wraps), with a long name truncated at `max-w-48` — each chip's label span
+ * carries the full name in `title`. */
+const PIN_CHIP_CLASS = cx(
+  "inline-flex max-w-48 items-center gap-1.5 whitespace-nowrap rounded-full border",
+  "border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium",
+  "text-brand-secondary",
+);
+
 function FocusChip({
   label,
   tierColor,
@@ -109,18 +118,15 @@ function FocusChip({
   onClear: () => void;
 }) {
   return (
-    <span
-      data-testid="focus-chip"
-      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
-        border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
-        text-brand-secondary"
-    >
+    <span data-testid="focus-chip" className={PIN_CHIP_CLASS}>
       <span
         aria-hidden
         className={cx("size-2 shrink-0 rounded-sm", !tierColor && "bg-fg-quaternary")}
         style={tierColor ? { backgroundColor: tierColor } : undefined}
       />
-      <span className="truncate">{label}</span>
+      <span title={label} className="truncate">
+        {label}
+      </span>
       <button
         type="button"
         data-testid="focus-clear"
@@ -142,14 +148,11 @@ function FocusChip({
  * OWN tier color is unavailable. */
 function TicketChip({ id, onClear }: { id: string; onClear: () => void }) {
   return (
-    <span
-      data-testid="ticket-chip"
-      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
-        border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
-        text-brand-secondary"
-    >
+    <span data-testid="ticket-chip" className={PIN_CHIP_CLASS}>
       <span aria-hidden className="size-2 shrink-0 rounded-sm bg-fg-quaternary" />
-      <span className="truncate font-mono">{id}</span>
+      <span title={id} className="truncate font-mono">
+        {id}
+      </span>
       <button
         type="button"
         data-testid="ticket-clear"
@@ -169,14 +172,11 @@ function TicketChip({ id, onClear }: { id: string; onClear: () => void }) {
  * its own. */
 function ProductChip({ name, onClear }: { name: string; onClear: () => void }) {
   return (
-    <span
-      data-testid="product-chip"
-      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
-        border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
-        text-brand-secondary"
-    >
+    <span data-testid="product-chip" className={PIN_CHIP_CLASS}>
       <span aria-hidden className="size-2 shrink-0 rounded-sm bg-fg-quaternary" />
-      <span className="truncate font-mono">{name}</span>
+      <span title={name} className="truncate font-mono">
+        {name}
+      </span>
       <button
         type="button"
         data-testid="product-clear"
@@ -363,18 +363,22 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
     <div className="flex min-h-screen flex-col">
       <header
         data-testid="app-bar"
-        className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-secondary px-4"
+        className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-secondary px-4 py-1"
       >
-        <div className="flex min-w-0 items-center gap-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1">
           <div
             data-testid="brand"
-            className="flex items-center gap-2 text-sm font-semibold text-secondary"
+            className="flex min-w-0 items-center gap-2 text-sm font-semibold text-secondary"
           >
             <span aria-hidden className="text-brand-500">
               ⬡
             </span>
-            <span>otto coverage</span>
-            {index && <span className="text-quaternary">· {index.report_title}</span>}
+            <span className="whitespace-nowrap">otto coverage</span>
+            {index && (
+              <span title={index.report_title} className="min-w-0 truncate text-quaternary">
+                · {index.report_title}
+              </span>
+            )}
           </div>
           {/* Top-level page nav. `#/tickets` sits outside the
               `#/coverage/...` namespace deliberately (see App.tsx) so it can
@@ -404,20 +408,15 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
             <span
               data-testid="overrides-badge"
               title="manual-testing overrides are active — open the ⋮ menu for the list"
-              className="rounded-full border border-dashed border-secondary px-2 text-xs text-tertiary"
+              className="whitespace-nowrap rounded-full border border-dashed border-secondary px-2 text-xs text-tertiary"
             >
               {overrides.length} override{overrides.length === 1 ? "" : "s"}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {searchHit && (
-            <span
-              data-testid="search-pill"
-              className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
-                border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
-                text-brand-secondary"
-            >
+            <span data-testid="search-pill" className={PIN_CHIP_CLASS}>
               <span title={searchHit.query} className="truncate font-mono">
                 {searchHit.query}
               </span>
@@ -445,7 +444,9 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
           {focus !== null && (
             <FocusChip
               label={focus}
-              {...(focusedContext && { tierColor: tierColors[focusedContext.tier] })}
+              {...(focusedContext && {
+                tierColor: tierColors[focusedContext.tier],
+              })}
               onClear={() => setFocus(null)}
             />
           )}
