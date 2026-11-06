@@ -28,7 +28,13 @@ import {
 } from "@/components/application/slideout-menus/slideout-menu";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
-import { endEvent } from "../data/eventApi";
+import {
+  endEvent,
+  isStale,
+  reportMutationFailure,
+  type StaleResult,
+  sourceGuard,
+} from "../data/eventApi";
 import { clampRange, type NormalizedSession, sessionBounds } from "../data/exportDoc";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatSpan, parseTs } from "../data/time";
@@ -71,10 +77,13 @@ function EventsComposeRow(props: {
 
   // Same catch shape as MarkControl's submit: the caller (this
   // control) owns the error surface, one inline slot shared by both flows.
-  const run = async (action: (text: string) => Promise<void>) => {
+  // A stale result means a file import overtook the request: this row is
+  // already gone, so nothing is reset.
+  const run = async (action: (text: string) => Promise<StaleResult | undefined>) => {
     if (!label.trim()) return;
     try {
-      await action(label);
+      const current = sourceGuard();
+      if (isStale(current(await action(label)))) return;
       setLabel("");
       setError(null);
     } catch (err) {
@@ -84,7 +93,8 @@ function EventsComposeRow(props: {
 
   const stop = async () => {
     try {
-      await endOpenSpan();
+      const current = sourceGuard();
+      if (isStale(current(await endOpenSpan()))) return;
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -134,7 +144,6 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
   const setRange = useReviewStore((s) => s.actions.setRange);
   const mode = useReviewStore((s) => s.mode);
   const editable = useReviewStore((s) => s.editable);
-  const addWarning = useReviewStore((s) => s.actions.addWarning);
   const openEventEditor = useUiStore((s) => s.actions.openEventEditor);
   const [jumpNotice, setJumpNotice] = useState<string | null>(null);
 
@@ -177,9 +186,8 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
   };
 
   const endRow = (eventId: number) => {
-    void endEvent(session.id, eventId).catch((err) =>
-      addWarning(`End now failed: ${err instanceof Error ? err.message : String(err)}`),
-    );
+    const onFailure = reportMutationFailure("End now");
+    void endEvent(session.id, eventId).catch(onFailure);
   };
 
   return (

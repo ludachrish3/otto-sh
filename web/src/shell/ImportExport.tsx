@@ -4,20 +4,15 @@
 // fresh via documentFromSessions rather than the raw boot-time document, so
 // a live export stays truthful after streamed chart_map/meta/event updates
 // (see exportDoc.ts's sessionToRecord).
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { documentFromSessions } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
+import { importLocalFile } from "../data/source";
 
-function useImportFile(): (file: File) => void {
-  const importMonitorSessions = useReviewStore((s) => s.actions.importMonitorSessions);
-  return useCallback(
-    (file: File) => {
-      void file.text().then((text) => importMonitorSessions(text, file.name));
-    },
-    [importMonitorSessions],
-  );
-}
+// Both UI paths (the picker and drag-drop) go through importLocalFile, which
+// makes a loaded file the shell's only data source (#873).
+const importFile = (file: File): void => void importLocalFile(file);
 
 export function exportLoadedDocument(): void {
   const { sessions, sourceName } = useReviewStore.getState();
@@ -35,7 +30,6 @@ export function exportLoadedDocument(): void {
 /** Mounts the hidden input + drag-drop handlers; children get the picker via context-free ref registration. */
 export function ImportProvider({ children }: { children: ReactNode }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const importFile = useImportFile();
 
   useEffect(() => {
     registerPicker(() => inputRef.current?.click());
@@ -52,7 +46,7 @@ export function ImportProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [importFile]);
+  }, []);
 
   return (
     <>

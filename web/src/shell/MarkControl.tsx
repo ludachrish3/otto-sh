@@ -11,7 +11,8 @@ import { Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import { useActiveSession, useReviewStore } from "../data/reviewStore";
+import { isStale, reportMutationFailure, sourceGuard } from "../data/eventApi";
+import { useActiveSession } from "../data/reviewStore";
 import { TextInput } from "../ui/TextInput";
 import { useUiStore } from "../ui/uiStore";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "./marking";
@@ -23,7 +24,6 @@ export function MarkControl() {
   const { openMarkPopover, closeMarkPopover, armSweep, openEventEditor } = useUiStore(
     (s) => s.actions,
   );
-  const addWarning = useReviewStore((s) => s.actions.addWarning);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputElRef = useRef<HTMLInputElement | null>(null);
@@ -43,7 +43,10 @@ export function MarkControl() {
   const submit = async () => {
     if (!label.trim()) return;
     try {
-      await (markPopover === "start" ? startSpan(label) : markNow(label));
+      // Stale: a file import overtook the request and already closed this.
+      const current = sourceGuard();
+      if (isStale(current(await (markPopover === "start" ? startSpan(label) : markNow(label)))))
+        return;
       closeMarkPopover();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -121,11 +124,8 @@ export function MarkControl() {
                 label="End span"
                 isDisabled={!spanOpen}
                 onAction={() => {
-                  void endOpenSpan().catch((err) =>
-                    addWarning(
-                      `End span failed: ${err instanceof Error ? err.message : String(err)}`,
-                    ),
-                  );
+                  const onFailure = reportMutationFailure("End span");
+                  void endOpenSpan().catch(onFailure);
                 }}
                 data-testid="menu-end-span"
               />

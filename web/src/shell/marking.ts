@@ -3,7 +3,11 @@
 // EventsPanel's compose row — one implementation per flow, three triggers.
 // All throw EventApiError upward: the CALLER owns the error surface (inline
 // text for controls, the warnings banner for palette-initiated runs).
-import { createEvent, endEvent } from "../data/eventApi";
+// Each flow resolves to eventApi's StaleResult when a file import overtook
+// its request (#873): the flow then skips its own follow-up effects, and so
+// does its caller. Each layer re-checks with its own sourceGuard after its
+// await, so an import landing between the layers still counts as stale.
+import { createEvent, endEvent, isStale, type StaleResult, sourceGuard } from "../data/eventApi";
 import type { NormalizedSession } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
@@ -14,23 +18,31 @@ function requireActiveSessionId(): string {
   return id;
 }
 
-export async function markNow(label: string): Promise<void> {
-  await createEvent(requireActiveSessionId(), { label });
+export async function markNow(label: string): Promise<StaleResult | undefined> {
+  const current = sourceGuard();
+  const result = current(await createEvent(requireActiveSessionId(), { label }));
+  return isStale(result) ? result : undefined;
 }
 
-export async function startSpan(label: string): Promise<void> {
+export async function startSpan(label: string): Promise<StaleResult | undefined> {
   const sessionId = requireActiveSessionId();
-  const record = await createEvent(sessionId, { label });
+  const current = sourceGuard();
+  const record = current(await createEvent(sessionId, { label }));
+  if (isStale(record)) return record;
   if (record.id != null) {
     useUiStore.getState().actions.setOpenSpan({ sessionId, eventId: record.id });
   }
+  return undefined;
 }
 
-export async function endOpenSpan(): Promise<void> {
+export async function endOpenSpan(): Promise<StaleResult | undefined> {
   const span = useUiStore.getState().openSpan;
-  if (span === null) return;
-  await endEvent(span.sessionId, span.eventId);
+  if (span === null) return undefined;
+  const current = sourceGuard();
+  const result = current(await endEvent(span.sessionId, span.eventId));
+  if (isStale(result)) return result;
   useUiStore.getState().actions.setOpenSpan(null);
+  return undefined;
 }
 
 export function blankDraft(session: NormalizedSession): EventDraft {

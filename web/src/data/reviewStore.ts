@@ -81,7 +81,11 @@ interface ReviewActions {
   appendFragments: (frags: readonly MonitorSessionFragment[]) => void;
   selectSession: (id: string) => void;
   setRange: (range: TimeRange | null) => void;
-  clearImportError: () => void;
+  /** The one writer of `importError` outside the parse itself: surfaces an
+   * import failure that never reached the parser (a file the browser could
+   * not read — see data/source.ts's importLocalFile) on the same banner a
+   * parse failure uses, and clears the banner when given null. */
+  setImportError: (message: string | null) => void;
   /** Which server mode the shell booted against — set once from `/api/mode`. */
   setMode: (mode: "live" | "review" | null) => void;
   /** From /api/mode: whether this server accepts event mutations
@@ -267,7 +271,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
       }
       set({ range });
     },
-    clearImportError: () => set({ importError: null }),
+    setImportError: (message) => set({ importError: message }),
     setMode: (mode) => set({ mode }),
     setEditable: (editable) => set({ editable }),
     addWarning: (message) => set({ warnings: [...get().warnings, message] }),

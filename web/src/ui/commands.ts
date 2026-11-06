@@ -22,6 +22,7 @@ import type { FC } from "react";
 import { useMemo } from "react";
 import { useHashLocation } from "wouter/use-hash-location";
 
+import { reportMutationFailure } from "../data/eventApi";
 import { useActiveSession, useIsPaused, useReviewStore } from "../data/reviewStore";
 import { exportLoadedDocument, openImportPicker } from "../shell/ImportExport";
 import { blankDraft, endOpenSpan } from "../shell/marking";
@@ -69,7 +70,6 @@ export function useCommands(): Command[] {
   const editable = useReviewStore((s) => s.editable);
   const togglePause = useReviewStore((s) => s.actions.togglePause);
   const setWindow = useReviewStore((s) => s.actions.setWindow);
-  const addWarning = useReviewStore((s) => s.actions.addWarning);
   const paused = useIsPaused();
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.actions.toggleTheme);
@@ -209,9 +209,8 @@ export function useCommands(): Command[] {
             // running elsewhere must not offer to end the wrong one.
             enabled: openSpan?.sessionId === session.id,
             run: () => {
-              void endOpenSpan().catch((err) =>
-                addWarning(`End span failed: ${err instanceof Error ? err.message : String(err)}`),
-              );
+              const onFailure = reportMutationFailure("End span");
+              void endOpenSpan().catch(onFailure);
             },
           },
         );
@@ -256,6 +255,5 @@ export function useCommands(): Command[] {
     openEventEditor,
     armSweep,
     openMarkPopover,
-    addWarning,
   ]);
 }

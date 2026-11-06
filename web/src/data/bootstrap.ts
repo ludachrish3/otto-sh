@@ -28,8 +28,19 @@
 // only ever sees a 200 `/api/monitor_sessions` body; ITS validation
 // failures are not swallowed — they surface through the store's existing
 // `importError`, the same as a bad file chosen through Import.
+//
+// A file import supersedes all of this (#873; see data/source.ts). Each
+// entry point here — the boot below and every `resync` — captures the
+// source generation before its first await and gives up, silently, the
+// moment it is no longer current: a late /api/mode answer, snapshot body or
+// hydrate never overwrites an imported file, flips the shell back to live,
+// or opens a stream. The check sits after EVERY await, in the continuation
+// that then writes state: a helper's own check does not cover its caller.
+// The stopper startStream returns is registered with source.ts, which closes
+// it on the switch.
 
 import { useReviewStore } from "./reviewStore";
+import { isCurrentSource, registerStreamStop, sourceGeneration } from "./source";
 import { startStream } from "./stream";
 
 interface ModePayload {
@@ -51,39 +62,43 @@ function isModePayload(value: unknown): value is ModePayload {
 }
 
 export async function bootstrapFromServer(): Promise<void> {
+  const generation = sourceGeneration();
   let modeRes: Response;
   try {
     modeRes = await fetch("/api/mode");
   } catch {
     return;
   }
-  if (!modeRes.ok) return;
+  if (!modeRes.ok || !isCurrentSource(generation)) return;
   let modeBody: unknown;
   try {
     modeBody = await modeRes.json();
   } catch {
     return;
   }
-  if (!isModePayload(modeBody)) return;
+  if (!isModePayload(modeBody) || !isCurrentSource(generation)) return;
 
   // Same soft-fail rules as the mode fetch above: a transport failure here
   // is swallowed silently too (the Import shell stays exactly as it was);
   // only a 200-but-unparseable body reaches the store and its existing
   // importError surface. Shared by `hydrate` (the initial load) and
-  // `resync` (the stream's resync-on-reconnect) below.
-  const fetchDocumentText = async (): Promise<string | null> => {
+  // `resync` (the stream's resync-on-reconnect) below. Also null once
+  // `gen` is no longer the current source: a file was imported meanwhile.
+  const fetchDocumentText = async (gen: number): Promise<string | null> => {
     let docRes: Response;
     try {
       docRes = await fetch("/api/monitor_sessions");
     } catch {
       return null;
     }
-    if (!docRes.ok) return null;
+    if (!docRes.ok || !isCurrentSource(gen)) return null;
+    let text: string;
     try {
-      return await docRes.text();
+      text = await docRes.text();
     } catch {
       return null;
     }
+    return isCurrentSource(gen) ? text : null;
   };
 
   // The initial boot load. Fresh state: sessions[0] becomes active and any
@@ -92,8 +107,10 @@ export async function bootstrapFromServer(): Promise<void> {
   // transport failure (false) — used below to decide whether starting the
   // stream is even worthwhile.
   const hydrate = async (): Promise<boolean> => {
-    const bodyText = await fetchDocumentText();
-    if (bodyText === null) return false;
+    const bodyText = await fetchDocumentText(generation);
+    // Re-checked here, not only inside the helper: an import can land
+    // between the helper's last check and this continuation.
+    if (bodyText === null || !isCurrentSource(generation)) return false;
     useReviewStore.getState().actions.importMonitorSessions(bodyText, modeBody.source ?? "server");
     return true;
   };
@@ -104,13 +121,15 @@ export async function bootstrapFromServer(): Promise<void> {
   // snapshot must not silently discard a user's paused/pinned view (see
   // reviewStore.ts's resyncMonitorSessions).
   const resync = async (): Promise<boolean> => {
-    const bodyText = await fetchDocumentText();
-    if (bodyText === null) return false;
+    const gen = sourceGeneration();
+    const bodyText = await fetchDocumentText(gen);
+    if (bodyText === null || !isCurrentSource(gen)) return false;
     useReviewStore.getState().actions.resyncMonitorSessions(bodyText, modeBody.source ?? "server");
     return true;
   };
 
   const hydrated = await hydrate();
+  if (!isCurrentSource(generation)) return;
 
   // The shell is LIVE only if it actually hydrated a live session and
   // started streaming — never before knowing that. A live server with
@@ -139,7 +158,7 @@ export async function bootstrapFromServer(): Promise<void> {
       // sequence-numbered replay buffer or a shared server-side cursor
       // between the snapshot fetch and the stream open, neither of which
       // exists today.
-      startStream({ resync });
+      registerStreamStop(startStream({ resync }));
     }
   } else {
     useReviewStore.getState().actions.setMode(modeBody.mode);
