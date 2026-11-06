@@ -8,13 +8,18 @@
 // store's range is the single source of truth, so the zoomed window
 // round-trips through the store and every chart (and the review bar's
 // inputs) follows.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { TimeRange } from "../data/exportDoc";
 import { echarts } from "./echarts";
+import { createTextMeasure } from "./measure";
 import {
   type ChartTheme,
+  DEFAULT_PLOT_WIDTH_PX,
   type EventMarker,
+  GRID,
+  labelLayout,
+  type MeasureText,
   windowPatch,
   yAxisPointerPatch,
   zoomToRange,
@@ -80,7 +85,7 @@ export function ChartPanel(props: {
    * patch (SubjectPage's live charts). Omitted by tests exercising the bare
    * option-replace lifecycle — see chartpanel.test.tsx. */
   markers?: EventMarker[];
-  theme?: Pick<ChartTheme, "muted" | "ink">;
+  theme?: Pick<ChartTheme, "muted" | "ink" | "surface">;
   /** id (SeriesInput.key) of the chart's index-0 series — the one
    * buildStackOption/eventOverlay attach markLine/markArea to. */
   anchorSeriesId?: string | null;
@@ -89,6 +94,9 @@ export function ChartPanel(props: {
    * brush drag opens the event editor via `onSweep` instead of zooming. */
   sweepArmed?: boolean;
   onSweep?: (range: TimeRange) => void;
+  /** Label measurer for the event overlay's layout. Defaults to a canvas
+   * measurer at the label font (approximate under jsdom). */
+  measure?: MeasureText;
   testId?: string;
 }) {
   const {
@@ -111,6 +119,28 @@ export function ChartPanel(props: {
   // pointer is un-suppressed (see the hover listeners in the init effect and
   // the re-assert in the option effect below).
   const hovered = useRef(false);
+  // The event-label layout's inputs (#863): the plot's measured width (the
+  // ResizeObserver below keeps it current), the label measurer (built once
+  // per instance), and a counter bumped when web fonts finish loading —
+  // Inter can arrive after the first paint, and widths measured in the
+  // fallback face would no longer fit the text ECharts draws.
+  const [plotWidthPx, setPlotWidthPx] = useState(DEFAULT_PLOT_WIDTH_PX);
+  const [fontsReady, setFontsReady] = useState(0);
+  const [ownMeasure] = useState(() => createTextMeasure());
+  const measure = props.measure ?? ownMeasure;
+
+  useEffect(() => {
+    // Absent in jsdom (and typed as always present, hence the cast).
+    const ready = (document as { fonts?: FontFaceSet }).fonts?.ready;
+    if (ready === undefined) return;
+    let live = true;
+    void ready.then(() => {
+      if (live) setFontsReady((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!el.current) return;
@@ -132,8 +162,12 @@ export function ChartPanel(props: {
         if (!noop) latest.current.onZoom?.(range);
       }, ZOOM_DEBOUNCE_MS);
     });
-    const ro = new ResizeObserver(() => instance.resize());
-    ro.observe(el.current);
+    const plot = el.current;
+    const ro = new ResizeObserver(() => {
+      instance.resize();
+      setPlotWidthPx(Math.max(1, plot.clientWidth - GRID.left - GRID.right));
+    });
+    ro.observe(plot);
     chart.current = instance;
     instance.dispatchAction(BRUSH_ARM_ACTION);
     instance.on("brushEnd", (e) => {
@@ -322,16 +356,27 @@ export function ChartPanel(props: {
   // this doesn't fire on every unrelated re-render either. Deliberately a
   // MERGE (notMerge: false) touching only xAxis + the anchor series'
   // markLine/markArea, never series `data` — see options.ts's windowPatch.
-  const markersKey = (markers ?? []).map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}`).join("|");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey/theme?.muted are content-based stand-ins for `markers`/`theme`, which are fresh objects every render (see comment above)
+  //
+  // It also owns the event labels' MEASURED layout (#863): buildStackOption
+  // can only lay labels out for a default plot width, so this patch re-applies
+  // the measured one after every full replacement (`option` is a dependency,
+  // and this effect is declared after the replace effect, so it runs second),
+  // on every resize (`plotWidthPx`) and once web fonts load (`fontsReady`).
+  // Every marker field the overlay draws is in `markersKey`.
+  const markersKey = (markers ?? [])
+    .map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}:${m.label}:${m.color}:${m.dash ?? ""}`)
+    .join("|");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey/theme?.muted/theme?.surface are content-based stand-ins for `markers`/`theme`, which are fresh objects every render (see comment above)
   useEffect(() => {
     if (markers === undefined) return; // no incremental-patch contract for this caller
     chart.current?.setOption(
       windowPatch({
         window: win,
         events: markers,
-        theme: theme ?? { muted: "", ink: "" },
+        theme: theme ?? { muted: "", ink: "", surface: "" },
         anchorSeriesId: anchorSeriesId ?? null,
+        plotWidthPx,
+        measure,
       }),
       { notMerge: false, lazyUpdate: true },
     );
@@ -358,8 +403,29 @@ export function ChartPanel(props: {
       el.current.dataset["echartsWindowFrom"] = String(win.from);
       el.current.dataset["echartsWindowTo"] = String(win.to);
       el.current.dataset["echartsMarkerCount"] = String(markers.length);
+      // data-echarts-label-rects: the visible labels' [lane, leftPx, widthPx]
+      // (plot-relative), so a browser spec can check overprinting and
+      // clipping without decoding canvas pixels. The same pure layout
+      // windowPatch drew above, on the same inputs.
+      const visible = labelLayout(markers, win, plotWidthPx, measure).filter((p) => !p.hidden);
+      el.current.dataset["echartsLabelRects"] = JSON.stringify(
+        visible.map((p) => [p.lane, p.leftPx, p.widthPx]),
+      );
+      // data-echarts-plot-width: the plot width those rects were laid out
+      // across, so a spec bounds them without restating GRID's margins.
+      el.current.dataset["echartsPlotWidth"] = String(plotWidthPx);
     }
-  }, [win.from, win.to, markersKey, theme?.muted, anchorSeriesId]);
+  }, [
+    win.from,
+    win.to,
+    markersKey,
+    theme?.muted,
+    theme?.surface,
+    anchorSeriesId,
+    plotWidthPx,
+    option,
+    fontsReady,
+  ]);
 
   return <div ref={el} data-testid={testId} style={{ height: HEIGHT_PX }} className="w-full" />;
 }

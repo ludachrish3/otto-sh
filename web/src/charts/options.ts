@@ -146,8 +146,194 @@ export function zoomAbout(window: TimeRange, factor: number): TimeRange | null {
   return { from: Math.round(center - span / 2), to: Math.round(center + span / 2) };
 }
 
-/** Vertical pixel step between stacked markArea labels — see `assignLanes`. */
+/** Vertical pixel step between stacked label lanes — see `labelLayout`. */
 const LANE_LABEL_STEP_PX = 14;
+
+/** The plot's margins inside the chart container — the one source for the
+ * grid. left: 88 (not the ~56 the y-axis labels alone need) reserves a gutter
+ * for the per-chart +/- zoom button column (SubjectPage), which is pinned
+ * top-left over this margin — the extra width keeps the buttons clear of the
+ * y-axis name, tick labels, and the hover crosshair y-value label (TODO item
+ * 2). ChartPanel subtracts left + right from its container width to get the
+ * plot width `labelLayout` lays labels out across. */
+export const GRID = { left: 88, right: 16, top: 28, bottom: 28 } as const;
+
+/** A label's rendered pixel width at the label font (LABEL_FONT_*). */
+export type MeasureText = (text: string) => number;
+
+/** The ONE event-label font: `createTextMeasure` measures at it and every
+ * markLine/markArea label draws in it. The app's Inter stack (app.css's
+ * --font-sans); ECharts would otherwise default to `sans-serif`, and a width
+ * measured in one face would not fit the text drawn in another. */
+export const LABEL_FONT_FAMILY = '"Inter Variable", system-ui, sans-serif';
+export const LABEL_FONT_SIZE = 10;
+
+/** The measurer where no canvas exists (jsdom, and buildStackOption's default
+ * before ChartPanel re-applies a measured layout): ~6 px per character. */
+export const approxMeasure: MeasureText = (t) => t.length * 6;
+
+/** Plot width buildStackOption lays labels out for when its caller has not
+ * measured one; ChartPanel re-applies the measured layout on top. */
+export const DEFAULT_PLOT_WIDTH_PX = 800;
+
+/** At most this many label lanes; labels that would need a fourth are hidden
+ * and counted on the lane-2 label above them. */
+export const LABEL_LANES_MAX = 3;
+/** Longest a label may draw; longer text is cut and ends with an ellipsis. */
+export const LABEL_MAX_PX = 160;
+/** Gap from the plot's top edge to lane 0's top. */
+const LABEL_TOP_PX = 4;
+/** Width of the surface-coloured halo drawn around label text. */
+const LABEL_HALO_PX = 3;
+/** Clear space kept between two labels sharing a lane. */
+const LABEL_GAP_PX = 4;
+const ELLIPSIS = "…";
+/** The widest overflow suffix — reserved in every label's extent. */
+const MAX_SUFFIX = " (+99)";
+const MAX_OVERFLOW = 99;
+
+/** Where one event's label goes. `leftPx` is relative to the plot's left
+ * edge; `lane` is -1 for a label that takes no lane (an empty one). */
+export interface LabelPlacement {
+  id: number;
+  lane: number;
+  leftPx: number;
+  widthPx: number;
+  text: string;
+  hidden: boolean;
+}
+
+/** Top of lane `lane`, in px below the plot's top edge. */
+function laneTopPx(lane: number): number {
+  return LABEL_TOP_PX + lane * LANE_LABEL_STEP_PX;
+}
+
+/** The pixel x a marker's label is centred on, plus (for a span) the
+ * clipped start its markArea polygon is drawn from — the origin a markArea
+ * label position is relative to. One function so the layout and the drawing
+ * never disagree about where an event sits. */
+function labelAnchor(
+  m: EventMarker,
+  window: TimeRange,
+  plotWidthPx: number,
+): { anchorPx: number; spanStartPx: number } {
+  const span = window.to - window.from || 1; // a zero-width window must not divide by zero
+  const px = (ms: number) => ((ms - window.from) / span) * plotWidthPx;
+  if (m.toMs === null) {
+    const anchorPx = px(m.fromMs);
+    return { anchorPx, spanStartPx: anchorPx };
+  }
+  const spanStartPx = px(Math.max(m.fromMs, window.from));
+  const spanEndPx = px(Math.min(m.toMs, window.to));
+  return { anchorPx: (spanStartPx + spanEndPx) / 2, spanStartPx };
+}
+
+/** An event label as the chart draws it: on ONE line. Every line break,
+ * with the whitespace around it, becomes a single space. The layout gives
+ * each label one lane of LANE_LABEL_STEP_PX, and ECharts would draw a `\n`
+ * as extra lines down into the next lane. Chart labels only: the editor,
+ * tooltips and export keep the event's own text. */
+function chartLabelText(label: string): string {
+  return label.replace(/[^\S\r\n]*(?:\r\n|\r|\n)\s*/gu, " ");
+}
+
+/** `text` cut (with an ellipsis) to at most `budgetPx` wide: the longest
+ * prefix whose `prefix + "…"` fits. A binary search over the prefix length,
+ * so a very long label costs about log2(length) measurements, not one per
+ * character. */
+function truncate(text: string, budgetPx: number, measure: MeasureText): string {
+  if (measure(text) <= budgetPx) return text;
+  const chars = Array.from(text); // code points, so a cut never splits a surrogate pair
+  const cut = (keep: number) => chars.slice(0, keep).join("") + ELLIPSIS;
+  // Invariant: a `lo`-character prefix fits (0 always counts: a bare "…"),
+  // and a `hi`-character one does not (the whole text alone is too wide).
+  let lo = 0;
+  let hi = chars.length;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >>> 1;
+    if (measure(cut(mid)) <= budgetPx) lo = mid;
+    else hi = mid;
+  }
+  return cut(lo);
+}
+
+/** `labelLayout`'s placements, each handed back TOGETHER WITH its marker —
+ * the same structural pairing `withLanes` gives its own callers. */
+function layoutWith(
+  markers: EventMarker[],
+  window: TimeRange,
+  plotWidthPx: number,
+  measure: MeasureText,
+): { marker: EventMarker; placement: LabelPlacement }[] {
+  const suffixPx = measure(MAX_SUFFIX);
+  // Too narrow to show even "… (+99)": nothing fits, so nothing draws.
+  const fits = plotWidthPx >= measure(ELLIPSIS + MAX_SUFFIX);
+  const budgetPx = Math.min(LABEL_MAX_PX, plotWidthPx) - suffixPx;
+  // Each label's EXTENT reserves the widest suffix up front, so appending a
+  // count after lane assignment can never displace anything (one stable pass).
+  const items = markers.map((marker) => {
+    const hidden: LabelPlacement = {
+      id: marker.id,
+      lane: -1,
+      leftPx: 0,
+      widthPx: 0,
+      text: "",
+      hidden: true,
+    };
+    if (!fits || marker.label === "") return { marker, placement: hidden, extent: null };
+    const text = truncate(chartLabelText(marker.label), budgetPx, measure);
+    const widthPx = measure(text);
+    const extentPx = widthPx + suffixPx;
+    const { anchorPx } = labelAnchor(marker, window, plotWidthPx);
+    // Centred on the anchor, then shifted (never re-aligned) only as far as
+    // keeping the whole extent inside the plot requires.
+    const leftPx = Math.min(Math.max(anchorPx - widthPx / 2, 0), plotWidthPx - extentPx);
+    return {
+      marker,
+      placement: { ...hidden, leftPx, widthPx, text, hidden: false },
+      // The gap is part of the lane interval only, never the drawn width.
+      extent: { fromMs: leftPx, toMs: leftPx + extentPx + LABEL_GAP_PX },
+    };
+  });
+  // The same greedy interval colouring spans use, run over pixel extents.
+  const laned = withLanes(items.flatMap((item) => (item.extent ? [{ ...item.extent, item }] : [])));
+  for (const { event, lane } of laned) {
+    event.item.placement.lane = lane;
+    event.item.placement.hidden = lane >= LABEL_LANES_MAX;
+  }
+  // Each hidden label is counted on the leftmost visible lane-2 label whose
+  // extent overlaps it. Greedy colouring guarantees one exists: a label only
+  // reaches lane 3 while lane 2's latest occupant still covers its start.
+  const lastLane = laned.filter((l) => l.lane === LABEL_LANES_MAX - 1);
+  const counts = new Map<(typeof laned)[number], number>();
+  for (const over of laned.filter((l) => l.lane >= LABEL_LANES_MAX)) {
+    const host = lastLane
+      .filter((l) => l.event.fromMs < over.event.toMs && over.event.fromMs < l.event.toMs)
+      .sort((a, b) => a.event.fromMs - b.event.fromMs)[0];
+    if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
+  }
+  for (const [host, n] of counts) {
+    const p = host.event.item.placement;
+    p.text = `${p.text} (+${Math.min(n, MAX_OVERFLOW)})`;
+    p.widthPx = measure(p.text);
+  }
+  return items.map(({ marker, placement }) => ({ marker, placement }));
+}
+
+/** One annotation layout for every event label (points and spans together):
+ * measured widths, kept inside the plot, at most LABEL_LANES_MAX lanes, with
+ * a `(+N)` count standing in for the labels a dense cluster hides. Pure — the
+ * caller supplies the plot width and the measurer. Placements come back in
+ * input order. Precondition: `markers` are already window-filtered by
+ * `eventMarkers`. */
+export function labelLayout(
+  markers: EventMarker[],
+  window: TimeRange,
+  plotWidthPx: number,
+  measure: MeasureText,
+): LabelPlacement[] {
+  return layoutWith(markers, window, plotWidthPx, measure).map((l) => l.placement);
+}
 
 /** Greedy interval-graph lane assignment: the pure core of the overlapping-
  * span-event label fix (found by a visual gate against kitchen-sink.json's
@@ -173,8 +359,9 @@ export function assignLanes(events: { fromMs: number; toMs: number }[]): number[
 }
 
 /** `assignLanes`' algorithm, handing each event back TOGETHER WITH its lane
- * instead of as a parallel array. `eventOverlay` consumes this form so the
- * span/lane pairing is structural: a `lanes[i]` read alongside `spans[i]`
+ * instead of as a parallel array. `labelLayout` consumes this form — over
+ * label pixel extents — so the label/lane pairing is structural: a
+ * `lanes[i]` read alongside `labels[i]`
  * asks the reader to take the alignment on faith, and it is the alignment —
  * not the colouring — that a future edit is most likely to break silently.
  * `assignLanes` stays the exported, directly-unit-tested statement of the
@@ -222,65 +409,106 @@ export interface EventOverlay {
   markArea: { silent: boolean; animation: boolean; data: unknown[] };
 }
 
+/** What `eventOverlay` lays its labels out against: the visible window, the
+ * plot's pixel width and the label measurer (see `labelLayout`). */
+export interface OverlayLayout {
+  window: TimeRange;
+  plotWidthPx: number;
+  measure: MeasureText;
+}
+
 export function eventOverlay(
   events: EventMarker[],
-  theme: Pick<ChartTheme, "muted" | "ink">,
+  theme: Pick<ChartTheme, "muted" | "ink" | "surface">,
+  layout: OverlayLayout,
 ): EventOverlay {
+  const { window, plotWidthPx, measure } = layout;
+  // Points and spans are laid out TOGETHER, so a point label and a span label
+  // that would overprint take different lanes. A hidden label still draws its
+  // line or area; only the text is suppressed.
+  const placed = layoutWith(events, window, plotWidthPx, measure);
+  // The one label text style. The halo (a surface-coloured text border) keeps
+  // a label legible where its own marker line, a neighbour's line or series
+  // data runs through it — labels sit inside the plot's top band.
+  const font = {
+    fontFamily: LABEL_FONT_FAMILY,
+    fontSize: LABEL_FONT_SIZE,
+    textBorderColor: theme.surface,
+    textBorderWidth: LABEL_HALO_PX,
+  };
   const markLine = {
     symbol: "none",
     animation: false,
-    label: { formatter: "{b}", color: theme.muted, fontSize: 10 },
-    data: events
-      .filter((e) => e.toMs === null)
-      .map((e) => ({
-        xAxis: e.fromMs,
-        name: e.label,
-        lineStyle: { color: e.color, type: dashType(e.dash), width: 1 },
-      })),
+    label: { color: theme.muted, ...font },
+    data: placed
+      .filter(({ marker }) => marker.toMs === null)
+      .map(({ marker: e, placement: p }) => {
+        const { anchorPx } = labelAnchor(e, window, plotWidthPx);
+        return {
+          xAxis: e.fromMs,
+          name: e.label,
+          lineStyle: { color: e.color, type: dashType(e.dash), width: 1 },
+          // "end" is the line's top; a negative distance pulls the label back
+          // down INSIDE the plot (clear of the y-axis name above it), and the
+          // offset moves its left edge from the line to the layout's leftPx.
+          label: {
+            show: !p.hidden,
+            position: "end",
+            distance: -laneTopPx(p.lane),
+            verticalAlign: "top",
+            align: "left",
+            offset: [p.leftPx - anchorPx, 0],
+            formatter: () => p.text,
+            ...font,
+          },
+        };
+      }),
   };
-  // Span events only (instant events use markLine above, untouched). Lanes
-  // are assigned over exactly the set being drawn here — deterministic and
-  // stateless, recomputed fresh on every call (no identity to keep in sync
-  // as the window/event set changes).
-  //
   // flatMap rather than filter so `toMs` is narrowed to a real number once,
-  // here: both the lane assignment and the markArea's closing coordinate then
-  // read it directly instead of each restating `e.toMs as number`.
-  const spans = events.flatMap((e) => (e.toMs === null ? [] : [{ ...e, toMs: e.toMs }]));
-  const laned = withLanes(spans);
+  // here, for the markArea's closing coordinate.
+  const spans = placed.flatMap(({ marker: e, placement }) =>
+    e.toMs === null ? [] : [{ e, toMs: e.toMs, placement }],
+  );
   const markArea = {
     silent: true,
     animation: false,
-    data: laned.map(({ event: e, lane }) => [
-      {
-        xAxis: e.fromMs,
-        name: e.label,
-        // Faint fill (alpha baked into the colour, NOT itemStyle.opacity, which
-        // would fade the border too) + a full-strength dashed border in the
-        // event's dash style, so a span reads with the same dash as a point
-        // marker (TODO item 5). borderType rings all four edges — ECharts has no
-        // per-side border and the span is full-height, so the top/bottom lines
-        // land on the plot edges; accepted (the chosen dash on every edge).
-        itemStyle: {
-          color: withAlpha(e.color, 0.12),
-          borderColor: e.color,
-          borderType: dashType(e.dash),
-          borderWidth: 1,
+    data: spans.map(({ e, toMs, placement: p }) => {
+      const { spanStartPx } = labelAnchor(e, window, plotWidthPx);
+      return [
+        {
+          xAxis: e.fromMs,
+          name: e.label,
+          // Faint fill (alpha baked into the colour, NOT itemStyle.opacity, which
+          // would fade the border too) + a full-strength dashed border in the
+          // event's dash style, so a span reads with the same dash as a point
+          // marker (TODO item 5). borderType rings all four edges — ECharts has no
+          // per-side border and the span is full-height, so the top/bottom lines
+          // land on the plot edges; accepted (the chosen dash on every edge).
+          itemStyle: {
+            color: withAlpha(e.color, 0.12),
+            borderColor: e.color,
+            borderType: dashType(e.dash),
+            borderWidth: 1,
+          },
+          // A coordinate-array position is relative to the area's polygon
+          // origin — its CLIPPED start, at the plot top — so the layout's
+          // plot-relative leftPx is rebased onto it. color: markArea labels
+          // used to inherit ECharts' default label color regardless of theme —
+          // illegible against a dark surface; theme.ink is the same token
+          // buildStackOption's tooltip textStyle uses for dark-mode-safe text.
+          label: {
+            show: !p.hidden,
+            position: [p.leftPx - spanStartPx, laneTopPx(p.lane)],
+            align: "left",
+            verticalAlign: "top",
+            formatter: () => p.text,
+            color: theme.ink,
+            ...font,
+          },
         },
-        // Stack overlapping events' labels instead of colliding: each lane
-        // sits LANE_LABEL_STEP_PX further down from the region's top edge.
-        // color/fontSize: markArea labels used to inherit ECharts' default
-        // label color regardless of theme — illegible against a dark surface.
-        // theme.ink is the same token buildStackOption's tooltip textStyle
-        // already uses for dark-mode-safe text.
-        label: {
-          position: ["50%", lane * LANE_LABEL_STEP_PX],
-          color: theme.ink,
-          fontSize: 10,
-        },
-      },
-      { xAxis: e.toMs },
-    ]),
+        { xAxis: toMs },
+      ];
+    }),
   };
   return { markLine, markArea };
 }
@@ -297,10 +525,12 @@ export function eventOverlay(
 export function windowPatch(args: {
   window: TimeRange;
   events: EventMarker[];
-  theme: Pick<ChartTheme, "muted" | "ink">;
+  theme: Pick<ChartTheme, "muted" | "ink" | "surface">;
   anchorSeriesId: string | null;
+  plotWidthPx: number;
+  measure: MeasureText;
 }): Record<string, unknown> {
-  const { window, events, theme, anchorSeriesId } = args;
+  const { window, events, theme, anchorSeriesId, plotWidthPx, measure } = args;
   return {
     xAxis: { min: window.from, max: window.to },
     // Built in one expression rather than assigned onto a mutable record, so
@@ -308,7 +538,14 @@ export function windowPatch(args: {
     // series => no series key at all" rule (a merge patch carrying
     // `series: undefined` is not the same thing) is stated once, here.
     ...(anchorSeriesId !== null
-      ? { series: [{ id: anchorSeriesId, ...eventOverlay(events, theme) }] }
+      ? {
+          series: [
+            {
+              id: anchorSeriesId,
+              ...eventOverlay(events, theme, { window, plotWidthPx, measure }),
+            },
+          ],
+        }
       : {}),
   };
 }
@@ -332,17 +569,19 @@ export function buildStackOption(args: {
   window: TimeRange;
   events: EventMarker[];
   theme: ChartTheme;
+  /** The plot's measured width; ChartPanel re-applies its own measured layout
+   * after every full replacement, so the default only shows before that. */
+  plotWidthPx?: number;
+  measure?: MeasureText;
 }): Record<string, unknown> {
   const { unit, yTitle, series, window, events, theme } = args;
-  const { markLine, markArea } = eventOverlay(events, theme);
+  const plotWidthPx = args.plotWidthPx ?? DEFAULT_PLOT_WIDTH_PX;
+  const measure = args.measure ?? approxMeasure;
+  const { markLine, markArea } = eventOverlay(events, theme, { window, plotWidthPx, measure });
   return {
     animation: false,
-    // left: 88 (not the ~56 the y-axis labels alone need) reserves a gutter for
-    // the per-chart +/- zoom button column (SubjectPage), which is pinned
-    // top-left over this margin — the extra width keeps the buttons clear of the
-    // y-axis name, tick labels, and the hover crosshair y-value label (TODO
-    // item 2).
-    grid: { left: 88, right: 16, top: 28, bottom: 28 },
+    grid: { ...GRID }, // see GRID for why left is 88
+
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "cross", label: { backgroundColor: theme.axis } },

@@ -620,6 +620,55 @@ def test_refused_jump_keeps_panel_open(page: Page, live_stream_dash) -> None:
     expect(_tid(page, "events-panel")).to_be_visible()
 
 
+def _label_rects(panel: Locator) -> list[list[float]]:
+    """``data-echarts-label-rects``: each visible event label's
+    ``[lane, leftPx, widthPx]``, plot-relative (ChartPanel's overlay effect)."""
+    return json.loads(panel.get_attribute("data-echarts-label-rects") or "[]")
+
+
+def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) -> None:
+    """Three point events 2 s apart (the test start/pass/fail case, #863)
+    take three label lanes instead of overprinting, and a label at the
+    window's right edge is shifted inside the plot rather than clipped."""
+    t0 = datetime.now(tz=timezone.utc)
+    for mins in (14, 10, 5, 0):
+        _push_tick(live_stream_dash, "r1", t0 - timedelta(minutes=mins), 10.0)
+    session_id = live_stream_dash.collector.session_id
+    url = live_stream_dash.api_url(f"/api/session/{session_id}/event")
+    cluster_at = t0 - timedelta(minutes=5)
+    events = [
+        ("test start", cluster_at),
+        ("test pass", cluster_at + timedelta(seconds=2)),
+        ("test fail", cluster_at + timedelta(seconds=4)),
+        ("right window edge", t0),
+    ]
+    for label, ts in events:
+        status, body = _post_json(url, {"label": label, "timestamp": ts.isoformat()})
+        assert status == 201, body
+    # A later tick, so the window's `to` sits just past the right-edge event.
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 11.0)
+
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    panel = _tid(page, "chart-panel-CPU")
+    expect(panel).to_have_attribute("data-echarts-marker-count", str(len(events)))
+    page.wait_for_function(
+        "(n) => JSON.parse(document.querySelector('[data-testid=\"chart-panel-CPU\"]')"
+        ".dataset.echartsLabelRects || '[]').length === n",
+        arg=len(events),
+    )
+    rects = _label_rects(panel)
+    # The plot width ChartPanel laid those rects out across, stamped beside them.
+    plot_width = float(panel.get_attribute("data-echarts-plot-width") or "nan")
+    assert {lane for lane, _, _ in rects} == {0, 1, 2}, rects
+    for lane, left, width in rects:
+        assert left >= 0, (lane, left, width)
+        assert left + width <= plot_width, (lane, left, width, plot_width)
+
+
 # --- Visual gate (Task 13 Step 4): span-label legibility, both themes -----
 #
 # Not one of the ten behavior specs above -- legibility can only be judged by
@@ -660,3 +709,51 @@ def test_zz_shot_span_labels_both_themes(page: Page, shell_dash, tmp_path) -> No
         out_path = out_dir / f"span-labels-{theme_name}.png"
         page.locator('[data-testid="subject-page"]').screenshot(path=str(out_path))
         assert out_path.stat().st_size > 0
+
+    # #863: a dense point cluster (test lifecycle markers milliseconds-to-
+    # seconds apart, collapsing into three lanes and a "(+N)" count) and
+    # labels at both window edges (shifted inside the plot, clear of the
+    # y-axis name). Each is kitchen-sink.json plus extra point events.
+    scenarios = {
+        "clustered-points": [
+            ("test start", "08:40:00"),
+            ("test pass", "08:40:00.004"),
+            ("test fail", "08:40:00.009"),
+            ("teardown", "08:40:02"),
+            ("collect logs", "08:40:04"),
+        ],
+        "edge-labels": [
+            ("LEFT WINDOW EDGE", "08:00:00"),
+            ("RIGHT WINDOW EDGE", "10:00:00"),
+            ("deploy v2.14.0-rc3 to the staging cluster", "09:58:00"),
+        ],
+    }
+    base = json.loads((_FIXTURES / "kitchen-sink.json").read_text())
+    for name, extra in scenarios.items():
+        doc = json.loads(json.dumps(base))
+        session = doc["sessions"][0]
+        for n, (label, clock) in enumerate(extra):
+            session["events"].append(
+                {
+                    "id": 100 + n,
+                    "timestamp": f"2026-07-01T{clock}Z",
+                    "label": label,
+                    "source": "manual",
+                    "color": "#7c5cff",
+                    "dash": "dash",
+                }
+            )
+        fixture = tmp_path / f"{name}.json"
+        fixture.write_text(json.dumps(doc))
+        page.goto(shell_dash.url)
+        page.locator('[data-testid="import-input"]').set_input_files(fixture)
+        page.locator('[data-testid="review-bar"]').wait_for()
+        page.goto(f"{shell_dash.url}#/host/chassis-a-lc1-1")
+        panel = page.locator('[data-testid="chart-panel-cpu"]')
+        panel.locator("canvas").wait_for()
+        expect(panel).to_have_attribute("data-echarts-label-rects", re.compile(r"^\[\["))
+        for theme_name, dark in (("light", False), ("dark", True)):
+            _set_theme(page, dark=dark)
+            out_path = out_dir / f"{name}-{theme_name}.png"
+            panel.screenshot(path=str(out_path))
+            assert out_path.stat().st_size > 0
