@@ -168,7 +168,19 @@ resync, never replayed. The cost is deliberate: a tab that is alive but
 sustainedly slower than the stream lapses, resyncs and lapses again rather
 than silently showing stale data. Only the live view and live exports age
 out — the DB keeps everything, so a review opened from a `.db` archive is
-always complete.
+always complete. A resync's snapshot is captured somewhere between its
+request and its response, so an event mutation answered in that interval
+may be newer than the snapshot or already in it. The review store logs the
+event changes it applies from the moment the request starts
+(`beginResync` in `web/src/data/reviewStore.ts`) and, before its one write,
+replays a logged change only if its `observed_at` is strictly later than
+the snapshot session's; a tie or a missing stamp keeps the snapshot. That
+comparison is the server's own order because `event_ops.utc_now` is
+strictly increasing at microsecond resolution, and each stamp is read in
+the same synchronous step as the state it describes: the collector writes
+an event to the database first and then changes memory and publishes, and
+the snapshot reads its stamp and its state together. A session's
+server-observed horizon never moves back.
 
 **Streams end when the server drains.** An open `/api/stream` response
 never finishes on its own, and sse_starlette notices a shutdown only through

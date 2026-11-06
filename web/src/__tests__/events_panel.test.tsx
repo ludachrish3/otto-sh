@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { EventsPanel } from "../shell/EventsPanel";
 import { useUiStore } from "../ui/uiStore";
@@ -24,7 +25,14 @@ function okJson(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+// The app installs this once at startup; endOpenSpan leaves the clearing to it.
+let uninstallReconciler: () => void;
+beforeEach(() => {
+  uninstallReconciler = installOpenSpanReconciler();
+});
+
 afterEach(() => {
+  uninstallReconciler();
   cleanup();
   vi.unstubAllGlobals();
   useReviewStore.setState({
@@ -365,6 +373,35 @@ describe("EventsPanel row affordances", () => {
     await screen.findByTestId("events-panel");
     expect(screen.queryByTestId("event-endnow-1")).toBeNull();
     expect(screen.queryByTestId("event-endnow-4")).toBeNull();
+  });
+
+  it("End now on the tracked span disables Stop", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    const { session } = load();
+    act(() => {
+      useUiStore.getState().actions.setOpenSpan({ sessionId: session.id, eventId: 1 });
+    });
+    expect(screen.getByTestId("events-compose-stop").hasAttribute("disabled")).toBe(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        okJson({
+          id: 1,
+          timestamp: "2026-07-01T08:20:00Z",
+          end_timestamp: "2026-07-01T09:59:00Z",
+          label: "config reload",
+          source: "manual",
+          color: "#7c5cff",
+          dash: "dash",
+        }),
+      ),
+    );
+    await user.click(screen.getByTestId("event-endnow-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("events-compose-stop").hasAttribute("disabled")).toBe(true),
+    );
+    expect(useUiStore.getState().openSpan).toBeNull();
   });
 
   it("clicking End now ends that event via the session/event/id/end route", async () => {

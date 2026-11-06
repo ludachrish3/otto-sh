@@ -141,6 +141,9 @@ export function startStream(
         // Resync BEFORE reopening: re-fetch the whole payload rather than trying to
         // replay what we missed. The snapshot is the truth and already contains it —
         // no sequence numbers, no replay buffer, no way to disagree about history.
+        // The one thing newer than the snapshot is what the shell itself applied
+        // while it was in flight (a mutation's response); the store replays that
+        // onto it (reviewStore.ts's beginResync, #868).
         //
         // Known gap (see bootstrap.ts's `startStream` call for the full note):
         // a point published strictly between this resync's fetch response and

@@ -30,6 +30,26 @@ export function parseObservedAt(observedAt: string | null | undefined): number |
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** A wire `observed_at` as epoch MICROseconds, or null when absent or
+ * unparsable: the server stamps at microsecond resolution and every stamp is
+ * strictly later than the one before (event_ops.utc_now), so this is the
+ * exact order of two server steps, which epoch ms (parseObservedAt) is not.
+ * A resync orders a logged mutation against its snapshot with it (#868). */
+export function observedAtMicros(observedAt: string | null | undefined): number | null {
+  if (observedAt == null) return null;
+  const groups = STAMP_PARTS.exec(observedAt)?.groups;
+  if (groups === undefined) return null;
+  const wholeMs = Date.parse(`${groups["seconds"] ?? ""}${groups["zone"] ?? ""}`);
+  if (Number.isNaN(wholeMs)) return null;
+  const fraction = Number((groups["fraction"] ?? "").padEnd(6, "0").slice(0, 6));
+  return wholeMs * 1000 + fraction;
+}
+
+/** An ISO stamp split at its fractional seconds (which Date.parse would
+ * round to milliseconds): `seconds` up to the whole second, then the
+ * optional `fraction` digits, then the `zone`. */
+const STAMP_PARTS = /^(?<seconds>.*T\d{2}:\d{2}:\d{2})(?:\.(?<fraction>\d+))?(?<zone>.*)$/u;
+
 export interface TimeRange {
   from: number;
   to: number;

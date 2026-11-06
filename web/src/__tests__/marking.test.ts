@@ -4,6 +4,7 @@
 // stores, so the store IS the assertion surface rather than a mock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
+import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs, liveRange } from "../data/time";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "../shell/marking";
@@ -40,8 +41,14 @@ function lastRequestBody(): unknown {
 }
 
 describe("marking", () => {
-  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  let uninstall: () => void;
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    // endOpenSpan leaves clearing the span to the reconciler.
+    uninstall = installOpenSpanReconciler();
+  });
   afterEach(() => {
+    uninstall();
     vi.unstubAllGlobals();
     useReviewStore.setState({
       sessions: [],

@@ -16,6 +16,7 @@ import { Route, Router, Switch } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 
 import { bootstrapFromServer } from "./data/bootstrap";
+import { installOpenSpanReconciler } from "./data/openSpan";
 import { useReviewStore } from "./data/reviewStore";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SubjectPage } from "./pages/SubjectPage";
@@ -35,8 +36,12 @@ function App() {
   const setImportError = useReviewStore((s) => s.actions.setImportError);
   // One-shot, fire-and-forget: bootstrapFromServer never throws (see its
   // header) and Import remains available whether or not it finds anything.
+  // The open-span reconciler is installed first, so the tracked span follows
+  // every store change from the boot hydrate onward (data/openSpan.ts).
   useEffect(() => {
+    const stopReconciling = installOpenSpanReconciler();
     void bootstrapFromServer();
+    return stopReconciling;
   }, []);
   return (
     <ImportProvider>

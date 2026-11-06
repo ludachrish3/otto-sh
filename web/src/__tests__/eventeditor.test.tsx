@@ -7,8 +7,9 @@
 // how MarkControl/EventsPanel trigger it in production.
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import kitchenSink from "../../fixtures/kitchen-sink.json" with { type: "json" };
+import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { EventEditor } from "../shell/EventEditor";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
@@ -659,5 +660,51 @@ describe("EventEditor pending gate (#867)", () => {
       expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
     );
     expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("EventEditor and the tracked span (#868)", () => {
+  // kitchen-sink's event 1 has no end: track it as the open span.
+  function trackEvent1(): string {
+    const sid = hydrate();
+    useUiStore.getState().actions.setOpenSpan({ sessionId: sid, eventId: 1 });
+    return sid;
+  }
+
+  let uninstall: () => void;
+  beforeEach(() => {
+    uninstall = installOpenSpanReconciler();
+  });
+  afterEach(() => {
+    uninstall();
+    useUiStore.setState({ openSpan: null });
+  });
+
+  it("deleting the tracked span from the editor clears it", async () => {
+    const user = userEvent.setup();
+    const sid = trackEvent1();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("editor-delete"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(useUiStore.getState().openSpan).toBeNull();
+  });
+
+  it("saving the tracked span with an end clears it", async () => {
+    const user = userEvent.setup();
+    const sid = trackEvent1();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(okJson(record({ id: 1, end_timestamp: "2026-07-01T09:20:00Z" }), 200)),
+    );
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(useUiStore.getState().openSpan).toBeNull();
   });
 });

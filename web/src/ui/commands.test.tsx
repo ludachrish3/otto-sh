@@ -1,7 +1,8 @@
 // web/src/ui/commands.test.tsx
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { useCommands } from "./commands";
 import { MARK_NOW_BINDING } from "./shortcuts";
@@ -38,7 +39,14 @@ function seedStore(mode: "live" | null): void {
   });
 }
 
+// The app installs this once at startup; End span leaves the clearing to it.
+let uninstallReconciler: () => void;
+beforeEach(() => {
+  uninstallReconciler = installOpenSpanReconciler();
+});
+
 afterEach(() => {
+  uninstallReconciler();
   // Unmount before resetting: this hook runs before RTL's auto-cleanup, so a
   // bare setState here would land on still-mounted hooks outside act.
   cleanup();

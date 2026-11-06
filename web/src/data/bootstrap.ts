@@ -119,13 +119,23 @@ export async function bootstrapFromServer(): Promise<void> {
   // reopen). Unlike `hydrate` above, this must NOT reset `range`/
   // `activeSessionId` — a transient network blip resyncing the whole
   // snapshot must not silently discard a user's paused/pinned view (see
-  // reviewStore.ts's resyncMonitorSessions).
+  // reviewStore.ts's resyncMonitorSessions). The resync's token is taken
+  // BEFORE the snapshot request starts: every fragment applied from then on
+  // (a mutation answered while the snapshot is in flight) is newer than the
+  // snapshot, and the store replays it onto the snapshot (#868). Ended in
+  // `finally`, so a failed or stale attempt never keeps logging.
   const resync = async (): Promise<boolean> => {
     const gen = sourceGeneration();
-    const bodyText = await fetchDocumentText(gen);
-    if (bodyText === null || !isCurrentSource(gen)) return false;
-    useReviewStore.getState().actions.resyncMonitorSessions(bodyText, modeBody.source ?? "server");
-    return true;
+    const { actions } = useReviewStore.getState();
+    const token = actions.beginResync();
+    try {
+      const bodyText = await fetchDocumentText(gen);
+      if (bodyText === null || !isCurrentSource(gen)) return false;
+      actions.resyncMonitorSessions(bodyText, modeBody.source ?? "server", token);
+      return true;
+    } finally {
+      actions.endResync(token);
+    }
   };
 
   const hydrated = await hydrate();

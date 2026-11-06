@@ -105,6 +105,86 @@ describe("reviewStore", () => {
       expect(s.activeSessionId).toBeNull();
       expect(s.range).toBeNull();
     });
+
+    // #868: what a resync replays onto its snapshot, and what it must not.
+    describe("with a token from beginResync", () => {
+      const event = (id: number) => ({
+        id,
+        timestamp: "2026-07-01T08:10:00Z",
+        label: `e${id}`,
+        source: "manual",
+        color: "#888888",
+        dash: "dash",
+      });
+      const withEvents = (events: unknown[]) => {
+        const doc = JSON.parse(MINIMAL) as { sessions: Record<string, unknown>[] };
+        doc.sessions[0]["events"] = events;
+        return JSON.stringify(doc);
+      };
+      const metric = { timestamp: "2026-07-01T08:30:30Z", host: "solo", label: "CPU %", value: 9 };
+
+      it("does not re-apply a fragment that landed before the resync began", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(MINIMAL, "live");
+        const sid = useReviewStore.getState().sessions[0].id;
+        actions.appendFragment({ format: 1, session: sid, events: [event(1)], metrics: [metric] });
+        const token = actions.beginResync();
+        // The snapshot already holds what landed before its request.
+        const doc = JSON.parse(withEvents([event(1)])) as {
+          sessions: { metrics: unknown[] }[];
+        };
+        doc.sessions[0].metrics.push(metric);
+        const expected = doc.sessions[0].metrics.length;
+        expect(actions.resyncMonitorSessions(JSON.stringify(doc), "live", token)).toBe(true);
+        const s = useReviewStore.getState().sessions[0];
+        expect(s.events.map((e) => e.id)).toEqual([1]);
+        expect(s.metrics).toHaveLength(expected);
+      });
+
+      it("replays event upserts and deletes, never metric rows, and the log ends with the apply", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(withEvents([event(1), event(2)]), "live");
+        const sid = useReviewStore.getState().sessions[0].id;
+        const token = actions.beginResync();
+        // Server stamps: the snapshot's capture, then the three mutations after it.
+        const capturedAt = "2026-07-01T08:31:00.000001+00:00";
+        const after = "2026-07-01T08:31:00.000002+00:00";
+        actions.appendFragment({ format: 1, session: sid, events: [event(3)], observed_at: after });
+        actions.appendFragment({
+          format: 1,
+          session: sid,
+          deleted_event_ids: [2],
+          observed_at: after,
+        });
+        actions.appendFragment({ format: 1, session: sid, metrics: [metric], observed_at: after });
+        // The snapshot was captured before all three; it already has event 2.
+        const doc = JSON.parse(withEvents([event(1), event(2)])) as {
+          sessions: Record<string, unknown>[];
+        };
+        for (const session of doc.sessions) session["observed_at"] = capturedAt;
+        const snapshot = JSON.stringify(doc);
+        const metricsInSnapshot = (JSON.parse(snapshot) as { sessions: { metrics: unknown[] }[] })
+          .sessions[0].metrics.length;
+        expect(actions.resyncMonitorSessions(snapshot, "live", token)).toBe(true);
+        let s = useReviewStore.getState().sessions[0];
+        expect(s.events.map((e) => e.id).sort()).toEqual([1, 3]);
+        expect(s.metrics).toHaveLength(metricsInSnapshot);
+        // The token is spent: a later resync with it replays nothing.
+        expect(actions.resyncMonitorSessions(snapshot, "live", token)).toBe(true);
+        s = useReviewStore.getState().sessions[0];
+        expect(s.events.map((e) => e.id).sort()).toEqual([1, 2]);
+      });
+
+      it("never lowers a kept session's observedMs", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(MINIMAL, "live");
+        const sid = useReviewStore.getState().sessions[0].id;
+        const later = "2026-07-01T09:30:00Z";
+        actions.appendFragment({ format: 1, session: sid, observed_at: later });
+        expect(actions.resyncMonitorSessions(MINIMAL, "live")).toBe(true);
+        expect(useReviewStore.getState().sessions[0].observedMs).toBe(Date.parse(later));
+      });
+    });
   });
 
   it("selectSession switches and resets the range", () => {

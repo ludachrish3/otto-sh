@@ -18,6 +18,7 @@ import {
   documentFromSessions,
   ExportParseError,
   metricsForSubject,
+  observedAtMicros,
   parseExportDocument,
   presetRange,
   sessionBounds,
@@ -454,5 +455,27 @@ describe("observed_at", () => {
     const bounds = sessionBounds(s);
     expect(bounds).toEqual({ from: T - 600_000, to: at });
     expect(eventMarkers(s.events, bounds).map((m) => m.id)).toEqual([1]);
+  });
+});
+
+describe("observedAtMicros (#868)", () => {
+  it("keeps microseconds, so stamps 1 us apart order exactly", () => {
+    const a = observedAtMicros("2026-07-01T09:10:00.000001+00:00");
+    const b = observedAtMicros("2026-07-01T09:10:00.000002+00:00");
+    expect(a).not.toBeNull();
+    expect((b ?? 0) - (a ?? 0)).toBe(1);
+  });
+
+  it("reads the Z and +00:00 spellings, and a whole second with no fraction, alike", () => {
+    const base = Date.parse("2026-07-01T09:10:00Z") * 1000;
+    expect(observedAtMicros("2026-07-01T09:10:00+00:00")).toBe(base);
+    expect(observedAtMicros("2026-07-01T09:10:00Z")).toBe(base);
+    expect(observedAtMicros("2026-07-01T09:10:00.5Z")).toBe(base + 500_000);
+  });
+
+  it("is null for a missing or unparsable stamp", () => {
+    expect(observedAtMicros(null)).toBeNull();
+    expect(observedAtMicros(undefined)).toBeNull();
+    expect(observedAtMicros("not a time")).toBeNull();
   });
 });
