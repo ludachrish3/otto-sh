@@ -73,15 +73,16 @@ either limit is reached first.
     place them in a ``cov/`` directory in the run's output directory.
 
 ``--cov-dir PATH``
-    Write coverage data to ``PATH`` instead of the default
-    ``<output_dir>/cov``.  Implies ``--cov``.  The directory is created
-    if missing; if it already exists and is non-empty, the command
-    aborts unless ``--overwrite-cov-dir`` is also given.
+    Stage coverage in ``PATH/cov`` (the run-dir shape ``otto cov report
+    PATH`` reads) instead of ``<output_dir>/cov``.  Implies ``--cov``.
+    ``PATH/cov`` is created if missing.  It must not be a symlink, and
+    if it is non-empty the command aborts unless ``--overwrite-cov-dir``
+    is given.
 
 ``--overwrite-cov-dir``
-    Clear the contents of the ``--cov-dir`` destination before the run
-    so stale data from a previous invocation cannot be mixed with the
-    new results.
+    Clear ``PATH/cov`` (nothing else under ``PATH``) before the run so
+    stale data from a previous invocation cannot be mixed with the new
+    results.
 
 ``--cov-clean / --no-cov-clean``
     Delete ``.gcda`` files on remote hosts before the test run.
@@ -94,7 +95,7 @@ either limit is reached first.
 ``--cov-report-dir PATH``
     Write the HTML report to ``PATH`` instead of the default.  Implies
     ``--cov-report`` (and therefore ``--cov``).  Empty/overwrite rules
-    match ``--cov-dir``: created if missing, aborts if non-empty unless
+    match ``--cov-dir``'s ``PATH/cov``: created if missing, aborts if non-empty unless
     ``--overwrite-cov-report-dir`` is also given.
 
 ``--overwrite-cov-report-dir``
@@ -157,6 +158,7 @@ files it collects and runs no test, so parametrizations are expanded and
     otto test --duration 300 --threshold 90 TestMyDevice
     otto test --cov TestMyDevice
     otto test --cov-dir /tmp/myrun --overwrite-cov-dir TestMyDevice
+    otto cov report /tmp/myrun
     otto test --cov --cov-report TestMyDevice
 """
 
@@ -501,8 +503,9 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
         typer.Option(
             "--cov-dir",
             help=(
-                "Directory to write coverage data to. Implies --cov. "
-                "Default when --cov is used alone: <output_dir>/cov."
+                "Run directory to stage coverage in: writes PATH/cov, which "
+                "`otto cov report PATH` reads. Implies --cov. "
+                "Default: the run's own output dir, so coverage lands in <output_dir>/cov."
             ),
             file_okay=False,
             dir_okay=True,
@@ -514,8 +517,8 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
         typer.Option(
             "--overwrite-cov-dir",
             help=(
-                "Allow --cov-dir to target an existing non-empty directory "
-                "(its contents will be cleared before the run)."
+                "Allow a non-empty PATH/cov (it is cleared before the run; "
+                "the rest of PATH is kept)."
             ),
         ),
     ] = False,

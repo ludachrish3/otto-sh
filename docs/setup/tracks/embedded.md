@@ -418,7 +418,7 @@ Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable, so your log reads like this one:
 
 ```bash
-otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e/cov --no-random TestMathops
+otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e --no-random TestMathops
 ```
 
 ```{literalinclude} ../../examples/captures/qs-embedded-test-cov.txt
@@ -430,12 +430,11 @@ The third line, `No such extension mathops`, is the pre-run reset
 is not loaded has nothing to clear, so otto counts that answer as a successful
 reset ({ref}`coverage-embedded-reset`).
 
-`--cov-dir` refuses a directory that is not empty, so a second run adds
+`--cov-dir` refuses a run whose `cov/` is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
 Your unit run's counters are already in `build/`, from the unit test
-section. Report all three tiers, naming the directory that holds `cov/`,
-not `cov/` itself ({doc}`../../cli/cov/report`):
+section. Report all three tiers ({doc}`../../cli/cov/report`):
 
 ```bash
 otto --lab example_lab cov report ~/otto-runs/e2e --dir ~/otto-runs/report

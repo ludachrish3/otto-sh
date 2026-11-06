@@ -22,6 +22,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto import layout
 from otto.coverage.capture.produce import ProduceResult, ProductCapture
 from otto.coverage.collect import CollectResult, collect_coverage
 from otto.coverage.fetcher.failures import FetchFailure
@@ -1451,8 +1452,11 @@ class TestPostRunSwallowPolicy:
     def _drive_post_run(self, project, cov_dir, cov_config):
         from otto.suite.run import RunOptions, _post_run_coverage
 
+        # RunOptions.cov_dir names the run dir; *cov_dir* is the staged dir under it.
+        run_dir = cov_dir.parent
+        assert layout.cov_dir(run_dir) == cov_dir
         embedded_collect = AsyncMock(return_value={ProductKey("board1", "app"): cov_dir / "board1"})
-        opts = RunOptions(cov=True, cov_report=False, cov_dir=cov_dir)
+        opts = RunOptions(cov=True, cov_report=False, cov_dir=run_dir)
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[]),
@@ -1883,12 +1887,13 @@ class TestAFailedFetchIsAFailedProduct:
         """The run tail's rule for every collection failure: loud, never a failed run."""
         from otto.suite.run import RunOptions, _post_run_coverage
 
-        cov_dir = tmp_path / "cov"
-        opts = RunOptions(cov=True, cov_report=False, cov_dir=cov_dir)
+        run_dir = tmp_path / "run"
+        staged_cov_dir = layout.cov_dir(run_dir)
+        opts = RunOptions(cov=True, cov_report=False, cov_dir=run_dir)
         clean_mock = AsyncMock(return_value=self._app_cleaned())
 
         with (
-            self._lab(cov_dir, self._app_captured(cov_dir), clean_mock) as project,
+            self._lab(staged_cov_dir, self._app_captured(staged_cov_dir), clean_mock) as project,
             caplog.at_level("WARNING"),
         ):
             asyncio.run(_post_run_coverage([project], tmp_path / "log", opts, None))

@@ -31,6 +31,8 @@ CONTRADICTIONS = [
     ({"seed": 7, "random_order": False}, "seed cannot be combined with random_order=False"),
     ({"cov_dir": P, "cov_report_dir": P}, "^cov_report_dir cannot be or contain cov_dir"),
     ({"cov_dir": P / "cov", "cov_report_dir": P}, "^cov_report_dir cannot be or contain cov_dir"),
+    # The report dir IS the staged dir.
+    ({"cov_dir": P, "cov_report_dir": P / "cov"}, "^cov_report_dir cannot be or contain cov_dir"),
 ]
 
 # The same directory, spelled so that only a lexical normalisation equates
@@ -71,8 +73,13 @@ def test_a_report_dir_spelled_differently_is_still_the_cov_dir(cov_dir, cov_repo
 
 @pytest.mark.parametrize(
     ("cov_dir", "cov_report_dir"),
-    [(P, P / "report"), (P / "cov", P / "report"), (P / "cov-data", P / "cov")],
-    ids=["report-inside-cov", "siblings", "shared-name-prefix"],
+    [
+        (P, P / "cov" / "report"),
+        (P / "cov", P / "report"),
+        (P / "cov-data", P / "cov"),
+        (P, P / "cov_report"),
+    ],
+    ids=["report-inside-staged-cov", "siblings", "shared-name-prefix", "report-beside-staged-cov"],
 )
 def test_a_report_dir_that_cannot_clear_the_cov_dir_is_allowed(cov_dir, cov_report_dir):
     """A report inside the coverage tree, or beside it, destroys no data.

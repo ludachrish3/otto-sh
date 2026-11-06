@@ -392,7 +392,7 @@ Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable:
 
 ```bash
-otto --lab example_lab test --cov --cov-dir ~/otto-runs/quickstart-docker/e2e/cov --no-random TestTools
+otto --lab example_lab test --cov --cov-dir ~/otto-runs/quickstart-docker/e2e --no-random TestTools
 ```
 
 ```{literalinclude} ../../examples/captures/qs-docker-test-cov.txt
@@ -407,7 +407,7 @@ container's interleave differently on each run. The DEBUG line
 `banner`: the report reads its binary from its container
 instead (below).
 
-`--cov-dir` refuses a directory that is not empty, so a second run adds
+`--cov-dir` refuses a run whose `cov/` is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
 The report reads `banner`'s binary from its container (below), running or
@@ -415,8 +415,7 @@ stopped, so a container you stopped to flush a long-running process's
 counters needs no restart ({ref}`coverage-container-stop-to-flush`).
 
 Your unit run's counters are already in `build/`, from the unit test
-section. Report all three tiers, naming the directory that holds `cov/`,
-not `cov/` itself ({doc}`../../cli/cov/report`):
+section. Report all three tiers ({doc}`../../cli/cov/report`):
 
 ```bash
 otto --lab example_lab cov report ~/otto-runs/quickstart-docker/e2e --dir ~/otto-runs/quickstart-docker/report

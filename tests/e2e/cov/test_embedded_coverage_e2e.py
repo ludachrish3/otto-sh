@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 import tomli
 
+from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for
@@ -236,13 +237,14 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
             )
 
     report_dir = tmp_path / "report"
-    cov_dir = tmp_path / "cov"
+    run_dir = tmp_path / "e2e"
+    cov_dir = layout.cov_dir(run_dir)
 
     result = _run_otto(
         "test",
         "--cov",
         "--cov-dir",
-        str(cov_dir),
+        str(run_dir),
         "--cov-report",
         "--cov-report-dir",
         str(report_dir),
@@ -364,13 +366,14 @@ def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path)
                 "tests/project3/product/README.md; this lane fails loud rather than "
                 "skipping (G12)."
             )
-    cov_dir = tmp_path / "cov"
+    run_dir = tmp_path / "e2e"
+    cov_dir = layout.cov_dir(run_dir)
 
     result = _run_otto(
         "test",
         "--cov",
         "--cov-dir",
-        str(cov_dir),
+        str(run_dir),
         "TestEmbeddedCounterReset",
         xdir=tmp_path,
     )

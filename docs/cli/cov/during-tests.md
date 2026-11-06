@@ -108,9 +108,9 @@ it:
 `--cov-dir`, `--cov-report`, `--cov-report-dir` and `--cov-tickets-json` all
 imply coverage ({class}`~otto.suite.run.RunOptions` applies the same rule to
 a Python caller), so pairing any of them with `--no-cov` is a usage error.
-So is a `--cov-report-dir` that is, or contains, the `--cov-dir`: clearing
-the report would clear the coverage data it reports on. A report inside
-the `--cov-dir` is fine.
+So is a `--cov-report-dir` that is, or contains, `--cov-dir`'s `PATH/cov`:
+clearing the report would clear the coverage data it reports on. A report
+beside it (`PATH/cov_report`) is fine.
 
 (coverage-awareness)=
 ## Coverage awareness: `ctx.cov`
@@ -225,8 +225,8 @@ a custom pipeline), see the *Collecting coverage from Python* section of
 | Option | Description |
 | ------ | ----------- |
 | `--cov / --no-cov` | Force retrieval on or off; the default is auto (see {ref}`coverage-tristate`). On, each instrumented product's `.gcda` is fetched into `<run>/cov/<host_id>/<product>/` |
-| `--cov-dir PATH` | Write coverage artifacts to an explicit directory instead of `<run>/cov/` (implies `--cov`). PATH replaces that `cov/` directory and nothing else: each product's counters still land in `PATH/<host_id>/<product>/` |
-| `--overwrite-cov-dir` | Allow `--cov-dir` to clear an existing non-empty directory |
+| `--cov-dir PATH` | Stage coverage in `PATH/cov` instead of `<run>/cov/` (implies `--cov`). PATH stands in for the run dir: counters land in `PATH/cov/<host_id>/<product>/`, and `otto cov report PATH` reads them |
+| `--overwrite-cov-dir` | Allow `--cov-dir` to clear a non-empty `PATH/cov` (nothing else under PATH) |
 | `--cov-clean / --no-cov-clean` | Reset every instrumented product's counters before the run — the same reset {doc}`clean` performs — on by default; `.gcda` counters are additive. See {ref}`coverage-cov-clean-failures` |
 | `--cov-report, -r` | Also render the HTML report inline after the run (implies `--cov`). A run whose tests stop a `docker_image` container named by reference gets a warning instead: that report needs the container running ({ref}`coverage-container-stop-to-flush`) |
 | `--cov-report-dir PATH` | Explicit destination for the inline HTML report (implies `--cov-report`) |
@@ -238,7 +238,7 @@ See {doc}`../test/index` for the rest of `otto test`'s options, and
 (coverage-cov-dir)=
 ## Choosing a Destination
 
-Use `--cov-dir` to write coverage artifacts to an explicit location —
+Use `--cov-dir` to stage coverage under an explicit run directory —
 for example, a persistent CI directory:
 
 ```bash
@@ -246,13 +246,14 @@ otto test --cov-dir /var/artifacts/myrun TestMyDevice
 ```
 
 `--cov-dir` implies `--cov`, so the `--cov` flag is optional when you
-supply a path.  PATH stands in for the run directory's `cov/` subtree, keeping
-its shape: everything {ref}`a product's directory <coverage-run-tree-product>`
-holds lands in `PATH/<host_id>/<product>/`, exactly as it would under
-`<run>/cov/`.  The destination directory is created if it does not
-already exist.  If it exists and is non-empty, the run aborts to avoid
-mixing stale coverage into the new results; pass `--overwrite-cov-dir`
-to clear it first:
+supply a path.  PATH stands in for the run directory: everything
+{ref}`a product's directory <coverage-run-tree-product>` holds lands in
+`PATH/cov/<host_id>/<product>/`, exactly as it would under `<run>/cov/`, and
+`otto cov report PATH` reads it.  `PATH/cov` is created if it does not
+already exist, and must not be a symlink.  If it exists and is non-empty,
+the run aborts to avoid mixing stale coverage into the new results; pass
+`--overwrite-cov-dir` to clear `PATH/cov` first (nothing else under PATH is
+touched):
 
 ```bash
 otto test --cov-dir /var/artifacts/myrun --overwrite-cov-dir TestMyDevice

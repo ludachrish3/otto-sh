@@ -100,14 +100,17 @@ class RunOptions:
     ``cov_report_dir``, ``cov_tickets_json``) forces ``True``; ``False`` with
     one is refused at construction."""
     cov_dir: Path | None = None
-    """Implies ``cov``."""
+    """The run directory whose ``layout.cov_dir(cov_dir)`` (``<cov_dir>/cov``)
+    coverage stages into, which is what ``otto cov report <cov_dir>`` reads.
+    Implies ``cov``."""
     overwrite_cov_dir: bool = False
     cov_clean: bool = True  # matches the --cov-clean CLI default
     cov_report: bool = False
     """Implies ``cov``."""
     cov_report_dir: Path | None = None
-    """Implies ``cov_report``. Must not be or contain ``cov_dir``: clearing
-    the report directory would clear the coverage data it reports on."""
+    """Implies ``cov_report``. Must not be or contain the staged
+    ``<cov_dir>/cov``: clearing the report directory would clear the coverage
+    data it reports on."""
     overwrite_cov_report_dir: bool = False
     report_title: str = "Coverage Report"
     cov_tickets_json: Path | None = None
@@ -131,7 +134,7 @@ class RunOptions:
         Raises:
             otto.params.OptionsValidationError: ``cov=False`` with a
                 coverage destination, a ``cov_report_dir`` that is or
-                contains ``cov_dir``, a ``seed`` with ``random_order=False``,
+                contains the staged ``<cov_dir>/cov``, a ``seed`` with ``random_order=False``,
                 a ``monitor_interval`` below the monitor's floor, or a
                 ``monitor_hosts`` that is not a valid regex. The error class
                 is imported inline on each raise branch, so the happy path
@@ -157,7 +160,9 @@ class RunOptions:
             # unknown ~user, a deleted cwd) skips the rule: prepare_run's
             # destination checks report it.
             try:
-                cov_dir = _lexical_path(self.cov_dir)
+                from .. import layout
+
+                cov_dir = _lexical_path(layout.cov_dir(self.cov_dir))
                 report = _lexical_path(self.cov_report_dir)
             except (RuntimeError, OSError):
                 cov_dir = report = None
@@ -396,6 +401,17 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
         active.policy.output_dir, active.cov_decision = prior_output_dir, prior_cov
 
 
+def _staged_cov_dir(opts: RunOptions, log_dir: Path) -> Path:
+    """Return the local dir a run stages coverage into: ``<cov_dir>/cov``, else ``<log_dir>/cov``.
+
+    The one resolver the collect and report steps of the run tail share, so
+    they cannot disagree on where the counters are.
+    """
+    from .. import layout
+
+    return layout.cov_dir(opts.cov_dir if opts.cov_dir is not None else log_dir)
+
+
 def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     """Refuse a run that cannot save its files, before any host is touched.
 
@@ -418,18 +434,27 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     Raises:
         otto.coverage.config.DestinationError: a destination is not a
             directory, cannot be written, or is not empty without
-            ``overwrite_*``.
+            ``overwrite_*``, or the staged ``<cov_dir>/cov`` is a symlink.
         otto.params.OptionsValidationError: ``cov_tickets_json`` is set
             and no ``[coverage.tickets]`` table is configured.
     """
     if opts.cov_dir is not None or opts.cov_report_dir is not None:
         # Lazy: otto.coverage's package __init__ is the whole collection stack.
-        from ..coverage.config import check_destination, prepare_destination
+        from .. import layout
+        from ..coverage.config import DestinationError, check_destination, prepare_destination
 
         gate = check_destination if dry_run else prepare_destination
         if opts.cov_dir is not None:
+            staged = layout.cov_dir(opts.cov_dir)
+            # Before either gate: a symlinked leaf aliases the run dir or a
+            # sibling (the report dir), and --overwrite-cov-dir would clear
+            # through it. check_destination follows symlinks.
+            if staged.is_symlink():
+                raise DestinationError(
+                    staged, field="cov_dir", remedy_field="overwrite_cov_dir", kind="symlink"
+                )
             gate(
-                opts.cov_dir,
+                staged,
                 overwrite=opts.overwrite_cov_dir,
                 field="cov_dir",
                 remedy_field="overwrite_cov_dir",
@@ -659,7 +684,7 @@ async def _post_run_coverage(
     if opts.cov:
         from ..coverage.collect import collect_coverage
 
-        cov_dir = opts.cov_dir or layout.cov_dir(log_dir)
+        cov_dir = _staged_cov_dir(opts, log_dir)
         # collect_coverage fails loud; a bare `otto test --cov` run must never
         # let a coverage-collection failure (no [coverage] section, no .gcda
         # retrieved, an ambiguous/misconfigured tier, a non-git project root, or a
@@ -708,7 +733,7 @@ async def _post_run_coverage(
         from ..coverage.report_inputs import resolve_report_inputs
         from ..coverage.reporter import run_coverage_report
 
-        cov_dir = opts.cov_dir or layout.cov_dir(log_dir)
+        cov_dir = _staged_cov_dir(opts, log_dir)
         report_dir = (
             opts.cov_report_dir
             if opts.cov_report_dir is not None

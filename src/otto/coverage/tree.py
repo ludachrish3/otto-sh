@@ -48,7 +48,7 @@ def iter_product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
     missing or empty yields no entries.
 
     Args:
-        cov_dir: A coverage directory (``--cov-dir`` or ``<run>/cov``).
+        cov_dir: A staged coverage directory (``<run>/cov``).
 
     Returns:
         One tuple per product directory, sorted by host id then product.

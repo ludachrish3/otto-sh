@@ -187,13 +187,40 @@ def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, one_project, monke
 
 
 def test_overwrite_cov_dir_reaches_run_options(otto_test_cli, captured_run, tmp_path):
-    cov = tmp_path / "cov"
-    cov.mkdir()
-    (cov / "old").write_text("x")
-    result = otto_test_cli(["test", "--cov-dir", str(cov), "--overwrite-cov-dir", "test_c"])
+    run = tmp_path / "run"
+    (run / "cov").mkdir(parents=True)
+    (run / "cov" / "old").write_text("x")
+    (run / "keep.txt").write_text("x")
+    result = otto_test_cli(["test", "--cov-dir", str(run), "--overwrite-cov-dir", "test_c"])
     assert result.exit_code == 0, result.output
     assert captured_run[0]["run_options"].overwrite_cov_dir is True
-    assert list(cov.iterdir()) == []
+    assert list((run / "cov").iterdir()) == []
+    assert (run / "keep.txt").exists()
+
+
+@pytest.mark.parametrize("alias", ["to-run-dir", "to-report-dir"])
+def test_a_symlinked_cov_leaf_is_a_usage_error_and_clears_nothing(
+    otto_test_cli, captured_run, tmp_path, alias
+):
+    run = tmp_path / "e2e"
+    run.mkdir()
+    args = ["test", "--cov-dir", str(run), "--overwrite-cov-dir", "test_c"]
+    if alias == "to-run-dir":
+        planted = run / "keep.txt"
+        (run / "cov").symlink_to(run)
+    else:
+        (run / "report").mkdir()
+        planted = run / "report" / "index.html"
+        (run / "cov").symlink_to(run / "report")
+        args += ["--cov-report-dir", str(run / "report"), "--overwrite-cov-report-dir"]
+    planted.write_text("original")
+    result = otto_test_cli(args)
+    flat = " ".join(result.output.replace("│", " ").split())
+    assert result.exit_code == 2
+    assert "--cov-dir target" in flat
+    assert "is a symlink" in flat
+    assert captured_run == []
+    assert planted.exists()
 
 
 def test_the_run_goes_to_the_contexts_output_dir(otto_test_cli, captured_run, tmp_path):
@@ -375,12 +402,13 @@ def test_a_dry_run_neither_clears_nor_creates_a_destination(
     """`-n` validates a destination as a run would, and never touches it."""
     one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     full = tmp_path / "full"
-    full.mkdir()
-    (full / "keep.txt").write_text("keep")
+    held = full / "cov" if flag == "--cov-dir" else full
+    held.mkdir(parents=True)
+    (held / "keep.txt").write_text("keep")
     overwrite = f"--overwrite-{flag.lstrip('-')}"
     result = otto_test_cli(["-n", "test", "test_d", flag, str(full), overwrite])
     assert result.exit_code == 0, result.output
-    assert (full / "keep.txt").read_text() == "keep"
+    assert (held / "keep.txt").read_text() == "keep"
 
     missing = tmp_path / "missing" / "deeper"
     result = otto_test_cli(["-n", "test", "test_d", flag, str(missing)])
@@ -394,12 +422,13 @@ def test_a_dry_run_refuses_a_full_destination_like_a_run(
 ):
     one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     full = tmp_path / "full"
-    full.mkdir()
-    (full / "keep.txt").write_text("keep")
+    held = full / "cov" if flag == "--cov-dir" else full
+    held.mkdir(parents=True)
+    (held / "keep.txt").write_text("keep")
     result = otto_test_cli(["-n", "test", "test_d", flag, str(full)])
     assert result.exit_code == 2
     assert f"--overwrite-{flag.lstrip('-')}" in " ".join(result.output.replace("│", " ").split())
-    assert (full / "keep.txt").exists()
+    assert (held / "keep.txt").exists()
 
 
 def test_a_dry_run_writes_no_results_or_monitor_file(otto_test_cli, one_project, tmp_path):

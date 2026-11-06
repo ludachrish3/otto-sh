@@ -625,12 +625,14 @@ def test_resolve_coverage_forced_on_names_no_membership_keyword(monkeypatch):
 # ── run_tests: --cov-report wiring ───────────────────────────────────────────
 
 
-def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir):
+def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir, collect=None):
     """Drive run_tests with a stubbed project and mocked coverage tail; return the report mock."""
     # No [coverage] section → legacy gcda-only report path (what these pin).
     _use_project(monkeypatch, _stub_project(tmp_path, root=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage", collect if collect is not None else AsyncMock()
+    )
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
 
@@ -761,8 +763,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
 def test_run_tests_cov_dir_override_used_as_report_source(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    cov_dir = tmp_path / "custom_cov"
-    cov_dir.mkdir()
+    cov_dir = tmp_path / "custom_run"
     mock = _run_tests_report(
         tmp_path,
         monkeypatch,
@@ -771,7 +772,38 @@ def test_run_tests_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
     )
     mock.assert_called_once()
     args = mock.call_args.args
-    assert args[0] == [cov_dir]
+    assert args[0] == [cov_dir / "cov"]
+
+
+def test_otto_test_cov_dir_and_cov_report_read_one_dir(tmp_path, monkeypatch):
+    """``otto test --cov-dir P`` stages into ``P/cov``, the dir ``otto cov report P`` reads."""
+    from typer.testing import CliRunner
+
+    from otto.cli.cov import cov_app
+    from otto.coverage.report_inputs import ReportInputs
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    run_dir = tmp_path / "e2e"
+    collect = AsyncMock()
+    mock = _run_tests_report(
+        tmp_path,
+        monkeypatch,
+        run_options=RunOptions(cov=True, cov_clean=False, cov_report=True, cov_dir=run_dir),
+        log_dir=log_dir,
+        collect=collect,
+    )
+    host_dir = layout.cov_dir(run_dir) / "host1"
+    host_dir.mkdir(parents=True)
+    (host_dir / "main.gcda").write_bytes(b"\x00")
+    inputs = ReportInputs(project_root=tmp_path / "sut", tier_configs=[])
+    monkeypatch.setattr("otto.coverage.report_inputs.resolve_report_inputs", lambda *a, **k: inputs)
+    result = CliRunner().invoke(cov_app, ["report", str(run_dir), "--dir", str(tmp_path / "out")])
+
+    assert collect.await_args.args[0] == run_dir / "cov"
+    assert mock.call_args_list[0].args[0] == [run_dir / "cov"]
+    assert mock.call_args_list[1].args[0] == [run_dir / "cov"]
+    assert result.exit_code == 0, result.output
 
 
 # ── run_tests / _post_run_coverage: [coverage.tickets] wiring ───────────────
@@ -1453,8 +1485,8 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     cov_dir = tmp_path / "cov_dir"
-    cov_dir.mkdir()
-    (cov_dir / "stale.txt").write_text("stale")
+    (cov_dir / "cov").mkdir(parents=True)
+    (cov_dir / "cov" / "stale.txt").write_text("stale")
 
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
@@ -1467,7 +1499,7 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     # Failed before the pre-run remote clean ever ran, and the stale contents
     # were never touched.
     clean_mock.assert_not_awaited()
-    assert (cov_dir / "stale.txt").exists()
+    assert (cov_dir / "cov" / "stale.txt").exists()
 
 
 def test_run_tests_refuses_a_bad_report_dir_before_the_instrumentation_scan(tmp_path, monkeypatch):
@@ -1504,7 +1536,8 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     cov_dir = tmp_path / "cov_dir"
-    cov_dir.mkdir()
+    (cov_dir / "cov").mkdir(parents=True)
+    (cov_dir / "cov" / "stale.txt").write_text("stale")
     (cov_dir / "stale.txt").write_text("stale")
 
     _use_project(monkeypatch, _stub_project(tmp_path))
@@ -1519,7 +1552,8 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
         output_dir=log_dir,
     )
     assert result.passed
-    assert not (cov_dir / "stale.txt").exists()
+    assert not (cov_dir / "cov" / "stale.txt").exists()
+    assert (cov_dir / "stale.txt").read_text() == "stale"
 
 
 def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_path, monkeypatch):
@@ -1537,8 +1571,8 @@ def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     cov_dir = tmp_path / "cov_dir"
-    cov_dir.mkdir()
-    (cov_dir / "stale.txt").write_text("stale")
+    (cov_dir / "cov").mkdir(parents=True)
+    (cov_dir / "cov" / "stale.txt").write_text("stale")
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
@@ -1552,7 +1586,7 @@ def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_
             run_options=RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True),
             output_dir=log_dir,
         )
-    assert (cov_dir / "stale.txt").read_text() == "stale"
+    assert (cov_dir / "cov" / "stale.txt").read_text() == "stale"
 
 
 # ── run_tests / _pre_run_cov_clean, _post_run_coverage: a failed clear fails the run ──

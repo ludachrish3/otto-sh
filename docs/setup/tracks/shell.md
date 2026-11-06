@@ -246,7 +246,7 @@ Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable, so your log reads like this one:
 
 ```bash
-otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e/cov --no-random TestTools
+otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e --no-random TestTools
 ```
 
 ```{literalinclude} ../../examples/captures/qs-shell-test-cov.txt
@@ -258,14 +258,13 @@ A product that keeps running writes them only when it exits, so a test of one
 stops it first, in a way that lets it write them ({ref}`how it must stop
 <coverage-process-exit>`).
 
-`--cov-dir` refuses a directory that is not empty, so a second run adds
+`--cov-dir` refuses a run whose `cov/` is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
 Your unit run's counters are already in `build/`, from the unit test
 section: the unit run can come any time after the build, because
 `otto cov clean` zeroes only the host and the report's unit tier reads the
-build tree. Report all three tiers, naming the directory that holds `cov/`,
-not `cov/` itself ({doc}`../../cli/cov/report`):
+build tree. Report all three tiers ({doc}`../../cli/cov/report`):
 
 ```bash
 otto --lab example_lab cov report ~/otto-runs/e2e --dir ~/otto-runs/report

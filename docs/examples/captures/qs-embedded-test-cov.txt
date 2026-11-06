@@ -1,4 +1,4 @@
-$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov --no-random TestMathops
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-embedded/e2e --no-random TestMathops
 INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
 INFO     Connected to <Peer 127.0.0.1 <port>>

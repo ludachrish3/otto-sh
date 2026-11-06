@@ -404,8 +404,8 @@ the report renderer writes the first, and the second mirror each test's
 pytest ID — see [Where a run's files go](test/index.md#where-a-runs-files-go).
 
 `<run>` is the per-invocation output directory above, unless a caller passes
-an explicit destination (`dest=` on the log verbs, `--cov-dir` for coverage
-staging).
+an explicit destination: `dest=` on the log verbs, or `--cov-dir`, which
+names a run directory and stages coverage into its `cov/`.
 
 ## The workspace home
 
