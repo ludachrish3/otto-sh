@@ -31,15 +31,19 @@ def _required() -> list[str]:
     return json.loads((CHECKOUT_ROOT / ".github/required_contexts.json").read_text())
 
 
-def test_gate_admission_runs_on_every_event_and_polls_only_for_a_pull_request():
+AWAITS = "env.AWAIT_LOCAL_GATE == 'true'"
+SKIPS = "env.AWAIT_LOCAL_GATE != 'true'"
+
+
+def test_gate_admission_runs_on_every_event_and_polls_only_when_it_awaits_the_status():
     job = CI["jobs"]["gate-admission"]
     assert "if" not in job
     assert job["timeout-minutes"] == 8
     assert job["permissions"] == {"statuses": "read", "contents": "read"}
-    assert job["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
     polling = [s for s in job["steps"] if "local_gate_status.py await" in s.get("run", "")]
     assert len(polling) == 1
-    assert polling[0]["if"] == "github.event_name == 'pull_request'"
+    assert polling[0]["if"] == AWAITS
     assert '--sha "${{ github.event.pull_request.head.sha }}"' in polling[0]["run"]
     assert '--repo-slug "$GITHUB_REPOSITORY"' in polling[0]["run"]
     checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout"))
@@ -47,8 +51,28 @@ def test_gate_admission_runs_on_every_event_and_polls_only_for_a_pull_request():
         "ref": "${{ github.event.pull_request.head.sha }}",
         "fetch-depth": 0,
     }
-    noop = [s for s in job["steps"] if s.get("if") == "github.event_name != 'pull_request'"]
+    noop = [s for s in job["steps"] if s.get("if") == SKIPS]
     assert len(noop) == 1
+
+
+def test_only_a_pull_request_dependabot_did_not_author_awaits_the_status():
+    """One expression decides whether admission waits, and every step reads it.
+
+    A Dependabot head is admitted without the wait so CI judges the bump; the
+    ruleset's own ``local-gate`` requirement still stops it merging ungated. The
+    test reads the pull request's author: ``github.actor`` names whoever
+    triggered the event.
+    """
+    job = CI["jobs"]["gate-admission"]
+    decision = job["env"]["AWAIT_LOCAL_GATE"]
+    assert decision == (
+        "${{ github.event_name == 'pull_request'"
+        " && github.event.pull_request.user.login != 'dependabot[bot]' }}"
+    )
+    assert "github.actor" not in decision
+    conditions = [s["if"] for s in job["steps"]]
+    assert conditions == [SKIPS] + [AWAITS] * (len(conditions) - 1)
+    assert "local-gate" in _required()
 
 
 def test_every_validation_job_needs_the_admission_job():

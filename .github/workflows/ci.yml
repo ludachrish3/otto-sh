@@ -46,6 +46,16 @@ jobs:
   # local gate posts the `local-gate` status for the head it gated, and a head
   # nobody gated is refused here before any validation job spends a runner. A
   # push to main has no pull request to admit (the ruleset judged its PR).
+  #
+  # A Dependabot pull request is admitted without the wait. Its head is a bump
+  # nobody has gated yet, and CI's verdict on it is the point: the maintainer
+  # gates and lands it once the hostless lanes say it is worth a bed run
+  # ("Dependency updates" in docs/contributing.md). The ruleset still requires
+  # the `local-gate` status, so nothing Dependabot opens merges ungated, a
+  # maintainer's fix commits pushed onto its branch included. The test reads
+  # the pull request's AUTHOR, never github.actor, which names whoever
+  # triggered the event. AWAIT_LOCAL_GATE is the one place the decision is
+  # made; every step below reads it.
   gate-admission:
     name: gate-admission
     runs-on: ubuntu-latest
@@ -55,25 +65,26 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
+      AWAIT_LOCAL_GATE: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
-      - name: A push to main needs no admission (the ruleset judged its pull request)
-        if: github.event_name != 'pull_request'
-        run: echo "push event — nothing to verify"
+      - name: A push to main or a Dependabot pull request awaits no local-gate status
+        if: env.AWAIT_LOCAL_GATE != 'true'
+        run: echo "$GITHUB_EVENT_NAME — no local-gate status to await"
       - uses: actions/checkout@v7.0.1
-        if: github.event_name == 'pull_request'
+        if: env.AWAIT_LOCAL_GATE == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - name: Set up uv
-        if: github.event_name == 'pull_request'
+        if: env.AWAIT_LOCAL_GATE == 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
       - name: Set up Python 3.10
-        if: github.event_name == 'pull_request'
+        if: env.AWAIT_LOCAL_GATE == 'true'
         run: uv python install 3.10
       - name: Wait for the local-gate status that matches this head
-        if: github.event_name == 'pull_request'
+        if: env.AWAIT_LOCAL_GATE == 'true'
         run: |
           base="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
           uv run --no-project --with tomli python scripts/local_gate_status.py await --repo-slug "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha }}" --base "$base"
