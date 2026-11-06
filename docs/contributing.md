@@ -658,7 +658,7 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark), and the two measured matrices, over their reader modules | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | `make check-breaking`, `make check-python`, `make collect-check`, and `make coverage-bed` when a changed module is in the bed half (`BED_REACH`) |
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
 | `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | `make check-breaking` and the static lanes, `make coverage-bed`, the package's bed lane |
-| `scripts` | `scripts/` | `make quick-guards`, ty, ruff | `make check-breaking` and the static lanes, `make coverage-bed` |
+| `scripts` | `scripts/` | `make quick-guards`, ty, ruff | `make check-breaking` and the static lanes, and `make coverage-bed` when a changed script is one the bed half runs on (`BED_SCRIPTS`) |
 | `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | `make check-breaking` and the static lanes, `make coverage-bed` and the bed lanes |
 | `full` | any path with no row | the full gate | as `escalate` |
 
@@ -677,7 +677,11 @@ docs-captures-check`, a bed lane.
 
 **`BED_REACH`** (`bed_reach()` in `scripts/gate_scope.py`) decides whether
 the tip runs `make coverage-bed`. It holds
-when the diff's classes include `src-leaf`, `scripts`, `escalate` or `full`;
+when the diff's classes include `src-leaf`, `escalate` or `full`;
+when a changed script is one the bed half runs on (`BED_SCRIPTS` in the same
+file: a script that a bed-half test module or a conftest above one imports,
+directly or through other `tests` and `scripts` modules, and the lease and
+the reap that every bed lane's recipe runs);
 when a changed `tests-leaf` or `tests-structural` module is in the bed half,
 that is, it lives under `tests/integration` or any of its tests carries an
 `integration` or `embedded` mark (module, class, function and parameter marks
@@ -685,7 +689,12 @@ all count, so a module mixing hostless and bed tests is in the bed half); and
 when the oracle recorded a reason for the diff (an unreadable `pytestmark` or
 mark decorator, no surviving root, a package's test trees gone), the
 conservative fallback, printed under the tip as `(bed half: <reason>)`. A
-hostless unit-test change therefore takes no lease. A bed test module's tip
+hostless unit-test change therefore does not select `make coverage-bed`.
+Neither does a change to any other script: what it can break, the pull
+request's CI can see. That includes `scripts/gate_tip.py`, the runner around
+the lanes, and the scripts that build the web bundle. A script with a row of
+its own (the two capture scripts above) still selects that row's bed lane. A
+bed test module's tip
 runs the whole bed half, not a `make quick` over the module: coarser and
 longer, the price of one lane.
 

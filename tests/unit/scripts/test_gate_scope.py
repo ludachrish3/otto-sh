@@ -1328,7 +1328,11 @@ def test_commands_for_each_class():
         "uv run ty check --extra-search-path . scripts/gate_tip.py",
         "uv run ruff check scripts/gate_tip.py",
     ]
-    assert gs.commands(scripts, tip=True, base=base) == [cb, *static, "make coverage-bed"]
+    assert gs.commands(scripts, tip=True, base=base) == [cb, *static], (
+        "a script only hostless tests exercise takes no lease"
+    )
+    bed_script = _s([gs.SCRIPTS], files=["scripts/bed_lease.py"])
+    assert gs.commands(bed_script, tip=True, base=base) == [cb, *static, "make coverage-bed"]
     esc = _s([gs.ESCALATE], files=["Makefile"], bed=["make stability-unix COUNT=1"])
     assert gs.commands(esc, tip=False, base=base) == [
         cb,
@@ -2453,6 +2457,111 @@ def test_a_hostless_test_change_earns_the_static_lanes_and_no_bed_lane():
     ]
     assert s.bed_modules == []
     assert not gs.bed_reach(s)
+
+
+def test_a_script_change_takes_no_lease_unless_the_bed_half_runs_on_the_script():
+    hostless = _scope([gs.Change("scripts/gate_scope.py", "M")])
+    assert hostless.classes == [gs.SCRIPTS]
+    assert not gs.bed_reach(hostless)
+    assert gs.commands(hostless, **TIP) == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+    ]
+    for status in ("M", "D"):
+        bed = _scope([gs.Change("scripts/lab_health.py", status)])
+        assert gs.bed_reach(bed), status
+        assert gs.commands(bed, **TIP)[-1] == "make coverage-bed", status
+    mixed = _scope([gs.Change("scripts/gate_scope.py", "M"), gs.Change("scripts/bed_reap.py", "M")])
+    assert gs.bed_reach(mixed)
+
+
+def _local_imports(root: Path, module: Path) -> "set[Path]":
+    """Return the `tests` and `scripts` modules under *root* that *module* imports, at any depth."""
+    tree = gs._parse(module.read_text(encoding="utf-8"))
+    found = set()
+    for name in () if tree is None else gs._imported_names(tree):
+        if name.split(".")[0] not in ("tests", "scripts"):
+            continue
+        parts = name.split(".")
+        # Importing a.b.c runs a/__init__.py and a/b/__init__.py on the way to c.
+        packages = [
+            root.joinpath(*parts[:depth], "__init__.py") for depth in range(1, len(parts) + 1)
+        ]
+        candidates = [root.joinpath(*parts).with_suffix(".py"), *packages]
+        found |= {c for c in candidates if c.is_file()}
+    return found
+
+
+def _bed_reached_scripts(root: Path, recipe: "set[str]") -> "set[str]":
+    """Return the scripts under *root* the bed half runs on: *recipe*, and every script a
+    bed-half test module or a conftest above one imports, through `tests` and `scripts`."""
+    todo = [root / path for path in recipe]
+    for module in (root / "tests").rglob("test_*.py"):
+        rel = module.relative_to(root).as_posix()
+        if gs.in_bed_half(rel, module.read_text(encoding="utf-8")):
+            above = [
+                d / "conftest.py" for d in module.parents if (root / "tests") in [d, *d.parents]
+            ]
+            todo += [module, *(c for c in above if c.is_file())]
+    seen: "set[Path]" = set()
+    while todo:
+        module = todo.pop()
+        if module not in seen:
+            seen.add(module)
+            todo += _local_imports(root, module)
+    rels = {module.relative_to(root).as_posix() for module in seen}
+    return {rel for rel in rels if rel.startswith("scripts/")}
+
+
+def test_bed_scripts_are_exactly_what_the_bed_half_runs_on():
+    """BED_SCRIPTS against the live tree: the lease and the reap the bed lanes' recipes run,
+    and every script a bed-half test module or a conftest above one imports."""
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    recipe = set(re.findall(r"^BED_(?:LEASE|REAP) := .*?(scripts/\w+\.py)", makefile, re.MULTILINE))
+    assert recipe == {"scripts/bed_lease.py", "scripts/bed_reap.py"}, recipe
+    reached = _bed_reached_scripts(CHECKOUT_ROOT, recipe)
+    assert reached == gs.BED_SCRIPTS, (
+        f"missing from BED_SCRIPTS: {sorted(reached - gs.BED_SCRIPTS)}; "
+        f"no longer reached: {sorted(gs.BED_SCRIPTS - reached)}"
+    )
+
+
+def test_the_bed_scripts_pin_follows_fixtures_conftests_and_marks(tmp_path):
+    """The pin's own reach, on a planted tree: a script behind a fixture, behind a conftest
+    above a bed module, behind another script, behind a package's `__init__`, and one a
+    marked test outside tests/integration imports are all found; a hostless test's is not."""
+    files = {
+        "scripts/recipe.py": "from scripts import recipe_helper\n",
+        "scripts/recipe_helper.py": "",
+        "scripts/behind_fixture.py": "import scripts.behind_script\n",
+        "scripts/behind_script.py": "",
+        "scripts/behind_conftest.py": "",
+        "scripts/behind_marked.py": "",
+        "scripts/behind_init.py": "",
+        "scripts/hostless_only.py": "",
+        "tests/conftest.py": "from scripts.behind_conftest import x\n",
+        "tests/_fixtures/__init__.py": "",
+        "tests/_fixtures/lab.py": "from scripts import behind_fixture\n",
+        "tests/integration/x/test_bed.py": "from tests._fixtures import lab\n",
+        "tests/integration/x/test_deep.py": "import tests.pkg.mod\n",
+        "tests/pkg/__init__.py": "import scripts.behind_init\n",
+        "tests/pkg/mod.py": "",
+        "tests/unit/test_marked.py": "import scripts.behind_marked\n" + _BED_MARKED,
+        "tests/unit/test_hostless.py": "import scripts.hostless_only\n" + _HOSTLESS,
+    }
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    assert _bed_reached_scripts(tmp_path, {"scripts/recipe.py"}) == {
+        "scripts/recipe.py",
+        "scripts/recipe_helper.py",
+        "scripts/behind_fixture.py",
+        "scripts/behind_script.py",
+        "scripts/behind_conftest.py",
+        "scripts/behind_marked.py",
+        "scripts/behind_init.py",
+    }
 
 
 @pytest.mark.parametrize(
