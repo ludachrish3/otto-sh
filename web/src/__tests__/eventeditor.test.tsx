@@ -274,7 +274,7 @@ describe("EventEditor", () => {
     expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(true);
   });
 
-  it("Delete requires a second press (relabels 'Really delete?') before it DELETEs", async () => {
+  it("Delete opens a dialog naming the event, and a double-click deletes nothing", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
@@ -283,17 +283,70 @@ describe("EventEditor", () => {
     render(<EventEditor />);
     const deleteButton = screen.getByTestId("editor-delete");
     expect(deleteButton.textContent).toBe("Delete");
-    await user.click(deleteButton);
+    await user.dblClick(deleteButton);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByTestId("editor-delete").textContent).toBe("Really delete?");
+    const dialog = screen.getByTestId("confirm-delete");
+    expect(dialog.getAttribute("role")).toBe("alertdialog");
+    expect(within(dialog).getByText("Delete event?")).toBeTruthy();
+    expect(dialog.textContent).toContain("\u201cstress run\u201d will be removed.");
+    expect(dialog.textContent).toContain("This can't be undone.");
+    expect(screen.getByTestId("editor-delete").textContent).toBe("Delete");
+    expect(document.activeElement).toBe(screen.getByTestId("confirm-delete-cancel"));
+  });
+
+  it("the dialog names the stored label, not an unsaved edit to the label field", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    vi.stubGlobal("fetch", vi.fn());
+    render(<EventEditor />);
+    const input = screen.getByTestId("editor-label");
+    await user.clear(input);
+    await user.type(input, "renamed");
     await user.click(screen.getByTestId("editor-delete"));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/session/${encodeURIComponent(sid)}/event/2`,
-        expect.objectContaining({ method: "DELETE" }),
-      ),
-    );
+    const dialog = screen.getByTestId("confirm-delete");
+    expect(dialog.textContent).toContain("“stress run” will be removed.");
+    expect(dialog.textContent).not.toContain("renamed");
+  });
+
+  it("Confirm sends one DELETE and closes editor and dialog", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.dblClick(screen.getByTestId("confirm-delete-confirm"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/session/${encodeURIComponent(sid)}/event/2`,
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(screen.queryByTestId("confirm-delete")).toBeNull();
+    expect(screen.queryByTestId("event-editor")).toBeNull();
+  });
+
+  it("Cancel and Escape close only the dialog; the editor stays and Delete has focus", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    expect(screen.getByTestId("confirm-delete")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("confirm-delete")).toBeNull());
+    expect(screen.getByTestId("event-editor")).toBeTruthy();
+    expect(useUiStore.getState().eventEditor).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("editor-delete")));
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("confirm-delete")).toBeNull());
+    expect(screen.getByTestId("event-editor")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("a 422 on Save keeps the editor open and shows editor-error", async () => {
@@ -322,7 +375,7 @@ describe("EventEditor", () => {
     expect(screen.getByTestId("event-editor")).toBeTruthy();
   });
 
-  it("a failed Delete surfaces editor-error and does not close the editor", async () => {
+  it("a failed delete keeps the dialog open with the error", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
@@ -330,21 +383,24 @@ describe("EventEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
-    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    const dialog = screen.getByTestId("confirm-delete");
     await waitFor(() =>
-      expect(screen.getByTestId("editor-error").textContent).toBe("archive is locked"),
+      expect(within(dialog).getByRole("alert").textContent).toBe("archive is locked"),
     );
+    expect(screen.getByTestId("confirm-delete")).toBeTruthy();
     expect(useUiStore.getState().eventEditor).not.toBeNull();
   });
 
-  it("reopening on a new target never shows a stale abandoned edit or an armed delete", async () => {
+  it("reopening on a new target never shows a stale abandoned edit or an open delete dialog", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
     vi.stubGlobal("fetch", vi.fn());
     const { rerender } = render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
-    expect(screen.getByTestId("editor-delete").textContent).toBe("Really delete?");
+    expect(screen.getByTestId("confirm-delete")).toBeTruthy();
+    await user.keyboard("{Escape}");
     const label = screen.getByTestId("editor-label") as HTMLInputElement;
     await user.clear(label);
     await user.type(label, "abandoned edit");
@@ -355,6 +411,7 @@ describe("EventEditor", () => {
     rerender(<EventEditor />);
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
     expect(screen.getByTestId("editor-delete").textContent).toBe("Delete");
+    expect(screen.queryByTestId("confirm-delete")).toBeNull();
   });
 
   it("choosing a color swatch updates the selection ring and is sent on Save", async () => {
@@ -616,7 +673,7 @@ describe("EventEditor pending gate (#867)", () => {
     expect(fetchMock.mock.calls.length).toBe(1);
   });
 
-  it("two confirmed Delete presses while the DELETE is held send one DELETE", async () => {
+  it("three Confirm presses while the DELETE is held send one DELETE", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
@@ -624,10 +681,11 @@ describe("EventEditor pending gate (#867)", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
-    await user.click(screen.getByTestId("editor-delete"));
-    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
     expect(fetchMock.mock.calls.length).toBe(1);
-    expect(screen.getByTestId("editor-delete").hasAttribute("data-loading")).toBe(true);
+    expect(screen.getByTestId("confirm-delete-confirm").hasAttribute("data-loading")).toBe(true);
     await act(() => Promise.resolve(release(new Response(null, { status: 204 }))));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(fetchMock.mock.calls.length).toBe(1);
@@ -644,6 +702,19 @@ describe("EventEditor pending gate (#867)", () => {
     const del = screen.getByTestId("editor-delete");
     expect(del.hasAttribute("data-loading")).toBe(false);
     expect(del.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("a held Confirm spins the dialog's Delete alone, not the editor's Save or Delete", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    vi.stubGlobal("fetch", held().fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    expect(screen.getByTestId("confirm-delete-confirm").hasAttribute("data-loading")).toBe(true);
+    expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false);
+    expect(screen.getByTestId("editor-delete").hasAttribute("data-loading")).toBe(false);
   });
 
   it("a Save still pending for one event does not make another event's editor busy (#932)", async () => {
@@ -687,7 +758,7 @@ describe("EventEditor and the tracked span (#868)", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
-    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(useUiStore.getState().openSpan).toBeNull();
   });

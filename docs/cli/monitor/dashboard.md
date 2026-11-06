@@ -194,8 +194,10 @@ turns a span back into a point event), a row of color swatches, and a
 line and the border drawn around a span. **Save** stays disabled until
 **Start** is complete and **End** is either complete or empty; the reason
 shows under the field. Editing or deleting an existing event reuses the
-same panel; deleting requires pressing **Delete** twice ("Really
-delete?") before it takes effect.
+same panel; **Delete** opens a dialog that names the event ("Delete
+event?") and removes it only when you press **Delete** in the dialog.
+**Cancel**, **Esc** or a click outside the dialog closes just the dialog
+and leaves the editor open.
 
 **Crowded labels.** Event labels stack in up to three rows at the top of
 each chart. Where more events crowd one spot, the earliest ones keep their
