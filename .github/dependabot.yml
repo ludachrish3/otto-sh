@@ -1,3 +1,28 @@
+# The groups sort bumps into pull requests by what landing them costs, from
+# this repository's history of Dependabot pull requests ("Dependency updates"
+# in docs/contributing.md has the procedure):
+#
+#   - routine (uv and npm): the bumps that pass CI unchanged. One pull
+#     request per ecosystem a week, gated and landed whole.
+#   - a tool whose new rules fail code that has not changed (ty, ruff, Biome,
+#     knip) is excluded from routine and comes alone, on every bump, so it
+#     lands with the code fixes it asks for.
+#   - a framework otto's own code is written against (typer, pytest,
+#     pytest-asyncio) is excluded too: its break is a product change.
+#   - lockstep sets that must move together (the npm groups further down).
+#
+# Membership is decided by EXCLUSION, never by update-types on a one-package
+# group. Dependabot gives a package to the group whose pattern names it most
+# specifically ("ruff" beats "*"), and only checks update-types later, when
+# it builds that group's pull request: a ruff patch claimed by a minor-only
+# ruff group is rejected there and never reaches routine (dependabot-core,
+# updater/lib/dependabot/dependency_group_engine.rb and
+# updater/lib/dependabot/updater/group_update_creation.rb). Routine takes
+# patch and minor only, so a major outside a lockstep group is left out of
+# it and normally comes alone; while a routine pull request is still open,
+# dependabot-core may hold that major back until a later run. Groups apply
+# to version updates; whether security updates are grouped is the
+# repository's "Grouped security updates" setting.
 version: 2
 updates:
   - package-ecosystem: "uv"
@@ -16,6 +41,28 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      # Excluded, so each gets a pull request of its own:
+      #   - ty. Pre-1.0, a patch adds rules: 0.0.45, 0.0.72, 0.0.75 (23 fixes
+      #     and 6 ignores), 0.0.79, 0.0.89, 0.0.94 and 0.0.95 all failed
+      #     typecheck-python or needed fixes ahead of the bump.
+      #   - ruff. 0.16.9 -> 0.17.3 asked for the `dt` alias sweep (b51fa07e6)
+      #     before it could land.
+      #   - typer (0.26 moved the runner options, 63966e969), pytest (9.1.1's
+      #     show_test_item call, c03744ff6; 10's fixture form, 1fdea3de3) and
+      #     pytest-asyncio: frameworks otto's code is written against.
+      routine:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "ty"
+          - "ruff"
+          - "typer"
+          - "pytest"
+          - "pytest-asyncio"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -80,3 +127,20 @@ updates:
           - "@react-aria/*"
           - "@react-stately/*"
           - "@internationalized/*"
+      # The lockstep groups above name their members more specifically than
+      # "*", so they keep them. Excluded, so each gets a pull request of its
+      # own:
+      #   - Biome. 2.6 asked for two fixes ahead of the bump (1dae6f27a,
+      #     b89403d3b) and four commits after it (f1d451b62, c4693bf45,
+      #     89f34001b, ae5a756dd) to satisfy or turn off the rules it adds.
+      #   - knip. 6.43 derived an entry pattern our config also named, and
+      #     failed until the config dropped it (95bf78af0).
+      routine:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@biomejs/biome"
+          - "knip"
+        update-types:
+          - "minor"
+          - "patch"
