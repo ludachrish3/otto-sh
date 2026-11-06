@@ -18,7 +18,7 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
-import { createEvent, deleteEvent, updateEvent } from "../data/eventApi";
+import { createEvent, deleteEvent, isStale, updateEvent } from "../data/eventApi";
 import { useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
@@ -107,8 +107,11 @@ export function EventEditor() {
 
   const save = async () => {
     try {
+      // A stale result: a file import overtook the request and already
+      // closed the editor (data/source.ts), so there is nothing left to do.
+      let result: unknown;
       if (editor.kind === "draft") {
-        await createEvent(form.sessionId, {
+        result = await createEvent(form.sessionId, {
           label: form.label,
           timestamp: new Date(form.timestampMs).toISOString(),
           ...(form.endTimestampMs !== null
@@ -118,7 +121,7 @@ export function EventEditor() {
           dash: form.dash,
         });
       } else {
-        await updateEvent(editor.sessionId, editor.eventId, {
+        result = await updateEvent(editor.sessionId, editor.eventId, {
           label: form.label,
           timestamp: new Date(form.timestampMs).toISOString(),
           end_timestamp:
@@ -127,6 +130,7 @@ export function EventEditor() {
           dash: form.dash,
         });
       }
+      if (isStale(result)) return;
       closeEventEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -140,7 +144,7 @@ export function EventEditor() {
       return;
     }
     try {
-      await deleteEvent(editor.sessionId, editor.eventId);
+      if (isStale(await deleteEvent(editor.sessionId, editor.eventId))) return;
       closeEventEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

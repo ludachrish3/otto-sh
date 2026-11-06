@@ -32,7 +32,7 @@ import { CommandLayer } from "./ui/CommandLayer";
 function App() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
   const importError = useReviewStore((s) => s.importError);
-  const clearImportError = useReviewStore((s) => s.actions.clearImportError);
+  const setImportError = useReviewStore((s) => s.actions.setImportError);
   // One-shot, fire-and-forget: bootstrapFromServer never throws (see its
   // header) and Import remains available whether or not it finds anything.
   useEffect(() => {
@@ -58,7 +58,7 @@ function App() {
                 <button
                   type="button"
                   data-testid="import-error-dismiss"
-                  onClick={clearImportError}
+                  onClick={() => setImportError(null)}
                   className="cursor-pointer rounded-md px-2 py-0.5 font-medium underline-offset-2
                     hover:underline"
                 >

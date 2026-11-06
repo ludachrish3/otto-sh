@@ -76,6 +76,11 @@ session:
 - **Export.** The **⋯** menu re-downloads whatever document is currently
   loaded, unchanged.
 
+Importing a file while connected to a server (live, or an editable review
+served by `otto monitor`) disconnects from that server and shows the file
+read-only: the stream stops and the marking controls go away. There is no
+in-app way back; reload the page to return to the server's data.
+
 ## Topology view
 
 ![The topology map of a dense lab laid out by data-plane structure:
