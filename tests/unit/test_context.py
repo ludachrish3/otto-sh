@@ -541,6 +541,22 @@ def test_cov_is_false_when_nothing_is_instrumented(cov_detection):
     assert OttoContext(lab=_lab_with("test1")).cov is False
 
 
+def test_cov_asks_the_one_instrumented_predicate(cov_detection, monkeypatch):
+    """ctx.cov's "instrumented" is is_instrumented's, the predicate cleanup and the fetch ask."""
+    import otto.host.product as product_mod
+
+    asked: list[object] = []
+
+    def _is_instrumented(product):
+        asked.append(product)
+        return True
+
+    monkeypatch.setattr(product_mod, "is_instrumented", _is_instrumented)
+    cov_detection["instrumented"] = [None]
+    assert OttoContext(lab=_lab_with("test1")).cov is True
+    assert len(asked) == 1
+
+
 def test_cov_without_a_coverage_table_is_false_and_never_scans(cov_detection):
     """otto test's auto rule: no [coverage] table means off, whatever is built."""
     cov_detection["projects"] = [_CovProject(None)]

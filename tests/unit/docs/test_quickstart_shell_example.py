@@ -3,7 +3,7 @@
 The page says the example is hierarchical the way real product trees are: a
 subsystem library in its own object directory, two products whose sources
 share a basename, a gtest tree under the project root. It says the e2e test
-derives GCOV_PREFIX_STRIP from where the project sits, that GoogleTest comes
+reads the GCOV_PREFIX_STRIP otto computes from the project root, that GoogleTest comes
 from the build machine when it is installed, and that the download holds the
 project and nothing built. Each test below pins one of those sentences.
 """
@@ -36,9 +36,9 @@ def test_the_library_and_both_products_build_from_their_own_directories():
     assert (EXAMPLE / "tests" / "unit" / "test_text.cpp").is_file()
 
 
-def test_the_e2e_helper_derives_the_strip_count_from_the_project_root():
+def test_the_e2e_helper_reads_the_strip_otto_computes():
     source = (EXAMPLE / "pylib" / "quickstart_shell" / "tools.py").read_text()
-    assert "len(PROJECT_ROOT.parts) - 1" in source
+    assert "product.gcov_prefix_strip" in source
     for path in [
         EXAMPLE / "pylib" / "quickstart_shell" / "tools.py",
         *(EXAMPLE / "tests").glob("*.py"),
@@ -111,11 +111,13 @@ def _tools_module() -> ModuleType:
 
 
 def _dut_answering(result: CommandResult) -> SimpleNamespace:
-    async def exec_(_cmd: str) -> CommandResult:
+    async def exec_(cmd: str) -> CommandResult:
+        ran.append(cmd)
         return result
 
-    product = SimpleNamespace(name="shout", cov_dir="/tmp/shout")
-    return SimpleNamespace(products=[product], exec=exec_)
+    ran: list[str] = []
+    product = SimpleNamespace(name="shout", cov_dir="/tmp/shout", gcov_prefix_strip=3)
+    return SimpleNamespace(products=[product], exec=exec_, ran=ran)
 
 
 @pytest.mark.asyncio
@@ -175,5 +177,8 @@ async def test_the_e2e_helper_names_a_product_dut_does_not_have(monkeypatch):
 async def test_the_e2e_helper_returns_what_a_tool_printed(monkeypatch):
     tools = _tools_module()
     ok = CommandResult(Status.Success, value="X", command="/tmp/quickstart/shout x", retcode=0)
-    monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(ok))
+    dut = _dut_answering(ok)
+    monkeypatch.setattr(tools, "get_host", lambda _name: dut)
     assert await tools.run_tool("shout", "x") == "X"
+    # The strip is the product's own (the double's 3), never a count the helper makes.
+    assert dut.ran == ["GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout x"]

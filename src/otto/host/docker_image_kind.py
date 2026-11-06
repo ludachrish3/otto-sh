@@ -12,14 +12,24 @@ for a tarball-loaded image, resolves that image from the CONTAINER ITSELF
 and removes it too — never from
 in-process memory, since the project CLI's normal lifecycle
 (``otto install`` … ``otto uninstall``) runs each verb in its own process.
-The bind mount is the whole coverage story: an instrumented binary inside
-the container writing under ``GCOV_PREFIX=<cov_dir>`` writes onto the
-daemon host, where the fetcher and the default hooks already work — docker
-creates a missing bind-mount source directory itself, root-owned, so the
-kind's ``cov_dir`` is root-owned (:attr:`~otto.host.product.Product.cov_dir_root_owned`):
-the reset's delete and cleanup's sweep run elevated, and
-a non-root container image needs its ``cov_dir`` pre-created and writable
-(the fixture suite's own install does this) or nothing lands in it.
+The bind mount is the whole coverage story, and for an instrumented
+product (``is_instrumented``, the predicate cleanup and
+the fetch ask) otto sets both gcov variables on the ``docker run`` it owns:
+``-e GCOV_PREFIX=<cov_dir>`` (the same path inside the container as on the
+daemon host, through the same-path mount) and ``-e GCOV_PREFIX_STRIP=<n>``
+from the product's ``build_root``
+(:attr:`~otto.host.product.Product.gcov_prefix_strip`). An uninstrumented
+product gets neither: nothing would clean or fetch what it wrote. Both flags follow
+``run_args``, just before the image, so they win over any ``--env-file``
+entry and an image ``ENV``; ``run_args`` that sets either variable itself
+is refused at lab load (:func:`refuse_gcov_env`). An instrumented binary
+the container starts therefore writes onto the daemon host, where the
+fetcher and the default hooks already work — docker creates a missing
+bind-mount source directory itself, root-owned, so the kind's ``cov_dir``
+is root-owned (:attr:`~otto.host.product.Product.cov_dir_root_owned`):
+the reset's delete and cleanup's sweep run elevated, and a non-root
+container image needs its ``cov_dir`` pre-created and writable (the
+fixture suite's own install does this) or nothing lands in it.
 ``docker logs`` is hauled as ``debug/container.log`` — that is PID 1's
 output only; anything a suite runs via ``docker exec`` never reaches it.
 Products only.
@@ -32,6 +42,7 @@ true`` on the entry when the build is known to carry coverage.
 
 import logging
 import shlex
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar
@@ -53,11 +64,13 @@ from .product import (
     ShellProduct,
     cov_dir_of,
     ensure_stage_dir,
+    is_instrumented,
     planned_stage_dir,
     stage_lines,
 )
 from .shell_kind import (
     bool_param,
+    build_root_param,
     coverage_params,
     placeholder_values,
     refuse_unknown_params,
@@ -74,7 +87,22 @@ logger = logging.getLogger(__name__)
 TARBALL_SUFFIXES = (".tar", ".tar.gz", ".tgz")
 """An ``image`` value with one of these suffixes is a ``docker save`` tarball path."""
 
-_VALID = "image, stage_dir, pull, run_args, container_name, cov_dir, instrumented, debug_log_globs"
+_VALID = (
+    "image, stage_dir, pull, run_args, container_name, cov_dir, instrumented, debug_log_globs, "
+    "build_root"
+)
+_GCOV_ENV = {
+    "GCOV_PREFIX": "to the cov_dir",
+    "GCOV_PREFIX_STRIP": "from build_root",
+}
+"""The gcov variables otto sets on ``docker run``, each with how it sets it (for the refusal)."""
+
+_DOCKER_RUN_VALUE_SHORTS = frozenset("acehlmpuvw")
+"""``docker run``'s short flags that take a value (``a`` is ``--attach``).
+
+The one list ``_env_operands`` reads a ``docker run`` cluster with; a
+check over another command's args passes that command's set instead."""
+
 _LOAD_TIMEOUT = 600.0
 _PULL_TIMEOUT = 900.0
 
@@ -177,11 +205,19 @@ class DockerImageProduct(ShellProduct):
         Already quoted so a plan can pass a bare placeholder such as
         ``<loaded image>`` where the hook passes the real, quoted reference.
         """
-        cov_dir = cov_dir_of(self)
+        cov_dir = shlex.quote(cov_dir_of(self))
         args = f" {self.run_args}" if self.run_args else ""
+        # Only a product otto cleans and fetches gets the gcov variables: an
+        # uninstrumented one's counters would land on the daemon host where
+        # nothing ever removes them.
+        gcov_env = (
+            f" -e GCOV_PREFIX={cov_dir} -e GCOV_PREFIX_STRIP={self.gcov_prefix_strip}"
+            if is_instrumented(self)
+            else ""
+        )
         return (
             f"docker run -d --name {shlex.quote(self.container_name)} "
-            f"-v {shlex.quote(cov_dir)}:{shlex.quote(cov_dir)}{args} {ref}"
+            f"-v {cov_dir}:{cov_dir}{args}{gcov_env} {ref}"
         )
 
     def _rm_command(self, *, force: bool) -> str:
@@ -401,6 +437,84 @@ class DockerImageProduct(ShellProduct):
         return hauled
 
 
+def _env_operands(tokens: list[str], value_shorts: Collection[str]) -> list[str]:
+    """Return the operands *tokens* hand to ``-e``/``--env``, in order.
+
+    *tokens* are one command's arguments, already shell-split. ``--env X`` and
+    ``--env=X`` name ``X``; ``--env-file`` is a different flag. A short-flag
+    token is read letter by letter: the first letter in *value_shorts* claims
+    the operand -- the rest of the token if any is left (one leading ``=``
+    stripped, as pflag does), else the next token -- and the token ends there.
+    An operand claimed by any other letter is consumed and never re-read as a
+    flag, so ``-l '-eX=1'`` names nothing. A long flag other than ``--env`` is
+    not known to take a value, so the token after it is read as a flag in its
+    own right. That makes the walk inexact in both directions, for values no
+    real entry writes: ``--label -eGCOV_PREFIX=x`` is read as an env operand
+    (docker gives the token to ``--label``), and ``--label -p -e GCOV_PREFIX=1``
+    is not (docker gives ``-p`` to ``--label``, then sets the variable). A
+    table of docker's long flags would close both, at the cost of a second
+    list to drift from the docker version. The missed case changes nothing:
+    otto's own ``-e`` flags come after ``run_args`` and docker keeps the last
+    ``-e`` per variable, so otto's value wins anyway
+    (``test_otto_env_follows_run_args`` pins the order).
+    """
+    found: list[str] = []
+    i = 0
+    while i < len(tokens):
+        arg = tokens[i]
+        i += 1
+        if arg == "--env":
+            if i < len(tokens):
+                found.append(tokens[i])
+                i += 1
+            continue
+        if arg.startswith("--env="):
+            found.append(arg.removeprefix("--env="))
+            continue
+        if arg.startswith("--") or not arg.startswith("-"):
+            continue
+        letters = arg[1:]
+        for j, letter in enumerate(letters):
+            if letter not in value_shorts:
+                continue
+            rest = letters[j + 1 :]
+            if rest:
+                operand: str | None = rest.removeprefix("=")
+            elif i < len(tokens):
+                operand = tokens[i]
+                i += 1
+            else:
+                operand = None
+            if letter == "e" and operand is not None:
+                found.append(operand)
+            break
+    return found
+
+
+def refuse_gcov_env(entry: DeclaredEntry, run_args: str) -> None:
+    """Refuse *run_args* that sets ``GCOV_PREFIX`` or ``GCOV_PREFIX_STRIP``.
+
+    *run_args* is the EXPANDED string, so a placeholder that becomes one of
+    the names is caught too. Otto sets both on the ``docker run`` it owns,
+    after ``run_args``; the only thing that could compete is another ``-e``
+    for the same name, and two answers to one variable is the defect, so
+    every spelling ``_env_operands`` reads is refused. ``--env-file`` is
+    allowed: docker reads it before any ``-e``, so otto's flags win.
+    """
+    who = f"[[{entry.seam}]] {entry.name!r}"
+    try:
+        tokens = shlex.split(run_args)
+    except ValueError as e:
+        raise ValueError(f"{who}: 'run_args' cannot be split as shell words ({e})") from e
+    for operand in _env_operands(tokens, _DOCKER_RUN_VALUE_SHORTS):
+        var = operand.split("=", 1)[0]
+        if var in _GCOV_ENV:
+            raise ValueError(
+                f"{who}: 'run_args' must not set {var}: otto sets it on docker run "
+                f"{_GCOV_ENV[var]} (found {operand!r} in the expanded run_args)"
+            )
+
+
 def _loaded_reference(output: str) -> str | None:
     """Return the reference ``docker load`` printed: ``Loaded image[ ID]: <ref>``."""
     for raw_line in output.splitlines():
@@ -429,9 +543,11 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
     run_args = str_param(entry, params, "run_args") or ""
     container_name = str_param(entry, params, "container_name")
     cov = coverage_params(entry, params)
+    build_root = build_root_param(entry, params)
     refuse_unknown_params(entry, params, "kind 'docker_image'", _VALID)
-    values = placeholder_values(entry, cov.cov_dir)
+    values = placeholder_values(entry, cov.cov_dir, build_root)
     expanded = substitute_placeholders(entry, "run_args", run_args, values) or ""
+    refuse_gcov_env(entry, expanded)
     # `artifact` only satisfies ShellProduct's constructor here — instrumented()
     # is overridden to never scan it (see DockerImageProduct.instrumented), so
     # both forms answer unknown until `instrumented` says otherwise.
@@ -441,6 +557,7 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
         name=entry.name,
         stage_dir=stage_dir,
         cov_dir=cov.cov_dir,
+        build_root=build_root,
         debug_log_globs=cov.debug_log_globs,
         instrumented_override=cov.instrumented,
         image=image,

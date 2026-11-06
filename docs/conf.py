@@ -204,6 +204,7 @@ _SHORT_TYPE_ALIASES = {
     # stdlib
     "Path": "pathlib.Path",
     "PurePath": "pathlib.PurePath",
+    "PurePosixPath": "pathlib.PurePosixPath",
     "datetime": "datetime.datetime",
     "timedelta": "datetime.timedelta",
     # A TYPE_CHECKING-only import in config/project.py; the class's __module__ is

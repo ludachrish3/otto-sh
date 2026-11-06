@@ -285,12 +285,10 @@ The tests run each tool through one helper:
 
 Each tool writes its counters as it exits, with `GCOV_PREFIX` and
 `GCOV_PREFIX_STRIP` as in {doc}`the shell track <shell>`
-({ref}`a tool run once per test <coverage-run-per-test-case>`). `banner`'s
-container already has `GCOV_PREFIX` from the product's `run_args`, so the
-helper adds only `GCOV_PREFIX_STRIP` to its `docker exec`.
-
-A process that the image's `CMD` starts gets the strip count another way:
-{doc}`../../cli/cov/instrumenting/containers` covers it.
+({ref}`a tool run once per test <coverage-run-per-test-case>`). Otto sets both
+variables on `banner`'s own `docker run`, so its container already has them,
+and the helper's `docker exec` adds nothing
+({doc}`../../cli/cov/instrumenting/containers`).
 
 The coverage section below runs these tests, with coverage on.
 
@@ -342,14 +340,13 @@ First, zero the counters ({doc}`../../cli/cov/clean`):
 otto --lab example_lab cov clean
 ```
 
-Exercise `wordcount` by hand, twice, in the container. `/tmp/wordcount` is
-its `cov_dir`, the default `/tmp/<name>`. `GCOV_PREFIX_STRIP` is `3` for the
-docs build's root, `/tmp/otto-gs/quickstart-docker`; [the shell track's
-coverage section](shell.md#coverage) shows how to print yours. Run it with
-your number in place of `3`:
+Exercise `wordcount` by hand, twice, in the container, with `GCOV_PREFIX`
+alone. `/tmp/wordcount` is its `cov_dir`, the default `/tmp/<name>`; with no
+strip, its counters keep their whole path, and
+{ref}`the shell track <manual-run-no-strip>` says why that pairs:
 
 ```bash
-otto --lab example_lab host docker-host.quickstart.tools exec 'GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount by hand; GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount once more'
+otto --lab example_lab host docker-host.quickstart.tools exec 'GCOV_PREFIX=/tmp/wordcount /opt/quickstart/wordcount by hand; GCOV_PREFIX=/tmp/wordcount /opt/quickstart/wordcount once more'
 ```
 
 ```{literalinclude} ../../examples/captures/qs-docker-manual-run.txt

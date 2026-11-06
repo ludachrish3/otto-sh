@@ -86,7 +86,10 @@ async def test_reference_without_pull_plans_run_and_names_the_presence_read(plan
     assert (
         _actions(recorded, {DOCKER_PROBE, present})
         == plan.install
-        == ["docker rm -v web", "docker run -d --name web -v /tmp/web:/tmp/web nginx:1.25"]
+        == [
+            "docker rm -v web",
+            "docker run -d --name web -v /tmp/web:/tmp/web nginx:1.25",
+        ]
     )
     assert plan.unchecked == [
         "that docker is on h1's PATH (command -v docker)",

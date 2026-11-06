@@ -15,17 +15,11 @@
 # The binary's baked-in .gcda path is this build directory's own absolute
 # path, e.g. <build>/product-main.gcda — meaningless once the binary is
 # COPYed into the image and run in a container with a different
-# filesystem. GCOV_PREFIX_STRIP tells the gcov runtime how many leading
-# '/'-separated components of that absolute path to drop before prepending
-# GCOV_PREFIX; stripping ALL of the build directory's own components lands
-# the files flat under GCOV_PREFIX — both .gcda land directly under
-# GCOV_PREFIX with no intermediate directories, proven on the dev VM with a
-# throwaway container (GCOV_PREFIX set only at `docker run`, no -e on
-# `docker exec`, matching exactly how the suite calls it). That count
-# depends on this checkout's own path depth (a worktree sits deeper than
-# the main checkout), so it is computed here, at build time, and baked into
-# the image as an ENV default (see Dockerfile) rather than hardcoded in
-# settings.toml — the products' run_args then need only pass GCOV_PREFIX.
+# filesystem. The products declare `build_root = "docker/build"`
+# (.otto/settings.toml), so otto strips ALL of this directory's own
+# components on the `docker run` it owns: both .gcda land flat under
+# GCOV_PREFIX, with no intermediate directories, whatever this checkout's
+# depth. `docker exec` inherits both variables, as the suite calls it.
 #
 # The image's PID 1 is the product's own `serve` (see Dockerfile and
 # src/main.c): a `docker stop` ends it through its SIGTERM handler, so the
@@ -48,12 +42,7 @@ gcc --coverage -static -O0 -g -o "$HERE/build-bind/product" "$SRC/main.c" "$SRC/
 gcc --coverage -O0 -g -o "$HERE/build-unit/test_math_ops" \
     "$HERE/unit/test_math_ops.c" "$SRC/math_ops.c"
 
-# Count BUILD's own '/'-separated components: stripping that many leaves
-# just the bare filename (e.g. "product-main.gcda").
-strip_count=$(echo "$BUILD" | tr -s '/' '\n' | grep -c .)
-
-docker build -q -t otto-cov-demo:e2e --build-arg GCOV_PREFIX_STRIP="$strip_count" \
-    -f "$HERE/Dockerfile" "$BUILD" >/dev/null
+docker build -q -t otto-cov-demo:e2e -f "$HERE/Dockerfile" "$BUILD" >/dev/null
 docker save -o "$HERE/otto-cov-demo.tar" otto-cov-demo:e2e
 gcno_count=$(find "$BUILD" -maxdepth 1 -name '*.gcno' | wc -l)
 if [ "$gcno_count" -eq 0 ]; then
@@ -61,4 +50,4 @@ if [ "$gcno_count" -eq 0 ]; then
         "wrong flags, or a stale non-instrumented binary reused)" >&2
     exit 1
 fi
-echo "built: $HERE/otto-cov-demo.tar (GCOV_PREFIX_STRIP=$strip_count, $gcno_count .gcno in $BUILD)"
+echo "built: $HERE/otto-cov-demo.tar ($gcno_count .gcno in $BUILD)"

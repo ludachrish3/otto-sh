@@ -147,6 +147,9 @@ def test_strip_collision_is_merged_on_device(tmp_path):
         )
     assert e.value.kind == "merged-on-device"
     assert "GCOV_PREFIX_STRIP" in str(e.value)
+    # Otto counts the strip from the product's build_root: a too-deep strip is
+    # a build_root deeper than the build's, and that is the setting to fix.
+    assert "build_root" in str(e.value)
 
 
 def test_unlisted_gcda_falls_back_to_tail_search(tmp_path, caplog):

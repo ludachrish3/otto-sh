@@ -10,11 +10,12 @@ import functools
 import json
 import os
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import tomli
 
+from otto.host.product import gcov_prefix_strip
 from tests.e2e.cov import _project5_build as helper
 
 pytestmark = pytest.mark.hostless
@@ -562,8 +563,9 @@ def serve_build(tmp_path_factory) -> "tuple[Path, int]":
         check=True,
         cwd=build,
     )
-    # build.sh's count: every '/'-separated component of the build directory.
-    return build / "product", len([part for part in str(build).split("/") if part])
+    # Every component of the build directory, as otto counts a declared
+    # build_root (project5's products declare docker/build).
+    return build / "product", gcov_prefix_strip(PurePosixPath(build))
 
 
 def _serve(build: "tuple[Path, int]", cov: Path, **env: str) -> "subprocess.Popen[bytes]":

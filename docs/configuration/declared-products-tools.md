@@ -113,8 +113,9 @@ param; everything else is optional:
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`. It must be an absolute, normalized path of at least two components (`/tmp/x`, never `/`, `/tmp`, a `..`, a `//` or a trailing slash), and unique and un-nested per host: two products on one host whose `cov_dir`s are equal or one inside the other are refused at lab load, naming both. The empty string is refused too |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
 | `instrumented` | `true`/`false`, overriding the artifact scan — the answer for an archive (`.tar`, `.tar.gz`, `.zip`, …), which always scans `unknown` because the scan cannot see inside it |
+| `build_root` | the directory the artifact's build ran in, on the machine that compiled it; otto counts `{gcov_prefix_strip}` from it ({ref}`below <declared-build-root>`). Default: the project root |
 
-The last three are **products only**: a `[[dev_tools]]` entry naming any of
+The last four are **products only**: a `[[dev_tools]]` entry naming any of
 them is refused by name, because a dev tool is never under test and so has no
 coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
 {doc}`../setup/coverage` is the walkthrough.
@@ -222,6 +223,7 @@ untouched:
 |---|---|---|
 | `{cov_dir}` | the entry's `cov_dir`, or the `/tmp/<name>` default | `install`, `check`; refused in `uninstall` ({ref}`why <cov-dir-lifecycle>`) |
 | `{name}` | the entry's `name` | all three |
+| `{gcov_prefix_strip}` | the number of components in the entry's `build_root` | all three |
 
 ```toml
 [[products]]
@@ -229,14 +231,23 @@ name = "app"
 kind = "shell"
 artifact = "build/app"
 stage_dir = "/opt/app"               # where staging puts the artifact
-install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 setsid /opt/app/{name} </dev/null >/tmp/{name}.log 2>&1 &"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP={gcov_prefix_strip} setsid /opt/app/{name} </dev/null >/tmp/{name}.log 2>&1 &"
 ```
 
-`GCOV_PREFIX_STRIP` is the compiler's knob, not otto's: it drops that many
-leading components from the path baked into the build, so the tree under
-`cov_dir` stays shallow. Count the leading components of the build directory's
-absolute path on the machine that compiled the artifact and pass that; otto
-never reads the value.
+(declared-build-root)=
+`GCOV_PREFIX_STRIP` drops that many leading components from the path the
+build baked in; {ref}`gcc's page <coverage-gcov-prefix>` says what the two
+variables do together. Otto counts it from `build_root`, never from the
+artifact, so the build need not have run yet. `build_root` defaults to the
+project root: the convention is that the artifact was built inside the
+project, at the path otto sees. A build that ran somewhere else (a CI
+checkout, or inside an image) sets `build_root` to that directory. A relative
+value is anchored at the project root, as `artifact` is, and a leading `~`
+expands to the home directory of the machine running otto, not the build
+machine's. An absolute value is taken as written: otto never resolves
+symlinks or reads the directory. A `build_root` that is empty or contains `..`
+is refused at lab load, naming the entry. Python code reads the same number as
+{attr}`Product.gcov_prefix_strip <otto.host.product.Product.gcov_prefix_strip>`.
 
 The command runs through `host.run` with **no working directory of its own**,
 so a relative `./app` would resolve against the login shell's directory, not
@@ -257,7 +268,7 @@ host. A literal brace is doubled, `{{` and `}}`, which is what an `awk
 {class}`~otto.host.declared_product.DeclaredProduct` importable from the
 project's `libs`. The entry's other keys are the class's fields: every `shell`
 key (`artifact`, `stage_dir`, `install`, `uninstall`, `check`, `cov_dir`,
-`debug_log_globs`, `instrumented`) and any field the subclass adds with
+`debug_log_globs`, `instrumented`, `build_root`) and any field the subclass adds with
 `@dataclass`. A `str`, `int`, `bool`, `Path` or `list[str]` field is checked
 against the TOML value; any other annotation takes the value as written. A
 field without a default must be set (a subclass that adds one uses
@@ -369,7 +380,8 @@ and `llext-hex` is only the first one otto ships.
 | `debug_log_globs` | as the `shell` kind |
 
 There is no `{cov_dir}`/`{name}` substitution here: an `embedded` entry declares
-no command strings to substitute into.
+no command strings to substitute into. `build_root` is not accepted either: a
+Zephyr gcov dump never uses `GCOV_PREFIX_STRIP`.
 
 The matched host must carry a **binary loader** — the object is pushed through
 `host.load`, and `is_installed` asks the loader's own list command what is
@@ -412,10 +424,13 @@ carries coverage; the dev-tool form is a plain module with none.
 | `artifact` | **Required.** The local `.ko`; `load` transfers it, `insmod`s it, and removes it — no staged copy is left on the host |
 | `stage_dir` | Where that transfer lands before the `insmod`, as the `shell` kind |
 | `module_name` | Defaults to the artifact stem with `-` → `_` (what `/proc/modules` shows) |
-| `params` | Appended to `insmod` **unquoted**, apart from the `cov_dir=` token otto itself adds for `coverage = "module"` — a value with whitespace is the user's to quote. `{cov_dir}`/`{name}` placeholders, as the `shell` kind |
+| `params` | Appended to `insmod` **unquoted**, apart from the `cov_dir=` token otto itself adds for `coverage = "module"` — a value with whitespace is the user's to quote. `{cov_dir}`/`{name}` placeholders, as the `shell` kind; `{gcov_prefix_strip}` is refused |
 | `coverage` | `"none"` (default), `"module"`, or `"kernel"` |
 | `gcov_path` | Required with `coverage = "kernel"`: the module's own subtree under `/sys/kernel/debug/gcov/`, as a full path; refused outside it |
 | `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
+
+A `kmod` takes no `build_root`: its counters keep their full baked path under
+`cov_dir`, so there is no strip to count.
 
 Refused at lab load on any host missing `load`/`unload`/`lsmod` (today only a
 `UnixHost`), naming the host. With `coverage = "module"` otto appends
@@ -517,14 +532,19 @@ fails loud naming the host when it is not.
 | `image` | **Required.** A `registry/name:tag` reference, or the path of a `docker save` tarball (`.tar`, `.tar.gz`, `.tgz`) |
 | `stage_dir` | Tarball form only: where the tarball is put for `docker load`, as the `shell` kind |
 | `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud naming it); `true`: `docker pull` first. Reference form only — declaring `pull = true` on a tarball entry is refused when the product is built |
-| `run_args` | Extra `docker run` arguments; `{cov_dir}`/`{name}` placeholders substituted as the `shell` kind does, but inserted unquoted — quote any value of your own that contains whitespace |
+| `run_args` | Extra `docker run` arguments; `{cov_dir}`/`{name}`/`{gcov_prefix_strip}` placeholders substituted as the `shell` kind does, but inserted unquoted — quote any value of your own that contains whitespace. Must not set `GCOV_PREFIX` or `GCOV_PREFIX_STRIP` in any `-e`/`--env` spelling, instrumented or not: otto sets both, and the entry is refused at lab load otherwise. `--env-file` is allowed; otto's flags come after it and win |
 | `container_name` | `--name`; defaults to the product name |
 | `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
+| `build_root` | As the `shell` kind; for an image built inside a container, the directory the build ran in there |
 
 `install` runs `docker run -d --name <container_name> -v
-<cov_dir>:<cov_dir> <run_args> <image>` — the bind mount is the whole
-coverage story: an instrumented binary inside the container writing under
-`GCOV_PREFIX=<cov_dir>` writes onto the daemon host, where the ordinary
+<cov_dir>:<cov_dir> <run_args> -e GCOV_PREFIX=<cov_dir> -e
+GCOV_PREFIX_STRIP=<n> <image>`, where `<n>` is counted from the product's
+`build_root`. The two `-e` flags go only to an instrumented product
+(`instrumented = true`): otto never cleans or fetches an uninstrumented one's
+counters, so it does not ask it to write any — the bind mount is the whole coverage story: an instrumented
+binary inside the container writes its counters under `<cov_dir>`, on the
+daemon host, where the ordinary
 fetcher and the default hooks already work, no collector and no host class
 needed. A tarball entry's staged copy under its `stage_dir` is removed right
 after a successful `docker load` — it is an intermediate the load has already

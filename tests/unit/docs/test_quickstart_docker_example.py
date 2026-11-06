@@ -5,7 +5,8 @@ tool, built on the build machine as static binaries so they run on a small
 base image; two tools are shell products installed into one compose
 container, the third is baked into an image run as a product of its own;
 each image has its own build context and its long-running process is its
-CMD; one helper sets GCOV_PREFIX_STRIP for all three; the placeholder lab
+CMD; one helper sets the strip otto computes for the two container tools,
+and otto sets it on the image's own `docker run`; the placeholder lab
 resolves the default parent with no host; the download holds the project
 and nothing built. Each test below pins one of those sentences. The bed
 capture set's pins follow, under their own heading.
@@ -193,9 +194,9 @@ def test_the_bed_overlay_holds_exactly_the_lab():
     assert held == ["lab_data/lab.json"]
 
 
-def test_the_e2e_helper_derives_the_strip_count_from_the_project_root():
+def test_the_e2e_helper_reads_the_strip_otto_computes():
     source = (EXAMPLE / "pylib" / "quickstart_docker" / "tools.py").read_text()
-    assert "len(PROJECT_ROOT.parts) - 1" in source
+    assert "product.gcov_prefix_strip" in source
     for path in [
         EXAMPLE / "pylib" / "quickstart_docker" / "tools.py",
         *(EXAMPLE / "tests").glob("*.py"),
@@ -247,7 +248,7 @@ def _hosts(result: CommandResult, seen: "list[tuple[str, str]]"):
         CONTAINER: host(
             CONTAINER,
             [
-                SimpleNamespace(name=n, kind="shell", cov_dir=f"/tmp/{n}")
+                SimpleNamespace(name=n, kind="shell", cov_dir=f"/tmp/{n}", gcov_prefix_strip=3)
                 for n in CONTAINER_PRODUCTS
             ],
         ),
@@ -270,7 +271,7 @@ async def test_the_helper_runs_a_container_product_in_its_container(monkeypatch,
     assert seen == [
         (
             CONTAINER,
-            f"GCOV_PREFIX=/tmp/{name} GCOV_PREFIX_STRIP={tools.STRIP} /opt/quickstart/{name} a b",
+            f"GCOV_PREFIX=/tmp/{name} GCOV_PREFIX_STRIP=3 /opt/quickstart/{name} a b",
         )
     ]
 
@@ -285,10 +286,7 @@ async def test_the_helper_runs_the_image_product_through_docker_exec_on_the_pare
     assert seen == [
         (
             "docker-host",
-            (
-                f"docker exec -e GCOV_PREFIX_STRIP={tools.STRIP} quickstart-banner "
-                "/opt/quickstart/banner a b"
-            ),
+            "docker exec quickstart-banner /opt/quickstart/banner a b",
         )
     ]
 

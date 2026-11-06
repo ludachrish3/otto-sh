@@ -1,6 +1,7 @@
 """The built-in ``docker_image`` kind: params, verbs, hooks, container logs."""
 
 import json
+import re
 import shlex
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +27,7 @@ def _entry(**params):
         kind="docker_image",
         seam="products",
         owner="r",
-        base_dir=Path("/project"),
+        base_dir=params.pop("base_dir", Path("/project")),
         match={},
         params=params,
     )
@@ -156,11 +157,11 @@ def test_defaults_and_declared_params():
     q = _build(
         image="app:latest",
         pull=True,
-        run_args="-e GCOV_PREFIX={cov_dir} --net host",
+        run_args="--net host",
         container_name="c1",
         cov_dir="/var/cov/app",
     )
-    expected = (True, "-e GCOV_PREFIX=/var/cov/app --net host", "c1")
+    expected = (True, "--net host", "c1")
     assert (q.pull, q.run_args, q.container_name) == expected
 
 
@@ -211,6 +212,144 @@ def test_loaded_reference_returns_none_for_unrecognized_output():
     assert _loaded_reference("nothing useful\n") is None
 
 
+# ── GCOV_PREFIX / GCOV_PREFIX_STRIP on the docker run otto owns (#788) ─────────
+
+_PROJECT_ROOT = Path("/home/dev/proj")
+_GCOV_VARS = ["GCOV_PREFIX", "GCOV_PREFIX_STRIP"]
+
+
+def _proj_build(host=None, **params) -> DockerImageProduct:
+    """Instrumented ``app:1.2`` from the project at ``/home/dev/proj``, into ``/var/cov/app``."""
+    params.setdefault("image", "app:1.2")
+    params.setdefault("cov_dir", "/var/cov/app")
+    params.setdefault("instrumented", True)
+    return _build(host, base_dir=_PROJECT_ROOT, **params)
+
+
+async def _run_line(**params) -> str:
+    host = _DockerHost()
+    product = _proj_build(host, **params)
+    assert (await product.install(host)).is_ok
+    return host.exec_calls[-1]
+
+
+@pytest.mark.asyncio
+async def test_run_sets_both_gcov_variables():
+    assert await _run_line() == (
+        "docker run -d --name app -v /var/cov/app:/var/cov/app "
+        "-e GCOV_PREFIX=/var/cov/app -e GCOV_PREFIX_STRIP=3 app:1.2"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instrumented", [False, None], ids=["false", "unknown"])
+async def test_a_product_not_known_instrumented_gets_no_gcov_variables(instrumented):
+    # Otto never cleans or fetches such a product's counters, so a GCOV_PREFIX
+    # would strand them on the daemon host: cleanup owns every trace.
+    params = {} if instrumented is None else {"instrumented": instrumented}
+    host = _DockerHost()
+    product = _build(
+        host, base_dir=_PROJECT_ROOT, image="app:1.2", cov_dir="/var/cov/app", **params
+    )
+    assert (await product.install(host)).is_ok
+    assert host.exec_calls[-1] == "docker run -d --name app -v /var/cov/app:/var/cov/app app:1.2"
+
+
+def test_an_uninstrumented_product_still_refuses_gcov_env():
+    # One rule, whatever the product: the user never sets these variables.
+    with pytest.raises(ValueError, match="must not set GCOV_PREFIX: otto sets it"):
+        _proj_build(instrumented=False, run_args="-e GCOV_PREFIX=1")
+
+
+@pytest.mark.asyncio
+async def test_otto_env_follows_run_args():
+    # otto's -e flags come after every --env-file entry, so they win (docker/cli opts/parse.go).
+    assert await _run_line(run_args="--net host --env-file e.env") == (
+        "docker run -d --name app -v /var/cov/app:/var/cov/app --net host --env-file e.env "
+        "-e GCOV_PREFIX=/var/cov/app -e GCOV_PREFIX_STRIP=3 app:1.2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gcov_prefix_is_the_mounted_cov_dir():
+    quoted = shlex.quote("/var/cov/my app")
+    line = await _run_line(cov_dir="/var/cov/my app")
+    assert f" -v {quoted}:{quoted} " in line
+    assert f" -e GCOV_PREFIX={quoted} " in line
+
+
+def test_plan_shows_both_gcov_flags():
+    host = _DockerHost()
+    run = _proj_build(host).plan(host).install[-1]
+    assert run.startswith("docker run -d ")
+    assert " -e GCOV_PREFIX=/var/cov/app -e GCOV_PREFIX_STRIP=3 app:1.2" in run
+
+
+_ENV_SPELLINGS = [
+    "-e {var}=1",
+    "-e{var}=1",
+    "--env {var}=1",
+    "--env={var}=1",
+    "-e {var}",
+    "'-e' '{var}=a b'",
+    '"--env={var}={cov_dir}"',
+    "-de {var}=1",
+    "-de{var}=1",
+    "-e={var}=1",
+    "-de={var}=1",
+]
+
+
+@pytest.mark.parametrize("spelling", _ENV_SPELLINGS)
+@pytest.mark.parametrize("var", _GCOV_VARS)
+def test_run_args_setting_gcov_env_is_refused(var, spelling):
+    other = next(v for v in _GCOV_VARS if v != var)
+    with pytest.raises(ValueError, match=f"must not set {var}: otto sets it") as caught:
+        _proj_build(run_args=spelling.replace("{var}", var))
+    assert not re.search(rf"\b{other}\b", str(caught.value))
+
+
+_NON_ENV_SPELLINGS = [
+    "--label {var}=x",
+    "-dl {var}=x",
+    "-le{var}=x",
+    "-l '-e{var}=x'",
+    "-l {var}=x",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", _NON_ENV_SPELLINGS)
+@pytest.mark.parametrize("var", _GCOV_VARS)
+async def test_non_env_operand_named_like_gcov_env_is_allowed(var, spelling):
+    run_args = spelling.replace("{var}", var)
+    assert f" {run_args} " in await _run_line(run_args=run_args)
+
+
+# docker run's value-taking short flags other than `e`, spelled out here
+# rather than imported: the tests below fail if the walker's own list drops one.
+_NON_ENV_VALUE_SHORTS = list("achlmpuvw")
+
+
+@pytest.mark.parametrize("letter", _NON_ENV_VALUE_SHORTS)
+def test_value_flag_consumes_its_operand(letter):
+    # The operand is flag-shaped: read as a flag it would be `-e GCOV_PREFIX=x`
+    # and refused, so passing proves -<letter> consumed it.
+    run_args = f"-{letter} -eGCOV_PREFIX=x"
+    assert _proj_build(run_args=run_args).run_args == run_args
+
+
+@pytest.mark.parametrize("letter", _NON_ENV_VALUE_SHORTS)
+def test_value_flag_consumes_only_its_own_operand(letter):
+    with pytest.raises(ValueError, match="must not set GCOV_PREFIX: otto sets it"):
+        _proj_build(run_args=f"-{letter} -eGCOV_PREFIX=x -e GCOV_PREFIX=1")
+
+
+def test_run_args_that_cannot_be_split_is_refused_by_name():
+    with pytest.raises(ValueError, match=r"'app': 'run_args' cannot be split as shell words"):
+        _proj_build(run_args="-e 'x")
+
+
 # ── verbs ────────────────────────────────────────────────────────────────────
 
 
@@ -229,7 +368,6 @@ async def test_tarball_install_stages_loads_then_runs_with_the_bind_mount():
         host,
         image="docker/app.tar",
         cov_dir="/var/cov/app",
-        run_args="-e GCOV_PREFIX={cov_dir}",
     )
     assert (await p.stage(host)).is_ok
     host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/tmp"))
@@ -240,9 +378,7 @@ async def test_tarball_install_stages_loads_then_runs_with_the_bind_mount():
     # intermediate docker load has already consumed, not the product itself.
     assert host.exec_calls[2] == "rm -f /tmp/app.tar"
     assert host.exec_calls[-2] == "docker rm -v app"
-    assert host.exec_calls[-1] == (
-        "docker run -d --name app -v /var/cov/app:/var/cov/app -e GCOV_PREFIX=/var/cov/app app:1.2"
-    )
+    assert host.exec_calls[-1] == ("docker run -d --name app -v /var/cov/app:/var/cov/app app:1.2")
 
 
 @pytest.mark.asyncio
@@ -501,11 +637,15 @@ async def test_injection_shaped_values_are_quoted_not_executed():
     nasty_name = "a b's; rm -rf"
     nasty_cov = "/opt/My App's; cov"
     host = _DockerHost()
-    p = _build(host, image=nasty_image, container_name=nasty_name, cov_dir=nasty_cov)
+    p = _build(
+        host, image=nasty_image, container_name=nasty_name, cov_dir=nasty_cov, instrumented=True
+    )
     assert (await p.install(host)).is_ok
     expected_run = (
         f"docker run -d --name {shlex.quote(nasty_name)} "
-        f"-v {shlex.quote(nasty_cov)}:{shlex.quote(nasty_cov)} {shlex.quote(nasty_image)}"
+        f"-v {shlex.quote(nasty_cov)}:{shlex.quote(nasty_cov)} "
+        f"-e GCOV_PREFIX={shlex.quote(nasty_cov)} -e GCOV_PREFIX_STRIP=1 "
+        f"{shlex.quote(nasty_image)}"
     )
     assert host.exec_calls[-1] == expected_run
     assert (await p.reset_coverage(host)).is_ok

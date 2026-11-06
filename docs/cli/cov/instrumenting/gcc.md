@@ -44,7 +44,9 @@ Two things can break it:
   that two objects' remaining paths are the same, for example both
   `main.cpp.gcda`, and the product's runtime merges both objects' counters
   into one file on the device. otto then refuses the file (see
-  [Pairing errors](#pairing-errors)).
+  [Pairing errors](#pairing-errors)). `{gcov_prefix_strip}` is too deep only
+  when a product's `build_root` is deeper than the directory its build ran
+  in.
 - **`-fprofile-dir`.** It folds the whole path into a single file name, so
   otto cannot follow it. otto does not support it. Use `GCOV_PREFIX` and
   `GCOV_PREFIX_STRIP` instead.
@@ -92,7 +94,7 @@ and run the tests again. Each error ends with its remedy:
 
 | The error says | What happened | What to do |
 |---|---|---|
-| *matches several objects … the device wrote their counters to one file; lower GCOV_PREFIX_STRIP* | The strip count left two objects with the same path, and the runtime merged their counters into one file | Lower `GCOV_PREFIX_STRIP`, clean, and run again |
+| *matches several objects … the device wrote their counters to one file; lower GCOV_PREFIX_STRIP …* | The strip count left two objects with the same path, and the runtime merged their counters into one file. For `{gcov_prefix_strip}` that means a `build_root` deeper than the directory the build ran in | Set `build_root` to that directory ({ref}`build_root <declared-build-root>`), or lower a strip of your own; clean, and run again |
 | *these build trees each hold notes that match … remove the stale tree* | The product was built somewhere else (in a container, on a CI machine), so otto searched the project root. Several build trees there hold different notes that all fit this object | Remove the stale build tree |
 | *no notes file for … keep the build tree that produced the product* | No `.gcno` under the project root fits this object | Keep, or restore, the build tree that produced the deployed product |
 
@@ -127,36 +129,47 @@ kind = "shell"
 artifact = "build/myproduct"
 stage_dir = "/opt/myproduct"         # where staging puts the artifact
 cov_dir = "/var/coverage/myproduct"
-install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 setsid /opt/myproduct/myproduct </dev/null >/tmp/myproduct.log 2>&1 &"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP={gcov_prefix_strip} setsid /opt/myproduct/myproduct </dev/null >/tmp/myproduct.log 2>&1 &"
 ```
 
 The `setsid … &` form starts a long-running product and returns; see
 {ref}`long-running products <declared-long-running>`.
 
+(coverage-gcov-prefix)=
 `GCOV_PREFIX_STRIP` drops that many leading components off the baked-in path
 before `GCOV_PREFIX` is prepended, which is what keeps the tree under
 `cov_dir` shallow rather than a deep replica of the build machine's layout.
 Together the two variables choose the path each `.gcda` is written at, and
-otto fetches each file at that path relative to `cov_dir`. An object built at
-`/home/dev/agent/build/src/main.cpp.o` writes, with `GCOV_PREFIX_STRIP=4`,
-`<cov_dir>/src/main.cpp.gcda`. Keep the strip count low enough that every
-object's path stays unique (see
-[The one build requirement](#the-one-build-requirement)). `cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
+otto fetches each file at that path relative to `cov_dir`.
+
+Otto counts the strip for you, as `{gcov_prefix_strip}`, from the product's
+`build_root`: every component of the directory the build ran in. Its default
+is the project root, a convention that the binary was built inside the
+project at the path otto sees, which leaves each `.gcda` at its
+project-relative path and so always meets
+[the one build requirement](#the-one-build-requirement). A build that ran
+elsewhere (a CI checkout, or a build inside an image) sets `build_root` to
+that directory. A project at `/home/dev/agent` whose objects build under
+`/home/dev/agent/build` declares `build_root = "build"`: the object
+`/home/dev/agent/build/src/main.cpp.o` then writes
+`<cov_dir>/src/main.cpp.gcda`. {ref}`The entry's reference <declared-build-root>`
+has the anchoring rules. `cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
 without being told to. See
 {doc}`../../../configuration/declared-products-tools` for the entry, and
 {ref}`the configuration section <coverage-configuration>` for the rest.
 
 (coverage-run-per-test-case)=
 **A command-line tool run once per test** writes its counters each time it
-exits, so the test sets the variables on every invocation. Read the
-directory from the product rather than repeating the path, so the test and
-`otto cov get` cannot disagree: `Product.cov_dir` is filled in concrete when
-the lab loads.
+exits, so the test sets the variables on every invocation. Read both values
+from the product rather than repeating them, so the test and `otto cov get`
+cannot disagree: `Product.cov_dir` is filled in concrete when the lab loads,
+and `Product.gcov_prefix_strip` is counted from its `build_root`.
 
 ```python
 product = next(p for p in host.products if p.name == "mytool")
 result = await host.exec(
-    f"GCOV_PREFIX={product.cov_dir} GCOV_PREFIX_STRIP=3 /opt/mytool/mytool --check"
+    f"GCOV_PREFIX={product.cov_dir} GCOV_PREFIX_STRIP={product.gcov_prefix_strip} "
+    "/opt/mytool/mytool --check"
 )
 ```
 

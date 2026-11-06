@@ -141,7 +141,9 @@ def pair_product(
                 raise PairingError(
                     "merged-on-device",
                     f"{label}: {gcda} matches several objects ({', '.join(map(str, listed))}): "
-                    "the device wrote their counters to one file; lower GCOV_PREFIX_STRIP",
+                    "the device wrote their counters to one file; lower GCOV_PREFIX_STRIP "
+                    "(a declared product's comes from its build_root: set build_root to the "
+                    "directory the build ran in)",
                 )
             if listed:
                 target = listed[0]

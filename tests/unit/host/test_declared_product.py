@@ -2,7 +2,8 @@
 describes a hook the subclass replaced."""
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,8 +11,11 @@ from otto.declared import DeclaredEntry
 from otto.host import DeclaredProduct as LazyDeclaredProduct
 from otto.host.declared_product import DeclaredProduct
 from otto.host.dev_tool import DevTool
+from otto.host.docker_image_kind import _docker_image_kind
+from otto.host.embedded_kind import _embedded_kind
+from otto.host.kmod_kind import _kmod_kind
 from otto.host.product import PRODUCT_KIND_BUILDER, Product, ShellProduct
-from otto.host.shell_kind import build_declared
+from otto.host.shell_kind import build_declared, placeholder_values, substitute_placeholders
 from otto.result import Result
 from otto.utils import Status
 
@@ -192,3 +196,135 @@ def test_build_declared_builds_the_subclass_it_is_given():
     built = build_declared(_entry(install="go"), _Host(), Sub)
     assert type(built) is Sub
     assert built.install_cmd == "go"
+
+
+# --- build_root and {gcov_prefix_strip} (#788) ---------------------------------
+
+_PROJECT_ROOT = Path("/home/dev/proj")
+
+
+def _app_entry(kind="shell", seam="products", **params):
+    """An entry named ``app`` declared by the project at ``/home/dev/proj``."""
+    if kind in ("shell", "kmod", "embedded"):
+        params.setdefault("artifact", "build/app.ko" if kind == "kmod" else "build/app")
+    if kind == "docker_image":
+        params.setdefault("image", "app:latest")
+    return DeclaredEntry(
+        name="app", kind=kind, seam=seam, owner="r1", base_dir=_PROJECT_ROOT, params=params
+    )
+
+
+def _shell(**params):
+    return build_declared(_app_entry(**params), _Host(), DeclaredProduct)
+
+
+_STRIP_INSTALL = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP={gcov_prefix_strip} ./app"
+
+
+def test_install_placeholder_is_filled_from_project_root():
+    product = _shell(install=_STRIP_INSTALL)
+    assert product.install_cmd == "GCOV_PREFIX=/tmp/app GCOV_PREFIX_STRIP=3 ./app"
+    assert product.build_root == PurePosixPath("/home/dev/proj")
+    assert product.gcov_prefix_strip == 3
+
+
+def test_relative_build_root_anchors_at_base_dir():
+    product = _shell(install=_STRIP_INSTALL, build_root="build/out")
+    assert product.install_cmd == "GCOV_PREFIX=/tmp/app GCOV_PREFIX_STRIP=5 ./app"
+    assert product.build_root == PurePosixPath("/home/dev/proj/build/out")
+
+
+def test_build_root_elsewhere_overrides_project_root():
+    product = _shell(install=_STRIP_INSTALL, build_root="/builds/ci/proj/build")
+    assert product.install_cmd == "GCOV_PREFIX=/tmp/app GCOV_PREFIX_STRIP=4 ./app"
+    assert product.build_root == PurePosixPath("/builds/ci/proj/build")
+
+
+def test_dotdot_build_root_is_refused_at_load():
+    with pytest.raises(ValueError, match=r"'app'.*'build_root' must not contain '\.\.'"):
+        _shell(build_root="../sibling")
+
+
+def test_dotdot_refusal_quotes_the_value_as_written():
+    with pytest.raises(ValueError, match=r"got 'build/\.\./x'\)$") as caught:
+        _shell(build_root="build/../x")
+    assert "'build/../x'" in str(caught.value)
+    assert "/home/dev/proj/build/../x" not in str(caught.value)
+
+
+def test_empty_build_root_is_refused():
+    with pytest.raises(ValueError, match="'build_root' must not be empty"):
+        _shell(build_root="")
+
+
+def test_uninstall_accepts_gcov_prefix_strip():
+    product = _shell(uninstall="echo strip={gcov_prefix_strip}")
+    assert product.uninstall_cmd == "echo strip=3"
+
+
+def test_shell_and_docker_share_the_strip():
+    common = {"build_root": "build"}
+    shell = _shell(install="GCOV_PREFIX_STRIP={gcov_prefix_strip}", **common)
+    docker = _docker_image_kind(
+        _app_entry(kind="docker_image", run_args="--label s={gcov_prefix_strip}", **common),
+        _Host(),
+    )
+    assert shell.install_cmd == "GCOV_PREFIX_STRIP=4"
+    assert docker.run_args == "--label s=4"
+    assert shell.build_root == docker.build_root == PurePosixPath("/home/dev/proj/build")
+    assert shell.gcov_prefix_strip == docker.gcov_prefix_strip == 4
+
+
+def test_shell_and_docker_default_build_root_is_the_project_root():
+    shell = _shell(install="GCOV_PREFIX_STRIP={gcov_prefix_strip}")
+    docker = _docker_image_kind(
+        _app_entry(kind="docker_image", run_args="--label s={gcov_prefix_strip}"), _Host()
+    )
+    assert shell.install_cmd == "GCOV_PREFIX_STRIP=3"
+    assert docker.run_args == "--label s=3"
+    assert shell.build_root == docker.build_root == _PROJECT_ROOT
+
+
+def _kmod_host():
+    async def _verb(*args, **kwargs):
+        return Result(Status.Success)
+
+    return SimpleNamespace(id="h1", load=_verb, unload=_verb, lsmod=_verb)
+
+
+def test_kmod_and_embedded_refuse_build_root():
+    with pytest.raises(ValueError, match=r"unknown param.*build_root"):
+        _kmod_kind(_app_entry(kind="kmod", build_root="build"), _kmod_host())
+    with pytest.raises(ValueError, match=r"unknown param.*build_root"):
+        _embedded_kind(
+            _app_entry(kind="embedded", build_root="build"),
+            SimpleNamespace(id="h1", loader=object()),
+        )
+
+
+def test_kmod_params_refuse_gcov_prefix_strip():
+    with pytest.raises(ValueError, match=r"unknown placeholder.*full path"):
+        _kmod_kind(_app_entry(kind="kmod", params="strip={gcov_prefix_strip}"), _kmod_host())
+
+
+def test_kmod_product_strip_says_a_kmod_never_strips():
+    product = _kmod_kind(_app_entry(kind="kmod"), _kmod_host())
+    with pytest.raises(ValueError, match=r"'app' is a kmod: .*full path") as caught:
+        _ = product.gcov_prefix_strip
+    assert "set Product.build_root" not in str(caught.value)
+
+
+def test_a_placeholder_without_a_value_is_refused_by_name():
+    # The default `allowed` names every placeholder; a value set without a build
+    # root has no strip, and the walk refuses it rather than format_map's KeyError.
+    entry = _app_entry()
+    values = placeholder_values(entry, None, None)
+    with pytest.raises(
+        ValueError, match=r"'params' has an unknown placeholder.*valid: \{cov_dir\}, \{name\} "
+    ):
+        substitute_placeholders(entry, "params", "x={gcov_prefix_strip}", values)
+
+
+def test_dev_tool_refuses_build_root():
+    with pytest.raises(ValueError, match="product-only param"):
+        build_declared(_app_entry(seam="dev_tools", build_root="build"), _Host(), DeclaredProduct)

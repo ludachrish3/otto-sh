@@ -36,14 +36,16 @@ C++ tool, copied into an image and declared as a reference to it:
 :language: docker
 ```
 
-`run_args` sets `GCOV_PREFIX` and nothing else. `GCOV_PREFIX_STRIP` is set
-where the process starts, and its value depends on where the build ran, so it
-is computed by the tests, never hard-coded in them ({ref}`a tool run once per test
-<coverage-run-per-test-case>`). The track's tests compute it and pass it on
-each `docker exec`. A process the image's `CMD` starts gets it from an `ENV`
-the image sets from a build argument (`ARG GCOV_PREFIX_STRIP`, then `ENV
-GCOV_PREFIX_STRIP=$GCOV_PREFIX_STRIP`), and the build passes the computed
-value with `otto docker compose build --build-arg GCOV_PREFIX_STRIP=<n>`.
+The entry sets neither gcov variable: for an instrumented product (the
+`instrumented = true` above), otto sets both on the `docker run` it owns,
+`-e GCOV_PREFIX=<cov_dir> -e GCOV_PREFIX_STRIP=<n>`, with `<n>` counted from
+the entry's `build_root` ({ref}`build_root <declared-build-root>`). The flags come
+after `run_args`, just before the image, so they win over an `--env-file`
+there and over an `ENV` the image sets; a `run_args` that sets either variable
+itself is refused at lab load. Every process in the container has them: the
+image's `CMD`, and each `docker exec` the tests run, which inherits the
+container's environment and so adds nothing. An entrypoint script that exports
+its own value still overrides otto's, so leave both variables to otto.
 
 (coverage-container-stop-to-flush)=
 ### A long-running process: stop it to flush
@@ -183,7 +185,9 @@ own container once its stack is up, as the track does
 ({ref}`a project's own containers <fleet-owned-containers>`).
 `docker_image` is the opposite shape — the image *is* the deliverable, run
 as a product on a host that already exists.
-{doc}`../../docker/use-cases` is the compose workflow.
+{doc}`../../docker/use-cases` is the compose workflow. Otto does not start a
+process a compose service's `CMD` runs, so it sets no gcov variable for it;
+to have otto set them, make that image a `docker_image` product.
 
 (coverage-container-host-example)=
 ### Collecting from the container
@@ -218,8 +222,10 @@ A project with only container products names only the container in `hosts`.
 The track builds its tools on the build machine. A product can instead be
 compiled in a builder container with the project mounted at `/build`.
 Its counters then carry `/build/...` paths, which pair with their `.gcno`
-files by path even though `/build` exists nowhere on the lab, so no
-`GCOV_PREFIX_STRIP` is needed ({ref}`coverage-build-requirement`).
+files by path even though `/build` exists nowhere on the lab
+({ref}`coverage-build-requirement`). Declare `build_root = "/build"` on the
+entry, so `{gcov_prefix_strip}` drops exactly that directory
+({ref}`build_root <declared-build-root>`).
 
 `otto run install` stages and installs the products into the container
 and creates `stage_dir`, as on any host. It never creates a `cov_dir`: the
