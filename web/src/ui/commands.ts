@@ -22,10 +22,10 @@ import type { FC } from "react";
 import { useMemo } from "react";
 import { useHashLocation } from "wouter/use-hash-location";
 
-import { reportMutationFailure } from "../data/eventApi";
 import { useActiveSession, useIsPaused, useReviewStore } from "../data/reviewStore";
 import { exportLoadedDocument, openImportPicker } from "../shell/ImportExport";
-import { blankDraft, endOpenSpan } from "../shell/marking";
+import { blankDraft, endSpanReporting } from "../shell/marking";
+import { markGateKey, useMutationGate } from "../shell/useMutationGate";
 import {
   type Binding,
   EXPORT_BINDING,
@@ -77,6 +77,9 @@ export function useCommands(): Command[] {
   const openEventEditor = useUiStore((s) => s.actions.openEventEditor);
   const armSweep = useUiStore((s) => s.actions.armSweep);
   const openMarkPopover = useUiStore((s) => s.actions.openMarkPopover);
+  // The palette's one mutation (End span) rides the session's shared mark
+  // gate, so it is shut while any surface's Mark / Start / End is pending.
+  const { run: runGated, pending } = useMutationGate(markGateKey(session?.id ?? ""));
 
   return useMemo(() => {
     const commands: Command[] = [
@@ -207,11 +210,8 @@ export function useCommands(): Command[] {
             // Only meaningful while the open span belongs to the session
             // currently being viewed — switching sessions with a span still
             // running elsewhere must not offer to end the wrong one.
-            enabled: openSpan?.sessionId === session.id,
-            run: () => {
-              const onFailure = reportMutationFailure("End span");
-              void endOpenSpan().catch(onFailure);
-            },
+            enabled: openSpan?.sessionId === session.id && !pending,
+            run: () => void runGated(endSpanReporting, "palette-end-span"),
           },
         );
       }
@@ -255,5 +255,7 @@ export function useCommands(): Command[] {
     openEventEditor,
     armSweep,
     openMarkPopover,
+    runGated,
+    pending,
   ]);
 }

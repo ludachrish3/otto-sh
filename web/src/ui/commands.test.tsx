@@ -263,9 +263,51 @@ describe("useCommands — marking rows (Plan 5c)", () => {
       ),
     );
     const { result } = renderHook(() => useCommands());
-    result.current.find((c) => c.id === "action-end-span")?.run();
+    await act(() => Promise.resolve(result.current.find((c) => c.id === "action-end-span")?.run()));
     await waitFor(() => expect(useUiStore.getState().openSpan).toBeNull());
     expect(useReviewStore.getState().warnings).toEqual([]);
+  });
+
+  it("action-end-span ignores a repeat while pending, and is disabled meanwhile (#867)", async () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUiStore.setState({ openSpan: { sessionId: "s1", eventId: 3 } });
+    let release!: (r: Response) => void;
+    const fetchMock = vi.fn().mockReturnValue(
+      new Promise<Response>((res) => {
+        release = res;
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useCommands());
+    await act(() => {
+      const run = result.current.find((c) => c.id === "action-end-span")?.run;
+      run?.();
+      run?.();
+      return Promise.resolve();
+    });
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.find((c) => c.id === "action-end-span")?.enabled).toBe(false);
+    await act(() =>
+      Promise.resolve(
+        release(
+          new Response(
+            JSON.stringify({
+              id: 3,
+              timestamp: "2026-07-18T12:00:00+00:00",
+              label: "span",
+              source: "manual",
+              color: "#888888",
+              dash: "dash",
+              end_timestamp: "2026-07-18T12:05:00+00:00",
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    await waitFor(() => expect(useUiStore.getState().openSpan).toBeNull());
+    expect(fetchMock.mock.calls.length).toBe(1);
   });
 
   it("a failed action-end-span surfaces a warning via addWarning rather than throwing", async () => {
@@ -281,7 +323,7 @@ describe("useCommands — marking rows (Plan 5c)", () => {
         ),
     );
     const { result } = renderHook(() => useCommands());
-    result.current.find((c) => c.id === "action-end-span")?.run();
+    await act(() => Promise.resolve(result.current.find((c) => c.id === "action-end-span")?.run()));
     await waitFor(() => expect(useReviewStore.getState().warnings.length).toBe(1));
     expect(useReviewStore.getState().warnings[0]).toContain("End span failed");
     expect(useReviewStore.getState().warnings[0]).toContain("archive is locked");

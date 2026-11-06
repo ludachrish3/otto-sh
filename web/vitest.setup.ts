@@ -16,6 +16,7 @@
 import { cleanup } from "@testing-library/react";
 import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach } from "vitest";
+import { useMutationGates } from "./src/shell/useMutationGate";
 
 // React 19 requires this flag for act() (which Testing Library wraps every
 // render/event in). Testing Library's own auto-setup would set it, but that
@@ -100,6 +101,10 @@ afterEach(() => {
   // only "virtual" changes focusSafely's path) — while "pointer" would silently
   // turn focus-visible OFF at the start of every test.
   setInteractionModality("keyboard");
+  // The mutation gates (shell/useMutationGate.ts) are module-level by design:
+  // they outlive the surface that pressed. A test that holds a request open
+  // and never settles it would otherwise leave its key shut for the next.
+  useMutationGates.setState({ pending: {} });
   console.warn = original.warn;
   console.error = original.error;
   if (!allowed && captured.length > 0) {

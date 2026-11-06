@@ -7,7 +7,14 @@
 // its request (#873): the flow then skips its own follow-up effects, and so
 // does its caller. Each layer re-checks with its own sourceGuard after its
 // await, so an import landing between the layers still counts as stale.
-import { createEvent, endEvent, isStale, type StaleResult, sourceGuard } from "../data/eventApi";
+import {
+  createEvent,
+  endEvent,
+  isStale,
+  reportMutationFailure,
+  type StaleResult,
+  sourceGuard,
+} from "../data/eventApi";
 import type { NormalizedSession } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs } from "../data/time";
@@ -44,6 +51,12 @@ export async function endOpenSpan(): Promise<StaleResult | undefined> {
   if (isStale(result)) return result;
   useUiStore.getState().actions.setOpenSpan(null);
   return undefined;
+}
+
+/** End the open span for a surface with no inline error slot (the menu, the
+ * palette): a failure lands in the warnings banner, never as a rejection. */
+export function endSpanReporting(): Promise<void> {
+  return endOpenSpan().then(() => undefined, reportMutationFailure("End span"));
 }
 
 /** A blank point draft at the display horizon (displayEndMs), so "Add

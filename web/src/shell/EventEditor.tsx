@@ -33,6 +33,7 @@ import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { TextInput } from "../ui/TextInput";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
+import { editorGateKey, useMutationGate } from "./useMutationGate";
 
 // Default manual grey + the app's event accent + the auto lifecycle colors --
 // mirrors AUTO_EVENT_COLORS (otto/monitor/events.py: start/pass/fail =
@@ -103,11 +104,25 @@ function formFromRecord(
   };
 }
 
+/** The editor's action names on its target's gate. */
+const SAVE = "save";
+const DELETE = "delete";
+
 export function EventEditor() {
   const editor = useUiStore((s) => s.eventEditor);
   const { closeEventEditor } = useUiStore((s) => s.actions);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Save and Delete share one gate, keyed by the editor's target: one
+  // request in flight per event, and a request still pending for one event
+  // never makes another event's editor look busy.
+  const gate = useMutationGate(
+    editor === null
+      ? ""
+      : editor.kind === "edit"
+        ? editorGateKey(editor.sessionId, editor.eventId)
+        : editorGateKey(editor.draft.sessionId, null),
+  );
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [fill, setFill] = useState<Fill>({ start: "complete", end: "empty" });
   // Start was fully cleared (its field called onChange(null)). form.timestampMs
@@ -184,38 +199,39 @@ export function EventEditor() {
   const endMsg = endMessage(form, fill, startEmpty);
   const invalid = form.label.trim() === "" || startMsg !== null || endMsg !== null;
 
-  const save = async () => {
-    try {
-      // A stale result: a file import overtook the request and already
-      // closed the editor (data/source.ts), so there is nothing left to do.
-      const current = sourceGuard();
-      let result: EventRecord | StaleResult;
-      if (editor.kind === "draft") {
-        result = await createEvent(form.sessionId, {
-          label: form.label,
-          timestamp: new Date(form.timestampMs).toISOString(),
-          ...(form.endTimestampMs !== null
-            ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
-            : {}),
-          color: form.color,
-          dash: form.dash,
-        });
-      } else {
-        result = await updateEvent(editor.sessionId, editor.eventId, {
-          label: form.label,
-          timestamp: new Date(form.timestampMs).toISOString(),
-          end_timestamp:
-            form.endTimestampMs !== null ? new Date(form.endTimestampMs).toISOString() : null,
-          color: form.color,
-          dash: form.dash,
-        });
+  const save = () =>
+    gate.run(async () => {
+      try {
+        // A stale result: a file import overtook the request and already
+        // closed the editor (data/source.ts), so there is nothing left to do.
+        const current = sourceGuard();
+        let result: EventRecord | StaleResult;
+        if (editor.kind === "draft") {
+          result = await createEvent(form.sessionId, {
+            label: form.label,
+            timestamp: new Date(form.timestampMs).toISOString(),
+            ...(form.endTimestampMs !== null
+              ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
+              : {}),
+            color: form.color,
+            dash: form.dash,
+          });
+        } else {
+          result = await updateEvent(editor.sessionId, editor.eventId, {
+            label: form.label,
+            timestamp: new Date(form.timestampMs).toISOString(),
+            end_timestamp:
+              form.endTimestampMs !== null ? new Date(form.endTimestampMs).toISOString() : null,
+            color: form.color,
+            dash: form.dash,
+          });
+        }
+        if (isStale(current(result))) return;
+        closeEventEditor();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
       }
-      if (isStale(current(result))) return;
-      closeEventEditor();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+    }, SAVE);
 
   const onDelete = async () => {
     if (editor.kind !== "edit") return;
@@ -223,13 +239,15 @@ export function EventEditor() {
       setDeleteArmed(true);
       return;
     }
-    try {
-      const current = sourceGuard();
-      if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
-      closeEventEditor();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+    await gate.run(async () => {
+      try {
+        const current = sourceGuard();
+        if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
+        closeEventEditor();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, DELETE);
   };
 
   return (
@@ -367,6 +385,9 @@ export function EventEditor() {
                   size="sm"
                   color={deleteArmed ? "primary-destructive" : "secondary-destructive"}
                   data-testid="editor-delete"
+                  isDisabled={gate.pending && gate.pendingAction !== DELETE}
+                  isLoading={gate.pendingAction === DELETE}
+                  showTextWhileLoading
                   onPress={() => void onDelete()}
                 >
                   {deleteArmed ? "Really delete?" : "Delete"}
@@ -385,8 +406,10 @@ export function EventEditor() {
               <Button
                 size="sm"
                 color="primary"
-                isDisabled={invalid}
+                isDisabled={invalid || (gate.pending && gate.pendingAction !== SAVE)}
                 data-testid="editor-save"
+                isLoading={gate.pendingAction === SAVE}
+                showTextWhileLoading
                 onPress={() => void save()}
               >
                 Save

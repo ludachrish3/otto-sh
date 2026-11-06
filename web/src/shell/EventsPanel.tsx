@@ -41,8 +41,14 @@ import { formatClockTime, formatSpan, parseTs } from "../data/time";
 import { TextInput } from "../ui/TextInput";
 import { type EventEditorTarget, useUiStore } from "../ui/uiStore";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "./marking";
+import { endNowGateKey, markGateKey, useMutationGate } from "./useMutationGate";
 
 const JUMP_PAD_MS = 15 * 60_000;
+
+/** The compose row's action names on the session's shared mark gate. */
+const COMPOSE_MARK = "events-mark";
+const COMPOSE_START = "events-start";
+const COMPOSE_STOP = "events-stop";
 
 /** The compose row: live+editable sessions mark/start/stop inline; review+
  * editable sessions get "Add event…" (there's no "now" to mark/start/end in
@@ -57,6 +63,15 @@ function EventsComposeRow(props: {
   const openSpan = useUiStore((s) => s.openSpan);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // One request in flight for this session's marking across Mark, Start and
+  // Stop, shared with the AppBar's MarkControl and the palette; held outside
+  // this row, so it survives the panel closing (see useMutationGate.ts).
+  const gate = useMutationGate(markGateKey(session.id));
+  // The pressed button spins; its siblings are disabled meanwhile.
+  const busy = (name: string) => ({
+    isLoading: gate.pendingAction === name,
+    isDisabled: gate.pending && gate.pendingAction !== name,
+  });
 
   if (mode !== "live") {
     return (
@@ -79,28 +94,32 @@ function EventsComposeRow(props: {
   // control) owns the error surface, one inline slot shared by both flows.
   // A stale result means a file import overtook the request: this row is
   // already gone, so nothing is reset.
-  const run = async (action: (text: string) => Promise<StaleResult | undefined>) => {
-    if (!label.trim()) return;
-    try {
-      const current = sourceGuard();
-      if (isStale(current(await action(label)))) return;
-      setLabel("");
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+  const run = (action: (text: string) => Promise<StaleResult | undefined>, actionName: string) => {
+    if (!label.trim()) return Promise.resolve();
+    return gate.run(async () => {
+      try {
+        const current = sourceGuard();
+        if (isStale(current(await action(label)))) return;
+        setLabel("");
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, actionName);
   };
 
-  const stop = async () => {
-    try {
-      const current = sourceGuard();
-      if (isStale(current(await endOpenSpan()))) return;
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+  const stop = () =>
+    gate.run(async () => {
+      try {
+        const current = sourceGuard();
+        if (isStale(current(await endOpenSpan()))) return;
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, COMPOSE_STOP);
 
+  const stopBusy = busy(COMPOSE_STOP);
   return (
     <div data-testid="events-compose" className="flex flex-wrap items-end gap-2 pb-1">
       <TextInput label="Label" testId="events-compose-label" value={label} onChange={setLabel} />
@@ -108,7 +127,9 @@ function EventsComposeRow(props: {
         size="sm"
         color="secondary"
         data-testid="events-compose-mark"
-        onPress={() => void run(markNow)}
+        {...busy(COMPOSE_MARK)}
+        showTextWhileLoading
+        onPress={() => void run(markNow, COMPOSE_MARK)}
       >
         Mark
       </Button>
@@ -116,7 +137,9 @@ function EventsComposeRow(props: {
         size="sm"
         color="secondary"
         data-testid="events-compose-start"
-        onPress={() => void run(startSpan)}
+        {...busy(COMPOSE_START)}
+        showTextWhileLoading
+        onPress={() => void run(startSpan, COMPOSE_START)}
       >
         Start
       </Button>
@@ -124,7 +147,9 @@ function EventsComposeRow(props: {
         size="sm"
         color="secondary"
         data-testid="events-compose-stop"
-        isDisabled={!spanOpen}
+        isLoading={stopBusy.isLoading}
+        showTextWhileLoading
+        isDisabled={!spanOpen || stopBusy.isDisabled}
         onPress={() => void stop()}
       >
         Stop
@@ -135,6 +160,31 @@ function EventsComposeRow(props: {
         </p>
       )}
     </div>
+  );
+}
+
+/** One row's End now: each row has its own gate key, so ending one event
+ * never blocks another, and a repeat press on the same row is ignored, even
+ * across the panel closing and reopening. */
+function EndNowButton(props: { sessionId: string; eventId: number }) {
+  const { sessionId, eventId } = props;
+  const gate = useMutationGate(endNowGateKey(sessionId, eventId));
+  const onPress = () =>
+    gate.run(async () => {
+      const onFailure = reportMutationFailure("End now");
+      await endEvent(sessionId, eventId).then(() => undefined, onFailure);
+    });
+  return (
+    <Button
+      size="sm"
+      color="secondary"
+      data-testid={`event-endnow-${eventId}`}
+      isLoading={gate.pending}
+      showTextWhileLoading
+      onPress={() => void onPress()}
+    >
+      End now
+    </Button>
   );
 }
 
@@ -183,11 +233,6 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
     setJumpNotice(null);
     setRange(clamped);
     onClose();
-  };
-
-  const endRow = (eventId: number) => {
-    const onFailure = reportMutationFailure("End now");
-    void endEvent(session.id, eventId).catch(onFailure);
   };
 
   return (
@@ -274,14 +319,7 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
                       />
                     )}
                     {editable && mode === "live" && wireId !== null && ev.toMs === null && (
-                      <Button
-                        size="sm"
-                        color="secondary"
-                        data-testid={`event-endnow-${wireId}`}
-                        onPress={() => endRow(wireId)}
-                      >
-                        End now
-                      </Button>
+                      <EndNowButton sessionId={session.id} eventId={wireId} />
                     )}
                   </li>
                 );
