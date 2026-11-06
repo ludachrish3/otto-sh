@@ -66,6 +66,7 @@ from typing import Any, TextIO, TypeVar
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts import gate_scope  # noqa: E402
+from scripts.bed_lease import LEASE_BUDGET_KNOBS  # noqa: E402
 from scripts.gate_scope import (  # noqa: E402
     LIVE_GOALS,  # noqa: F401 -- the runner's goal census reads the classes through this module
     STAMPED_GOALS,  # noqa: F401 -- likewise
@@ -926,8 +927,11 @@ Makefile's ``gate-tip`` and ``gate-status`` pass (pinned); a push elsewhere is t
 
 
 def lane_env(environ: "dict[str, str]") -> "dict[str, str]":
-    """Return the environment a lane runs in: the caller's, minus make's and pytest's knobs."""
-    return {k: v for k, v in environ.items() if k not in _STRIPPED}
+    """Return the lane environment: the caller's, minus make's and pytest's knobs.
+
+    Also minus the gate's own lease budget (the gate queues once; lanes re-enter).
+    """
+    return {k: v for k, v in environ.items() if k not in _STRIPPED and k not in LEASE_BUDGET_KNOBS}
 
 
 def _default_runner(cmd: "list[str] | str", cwd: Path, env: "dict[str, str]") -> RunOutcome:

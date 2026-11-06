@@ -1209,6 +1209,12 @@ Set `BED_LEASE_WAIT=<seconds>` to queue behind it instead (the lane polls every
 5 s and starts the moment the bed frees). `make bed-status` shows the same
 record, `free` when nobody holds it.
 
+The lease budgets belong to `make gate-tip`, not its lanes: it spends
+`BED_LEASE_WAIT` (above) once when it takes the lease, its `BED_LEASE_TTL`
+covers its whole hold, and `BED_LEASE_DRAIN` is spent once when it releases.
+It passes none of the three to the lanes it runs, which re-enter the gate's
+hold.
+
 The lease belongs to the **run**: the `make` running the lane and every
 process group it starts. A lane that dies mid-run (SIGKILL, a lost VM, a
 closed terminal) keeps the bed only while something of it still runs; once
