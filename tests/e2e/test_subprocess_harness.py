@@ -10,13 +10,18 @@ across whole test sessions, which is how a cache-content bug produced an
 e2e failure that only reproduced on the second-ever run on a machine.
 """
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
+from tests.e2e import _otto_subprocess
 from tests.e2e._otto_subprocess import (
     _INSTALLER_INDEX_VARS,
+    _coverage_core_env,
     _isolate_installer_config,
+    coverage_subprocess_env,
     otto_subprocess_env,
 )
 
@@ -84,3 +89,58 @@ def test_isolate_installer_config_drops_index_sources_and_keeps_the_rest() -> No
     assert env["UNRELATED_VAR"] == "kept"
     assert env["PIP_CONFIG_FILE"] == "/dev/null"
     assert env["UV_NO_CONFIG"] == "1"
+
+
+def test_child_env_pins_ctrace_on_314_with_the_c_tracer() -> None:
+    """3.14's default ``sysmon`` core made one ``otto --help`` ~3x slower (#744)."""
+    assert _coverage_core_env((3, 14, 0, "final", 0), has_ctracer=True) == {
+        "COVERAGE_CORE": "ctrace"
+    }
+    assert _coverage_core_env((3, 15, 0, "alpha", 1), has_ctracer=True) == {
+        "COVERAGE_CORE": "ctrace"
+    }
+
+
+def test_child_env_skips_ctrace_when_the_tracer_is_not_compiled() -> None:
+    """Forcing ctrace without CTracer exits every child 1, so 3.14+ falls back."""
+    assert _coverage_core_env((3, 14, 0, "final", 0), has_ctracer=False) == {}
+    assert _coverage_core_env((3, 15, 0, "alpha", 1), has_ctracer=False) == {}
+
+
+@pytest.mark.parametrize(
+    "tracer_module",
+    [None, types.ModuleType("coverage.tracer")],
+    ids=["module-unimportable", "module-without-CTracer"],
+)
+def test_child_env_probe_imports_the_tracer_itself(
+    monkeypatch: pytest.MonkeyPatch, tracer_module: types.ModuleType | None
+) -> None:
+    """The probe imports ``CTracer``: a found module is not a loadable tracer.
+
+    ``sys.modules[name] = None`` makes ``import name`` raise ``ImportError``;
+    a module object without ``CTracer`` makes ``from name import CTracer`` raise
+    it. Either way no compiled tracer loads, so 3.14+ keeps coverage's default.
+    """
+    monkeypatch.setitem(sys.modules, "coverage.tracer", tracer_module)
+    assert _coverage_core_env((3, 14, 0, "final", 0)) == {}
+
+
+def test_child_env_leaves_the_core_alone_below_314() -> None:
+    assert _coverage_core_env((3, 13, 9, "final", 0), has_ctracer=True) == {}
+    assert _coverage_core_env((3, 10, 0, "final", 0), has_ctracer=True) == {}
+
+
+def test_both_builders_apply_the_core_helper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The version-dependent helper would pass vacuously below 3.14 if disconnected."""
+    monkeypatch.setattr(
+        _otto_subprocess,
+        "_coverage_core_env",
+        lambda version=sys.version_info, has_ctracer=None: {"COVERAGE_CORE": "ctrace"},
+    )
+    assert otto_subprocess_env(xdir=tmp_path).get("COVERAGE_CORE") == "ctrace"
+    assert coverage_subprocess_env().get("COVERAGE_CORE") == "ctrace"
+    probe = {"COVERAGE_CORE": "sysmon"}
+    assert otto_subprocess_env(xdir=tmp_path, extra_env=probe)["COVERAGE_CORE"] == "sysmon"
+    assert coverage_subprocess_env(extra_env=probe)["COVERAGE_CORE"] == "sysmon"

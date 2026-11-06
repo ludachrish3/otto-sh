@@ -44,6 +44,38 @@ COVERAGE_BOOTSTRAP = CHECKOUT_ROOT / "tests" / "_coverage_bootstrap"
 OTTO_BIN = Path(sys.executable).parent / "otto"
 
 
+def _ctracer_importable() -> bool:
+    """Whether coverage's compiled ``CTracer`` imports in this interpreter.
+
+    The import itself, not a module lookup: a found ``coverage.tracer`` that
+    cannot load (or a venv with no ``coverage`` at all) is no tracer.
+    """
+    try:
+        from coverage.tracer import CTracer  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _coverage_core_env(
+    version: tuple = sys.version_info, has_ctracer: bool | None = None
+) -> dict[str, str]:
+    """The coverage core every child gets: ``ctrace`` on 3.14+ with a compiled tracer.
+
+    3.14's default ``sysmon`` core makes one ``otto --help`` child ~3x slower
+    than the C tracer (24.6 s vs 8.1 s, #744), enough to blow the pty banner
+    wait. Forcing ``ctrace`` where coverage ships no compiled tracer (a new
+    interpreter before its wheel exists) exits every child 1, so that case
+    keeps coverage's own default. *has_ctracer* None runs
+    :func:`_ctracer_importable`; tests inject it, along with *version*.
+    """
+    if has_ctracer is None:
+        has_ctracer = _ctracer_importable()
+    if tuple(version[:2]) >= (3, 14) and has_ctracer:
+        return {"COVERAGE_CORE": "ctrace"}
+    return {}
+
+
 def coverage_subprocess_env(
     *,
     extra_env: dict[str, str] | None = None,
@@ -74,6 +106,10 @@ def coverage_subprocess_env(
     there. Without it, the child's session-finish cleanup could delete a
     finished session's whole temp tree under ``/tmp/pytest-of-<user>``
     inside its test's budget (#814).
+
+    ``COVERAGE_CORE=ctrace`` on 3.14 and later (:func:`_coverage_core_env`):
+    ``sysmon`` is ~3x slower per start-up. Test-only; ``.coveragerc`` stays
+    core-agnostic. *extra_env* merges last, so a test probing the core overrides.
     """
     env: dict[str, str] = {
         "PATH": os.environ.get("PATH", ""),
@@ -87,6 +123,7 @@ def coverage_subprocess_env(
         value = os.environ.get(var)
         if value:
             env[var] = value
+    env.update(_coverage_core_env())
     if extra_env:
         env.update(extra_env)
     return env
