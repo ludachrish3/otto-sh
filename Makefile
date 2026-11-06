@@ -729,13 +729,14 @@ $(WEB_NODE_MODULES): web/package.json web/package-lock.json
 
 web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covapp SPA (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
 # Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
-# the live pydantic models and fail BEFORE the vite build if either
-# committed file has drifted — a stale wire contract should be caught by
-# its own diff, not surface later as a build or runtime type error with
-# no clue which model changed.
+# the live pydantic models (and web/src/api/eventStyle.gen.ts from the
+# event-style registry, otto.models.event_style) and fail BEFORE the vite
+# build if any committed file has drifted — a stale wire contract should be
+# caught by its own diff, not surface later as a build or runtime type
+# error with no clue which model changed.
 	@$(SAY) "regenerating web/ API types from the live pydantic models"
 	@scripts/gen_web_types.sh
-	@git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
+	@git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts web/src/api/eventStyle.gen.ts
 # build_web_no_warnings.sh = vite with warnings-as-errors: the build fails
 # if it writes ANYTHING to stderr. That rule is what enforces the chunk
 # budget (Vite 8 reports a chunkSizeWarningLimit overrun on stderr) and what

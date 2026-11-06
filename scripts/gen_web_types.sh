@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
-# otto's live pydantic models.
+# otto's live pydantic models, and web/src/api/eventStyle.gen.ts from the
+# event-style registry (otto.models.event_style, via
+# scripts/gen_event_style_ts.py).
 #
 # monitor-meta.schema.json (the internal chart/tab-layout contract, see
 # src/otto/models/monitor.py::MonitorMeta) and monitor-export.schema.json
@@ -23,7 +25,8 @@
 # references it.
 #
 # Idempotent: running this twice produces byte-identical output — do not
-# edit web/src/api/types.gen.ts or web/src/api/export.gen.ts by hand.
+# edit web/src/api/types.gen.ts, web/src/api/export.gen.ts or
+# web/src/api/eventStyle.gen.ts by hand.
 #
 # Warnings are errors: json-schema-to-typescript writes nothing to stderr on
 # a clean run, so any stderr output from it (a schema construct it can't
@@ -90,3 +93,6 @@ json2ts \
     ../schemas/monitor-export.schema.json \
     -o src/api/export.gen.ts \
     --bannerComment "/* AUTO-GENERATED from monitor-export.schema.json — run scripts/gen_web_types.sh; do not edit. */"
+# Values, not a schema: the event colour presets, dash styles and colour
+# pattern the dashboard mirrors, straight from the Python registry.
+uv run python scripts/gen_event_style_ts.py

@@ -10,16 +10,15 @@ Events appear as vertical lines on all metric charts. They can be created by:
 from dataclasses import dataclass
 from datetime import datetime
 
-from ..models.monitor import VALID_DASH_STYLES
+from ..models.event_style import (
+    AUTO_EVENT_COLORS,
+    DEFAULT_EVENT_COLOR,
+    DEFAULT_EVENT_DASH,
+    check_event_dash,
+    normalize_event_color,
+)
 
-__all__ = ["AUTO_EVENT_COLORS", "VALID_DASH_STYLES", "MonitorEvent"]
-
-# Default colors for automatic test lifecycle events
-AUTO_EVENT_COLORS = {
-    "start": "#888888",
-    "pass": "#2ca02c",
-    "fail": "#d62728",
-}
+__all__ = ["AUTO_EVENT_COLORS", "MonitorEvent"]
 
 
 @dataclass
@@ -35,10 +34,12 @@ class MonitorEvent:
     source: str = "manual"
     """Who created this event — ``'manual'`` (dashboard UI), ``'user_code'`` (test code), or ``'auto'`` (lifecycle)."""  # noqa: E501 — long field docstring
 
-    color: str = "#888888"
-    """CSS color for the vertical marker line (hex, named color, or rgb())."""
+    color: str = DEFAULT_EVENT_COLOR
+    """Marker colour, ``#rrggbb`` or ``#rgb`` in any case, stored as lowercase
+    ``#rrggbb``. Anything else (a CSS name such as ``"red"``, ``rgb()``) raises
+    ``ValueError`` at construction."""
 
-    dash: str = "dash"
+    dash: str = DEFAULT_EVENT_DASH
     """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""  # noqa: E501 — long field docstring
 
     id: int = 0
@@ -46,6 +47,12 @@ class MonitorEvent:
 
     end_timestamp: datetime | None = None
     """End timestamp for span events; ``None`` for instantaneous events."""
+
+    def __post_init__(self) -> None:
+        # Every construction is a write boundary: the collector's add_event
+        # and any direct caller get the same colour/dash contract.
+        self.color = normalize_event_color(self.color)
+        check_event_dash(self.dash)
 
     def to_dict(self) -> dict[str, object]:
         """Serialize to a JSON-safe dict for the dashboard API."""

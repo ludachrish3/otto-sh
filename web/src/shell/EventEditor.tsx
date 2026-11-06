@@ -18,6 +18,7 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
 import { cx } from "@/utils/cx";
+import { EVENT_COLOR_PRESETS, EVENT_DASH_STYLES, type EventDash } from "../api/eventStyle.gen";
 import type { EventRecord } from "../api/export.gen";
 import {
   createEvent,
@@ -27,6 +28,7 @@ import {
   sourceGuard,
   updateEvent,
 } from "../data/eventApi";
+import { isEventDash } from "../data/eventStyle";
 import { useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
@@ -36,27 +38,8 @@ import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
 import { editorGateKey, useMutationGate } from "./useMutationGate";
 
-// Default manual grey + the app's event accent + the auto lifecycle colors --
-// mirrors AUTO_EVENT_COLORS (otto/monitor/events.py: start/pass/fail =
-// #888888/#2ca02c/#d62728) plus two extra chart hues for manual marking.
-// Not exported (knip's unused-exports check) -- nothing outside this module
-// consumes it yet; an earlier draft marked it `export` in anticipation of a
-// future consumer that never arrived, and a dead export is exactly what that
-// gate is there to catch.
-const EVENT_COLOR_SWATCHES = [
-  "#888888",
-  "#7c5cff",
-  "#2ca02c",
-  "#d62728",
-  "#1f77b4",
-  "#ff7f0e",
-] as const;
-
-// Mirrors otto/models/monitor.py's VALID_DASH_STYLES. No TS export exists
-// for it (that module is Python-only) -- this list is hand-kept in sync; a
-// mismatched entry just 422s loudly (server-side validation catches it),
-// it does not silently corrupt data.
-const DASH_STYLES = ["solid", "dot", "dash", "longdash", "dashdot", "longdashdot"] as const;
+// The swatches and the dash list are the event-style registry's
+// (otto/models/event_style.py, mirrored in api/eventStyle.gen.ts).
 
 type Form = EventDraft;
 
@@ -91,8 +74,8 @@ function formFromRecord(
     timestamp: string;
     end_timestamp?: string | null;
     label?: string;
-    color?: string;
-    dash?: string;
+    color: string;
+    dash: EventDash;
   },
 ): Form {
   return {
@@ -100,8 +83,8 @@ function formFromRecord(
     timestampMs: parseTs(record.timestamp),
     endTimestampMs: record.end_timestamp != null ? parseTs(record.end_timestamp) : null,
     label: record.label ?? "",
-    color: record.color ?? "#888888",
-    dash: record.dash ?? "dash",
+    color: record.color,
+    dash: record.dash,
   };
 }
 
@@ -349,7 +332,7 @@ export function EventEditor() {
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-secondary">Color</span>
               <div className="flex gap-2">
-                {EVENT_COLOR_SWATCHES.map((hex) => (
+                {EVENT_COLOR_PRESETS.map(({ hex }) => (
                   <button
                     key={hex}
                     type="button"
@@ -370,9 +353,12 @@ export function EventEditor() {
               aria-label="Dash style"
               label="Dash"
               data-testid="editor-dash"
-              items={DASH_STYLES.map((d) => ({ id: d, label: d }))}
+              items={EVENT_DASH_STYLES.map((d) => ({ id: d, label: d }))}
               selectedKey={form.dash}
-              onSelectionChange={(key) => key !== null && setForm({ ...form, dash: String(key) })}
+              onSelectionChange={(key) => {
+                const dash = String(key);
+                if (key !== null && isEventDash(dash)) setForm({ ...form, dash });
+              }}
             >
               {/* Conditional spread, not `label={item.label}`: the vendored
                   `SelectItemProps` declares `label?: string`, and the render

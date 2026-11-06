@@ -123,3 +123,97 @@ def test_utc_now_is_strictly_increasing_even_when_the_wall_clock_steps_back(monk
     stamps = [event_ops.utc_now() for _ in range(4)]
     assert stamps == sorted(set(stamps)), stamps
     assert stamps[3] == frozen + timedelta(seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_add_event_rejects_a_named_color() -> None:
+    """#857: the write boundary raises on anything that is not hex."""
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    with pytest.raises(ValueError, match=r"color must be #rrggbb, got 'red'"):
+        await collector.add_event(label="x", color="red")
+    assert collector.get_events() == []
+
+
+@pytest.mark.asyncio
+async def test_add_event_rejects_an_unknown_dash() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    with pytest.raises(ValueError, match="dash must be one of"):
+        await collector.add_event(label="x", dash="wavy")
+    assert collector.get_events() == []
+
+
+@pytest.mark.asyncio
+async def test_add_event_stores_lowercase_hex() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="x", color="#7C5CFF")
+    assert ev.color == "#7c5cff"
+    assert collector.get_events()[0].color == "#7c5cff"
+
+
+@pytest.mark.asyncio
+async def test_monitor_event_construction_rejects_a_named_color() -> None:
+    from datetime import datetime, timezone
+
+    from otto.monitor.events import MonitorEvent
+
+    with pytest.raises(ValueError, match=r"color must be #rrggbb, got 'red'"):
+        MonitorEvent(timestamp=datetime.now(tz=timezone.utc), label="x", color="red")
+    with pytest.raises(ValueError, match="dash must be one of"):
+        MonitorEvent(timestamp=datetime.now(tz=timezone.utc), label="x", dash="wavy")
+    assert MonitorEvent(timestamp=datetime.now(tz=timezone.utc), label="x", color="#ABC").color == (
+        "#aabbcc"
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_event_rejects_a_named_color_before_mutating() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="before")
+    q = collector.subscribe()
+    with pytest.raises(ValueError, match=r"color must be #rrggbb, got 'red'"):
+        await collector.update_event(
+            ev.id, label="x", color="red", dash=ev.dash, timestamp=ev.timestamp
+        )
+    collector.unsubscribe(q)
+    [stored] = collector.get_events()
+    assert stored.label == "before"
+    assert stored.color == "#888888"
+    assert q.empty()  # nothing published
+
+
+@pytest.mark.asyncio
+async def test_update_event_rejects_an_unknown_dash_before_mutating() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="before")
+    q = collector.subscribe()
+    with pytest.raises(ValueError, match=r"dash must be one of .*, got 'wavy'"):
+        await collector.update_event(
+            ev.id, label="x", color=ev.color, dash="wavy", timestamp=ev.timestamp
+        )
+    collector.unsubscribe(q)
+    [stored] = collector.get_events()
+    assert (stored.label, stored.dash) == ("before", ev.dash)
+    assert q.empty()  # nothing published
+
+
+@pytest.mark.asyncio
+async def test_update_event_normalises_color() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="x")
+    updated = await collector.update_event(
+        ev.id, label="x", color="#ABC", dash="solid", timestamp=ev.timestamp
+    )
+    assert updated is not None
+    assert updated.color == "#aabbcc"

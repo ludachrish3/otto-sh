@@ -23,6 +23,10 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..logger.mode import LogMode
+from ..models.event_style import (
+    DEFAULT_EVENT_COLOR,
+    DEFAULT_EVENT_DASH,
+)
 from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
 from ..models.monitor import (
     DEFAULT_MAX_SERIES_PER_CHART,
@@ -822,12 +826,17 @@ class MetricCollector:
         self,
         label: str,
         timestamp: datetime | None = None,
-        color: str = "#888888",
-        dash: str = "dash",
+        color: str = DEFAULT_EVENT_COLOR,
+        dash: str = DEFAULT_EVENT_DASH,
         source: str = "manual",
         end_timestamp: datetime | None = None,
     ) -> MonitorEvent:
-        """Record a labeled event and push it to all dashboard subscribers."""
+        """Record a labeled event and push it to all dashboard subscribers.
+
+        *color* is ``#rrggbb`` or ``#rgb`` (stored as lowercase ``#rrggbb``);
+        a named colour or an unknown *dash* raises ``ValueError`` before
+        anything is stored or published.
+        """
         event = MonitorEvent(
             timestamp=timestamp or event_ops.utc_now(),
             label=label,
@@ -923,6 +932,9 @@ class MetricCollector:
         passing the old start while believing it edited it (the 5a
         `interval=None` trap, made structural).
         """
+        # No check here: replace() runs MonitorEvent.__post_init__, which
+        # normalises the colour and refuses a bad colour or dash inside the
+        # resolver -- before mutate_event writes anything.
         return await self.mutate_event(
             event_id,
             lambda current: replace(

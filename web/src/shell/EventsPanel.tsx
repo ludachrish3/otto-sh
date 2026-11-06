@@ -211,7 +211,7 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
       id: ev.id ?? -1 - i,
       wireId: ev.id ?? null,
       label: ev.label ?? "",
-      color: ev.color ?? "#7c5cff",
+      color: ev.color,
       source: ev.source ?? "manual",
       fromMs: parseTs(ev.timestamp),
       toMs: ev.end_timestamp != null ? parseTs(ev.end_timestamp) : null,

@@ -452,7 +452,14 @@ describe("ChartPanel measured label layout (#863)", () => {
   const MARKERS: EventMarker[] = [
     // At 90% of the window: centred at 800 px, but pushed in from the right
     // edge at 296 px, so the offset differs between the two widths.
-    { id: 1, label: "deploy", color: "#7c5cff", fromMs: 1_900_000, toMs: null },
+    {
+      id: 1,
+      label: "deploy",
+      color: "#7c5cff",
+      fromMs: 1_900_000,
+      toMs: null,
+      dash: "dash" as const,
+    },
   ];
   const THEME = { muted: "#999", ink: "#111", surface: "#fff" };
 
@@ -576,6 +583,7 @@ describe("ChartPanel cluster overflow (#920)", () => {
       color: "#888888",
       fromMs: atMs + i,
       toMs: null,
+      dash: "dash" as const,
     }));
   const THEME = { muted: "#999", ink: "#111", surface: "#fff" };
 
@@ -649,6 +657,7 @@ describe("ChartPanel cluster overflow (#920)", () => {
       color: "#888888",
       fromMs: 1_200_000 + i,
       toMs: null,
+      dash: "dash" as const,
     }));
     render(panel(many));
     expect(button(3).getAttribute("aria-label")).toBe(

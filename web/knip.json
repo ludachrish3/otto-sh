@@ -7,7 +7,8 @@
     "src/utils/is-react-component.ts",
     "src/hooks/use-resize-observer.ts",
     "src/api/types.gen.ts",
-    "src/api/export.gen.ts"
+    "src/api/export.gen.ts",
+    "src/api/eventStyle.gen.ts"
   ],
   "ignoreDependencies": ["@react-stately/utils", "input-otp", "json-schema-to-typescript"],
   "treatConfigHintsAsErrors": true

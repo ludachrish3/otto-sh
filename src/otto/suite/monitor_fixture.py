@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
+from otto.models.event_style import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
+
 if TYPE_CHECKING:
     from otto.host.remote_host import RemoteHost
     from otto.monitor.collector import MetricCollector, MonitorTarget
@@ -140,8 +142,8 @@ class MonitorHandle:
     def event(
         self,
         label: str,
-        color: str = "#888888",
-        dash: str = "dash",
+        color: str = DEFAULT_EVENT_COLOR,
+        dash: str = DEFAULT_EVENT_DASH,
     ) -> Coroutine[Any, Any, None]:
         """
         Record a labeled event on the live dashboard at the current time.
@@ -153,7 +155,8 @@ class MonitorHandle:
 
         Validates through the same seam as every other marking surface
         (:class:`~otto.models.monitor.EventCreateBody`) — a blank label, a
-        non-``#rrggbb`` color, or an unknown dash style raises
+        color that is not ``#rrggbb`` or ``#rgb`` (a CSS name such as ``"red"``
+        included), or an unknown dash style raises
         ``pydantic.ValidationError`` (a ``ValueError`` subclass) synchronously,
         at the call site, before the collector is ever touched. Call sites
         still ``await`` the result (``await monitor.event(...)``) — this is a

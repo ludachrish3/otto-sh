@@ -7,6 +7,7 @@
 // value the menu label reads.
 import { create } from "zustand";
 
+import type { EventDash } from "../api/eventStyle.gen";
 import { loadTheme, saveTheme, type Theme } from "../theme";
 
 // Event marking: the compose-row shape shared by the palette's "Add
@@ -19,7 +20,7 @@ export interface EventDraft {
   endTimestampMs: number | null;
   label: string;
   color: string;
-  dash: string;
+  dash: EventDash;
 }
 
 /** What the (future) event editor is pointed at: an existing event being

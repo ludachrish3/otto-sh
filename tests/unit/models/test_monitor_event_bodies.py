@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from otto.models.monitor import EventCreateBody, EventUpdateBody
+from otto.models.monitor import EventCreateBody, EventRecord, EventUpdateBody
 
 T0 = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
 T1 = datetime(2026, 7, 18, 12, 5, tzinfo=timezone.utc)
@@ -32,6 +32,15 @@ class TestEventCreateBody:
     def test_non_hex_color_rejected(self, color: str) -> None:
         with pytest.raises(ValidationError, match="color"):
             EventCreateBody(label="x", color=color)
+
+    def test_named_color_rejected_with_the_hex_message(self) -> None:
+        # The route maps this ValidationError to 422; the text is the registry's.
+        with pytest.raises(ValidationError, match=r"color must be #rrggbb, got 'red'"):
+            EventCreateBody(label="x", color="red")
+
+    @pytest.mark.parametrize(("given", "stored"), [("#ABC", "#aabbcc"), ("#7C5CFF", "#7c5cff")])
+    def test_short_and_upper_hex_normalised(self, given: str, stored: str) -> None:
+        assert EventCreateBody(label="x", color=given).color == stored
 
     def test_unknown_dash_rejected(self) -> None:
         with pytest.raises(ValidationError, match="dash"):
@@ -72,6 +81,9 @@ class TestEventUpdateBody:
         with pytest.raises(ValidationError, match="label"):
             EventUpdateBody(label="   ")
 
+    def test_short_hex_normalised(self) -> None:
+        assert EventUpdateBody(color="#ABC").color == "#aabbcc"
+
     def test_none_values_pass_field_validators(self) -> None:
         body = EventUpdateBody(label=None, color=None, dash=None)
         assert body.label is None
@@ -79,3 +91,25 @@ class TestEventUpdateBody:
     def test_unknown_field_rejected(self) -> None:
         with pytest.raises(ValidationError, match=r"\ndashh\n\s*Extra inputs are not permitted"):
             EventUpdateBody.model_validate({"dashh": "dot"})
+
+
+class TestEventRecordImportBoundary:
+    """legacy colour is preserved and drawn as the default (#857): the IMPORT
+    boundary never fails on, or destroys, a non-hex colour an old file or DB
+    holds; the dashboard's own boundary draws it as the default."""
+
+    TS = "2026-01-01T00:00:00Z"
+
+    def test_legacy_named_color_is_kept_unchanged(self) -> None:
+        assert EventRecord.model_validate({"timestamp": self.TS, "color": "red"}).color == "red"
+
+    def test_null_color_takes_the_default(self) -> None:
+        assert EventRecord.model_validate({"timestamp": self.TS, "color": None}).color == "#888888"
+
+    def test_short_hex_is_normalised(self) -> None:
+        assert (
+            EventRecord.model_validate({"timestamp": self.TS, "color": "#ABC"}).color == "#aabbcc"
+        )
+
+    def test_null_dash_takes_the_default(self) -> None:
+        assert EventRecord.model_validate({"timestamp": self.TS, "dash": None}).dash == "dash"
