@@ -136,7 +136,8 @@ either limit is reached first.
     (``re.fullmatch``): ``sensor`` does not select ``sensor-1`` — write
     ``sensor.*``.  A regex matching none of the hosts the run may walk stops
     the run before any test executes; hosts that matched but cannot be sampled
-    only disable collection, with a warning naming them.
+    are left out, the rest are sampled, and the left-out hosts are named once,
+    at start (see :ref:`hosts monitor cannot sample <monitor-not-monitoring>`).
 
 **Dry run.** ``otto -n test NAMES`` builds and validates the test-verb options
 exactly as a run would, then prints them with the tests the run would run:

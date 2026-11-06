@@ -415,7 +415,17 @@ narrows the fleet, so it is listed where the fleet is explained. The bare
 `otto run status` table leaves it out.
 
 Context creation also logs one line at INFO, and only when something actually
-narrowed: `fleet of interest: 6 of 214 lab hosts (2 project(s), 1 excluded)`.
+narrowed:
+
+```text
+fleet of interest: 2 of 5 lab hosts (2 project(s), 0 excluded); outside it: h3 (only switched-off projects target it); h4 (no declared project targets it)
+```
+
+The `; outside it:` part names each lab host the fleet leaves out, and why: no
+declared project targets it, or only projects switched off with
+`--exclude-projects` do. It is absent when no host is left out, and otto's
+{ref}`built-in local host <overview-local-host>` is never named there, though it
+still counts in the lab total.
 
 ## What `cleanup` takes off the lab
 

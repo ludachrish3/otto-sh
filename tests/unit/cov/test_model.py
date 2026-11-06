@@ -194,7 +194,7 @@ class TestCoverageStore:
 
     def test_save_load_roundtrip(self, tmp_path):
         store = CoverageStore(tier_order=["system", "unit"])
-        store.add_run(tier="system", board="h1", host="h1", product="app")
+        store.add_run(tier="system", source="run", board="h1", host="h1", product="app")
         fr = store.get_or_create_file(Path("/a.c"))
         lr = fr.get_or_create_line(1)
         lr.hits.add("system", 5)
@@ -236,7 +236,7 @@ class TestCoverageStore:
         # A well-formed current-version file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 8,
+            "format": 9,
             "tier_order": ["system"],
             "files": [
                 {
@@ -257,7 +257,7 @@ class TestCoverageStore:
     def test_store_has_no_provenance_attribute(self, tmp_path):
         store = CoverageStore()
         assert not hasattr(store, "provenance")
-        store.add_run(tier="manual", ticket="T-1")
+        store.add_run(tier="manual", source="manual", ticket="T-1")
         path = tmp_path / "store.json"
         store.save(path)
         assert "provenance" not in json.loads(path.read_text())
@@ -283,7 +283,7 @@ class TestCoverageStore:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 8,
+                    "format": 9,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -298,20 +298,62 @@ class TestCoverageStore:
 class TestRuns:
     def test_add_run_allocates_sequential_ids(self):
         store = CoverageStore()
-        a = store.add_run(tier="manual", label="rack2-slot4", board="rack2-slot4-id")
-        b = store.add_run(tier="system", board="gw-a")
+        a = store.add_run(tier="manual", source="manual", board="rack2-id", host="rack2-id")
+        b = store.add_run(tier="system", source="run", board="gw-a", host="gw-a")
         assert (a, b) == (0, 1)
-        assert store.runs[a].label == "rack2-slot4"
-        assert store.runs[b].label == "gw-a"  # falls back to board
 
-    def test_add_run_label_falls_back_to_tier(self):
+    def test_a_host_run_is_labelled_host_slash_product(self):
         store = CoverageStore()
-        rid = store.add_run(tier="unit")
+        rid = store.add_run(
+            tier="manual", source="manual", board="test2", host="test2", product="stack"
+        )
+        assert store.runs[rid].label == "test2/stack"
+
+    def test_a_unit_view_is_labelled_tier_slash_product(self):
+        store = CoverageStore()
+        rid = store.add_run(tier="unit", source="unit", product="app")
+        assert store.runs[rid].label == "unit/app"
+
+    def test_a_tracefile_run_is_labelled_by_its_tier(self):
+        store = CoverageStore()
+        rid = store.add_run(tier="lab", source="tracefile")
         rec = store.runs[rid]
-        assert rec.label == "unit"
+        assert rec.label == "lab"
         assert rec.board == ""
         assert rec.base_commit == ""
         assert rec.aging is False
+
+    def test_a_row_whose_label_disagrees_is_refused(self, tmp_path):
+        store = CoverageStore(tier_order=["manual"])
+        store.add_run(tier="manual", source="manual", board="test2", host="test2", product="stack")
+        path = tmp_path / "store.json"
+        store.save(path)
+        raw = json.loads(path.read_text())
+        raw["runs"][0]["label"] = "test2:stack"
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match=r"run 0 label 'test2:stack'.*expected 'test2/stack'"):
+            CoverageStore.load(path)
+
+    def test_a_row_without_a_known_source_is_refused(self, tmp_path):
+        store = CoverageStore(tier_order=["lab"])
+        store.add_run(tier="lab", source="tracefile")
+        path = tmp_path / "store.json"
+        store.save(path)
+        raw = json.loads(path.read_text())
+        del raw["runs"][0]["source"]
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match=r"run 0 source None is not one of run, manual"):
+            CoverageStore.load(path)
+
+    def test_source_and_run_dir_round_trip(self, tmp_path):
+        store = CoverageStore(tier_order=["e2e"])
+        store.add_run(
+            tier="e2e", source="run", board="h1", host="h1", product="app", run_dir="/x/run1"
+        )
+        path = tmp_path / "store.json"
+        store.save(path)
+        (rec,) = CoverageStore.load(path).runs
+        assert (rec.source, rec.run_dir) == ("run", "/x/run1")
 
     def test_line_merge_adds_run_hits_and_unions_stale(self):
         a = LineRecord(line_number=1)
@@ -328,8 +370,10 @@ class TestRuns:
         store = CoverageStore(tier_order=["manual"])
         rid = store.add_run(
             tier="manual",
-            label="slot4",
+            source="manual",
             board="slot4-id",
+            host="slot4-id",
+            product="fw",
             labs=["lab1"],
             captured_at="2026-07-01T00:00:00Z",
             tester={"name": "Alice"},
@@ -349,7 +393,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 8
+        assert raw["format"] == 9
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -359,7 +403,7 @@ class TestRuns:
         loaded = CoverageStore.load(path)
         assert loaded.tier_colors == {"manual": "#ff0000"}
         (lrec,) = list(loaded.runs)
-        assert (lrec.id, lrec.label, lrec.ticket, lrec.aging) == (0, "slot4", "T-1", True)
+        assert (lrec.id, lrec.label, lrec.ticket, lrec.aging) == (0, "slot4-id/fw", "T-1", True)
         assert lrec.dirty_remap is True
         assert lrec.base_commit == "deadbeef"
         (frec,) = list(loaded.files())
@@ -368,7 +412,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 8,
+            "format": 9,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -397,7 +441,7 @@ class TestStoreConfig:
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
-        assert raw["format"] == 8
+        assert raw["format"] == 9
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
         assert raw["stat_types"] == ["line", "branch", "decision"]
 
@@ -411,7 +455,7 @@ class TestStoreConfig:
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
-        p.write_text('{"format": 8, "tier_order": ["system"], "files": []}')
+        p.write_text('{"format": 9, "tier_order": ["system"], "files": []}')
         loaded = CoverageStore.load(p)
         assert loaded.thresholds == Thresholds()
 
@@ -424,17 +468,17 @@ class TestStoreConfig:
 
 def test_run_record_product_defaults_empty_and_serialises():
     store = CoverageStore(tier_order=["e2e"])
-    rid = store.add_run(tier="e2e", board="h1", host="h1", product="app")
+    rid = store.add_run(tier="e2e", source="run", board="h1", host="h1", product="app")
     assert store.runs[rid].product == "app"
     assert store.runs[rid].to_dict()["product"] == "app"
-    assert store.add_run(tier="unit") == 1
+    assert store.add_run(tier="unit", source="unit") == 1
     assert store.runs[-1].product == ""
 
 
 class TestRunHost:
     def test_add_run_host_roundtrip(self, tmp_path) -> None:
         store = CoverageStore(tier_order=["nightly"])
-        rid = store.add_run(tier="nightly", label="Rig One", board="rig-1", host="rig-1")
+        rid = store.add_run(tier="nightly", source="run", board="rig-1", host="rig-1")
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
@@ -444,7 +488,7 @@ class TestRunHost:
 
     def test_add_run_defaults_host_empty(self) -> None:
         store = CoverageStore(tier_order=["system"])
-        rid = store.add_run(tier="system")
+        rid = store.add_run(tier="system", source="tracefile")
         assert store.runs[rid].host == ""
 
     def test_per_host_lines_derivable_from_run_hits(self) -> None:
@@ -452,8 +496,8 @@ class TestRunHost:
         LineRecord.run_hits by RunRecord.host reconstructs per-host line
         counts, because one capture == one host == one run."""
         store = CoverageStore(tier_order=["nightly"])
-        r1 = store.add_run(tier="nightly", label="Rig One", host="rig-1")
-        r2 = store.add_run(tier="nightly", label="Rig Two", host="rig-2")
+        r1 = store.add_run(tier="nightly", source="run", host="rig-1")
+        r2 = store.add_run(tier="nightly", source="run", host="rig-2")
         f = FileRecord(path=Path("src/a.c"))
         l1 = f.get_or_create_line(1)
         l1.hits.add("nightly", 1)
@@ -505,15 +549,15 @@ class TestLineTicketSlot:
         assert c.ticket == ["PROJ-2"]
 
 
-def test_format_is_eight():
-    """v8 adds a per-run ``product`` — the ``<product>`` segment of cov/<host>/<product>/."""
-    assert STORE_FORMAT_VERSION == 8
+def test_format_is_nine():
+    """v9 labels a run ``<host>/<product>`` and adds a per-run ``source`` and ``run_dir``."""
+    assert STORE_FORMAT_VERSION == 9
 
 
-def test_v7_store_fails_loud(tmp_path):
-    """The v8 bump is real for on-disk data: a v7 store is refused, not read."""
-    (tmp_path / "store.json").write_text('{"format": 7}')
-    with pytest.raises(ValueError, match="v8 required"):
+def test_v8_store_fails_loud(tmp_path):
+    """The v9 bump is real for on-disk data: a v8 store is refused, not read."""
+    (tmp_path / "store.json").write_text('{"format": 8}')
+    with pytest.raises(ValueError, match="v9 required"):
         CoverageStore.load(tmp_path / "store.json")
 
 
@@ -560,7 +604,7 @@ def test_v4_store_is_rejected_loud(tmp_path):
     """A v4 store.json (pre-list ticket, no tickets table) fails loud, no migration."""
     path = tmp_path / "store.json"
     path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
-    with pytest.raises(ValueError, match="v8"):
+    with pytest.raises(ValueError, match="v9"):
         CoverageStore.load(path)
 
 
@@ -636,14 +680,14 @@ def test_line_merge_unions_asserted_ids_per_tier():
 
 def test_v5_store_fails_loud(tmp_path):
     (tmp_path / "store.json").write_text('{"format": 5}')
-    with pytest.raises(ValueError, match="v8 required"):
+    with pytest.raises(ValueError, match="v9 required"):
         CoverageStore.load(tmp_path / "store.json")
 
 
 def test_v6_store_fails_loud(tmp_path):
     """A v6 store is refused, not read."""
     (tmp_path / "store.json").write_text('{"format": 6}')
-    with pytest.raises(ValueError, match="v8 required"):
+    with pytest.raises(ValueError, match="v9 required"):
         CoverageStore.load(tmp_path / "store.json")
 
 
@@ -681,7 +725,7 @@ class TestFunctions:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 8,
+                    "format": 9,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -695,7 +739,7 @@ class TestFunctions:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 8,
+                    "format": 9,
                     "tier_order": [],
                     "files": [
                         {

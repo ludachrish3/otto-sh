@@ -352,6 +352,8 @@ const RUNS_FOR_CTX: Context["runs"] = [
     id: 1,
     tier: "system",
     label: "manual run",
+    source: "run",
+    run_dir: "",
     board: "bench",
     host: "host-1",
     product: "",
@@ -368,6 +370,7 @@ const RUNS_FOR_CTX: Context["runs"] = [
 
 const MANUAL_RUN_CTX: Context = {
   label: "manual run",
+  tiers: ["system"],
   tier: "system",
   runs: RUNS_FOR_CTX,
   ctxLabel: "manual run",

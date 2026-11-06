@@ -8,6 +8,7 @@ construction.
 
 import copy
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import cast
 
 from ..host.remote_host import RemoteHost
@@ -15,23 +16,63 @@ from ..host.unix_host import UnixHost
 from ..models.monitor import TunnelRecord
 from .collector import MetricCollector, MonitorTarget
 from .db import MetricDB
+from .errors import UNMONITORABLE_REASON
 from .parsers import MetricParser, get_host_parsers
 from .snmp import SnmpClient, SnmpSource, SnmpVersion, expand_oid_bundles
 
 
-def is_monitorable(host: RemoteHost) -> bool:
-    """Whether otto can sample *host*: over a shell (a Unix host) or over SNMP.
+def unmonitorable_reason(host: RemoteHost, *, has_snmp: bool | None = None) -> str | None:
+    """Why otto cannot sample *host*, or ``None`` when it can.
 
-    The one predicate every monitor producer selects with. An embedded RTOS
-    console cannot share its single session with a metrics poller, so a host
-    that is not Unix is sampled only through a declared ``snmp`` block.
+    The one decision every monitor producer selects with, and the reason
+    every message about an unsampled host names. otto samples over a shell
+    (a Unix host) or over SNMP. An embedded RTOS console cannot share its
+    single session with a metrics poller, so a host that is not Unix is
+    sampled only through an ``snmp`` block.
+
+    Args:
+        host: The host to judge.
+        has_snmp: Whether *host* is polled over SNMP. ``None`` reads the
+            host's own ``snmp`` block; a caller holding a prebuilt
+            :class:`~otto.monitor.collector.MonitorTarget` passes whether
+            that target carries an SNMP source.
     """
-    return isinstance(host, UnixHost) or host.snmp is not None
+    if has_snmp is None:
+        has_snmp = host.snmp is not None
+    if isinstance(host, UnixHost) or has_snmp:
+        return None
+    return UNMONITORABLE_REASON
 
 
-def monitorable(hosts: Sequence[RemoteHost]) -> list[RemoteHost]:
-    """Return the hosts in *hosts* that :func:`is_monitorable` accepts, order kept."""
-    return [host for host in hosts if is_monitorable(host)]
+def is_monitorable(host: RemoteHost) -> bool:
+    """Whether otto can sample *host*: :func:`unmonitorable_reason` names no reason."""
+    return unmonitorable_reason(host) is None
+
+
+@dataclass(frozen=True)
+class MonitorSelection:
+    """A host selection split by :func:`unmonitorable_reason`.
+
+    Attributes:
+        hosts: The hosts otto can sample, in selection order.
+        dropped: Each host otto cannot sample, by id, mapped to its reason.
+    """
+
+    hosts: list[RemoteHost]
+    dropped: dict[str, str]
+
+
+def partition_monitorable(hosts: Sequence[RemoteHost]) -> MonitorSelection:
+    """Split *hosts* into those otto can sample (order kept) and those it drops, with why."""
+    kept: list[RemoteHost] = []
+    dropped: dict[str, str] = {}
+    for host in hosts:
+        reason = unmonitorable_reason(host)
+        if reason is None:
+            kept.append(host)
+        else:
+            dropped[host.id] = reason
+    return MonitorSelection(kept, dropped)
 
 
 def build_monitor_collector(

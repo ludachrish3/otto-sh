@@ -11,10 +11,10 @@ The module imports nothing, so the API-dump producer reads the lists without
 importing a reader.
 """
 
-STORE_READ_VERSIONS: list[int] = [8]
+STORE_READ_VERSIONS: list[int] = [9]
 """``store.json`` versions ``CoverageStore.load`` accepts."""
 
-STORE_WRITE_VERSIONS: list[int] = [8]
+STORE_WRITE_VERSIONS: list[int] = [9]
 """``store.json`` versions ``CoverageStore.save`` writes."""
 
 CAPTURE_READ_VERSIONS: list[int] = [3]

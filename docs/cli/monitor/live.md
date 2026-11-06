@@ -37,6 +37,16 @@ is a usage error naming `--hosts` (exit 2).
 Omit the option to monitor every real host in the lab (Docker containers
 excluded).
 
+(monitor-not-monitoring)=
+When some selected hosts cannot be sampled, the run monitors the rest and
+names the ones it leaves out, with the reason, in one line at start:
+
+```text
+not monitoring 1 of 3 selected host(s): z1 (not a Unix host and has no `snmp` block)
+```
+
+Nothing is printed when every selected host is sampled.
+
 "The hosts the run may walk" is the run's **fleet of interest**, not
 necessarily every host in the lab: when a project declares a `[project]` table in
 its `.otto/settings.toml`, `--hosts` selects a subset of what that declaration
@@ -65,8 +75,8 @@ different fix:
 - **Nothing was selected at all.** `No hosts available in the active lab.` —
   the message does not mention `--hosts`.
 - **Hosts were selected, but none can be sampled.** You get the count and the
-  ids (up to five, then a summary), and a reminder that otto samples over a
-  shell or over SNMP. Give the host an `snmp` block, or point `--hosts` at a
+  ids (up to five, then a summary), and the reason: each is not a Unix host
+  and has no `snmp` block. Give the host an `snmp` block, or point `--hosts` at a
   Unix host — widening the selection will not help.
 
 All four exit 1 with a one-line message on stderr.

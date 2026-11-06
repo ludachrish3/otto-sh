@@ -97,6 +97,8 @@
     "labs",
     "note",
     "product",
+    "run_dir",
+    "source",
     "tester",
     "ticket",
     "tier"

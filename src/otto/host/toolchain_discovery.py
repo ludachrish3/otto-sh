@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..host.toolchain import Toolchain
+from ..layout import product_label
 from .errors import CoverageToolMissingError
 from .gcovformat import LLVM_COV_STAMPS, gcov_stamp_major, is_llvm_stamp, read_gcov_version
 
@@ -120,7 +121,7 @@ def _product_subject(gcda_dir: Path) -> StampSubject:
     host, product = gcda_dir.parent.name, gcda_dir.name
     return StampSubject(
         name=f"product '{product}' on host '{host}'",
-        log=f"{host}/{product}",
+        log=product_label(host, product),
         remedy="name the gcov to use in the host's `toolchain.gcov`",
         where=gcda_dir,
     )

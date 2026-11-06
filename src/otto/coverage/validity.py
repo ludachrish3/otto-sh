@@ -17,24 +17,33 @@ from .anchor import AnchorResolver
 from .capture import gitio
 from .capture.model import Capture, CaptureFileCov
 from .capture.remap import LineRemapper, parse_u0_hunks
-from .store.model import BranchHits, CoverageStore, FileRecord, LineRecord
+from .capture.supersede import supersede_key
+from .store.model import BranchHits, CoverageStore, FileRecord, LineRecord, RunSource
 
 logger = logging.getLogger(__name__)
 
 
-def register_capture_run(store: CoverageStore, capture: Capture) -> int:
+def register_capture_run(
+    store: CoverageStore, capture: Capture, *, source: RunSource, run_dir: str = ""
+) -> int:
     """Register one capture as a run; returns its run id.
 
-    The chip label prefers the host display name, then the board (host
-    id) — ``add_run`` itself falls back to the tier name, which only
-    synthetic runs use.
+    *source* names the input the capture was folded from, and *run_dir* the
+    run directory an e2e (``"run"``) capture came from. The run's tier, host
+    and product are the capture's context,
+    :func:`~otto.coverage.capture.supersede.supersede_key`, so the run and its
+    supersede context name one host. The label is ``add_run``'s own,
+    ``<host>/<product>``: the capture's ``display_name`` does not reach the
+    store.
     """
+    context = supersede_key(capture)
     return store.add_run(
-        tier=capture.tier,
-        label=capture.display_name or capture.board or None,
+        tier=context.tier,
+        source=source,
         board=capture.board,
-        host=capture.board,
-        product=capture.product,
+        host=context.host,
+        product=context.product,
+        run_dir=run_dir,
         labs=capture.labs,
         captured_at=capture.captured_at,
         tester=capture.tester,

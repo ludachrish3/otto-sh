@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..layout import product_label
 from ..utils import anchor_path
 from .merge.gcovfile import gcno_sources
 from .objects import ObjectList, ObjectListCache, Unavailable
@@ -318,7 +319,7 @@ async def plan_unit_views(
     views: list[UnitView] = []
     for tier in tiers:
         for name, dirs in tier.products.items():
-            label = f"{tier.name}/{name}"
+            label = product_label(tier.name, name)
             candidates = [s for s in owned if s.product.name == name]
             selected = [
                 s

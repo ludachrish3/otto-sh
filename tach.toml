@@ -293,6 +293,10 @@ depends_on = [
     # open_context splits a lab selection and wraps a given lab with the lab
     # model in otto.labs.loader. Function-local; otto.labs is outside the cycle.
     "otto.labs",
+    # The fleet-of-interest line names the hosts outside it through
+    # name_by_reason, the one "ids grouped by reason" formatter (monitor's
+    # dropped-hosts line shares it). A foundation leaf, so no cycle.
+    "otto.utils",
 ]
 
 [[modules]]

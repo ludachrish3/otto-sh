@@ -336,6 +336,22 @@ def ellipsize(text: str, cap: int) -> str:
     return text if len(text) <= cap else text[:cap] + "…"
 
 
+def name_by_reason(reasons: dict[str, str]) -> str:
+    """Name ids grouped by the reason each was left out: ``"a, b (R); c (Q)"``.
+
+    The one formatter for a line that says which ids a selection dropped and
+    why. Ids are sorted within a group; groups keep the order their reason is
+    first seen in *reasons*.
+
+    >>> name_by_reason({"b": "R", "a": "R", "c": "Q"})
+    'a, b (R); c (Q)'
+    """
+    groups: dict[str, list[str]] = {}
+    for ident, reason in reasons.items():
+        groups.setdefault(reason, []).append(ident)
+    return "; ".join(f"{', '.join(sorted(ids))} ({reason})" for reason, ids in groups.items())
+
+
 def split_on(values: list[str] | str, sep: str = ",") -> list[str]:
     """Split a string or list of strings on *sep* into a flat list.
 

@@ -241,7 +241,7 @@ def test_golden_mixed_timeline(tmp_path):
     from otto.coverage.capture.supersede import select_manual_captures
 
     tl.captures = select_manual_captures(tl.captures)
-    assert len(tl.captures) == 1  # same label+host: month-3 capture superseded month-1
+    assert len(tl.captures) == 1  # same tier+host+product: month-3 capture superseded month-1
     store = tl.fold()
     assert tl.dispositions(store, "core.c") == {3: "hit", 4: "hit"}
     # the superseded January capture no longer credits helpers.c at all:

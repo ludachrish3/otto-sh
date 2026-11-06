@@ -11,7 +11,7 @@ import { type CodeLine, CodeView, type GutterCol } from "@/ui/CodeView";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
-import { resolveScope } from "../contexts";
+import { type FocusScope, resolveScope } from "../contexts";
 import { loadFileChunk, StampMismatchError } from "../data";
 import { parseHashQuery, useFocus } from "../focus";
 import {
@@ -309,34 +309,35 @@ function buildCells(
   return cells;
 }
 
-/** `buildCells`'s under-focus counterpart: the focused context's OWN tier
- * column shows the summed hits of its member runs on this line (`null`
- * when there's no `LineJson` at all, rendering `HitCell`'s muted "·" same
- * as a real zero); every OTHER tier column reads `null` too — a context
- * belongs to one tier, so those columns have no context-scoped number to
- * show (spec-pinned "other tiers ·", distinct from `DirectoryPage`'s tree
- * columns, which show a real 0.0% instead — files use HitCell's existing
- * "no data" glyph, trees use a percentage). Branch pills unchanged (see
- * `branchesCell`). */
+/** `buildCells`'s under-focus counterpart. A focused CONTEXT's tier columns
+ * each show the summed hits of its member runs IN THAT TIER on this line:
+ * one `<host>/<product>` label can hold captures from several tiers (store
+ * v9), so a context with a `manual` and a `bench` capture fills both columns.
+ * A tier the context has no capture in reads `null` (HitCell's muted "·"),
+ * as does every column when there's no `LineJson` at all — a spec-pinned
+ * "other tiers ·", distinct from `DirectoryPage`'s tree columns, which show
+ * a real 0.0% instead. A bare PRODUCT scope (`ctxLabel: null`) spans tiers
+ * without being a run grouping, so every tier column reads `null`. Branch
+ * pills unchanged (see `branchesCell`). */
 function buildCellsFocused(
   lineNo: number,
   line: LineJson | undefined,
   index: IndexPayload,
-  memberRunIds: Set<number>,
-  focusedTier: string,
+  scope: FocusScope,
 ): ReactNode[] {
   const cells: ReactNode[] = [
     <span key="num" className="text-quaternary tabular-nums">
       {lineNo}
     </span>,
   ];
-  let runHitSum: number | null = null;
-  if (line) {
-    runHitSum = 0;
-    for (const id of memberRunIds) runHitSum += line.run?.[String(id)] ?? 0;
+  const perTier = new Map<string, number>();
+  if (line && scope.ctxLabel !== null) {
+    for (const run of scope.runs) {
+      perTier.set(run.tier, (perTier.get(run.tier) ?? 0) + (line.run?.[String(run.id)] ?? 0));
+    }
   }
   for (const tier of index.tier_order) {
-    cells.push(<HitCell key={tier} value={tier === focusedTier ? runHitSum : null} />);
+    cells.push(<HitCell key={tier} value={perTier.get(tier) ?? null} />);
   }
   cells.push(branchesCell(line, index));
   return cells;
@@ -679,7 +680,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       rowClass,
       cells:
         scope && memberRunIds
-          ? buildCellsFocused(lineNo, line, index, memberRunIds, scope.tier)
+          ? buildCellsFocused(lineNo, line, index, scope)
           : buildCells(lineNo, line, index, hideAsserted),
       expandable: collectRunIds(line).size > 0 || Object.keys(line?.asserted ?? {}).length > 0,
       style: dimStyleFor(rowClass, index, dimmed),

@@ -466,11 +466,10 @@ coverage against the new files.
 
 A few more rules:
 
-- A **newer manual capture with the same run label, host, and product**
-  entirely replaces the older one — the superseded capture's credits do not
-  accumulate, and it drops out of the run table (see
-  {ref}`coverage-runs`). Two products on one host are two identities, so
-  neither supersedes the other.
+- A **newer manual capture of the same context** entirely replaces the
+  older one ({ref}`coverage-supersede`): the superseded capture's credits do
+  not accumulate, and it drops out of the run table (see
+  {ref}`coverage-runs`).
 - On a **shallow clone**, a capture older than the clone's fetch depth has
   a `base_commit` git cannot resolve here; validity falls back to the
   per-file blob check instead of crashing — files whose current blob
@@ -486,9 +485,9 @@ A few more rules:
 ## Runs: which run covered this line?
 
 Every coverage input becomes a **run** at report time: each manual
-or e2e capture is one run — one host, one product (labelled by the host's
-display name, shown as `host · product` where runs are listed; hover for
-tier, ticket, note, date, and base_commit) — each named unit-tier product
+or e2e capture is one run — one host, one product (labelled
+`<host_id>/<product>`, {ref}`coverage-store-json`; hover for tier, ticket,
+note, date, and base_commit) — each named unit-tier product
 view is its own run, and a `--tier` `.info` load gets a synthetic per-tier
 run that names no product.  On a file's annotated page,
 the right-hand **runs** column expands per line to list every run that hit

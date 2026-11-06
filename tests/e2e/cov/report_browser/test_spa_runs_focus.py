@@ -28,6 +28,7 @@ import math
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -49,17 +50,38 @@ pytestmark = [
 # but it's still a hit for the unfocused "any tier" count).
 MAIN_C_TOTAL_LINES = 11
 MAIN_C_HIT_LINES = 9
-# nightly-full's member runs (run_sys_a/run_sys_b) post run_hits on lines
-# 3,4,5 (router-a) and 10,11,12 (router-b) — 6 of main.c's 11 lines; the
-# bench-tier lines 1/2 carry no run_hits for this context.
-MAIN_C_NIGHTLY_FULL_LINES = 6
-# Per member run: router-a's firmware run posts 3 of those (3/4/5),
-# router-b's firmware run the other 3 (10/11/12), and router-b's agent run
-# posts lib/ring.c's system-tier lines — push/pop's happy paths
-# (8/9/12/13, 16/17/20/21), not the unit-only early returns 10 and 18.
+# Every run is its own ``<host>/<product>`` context (store v9 labels): the
+# one nightly invocation on router-a and router-b is three contexts.
+ROUTER_A_FIRMWARE = "router-a/firmware"
+ROUTER_B_FIRMWARE = "router-b/firmware"
+ROUTER_B_AGENT = "router-b/agent"
+CI_FIRMWARE = "ci-01/firmware"
+CI_AGENT = "ci-01/agent"
+BENCH_3_BOOTLOADER = "bench-3/bootloader"  # fully revoked
+BENCH_7_BOOTLOADER = "bench-7/bootloader"  # aging, dirty-remapped, FW-1188
+ALL_CONTEXTS = [
+    ROUTER_A_FIRMWARE,
+    ROUTER_B_FIRMWARE,
+    ROUTER_B_AGENT,
+    CI_FIRMWARE,
+    CI_AGENT,
+    BENCH_3_BOOTLOADER,
+    BENCH_7_BOOTLOADER,
+]
+# The context every focus-flow test pins, and its spelling in the hash
+# (URLSearchParams writes "/" as "%2F").
+FOCUS_CTX = ROUTER_A_FIRMWARE
+FOCUS_CTX_Q = quote(FOCUS_CTX, safe="")
+# Per context: router-a's firmware run posts run_hits on main.c lines 3/4/5,
+# router-b's firmware run on 10/11/12, and router-b's agent run on
+# lib/ring.c's system-tier lines — push/pop's happy paths (8/9/12/13,
+# 16/17/20/21), not the unit-only early returns 10 and 18.
 ROUTER_A_FIRMWARE_LINES = 3
 ROUTER_B_FIRMWARE_LINES = 3
 ROUTER_B_AGENT_LINES = 8
+# The focused context's main.c lines: router-a/firmware's 3 of main.c's 11;
+# the bench-tier lines 1/2 carry no run_hits for it.
+MAIN_C_FOCUS_LINES = ROUTER_A_FIRMWARE_LINES
 # index.total_lines = main.c's 11 + utils.c's 2 (utils.c has LineRecords for
 # lines 2 and 10 only) + lib/ring.c's 14. Line 6 of utils.c is
 # LCOV_EXCL_LINE-marked, so the exclusion filter deleted its record before
@@ -84,12 +106,12 @@ def _goto(page: Page, report_dir: Path, hash_route: str) -> None:
     page.goto((report_dir / "index.html").as_uri() + f"#{hash_route}")
 
 
-def _pin_nightly_full(page: Page, report_dir: Path) -> None:
+def _pin_focus_ctx(page: Page, report_dir: Path) -> None:
     """Real UI pin (per the brief: focus from a run detail's own button),
     used by every focus-flow test below as their common starting state."""
     _goto(page, report_dir, "/runs")
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_be_visible()
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    expect(page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')).to_be_visible()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="focus-context-btn"]').click()
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
 
@@ -99,13 +121,13 @@ def _pin_nightly_full(page: Page, report_dir: Path) -> None:
 # ---------------------------------------------------------------------
 
 
-def test_runs_page_one_row_per_context_with_multihost_pills(page: Page, report_dir: Path) -> None:
-    """5 contexts (nightly-full, unit harvest, agent unit, smoke-old, field
-    bring-up); nightly-full is the only multi-host one — firmware on
-    router-a and router-b, plus agent on router-b, one pill per member run
-    reading ``host · product``."""
+def test_runs_page_one_row_per_product_context(page: Page, report_dir: Path) -> None:
+    """7 contexts, one per ``<host>/<product>``: the one nightly invocation
+    is three (firmware on router-a and router-b, agent on router-b), each a
+    single pill reading ``host · product``."""
     _goto(page, report_dir, "/runs")
-    for label in ("nightly-full", "unit harvest", "agent unit", "smoke-old", "field bring-up"):
+    expect(page.locator('[data-testid^="run-row-"]')).to_have_count(len(ALL_CONTEXTS))
+    for label in ALL_CONTEXTS:
         expect(page.locator(f'[data-testid="run-row-{label}"]')).to_be_visible()
 
     # Host column is the run row's 3rd direct child (Run, Tier, Host, ...,
@@ -113,90 +135,92 @@ def test_runs_page_one_row_per_context_with_multihost_pills(page: Page, report_d
     # testid, so this is the precise way to scope to just that column
     # rather than substring-matching row text (the Board column can
     # legitimately repeat one of the same host names).
-    host_col = page.locator('[data-testid="run-row-nightly-full"] > *').nth(2)
-    expect(host_col.locator("span")).to_have_count(3)
-    assert host_col.locator("span").all_inner_texts() == [
-        "router-a · firmware",
-        "router-b · firmware",
-        "router-b · agent",
-    ]
-
-    single_host_col = page.locator('[data-testid="run-row-unit harvest"] > *').nth(2)
-    expect(single_host_col.locator("span")).to_have_count(1)
+    for label, pill in [
+        (ROUTER_A_FIRMWARE, "router-a · firmware"),
+        (ROUTER_B_FIRMWARE, "router-b · firmware"),
+        (ROUTER_B_AGENT, "router-b · agent"),
+    ]:
+        host_col = page.locator(f'[data-testid="run-row-{label}"] > *').nth(2)
+        expect(host_col.locator("span")).to_have_count(1)
+        assert host_col.locator("span").all_inner_texts() == [pill]
 
 
 def test_stale_context_shows_revoked_count_and_stale_badge(page: Page, report_dir: Path) -> None:
-    """smoke-old is fully revoked (Global Constraints/fixture: no live
+    """bench-3/bootloader is fully revoked (Global Constraints/fixture: no live
     hits, one stale mark on main.c line 6) -> ContribCell shows "N
     revoked" instead of a hit fraction, and the status badge reads
     "stale"."""
     _goto(page, report_dir, "/runs")
-    row = page.locator('[data-testid="run-row-smoke-old"]')
+    row = page.locator(f'[data-testid="run-row-{BENCH_3_BOOTLOADER}"]')
     expect(row).to_contain_text("1 revoked")  # main.c line 6's one stale mark
     expect(row).to_contain_text("stale")
 
 
 def test_remapped_context_shows_marker_and_detail_base_commit(page: Page, report_dir: Path) -> None:
-    """field bring-up's ``dirty_remap=True`` -> "✎ remapped" on the row and
+    """bench-7/bootloader's ``dirty_remap=True`` -> "✎ remapped" on the row and
     a "→ HEAD (remapped)" suffix on the detail's base-commit line."""
     _goto(page, report_dir, "/runs")
-    row = page.locator('[data-testid="run-row-field bring-up"]')
+    row = page.locator(f'[data-testid="run-row-{BENCH_7_BOOTLOADER}"]')
     expect(row).to_contain_text("✎ remapped")
 
     row.click()
-    detail = page.locator('[data-testid="run-detail-field bring-up"]')
+    detail = page.locator(f'[data-testid="run-detail-{BENCH_7_BOOTLOADER}"]')
     expect(detail).to_be_visible()
     # _BASE_COMMIT_FIELD = "b2" * 20, sliced to 12 chars by ContextDetail.
     expect(detail).to_contain_text("b2b2b2b2b2b2 → HEAD (remapped)")
 
 
 def test_tier_chip_filter_narrows_to_manual_rows(page: Page, report_dir: Path) -> None:
-    """smoke-old and field bring-up are the only "manual" tier contexts."""
+    """bench-3/bootloader and bench-7/bootloader are the only "manual" tier contexts."""
     _goto(page, report_dir, "/runs")
     page.locator('[data-testid="tier-chip-manual"]').click()
     expect(page.locator('[data-testid^="run-row-"]')).to_have_count(2)
-    expect(page.locator('[data-testid="run-row-smoke-old"]')).to_be_visible()
-    expect(page.locator('[data-testid="run-row-field bring-up"]')).to_be_visible()
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_have_count(0)
+    expect(page.locator(f'[data-testid="run-row-{BENCH_3_BOOTLOADER}"]')).to_be_visible()
+    expect(page.locator(f'[data-testid="run-row-{BENCH_7_BOOTLOADER}"]')).to_be_visible()
+    expect(page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')).to_have_count(0)
 
 
 def test_search_by_ticket_narrows_to_field_bring_up(page: Page, report_dir: Path) -> None:
-    """FW-1188 is field bring-up's ticket (searchHaystack includes it)."""
+    """FW-1188 is bench-7/bootloader's ticket (searchHaystack includes it)."""
     _goto(page, report_dir, "/runs")
     page.locator('[data-testid="runs-search"] input').fill("FW-1188")
     expect(page.locator('[data-testid^="run-row-"]')).to_have_count(1)
-    expect(page.locator('[data-testid="run-row-field bring-up"]')).to_be_visible()
+    expect(page.locator(f'[data-testid="run-row-{BENCH_7_BOOTLOADER}"]')).to_be_visible()
 
 
-def test_nightly_full_detail_shows_per_host_lines_for_both_hosts(
-    page: Page, report_dir: Path
+@pytest.mark.parametrize(
+    ("label", "pill", "lines"),
+    [
+        (ROUTER_A_FIRMWARE, "router-a · firmware", ROUTER_A_FIRMWARE_LINES),
+        (ROUTER_B_FIRMWARE, "router-b · firmware", ROUTER_B_FIRMWARE_LINES),
+        (ROUTER_B_AGENT, "router-b · agent", ROUTER_B_AGENT_LINES),
+    ],
+)
+def test_nightly_context_detail_shows_its_own_per_host_lines(
+    page: Page, report_dir: Path, label: str, pill: str, lines: int
 ) -> None:
     """router-a's firmware run covers main.c lines 3/4/5 (3 lines),
     router-b's covers 10/11/12 (3 lines), and router-b's agent run covers
-    lib/ring.c's 8 system-tier lines — one per-host row per member run,
-    each carrying its own count."""
+    lib/ring.c's 8 system-tier lines — each its own context, so each
+    detail has one per-host row carrying that run's own count."""
     _goto(page, report_dir, "/runs")
-    page.locator('[data-testid="run-row-nightly-full"]').click()
-    detail = page.locator('[data-testid="run-detail-nightly-full"]')
+    page.locator(f'[data-testid="run-row-{label}"]').click()
+    detail = page.locator(f'[data-testid="run-detail-{label}"]')
     expect(detail).to_be_visible()
     per_host = detail.get_by_text("Per-host lines").locator("..")
     # Each row is (host pill, line count, bar); read the first two spans so
     # a count is checked against its own label, not found anywhere.
     rows = per_host.locator(":scope > div > div")
-    expect(rows).to_have_count(3)
+    expect(rows).to_have_count(1)
     assert [
         (row.locator("span").nth(0).inner_text(), row.locator("span").nth(1).inner_text())
         for row in rows.all()
-    ] == [
-        ("router-a · firmware", str(ROUTER_A_FIRMWARE_LINES)),
-        ("router-b · firmware", str(ROUTER_B_FIRMWARE_LINES)),
-        ("router-b · agent", str(ROUTER_B_AGENT_LINES)),
-    ]
+    ] == [(pill, str(lines))]
 
 
 def test_top_file_link_routes_to_file_page(page: Page, report_dir: Path) -> None:
     _goto(page, report_dir, "/runs")
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="file-link-product/main.c"]').click()
     assert page.url.endswith("#/coverage/product/main.c")
     expect(page.locator('[data-testid="code-row-1"]')).to_be_visible()
@@ -208,9 +232,9 @@ def test_top_file_link_routes_to_file_page(page: Page, report_dir: Path) -> None
 
 
 def test_focus_pin_shows_chip_and_ctx_in_hash(page: Page, report_dir: Path) -> None:
-    _pin_nightly_full(page, report_dir)
-    expect(page.locator('[data-testid="focus-chip"]')).to_contain_text("nightly-full")
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    _pin_focus_ctx(page, report_dir)
+    expect(page.locator('[data-testid="focus-chip"]')).to_contain_text(FOCUS_CTX)
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
 
 
 def test_focus_changes_directory_page_line_pct_cell(page: Page, report_dir: Path) -> None:
@@ -222,34 +246,34 @@ def test_focus_changes_directory_page_line_pct_cell(page: Page, report_dir: Path
     unfocused_pct = _fmt_pct(MAIN_C_HIT_LINES, MAIN_C_TOTAL_LINES)
     expect(row).to_contain_text(unfocused_pct)  # "77.8%"
 
-    _pin_nightly_full(page, report_dir)
+    _pin_focus_ctx(page, report_dir)
     page.evaluate("location.hash = '#/coverage/product'")
     row = page.locator('[data-testid="tree-row-file:product/main.c"]')
     expect(row).to_be_visible()
-    focused_pct = _fmt_pct(MAIN_C_NIGHTLY_FULL_LINES, MAIN_C_TOTAL_LINES)
+    focused_pct = _fmt_pct(MAIN_C_FOCUS_LINES, MAIN_C_TOTAL_LINES)
     assert focused_pct != unfocused_pct
-    expect(row).to_contain_text(focused_pct)  # "66.7%"
+    expect(row).to_contain_text(focused_pct)  # "27.3%"
     expect(row).not_to_contain_text(unfocused_pct)
 
 
 def test_focus_marks_non_member_line_uncovered_on_file_page(page: Page, report_dir: Path) -> None:
-    """main.c line 7 is hit only by "unit harvest" (run_unit) — under
-    nightly-full's focus (router-a/router-b only), it has no member-run
+    """main.c line 7 is hit only by ci-01/firmware (run_unit) — under
+    router-a/firmware's focus, it has no member-run
     hit, so it renders the uncovered class instead of its unfocused
     ``t-unit`` tier tint."""
     _goto(page, report_dir, "/coverage/product/main.c")
     expect(page.locator('[data-testid="code-row-7"]')).to_have_class(re.compile(r"\bt-unit\b"))
 
-    _pin_nightly_full(page, report_dir)
+    _pin_focus_ctx(page, report_dir)
     page.evaluate("location.hash = '#/coverage/product/main.c'")
     row7 = page.locator('[data-testid="code-row-7"]')
     expect(row7).to_be_visible()
     expect(row7).to_have_class(re.compile(r"\bs-unc\b"))
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
 
 
 def test_focus_reload_persists_then_clear_removes_it(page: Page, report_dir: Path) -> None:
-    _pin_nightly_full(page, report_dir)
+    _pin_focus_ctx(page, report_dir)
     page.evaluate("location.hash = '#/coverage/product/main.c'")
     expect(page.locator('[data-testid="code-row-1"]')).to_be_visible()
     focused_url = page.url
@@ -265,7 +289,7 @@ def test_focus_reload_persists_then_clear_removes_it(page: Page, report_dir: Pat
 
 
 def test_focus_localstorage_key_is_stamp_namespaced(page: Page, report_dir: Path) -> None:
-    _pin_nightly_full(page, report_dir)
+    _pin_focus_ctx(page, report_dir)
     keys = page.evaluate("Object.keys(localStorage)")
     focus_keys = [k for k in keys if re.match(r"^otto-cov:.+:focus$", k)]
     assert len(focus_keys) == 1, keys
@@ -281,7 +305,7 @@ def test_focus_localstorage_key_is_stamp_namespaced(page: Page, report_dir: Path
 
 def test_back_forward_with_focus_pinned_history_not_trapped(page: Page, report_dir: Path) -> None:
     """Entry A: #/runs, unfocused (this initial ``page.goto`` navigation).
-    Entry B: #/runs?ctx=nightly-full (a real click on "Focus this
+    Entry B: #/runs?ctx=router-a%2Ffirmware (a real click on "Focus this
     context" — a user action, must push). Entry C: #/coverage (a real
     click on the breadcrumb's report_title link — genuine in-app
     navigation, must push; focus.tsx's own re-append then corrects it
@@ -293,23 +317,23 @@ def test_back_forward_with_focus_pinned_history_not_trapped(page: Page, report_d
     test are the browser's real ones, not simulated.
     """
     _goto(page, report_dir, "/runs")  # Entry A
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_be_visible()
+    expect(page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')).to_be_visible()
     assert page.locator('[data-testid="focus-chip"]').count() == 0
 
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="focus-context-btn"]').click()  # Entry B (push)
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert page.evaluate("location.hash") == "#/runs?ctx=nightly-full"
+    assert page.evaluate("location.hash") == f"#/runs?ctx={FOCUS_CTX_Q}"
 
     page.locator('[data-testid="breadcrumbs"] a', has_text="otto example product").click()
     expect(page.locator('[data-testid="tree-row-dir:product"]')).to_be_visible()  # Entry C
-    assert page.evaluate("location.hash") == "#/coverage?ctx=nightly-full"
+    assert page.evaluate("location.hash") == f"#/coverage?ctx={FOCUS_CTX_Q}"
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
 
     # Back #1: MOVES to entry B — ctx still in the hash, chip still visible.
     page.go_back()
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_be_visible()
-    assert page.evaluate("location.hash") == "#/runs?ctx=nightly-full"
+    expect(page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')).to_be_visible()
+    assert page.evaluate("location.hash") == f"#/runs?ctx={FOCUS_CTX_Q}"
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
 
     # Back #2: MOVES to entry A — the genuinely pre-focus entry. Must not
@@ -323,7 +347,7 @@ def test_back_forward_with_focus_pinned_history_not_trapped(page: Page, report_d
     # Forward: MOVES back to entry B, re-focusing.
     page.go_forward()
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert page.evaluate("location.hash") == "#/runs?ctx=nightly-full"
+    assert page.evaluate("location.hash") == f"#/runs?ctx={FOCUS_CTX_Q}"
 
 
 def test_back_once_then_forward_click_keeps_focus_pinned(page: Page, report_dir: Path) -> None:
@@ -342,7 +366,7 @@ def test_back_once_then_forward_click_keeps_focus_pinned(page: Page, report_dir:
     push/length heuristic — this pins the exact case that heuristic got
     wrong."""
     _goto(page, report_dir, "/runs")  # Entry A
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="focus-context-btn"]').click()  # Entry B (push)
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
 
@@ -350,18 +374,18 @@ def test_back_once_then_forward_click_keeps_focus_pinned(page: Page, report_dir:
     expect(page.locator('[data-testid="tree-row-dir:product"]')).to_be_visible()  # Entry C
 
     page.go_back()  # -> B (real traversal; C remains a "forward" entry)
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_be_visible()
+    expect(page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')).to_be_visible()
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
 
     # A real link click from B — RunsPage remounted on the Back (a route
-    # change), so nightly-full's detail (and its file link) needs
+    # change), so router-a/firmware's detail (and its file link) needs
     # re-expanding before this mid-stack push.
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="file-link-product/main.c"]').click()  # Entry D (mid-stack push)
     expect(page.locator('[data-testid="code-row-1"]')).to_be_visible()
 
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
 
 
 # ---------------------------------------------------------------------
@@ -505,7 +529,7 @@ def test_tier_chip_text_contrast(page: Page, report_dir: Path, theme: str) -> No
         page.locator('[data-testid="theme-toggle"]').click()
         assert "dark-mode" in page.evaluate("document.documentElement.className")
     page.locator('[data-testid="tier-chip-unit"]').click()
-    chip = page.locator('[data-testid="run-row-unit harvest"] [data-testid="tier-chip"]')
+    chip = page.locator(f'[data-testid="run-row-{CI_FIRMWARE}"] [data-testid="tier-chip"]')
     expect(chip).to_be_visible()
 
     # The chip's own background, then every ancestor's, innermost first; an

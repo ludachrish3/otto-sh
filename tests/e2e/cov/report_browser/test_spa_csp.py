@@ -73,7 +73,7 @@ def test_file_page_lazy_loads_its_chunk_over_http(page: Page, csp_server: CspRep
 
 def test_runs_route_renders_under_csp(page: Page, csp_server: CspReportServer) -> None:
     _goto(page, csp_server, "/runs")
-    expect(page.locator('[data-testid="run-row-nightly-full"]')).to_be_visible()
+    expect(page.locator('[data-testid="run-row-router-a/firmware"]')).to_be_visible()
 
 
 def test_theme_toggle_still_works_under_csp(page: Page, csp_server: CspReportServer) -> None:

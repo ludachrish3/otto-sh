@@ -6,6 +6,7 @@ import pytest
 
 from otto.errors import FieldError, OttoError
 from otto.monitor.errors import (
+    UNMONITORABLE_REASON,
     MonitorInputError,
     MonitorTlsError,
     NoMonitorableHostsError,
@@ -46,10 +47,15 @@ def test_walk_names_hosts_both_routes_and_absolves_the_selection():
     msg = str(exc)
     assert exc.walked == ["alpha", "zeta"]
     assert msg.startswith("2 host(s) selected, but none of them can be monitored: alpha, zeta.")
-    assert "over a shell (Unix hosts)" in msg
-    assert "over SNMP" in msg
+    assert UNMONITORABLE_REASON in msg
     assert "The selection is not the problem" in msg
     assert "--" not in msg  # no CLI flag spelling in a library message
+
+
+def test_the_reason_reads_inside_one_pair_of_parentheses():
+    """``name_by_reason`` wraps a reason in parentheses, so the reason itself holds none."""
+    assert "(" not in UNMONITORABLE_REASON
+    assert ")" not in UNMONITORABLE_REASON
 
 
 def test_more_than_five_hosts_are_summarized():

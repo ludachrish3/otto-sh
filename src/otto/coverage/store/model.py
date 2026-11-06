@@ -17,8 +17,9 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
+from ...layout import product_label
 from ..formats import STORE_READ_VERSIONS, STORE_WRITE_VERSIONS, found_version_label
 
 TIER_SYSTEM = "system"
@@ -60,12 +61,46 @@ the denominator. Version 7 also carries an additive, optional ``files[].function
 list (2026-09); absent keys load as no functions, so no bump.
 Version 8 adds a per-run ``product`` (the ``<product>`` segment of
 ``cov/<host>/<product>/``; ``""`` for a synthetic run (a ``--tier`` tracefile)).
+Version 9 makes the run ``label`` one product's identity, built by
+:func:`run_label` and never passed in: ``<host_id>/<product>`` for a run on a
+host, ``<tier>/<product>`` for a unit view, the tier alone for a tracefile.
+The host's display name no longer reaches the store. It adds a per-run
+``source`` (``run``, ``manual``, ``unit`` or ``tracefile``: which input the
+run was folded from) and ``run_dir`` (the run directory an e2e capture came
+from; ``""`` for every other source). ``load`` rebuilds each row's label and
+refuses a row whose stored label differs, naming the run id.
 The version ``save`` writes: the one entry of ``STORE_WRITE_VERSIONS``
 (``otto.coverage.formats``), unpacked so that a second write version fails at
 import until a writer chooses it. There is no migration shim: ``load``
 accepts only ``STORE_READ_VERSIONS`` and fails loud on anything else, telling
 the caller to regenerate rather than mis-reading renamed or reshaped keys.
 """
+
+RunSource = Literal["run", "manual", "unit", "tracefile"]
+"""Which report input a run was folded from (store v9).
+
+``run``: an e2e ``capture.json`` from a run directory's ``cov/``; ``manual``: a
+committed manual capture; ``unit``: a unit view; ``tracefile``: a ``--tier``
+tracefile.
+"""
+
+_RUN_SOURCES: list[str] = list(get_args(RunSource))
+
+
+def run_label(tier: str, host: str, product: str) -> str:
+    """Return the label a run carries: one product's identity (store v9).
+
+    ``<host>/<product>`` for a run on a host (the id ``otto monitor`` and
+    ``otto test`` print), ``<tier>/<product>`` for a product with no host (a
+    unit view), and *tier* alone for a run with neither (a ``--tier``
+    tracefile). Both joins are :func:`otto.layout.product_label`.
+    """
+    if host:
+        return product_label(host, product)
+    if product:
+        return product_label(tier, product)
+    return tier
+
 
 STAT_TYPES: tuple[str, ...] = ("line", "branch", "decision")
 """The type-extensible stats vocabulary (design §6), emitted into
@@ -229,22 +264,27 @@ class RunRecord:
 
     The run table (``CoverageStore.runs``) is derived fresh at report
     time from the capture inputs; ``id`` is the record's index into that
-    list.  ``label`` is what the drilldown chip shows: the host display
-    name when the capture carries one, else the board (host id), else the
-    tier name (synthetic runs pass neither). ``host`` is the explicit
-    host identity (v4); label derivation is unchanged.  ``product`` is
-    the product the run's counters came from (v8).
+    list.  ``label`` is what the drilldown chip shows and what the report
+    groups a context by: :func:`run_label` of the run's tier, host and
+    product (v9), which :meth:`CoverageStore.add_run` builds and
+    :meth:`CoverageStore.load` checks. ``host`` is the explicit host identity
+    (v4).  ``product`` is the product the run's counters came from (v8).
+    ``source`` is the input it was folded from, and ``run_dir`` the run
+    directory of an e2e (``source="run"``) capture (v9).
     """
 
     id: int
     tier: str
     label: str
+    source: RunSource
     board: str = ""
     # Host id (the capture's board dir name == host.id); "" = no host attribution.
     host: str = ""
     # The <product> segment of cov/<host>/<product>/; "" = a synthetic run
     # (a --tier tracefile), which names no product.
     product: str = ""
+    # The run directory an e2e capture came from; "" for every other source.
+    run_dir: str = ""
     labs: list[str] = field(default_factory=list)
     captured_at: str = ""
     tester: dict[str, str] | None = None
@@ -260,9 +300,11 @@ class RunRecord:
             "id": self.id,
             "tier": self.tier,
             "label": self.label,
+            "source": self.source,
             "board": self.board,
             "host": self.host,
             "product": self.product,
+            "run_dir": self.run_dir,
             "labs": list(self.labs),
             "captured_at": self.captured_at,
             "tester": self.tester,
@@ -272,6 +314,43 @@ class RunRecord:
             "dirty_remap": self.dirty_remap,
             "aging": self.aging,
         }
+
+
+@dataclass(frozen=True)
+class TierSources:
+    """What one tier's runs were folded from: :meth:`CoverageStore.source_counts`'s row.
+
+    ``runs`` counts the distinct run directories its e2e captures came from;
+    ``captures``, ``manual``, ``unit`` and ``tracefiles`` count its run records
+    by :data:`RunSource` (``run``, ``manual``, ``unit``, ``tracefile``).
+    """
+
+    tier: str
+    runs: int
+    captures: int
+    manual: int
+    unit: int
+    tracefiles: int
+
+    def describe(self) -> str:
+        """Return the nonzero counts in source order, e.g. ``3 capture(s) from 2 run dir(s)``.
+
+        The e2e captures are named with the run directories they came from
+        (``runs``), so the two read as one count, never as a sum.
+        """
+        parts: list[str] = []
+        if self.captures:
+            parts.append(f"{self.captures} capture(s) from {self.runs} run dir(s)")
+        parts.extend(
+            f"{n} {noun}"
+            for n, noun in [
+                (self.manual, "manual capture(s)"),
+                (self.unit, "product view(s)"),
+                (self.tracefiles, "tracefile(s)"),
+            ]
+            if n
+        )
+        return ", ".join(parts)
 
 
 @dataclass
@@ -532,6 +611,48 @@ class FileRecord:
         }
 
 
+def _load_run(rd: dict[str, Any]) -> RunRecord:
+    """Rebuild one run row of a v9 store, refusing a row it would misread.
+
+    Raises:
+        ValueError: The row's ``source`` is not a :data:`RunSource`, or its
+            ``label`` is not the :func:`run_label` of its tier, host and
+            product.
+    """
+    run_id, tier = rd["id"], rd["tier"]
+    host, product = rd.get("host", ""), rd.get("product", "")
+    source = rd.get("source")
+    if source not in _RUN_SOURCES:
+        raise ValueError(
+            f"coverage store run {run_id} source {source!r} is not one of "
+            f"{', '.join(_RUN_SOURCES)} — regenerate with otto cov get/report"
+        )
+    expected = run_label(tier, host, product)
+    if rd["label"] != expected:
+        raise ValueError(
+            f"coverage store run {run_id} label {rd['label']!r} is not its identity; "
+            f"expected {expected!r} — regenerate with otto cov get/report"
+        )
+    return RunRecord(
+        id=run_id,
+        tier=tier,
+        label=expected,
+        source=source,
+        board=rd.get("board", ""),
+        host=host,
+        product=product,
+        run_dir=rd.get("run_dir", ""),
+        labs=list(rd.get("labs") or []),
+        captured_at=rd.get("captured_at", ""),
+        tester=rd.get("tester"),
+        ticket=rd.get("ticket"),
+        note=rd.get("note"),
+        base_commit=rd.get("base_commit", ""),
+        dirty_remap=rd.get("dirty_remap", False),
+        aging=rd.get("aging", False),
+    )
+
+
 class CoverageStore:
     """Central store for all coverage data across all files, hosts, and tiers.
 
@@ -577,10 +698,11 @@ class CoverageStore:
         self,
         *,
         tier: str,
-        label: str | None = None,
+        source: RunSource,
         board: str = "",
         host: str = "",
         product: str = "",
+        run_dir: str = "",
         labs: list[str] | None = None,
         captured_at: str = "",
         tester: dict[str, str] | None = None,
@@ -591,9 +713,9 @@ class CoverageStore:
     ) -> int:
         """Register one run and return its run id (index into ``runs``).
 
-        ``label`` falls back to ``board``, then to ``tier`` — the synthetic
-        per-tier runs pass neither.  Also registers *tier* so the run
-        table can never reference an unknown tier.
+        The label is :func:`run_label` of *tier*, *host* and *product*; no
+        caller passes its own.  Also registers *tier* so the run table can
+        never reference an unknown tier.
         """
         self.register_tier(tier)
         run_id = len(self.runs)
@@ -601,10 +723,12 @@ class CoverageStore:
             RunRecord(
                 id=run_id,
                 tier=tier,
-                label=label or board or tier,
+                label=run_label(tier, host, product),
+                source=source,
                 board=board,
                 host=host,
                 product=product,
+                run_dir=run_dir,
                 labs=list(labs or []),
                 captured_at=captured_at,
                 tester=tester,
@@ -615,6 +739,31 @@ class CoverageStore:
             )
         )
         return run_id
+
+    def source_counts(self) -> list[TierSources]:
+        """Count each tier's runs by the input they were folded from, in ``tier_order``.
+
+        Reads the finished run table, so it counts what the report used: a
+        superseded or deduped capture and a missing tracefile registered no run
+        and are absent. A tier with no run is omitted.
+        """
+        counts: list[TierSources] = []
+        for tier in self.tier_order:
+            runs = [r for r in self.runs if r.tier == tier]
+            if not runs:
+                continue
+            by_source = {s: sum(r.source == s for r in runs) for s in _RUN_SOURCES}
+            counts.append(
+                TierSources(
+                    tier=tier,
+                    runs=len({r.run_dir for r in runs if r.source == "run"}),
+                    captures=by_source["run"],
+                    manual=by_source["manual"],
+                    unit=by_source["unit"],
+                    tracefiles=by_source["tracefile"],
+                )
+            )
+        return counts
 
     def get_or_create_file(self, path: Path) -> FileRecord:
         """Return the :class:`FileRecord` for *path*, creating it if absent.
@@ -698,7 +847,9 @@ class CoverageStore:
         Raises:
             ValueError: The file's ``"format"`` key is not one of
                 ``STORE_READ_VERSIONS`` (including files with no
-                ``"format"`` key at all).
+                ``"format"`` key at all), a run row names an unknown
+                ``source``, or a run row's ``label`` is not the
+                :func:`run_label` of its tier, host and product.
         """
         data = json.loads(path.read_text())
         found_format = data.get("format") if isinstance(data, dict) else None
@@ -743,24 +894,7 @@ class CoverageStore:
         # feature entirely (never carried a nonempty `overrides` list either).
         store.overrides_file_active = bool(data.get("overrides_file_active", False))
         for rd in runs_data:
-            store.runs.append(
-                RunRecord(
-                    id=rd["id"],
-                    tier=rd["tier"],
-                    label=rd["label"],
-                    board=rd.get("board", ""),
-                    host=rd.get("host", ""),
-                    product=rd.get("product", ""),
-                    labs=list(rd.get("labs") or []),
-                    captured_at=rd.get("captured_at", ""),
-                    tester=rd.get("tester"),
-                    ticket=rd.get("ticket"),
-                    note=rd.get("note"),
-                    base_commit=rd.get("base_commit", ""),
-                    dirty_remap=rd.get("dirty_remap", False),
-                    aging=rd.get("aging", False),
-                )
-            )
+            store.runs.append(_load_run(rd))
         for fd in files_data:
             record = FileRecord(path=Path(fd["path"]))
             record.excluded_lines = set(fd.get("excluded_lines") or [])

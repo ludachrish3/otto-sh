@@ -5,7 +5,13 @@ from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.monitor.factory import build_monitor_collector, is_monitorable, monitorable
+from otto.monitor.errors import UNMONITORABLE_REASON
+from otto.monitor.factory import (
+    MonitorSelection,
+    build_monitor_collector,
+    is_monitorable,
+    partition_monitorable,
+)
 from otto.monitor.parsers import LoadParser
 
 
@@ -163,9 +169,11 @@ class TestMonitorable:
     def test_host_offering_neither_is_not(self):
         assert not is_monitorable(_embedded("z2", snmp=False))
 
-    def test_monitorable_filters_and_keeps_order(self):
+    def test_partition_keeps_order_and_names_the_dropped(self):
         a, b, c = _unix("a"), _embedded("b", snmp=False), _embedded("c", snmp=True)
-        assert monitorable([a, b, c]) == [a, c]
+        assert partition_monitorable([a, b, c]) == MonitorSelection(
+            [a, c], {"b": UNMONITORABLE_REASON}
+        )
 
 
 def test_building_a_collector_leaves_the_hosts_log_mode_alone():

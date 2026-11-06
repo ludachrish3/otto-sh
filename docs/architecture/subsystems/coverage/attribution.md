@@ -237,7 +237,7 @@ the attributed answer is correct.
 ## The `tickets.json` export
 
 `tickets.json` is otto's first public export, versioned apart from the
-internal store ({doc}`types`); the guide's {ref}`coverage-tickets-json` is
+internal store ({ref}`coverage-store-json`); the guide's {ref}`coverage-tickets-json` is
 its contract.
 
 Its `format` bumped 1 → 2 for the manual-overrides feature, and v2 changed

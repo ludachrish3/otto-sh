@@ -593,3 +593,262 @@ def test_declared_products_keep_each_hosts_own_definition(monkeypatch):
 
     keys = [ProductKey("h1", "app"), ProductKey("h2", "app"), ProductKey("gone", "app")]
     assert _declared_products(keys) == {keys[0]: on_h1, keys[1]: on_h2}
+
+
+def _sources_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return every ``Sources:`` INFO message the reporter logged."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "otto.coverage.reporter"
+        and r.levelno == logging.INFO
+        and r.getMessage().startswith("Sources:")
+    ]
+
+
+def _run_cov(tmp_path: Path, project: Path, run: str, head: str) -> Path:
+    """Return the ``cov/`` of a run dir named *run*, its metadata at *head*."""
+    cov = layout.cov_dir(tmp_path / run)
+    cov.mkdir(parents=True)
+    meta = {
+        "project_name": "fw",
+        "project_root": str(project),
+        "toolchains": {},
+        "source_roots": {},
+        "tier": "system",
+        "base_commit": head,
+    }
+    (cov / ".otto_cov_meta.json").write_text(json.dumps(meta))
+    return cov
+
+
+def _capture(
+    head: str, *, host: str = "h", product: str = "app", tier: str = "system", at: str = ""
+) -> Capture:
+    return Capture(
+        tier=tier,
+        product=product,
+        board=host,
+        base_commit=head,
+        captured_at=at,
+        files={"f.c": CaptureFileCov(lines={2: 7})},
+    )
+
+
+class TestSourcesLine:
+    """``run_coverage_report`` logs one ``Sources:`` line from the finished store.
+
+    Each test drives the real reporter; the line counts what the report folded
+    (after supersede, the cross-source dedupe and a missing tracefile's skip),
+    never what it was offered.
+    """
+
+    @pytest.mark.asyncio
+    async def test_several_run_dirs_and_their_captures(self, tmp_path, caplog):
+        project = _git_repo(tmp_path)
+        head = head_commit(project)
+        first = _run_cov(tmp_path, project, "run1", head)
+        second = _run_cov(tmp_path, project, "run2", head)
+        # Distinct capture times: two identical captures are one run (the seen_runs dedupe).
+        _capture(head, host="h1", at="2026-01-01T00:00:00Z").save(
+            first / "h1" / "app" / "capture.json"
+        )
+        for host in ("h1", "h2"):
+            _capture(head, host=host, at="2026-02-01T00:00:00Z").save(
+                second / host / "app" / "capture.json"
+            )
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report(
+                [first, second], tmp_path / "report", _inputs(project)
+            )
+
+        assert _sources_lines(caplog) == ["Sources: system — 3 capture(s) from 2 run dir(s)"]
+        # Each record names the run dir its cov dir came from, not one rebuilt from its path.
+        assert sorted((r.source, r.run_dir, r.host) for r in store.runs) == [
+            ("run", str(tmp_path / "run1"), "h1"),
+            ("run", str(tmp_path / "run2"), "h1"),
+            ("run", str(tmp_path / "run2"), "h2"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_superseded_manual_counts_once(self, tmp_path, caplog):
+        from otto.coverage.capture.store_dir import write_manual_capture
+
+        project = _git_repo(tmp_path)
+        head = head_commit(project)
+        write_manual_capture(_capture(head, at="2026-01-01T00:00:00Z"), project)
+        write_manual_capture(_capture(head, at="2026-02-01T00:00:00Z"), project)
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report([], tmp_path / "report", _inputs(project))
+
+        assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
+        assert [(r.source, r.run_dir, r.captured_at) for r in store.runs] == [
+            ("manual", "", "2026-02-01T00:00:00Z")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_cov_dir_copy_of_a_manual_capture_counts_as_manual_only(self, tmp_path, caplog):
+        from otto.coverage.capture.store_dir import write_manual_capture
+
+        project = _git_repo(tmp_path)
+        head = head_commit(project)
+        cov = _cov_dir(tmp_path, project, base_commit=head)
+        capture = _capture(head)
+        capture.save(cov / "h" / "app" / "capture.json")
+        write_manual_capture(capture, project)
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+
+        assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
+        assert [r.source for r in store.runs] == ["manual"]
+
+    @pytest.mark.asyncio
+    async def test_unit_views_count_one_each(self, tmp_path, monkeypatch, caplog):
+        from tests.unit.cov._unit_lab import (
+            FakeHost,
+            install_capture,
+            install_lab,
+            product_build,
+            stub_unit_tools,
+            unit_build,
+        )
+
+        stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
+        project = tmp_path / "proj"
+        project.mkdir()
+        core = product_build(project, "core", ["f.c"])
+        lib = product_build(project, "lib", ["g.c"])
+        install_lab(monkeypatch, [FakeHost("h1", [core, lib])])
+        core_dir, lib_dir = tmp_path / "unit_core", tmp_path / "unit_lib"
+        unit_build(core_dir, project, ["f.c"])
+        unit_build(lib_dir, project, ["g.c"])
+        install_capture(monkeypatch)
+        products = {"core": [str(core_dir)], "lib": [str(lib_dir)]}
+        cov_config = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "products": products}}}
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report(
+                [],
+                tmp_path / "report",
+                ReportInputs(
+                    project_root=project,
+                    project_name="proj",
+                    tier_configs=load_tiers(cov_config, root=project),
+                ),
+            )
+
+        assert _sources_lines(caplog) == ["Sources: unit — 2 product view(s)"]
+        assert sorted((r.source, r.product, r.run_dir) for r in store.runs) == [
+            ("unit", "core", ""),
+            ("unit", "lib", ""),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_existing_tracefile_counts_once(self, tmp_path, caplog):
+        src = tmp_path / "f.c"
+        src.write_text("int a;\n")
+        info = tmp_path / "lab.info"
+        info.write_text(f"TN:\nSF:{src}\nDA:1,4\nend_of_record\n")
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            await run_coverage_report(
+                [], tmp_path / "report", ReportInputs(), tier_specs=[("lab", info)]
+            )
+
+        assert _sources_lines(caplog) == ["Sources: lab — 1 tracefile(s)"]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_tracefile_is_not_counted(self, tmp_path, caplog):
+        from otto.coverage.capture.store_dir import write_manual_capture
+
+        project = _git_repo(tmp_path)
+        write_manual_capture(_capture(head_commit(project)), project)
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            await run_coverage_report(
+                [],
+                tmp_path / "report",
+                _inputs(project),
+                tier_specs=[("lab", tmp_path / "missing.info")],
+            )
+
+        assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
+
+    @pytest.mark.asyncio
+    async def test_one_host_product_in_two_tiers_counts_in_both(self, tmp_path, caplog):
+        """Supersede is per tier: one host/product in two tiers is two contexts."""
+        from otto.coverage.capture.store_dir import write_manual_capture
+
+        project = _git_repo(tmp_path)
+        head = head_commit(project)
+        write_manual_capture(_capture(head, tier="manual", at="2026-01-01T00:00:00Z"), project)
+        write_manual_capture(_capture(head, tier="bench", at="2026-02-01T00:00:00Z"), project)
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            await run_coverage_report([], tmp_path / "report", _inputs(project))
+
+        assert _sources_lines(caplog) == [
+            "Sources: manual — 1 manual capture(s); bench — 1 manual capture(s)"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_nothing_folded_logs_none(self, tmp_path, caplog):
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            await run_coverage_report(
+                [], tmp_path / "report", ReportInputs(), tier_specs=[("lab", tmp_path / "x.info")]
+            )
+
+        assert _sources_lines(caplog) == ["Sources: none"]
+
+    @pytest.mark.asyncio
+    async def test_one_capture_in_two_run_dirs_counts_once(self, tmp_path, caplog):
+        """The e2e-to-e2e leg of the run dedupe: an identical capture.json in two
+        run dirs folds once, from the first run dir."""
+        project = _git_repo(tmp_path)
+        head = head_commit(project)
+        first = _run_cov(tmp_path, project, "run1", head)
+        second = _run_cov(tmp_path, project, "run2", head)
+        for cov in (first, second):
+            _capture(head, at="2026-01-01T00:00:00Z").save(cov / "h" / "app" / "capture.json")
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report(
+                [first, second], tmp_path / "report", _inputs(project)
+            )
+
+        assert _sources_lines(caplog) == ["Sources: system — 1 capture(s) from 1 run dir(s)"]
+        assert [r.run_dir for r in store.runs] == [str(tmp_path / "run1")]
+
+    @pytest.mark.asyncio
+    async def test_two_identical_manual_captures_fold_once(self, tmp_path, caplog):
+        """Supersede alone keeps one of two identical committed captures: one
+        context, one winner, so the manual fold needs no dedupe of its own."""
+        from otto.coverage.capture.store_dir import manual_store_dir, write_manual_capture
+
+        project = _git_repo(tmp_path)
+        capture = _capture(head_commit(project), at="2026-01-01T00:00:00Z")
+        write_manual_capture(capture, project)
+        capture.save(manual_store_dir(project) / "zz-copy.json")
+
+        with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
+            store = await run_coverage_report([], tmp_path / "report", _inputs(project))
+
+        assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
+        assert [r.source for r in store.runs] == ["manual"]
+
+
+def test_the_run_key_extends_the_supersede_key():
+    """One projection of a capture's context: the run dedupe key carries the
+    supersede key, so the two cannot read host or product differently."""
+    from otto.coverage.capture.supersede import supersede_key
+    from otto.coverage.reporter import _capture_run_key
+
+    capture = _capture(_COMMIT, host="h1", product="app", tier="bench", at="t")
+
+    key = _capture_run_key(capture)
+
+    assert key.context == supersede_key(capture)
+    assert (key.base_commit, key.captured_at) == (_COMMIT, "t")

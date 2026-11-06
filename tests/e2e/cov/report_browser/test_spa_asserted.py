@@ -21,6 +21,7 @@ named after that fixture rather than hand-typed.
 """
 
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -29,6 +30,12 @@ pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
+
+# The context pinned below: the fixture's router-a firmware run, labelled
+# ``<host>/<product>`` (tests/_fixtures/_report_fixture.py), and its spelling
+# in the hash (URLSearchParams writes "/" as "%2F").
+FOCUS_CTX = "router-a/firmware"
+FOCUS_CTX_Q = quote(FOCUS_CTX, safe="")
 
 OVERRIDE_KEY = "ticket:PROJ-204"
 OVERRIDE_REASON = "legacy bench regression pass"
@@ -111,15 +118,15 @@ def test_hide_asserted_recomputes_and_announces(page: Page, report_dir: Path) ->
 
 def test_hide_asserted_composes_with_run_focus(page: Page, report_dir: Path) -> None:
     _goto(page, report_dir, "/runs")
-    page.locator('[data-testid="run-row-nightly-full"]').click()
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
     page.locator('[data-testid="focus-context-btn"]').click()
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
 
     _toggle_hide_asserted(page)
 
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
     assert "asserted=1" in page.evaluate("location.hash")
 
     # Navigate to the file page with both still pinned — real render, no
@@ -127,5 +134,5 @@ def test_hide_asserted_composes_with_run_focus(page: Page, report_dir: Path) -> 
     page.evaluate("location.hash = '#/coverage/product/main.c'")
     expect(page.locator('[data-testid="code-row-1"]')).to_be_visible()
     expect(page.locator('[data-testid="focus-chip"]')).to_be_visible()
-    assert "ctx=nightly-full" in page.evaluate("location.hash")
+    assert f"ctx={FOCUS_CTX_Q}" in page.evaluate("location.hash")
     assert "asserted=1" in page.evaluate("location.hash")

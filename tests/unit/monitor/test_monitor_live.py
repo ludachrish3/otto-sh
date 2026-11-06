@@ -1,6 +1,7 @@
 """The lab-aware monitor layer: selection and the live run."""
 
 import asyncio
+import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,8 +16,14 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
-from otto.monitor.errors import MonitorInputError, MonitorTlsError, NoMonitorableHostsError
+from otto.monitor.errors import (
+    UNMONITORABLE_REASON,
+    MonitorInputError,
+    MonitorTlsError,
+    NoMonitorableHostsError,
+)
 from otto.monitor.export import build_db_export
+from otto.monitor.factory import unmonitorable_reason
 from otto.monitor.live import LiveReport, run_live, select_monitor_hosts
 from tests._fixtures.bootstrap_seam import (
     fake_bootstrap_result,
@@ -99,6 +106,23 @@ class TestSelect:
         with pytest.raises(NoMonitorableHostsError) as e:
             select_monitor_hosts("z.*")
         assert e.value.walked == ["z1"]
+
+    def test_a_dropped_host_is_named_with_its_reason_once(self, lab, caplog):
+        with caplog.at_level(logging.INFO, logger="otto.monitor.live"):
+            assert [h.id for h in select_monitor_hosts(None)] == ["web1", "s1"]
+        lines = [r.getMessage() for r in caplog.records if "not monitoring" in r.getMessage()]
+        assert lines == [f"not monitoring 1 of 3 selected host(s): z1 ({UNMONITORABLE_REASON})"]
+
+    def test_nothing_dropped_logs_nothing(self, lab, caplog):
+        with caplog.at_level(logging.INFO, logger="otto.monitor.live"):
+            select_monitor_hosts("web1")
+        assert not [r for r in caplog.records if "not monitoring" in r.getMessage()]
+
+    def test_the_reason_is_the_predicate(self):
+        assert unmonitorable_reason(_console("z1")) == UNMONITORABLE_REASON
+        assert unmonitorable_reason(_console("s1", snmp=True)) is None
+        assert unmonitorable_reason(_unix("web1")) is None
+        assert unmonitorable_reason(_console("z1"), has_snmp=True) is None
 
 
 class TestRunLiveRefusesBeforeAnyFile:

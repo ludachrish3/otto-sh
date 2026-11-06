@@ -327,7 +327,8 @@ Hosts are sampled over a shell (Unix hosts) or over SNMP (a host that declares
 an `snmp` block). A selection with nothing sampleable in it, or a lab with no
 hosts at all, also stops the run before any test executes, with the
 same exit 4 and a message beginning `--monitor:`. When only some of the selected
-hosts can be sampled, the run samples those.
+hosts can be sampled, the run samples those and names the rest once, at start
+(see {ref}`the line live mode prints <monitor-not-monitoring>`).
 
 A single test can also start and stop a monitor of its own through the
 `monitor` fixture (collection only, no dashboard); see

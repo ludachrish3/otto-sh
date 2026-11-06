@@ -596,6 +596,7 @@ def _refuse_foreign_pending(cov_dir: Path, *, tier: str, base_commit: str) -> No
     """
     import json
 
+    from ..layout import run_dir_of_cov
     from .errors import CoverageInputError
 
     pending = _pending_products(cov_dir)
@@ -613,7 +614,7 @@ def _refuse_foreign_pending(cov_dir: Path, *, tier: str, base_commit: str) -> No
     if isinstance(recorded_tier, str) and isinstance(recorded_commit, str):
         was = f"collected under tier {recorded_tier!r} at commit {recorded_commit[:12]}"
         remedy = (
-            f"report that directory first ('otto cov report {cov_dir.parent}' at commit "
+            f"report that directory first ('otto cov report {run_dir_of_cov(cov_dir)}' at commit "
             f"{recorded_commit[:12]}), or collect into a fresh output directory"
         )
     else:

@@ -780,18 +780,73 @@ def test_an_unavailable_bootstrap_refuses_instead_of_walking_the_whole_lab(monke
 # ── observability ─────────────────────────────────────────────────────────────
 
 
-def test_declaring_run_logs_the_fleet_of_interest_once(tmp_path, scoped_context, caplog):
-    """One line, at resolution, naming the narrowing (§6)."""
+def _fleet_lines(caplog) -> "list[str]":
+    return [r.message for r in caplog.records if "fleet of interest" in r.message]
+
+
+def test_declaring_run_logs_the_fleet_of_interest_once_and_unchanged_when_nothing_is_left_out(
+    tmp_path, scoped_context, caplog
+):
+    """One line, at resolution; with no host left out it is byte-identical to before #790."""
     lab = _lab(("h1", "a"), ("h2", "a"), ("h3", "b"))
-    project = _project(tmp_path, "r1", labs=["a"], hosts=["h1"])
+    project = _project(tmp_path, "r1", labs=["a", "b"], hosts=["h1", "h2", "h3"])
     ctx = scoped_context(lab, [project])
 
     with caplog.at_level(logging.INFO, logger="otto.context"):
         first = scopes_of(ctx)
         second = scopes_of(ctx)
     assert first is second  # resolution is cached, so the line cannot repeat
-    lines = [r.message for r in caplog.records if "fleet of interest" in r.message]
-    assert lines == ["fleet of interest: 1 of 3 lab hosts (1 project(s), 0 excluded)"]
+    assert _fleet_lines(caplog) == [
+        "fleet of interest: 3 of 3 lab hosts (1 project(s), 0 excluded)"
+    ]
+
+
+def test_declaring_run_names_the_hosts_no_project_targets(tmp_path, scoped_context, caplog):
+    """A host in no declared universe is named, with why, after the unchanged counts."""
+    lab = _lab(("h1", "a"), ("h2", "a"), ("h3", "b"))
+    project = _project(tmp_path, "r1", labs=["a"], hosts=["h1"])
+    ctx = scoped_context(lab, [project])
+
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        scopes_of(ctx)
+    (line,) = _fleet_lines(caplog)
+    assert line == (
+        "fleet of interest: 1 of 3 lab hosts (1 project(s), 0 excluded); "
+        "outside it: h2, h3 (no declared project targets it)"
+    )
+
+
+def test_hosts_left_out_are_named_with_their_reason(tmp_path, scoped_context, caplog):
+    """A switched-off project's host and an untargeted host each get their own reason."""
+    lab = _lab(("h1", "a"), ("h2", "a"), ("h3", "b"))
+    projects = [
+        _project(tmp_path, "r1", labs=["a"], hosts=["h1"]),
+        _project(tmp_path, "r2", labs=["a"], hosts=["h2"]),
+    ]
+    ctx = scoped_context(lab, projects, exclude_projects=("r2",))
+
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        scopes_of(ctx)
+    (line,) = _fleet_lines(caplog)
+    assert line == (
+        "fleet of interest: 1 of 3 lab hosts (2 project(s), 0 excluded); "
+        "outside it: h2 (only switched-off projects target it); "
+        "h3 (no declared project targets it)"
+    )
+
+
+def test_local_is_never_named(tmp_path, scoped_context, caplog):
+    """``local`` is the runner and in no universe by construction, so it is never 'outside'."""
+    from otto.host.builtin_hosts import make_builtin_local_host
+
+    lab = _lab(("h1", "a"))
+    lab.add_host(make_builtin_local_host())
+    ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
+
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        scopes_of(ctx)
+    (line,) = _fleet_lines(caplog)
+    assert line == "fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)"
 
 
 def test_undeclared_run_says_nothing(tmp_path, scoped_context, caplog):

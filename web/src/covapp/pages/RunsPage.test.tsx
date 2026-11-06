@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { makeIndex, makeRun, Providers } from "../testUtils";
+import { ctxTree, makeIndex, makeRun, Providers } from "../testUtils";
 import type { IndexPayload, RunJson } from "../types";
 import { RunsPage } from "./RunsPage";
 
@@ -96,6 +96,20 @@ const CONTRIB: IndexPayload["run_contrib"] = {
   "5": { lines: 0, revoked: 118, files: [] },
 };
 
+// The per-context line counts the page shows: each label's DISTINCT hit lines
+// per file (`Stats.ctx_lines`), as spa_data.py rolls them. `run_contrib`
+// above stays per capture (the per-host rows); the context total is never
+// its sum.
+const TREE = ctxTree(
+  {
+    "src/net/tcp.c": { "nightly-full": 450, "field bring-up": 44 },
+    "src/core/sched.c": { "nightly-full": 171 },
+    "src/main.c": { "nightly-full": 80 },
+    "lib/parse.c": { "unit harvest": 176 },
+  },
+  1836,
+);
+
 function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return makeIndex({
     report_title: "acme-fw",
@@ -107,6 +121,7 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     generated_at: "2026-07-23 14:02 UTC",
     runs: RUNS,
     run_contrib: CONTRIB,
+    tree: TREE,
     ...overrides,
   });
 }
@@ -204,8 +219,9 @@ describe("RunsPage", () => {
     const row = screen.getByTestId("run-row-nightly-full");
     expect(row.textContent).toContain("router-a");
     expect(row.textContent).toContain("router-b");
-    // lines contributed = 875 + 799 = 1674
-    expect(row.textContent).toContain("1674 / 1836");
+    // lines contributed = the label's distinct lines (450 + 171 + 80), not
+    // the per-host 875 + 799
+    expect(row.textContent).toContain("701 / 1836");
   });
 
   it("renders 0 contexts, no rows, without crashing when payload.runs is empty", () => {
@@ -328,12 +344,97 @@ describe("RunsPage", () => {
     const index = buildIndex({
       runs: [makeRun({ id: 9, label: "weird-path", tier: "system" })],
       run_contrib: { "9": { lines: 5, revoked: 0, files: [["src/100%.c", 5]] } },
+      tree: ctxTree({ "src/100%.c": { "weird-path": 5 } }, 1836),
     });
     renderPage(index);
     fireEvent.click(screen.getByTestId("run-row-weird-path"));
     const detail = screen.getByTestId("run-detail-weird-path");
     const link = within(detail).getByText("src/100%.c") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("#/coverage/src/100%25.c");
+  });
+
+  describe("one product captured in two tiers (store v9 `<host>/<product>` labels)", () => {
+    // h1/app captured once in `manual`, once in `bench`: one label, one row.
+    const crossTier = () =>
+      makeIndex({
+        tier_order: ["system", "bench", "manual"],
+        tier_labels: { system: "System", bench: "Bench", manual: "Manual" },
+        tier_colors: { system: "green", bench: "purple", manual: "orange" },
+        total_lines: 1,
+        runs: [
+          makeRun({
+            id: 1,
+            label: "h1/app",
+            tier: "manual",
+            host: "h1",
+            product: "app",
+            source: "manual",
+            captured_at: "2026-11-01",
+            ticket: "FW-1",
+            note: "manual sweep",
+          }),
+          makeRun({
+            id: 2,
+            label: "h1/app",
+            tier: "bench",
+            host: "h1",
+            product: "app",
+            captured_at: "2026-11-02",
+            ticket: "FW-2",
+            note: "bench sweep",
+          }),
+        ],
+        run_contrib: {
+          "1": { lines: 1, revoked: 0, files: [["src/a.c", 1]] },
+          "2": { lines: 1, revoked: 0, files: [["src/a.c", 1]] },
+        },
+        tree: ctxTree({ "src/a.c": { "h1/app": 1 } }, 1),
+      });
+
+    it("the row carries a tier chip per tier it has captures in", () => {
+      renderPage(crossTier());
+      const chips = within(screen.getByTestId("run-row-h1/app")).getAllByTestId("tier-chip");
+      expect(chips.map((c) => c.textContent)).toEqual(["Bench", "Manual"]);
+    });
+
+    it.each(["bench", "manual"])("filtering by %s keeps the context", (tier) => {
+      renderPage(crossTier());
+      fireEvent.click(screen.getByTestId(`tier-chip-${tier}`));
+      expect(screen.getByTestId("run-row-h1/app")).toBeTruthy();
+    });
+
+    it("filtering by a tier it has no capture in hides it", () => {
+      renderPage(crossTier());
+      fireEvent.click(screen.getByTestId("tier-chip-system"));
+      expect(screen.queryByTestId("run-row-h1/app")).toBeNull();
+    });
+
+    it("the detail lists every capture's own metadata", () => {
+      renderPage(crossTier());
+      fireEvent.click(screen.getByTestId("run-row-h1/app"));
+      const detail = screen.getByTestId("run-detail-h1/app");
+      const manual = within(detail).getByTestId("capture-meta-1");
+      const bench = within(detail).getByTestId("capture-meta-2");
+      expect(manual.textContent).toContain("Manual");
+      expect(manual.textContent).toContain("2026-11-01");
+      expect(manual.textContent).toContain("FW-1");
+      expect(manual.textContent).toContain("manual sweep");
+      expect(bench.textContent).toContain("Bench");
+      expect(bench.textContent).toContain("2026-11-02");
+      expect(bench.textContent).toContain("FW-2");
+      expect(bench.textContent).toContain("bench sweep");
+    });
+
+    it("one line both captures hit reads 1 of 1 (100%), the directory view's number, not 200%", () => {
+      renderPage(crossTier());
+      const row = screen.getByTestId("run-row-h1/app");
+      expect(row.textContent).toContain("1 / 1");
+      fireEvent.click(row);
+      const detail = screen.getByTestId("run-detail-h1/app");
+      expect(detail.textContent).toContain("1/1");
+      expect(detail.textContent).toContain("100");
+      expect(detail.textContent).not.toContain("200");
+    });
   });
 
   describe("focus", () => {

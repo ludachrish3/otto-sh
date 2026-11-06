@@ -105,7 +105,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     git("add", "f.c")
     git("commit", "-qm", "init")
 
-    def cap(ticket: str, lines: dict[int, int], display_name: str | None) -> Capture:
+    def cap(ticket: str, lines: dict[int, int], board: str, display_name: str | None) -> Capture:
         return Capture(
             tier="manual",
             product="app",
@@ -113,13 +113,16 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
             captured_at=f"2026-07-0{len(ticket)}T00:00:00Z",
             ticket=ticket,
             labs=["lab1"],
-            board="b1",
+            board=board,
             display_name=display_name,
             files={"f.c": CaptureFileCov(blob=blob_sha(root, Path("f.c")), lines=lines)},
         )
 
-    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "Rack 2 Slot 4"), root)
-    write_manual_capture(cap("T-22", {2: 3}, None), root)
+    # Two hosts: one host and product is one context, so the newer of two
+    # captures on b1/app would supersede the older. The display name never
+    # reaches the label.
+    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "b1", "Rack 2 Slot 4"), root)
+    write_manual_capture(cap("T-22", {2: 3}, "b2", None), root)
 
     # Edit line 1 → T-1's evidence for it is revoked.
     (root / "f.c").write_text("int EDITED;\nint b;\nint c;\n")
@@ -131,8 +134,8 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     )
 
     by_ticket = {c.ticket: c for c in store.runs}
-    assert by_ticket["T-1"].label == "Rack 2 Slot 4"
-    assert by_ticket["T-22"].label == "b1"
+    assert by_ticket["T-1"].label == "b1/app"
+    assert by_ticket["T-22"].label == "b2/app"
 
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
     t1, t22 = by_ticket["T-1"].id, by_ticket["T-22"].id
@@ -144,7 +147,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     reloaded = CoverageStore.load(report / "store.json")
     (fr2,) = [f for f in reloaded.files() if f.path.name == "f.c"]
     assert fr2.lines[2].run_hits == {t1: 1, t22: 3}
-    assert reloaded.runs[t1].label == "Rack 2 Slot 4"
+    assert reloaded.runs[t1].label == "b1/app"
 
     # The rendered SPA report carries the drilldown too (spec §9/§10): the
     # per-file chunk's line JSON names each valid run's credit and the
@@ -160,4 +163,4 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
 
     payload = _index_payload(report)
     labels_by_id = {r["id"]: r["label"] for r in payload["runs"]}
-    assert labels_by_id[t1] == "Rack 2 Slot 4"
+    assert labels_by_id[t1] == "b1/app"

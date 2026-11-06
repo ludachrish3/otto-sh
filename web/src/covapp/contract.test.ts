@@ -292,6 +292,8 @@ const RUN_JSON_KEYS: Record<keyof RunJson, true> = {
   dirty_remap: true,
   aging: true,
   product: true,
+  source: true,
+  run_dir: true,
 };
 
 const OVERRIDE_JSON_KEYS: Record<keyof OverrideJson, true> = {

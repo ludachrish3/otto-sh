@@ -196,6 +196,28 @@ def cov_dir(base: Path) -> Path:
     return base / COV_DIR
 
 
+def run_dir_of_cov(cov_dir: Path) -> Path:
+    """Return the run dir *cov_dir* was built from: the :func:`cov_dir` inverse.
+
+    The one place a run dir is recovered from its ``cov/``. The report names
+    the run each capture came from, and its refusals name the directory to
+    report; both start from a cov dir they were handed, never from a
+    capture's own path. Pure and unvalidated, like :func:`run_dir_of`.
+    """
+    return cov_dir.parent
+
+
+def product_label(owner: str, product: str) -> str:
+    """``<owner>/<product>`` — the one spelling of a product's identity in messages and labels.
+
+    *owner* is the host id the product runs on, or a unit tier's name for a
+    product a unit tier reports with no host. It is the same
+    ``<host_id>/<product>`` join the cov tree uses on disk
+    (:func:`cov_product_dir_in`), and the label a coverage run carries.
+    """
+    return f"{owner}/{product}"
+
+
 def cov_report_dir(base: Path) -> Path:
     """``<base>/cov_report`` — a run's HTML coverage report when no destination is given."""
     return base / COV_REPORT_DIR

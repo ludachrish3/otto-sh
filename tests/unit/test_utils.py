@@ -15,6 +15,7 @@ from otto.utils import (
     _get_literal_values,
     complete_separated_list,
     is_literal,
+    name_by_reason,
     ottopath_entries,
     split_on,
 )
@@ -199,3 +200,10 @@ def test_per_loop_keeps_one_primitive_within_a_loop():
         return per_loop.get() is per_loop.get()
 
     assert asyncio.run(twice())
+
+
+# ── name_by_reason ──────────────────────────────────────────────────────────
+
+
+def test_name_by_reason_sorts_ids_per_group_and_keeps_group_order():
+    assert name_by_reason({"b": "R", "a": "R", "c": "Q"}) == "a, b (R); c (Q)"
