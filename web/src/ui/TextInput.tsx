@@ -32,6 +32,7 @@ export function TextInput({
   shortcut,
   inputRef,
   onKeyDown,
+  isDisabled = false,
 }: {
   label: string;
   type?: string;
@@ -43,9 +44,15 @@ export function TextInput({
   /** Ref callback to the real <input> (searchFocus registration). */
   inputRef?: (el: HTMLInputElement | null) => void;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
+  isDisabled?: boolean;
 }) {
   return (
-    <TextField value={value} onChange={onChange} className="inline-flex items-center gap-1.5">
+    <TextField
+      value={value}
+      onChange={onChange}
+      isDisabled={isDisabled}
+      className="inline-flex items-center gap-1.5"
+    >
       <Label className="text-xs text-tertiary">{label}</Label>
       {/* The four optional props are spread CONDITIONALLY rather than passed
           as `foo={maybeUndefined}`: under `exactOptionalPropertyTypes`,
