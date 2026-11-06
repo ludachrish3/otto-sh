@@ -191,6 +191,13 @@ shows under the field. Editing or deleting an existing event reuses the
 same panel; deleting requires pressing **Delete** twice ("Really
 delete?") before it takes effect.
 
+**Crowded labels.** Event labels stack in up to three rows at the top of
+each chart. Where more events crowd one spot, the earliest ones keep their
+labels and the last visible label ends in a count such as **(+2)**. Click
+that label, or Tab to it and press Enter, to list the hidden events; on an
+editable session each one opens the event editor (events without an id
+are listed only).
+
 **During a test run.** Neither the `monitor` fixture (see [Monitoring from a
 test](../../setup/test-recipes.md#monitoring-from-a-test)) nor the run-wide
 `otto test --monitor` serves a dashboard. Events from `monitor.event(...)`, and

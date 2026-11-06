@@ -669,6 +669,116 @@ def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) ->
         assert left + width <= plot_width, (lane, left, width, plot_width)
 
 
+def _seed_cluster(dash) -> dict[str, int]:
+    """Five point events 1 ms apart (#920's coincident cluster), between CPU
+    ticks; returns each label's wire id."""
+    t0 = datetime.now(tz=timezone.utc)
+    for mins in (14, 10, 5, 0):
+        _push_tick(dash, "r1", t0 - timedelta(minutes=mins), 10.0)
+    url = dash.api_url(f"/api/session/{dash.collector.session_id}/event")
+    cluster_at = t0 - timedelta(minutes=5)
+    labels = ["test start", "collect logs and more", "test pass", "test fail", "teardown"]
+    ids: dict[str, int] = {}
+    for i, label in enumerate(labels):
+        ts = cluster_at + timedelta(milliseconds=i)
+        status, body = _post_json(url, {"label": label, "timestamp": ts.isoformat()})
+        assert status == 201, body
+        ids[label] = body["id"]
+    return ids
+
+
+def test_cluster_overflow_lists_hidden_events(page: Page, live_stream_dash) -> None:
+    """A five-event cluster keeps the three earliest labels visible, and the
+    "(+2)" label is a keyboard-reachable button listing the two hidden
+    events, each of which opens the editor (#920)."""
+    ids = _seed_cluster(live_stream_dash)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    panel = _tid(page, "chart-panel-CPU")
+    expect(panel).to_have_attribute("data-echarts-marker-count", "5")
+    # The "(+2)" host is the third event in time, not the widest label.
+    overflow = _tid(page, f"cluster-overflow-{ids['test pass']}")
+    expect(overflow).to_have_attribute(
+        "aria-label", "test pass (+2): 2 more events: test fail, teardown"
+    )
+
+    # The overlay passes the pointer through everywhere but the button: the
+    # plot's centre still hits the chart's own canvas.
+    box = panel.bounding_box()
+    assert box is not None
+    hit = page.evaluate(
+        "([x, y]) => document.elementFromPoint(x, y)?.closest('[data-testid=\"chart-panel-CPU\"]')"
+        " !== null",
+        [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
+    )
+    assert hit is True
+
+    # Reachable by Tab: the next stop after the chart's zoom-out button.
+    _tid(page, "zoom-out-CPU").focus()
+    page.keyboard.press("Tab")
+    expect(overflow).to_be_focused()
+    page.keyboard.press("Enter")
+    listing = _tid(page, "cluster-overflow-list")
+    expect(listing).to_be_visible()
+    expect(listing).to_contain_text("test fail")
+    expect(listing).to_contain_text("teardown")
+    # Each row leads with a 24-hour HH:MM:SS clock time, as the x-axis reads.
+    expect(listing).to_contain_text(re.compile(r"\b\d{2}:\d{2}:\d{2}test fail"))
+    expect(listing).not_to_contain_text(re.compile(r"\b(AM|PM)\b"))
+
+    _tid(page, f"cluster-overflow-item-{ids['test fail']}").click()
+    expect(_tid(page, "event-editor")).to_be_visible()
+    expect(_tid(page, "editor-label")).to_have_value("test fail")
+
+
+def test_cluster_overflow_list_scrolls_at_a_short_viewport(page: Page, live_stream_dash) -> None:
+    """A cluster with many hidden events lists them in a height-capped,
+    scrollable popover: at a short viewport the list stays on screen and its
+    last row scrolls into view and opens the editor (#920)."""
+    dash = live_stream_dash
+    t0 = datetime.now(tz=timezone.utc)
+    for mins in (14, 10, 5, 0):
+        _push_tick(dash, "r1", t0 - timedelta(minutes=mins), 10.0)
+    url = dash.api_url(f"/api/session/{dash.collector.session_id}/event")
+    cluster_at = t0 - timedelta(minutes=5)
+    ids: list[int] = []
+    for i in range(60):
+        ts = cluster_at + timedelta(milliseconds=i)
+        status, body = _post_json(url, {"label": f"step {i:02d}", "timestamp": ts.isoformat()})
+        assert status == 201, body
+        ids.append(body["id"])
+    page.set_viewport_size({"width": 1280, "height": 600})
+    page.goto(dash.url)
+    page.goto(f"{dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+    expect(_tid(page, "chart-panel-CPU")).to_have_attribute("data-echarts-marker-count", "60")
+
+    # The earliest three label lanes stay visible; the third hosts the "(+57)".
+    _tid(page, f"cluster-overflow-{ids[2]}").click()
+    listing = _tid(page, "cluster-overflow-list")
+    expect(listing).to_be_visible()
+    box = listing.bounding_box()
+    assert box is not None
+    assert box["y"] >= 0, box
+    assert box["y"] + box["height"] <= 600, box
+    scrolls = listing.evaluate(
+        "el => [...el.querySelectorAll('*')].concat(el)"
+        ".some(n => n.scrollHeight > n.clientHeight && getComputedStyle(n).overflowY === 'auto')"
+    )
+    assert scrolls is True
+
+    last = _tid(page, f"cluster-overflow-item-{ids[-1]}")
+    last.scroll_into_view_if_needed()
+    expect(last).to_be_in_viewport()
+    last.click()
+    expect(_tid(page, "event-editor")).to_be_visible()
+    expect(_tid(page, "editor-label")).to_have_value("step 59")
+
+
 # --- Visual gate (Task 13 Step 4): span-label legibility, both themes -----
 #
 # Not one of the ten behavior specs above -- legibility can only be judged by
