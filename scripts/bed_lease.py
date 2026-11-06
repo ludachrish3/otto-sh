@@ -65,6 +65,9 @@ ROOT_ENV = "BED_LEASE_ROOT"
 WAIT_ENV = "BED_LEASE_WAIT"
 TTL_ENV = "BED_LEASE_TTL"
 DRAIN_ENV = "BED_LEASE_DRAIN"
+LEASE_BUDGET_KNOBS: frozenset[str] = frozenset({WAIT_ENV, TTL_ENV, DRAIN_ENV})
+"""The caller's lease budgets: a runner that holds the lease for its lanes spends them
+itself, so the lanes it runs do not inherit them (``ROOT_ENV`` is not one: it names the cell)."""
 DEFAULT_TTL_S = 4 * 3600
 DEFAULT_DRAIN_S = 30
 SIBLING_WINDOW_S = 2.0

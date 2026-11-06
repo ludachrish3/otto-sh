@@ -1145,17 +1145,35 @@ class TestRunner:
         repo = _repo(tmp_path)
         for name in ("MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE"):
             monkeypatch.setenv(name, "x")
+        budget = ("BED_LEASE_WAIT", "BED_LEASE_TTL", "BED_LEASE_DRAIN")
+        for name in budget:
+            monkeypatch.setenv(name, "9")
         lines = ["make check-breaking RANGE=x..HEAD", "make coverage-bed", LANE]
         runner = FakeRunner()
         status, out, _ = _go(monkeypatch, repo, lines, runner)
         assert runner.keys == ["make coverage-bed", LANE]
         for _cmd, _cwd, env in runner.calls:
             assert not {"MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE"} & set(env)
+            assert not set(budget) & set(env)
         root, tree = gt.stamps_root(repo, gt.STORE), tree_hash(repo)
         assert gt.exact_stamp(root, tree, "make coverage-bed") is not None
         assert gt.exact_stamp(root, tree, LANE) is not None
         assert "\ngate-tip: 2 stamped, 0 already stamped, 1 live at push, 0 red\n" in out
         assert status == 0
+
+    def test_lane_env_drops_the_runners_lease_budget_knobs(self):
+        env = gt.lane_env(
+            {
+                "BED_LEASE_WAIT": "900",
+                "BED_LEASE_TTL": "60",
+                "BED_LEASE_DRAIN": "5",
+                "PATH": "/bin",
+            }
+        )
+        assert env == {"PATH": "/bin"}
+
+    def test_lane_env_keeps_the_lease_root_so_a_lane_reenters_the_gates_hold(self):
+        assert gt.lane_env({"BED_LEASE_ROOT": "/r"}) == {"BED_LEASE_ROOT": "/r"}
 
     def test_an_overridden_variable_refuses_before_any_lane(self, tmp_path, monkeypatch):
         repo, runner = _repo(tmp_path), FakeRunner()
