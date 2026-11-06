@@ -107,9 +107,15 @@ export function presetFor(hex: string): EventColorPreset | undefined {
   return EVENT_COLOR_PRESETS.find((p) => p.hex === wanted);
 }
 
+/** The user-visible name of a style value outside the named choices:
+ * `Custom — <value>`, for a colour and a legacy dash alike. */
+export function customStyleName(value: string): string {
+  return `Custom — ${value}`;
+}
+
 /** A colour's user-visible name: the preset's, or `Custom — #rrggbb`. */
 export function eventColorName(hex: string): string {
-  return presetFor(hex)?.name ?? `Custom — ${hex.toLowerCase()}`;
+  return presetFor(hex)?.name ?? customStyleName(hex.toLowerCase());
 }
 
 /** Typed colour text → lowercase `#rrggbb`, or `null` unless it is exactly

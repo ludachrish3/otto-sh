@@ -160,14 +160,16 @@ describe("EventEditor", () => {
 
   it("an edit target resolves the record from session.events by id and prefills from it", () => {
     const sid = hydrate();
-    // event id 1 in kitchen-sink.json: "config reload", 08:20, #7c5cff (one
-    // of EVENT_COLOR_SWATCHES -- picked so the ring assertion below has a
-    // real swatch button to check).
+    // event id 1 in kitchen-sink.json: "config reload", 08:20, #7c5cff (the
+    // Violet preset -- picked so the selection assertion below has a real
+    // swatch option to check).
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
     render(<EventEditor />);
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("config reload");
-    expect(screen.getByTestId("editor-color-#7c5cff").getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByTestId("editor-color-#888888").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("editor-color-annotation").getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(screen.getByTestId("editor-color-neutral").getAttribute("aria-selected")).toBe("false");
   });
 
   it("Delete is edit-mode only -- absent for a draft target", () => {
@@ -414,18 +416,126 @@ describe("EventEditor", () => {
     expect(screen.queryByTestId("confirm-delete")).toBeNull();
   });
 
-  it("choosing a color swatch updates the selection ring and is sent on Save", async () => {
-    const user = userEvent.setup();
-    const sid = hydrate();
-    useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
-    const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
-    vi.stubGlobal("fetch", fetchMock);
-    render(<EventEditor />);
-    await user.click(screen.getByTestId("editor-color-#2ca02c"));
-    expect(screen.getByTestId("editor-color-#2ca02c").getAttribute("aria-pressed")).toBe("true");
-    await user.click(screen.getByTestId("editor-save"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(jsonBody(fetchMock)).toMatchObject({ color: "#2ca02c" });
+  describe("colour (#858)", () => {
+    // Event id 1 re-imported with *color* as its stored colour: the import
+    // boundary normalises it (a non-hex becomes the default plus legacyColor).
+    function hydrateEvent1(color: string): string {
+      const doc = JSON.parse(JSON.stringify(kitchenSink)) as {
+        sessions: { events: { id: number; color?: string }[] }[];
+      };
+      const ev = doc.sessions[0]?.events.find((e) => e.id === 1);
+      if (!ev) throw new Error("fixture has no event 1");
+      ev.color = color;
+      useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
+      useReviewStore.getState().actions.setEditable(true);
+      const id = useReviewStore.getState().sessions[0]?.id;
+      if (!id) throw new Error("fixture has no session");
+      return id;
+    }
+
+    // Opens event 1, appends to its label, runs *pick*, saves: the PATCH body.
+    async function editAndSave(
+      sid: string,
+      pick?: () => Promise<void> | void,
+    ): Promise<Record<string, unknown>> {
+      const user = userEvent.setup();
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
+      const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 1 }), 200));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<EventEditor />);
+      await user.type(screen.getByTestId("editor-label"), " v2");
+      if (pick) await pick();
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      return jsonBody(fetchMock);
+    }
+
+    it("an existing #00abcd event: a label edit's PATCH has no color key", async () => {
+      const sid = hydrateEvent1("#00abcd");
+      const body = await editAndSave(sid, () => {
+        expect(screen.getByTestId("editor-color-custom").getAttribute("aria-selected")).toBe(
+          "true",
+        );
+      });
+      expect(body["label"]).toBe("config reload v2");
+      expect(body).not.toHaveProperty("color");
+    });
+
+    it("picking Green sends color #2ca02c", async () => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      const body = await editAndSave(sid, () =>
+        user.click(screen.getByRole("option", { name: "Green" })),
+      );
+      expect(body).toMatchObject({ color: "#2ca02c" });
+    });
+
+    it("label-only edit of a legacy-colour event sends no color", async () => {
+      const sid = hydrateEvent1("red");
+      const body = await editAndSave(sid, () => {
+        expect(screen.getByTestId("editor-color-legacy").textContent).toContain("“red”");
+        expect(screen.getByTestId("editor-color-name").textContent).toBe("· Grey");
+      });
+      expect(body).not.toHaveProperty("color");
+    });
+
+    it("a label-only edit's PATCH has no dash key; choosing a dash sends it", async () => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      expect(await editAndSave(sid)).not.toHaveProperty("dash");
+      cleanup();
+      const body = await editAndSave(sid, async () => {
+        await user.click(within(screen.getByTestId("editor-dash")).getByRole("button"));
+        await user.click(
+          within(screen.getByRole("listbox")).getByRole("option", { name: "longdash" }),
+        );
+      });
+      expect(body).toMatchObject({ dash: "longdash" });
+      expect(body).not.toHaveProperty("color");
+    });
+
+    it("a legacy dash shows as custom; choosing the default dash sends it", async () => {
+      const user = userEvent.setup();
+      const doc = JSON.parse(JSON.stringify(kitchenSink)) as {
+        sessions: { events: { id: number; dash?: string }[] }[];
+      };
+      const ev1 = doc.sessions[0]?.events.find((e) => e.id === 1);
+      if (!ev1) throw new Error("fixture has no event 1");
+      ev1.dash = "wavy";
+      useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
+      useReviewStore.getState().actions.setEditable(true);
+      const sid = useReviewStore.getState().sessions[0]?.id ?? "";
+      const body = await editAndSave(sid, async () => {
+        const trigger = within(screen.getByTestId("editor-dash")).getByRole("button");
+        expect(trigger.textContent).toContain("Custom — wavy");
+        await user.click(trigger);
+        await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "dash" }));
+      });
+      expect(body).toMatchObject({ dash: "dash" });
+    });
+
+    it("legacy red → Use Grey → Save sends #888888", async () => {
+      const user = userEvent.setup();
+      const sid = hydrateEvent1("red");
+      const body = await editAndSave(sid, async () => {
+        await user.click(screen.getByTestId("editor-color-legacy-repair"));
+        // The repair is made: the note goes.
+        expect(screen.queryByTestId("editor-color-legacy")).toBeNull();
+      });
+      expect(body).toMatchObject({ color: "#888888" });
+    });
+
+    it("a draft always sends its colour", async () => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
+      const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<EventEditor />);
+      await user.click(screen.getByTestId("editor-save"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(jsonBody(fetchMock)).toMatchObject({ color: "#888888" });
+    });
   });
 
   it("choosing a dash style via the vendored Select is sent on Save", async () => {
@@ -715,6 +825,34 @@ describe("EventEditor pending gate (#867)", () => {
     expect(screen.getByTestId("confirm-delete-confirm").hasAttribute("data-loading")).toBe(true);
     expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false);
     expect(screen.getByTestId("editor-delete").hasAttribute("data-loading")).toBe(false);
+  });
+
+  it("a held Save disables the label, times and dash; a failed Save gives them back intact", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), " v2");
+    await user.click(screen.getByTestId("editor-save"));
+    const dashButton = within(screen.getByTestId("editor-dash")).getByRole("button");
+    expect(dashButton.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(true);
+    for (const field of ["editor-start", "editor-end"]) {
+      for (const el of editableSegments(field)) {
+        expect(el.getAttribute("aria-disabled")).toBe("true");
+      }
+    }
+    await act(() => Promise.resolve(release(okJson({ error: "archive is locked" }, 409))));
+    await waitFor(() => expect(screen.getByTestId("editor-error").textContent).toBeTruthy());
+    expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("config reload v2");
+    expect(dashButton.hasAttribute("disabled")).toBe(false);
+    await user.click(screen.getByRole("option", { name: "Green" }));
+    fetchMock.mockResolvedValue(okJson(record({ id: 1 }), 200));
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(jsonBody(fetchMock, 1)).toMatchObject({ label: "config reload v2", color: "#2ca02c" });
   });
 
   it("a Save still pending for one event does not make another event's editor busy (#932)", async () => {

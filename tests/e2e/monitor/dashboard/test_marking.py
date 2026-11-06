@@ -239,6 +239,45 @@ def test_end_clear_button_aligns_with_end_input(page: Page, live_stream_dash) ->
     assert_level()
 
 
+def test_color_swatches_are_named(page: Page, live_stream_dash) -> None:
+    """The colour swatches are named options (#858): hovering Violet shows
+    its name as a tooltip, the arrow keys move along the row, Space picks
+    Green, the persistent name follows, and the POST carries Green's hex."""
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    _tid(page, "mark-menu").click()
+    _tid(page, "menu-add-event").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    _tid(page, "editor-label").fill("named swatch")
+    expect(_tid(page, "editor-color-name")).to_have_text("· Grey")
+
+    violet = editor.get_by_role("option", name="Violet")
+    violet.hover()
+    expect(page.get_by_role("tooltip")).to_have_text("Violet")
+
+    # The selected swatch is the row's one tab stop; the arrows move on.
+    grey = editor.get_by_role("option", name="Grey")
+    grey.focus()
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("ArrowRight")
+    expect(editor.get_by_role("option", name="Green")).to_be_focused()
+    page.keyboard.press("Space")
+    expect(_tid(page, "editor-color-success")).to_have_attribute("aria-selected", "true")
+    expect(_tid(page, "editor-color-name")).to_have_text("· Green")
+
+    with page.expect_request(
+        lambda r: r.method == "POST" and r.url.endswith("/event")
+    ) as request_info:
+        _tid(page, "editor-save").click()
+    assert request_info.value.post_data_json["color"] == "#2ca02c"
+    editor.wait_for(state="detached")
+
+
 def test_drag_zoom_select(page: Page, live_stream_dash) -> None:
     """A plain drag across the chart canvas (no modifier) zoom-selects: the
     window shrinks toward the dragged sub-range and, in live mode, pause
