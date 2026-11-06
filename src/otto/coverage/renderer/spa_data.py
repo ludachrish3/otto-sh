@@ -30,7 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 from ...version import get_version
-from ..colors import DEFAULT_TIER_COLORS, STATE_COLORS
+from ..colors import STATE_COLORS, default_tier_color
 from ..store.model import STAT_TYPES, CoverageStore, FileRecord, LineRecord, RunRecord
 from ..ticket_export import group_ranges as _group_ranges
 
@@ -184,11 +184,11 @@ def build_symbols_payload(store: CoverageStore, prefix: Path | None, stamp: str)
 
 
 def _resolve_tier_colors(store: CoverageStore, tier_order: list[str]) -> dict[str, str]:
-    """Per-tier colors: ``store.tier_colors`` first, else a name-keyed default.
+    """Per-tier colors: ``store.tier_colors`` first, else the kind default.
 
-    Same fallback quirk the retired Jinja renderer used.
+    An undeclared tier's name stands in for its kind.
     """
-    return {t: store.tier_colors.get(t) or DEFAULT_TIER_COLORS.get(t, "green") for t in tier_order}
+    return {t: store.tier_colors.get(t) or default_tier_color(t) for t in tier_order}
 
 
 def _line_to_json(lr: LineRecord) -> dict[str, Any]:

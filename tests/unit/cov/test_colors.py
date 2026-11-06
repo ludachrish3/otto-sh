@@ -1,8 +1,13 @@
 """Color validation for coverage tier config."""
 
+from pathlib import Path
+
 import pytest
 
-from otto.coverage.colors import DEFAULT_TIER_COLORS, STATE_COLORS
+from otto.coverage.colors import DEFAULT_TIER_COLORS, STATE_COLORS, default_tier_color
+from otto.coverage.renderer import spa_data
+from otto.coverage.store.model import CoverageStore
+from otto.coverage.tiers import load_tiers
 from otto.models.color import CSS_COLOR_NAMES, validate_color
 
 
@@ -30,3 +35,27 @@ def test_default_palette_is_valid() -> None:
 
 def test_css_names_include_basics() -> None:
     assert {"green", "yellow", "orange", "grey", "violet", "tan"} <= CSS_COLOR_NAMES
+
+
+def test_default_tier_color_known_kinds() -> None:
+    for kind, color in DEFAULT_TIER_COLORS.items():
+        assert default_tier_color(kind) == color
+
+
+def test_default_tier_color_unknown_kind_falls_back_to_e2e() -> None:
+    assert default_tier_color("no-such-kind") == DEFAULT_TIER_COLORS["e2e"]
+
+
+@pytest.mark.parametrize("kind", sorted(DEFAULT_TIER_COLORS))
+def test_declared_and_renderer_default_agree(kind: str) -> None:
+    """A declared colourless tier (tiers.py) and an undeclared tier named for
+    its kind (the renderer) resolve through the same decision."""
+    (declared,) = load_tiers({"tiers": {kind: {"kind": kind, "precedence": 1}}}, root=Path("/proj"))
+    rendered = spa_data._resolve_tier_colors(CoverageStore(tier_order=[kind]), [kind])
+    assert declared.color == rendered[kind] == DEFAULT_TIER_COLORS[kind]
+
+
+def test_renderer_default_goes_through_default_tier_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spa_data, "default_tier_color", lambda kind: "#123456")
+    resolved = spa_data._resolve_tier_colors(CoverageStore(tier_order=["mystery"]), ["mystery"])
+    assert resolved == {"mystery": "#123456"}
