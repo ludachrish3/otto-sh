@@ -524,6 +524,8 @@ The flow, from a branch whose commits are ready:
    status](#the-landings-gate-is-stamped) against the head, and every
    validation job waits for it. A missing or mismatched status fails it
    with the remedy: `make gate-tip` on this head, then `make gate-status`.
+   A pull request Dependabot opened is admitted without the wait; see
+   [Dependency updates](#dependency-updates).
    A branch forked before this flow landed does not carry the admission
    script at its head, so `gate-admission` fails with a Python error until
    the branch is rebased onto `main`.
@@ -602,6 +604,27 @@ CI run.
 actor may bypass for a push. Nothing reaches `main` but a merged pull
 request, [the release](release_process.md)'s included. The one escape is
 [the hotfix](#hotfix), which is still a pull request.
+
+(dependency-updates)=
+
+#### Dependency updates
+
+Dependabot cannot run the local gate, so `gate-admission` admits a pull
+request whose author is `dependabot[bot]` without waiting for the
+`local-gate` status, and CI runs every hostless lane on the bump. That
+verdict tells the maintainer whether the bump is worth a bed run. The
+ruleset still requires the `local-gate` status, so nothing Dependabot opens
+merges ungated. To land one whose CI is green:
+
+1. `gh pr checkout <n>`, then `make gate-scope` to see the lanes; expect
+   bed lanes under [the lease](#bed-lease).
+2. `make gate-tip`. Dependabot's head is already pushed, so its green end
+   posts the `local-gate` status itself; `make gate-status` re-checks it.
+3. **Rebase and merge**.
+
+Dependabot may rebase its pull request (on a conflict, a newer release, or
+an `@dependabot rebase` comment). That makes a new head the status does not
+cover, so gate just before the merge.
 
 (gate-class-table)=
 
