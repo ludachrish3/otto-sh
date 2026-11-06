@@ -14,9 +14,10 @@ import {
   LABEL_LANES_MAX,
   LABEL_MAX_PX,
   type LabelPlacement,
-  labelLayout,
+  layoutWith,
   type MeasureText,
   windowPatch,
+  withLanes,
   zoomAbout,
   zoomToRange,
 } from "../charts/options";
@@ -26,6 +27,11 @@ const WINDOW = { from: 1_000_000, to: 2_000_000 };
 const theme = chartTheme(false);
 /** Layout for the pre-#863 eventOverlay cases, whose events sit in 0..5000 ms. */
 const LAYOUT = { window: { from: 0, to: 5_000 }, plotWidthPx: 800, measure: approxMeasure };
+
+/** `layoutWith`'s placements alone, in input order. */
+function layoutPlacements(...args: Parameters<typeof layoutWith>): LabelPlacement[] {
+  return layoutWith(...args).map((l) => l.placement);
+}
 
 /** `xs[i]`, failing the test (rather than the type check) when it is absent. */
 function nth<T>(xs: readonly T[], i = 0): T {
@@ -355,6 +361,47 @@ describe("assignLanes", () => {
   it("empty input returns an empty array", () => {
     expect(assignLanes([])).toEqual([]);
   });
+
+  // #920: the `order` option must leave the default path alone. The expected
+  // lanes were taken from `main`'s output for this fixture (ties, a
+  // zero-width interval and NaN bounds included) before `order` existed.
+  it("withLanes default order is unchanged", () => {
+    const fixture = [
+      { fromMs: 30, toMs: 70 },
+      { fromMs: 0, toMs: 40 },
+      { fromMs: 10, toMs: 20 },
+      { fromMs: 20, toMs: 50 },
+      { fromMs: 40, toMs: 40 },
+      { fromMs: 40, toMs: 90 },
+      { fromMs: 0, toMs: 40 },
+      { fromMs: 55, toMs: 60 },
+      { fromMs: 70, toMs: 80 },
+      { fromMs: Number.NaN, toMs: 5 },
+      { fromMs: 60, toMs: Number.NaN },
+      { fromMs: 65, toMs: 66 },
+    ];
+    expect(assignLanes(fixture)).toEqual([3, 0, 2, 2, 0, 0, 1, 1, 1, 0, 1, 0]);
+  });
+
+  it("out-of-start-order non-overlapping intervals share a lane", () => {
+    // Placed in `rank` order: [0,10) and [20,30) first, both in lane 0. Then
+    // [10,20) fits BETWEEN them. Lane 0's last end (30) is past its start, so
+    // a lane-end check would push it to lane 1; only the lane's interval
+    // list shows the gap.
+    const items = [
+      { fromMs: 0, toMs: 10, rank: 0 },
+      { fromMs: 10, toMs: 20, rank: 2 },
+      { fromMs: 20, toMs: 30, rank: 1 },
+    ];
+    const laned = withLanes(items, { order: (a, b) => a.rank - b.rank });
+    expect(laned.map((l) => l.lane)).toEqual([0, 0, 0]);
+    expect(laned.map((l) => l.event)).toEqual(items); // input order, paired
+    // A real overlap still takes a new lane under an order.
+    const overlapping = [...items, { fromMs: 15, toMs: 25, rank: 3 }];
+    expect(withLanes(overlapping, { order: (a, b) => a.rank - b.rank }).map((l) => l.lane)).toEqual(
+      [0, 0, 0, 1],
+    );
+  });
 });
 
 describe("eventOverlay markArea lanes", () => {
@@ -478,9 +525,9 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
 });
 
 // #863: one annotation layout for every event label — measured widths, edge
-// clamping, a bounded lane count and an overflow count. `labelLayout` is the
+// clamping, a bounded lane count and an overflow count. `layoutWith` is the
 // pure core; these cases pin its invariants, not its mechanics.
-describe("labelLayout (#863)", () => {
+describe("layoutWith (#863)", () => {
   const WIN15 = { from: 0, to: 15 * 60_000 };
   const measure6: MeasureText = (t) => t.length * 6;
   const point = (id: number, fromMs: number, label = `event ${id}`): EventMarker => ({
@@ -513,7 +560,7 @@ describe("labelLayout (#863)", () => {
 
   it("three points two seconds apart take three lanes", () => {
     const markers = [point(1, 60_000), point(2, 62_000), point(3, 64_000)];
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     expect(new Set(placements.map((p) => p.lane))).toEqual(new Set([0, 1, 2]));
     expect(placements.every((p) => !p.hidden)).toBe(true);
@@ -522,7 +569,7 @@ describe("labelLayout (#863)", () => {
 
   it("five coincident points: three visible, one carries (+2)", () => {
     const markers = [1, 2, 3, 4, 5].map((id) => point(id, 300_000));
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     expect(placements.filter((p) => !p.hidden)).toHaveLength(3);
     expect(placements.filter((p) => p.hidden)).toHaveLength(2);
@@ -532,13 +579,108 @@ describe("labelLayout (#863)", () => {
     expect(nth(counted).hidden).toBe(false);
   });
 
+  // #920: which labels stay visible is decided by time, never by text width.
+  it("five coincident points keep the chronologically first three visible, regardless of width", () => {
+    const t0 = 300_000; // the cluster's own t=0; 4 ms is far below one pixel at 800 px
+    const labels = ["test start", "collect logs and more", "test pass", "test fail", "teardown"];
+    const markers = labels.map((label, i) => point(i + 1, t0 + i, label));
+    const placements = layoutPlacements(markers, WIN15, 800, measure6);
+    expectInvariants(placements, 800);
+    expect(placements.filter((p) => !p.hidden).map((p) => p.id)).toEqual([1, 2, 3]);
+    // Lanes follow time too: the widest label ("collect logs and more") does
+    // not take lane 0.
+    expect(placements.map((p) => p.lane)).toEqual([0, 1, 2, 3, 4]);
+    const host = placements.filter((p) => p.overflowIds.length > 0);
+    expect(host).toHaveLength(1);
+    expect(nth(host).text.endsWith(" (+2)")).toBe(true);
+    expect(nth(host).overflowIds).toEqual([4, 5]);
+    // Every other placement counts nothing.
+    expect(placements.filter((p) => p !== nth(host)).every((p) => p.overflowIds.length === 0)).toBe(
+      true,
+    );
+  });
+
+  it("the same cluster in shuffled input order lays out the same", () => {
+    const t0 = 300_000;
+    const labels = ["test start", "collect logs and more", "test pass", "test fail", "teardown"];
+    const byId = labels.map((label, i) => point(i + 1, t0 + i, label));
+    const markers = [5, 3, 1, 4, 2].map((id) => nth(byId, id - 1));
+    const placements = layoutPlacements(markers, WIN15, 800, measure6);
+    expectInvariants(placements, 800);
+    expect(
+      placements
+        .filter((p) => !p.hidden)
+        .map((p) => p.id)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2, 3]);
+    const host = placements.filter((p) => p.overflowIds.length > 0);
+    expect(host.map((p) => p.id)).toEqual([3]);
+    expect(nth(host).overflowIds).toEqual([4, 5]); // chronological, not input order
+  });
+
+  it("a hidden label overlapping two lane-2 labels counts on the earliest", () => {
+    // Two three-point clusters at x = 300 and x = 400, and one wide label at
+    // x = 370 whose extent spans both. It falls after the first cluster in
+    // time, so lanes 0-2 are taken there and it is hidden; the second
+    // cluster then fills lanes 0-2 beside it. Both lane-2 labels overlap it.
+    const late = [21, 22, 23].map((id) => point(id, at(400), "evt"));
+    const early = [11, 12, 13].map((id) => point(id, at(300), "evt"));
+    const wide = point(30, at(370), "x".repeat(20));
+    // The later cluster comes first in input, so input order would pick it.
+    const placements = layoutPlacements([...late, wide, ...early], WIN15, 1000, measure6);
+    expectInvariants(placements, 1000);
+    const byId = new Map(placements.map((p) => [p.id, p]));
+    expect(byId.get(30)?.hidden).toBe(true);
+    expect(byId.get(13)?.lane).toBe(2);
+    expect(byId.get(23)?.lane).toBe(2);
+    expect(byId.get(13)?.overflowIds).toEqual([30]);
+    expect(byId.get(23)?.overflowIds).toEqual([]);
+  });
+
+  it("equal times tie-break by id", () => {
+    const markers = [
+      point(9, 300_000, "same width"),
+      point(3, 300_000, "same width"),
+      ...[20, 21, 22].map((id, i) => point(id, 300_001 + i, "same width")),
+    ];
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
+    const byId = new Map(placements.map((p) => [p.id, p]));
+    expect(byId.get(3)?.lane).toBe(0);
+    expect(byId.get(9)?.lane).toBe(1);
+    expect(byId.get(20)?.lane).toBe(2);
+    expect(byId.get(20)?.overflowIds).toEqual([21, 22]);
+  });
+
+  it("id-less markers are listed but not editable", () => {
+    const rows = (first: string | null) => [
+      // An id-less row first in input, tied in time with a wire-id row.
+      // Its label is the wider one, so a width-led layout would put it first.
+      { id: null, timestamp: "1970-01-01T00:05:00Z", label: "no id at all", color: "#888888" },
+      { id: 7, timestamp: "1970-01-01T00:05:00Z", label: "wire id", color: "#888888" },
+      ...(first === null
+        ? []
+        : [{ id: null, timestamp: first, label: "early no id", color: "#888888" }]),
+    ];
+    const tied = eventMarkers(rows(null), WIN15);
+    const synthetic = nth(tied.filter((m) => m.id < 0));
+    const tiedLayout = layoutPlacements(tied, WIN15, 1000, measure6);
+    const lane = (ps: LabelPlacement[], id: number) => ps.find((p) => p.id === id)?.lane;
+    expect(lane(tiedLayout, 7)).toBe(0); // the wire id wins the tie
+    expect(lane(tiedLayout, synthetic.id)).toBe(1);
+    // Earliest in time, an id-less marker goes first: the order is chronological.
+    const early = eventMarkers(rows("1970-01-01T00:04:59.999Z"), WIN15);
+    const earliest = nth(early.filter((m) => m.label === "early no id"));
+    expect(earliest.id).toBeLessThan(0);
+    expect(lane(layoutPlacements(early, WIN15, 1000, measure6), earliest.id)).toBe(0);
+  });
+
   it("labels near both edges stay inside the plot", () => {
     const markers = [point(1, WIN15.from, "left edge"), point(2, WIN15.to - 1000, "right edge")];
-    const wide = labelLayout(markers, WIN15, 1000, measure6);
+    const wide = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(wide, 1000);
     expect(wide.every((p) => !p.hidden)).toBe(true);
     // A 30-character label on a 120 px plot, anchored at x = 10.
-    const narrow = labelLayout(
+    const narrow = layoutPlacements(
       [point(3, (10 / 120) * WIN15.to, "x".repeat(30))],
       WIN15,
       120,
@@ -550,14 +692,14 @@ describe("labelLayout (#863)", () => {
   });
 
   it("centres a label on its anchor when it fits", () => {
-    const p = nth(labelLayout([point(1, at(500), "deploy")], WIN15, 1000, measure6));
+    const p = nth(layoutPlacements([point(1, at(500), "deploy")], WIN15, 1000, measure6));
     expect(p.leftPx + p.widthPx / 2).toBe(500);
   });
 
   it("wide glyphs are measured, not counted", () => {
     const measure14: MeasureText = (t) => t.length * 14;
     const label = "部署完成部署完成部署完成";
-    const p = nth(labelLayout([point(1, at(500), label)], WIN15, 1000, measure14));
+    const p = nth(layoutPlacements([point(1, at(500), label)], WIN15, 1000, measure14));
     expectInvariants([p], 1000);
     expect(p.widthPx).toBe(measure14(p.text));
     expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
@@ -565,13 +707,13 @@ describe("labelLayout (#863)", () => {
   });
 
   it("long labels truncate to LABEL_MAX_PX with an ellipsis", () => {
-    const p = nth(labelLayout([point(1, at(500), "a".repeat(80))], WIN15, 1000, measure6));
+    const p = nth(layoutPlacements([point(1, at(500), "a".repeat(80))], WIN15, 1000, measure6));
     expectInvariants([p], 1000);
     expect(p.text.endsWith("…")).toBe(true);
     expect(p.widthPx).toBe(measure6(p.text));
     expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
     // A short label is left whole.
-    const q = nth(labelLayout([point(2, at(500), "deploy")], WIN15, 1000, measure6));
+    const q = nth(layoutPlacements([point(2, at(500), "deploy")], WIN15, 1000, measure6));
     expect(q.text).toBe("deploy");
   });
 
@@ -579,7 +721,7 @@ describe("labelLayout (#863)", () => {
     const markers = [1, 2, 3, 4, 5, 6].map((id) =>
       point(id, WIN15.to - 2000, `${"r".repeat(18)}${id}${id}`),
     );
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     const counted = placements.filter((p) => p.text.endsWith(" (+3)"));
     expect(counted).toHaveLength(1);
@@ -588,7 +730,7 @@ describe("labelLayout (#863)", () => {
 
   it("caps the overflow count at +99", () => {
     const markers = Array.from({ length: 110 }, (_, i) => point(i + 1, at(500), "evt"));
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     expect(placements.filter((p) => p.text.endsWith(" (+99)"))).toHaveLength(1);
   });
@@ -598,7 +740,7 @@ describe("labelLayout (#863)", () => {
       ...[1, 2, 3, 4, 5].map((id) => point(id, at(300), "evt")),
       ...[6, 7, 8, 9, 10].map((id) => point(id, at(500), "evt")),
     ];
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     const counted = placements.filter((p) => p.text.endsWith(" (+2)"));
     expect(counted).toHaveLength(2);
@@ -607,13 +749,13 @@ describe("labelLayout (#863)", () => {
   });
 
   it("a plot too narrow for an ellipsis and a count hides every label", () => {
-    const placements = labelLayout([point(1, at(500), "abc")], WIN15, 30, measure6);
+    const placements = layoutPlacements([point(1, at(500), "abc")], WIN15, 30, measure6);
     expect(placements.every((p) => p.hidden)).toBe(true);
   });
 
   it("empty label takes no lane", () => {
     const markers = [point(1, at(300), ""), point(2, at(300), "real"), point(3, at(300), "too")];
-    const placements = labelLayout(markers, WIN15, 1000, measure6);
+    const placements = layoutPlacements(markers, WIN15, 1000, measure6);
     expectInvariants(placements, 1000);
     expect(nth(placements, 0).hidden).toBe(true);
     expect(
@@ -632,7 +774,12 @@ describe("labelLayout (#863)", () => {
       fromMs: at(260),
       toMs: at(340),
     };
-    const placements = labelLayout([span, point(2, at(300), "checkpoint")], WIN15, 1000, measure6);
+    const placements = layoutPlacements(
+      [span, point(2, at(300), "checkpoint")],
+      WIN15,
+      1000,
+      measure6,
+    );
     expectInvariants(placements, 1000);
     expect(nth(placements, 0).lane).not.toBe(nth(placements, 1).lane);
   });
@@ -675,9 +822,23 @@ describe("labelLayout (#863)", () => {
     expect(texts(nth(built.series)).filter((t) => t.endsWith(" (+1)"))).toHaveLength(1);
   });
 
+  it("markLine and markArea data carry the marker's eventId", () => {
+    const span: EventMarker = {
+      id: 8,
+      label: "soak",
+      color: "#f00",
+      fromMs: at(100),
+      toMs: at(200),
+    };
+    const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
+    const overlay = eventOverlay([point(4, at(500)), span], theme, layout);
+    expect((overlay.markLine.data as { eventId: number }[]).map((d) => d.eventId)).toEqual([4]);
+    expect(nth(overlay.markArea.data as [{ eventId: number }, unknown][])[0].eventId).toBe(8);
+  });
+
   it("draws a point label at its layout offset, inside the plot top", () => {
     const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
-    const p = nth(labelLayout([point(1, at(995), "right edge")], WIN15, 1000, measure6));
+    const p = nth(layoutPlacements([point(1, at(995), "right edge")], WIN15, 1000, measure6));
     const d = nth(
       eventOverlay([point(1, at(995), "right edge")], theme, layout).markLine.data as {
         label: Record<string, unknown>;
@@ -702,7 +863,7 @@ describe("labelLayout (#863)", () => {
       return measure6(t);
     };
     const label = "A\nB\r\nC \r \n D";
-    const p = nth(labelLayout([point(1, at(500), label)], WIN15, 1000, measure));
+    const p = nth(layoutPlacements([point(1, at(500), label)], WIN15, 1000, measure));
     expect(p.text).toBe("A B C D");
     expect(measured.some((t) => /[\r\n]/u.test(t))).toBe(false);
     const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
@@ -724,7 +885,7 @@ describe("labelLayout (#863)", () => {
       calls += 1;
       return measure6(t);
     };
-    const p = nth(labelLayout([point(1, at(500), "x".repeat(10_000))], WIN15, 1000, counting));
+    const p = nth(layoutPlacements([point(1, at(500), "x".repeat(10_000))], WIN15, 1000, counting));
     expect(calls).toBeLessThanOrEqual(64);
     expect(p.text.endsWith("…")).toBe(true);
     expect(p.widthPx).toBeLessThanOrEqual(LABEL_MAX_PX);
@@ -732,7 +893,7 @@ describe("labelLayout (#863)", () => {
     const kept = p.text.length - 1;
     expect(measure6(`${"x".repeat(kept + 1)}…`)).toBeGreaterThan(measure6(p.text));
     expect(p.text).toBe(
-      nth(labelLayout([point(1, at(500), "x".repeat(80))], WIN15, 1000, measure6)).text,
+      nth(layoutPlacements([point(1, at(500), "x".repeat(80))], WIN15, 1000, measure6)).text,
     );
   });
 
@@ -745,7 +906,7 @@ describe("labelLayout (#863)", () => {
       toMs: at(100),
     };
     const layout = { window: WIN15, plotWidthPx: 1000, measure: measure6 };
-    const p = nth(labelLayout([span], WIN15, 1000, measure6));
+    const p = nth(layoutPlacements([span], WIN15, 1000, measure6));
     const area = eventOverlay([span], theme, layout).markArea.data as [
       { label: { position: number[]; align: string; fontFamily: string } },
       unknown,

@@ -1,4 +1,4 @@
-// The label measurer `labelLayout` (options.ts) lays event labels out with —
+// The label measurer `layoutWith` (options.ts) lays event labels out with —
 // kept out of options.ts so that file stays free of the DOM.
 import { approxMeasure, LABEL_FONT_FAMILY, LABEL_FONT_SIZE, type MeasureText } from "./options";
 

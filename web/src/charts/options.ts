@@ -146,8 +146,9 @@ export function zoomAbout(window: TimeRange, factor: number): TimeRange | null {
   return { from: Math.round(center - span / 2), to: Math.round(center + span / 2) };
 }
 
-/** Vertical pixel step between stacked label lanes — see `labelLayout`. */
-const LANE_LABEL_STEP_PX = 14;
+/** Vertical pixel step between stacked label lanes — see `layoutWith`. Also
+ * the height of a label's hit target over the chart (ClusterOverflow). */
+export const LANE_LABEL_STEP_PX = 14;
 
 /** The plot's margins inside the chart container — the one source for the
  * grid. left: 88 (not the ~56 the y-axis labels alone need) reserves a gutter
@@ -155,7 +156,7 @@ const LANE_LABEL_STEP_PX = 14;
  * top-left over this margin — the extra width keeps the buttons clear of the
  * y-axis name, tick labels, and the hover crosshair y-value label (TODO item
  * 2). ChartPanel subtracts left + right from its container width to get the
- * plot width `labelLayout` lays labels out across. */
+ * plot width `layoutWith` lays labels out across. */
 export const GRID = { left: 88, right: 16, top: 28, bottom: 28 } as const;
 
 /** A label's rendered pixel width at the label font (LABEL_FONT_*). */
@@ -201,10 +202,35 @@ export interface LabelPlacement {
   widthPx: number;
   text: string;
   hidden: boolean;
+  /** The marker ids this label's " (+N)" counts, in chronological order
+   * (`labelOrder`). Empty for every label that carries no count. */
+  overflowIds: number[];
+}
+
+/** A placement handed back TOGETHER WITH the marker it places. */
+export interface PlacedLabel {
+  marker: EventMarker;
+  placement: LabelPlacement;
+}
+
+/** The one order event labels are laid out in (#920): chronological first,
+ * so the earliest events keep the visible lanes whatever their text width.
+ * On equal times a wire-id marker (id >= 0) goes before an id-less one
+ * (eventMarkers' negative synthetics), then ids ascend, then input order. */
+function labelOrder(
+  a: { marker: EventMarker; index: number },
+  b: { marker: EventMarker; index: number },
+): number {
+  const byTime = a.marker.fromMs - b.marker.fromMs;
+  if (byTime !== 0) return byTime;
+  const synthetic = Number(a.marker.id < 0) - Number(b.marker.id < 0);
+  if (synthetic !== 0) return synthetic;
+  const byId = a.marker.id - b.marker.id;
+  return byId !== 0 ? byId : a.index - b.index;
 }
 
 /** Top of lane `lane`, in px below the plot's top edge. */
-function laneTopPx(lane: number): number {
+export function laneTopPx(lane: number): number {
   return LABEL_TOP_PX + lane * LANE_LABEL_STEP_PX;
 }
 
@@ -257,21 +283,28 @@ function truncate(text: string, budgetPx: number, measure: MeasureText): string 
   return cut(lo);
 }
 
-/** `labelLayout`'s placements, each handed back TOGETHER WITH its marker —
- * the same structural pairing `withLanes` gives its own callers. */
-function layoutWith(
+/** One annotation layout for every event label (points and spans together):
+ * measured widths, kept inside the plot, at most LABEL_LANES_MAX lanes, with
+ * a `(+N)` count standing in for the labels a dense cluster hides. Pure — the
+ * caller supplies the plot width and the measurer. Each placement comes back
+ * TOGETHER WITH its marker (the same structural pairing `withLanes` gives its
+ * own callers), in input order. ChartPanel computes it once and feeds the
+ * canvas (`windowPatch`), the overflow buttons and the label stamp from the
+ * one result. Precondition: `markers` are already window-filtered by
+ * `eventMarkers`. */
+export function layoutWith(
   markers: EventMarker[],
   window: TimeRange,
   plotWidthPx: number,
   measure: MeasureText,
-): { marker: EventMarker; placement: LabelPlacement }[] {
+): PlacedLabel[] {
   const suffixPx = measure(MAX_SUFFIX);
   // Too narrow to show even "… (+99)": nothing fits, so nothing draws.
   const fits = plotWidthPx >= measure(ELLIPSIS + MAX_SUFFIX);
   const budgetPx = Math.min(LABEL_MAX_PX, plotWidthPx) - suffixPx;
   // Each label's EXTENT reserves the widest suffix up front, so appending a
   // count after lane assignment can never displace anything (one stable pass).
-  const items = markers.map((marker) => {
+  const items = markers.map((marker, index) => {
     const hidden: LabelPlacement = {
       id: marker.id,
       lane: -1,
@@ -279,8 +312,9 @@ function layoutWith(
       widthPx: 0,
       text: "",
       hidden: true,
+      overflowIds: [],
     };
-    if (!fits || marker.label === "") return { marker, placement: hidden, extent: null };
+    if (!fits || marker.label === "") return { marker, index, placement: hidden, extent: null };
     const text = truncate(chartLabelText(marker.label), budgetPx, measure);
     const widthPx = measure(text);
     const extentPx = widthPx + suffixPx;
@@ -290,49 +324,49 @@ function layoutWith(
     const leftPx = Math.min(Math.max(anchorPx - widthPx / 2, 0), plotWidthPx - extentPx);
     return {
       marker,
+      index,
       placement: { ...hidden, leftPx, widthPx, text, hidden: false },
       // The gap is part of the lane interval only, never the drawn width.
       extent: { fromMs: leftPx, toMs: leftPx + extentPx + LABEL_GAP_PX },
     };
   });
-  // The same greedy interval colouring spans use, run over pixel extents.
-  const laned = withLanes(items.flatMap((item) => (item.extent ? [{ ...item.extent, item }] : [])));
+  // The same greedy interval colouring spans use, run over pixel extents, but
+  // placed in `labelOrder`: the earliest events take the low lanes (#920).
+  const laned = withLanes(
+    items.flatMap((item) => (item.extent ? [{ ...item.extent, item }] : [])),
+    { order: (a, b) => labelOrder(a.item, b.item) },
+  );
   for (const { event, lane } of laned) {
     event.item.placement.lane = lane;
     event.item.placement.hidden = lane >= LABEL_LANES_MAX;
   }
-  // Each hidden label is counted on the leftmost visible lane-2 label whose
-  // extent overlaps it. Greedy colouring guarantees one exists: a label only
-  // reaches lane 3 while lane 2's latest occupant still covers its start.
-  const lastLane = laned.filter((l) => l.lane === LABEL_LANES_MAX - 1);
-  const counts = new Map<(typeof laned)[number], number>();
-  for (const over of laned.filter((l) => l.lane >= LABEL_LANES_MAX)) {
-    const host = lastLane
-      .filter((l) => l.event.fromMs < over.event.toMs && over.event.fromMs < l.event.toMs)
-      .sort((a, b) => a.event.fromMs - b.event.fromMs)[0];
-    if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
+  // Each hidden label is counted on the visible label in the highest lane
+  // whose extent overlaps it; ties go to the earliest such label. First-fit
+  // guarantees one exists: a label only reaches lane LABEL_LANES_MAX when
+  // every lower lane already holds an interval overlapping it.
+  const visible = laned.filter((l) => l.lane < LABEL_LANES_MAX);
+  const overs = laned
+    .filter((l) => l.lane >= LABEL_LANES_MAX)
+    .sort((a, b) => labelOrder(a.event.item, b.event.item));
+  for (const over of overs) {
+    let host: (typeof laned)[number] | undefined;
+    for (const l of visible) {
+      if (!(l.event.fromMs < over.event.toMs && over.event.fromMs < l.event.toMs)) continue;
+      const better =
+        host === undefined ||
+        l.lane > host.lane ||
+        (l.lane === host.lane && labelOrder(l.event.item, host.event.item) < 0);
+      if (better) host = l;
+    }
+    host?.event.item.placement.overflowIds.push(over.event.item.marker.id);
   }
-  for (const [host, n] of counts) {
-    const p = host.event.item.placement;
-    p.text = `${p.text} (+${Math.min(n, MAX_OVERFLOW)})`;
+  for (const { event } of visible) {
+    const p = event.item.placement;
+    if (p.overflowIds.length === 0) continue;
+    p.text = `${p.text} (+${Math.min(p.overflowIds.length, MAX_OVERFLOW)})`;
     p.widthPx = measure(p.text);
   }
   return items.map(({ marker, placement }) => ({ marker, placement }));
-}
-
-/** One annotation layout for every event label (points and spans together):
- * measured widths, kept inside the plot, at most LABEL_LANES_MAX lanes, with
- * a `(+N)` count standing in for the labels a dense cluster hides. Pure — the
- * caller supplies the plot width and the measurer. Placements come back in
- * input order. Precondition: `markers` are already window-filtered by
- * `eventMarkers`. */
-export function labelLayout(
-  markers: EventMarker[],
-  window: TimeRange,
-  plotWidthPx: number,
-  measure: MeasureText,
-): LabelPlacement[] {
-  return layoutWith(markers, window, plotWidthPx, measure).map((l) => l.placement);
 }
 
 /** Greedy interval-graph lane assignment: the pure core of the overlapping-
@@ -359,16 +393,28 @@ export function assignLanes(events: { fromMs: number; toMs: number }[]): number[
 }
 
 /** `assignLanes`' algorithm, handing each event back TOGETHER WITH its lane
- * instead of as a parallel array. `labelLayout` consumes this form — over
+ * instead of as a parallel array. `layoutWith` consumes this form — over
  * label pixel extents — so the label/lane pairing is structural: a
  * `lanes[i]` read alongside `labels[i]`
  * asks the reader to take the alignment on faith, and it is the alignment —
  * not the colouring — that a future edit is most likely to break silently.
  * `assignLanes` stays the exported, directly-unit-tested statement of the
- * "one lane per input, in input order" contract. */
-function withLanes<T extends { fromMs: number; toMs: number }>(
+ * "one lane per input, in input order" contract.
+ *
+ * `order` places the events in that order instead of by start (#920: label
+ * lanes go to the earliest events, not the leftmost extents). First-fit is
+ * the same; only the "is this lane free" test differs. In start order a
+ * lane's most recently placed occupant is the only one that can still cover
+ * the new start, so its end decides — today's rule, untouched. In any other
+ * order a later event can fall in a GAP between two occupants, so each lane
+ * keeps its occupants sorted and is binary-searched for an overlap.
+ * Precondition for `order`: positive-width intervals (label extents always
+ * are), which keeps each lane's ends sorted along with its starts. */
+export function withLanes<T extends { fromMs: number; toMs: number }>(
   events: T[],
+  opts?: { order?: (a: T, b: T) => number },
 ): { event: T; lane: number }[] {
+  const custom = opts?.order;
   // Sort the events themselves, each carrying its original index, rather than
   // sorting a list of indices and reading back through `events[a]`: the
   // comparator then works on real objects, and the scatter write below is the
@@ -376,26 +422,69 @@ function withLanes<T extends { fromMs: number; toMs: number }>(
   const order = events
     .map((event, index) => ({ event, index }))
     .sort((a, b) => {
+      if (custom) return custom(a.event, b.event) || a.index - b.index;
       const byStart = a.event.fromMs - b.event.fromMs;
       return byStart !== 0 ? byStart : a.event.toMs - b.event.toMs;
     });
-  const laneEnds: number[] = []; // laneEnds[lane] = end (toMs) of that lane's last occupant
+  // lanes[lane] = that lane's occupants: in placement order by default (so
+  // the last is the most recently placed), sorted by start under `order`.
+  const lanes: T[][] = [];
   const laned: { event: T; lane: number }[] = new Array(events.length);
   for (const { event, index } of order) {
-    // Lowest-numbered lane whose most recently placed occupant has already
-    // ended, or a fresh lane if every existing one is still occupied.
-    // `laneEnd > event.fromMs` is "still occupied"; the predicate is written
-    // as that negation rather than `laneEnd <= event.fromMs` so that a NaN
-    // end (Date.parse of a malformed wire timestamp) stays on the side the
-    // previous `while (... && laneEnds[lane] > ev.fromMs)` put it on.
-    const firstFree = laneEnds.findIndex((laneEnd) => !(laneEnd > event.fromMs));
-    const lane = firstFree === -1 ? laneEnds.length : firstFree;
+    // Lowest-numbered free lane, or a fresh lane if every one is occupied.
+    const firstFree = lanes.findIndex((held) =>
+      custom ? !overlapsAny(held, event) : !lastStillCovers(held, event),
+    );
+    const lane = firstFree === -1 ? lanes.length : firstFree;
     // Every index appears in `order` exactly once, so `laned` is dense on
     // return even though it starts life as a hole-filled `new Array`.
     laned[index] = { event, lane };
-    laneEnds[lane] = event.toMs;
+    const occupants = lanes[lane] ?? [];
+    lanes[lane] = occupants;
+    if (custom)
+      occupants.splice(
+        firstWhere(occupants, (o) => o.fromMs > event.fromMs),
+        0,
+        event,
+      );
+    else occupants.push(event);
   }
   return laned;
+}
+
+/** Start order's lane test: the lane's most recently placed occupant still
+ * covers the event's start. `laneEnd > event.fromMs` is "still occupied",
+ * kept in that form rather than `laneEnd <= event.fromMs` so that a NaN end
+ * (Date.parse of a malformed wire timestamp) stays on the side it always
+ * has: free. */
+function lastStillCovers(occupants: { toMs: number }[], event: { fromMs: number }): boolean {
+  const last = occupants.at(-1);
+  return last !== undefined && last.toMs > event.fromMs;
+}
+
+/** Any-order lane test: some occupant overlaps the half-open event. In a
+ * start-sorted lane of disjoint intervals the first occupant ending after the
+ * event's start is the only candidate. */
+function overlapsAny(
+  occupants: { fromMs: number; toMs: number }[],
+  event: { fromMs: number; toMs: number },
+): boolean {
+  const candidate = occupants[firstWhere(occupants, (o) => o.toMs > event.fromMs)];
+  return candidate !== undefined && candidate.fromMs < event.toMs;
+}
+
+/** Index of the first element satisfying `pred` — which must be false, then
+ * true, along `xs` — by binary search; `xs.length` when none does. */
+function firstWhere<T>(xs: T[], pred: (x: T) => boolean): number {
+  let lo = 0;
+  let hi = xs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const x = xs[mid];
+    if (x !== undefined && pred(x)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 /** markLine/markArea for a chart's anchor (index-0) series — split out of
@@ -410,11 +499,15 @@ export interface EventOverlay {
 }
 
 /** What `eventOverlay` lays its labels out against: the visible window, the
- * plot's pixel width and the label measurer (see `labelLayout`). */
+ * plot's pixel width and the label measurer (see `layoutWith`). */
 export interface OverlayLayout {
   window: TimeRange;
   plotWidthPx: number;
   measure: MeasureText;
+  /** `layoutWith(events, window, plotWidthPx, measure)`, when the caller has
+   * already computed it (ChartPanel shares one layout between the canvas
+   * and its overflow buttons). Omitted, the overlay computes it. */
+  placed?: PlacedLabel[] | undefined;
 }
 
 export function eventOverlay(
@@ -426,7 +519,7 @@ export function eventOverlay(
   // Points and spans are laid out TOGETHER, so a point label and a span label
   // that would overprint take different lanes. A hidden label still draws its
   // line or area; only the text is suppressed.
-  const placed = layoutWith(events, window, plotWidthPx, measure);
+  const placed = layout.placed ?? layoutWith(events, window, plotWidthPx, measure);
   // The one label text style. The halo (a surface-coloured text border) keeps
   // a label legible where its own marker line, a neighbour's line or series
   // data runs through it — labels sit inside the plot's top band.
@@ -447,6 +540,9 @@ export function eventOverlay(
         return {
           xAxis: e.fromMs,
           name: e.label,
+          // The marker's id, for a later click on the line to resolve the
+          // event it draws (no handler reads it yet).
+          eventId: e.id,
           lineStyle: { color: e.color, type: dashType(e.dash), width: 1 },
           // "end" is the line's top; a negative distance pulls the label back
           // down INSIDE the plot (clear of the y-axis name above it), and the
@@ -478,6 +574,7 @@ export function eventOverlay(
         {
           xAxis: e.fromMs,
           name: e.label,
+          eventId: e.id, // as on a markLine datum
           // Faint fill (alpha baked into the colour, NOT itemStyle.opacity, which
           // would fade the border too) + a full-strength dashed border in the
           // event's dash style, so a span reads with the same dash as a point
@@ -529,8 +626,10 @@ export function windowPatch(args: {
   anchorSeriesId: string | null;
   plotWidthPx: number;
   measure: MeasureText;
+  /** The layout already computed for these inputs (see OverlayLayout). */
+  placed?: PlacedLabel[] | undefined;
 }): Record<string, unknown> {
-  const { window, events, theme, anchorSeriesId, plotWidthPx, measure } = args;
+  const { window, events, theme, anchorSeriesId, plotWidthPx, measure, placed } = args;
   return {
     xAxis: { min: window.from, max: window.to },
     // Built in one expression rather than assigned onto a mutable record, so
@@ -542,7 +641,7 @@ export function windowPatch(args: {
           series: [
             {
               id: anchorSeriesId,
-              ...eventOverlay(events, theme, { window, plotWidthPx, measure }),
+              ...eventOverlay(events, theme, { window, plotWidthPx, measure, placed }),
             },
           ],
         }

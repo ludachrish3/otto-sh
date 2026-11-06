@@ -8,9 +8,10 @@
 // store's range is the single source of truth, so the zoomed window
 // round-trips through the store and every chart (and the review bar's
 // inputs) follows.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TimeRange } from "../data/exportDoc";
+import { ClusterOverflow } from "./ClusterOverflow";
 import { echarts } from "./echarts";
 import { createTextMeasure } from "./measure";
 import {
@@ -18,7 +19,7 @@ import {
   DEFAULT_PLOT_WIDTH_PX,
   type EventMarker,
   GRID,
-  labelLayout,
+  layoutWith,
   type MeasureText,
   windowPatch,
   yAxisPointerPatch,
@@ -97,6 +98,9 @@ export function ChartPanel(props: {
   /** Label measurer for the event overlay's layout. Defaults to a canvas
    * measurer at the label font (approximate under jsdom). */
   measure?: MeasureText;
+  /** Opens the event editor on an event listed under a crowded cluster's
+   * " (+N)" label. Omitted, that list is read-only. */
+  onEventOpen?: ((eventId: number) => void) | undefined;
   testId?: string;
 }) {
   const {
@@ -109,6 +113,7 @@ export function ChartPanel(props: {
     onZoom,
     sweepArmed,
     onSweep,
+    onEventOpen,
     testId,
   } = props;
   const el = useRef<HTMLDivElement>(null);
@@ -366,7 +371,15 @@ export function ChartPanel(props: {
   const markersKey = (markers ?? [])
     .map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}:${m.label}:${m.color}:${m.dash ?? ""}`)
     .join("|");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey/theme?.muted/theme?.surface are content-based stand-ins for `markers`/`theme`, which are fresh objects every render (see comment above)
+  // The ONE label layout per (markers, window, plot width, fonts-ready): the
+  // canvas patch below, the label stamp and the overflow buttons (#920) all
+  // read it, so a button can never sit where the canvas drew no label.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey is the content-based stand-in for `markers` (a fresh array every render); fontsReady is a re-measure trigger with no value to read; `measure` is per-instance and stays out, as it always has for the patch below
+  const placed = useMemo(
+    () => (markers === undefined ? [] : layoutWith(markers, win, plotWidthPx, measure)),
+    [markersKey, win.from, win.to, plotWidthPx, fontsReady],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `placed` carries markersKey/plotWidthPx/fontsReady; theme?.muted/theme?.surface are content-based stand-ins for `theme`, a fresh object every render (see comment above)
   useEffect(() => {
     if (markers === undefined) return; // no incremental-patch contract for this caller
     chart.current?.setOption(
@@ -377,6 +390,7 @@ export function ChartPanel(props: {
         anchorSeriesId: anchorSeriesId ?? null,
         plotWidthPx,
         measure,
+        placed,
       }),
       { notMerge: false, lazyUpdate: true },
     );
@@ -405,9 +419,9 @@ export function ChartPanel(props: {
       el.current.dataset["echartsMarkerCount"] = String(markers.length);
       // data-echarts-label-rects: the visible labels' [lane, leftPx, widthPx]
       // (plot-relative), so a browser spec can check overprinting and
-      // clipping without decoding canvas pixels. The same pure layout
-      // windowPatch drew above, on the same inputs.
-      const visible = labelLayout(markers, win, plotWidthPx, measure).filter((p) => !p.hidden);
+      // clipping without decoding canvas pixels. The same layout windowPatch
+      // drew above.
+      const visible = placed.map((l) => l.placement).filter((p) => !p.hidden);
       el.current.dataset["echartsLabelRects"] = JSON.stringify(
         visible.map((p) => [p.lane, p.leftPx, p.widthPx]),
       );
@@ -415,17 +429,25 @@ export function ChartPanel(props: {
       // across, so a spec bounds them without restating GRID's margins.
       el.current.dataset["echartsPlotWidth"] = String(plotWidthPx);
     }
-  }, [
-    win.from,
-    win.to,
-    markersKey,
-    theme?.muted,
-    theme?.surface,
-    anchorSeriesId,
-    plotWidthPx,
-    option,
-    fontsReady,
-  ]);
+  }, [win.from, win.to, placed, theme?.muted, theme?.surface, anchorSeriesId, option]);
 
-  return <div ref={el} data-testid={testId} style={{ height: HEIGHT_PX }} className="w-full" />;
+  // The ECharts element stays the one carrying the data-echarts-* stamps. The
+  // overlay beside it passes every pointer through (drags, the brush and
+  // Ctrl-pan still reach the canvas) except on the overflow buttons. Only the
+  // ECharts element carries `testId`: specs count `[data-testid^="chart-panel-"]`
+  // as panels, so neither the wrapper nor the overlay takes an id under it.
+  return (
+    <div className="relative w-full">
+      <div ref={el} data-testid={testId} style={{ height: HEIGHT_PX }} className="w-full" />
+      <div className="pointer-events-none absolute inset-0">
+        <ClusterOverflow
+          placements={placed.map((l) => l.placement)}
+          markers={markers ?? []}
+          plotLeftPx={GRID.left}
+          plotTopPx={GRID.top}
+          onEventOpen={onEventOpen}
+        />
+      </div>
+    </div>
+  );
 }

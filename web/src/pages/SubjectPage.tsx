@@ -35,7 +35,7 @@ import { groupRowsFromData, type LogEventRow, logKey, visibleRows } from "../dat
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { seriesKey } from "../data/seriesIndex";
 import { buildSeriesTree, collectSeriesPoints, filterTree } from "../data/seriesTree";
-import { liveRange } from "../data/time";
+import { formatClockTime, liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
 import { Breadcrumbs } from "../ui/Breadcrumbs";
@@ -202,6 +202,12 @@ export function SubjectPage() {
     });
   };
 
+  // A crowded label cluster's overflow list opens the editor on a listed
+  // event — only where events can be edited at all (#920).
+  const onEventOpen = editable
+    ? (eventId: number) => openEventEditor({ kind: "edit", sessionId: session.id, eventId })
+    : undefined;
+
   const toggle = (key: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -350,6 +356,7 @@ export function SubjectPage() {
                   onZoom={(r) => setRange(clampRange(r, bounds))}
                   sweepArmed={sweepArmed}
                   onSweep={onSweep}
+                  onEventOpen={onEventOpen}
                   overflowCount={cap != null && active.length > cap ? active.length : null}
                 />
               );
@@ -438,6 +445,8 @@ function ChartSection(props: {
    * SubjectPage's own `sweepArmed`/`onSweep` for the wiring. */
   sweepArmed: boolean;
   onSweep: (range: TimeRange) => void;
+  /** Forwarded to ChartPanel; absent when events are not editable. */
+  onEventOpen: ((eventId: number) => void) | undefined;
   overflowCount: number | null;
 }) {
   const {
@@ -460,6 +469,7 @@ function ChartSection(props: {
     onZoom,
     sweepArmed,
     onSweep,
+    onEventOpen,
     overflowCount,
   } = props;
   // Keying on `session` identity instead would bust every chart's memo on
@@ -573,6 +583,7 @@ function ChartSection(props: {
           onZoom={onZoom}
           sweepArmed={sweepArmed}
           onSweep={onSweep}
+          onEventOpen={onEventOpen}
           testId={`chart-panel-${chartKey}`}
         />
       </div>
@@ -657,7 +668,7 @@ function LogTable(props: {
               {(column: LogColumn) => (
                 <Table.Cell>
                   {column.id === "time"
-                    ? new Date(item.row.timestamp).toLocaleTimeString()
+                    ? formatClockTime(item.row.timestamp)
                     : (item.row.fields[column.id] ?? "")}
                 </Table.Cell>
               )}

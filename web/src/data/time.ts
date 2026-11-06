@@ -13,6 +13,17 @@ export function liveRange(nowMs: number, windowMs: number): TimeRange {
   return { from: nowMs - windowMs, to: nowMs };
 }
 
+/** A row's clock time, wherever a list shows one (the Events panel, a label
+ * cluster's overflow list, a log table's time cell): 24-hour `HH:MM:SS` in
+ * local time, matching the chart's x-axis. Padded by hand rather than via
+ * toLocaleTimeString, whose `hour12: false` renders midnight as "24" in some
+ * engines. Accepts epoch ms or anything `Date` parses (a wire timestamp). */
+export function formatClockTime(t: number | string): string {
+  const d = new Date(t);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
 export function formatSpan(fromMs: number, toMs: number): string {
   const mins = Math.round((toMs - fromMs) / 60_000);
   if (mins < 60) return `${mins}m`;

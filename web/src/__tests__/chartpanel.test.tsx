@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type BrushArmAction,
@@ -13,8 +14,12 @@ import {
   type EventMarker,
   type EventOverlay,
   GRID,
-  labelLayout,
+  LANE_LABEL_STEP_PX,
+  laneTopPx,
+  layoutWith,
+  type MeasureText,
 } from "../charts/options";
+import { formatClockTime } from "../data/time";
 
 /** Every live observer, so a test can `trigger(width)` a resize: jsdom has
  * neither ResizeObserver nor layout, so the trigger stamps `clientWidth` on
@@ -95,6 +100,11 @@ vi.mock("../charts/echarts", () => ({
 }));
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
+
+/** `layoutWith`'s placements alone, in input order. */
+function layoutPlacements(...args: Parameters<typeof layoutWith>) {
+  return layoutWith(...args).map((l) => l.placement);
+}
 
 describe("ChartPanel lifecycle", () => {
   beforeEach(() => {
@@ -486,7 +496,7 @@ describe("ChartPanel measured label layout (#863)", () => {
     return datum.label.offset[0];
   }
   function expectedOffset(plotWidthPx: number): number {
-    const p = nth(labelLayout(MARKERS, WINDOW, plotWidthPx, approxMeasure));
+    const p = nth(layoutPlacements(MARKERS, WINDOW, plotWidthPx, approxMeasure));
     return p.leftPx - 0.9 * plotWidthPx;
   }
 
@@ -498,7 +508,7 @@ describe("ChartPanel measured label layout (#863)", () => {
     expect(lastOffset(nth(instances))).toBeCloseTo(expectedOffset(296));
     expect(expectedOffset(296)).not.toBeCloseTo(expectedOffset(DEFAULT_PLOT_WIDTH_PX));
     const el = container.querySelector('[data-testid="chart-panel-x"]') as HTMLElement;
-    const p = nth(labelLayout(MARKERS, WINDOW, 296, approxMeasure));
+    const p = nth(layoutPlacements(MARKERS, WINDOW, 296, approxMeasure));
     expect(JSON.parse(el.dataset["echartsLabelRects"] ?? "null")).toEqual([
       [p.lane, p.leftPx, p.widthPx],
     ]);
@@ -551,5 +561,188 @@ describe("ChartPanel measured label layout (#863)", () => {
     const series = (nth(calls, calls.length - 1).opt as { series: EventOverlay[] }).series;
     const datum = nth(nth(series).markLine.data as { label: { textBorderColor: string } }[]);
     expect(datum.label.textBorderColor).toBe("#030712");
+  });
+});
+
+// #920: a crowded cluster's " (+N)" label carries a transparent button that
+// lists the hidden events. Its geometry is the canvas layout's own.
+describe("ChartPanel cluster overflow (#920)", () => {
+  /** Five coincident points at `atMs`, ids from `firstId`: three visible,
+   * the last two counted on the lane-2 label (id `firstId + 2`). */
+  const cluster = (firstId: number, atMs: number): EventMarker[] =>
+    ["test start", "collect logs", "test pass", "test fail", "teardown"].map((label, i) => ({
+      id: firstId + i,
+      label,
+      color: "#888888",
+      fromMs: atMs + i,
+      toMs: null,
+    }));
+  const THEME = { muted: "#999", ink: "#111", surface: "#fff" };
+
+  beforeEach(() => {
+    instances.length = 0;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  /** `xs[i]`, failing the test (rather than the type check) when absent. */
+  function nth<T>(xs: readonly T[], i = 0): T {
+    const x = xs[i];
+    if (x === undefined) throw new Error(`no element ${i} in a list of ${xs.length}`);
+    return x;
+  }
+  function panel(
+    markers: EventMarker[],
+    extra: { onEventOpen?: (id: number) => void; measure?: MeasureText } = {},
+  ) {
+    return (
+      <ChartPanel
+        option={{ series: [] }}
+        groupId="g"
+        window={WINDOW}
+        markers={markers}
+        theme={THEME}
+        anchorSeriesId="s0"
+        measure={extra.measure ?? approxMeasure}
+        onEventOpen={extra.onEventOpen}
+        testId="chart-panel-x"
+      />
+    );
+  }
+  function button(id: number): HTMLElement {
+    return screen.getByTestId(`cluster-overflow-${id}`);
+  }
+  /** The placement `layoutWith` gives marker `id`, at plot width `width`. */
+  function placementOf(markers: EventMarker[], id: number, width: number, measure: MeasureText) {
+    return nth(layoutWith(markers, WINDOW, width, measure).filter((l) => l.placement.id === id))
+      .placement;
+  }
+
+  it("renders one overflow button per host, named by its hidden labels", () => {
+    render(panel([...cluster(1, 1_200_000), ...cluster(11, 1_700_000)]));
+    const buttons = screen.getAllByTestId(/^cluster-overflow-\d+$/u);
+    expect(buttons.map((b) => b.dataset["testid"])).toEqual([
+      "cluster-overflow-3",
+      "cluster-overflow-13",
+    ]);
+    // The name starts with the label's visible text (WCAG 2.5.3).
+    expect(button(3).getAttribute("aria-label")).toBe(
+      "test pass (+2): 2 more events: test fail, teardown",
+    );
+    const p = placementOf(cluster(1, 1_200_000), 3, DEFAULT_PLOT_WIDTH_PX, approxMeasure);
+    expect(button(3).style.left).toBe(`${GRID.left + p.leftPx}px`);
+    expect(button(3).style.top).toBe(`${GRID.top + laneTopPx(p.lane)}px`);
+    expect(button(3).style.width).toBe(`${p.widthPx}px`);
+    expect(button(3).style.height).toBe(`${LANE_LABEL_STEP_PX}px`);
+  });
+
+  it("names one hidden event in the singular, and at most ten by label", () => {
+    const one = cluster(1, 1_200_000).slice(0, 4);
+    const { unmount } = render(panel(one));
+    expect(button(3).getAttribute("aria-label")).toBe("test pass (+1): 1 more event: test fail");
+    unmount();
+    // Three visible, eleven hidden: ten are named, the eleventh is counted.
+    const many: EventMarker[] = Array.from({ length: 14 }, (_, i) => ({
+      id: i + 1,
+      label: `e${i + 1}`,
+      color: "#888888",
+      fromMs: 1_200_000 + i,
+      toMs: null,
+    }));
+    render(panel(many));
+    expect(button(3).getAttribute("aria-label")).toBe(
+      "e3 (+11): 11 more events: e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, and 1 more",
+    );
+  });
+
+  it("the popover's items open the editor only when onEventOpen is given", async () => {
+    const user = userEvent.setup();
+    const onEventOpen = vi.fn();
+    // One id-less (synthetic, negative id) marker among the hidden ones.
+    const markers = cluster(1, 1_200_000).map((m) => (m.id === 5 ? { ...m, id: -1 } : m));
+    const { rerender } = render(panel(markers));
+    await user.click(button(3));
+    const list = await screen.findByTestId("cluster-overflow-list");
+    expect(list.textContent).toContain("test fail");
+    expect(list.textContent).toContain("teardown");
+    // Each row leads with its 24-hour clock time.
+    expect(list.textContent).toContain(`${formatClockTime(1_200_003)}test fail`);
+    // Read-only: every item is plain text.
+    expect(list.querySelectorAll("button")).toHaveLength(0);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("cluster-overflow-list")).toBeNull());
+
+    rerender(panel(markers, { onEventOpen }));
+    await user.click(button(3));
+    await screen.findByTestId("cluster-overflow-list");
+    // The id-less marker is listed but never offered as editable.
+    expect(screen.getByTestId("cluster-overflow-item--1").tagName).toBe("SPAN");
+    const item = screen.getByTestId("cluster-overflow-item-4");
+    expect(item.tagName).toBe("BUTTON");
+    await user.click(item);
+    expect(onEventOpen).toHaveBeenCalledWith(4);
+    await waitFor(() => expect(screen.queryByTestId("cluster-overflow-list")).toBeNull());
+  });
+
+  it("overflow buttons move with the labels on resize and font load", async () => {
+    // A measurer whose widths change once "fonts" load, as a web font's do.
+    let scale = 6;
+    const measure: MeasureText = (t) => t.length * scale;
+    let resolve: () => void = () => {};
+    const ready = new Promise<void>((r) => {
+      resolve = r;
+    });
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready } });
+    try {
+      const markers = cluster(1, 1_500_000);
+      render(panel(markers, { measure }));
+      const leftAt = (width: number) =>
+        `${GRID.left + placementOf(markers, 3, width, measure).leftPx}px`;
+      expect(button(3).style.left).toBe(leftAt(DEFAULT_PLOT_WIDTH_PX));
+      trigger(400); // plot = 400 - GRID.left - GRID.right = 296 px
+      expect(button(3).style.left).toBe(leftAt(296));
+      const before = button(3).style.left;
+      expect(before).not.toBe(leftAt(DEFAULT_PLOT_WIDTH_PX));
+      scale = 8;
+      await act(async () => {
+        resolve();
+        await ready;
+      });
+      expect(button(3).style.left).toBe(leftAt(296));
+      expect(button(3).style.left).not.toBe(before);
+    } finally {
+      delete (document as { fonts?: unknown }).fonts;
+    }
+  });
+
+  it("a drag on the plot outside a button still brushes", () => {
+    const onZoom = vi.fn();
+    render(
+      <ChartPanel
+        option={{ series: [] }}
+        groupId="g"
+        window={WINDOW}
+        markers={cluster(1, 1_500_000)}
+        theme={THEME}
+        anchorSeriesId="s0"
+        measure={approxMeasure}
+        onZoom={onZoom}
+        testId="chart-panel-x"
+      />,
+    );
+    // The overlay layer takes no pointer events; only its buttons do. jsdom
+    // has no hit testing, so the classes are the contract here (the browser
+    // lane checks the real hit with elementFromPoint).
+    const overlay = button(3).parentElement;
+    expect(overlay?.className).toContain("pointer-events-none");
+    // Exactly one element per panel carries the panel's testid prefix.
+    expect(document.querySelectorAll('[data-testid^="chart-panel-"]')).toHaveLength(1);
+    expect(button(3).className).toContain("pointer-events-auto");
+    // The ECharts element, not the wrapper, still carries the stamps, and a
+    // brush over the plot still routes to onZoom.
+    expect(screen.getByTestId("chart-panel-x").dataset["echartsMarkerCount"]).toBe("5");
+    nth(instances).emit("brushEnd", { areas: [{ coordRange: [1_200_000, 1_800_000] }] });
+    expect(onZoom).toHaveBeenCalledWith({ from: 1_200_000, to: 1_800_000 });
   });
 });

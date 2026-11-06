@@ -37,7 +37,7 @@ import {
 } from "../data/eventApi";
 import { clampRange, type NormalizedSession, sessionBounds } from "../data/exportDoc";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
-import { formatSpan, parseTs } from "../data/time";
+import { formatClockTime, formatSpan, parseTs } from "../data/time";
 import { TextInput } from "../ui/TextInput";
 import { type EventEditorTarget, useUiStore } from "../ui/uiStore";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "./marking";
@@ -251,7 +251,7 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
                       />
                       <span className="min-w-0 grow truncate">{ev.label}</span>
                       <span className="shrink-0 text-xs text-tertiary">
-                        {new Date(ev.fromMs).toLocaleTimeString()}
+                        {formatClockTime(ev.fromMs)}
                         {ev.toMs !== null ? ` · ${formatSpan(ev.fromMs, ev.toMs)}` : ""}
                       </span>
                     </button>
