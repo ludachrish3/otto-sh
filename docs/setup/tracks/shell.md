@@ -133,8 +133,9 @@ The tests run each tool on `dut` through one helper:
 Each test runs its tool once, with `GCOV_PREFIX` and `GCOV_PREFIX_STRIP` set
 on that one invocation, so the tool writes its counters under its product's
 `cov_dir` as it exits ({ref}`a tool run once per test <coverage-run-per-test-case>`).
-`STRIP` counts the project root's own path components, so it holds wherever
-the project sits.
+The strip is `product.gcov_prefix_strip`, which otto counts from the
+product's build root, the project root by default, so it holds wherever the
+project sits ({ref}`build_root <declared-build-root>`).
 
 A product that runs as a daemon sets them in its `install` command instead:
 {ref}`a daemon's counters <coverage-daemon-case>`.
@@ -191,20 +192,16 @@ First, zero the counters on the host ({doc}`../../cli/cov/clean`):
 otto --lab example_lab cov clean
 ```
 
-Exercise `shout` by hand, twice, with the same two variables the tests set.
-`GCOV_PREFIX_STRIP` is the number of components in the project root's absolute
-path: `3` below, for the docs build's root, `/tmp/otto-gs/quickstart-shell`.
-The tests compute theirs (`STRIP`); for a command typed by hand, this prints
-yours when run from your project root:
+(manual-run-no-strip)=
+Exercise `shout` by hand, twice, with `GCOV_PREFIX` alone. With no
+`GCOV_PREFIX_STRIP` (a strip of 0), each counter keeps its whole baked path
+under `cov_dir`, which is unique whenever the build's paths are, so it pairs
+with its `.gcno` all the same ({ref}`coverage-build-requirement`). The manual
+tier is cleaned and fetched on its own, so its deeper tree never mixes with
+the test tier's.
 
 ```bash
-python3 -c 'import pathlib; print(len(pathlib.Path.cwd().resolve().parts) - 1)'
-```
-
-Then run `shout`, with your number in place of `3`:
-
-```bash
-otto --lab example_lab host dut exec 'GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout by hand; GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout again'
+otto --lab example_lab host dut exec 'GCOV_PREFIX=/tmp/shout /tmp/quickstart/shout by hand; GCOV_PREFIX=/tmp/shout /tmp/quickstart/shout again'
 ```
 
 ```{literalinclude} ../../examples/captures/qs-shell-manual-run.txt

@@ -24,11 +24,11 @@ INFO
 INFO     @docker-host > | otto-cov-presence
 INFO     @docker-host > | otto-cov 0 present
 INFO     @docker-host > | otto-cov 1 absent
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount || find
-         /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \;'
 INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
          '"'"'\n%s\n'"'"' otto-gcda-check; LC_ALL=C find /tmp/quickstart-docker/banner -name
          '"'"'*.gcda'"'"' -type f -print 2>&1'
+INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount || find
+         /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \;'
 INFO     @docker-host > | otto-gcda-check
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
          otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print 2>&1'
@@ -59,8 +59,7 @@ INFO     @docker-host   | docker exec -i <id> sh -c 'GCOV_PREFIX=/tmp/shout
          GCOV_PREFIX_STRIP=3 /opt/quickstart/shout hello world'
 INFO     @docker-host > | HELLO WORLD
 INFO     === test_banner_counts_then_repeats ===
-INFO     @docker-host   | docker exec -e GCOV_PREFIX_STRIP=3 quickstart-banner
-         /opt/quickstart/banner hello docker world
+INFO     @docker-host   | docker exec quickstart-banner /opt/quickstart/banner hello docker world
 INFO     @docker-host > | [3] hello docker world
 
 ------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------

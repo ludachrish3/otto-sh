@@ -4,13 +4,13 @@ import asyncio
 import os
 import shlex
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
-from otto.host.product import Product, ShellProduct
+from otto.host.product import Product, ShellProduct, gcov_prefix_strip
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
@@ -54,6 +54,29 @@ def test_product_cannot_be_instantiated_directly():
 
 def test_product_is_unowned_until_ingest_stamps_it():
     assert _DummyShellProduct(artifact=Path("/builds/app.bin")).owner is None
+
+
+def test_gcov_prefix_strip_counts_build_root_components():
+    assert gcov_prefix_strip(PurePosixPath("/home/dev/proj")) == 3
+    assert gcov_prefix_strip(PurePosixPath("/builds/ci/proj")) == 3
+    assert gcov_prefix_strip(PurePosixPath("/")) == 0
+
+
+def test_gcov_prefix_strip_refuses_relative():
+    with pytest.raises(ValueError, match="absolute"):
+        gcov_prefix_strip(PurePosixPath("build"))
+
+
+def test_gcov_prefix_strip_refuses_dotdot():
+    with pytest.raises(ValueError, match=r"must not contain '\.\.'"):
+        gcov_prefix_strip(PurePosixPath("/home/dev/proj/../other"))
+
+
+def test_code_product_without_build_root_raises():
+    product = _FakeProduct("x")  # a bare Product subclass, as a provider writes one
+    assert product.build_root is None
+    with pytest.raises(ValueError, match=r"'x' has no build_root.*GCOV_PREFIX_STRIP"):
+        _ = product.gcov_prefix_strip
 
 
 @pytest.mark.asyncio

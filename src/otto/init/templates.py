@@ -61,7 +61,8 @@ paths = ["lab_data"]
 #kind = "shell"
 #artifact = "build/fw.bin"
 #cov_dir = "/tmp/firmware"        # where it writes .gcda (GCOV_PREFIX); default /tmp/<name>
-#install = "GCOV_PREFIX={{cov_dir}} ./fw.bin &"
+#build_root = "build"             # where the build ran; default the project root
+#install = "GCOV_PREFIX={{cov_dir}} GCOV_PREFIX_STRIP={{gcov_prefix_strip}} ./fw.bin &"
 #match = {{ "metadata.hw_version" = "rev2" }}
 #[[dev_tools]]
 #name = "trace-probe"

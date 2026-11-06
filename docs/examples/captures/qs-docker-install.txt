@@ -9,9 +9,9 @@ INFO     @docker-host   | docker ps -q --filter
          label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
 INFO
 INFO     @docker-host > | Error response from daemon: No such container: quickstart-banner
-INFO     @docker-host > | <id>
 INFO     @docker-host   | banner: staged
 INFO     @docker-host   | command -v docker
+INFO     @docker-host > | <id>
 INFO     @docker-host > | /usr/bin/docker
 INFO     @docker-host   | docker image inspect --format '{{.Id}}' quickstart-banner:latest
 INFO     @docker-host > | sha256:<id>
@@ -19,10 +19,11 @@ INFO     @docker-host   | docker rm -v quickstart-banner
 INFO     @docker-host > | Error response from daemon: No such container: quickstart-banner
 INFO     @docker-host   | docker run -d --name quickstart-banner -v
          /tmp/quickstart-docker/banner:/tmp/quickstart-docker/banner -e
-         GCOV_PREFIX=/tmp/quickstart-docker/banner quickstart-banner:latest
+         GCOV_PREFIX=/tmp/quickstart-docker/banner -e GCOV_PREFIX_STRIP=3 quickstart-banner:latest
 INFO     @docker-host:tools   | test -x /opt/quickstart/wordcount
 INFO     @docker-host:tools   | test -x /opt/quickstart/shout
 INFO     @docker-host   | docker exec -i <id> sh -c 'mkdir -p /opt/quickstart'
+INFO     @docker-host > | <id>
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
          %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
@@ -33,7 +34,6 @@ INFO     @docker-host > | directory 0 1777
 INFO     @docker-host > | directory 1000 700
 INFO     @docker-host   | mkdir -p
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
-INFO     @docker-host > | <id>
 INFO     @docker-host   | banner: installed
 docker-host wordcount ━━━━ 2.3/2.3 MB <rate>
 INFO     @docker-host   | docker cp

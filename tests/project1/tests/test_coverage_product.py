@@ -67,6 +67,17 @@ async def _compile_product() -> None:
         await localhost.close()
 
 
+def _gcov_env(host: UnixHost) -> str:
+    """``GCOV_PREFIX=… GCOV_PREFIX_STRIP=…`` for *host*'s ``product``, both read off the product.
+
+    The strip is the one otto counts from the entry's ``build_root``
+    (``product/``, where the Makefile builds), so the ``.gcda`` land flat in
+    the cov_dir; the suite never counts it itself.
+    """
+    product = next(p for p in host.products if p.name == PRODUCT_NAME)
+    return f"GCOV_PREFIX={_cov_dir(host)} GCOV_PREFIX_STRIP={product.gcov_prefix_strip}"
+
+
 def _cov_dir(host: UnixHost) -> str:
     """The host-side coverage directory *host*'s ``product`` entry declares.
 
@@ -112,16 +123,8 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
 
     Returns the stdout output from the product.
     """
-    # Compute GCOV_PREFIX_STRIP: strip all path components from the
-    # build directory so .gcda files land flat in the product's cov_dir.
-    strip = len(PRODUCT_DIR.parts) - 1  # -1 for root '/'
-
     str_args = " ".join(str(a) for a in args)
-    cmd = (
-        f"GCOV_PREFIX={_cov_dir(host)} "
-        f"GCOV_PREFIX_STRIP={strip} "
-        f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
-    )
+    cmd = f"{_gcov_env(host)} {REMOTE_INSTALL_DIR}/product {op} {str_args}"
     result = await host.exec(cmd, timeout=10)
     if result.status != Status.Success:
         raise RuntimeError(f"Product run failed on {host.id}: {result.value}")
@@ -214,9 +217,7 @@ class TestCoverageProduct:
         """
         host = self._hosts[0]
         result = await host.exec(
-            f"GCOV_PREFIX={_cov_dir(host)} "
-            f"GCOV_PREFIX_STRIP={len(PRODUCT_DIR.parts) - 1} "
-            f"{REMOTE_INSTALL_DIR}/product div 1 0",
+            f"{_gcov_env(host)} {REMOTE_INSTALL_DIR}/product div 1 0",
             timeout=10,
         )
         # The program should exit with code 1 and print an error

@@ -4,7 +4,7 @@ INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 quickstart-docker
   docker-host
     install  banner  docker rm -v quickstart-banner
-                     docker run -d --name quickstart-banner -v /tmp/quickstart-docker/banner:/tmp/quickstart-docker/banner -e GCOV_PREFIX=/tmp/quickstart-docker/banner quickstart-banner:latest
+                     docker run -d --name quickstart-banner -v /tmp/quickstart-docker/banner:/tmp/quickstart-docker/banner -e GCOV_PREFIX=/tmp/quickstart-docker/banner -e GCOV_PREFIX_STRIP=3 quickstart-banner:latest
   docker-host.quickstart.tools
     stage    wordcount  mkdir -p /opt/quickstart
                         PUT /tmp/otto-gs/quickstart-docker/build/src/wordcount/wordcount -> /opt/quickstart

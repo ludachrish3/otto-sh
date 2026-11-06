@@ -63,6 +63,7 @@ __all__ = [
     "ProductPlan",
     "ShellProduct",
     "ensure_stage_dir",
+    "gcov_prefix_strip",
     "mkdir_line",
     "planned_stage_dir",
     "put_line",
@@ -400,6 +401,16 @@ class Product(ABC):
     Uninstall leaves it alone; cleanup removes the ``.gcda`` counters under
     it and the directories they leave empty (:mod:`otto.host.cov_sweep`)."""
 
+    build_root: PurePosixPath | None = None
+    """The directory this product's build ran in, as the build machine saw it.
+
+    The one input to :attr:`gcov_prefix_strip`: an instrumented binary bakes
+    each ``.gcda`` path in under this directory, and stripping its components
+    leaves the counters at their build-relative paths under :attr:`cov_dir`.
+    A declared product always has one (the ``build_root`` param, else the
+    declaring project's root); ``None`` (the default) is a code product that
+    did not say, and reading :attr:`gcov_prefix_strip` on it raises."""
+
     cov_dir_root_owned: ClassVar[bool] = False
     """Whether this kind's :attr:`cov_dir` is written as root, so it is cleared elevated.
 
@@ -429,6 +440,24 @@ class Product(ABC):
     """Host paths (literal or glob) of this product's own debug logs, hauled
     into ``logs/<host>/<name>/debug/`` by :meth:`get_debug_logs`. An immutable
     empty default on the ABC; subclasses assign their own list."""
+
+    @property
+    def gcov_prefix_strip(self) -> int:
+        """The ``GCOV_PREFIX_STRIP`` that pairs with :attr:`build_root` (:func:`gcov_prefix_strip`).
+
+        Raises:
+            ValueError: :attr:`build_root` is ``None`` -- the strip is never a
+                silent 0 -- or is not absolute, or contains ``..``.
+        """
+        if self.build_root is None:
+            raise ValueError(
+                f"product {self.name!r} has no build_root, so otto cannot compute "
+                "GCOV_PREFIX_STRIP; set Product.build_root to the directory its build ran in"
+            )
+        try:
+            return gcov_prefix_strip(self.build_root)
+        except ValueError as e:
+            raise ValueError(f"product {self.name!r}: {e} (got {str(self.build_root)!r})") from e
 
     @property
     def stages_artifact(self) -> bool:
@@ -571,17 +600,49 @@ def cov_dir_of(product: Product) -> str:
     return product.cov_dir or cov_dir_of_name(product.name)
 
 
-def instrumented_products(host: Any, products: Iterable[Product] | None = None) -> list[Product]:
-    """*host*'s products whose build is known to be instrumented.
+def gcov_prefix_strip(build_root: PurePosixPath) -> int:
+    """Return the ``GCOV_PREFIX_STRIP`` for a build that ran in *build_root*.
 
-    ``instrumented() is True`` only: a product that cannot tell (``None``)
-    is not counted. The counter reset, the fetch and the cleanup sweep all
-    ask this one predicate. *products* narrows the question to a subset of
-    the host's products (one owner's, say); ``None`` means all of them.
+    THE ONE RESOLVER: every component of *build_root* is stripped, so a
+    counter's baked path lands under ``GCOV_PREFIX`` at its path relative to
+    the build root. Pure: the path is never resolved and no filesystem is
+    read, because it names a directory on the build machine, which need not
+    be this one.
+
+    Raises:
+        ValueError: *build_root* is relative (there is no count to take) or
+            contains ``..`` (its depth is not the depth the compiler baked).
+            The message names the rule, not the value: each caller quotes the
+            value as its user wrote it.
     """
-    return [
-        p for p in (host.products if products is None else products) if p.instrumented() is True
-    ]
+    if not build_root.is_absolute():
+        raise ValueError("'build_root' must be absolute")
+    if ".." in build_root.parts:
+        raise ValueError(
+            "'build_root' must not contain '..': otto never resolves it, so write the "
+            "directory the build ran in"
+        )
+    return len(build_root.parts) - 1
+
+
+def is_instrumented(product: Product) -> bool:
+    """Whether *product*'s build is known to be instrumented: ``instrumented() is True``.
+
+    A product that cannot tell (``None``) is not. The one predicate behind
+    :func:`instrumented_products`, and behind every other place that acts on
+    a product's coverage only when otto will also clean and fetch it.
+    """
+    return product.instrumented() is True
+
+
+def instrumented_products(host: Any, products: Iterable[Product] | None = None) -> list[Product]:
+    """*host*'s products whose build is known to be instrumented (``is_instrumented``).
+
+    The counter reset, the fetch and the cleanup sweep all ask this one
+    predicate. *products* narrows the question to a subset of the host's
+    products (one owner's, say); ``None`` means all of them.
+    """
+    return [p for p in (host.products if products is None else products) if is_instrumented(p)]
 
 
 def cov_dir_products(host: Any, products: Iterable[Product]) -> list[Product]:
@@ -1009,6 +1070,10 @@ class ShellProduct(Product):
     cov_dir: str | None = None
     """See :attr:`Product.cov_dir <otto.host.product.Product.cov_dir>`; a dataclass
     field so kinds can pass it."""
+
+    build_root: PurePosixPath | None = None
+    """See :attr:`Product.build_root <otto.host.product.Product.build_root>`; a
+    dataclass field so kinds can pass it."""
 
     debug_log_globs: Sequence[str] = field(default_factory=list)
     """See :attr:`Product.debug_log_globs <otto.host.product.Product.debug_log_globs>`."""

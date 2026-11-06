@@ -8,11 +8,12 @@ can fail for a reader.
 
 import ast
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 from otto.config.project import Project
+from otto.host.product import gcov_prefix_strip
 from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
 from otto.labs.loader import load_lab
 from otto.reservations import SupportsResourceHolders
@@ -371,7 +372,8 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
     result = asyncio.run(agent.install(host))
     assert result.is_ok
     expected = (
-        "chmod +x /opt/agent/agent && GCOV_PREFIX=/var/cov/agent GCOV_PREFIX_STRIP=3 "
+        "chmod +x /opt/agent/agent && GCOV_PREFIX=/var/cov/agent "
+        f"GCOV_PREFIX_STRIP={gcov_prefix_strip(PurePosixPath(EXAMPLE))} "
         f"/opt/agent/agent --install --role {role}"
     )
     assert ran == [expected]

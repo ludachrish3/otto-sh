@@ -90,9 +90,10 @@ def _cov_dir(host: UnixHost) -> str:
     return product.cov_dir
 
 
-def _gcov_prefix_strip() -> int:
-    """Compute GCOV_PREFIX_STRIP for the product build directory."""
-    return len(PRODUCT_DIR.parts) - 1
+def _gcov_prefix_strip(host: UnixHost) -> int:
+    """The strip otto counts from *host*'s product's declared ``build_root`` (``product/``)."""
+    product = next(p for p in host.products if p.name == PRODUCT_NAME)
+    return product.gcov_prefix_strip
 
 
 async def _compile_product() -> None:
@@ -128,7 +129,7 @@ async def _uninstall_from_host(host: UnixHost) -> None:
 
 async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     """Run the product on a remote host with GCOV_PREFIX set."""
-    strip = _gcov_prefix_strip()
+    strip = _gcov_prefix_strip(host)
     str_args = " ".join(str(a) for a in args)
     cmd = (
         f"GCOV_PREFIX={_cov_dir(host)} "

@@ -1,16 +1,10 @@
 """Run the installed tools the way the tests do: once per call, with coverage on."""
 
-from pathlib import Path
 from typing import Any
 
 from otto.host import Host
 from otto.lab import get_host
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-# The build bakes each object's absolute path into the tool. GCOV_PREFIX_STRIP
-# drops the project root's own components from it, and GCOV_PREFIX puts what
-# is left under the product's cov_dir, where `otto cov get` looks.
-STRIP = len(PROJECT_ROOT.parts) - 1
 CONTAINER = "docker-host.quickstart.tools"
 PARENT = "docker-host"
 
@@ -36,20 +30,22 @@ def _find(name: str) -> "tuple[str, Host, Any]":
 async def run_tool(name: str, args: str) -> str:
     """Run one tool with coverage on; return what it printed.
 
+    The build bakes each object's absolute path into the tool.
+    ``product.gcov_prefix_strip``, which otto counts from the product's build
+    root, drops the project root's own components from it, and GCOV_PREFIX
+    puts what is left under the product's cov_dir, where `otto cov get` looks.
     wordcount and shout run in the compose container with both variables set.
-    banner runs in its own container through `docker exec` on the parent; that
-    container already has GCOV_PREFIX from the product's run_args.
+    banner runs in its own container through `docker exec` on the parent, and
+    adds nothing: otto set both variables on that container's `docker run`.
     ``args`` is shell text: quote what needs it.
     """
     host_id, host, product = _find(name)
     if product.kind == "docker_image":
-        command = (
-            f"docker exec -e GCOV_PREFIX_STRIP={STRIP} {product.container_name} "
-            f"/opt/quickstart/{name} {args}"
-        )
+        command = f"docker exec {product.container_name} /opt/quickstart/{name} {args}"
     else:
         command = (
-            f"GCOV_PREFIX={product.cov_dir} GCOV_PREFIX_STRIP={STRIP} /opt/quickstart/{name} {args}"
+            f"GCOV_PREFIX={product.cov_dir} GCOV_PREFIX_STRIP={product.gcov_prefix_strip} "
+            f"/opt/quickstart/{name} {args}"
         )
     result = await host.exec(command)
     if not result.is_ok:

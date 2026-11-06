@@ -20,7 +20,8 @@ each ``.gcda`` must pair with its own notes by path both times, so the two
 reports' system tiers are line-for-line identical. The unit tier counts only
 product sources: the library's ``core.cpp``, never the gtest test file.
 
-The products run with ``GCOV_PREFIX_STRIP`` set to the project root's depth, so
+The products run with the ``GCOV_PREFIX_STRIP`` otto counts from their build
+root, which defaults to the project root, so
 every object's ``.gcda`` is written at its path relative to the project root —
 the one build rule the coverage docs state.
 
@@ -45,8 +46,11 @@ from typing import Any
 import pytest
 
 from otto import layout
+from otto.config.project import Project
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
+from otto.host.declared_product import DeclaredProduct
+from otto.host.shell_kind import build_declared
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.e2e._otto_subprocess import output_dirs, run_otto
 from tests.e2e.cov._project5_build import _hits, _line_of
@@ -80,9 +84,11 @@ GCDA = {
     "tool": {"build/src/tool/CMakeFiles/tool.dir/main.cpp.gcda"},
 }
 
-# GCOV_PREFIX_STRIP drops the project root's components, leaving each object's
-# path relative to it.
-_STRIP = len(PROJECT_HIER.parts) - 1
+
+def _declared(name: str) -> DeclaredProduct:
+    """project_hier's declared product *name*, built from its entry as lab load builds it."""
+    (entry,) = [e for e in Project(root=PROJECT_HIER).declared_products if e.name == name]
+    return build_declared(entry, None, DeclaredProduct)  # the shell kind ignores its host
 
 
 def _run(
@@ -111,12 +117,18 @@ def _run(
 
 
 def _exercise() -> str:
-    """The shell command that runs app and tool on the host, failing on the first error."""
+    """The shell command that runs app and tool on the host, failing on the first error.
+
+    Both variables are read off the declared products: the strip is the one
+    otto counts from their build root (the project root by default), leaving
+    each object's path relative to it.
+    """
+    app_p, tool_p = _declared("app"), _declared("tool")
     app = (
-        f"GCOV_PREFIX=/tmp/otto-hier-cov-app GCOV_PREFIX_STRIP={_STRIP} "
+        f"GCOV_PREFIX={app_p.cov_dir} GCOV_PREFIX_STRIP={app_p.gcov_prefix_strip} "
         "LD_LIBRARY_PATH=/tmp /tmp/app"
     )
-    tool = f"GCOV_PREFIX=/tmp/otto-hier-cov-tool GCOV_PREFIX_STRIP={_STRIP} /tmp/tool"
+    tool = f"GCOV_PREFIX={tool_p.cov_dir} GCOV_PREFIX_STRIP={tool_p.gcov_prefix_strip} /tmp/tool"
     return (
         f"for i in $(seq {APP_RUNS}); do {app} || exit 1; done; "
         f"for i in $(seq {TOOL_RUNS}); do {tool} || exit 1; done"

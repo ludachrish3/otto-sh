@@ -710,8 +710,12 @@ class OttoContext:
             return False
         # The verdict otto.coverage.instrumentation.detect() reports as "yes" —
         # asked of the products directly, because this layer sits beneath the
-        # coverage pipeline (tach) and needs no report, only the answer.
-        return any(product.instrumented() is True for host in hosts for product in host.products)
+        # coverage pipeline (tach) and needs no report, only the answer. The
+        # predicate is the one cleanup and the fetch ask; imported here, like
+        # the config modules above, so it stays off the module's import path.
+        from .host.product import is_instrumented
+
+        return any(is_instrumented(product) for host in hosts for product in host.products)
 
     def get_host(self, host_id: str, **overrides: Unpack[HostOverrides]) -> "UnixHost":
         """Look up *host_id* in the active lab and apply any keyword overrides.

@@ -41,19 +41,18 @@ match = { id = "test[12]" }
 
 # The container-image products, both on the daemon host (test3). The
 # tarball form is built by docker/build.sh on the dev VM (git-ignored
-# artifact); it bakes its own GCOV_PREFIX_STRIP into the image (see
-# docker/build.sh and docker/Dockerfile) rather than fixing a number here —
-# the strip count depends on the build directory's own absolute path,
-# which differs between a worktree and the main checkout. The reference
-# form runs the image the tarball loaded, so it is declared AFTER it and
-# needs no pull. An archive scans unknown, hence `instrumented = true`.
+# artifact). Both declare the directory that build ran in as build_root, so
+# otto strips all of it on `docker run` and the counters land flat under
+# cov_dir, whatever the checkout's depth. The reference form runs the image
+# the tarball loaded, so it is declared AFTER it and needs no pull. An
+# archive scans unknown, hence `instrumented = true`.
 [[products]]
 name = "cov_container"
 kind = "docker_image"
 image = "docker/otto-cov-demo.tar"
 instrumented = true
 cov_dir = "/var/cov/cov_container"
-run_args = "-e GCOV_PREFIX={cov_dir}"
+build_root = "docker/build"
 match = { id = "test3" }
 
 [[products]]
@@ -63,7 +62,7 @@ image = "otto-cov-demo:e2e"
 pull = false
 instrumented = true
 cov_dir = "/var/cov/cov_container_ref"
-run_args = "-e GCOV_PREFIX={cov_dir}"
+build_root = "docker/build"
 match = { id = "test3" }
 
 # All three unix hosts are eligible for [coverage], though each suite's own

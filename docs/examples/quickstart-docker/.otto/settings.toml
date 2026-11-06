@@ -68,7 +68,8 @@ match = { id = "docker-host\\.quickstart\\.tools" }
 
 # doc: begin image-product
 # banner is the image itself, run on the parent with `docker run -d`. Its
-# cov_dir is bind-mounted at the same path, so its counters land on the parent.
+# cov_dir is bind-mounted at the same path, so its counters land on the parent;
+# otto sets GCOV_PREFIX and GCOV_PREFIX_STRIP on that `docker run` itself.
 [[products]]
 name = "banner"
 kind = "docker_image"
@@ -76,7 +77,6 @@ image = "quickstart-banner:latest"
 container_name = "quickstart-banner"
 instrumented = true
 cov_dir = "/tmp/quickstart-docker/banner"
-run_args = "-e GCOV_PREFIX={cov_dir}"
 match = { id = "docker-host" }
 # doc: end image-product
 

@@ -457,7 +457,7 @@ def test_cov_dir_in_uninstall_is_refused_by_name_with_the_hint(build):
     message = str(caught.value)
     assert "[[products]] 'fw'" in message
     assert "{cov_dir}" in message
-    assert "valid: {name} " in message
+    assert "valid: {name}, {gcov_prefix_strip} " in message
     assert "otto run cleanup" in message
 
 
@@ -465,8 +465,10 @@ def test_an_escaped_cov_dir_in_uninstall_is_literal():
     assert _build_shell(uninstall="echo {{cov_dir}}").uninstall_cmd == "echo {cov_dir}"
 
 
-def test_install_still_lists_both_placeholders():
-    with pytest.raises(ValueError, match=r"valid: \{cov_dir\}, \{name\} ") as caught:
+def test_install_lists_every_placeholder():
+    with pytest.raises(
+        ValueError, match=r"valid: \{cov_dir\}, \{name\}, \{gcov_prefix_strip\} "
+    ) as caught:
         _build_shell(install="echo {x}")
     assert "otto run cleanup" not in str(caught.value)
 

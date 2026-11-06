@@ -18,13 +18,13 @@ import string
 import types
 import typing
 from collections.abc import Collection, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from ..declared import DeclaredEntry
 from ..utils import anchor_path
 from .declared_product import DeclaredProduct
-from .product import cov_dir_of_name, validate_stage_dir
+from .product import cov_dir_of_name, gcov_prefix_strip, validate_stage_dir
 
 if TYPE_CHECKING:
     from .host import Host
@@ -58,7 +58,7 @@ def str_param(
 
 
 _COVERAGE_PARAMS = ("cov_dir", "debug_log_globs", "instrumented")
-_PLACEHOLDERS = ("cov_dir", "name")
+_PLACEHOLDERS = ("cov_dir", "name", "gcov_prefix_strip")
 _UNINSTALL_PLACEHOLDERS = tuple(p for p in _PLACEHOLDERS if p != "cov_dir")
 """What a declared ``uninstall`` may name: uninstall leaves coverage data alone (#777)."""
 _UNINSTALL_HINTS = {
@@ -66,7 +66,10 @@ _UNINSTALL_HINTS = {
     "uninstall leaves coverage data alone, and `otto run cleanup` removes it."
 }
 """Why a placeholder legal elsewhere is refused in ``uninstall``, keyed by its name."""
-_VALID = "artifact, stage_dir, install, uninstall, check, cov_dir, debug_log_globs, instrumented"
+_VALID = (
+    "artifact, stage_dir, install, uninstall, check, cov_dir, debug_log_globs, instrumented, "
+    "build_root"
+)
 
 RETIRED_PARAMS = {"dest_dir": "stage_dir"}
 """Param keys a built-in kind refuses BY NAME, mapped to what replaced them.
@@ -137,12 +140,16 @@ def substitute_placeholders(
     allowed: Collection[str] = _PLACEHOLDERS,
     hints: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Expand ``{cov_dir}``/``{name}`` in one command string, strictly.
+    """Expand ``{cov_dir}``/``{name}``/``{gcov_prefix_strip}`` in one command string, strictly.
 
-    *allowed* narrows the names *key* accepts (``uninstall`` takes every
-    placeholder but ``cov_dir``), and *hints* explains, per refused name,
-    why it is refused there. A name outside *allowed* is refused by the walk
-    below, before ``format_map`` could raise a bare ``KeyError``.
+    A name is accepted only when it is in *allowed* AND has a value in
+    *values*: *allowed* narrows the names *key* accepts (``uninstall`` takes
+    every placeholder but ``cov_dir``), and *values* says which exist at all
+    -- :func:`placeholder_values` leaves ``gcov_prefix_strip`` out for a kind
+    with no build root (``kmod``), so no caller restates that. *hints*
+    explains, per refused name, why it is refused there. Any other name is
+    refused by the walk below, before ``format_map`` could raise a bare
+    ``KeyError``.
 
     Shared by every built-in kind that takes command text (see
     :mod:`otto.host.kmod_kind`).
@@ -154,7 +161,7 @@ def substitute_placeholders(
     (``{}``, ``{0}``) all pass ``format_map`` silently — quietly rewriting
     the command that runs on the host. So this walks the parsed fields
     (:class:`string.Formatter`) FIRST and rejects anything but a bare
-    ``{cov_dir}``/``{name}``; only a template that passes the walk is handed
+    placeholder that is accepted; only a template that passes the walk is handed
     to ``format_map``, which then cannot fail.
 
     ``Formatter.parse`` is itself a lazy generator that raises a bare,
@@ -165,14 +172,15 @@ def substitute_placeholders(
     """
     if command is None:
         return None
+    accepted = [p for p in allowed if p in values]
     try:
         fields = list(_FORMATTER.parse(command))
     except ValueError as e:
-        raise _placeholder_error(entry, key, str(e), allowed) from e
+        raise _placeholder_error(entry, key, str(e), accepted) from e
     for _literal, field_name, format_spec, conversion in fields:
         if field_name is None:
             continue  # a chunk of literal text with no field in it
-        if field_name in allowed and conversion is None and not format_spec:
+        if field_name in accepted and conversion is None and not format_spec:
             continue
         offending = "{" + field_name
         if conversion is not None:
@@ -181,7 +189,7 @@ def substitute_placeholders(
             offending += f":{format_spec}"
         offending += "}"
         hint = (hints or {}).get(field_name)
-        raise _placeholder_error(entry, key, offending, allowed, hint)
+        raise _placeholder_error(entry, key, offending, accepted, hint)
     return command.format_map(values)
 
 
@@ -339,9 +347,49 @@ def refuse_unknown_params(
         )
 
 
-def placeholder_values(entry: DeclaredEntry, cov_dir: str | None) -> dict[str, str]:
-    """Return what a product's command placeholders (``_PLACEHOLDERS``) expand to."""
-    return {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+def build_root_param(entry: DeclaredEntry, params: dict[str, Any]) -> PurePosixPath:
+    """Pop ``build_root`` off *params*: the directory the product's build ran in.
+
+    Absent means the declaring project's root (``entry.base_dir``) -- the
+    convention that the binary was built inside the project, at the path
+    otto sees. A relative value is anchored at that root
+    (:func:`~otto.utils.anchor_path`, as ``artifact`` is); an absolute one is
+    the build machine's path, taken as written. Nothing is resolved or read
+    from disk. An empty value is refused (absence is the default, never
+    ``""``), and the resolver (:func:`~otto.host.product.gcov_prefix_strip`)
+    runs once here, so a ``..`` fails at lab load naming the entry.
+
+    Only the kinds whose counters ``GCOV_PREFIX_STRIP`` governs call this
+    (``shell``/``class =`` through :func:`build_declared`, and
+    ``docker_image``); it is deliberately not one of :func:`coverage_params`,
+    which ``kmod`` shares, so every other kind refuses the key as unknown.
+    """
+    value = str_param(entry, params, "build_root")
+    if value == "":
+        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: 'build_root' must not be empty")
+    root = PurePosixPath(
+        entry.base_dir if value is None else anchor_path(Path(value), entry.base_dir)
+    )
+    try:
+        gcov_prefix_strip(root)
+    except ValueError as e:
+        written = str(entry.base_dir) if value is None else value
+        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: {e} (got {written!r})") from e
+    return root
+
+
+def placeholder_values(
+    entry: DeclaredEntry, cov_dir: str | None, build_root: PurePosixPath | None
+) -> dict[str, str]:
+    """Return what a product's command placeholders (``_PLACEHOLDERS``) expand to.
+
+    ``gcov_prefix_strip`` is present only with a *build_root*: a kind that has
+    none (``kmod``) also leaves it out of the names its strings accept.
+    """
+    values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+    if build_root is not None:
+        values["gcov_prefix_strip"] = str(gcov_prefix_strip(build_root))
+    return values
 
 
 def build_declared(
@@ -357,7 +405,7 @@ def build_declared(
     """
     params = dict(entry.params)
     if entry.seam == "dev_tools":
-        for key in _COVERAGE_PARAMS:
+        for key in (*_COVERAGE_PARAMS, "build_root"):
             if key in params:
                 raise ValueError(
                     f"[[dev_tools]] {entry.name!r}: {key!r} is a product-only param "
@@ -370,10 +418,11 @@ def build_declared(
     uninstall = str_param(entry, params, "uninstall")
     check = str_param(entry, params, "check")
     cov = coverage_params(entry, params)
+    build_root = build_root_param(entry, params) if entry.seam == "products" else None
     extra = _subclass_fields(entry, cls, params)
     refuse_unknown_params(entry, params, _who(entry), ", ".join([_VALID, *_own_field_names(cls)]))
     if entry.seam == "products":
-        values = placeholder_values(entry, cov.cov_dir)
+        values = placeholder_values(entry, cov.cov_dir, build_root)
         install = substitute_placeholders(entry, "install", install, values)
         uninstall = substitute_placeholders(
             entry,
@@ -392,6 +441,7 @@ def build_declared(
         name=entry.name,
         stage_dir=stage_dir,
         cov_dir=cov.cov_dir,
+        build_root=build_root,
         debug_log_globs=cov.debug_log_globs,
         install_cmd=install,
         uninstall_cmd=uninstall,

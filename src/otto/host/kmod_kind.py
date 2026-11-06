@@ -87,6 +87,14 @@ _VALID = (
     "debug_log_globs"
 )
 _MODULE_VERBS = ("load", "unload", "lsmod")
+_PARAMS_HINTS = {
+    "gcov_prefix_strip": "a kmod's counters keep their full path: otto_kmodcov writes "
+    "cov_dir plus the path the build baked in, and no strip applies"
+}
+"""Why a kmod has no strip: one wording for ``params`` and :attr:`KmodProduct.gcov_prefix_strip`.
+
+A kmod has no ``build_root``, so :func:`~otto.host.shell_kind.placeholder_values`
+gives ``{gcov_prefix_strip}`` no value and ``params`` refuses it with this hint."""
 
 
 @dataclass
@@ -112,6 +120,16 @@ class KmodProduct(ShellProduct):
         super().__post_init__()
         if not self.module_name:
             self.module_name = self.artifact.stem.replace("-", "_")
+
+    @property
+    @override
+    def gcov_prefix_strip(self) -> int:
+        """Always raise, since a kmod never strips (``_PARAMS_HINTS``), whatever its ``build_root``.
+
+        Raises:
+            ValueError: always, naming the product.
+        """
+        raise ValueError(f"product {self.name!r} is a kmod: {_PARAMS_HINTS['gcov_prefix_strip']}")
 
     @override
     async def stage(self, host: "Host") -> Result:
@@ -464,8 +482,17 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
         )
     cov = coverage_params(entry, params)
     refuse_unknown_params(entry, params, "kind 'kmod'", _VALID)
-    values = placeholder_values(entry, cov.cov_dir)
-    expanded = substitute_placeholders(entry, "params", insmod_params, values) or ""
+    values = placeholder_values(entry, cov.cov_dir, None)
+    expanded = (
+        substitute_placeholders(
+            entry,
+            "params",
+            insmod_params,
+            values,
+            hints=_PARAMS_HINTS,
+        )
+        or ""
+    )
     return KmodProduct(
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,

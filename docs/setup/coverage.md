@@ -42,7 +42,7 @@ artifact = "build/agent"
 stage_dir = "/opt/agent"
 cov_dir = "/var/cov/agent"
 check = "test -x /opt/agent/agent"
-install = "chmod +x /opt/agent/agent && GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/agent/agent --install"
+install = "chmod +x /opt/agent/agent && GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP={gcov_prefix_strip} /opt/agent/agent --install"
 ```
 
 `check` is how otto asks the host whether this product is already there: a
@@ -60,9 +60,9 @@ A command-line tool the tests run once each needs nothing about coverage in
 `install`: each test sets the variables itself
 ({ref}`a tool run once per test <coverage-run-per-test-case>`).
 
-`{cov_dir}` and `{name}` are the two placeholders `install` and `check`
-accept; `uninstall` takes `{name}` only, and anything else is refused when
-settings load. Coverage data is otto's to clear, collect and remove
+`{cov_dir}`, `{name}` and `{gcov_prefix_strip}` are the placeholders
+`install` and `check` accept; `uninstall` takes all but `{cov_dir}`, and
+anything else is refused when settings load. Coverage data is otto's to clear, collect and remove
 ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 A literal brace — `awk '{{print $1}}'`, a shell `${{VAR}}` — is written
 doubled. See {doc}`../configuration/declared-products-tools` for the whole
@@ -73,7 +73,8 @@ product whose install needs code, such as the worked example's `AgentBinary`
 from {doc}`defining-products-and-tools` (it passes each element's `role` from
 lab metadata, a per-host value a command string cannot carry), names a Python
 class with `class =` instead. Its overridden `install` sets the same
-variable, from `self.cov_dir`, when it composes the command:
+variables, from `self.cov_dir` and `self.gcov_prefix_strip`, when it composes
+the command:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
 :language: python
@@ -91,17 +92,13 @@ purely in Python, with no `artifact` for otto to scan, is asked by calling
 `self.cov_dir` is concrete by the time the product is attached to a host, so
 building a command out of it always works.
 
-`GCOV_PREFIX_STRIP` is the compiler's own knob, not otto's: it drops that many
-leading components from the path baked in at compile time, so the tree under
-`cov_dir` stays shallow instead of replicating the build machine's layout.
-Pick it by counting the leading components of the build directory's absolute
-path *on the machine that compiled the product* — `/home/dev/agent/build` is
-four. Nothing in otto reads the value. The fetch keeps each `.gcda` at its path
-under `cov_dir`, and otto pairs it with its `.gcno` by that path, so the
-count only has to leave every object's path unique: the
-{ref}`one build requirement <coverage-build-requirement>`. Any count that does
-is right: the tracks count the project root's components instead of the build
-directory's, a smaller number that works too.
+`{gcov_prefix_strip}` is a number otto counts from the entry's `build_root`,
+the directory the build ran in, which defaults to the project root. That
+leaves each `.gcda` at its project-relative path under `cov_dir`, where otto
+pairs it with its `.gcno`, so it meets the
+{ref}`one build requirement <coverage-build-requirement>` with no number of
+your own. A product built somewhere else sets `build_root`
+({ref}`build_root <declared-build-root>`).
 
 ## Switch coverage on
 

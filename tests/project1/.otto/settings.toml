@@ -81,6 +81,9 @@ kind = "shell"
 artifact = "product/product"
 stage_dir = "/opt/coverage_product"
 cov_dir = "/var/coverage/product"
+# The Makefile builds in product/, so otto strips all of it: the .gcda land
+# flat in cov_dir (the suite reads the count as product.gcov_prefix_strip).
+build_root = "product"
 check = "test -x /opt/coverage_product/product"
 match = { id = "test[1-3]" }
 

@@ -23,14 +23,15 @@ class AgentBinary(DeclaredProduct):
 
         ``GCOV_PREFIX`` redirects the instrumented build's ``.gcda`` writes to
         :attr:`cov_dir` — the one directory ``otto cov get`` fetches from —
-        and ``GCOV_PREFIX_STRIP`` drops the build machine's leading path
-        components so the tree under it stays shallow. The role is the one
+        and ``GCOV_PREFIX_STRIP`` (:attr:`gcov_prefix_strip`, which otto
+        counts from the entry's build root) drops the build root's own
+        components so each counter lands at its project-relative path. The role is the one
         per-host value: it differs by element, so no declared string carries it.
         """
         binary = (await self.resolved_stage_dir(host)) / self.artifact.name
         element = host.element
         role = element.metadata.get("role", "node") if element is not None else "node"
-        env = f"GCOV_PREFIX={self.cov_dir} GCOV_PREFIX_STRIP=3"
+        env = f"GCOV_PREFIX={self.cov_dir} GCOV_PREFIX_STRIP={self.gcov_prefix_strip}"
         return await host.run(
             f"chmod +x {binary} && {env} {binary} --install --role {shlex.quote(str(role))}"
         )
