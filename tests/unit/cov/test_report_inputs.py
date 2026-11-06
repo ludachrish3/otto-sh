@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from otto.coverage.report_inputs import ReportInputs, resolve_report_inputs
-from otto.coverage.store.model import Thresholds
+from otto.coverage.store.model import CoverageStore, Thresholds
 from tests._fixtures.gitrepo import TmpGitRepo
 
 
@@ -59,6 +59,7 @@ async def test_run_coverage_report_overwrite_clears_and_proceeds(tmp_path, monke
 
     async def fake_run(self):
         ran()
+        return CoverageStore()
 
     monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
     await reporter_module.run_coverage_report([], tmp_path, ReportInputs(), overwrite=True)
@@ -78,6 +79,7 @@ async def test_run_coverage_report_creates_a_missing_output_dir(tmp_path, monkey
 
     async def fake_run(self):
         ran()
+        return CoverageStore()
 
     monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
     await reporter_module.run_coverage_report([], out, ReportInputs())

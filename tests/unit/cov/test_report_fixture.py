@@ -116,8 +116,8 @@ def test_display_paths_are_short_and_deterministic(tmp_path):
 
 
 class TestRunTable:
-    """spec §10: three system runs under one multi-host label, two unit
-    runs, and two manual runs (one fully revoked, one aging +
+    """spec §10: three system runs, one ``<host>/<product>`` context each,
+    two unit runs, and two manual runs (one fully revoked, one aging +
     dirty-remapped)."""
 
     def _runs(self, tmp_path):
@@ -125,17 +125,16 @@ class TestRunTable:
         payload = _index_payload(report_dir)
         return payload["runs"]
 
-    def test_nightly_full_is_two_hosts_same_label(self, tmp_path):
-        """Three member runs: firmware on router-a and router-b, plus agent
-        on router-b — two hosts, and one host carrying two products."""
+    def test_nightly_full_is_three_product_contexts(self, tmp_path):
+        """Three runs: firmware on router-a and router-b, plus agent on
+        router-b — two hosts, one carrying two products, so three contexts."""
         runs = self._runs(tmp_path)
-        nightly = [r for r in runs if r["label"] == "nightly-full"]
-        assert [(r["host"], r["product"]) for r in nightly] == [
-            ("router-a", "firmware"),
-            ("router-b", "firmware"),
-            ("router-b", "agent"),
+        nightly = [r for r in runs if r["tier"] == "system"]
+        assert [(r["label"], r["host"], r["product"], r["source"]) for r in nightly] == [
+            ("router-a/firmware", "router-a", "firmware", "run"),
+            ("router-b/firmware", "router-b", "firmware", "run"),
+            ("router-b/agent", "router-b", "agent", "run"),
         ]
-        assert all(r["tier"] == "system" for r in nightly)
 
     def test_products_span_every_run(self, tmp_path):
         report_dir = build_fixture_report(tmp_path)
@@ -145,23 +144,23 @@ class TestRunTable:
 
     def test_unit_harvest_run(self, tmp_path):
         runs = self._runs(tmp_path)
-        (unit_run,) = [r for r in runs if r["label"] == "unit harvest"]
+        (unit_run,) = [r for r in runs if r["label"] == "ci-01/firmware"]
         assert unit_run["tier"] == "unit"
         assert unit_run["host"] == "ci-01"
-        (agent_unit,) = [r for r in runs if r["label"] == "agent unit"]
+        (agent_unit,) = [r for r in runs if r["label"] == "ci-01/agent"]
         assert agent_unit["tier"] == "unit"
         assert (agent_unit["host"], agent_unit["product"]) == ("ci-01", "agent")
 
     def test_smoke_old_run_is_fully_revoked(self, tmp_path):
         report_dir = build_fixture_report(tmp_path)
         payload = _index_payload(report_dir)
-        (smoke_run,) = [r for r in payload["runs"] if r["label"] == "smoke-old"]
+        (smoke_run,) = [r for r in payload["runs"] if r["label"] == "bench-3/bootloader"]
         contrib = payload["run_contrib"][str(smoke_run["id"])]
         assert contrib == {"lines": 0, "revoked": 1, "files": []}
 
     def test_field_bring_up_run_is_aging_and_dirty_remapped(self, tmp_path):
         runs = self._runs(tmp_path)
-        (field_run,) = [r for r in runs if r["label"] == "field bring-up"]
+        (field_run,) = [r for r in runs if r["label"] == "bench-7/bootloader"]
         assert field_run["tier"] == "manual"
         assert field_run["aging"] is True
         assert field_run["dirty_remap"] is True
@@ -195,7 +194,7 @@ class TestRowStates:
         line = chunk["lines"]["6"]
         assert line["state"] == "stale"
         assert line["hits"] == {}
-        (smoke_run,) = [r for r in payload["runs"] if r["label"] == "smoke-old"]
+        (smoke_run,) = [r for r in payload["runs"] if r["label"] == "bench-3/bootloader"]
         assert line["stale_run"] == [smoke_run["id"]]
 
     def test_aging_line_has_run_credit_but_no_tier_hit(self, tmp_path):
@@ -206,7 +205,7 @@ class TestRowStates:
         line = chunk["lines"]["9"]
         assert line["state"] == "aging"
         assert line["hits"] == {}
-        (field_run,) = [r for r in payload["runs"] if r["label"] == "field bring-up"]
+        (field_run,) = [r for r in payload["runs"] if r["label"] == "bench-7/bootloader"]
         assert line["run"] == {str(field_run["id"]): 3}
 
     def test_utils_c_has_one_excluded_line(self, tmp_path):

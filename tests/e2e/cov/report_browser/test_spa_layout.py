@@ -26,11 +26,12 @@ WIDTHS = [820, 960, 1000]
 VIEWPORT_HEIGHT = 800
 
 # Context / ticket / product / search values come from
-# tests/_fixtures/_report_fixture.py (nightly-full, PROJ-204, firmware,
+# tests/_fixtures/_report_fixture.py (router-a/firmware, PROJ-204, firmware,
 # product/main.c's checked_add).
+FOCUS_CTX = "router-a/firmware"
 POPULATED_ROUTE = (
     "/coverage/product/main.c?lines=3&q=checked_add"
-    "&ctx=nightly-full&ticket=PROJ-204&product=firmware"
+    f"&ctx={quote(FOCUS_CTX, safe='')}&ticket=PROJ-204&product=firmware"
 )
 # The single-line header controls (chips and pills); ``brand``/``app-nav``
 # are groups, checked for overlap and containment but not for height.
@@ -55,9 +56,12 @@ LONG_QUERY = "checked_add|" + "q" * 70
 LONG_BOARD = "router-a-" + "b" * 60
 LONG_LAB = "lab1-" + "l" * 60
 LONG_TIER = "hardwarequalification"
+# The header swap rewrites "firmware" inside the run labels too, so the
+# focused context's label is the long one.
+LONG_CTX = FOCUS_CTX.replace("firmware", LONG_PRODUCT)
 LONG_ROUTE = (
     f"/coverage/product/main.c?lines=3&re=1&q={quote(LONG_QUERY)}"
-    f"&ctx=nightly-full&ticket={LONG_TICKET}&product={LONG_PRODUCT}"
+    f"&ctx={quote(LONG_CTX, safe='')}&ticket={LONG_TICKET}&product={LONG_PRODUCT}"
 )
 MAX_CHIP_WIDTH_PX = 192  # max-w-48
 
@@ -222,9 +226,9 @@ def test_runs_scroll_reveals_last_column(page: Page, report_dir: Path, width: in
 @pytest.mark.parametrize("width", [820])
 def test_runs_expanded_details_scroll_with_rows(page: Page, report_dir: Path, width: int) -> None:
     _goto(page, report_dir, width, "/runs")
-    row = page.locator('[data-testid="run-row-nightly-full"]')
+    row = page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')
     row.click()
-    detail = page.locator('[data-testid="run-detail-nightly-full"]')
+    detail = page.locator(f'[data-testid="run-detail-{FOCUS_CTX}"]')
     expect(detail).to_be_visible()
 
     def left_edge(loc: Locator) -> float:
@@ -274,15 +278,17 @@ def test_runs_cells_not_clipped(
 def test_runs_long_tier_name_stays_in_its_track(page: Page, report_dir: Path, width: int) -> None:
     _inject_long_values(page, tier=True)
     _goto(page, report_dir, width, "/runs")
-    chip = page.locator('[data-testid="run-row-unit harvest"] [data-testid="tier-chip"]')
+    chip = page.locator('[data-testid="run-row-ci-01/firmware"] [data-testid="tier-chip"]')
     expect(chip).to_be_visible()
     assert LONG_TIER in (chip.text_content() or "")
     # The chip's own box against the NEXT cell: a self-scrollWidth check can
-    # pass while the whole chip spills over its neighbour.
+    # pass while the whole chip spills over its neighbour. The chip sits in
+    # the row's tier cell (one chip per tier the context has captures in).
     rects = chip.evaluate(
         """el => {
             const r = el.getBoundingClientRect();
-            const n = el.nextElementSibling.getBoundingClientRect();
+            const cell = el.closest('[data-testid="run-tiers"]');
+            const n = cell.nextElementSibling.getBoundingClientRect();
             return {right: r.right, nextLeft: n.left};
         }"""
     )
@@ -293,8 +299,8 @@ def test_runs_long_tier_name_stays_in_its_track(page: Page, report_dir: Path, wi
 def test_runs_expanded_details_hold_long_values(page: Page, report_dir: Path, width: int) -> None:
     _inject_long_values(page, cells=True)
     _goto(page, report_dir, width, "/runs")
-    page.locator('[data-testid="run-row-nightly-full"]').click()
-    detail = page.locator('[data-testid="run-detail-nightly-full"]')
+    page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]').click()
+    detail = page.locator(f'[data-testid="run-detail-{FOCUS_CTX}"]')
     expect(detail).to_be_visible()
     problems = detail.evaluate(
         """el => {

@@ -39,6 +39,16 @@ def test_run_dir_of_is_the_inverse_of_host_logs_dir():
     assert layout.run_dir_of(layout.host_logs_dir(BASE, "h1")) == BASE
 
 
+def test_run_dir_of_cov_is_the_inverse_of_cov_dir():
+    # Kills: a run dir rebuilt from a capture path or by hand, drifting from
+    # the cov dir it was staged under.
+    assert layout.run_dir_of_cov(layout.cov_dir(BASE)) == BASE
+
+
+def test_product_label():
+    assert layout.product_label("test2", "stack") == "test2/stack"
+
+
 def test_logs_and_cov_trees_share_the_host_product_shape():
     logs = layout.product_logs_dir(BASE, "h1", "app").parent.relative_to(BASE / "logs")
     cov = layout.cov_product_dir(BASE, "h1", "app").relative_to(BASE / "cov")

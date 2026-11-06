@@ -327,7 +327,7 @@ abstract	otto.coverage:CoverageReporter	-
 name	otto.coverage:CoverageStore	class
 mro	otto.coverage:CoverageStore	-
 call	otto.coverage:CoverageStore	sync	PK:tier_order:N
-member	otto.coverage:CoverageStore.add_run	method	sync	KO:tier:- KO:label:N KO:board:S:"" KO:host:S:"" KO:product:S:"" KO:labs:N KO:captured_at:S:"" KO:tester:N KO:ticket:N KO:note:N KO:base_commit:S:"" KO:dirty_remap:B:false
+member	otto.coverage:CoverageStore.add_run	method	sync	KO:tier:- KO:source:- KO:board:S:"" KO:host:S:"" KO:product:S:"" KO:run_dir:S:"" KO:labs:N KO:captured_at:S:"" KO:tester:N KO:ticket:N KO:note:N KO:base_commit:S:"" KO:dirty_remap:B:false
 member	otto.coverage:CoverageStore.file_count	method	sync	-
 member	otto.coverage:CoverageStore.files	method	sync	-
 member	otto.coverage:CoverageStore.get_or_create_file	method	sync	PK:path:-
@@ -338,6 +338,7 @@ member	otto.coverage:CoverageStore.overall_pct	method	sync	PK:tier:N
 member	otto.coverage:CoverageStore.register_tier	method	sync	PK:tier:-
 member	otto.coverage:CoverageStore.remove_file	method	sync	PK:path:-
 member	otto.coverage:CoverageStore.save	method	sync	PK:path:-
+member	otto.coverage:CoverageStore.source_counts	method	sync	-
 abstract	otto.coverage:CoverageStore	-
 name	otto.coverage:CoverageToolVersionError	class
 mro	otto.coverage:CoverageToolVersionError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -4716,6 +4717,14 @@ name	otto.monitor:MonitorInputError	class
 mro	otto.monitor:MonitorInputError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.monitor:MonitorInputError	sync	PK:message:- KO:field:-
 abstract	otto.monitor:MonitorInputError	-
+name	otto.monitor:MonitorSelection	class
+mro	otto.monitor:MonitorSelection	-
+call	otto.monitor:MonitorSelection	sync	PK:hosts:- PK:dropped:-
+member	otto.monitor:MonitorSelection.__eq__	method	sync	PK:other:-
+member	otto.monitor:MonitorSelection.__hash__	method	sync	-
+member	otto.monitor:MonitorSelection.dropped	field
+member	otto.monitor:MonitorSelection.hosts	field
+abstract	otto.monitor:MonitorSelection	-
 name	otto.monitor:MonitorServer	class
 mro	otto.monitor:MonitorServer	-
 call	otto.monitor:MonitorServer	sync	PK:collector:- PK:host:S:"0.0.0.0" PK:port:I:0 KO:mode:S:"live" KO:document:N KO:source_name:N KO:frame:N KO:lab:N KO:tls_cert:N KO:tls_key:N KO:archive_path:N
@@ -4766,8 +4775,8 @@ name	otto.monitor:is_monitorable	function
 call	otto.monitor:is_monitorable	sync	PK:host:-
 name	otto.monitor:load_review_document	function
 call	otto.monitor:load_review_document	sync	PK:path:-
-name	otto.monitor:monitorable	function
-call	otto.monitor:monitorable	sync	PK:hosts:-
+name	otto.monitor:partition_monitorable	function
+call	otto.monitor:partition_monitorable	sync	PK:hosts:-
 name	otto.monitor:resolve_monitor_tls	function
 call	otto.monitor:resolve_monitor_tls	sync	PK:projects:-
 name	otto.monitor:run_live	function
@@ -4776,6 +4785,8 @@ name	otto.monitor:select_monitor_hosts	function
 call	otto.monitor:select_monitor_hosts	sync	PK:pattern:-
 name	otto.monitor:serve_review	function
 call	otto.monitor:serve_review	coroutine	PK:path:- KO:projects:-
+name	otto.monitor:unmonitorable_reason	function
+call	otto.monitor:unmonitorable_reason	sync	PK:host:- KO:has_snmp:N
 name	otto.params:OPTIONS	value
 name	otto.params:OptionVerb	alias
 name	otto.params:OptionsCollisionError	class
@@ -5993,7 +6004,7 @@ call	otto:try_get_context	sync	-
 format	check-echo-sentinel	S:"v1"	S:"v1"
 format	check-report	-	S:"otto-check/1"
 format	coverage-capture	I:3	I:3
-format	coverage-store	I:8	I:8
+format	coverage-store	I:9	I:9
 format	coverage-tickets	-	I:2
 format	kmodcov-interface	I:2	-
 format	link-impairment-sentinel	S:"v1" S:"v2" S:"v3"	S:"v1" S:"v3"

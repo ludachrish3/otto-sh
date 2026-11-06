@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { groupContexts, resolveScope, scopeTreeLines, searchHaystack } from "./contexts";
-import { emptyStats, makeIndex, makeRun } from "./testUtils";
+import { ctxTree, emptyStats, makeIndex, makeRun } from "./testUtils";
 import type { IndexPayload, RunJson } from "./types";
 
 describe("groupContexts", () => {
@@ -16,6 +16,7 @@ describe("groupContexts", () => {
         "1": { lines: 875, revoked: 0, files: [] },
         "2": { lines: 799, revoked: 0, files: [] },
       },
+      tree: ctxTree({ "src/net/tcp.c": { "nightly-full": 1200 } }),
     });
 
     const contexts = groupContexts(index);
@@ -27,7 +28,9 @@ describe("groupContexts", () => {
       ["router-a", 875],
       ["router-b", 799],
     ]);
-    expect(ctx.lines).toBe(875 + 799);
+    // Per-host rows are each capture's own count; the context total is the
+    // tree's distinct-line rollup, never their sum.
+    expect(ctx.lines).toBe(1200);
   });
 
   it("does not dedupe hosts: the same host display twice yields two host entries", () => {
@@ -83,48 +86,77 @@ describe("groupContexts", () => {
     expect(ctx.hosts).toEqual([["router-a", 0]]);
   });
 
-  it("uses the first member run's tier when a label spans tiers (documented data anomaly)", () => {
+  it("a label captured in two tiers carries both, and spans tiers (tier '')", () => {
+    // Store v9 labels a capture `<host>/<product>`, so one product captured
+    // in `manual` and in `bench` shares one label: the context is both
+    // tiers' captures, never the first one's tier alone.
     const runs: RunJson[] = [
-      makeRun({ id: 1, label: "mixed", tier: "system" }),
-      makeRun({ id: 2, label: "mixed", tier: "unit" }),
+      makeRun({ id: 1, label: "h1/app", tier: "manual", host: "h1", product: "app" }),
+      makeRun({ id: 2, label: "h1/app", tier: "bench", host: "h1", product: "app" }),
     ];
-    const index = makeIndex({ runs, run_contrib: {} });
+    const index = makeIndex({ tier_order: ["bench", "manual"], runs });
     const [ctx] = groupContexts(index);
-    expect(ctx.tier).toBe("system");
+    expect(ctx.tiers).toEqual(["bench", "manual"]);
+    expect(ctx.tier).toBe("");
   });
 
-  it("merges per-path file counts across members: summed, sorted desc by count then asc by path", () => {
+  it("a single-tier context keeps that tier as its scalar tier", () => {
+    const runs: RunJson[] = [makeRun({ id: 1, label: "solo", tier: "unit" })];
+    const [ctx] = groupContexts(makeIndex({ runs }));
+    expect(ctx.tiers).toEqual(["unit"]);
+    expect(ctx.tier).toBe("unit");
+  });
+
+  it("counts a line two captures of one label both hit ONCE (the tree rollup, never a sum of runs)", () => {
+    // Two captures of h1/app, one per tier, each hit the one coverable line.
+    // run_contrib says 1 + 1; it is one line, as the directory view's
+    // `ctx_lines` says — 100%, not 200%.
+    const runs: RunJson[] = [
+      makeRun({ id: 1, label: "h1/app", tier: "manual", host: "h1", product: "app" }),
+      makeRun({ id: 2, label: "h1/app", tier: "bench", host: "h1", product: "app" }),
+    ];
+    const index = makeIndex({
+      tier_order: ["bench", "manual"],
+      runs,
+      total_lines: 1,
+      run_contrib: {
+        "1": { lines: 1, revoked: 0, files: [["src/a.c", 1]] },
+        "2": { lines: 1, revoked: 0, files: [["src/a.c", 1]] },
+      },
+      tree: ctxTree({ "src/a.c": { "h1/app": 1 } }, 1),
+    });
+    const [ctx] = groupContexts(index);
+    expect(ctx.lines).toBe(1);
+    expect(ctx.files).toEqual([["src/a.c", 1]]);
+    // The per-host rows stay per capture: each capture's own count.
+    expect(ctx.hosts).toEqual([
+      ["h1 · app", 1],
+      ["h1 · app", 1],
+    ]);
+  });
+
+  it("reads per-file counts off the tree, sorted desc by count then asc by path", () => {
     const runs: RunJson[] = [
       makeRun({ id: 1, label: "nightly-full" }),
       makeRun({ id: 2, label: "nightly-full" }),
+      makeRun({ id: 3, label: "other" }),
     ];
     const index = makeIndex({
       runs,
-      run_contrib: {
-        "1": {
-          lines: 10,
-          revoked: 0,
-          files: [
-            ["src/net/tcp.c", 100],
-            ["src/main.c", 5],
-          ],
-        },
-        "2": {
-          lines: 10,
-          revoked: 0,
-          files: [
-            ["src/net/tcp.c", 50],
-            ["src/core/sched.c", 5],
-          ],
-        },
-      },
+      tree: ctxTree({
+        "src/main.c": { "nightly-full": 5 },
+        "src/net/tcp.c": { "nightly-full": 120, other: 7 },
+        "src/core/sched.c": { "nightly-full": 5 },
+      }),
     });
-    const [ctx] = groupContexts(index);
-    expect(ctx.files).toEqual([
-      ["src/net/tcp.c", 150],
+    const [nightly, other] = groupContexts(index);
+    expect(nightly.files).toEqual([
+      ["src/net/tcp.c", 120],
       ["src/core/sched.c", 5],
       ["src/main.c", 5],
     ]);
+    expect(nightly.lines).toBe(130);
+    expect(other.files).toEqual([["src/net/tcp.c", 7]]);
   });
 
   describe("status", () => {

@@ -36,8 +36,9 @@ import json
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
+from ..layout import run_dir_of_cov
 from .merge.lcov_loader import LCOVLoader
 from .merge.merger import LcovMerger
 from .report_inputs import ReportInputs
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from ..host.product import Product
     from ..host.toolchain import Toolchain
     from .capture.model import Capture
+    from .capture.supersede import SupersedeKey
     from .exclusions.rules import ExclusionRule
     from .objects import ObjectListCache
     from .overrides import OverrideConfig
@@ -70,6 +72,17 @@ needs its tracefile.
 
 
 @dataclass(frozen=True)
+class CaptureInput:
+    """One e2e ``capture.json`` to fold in, with the run directory it came from."""
+
+    path: Path
+    """The ``capture.json``."""
+    run_dir: Path
+    """:func:`~otto.layout.run_dir_of_cov` of the ``cov/`` it was staged under, never
+    rebuilt from :attr:`path`."""
+
+
+@dataclass(frozen=True)
 class CollectionInputs:
     """The collection-model inputs to :class:`CoverageReporter`.
 
@@ -81,8 +94,9 @@ class CollectionInputs:
       store; also the base_commit-guard reference and the exclusion source.
     - ``tier_configs``: Declared coverage tiers (precedence order).  Seeds
       ``tier_order`` / ``tier_colors`` and drives unit-harvest.
-    - ``capture_paths``: ``capture.json`` files (one per host and product) to
-      fold in under their own tier, subject to the HEAD base_commit guard.
+    - ``captures``: ``capture.json`` files (one per host and product), each
+      with the run directory it came from, to fold in under their own tier,
+      subject to the HEAD base_commit guard.
     - ``exclusion_rules``: Compiled ``[coverage.exclusions]`` rules. The
       built-in ``LCOV_EXCL_*`` families always apply and are not listed here.
     - ``project_name``: The project whose products a unit tier reports.
@@ -95,7 +109,7 @@ class CollectionInputs:
 
     project_root: Path | None = None
     tier_configs: "list[TierConfig]" = field(default_factory=list)
-    capture_paths: list[Path] = field(default_factory=list)
+    captures: list[CaptureInput] = field(default_factory=list)
     exclusion_rules: "list[ExclusionRule]" = field(default_factory=list)
     project_name: str | None = None
     objects: "ObjectListCache | None" = None
@@ -278,7 +292,7 @@ class CoverageReporter:
         coll = collection or CollectionInputs()
         self.project_root: Path | None = coll.project_root
         self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
-        self.capture_paths: list[Path] = list(coll.capture_paths)
+        self.captures: list[CaptureInput] = list(coll.captures)
         self.exclusion_rules: "list[ExclusionRule]" = list(coll.exclusion_rules)
         self.project_name: str | None = coll.project_name
         self.objects: "ObjectListCache | None" = coll.objects
@@ -351,7 +365,7 @@ class CoverageReporter:
                     )
                     store.register_tier(tier_name)
                     continue
-                run_id = store.add_run(tier=tier_name)
+                run_id = store.add_run(tier=tier_name, source="tracefile")
                 loader.load(tier_path, tier_name, run_id=run_id)
 
             # Collection-model inputs, each a no-op without its constructor
@@ -377,9 +391,9 @@ class CoverageReporter:
 
             all_manual_captures = self._manual_captures()
             manual_captures = select_manual_captures(all_manual_captures)
-            seen_runs: set[tuple[str, str, str, str, str]] = set()
+            seen_runs: set[_CaptureRunKey] = set()
             for cap in all_manual_captures:
-                seen_runs.add(self._run_key(cap))
+                seen_runs.add(_capture_run_key(cap))
             self._load_captures(store, seen_runs)
             await self._harvest_unit_tiers(localhost, work_dir, loader)
             self._load_manual_store(store, manual_captures)
@@ -447,14 +461,7 @@ class CoverageReporter:
     # relevant constructor argument is supplied.
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _run_key(capture: "Capture") -> tuple[str, str, str, str, str]:
-        """Dedupe key: one run-table entry per distinct capture across all capture sources."""
-        return _capture_run_key(capture)
-
-    def _load_captures(
-        self, store: CoverageStore, seen_runs: set[tuple[str, str, str, str, str]]
-    ) -> None:
+    def _load_captures(self, store: CoverageStore, seen_runs: "set[_CaptureRunKey]") -> None:
         """Fold e2e board ``capture.json`` files in under a strict HEAD base_commit guard.
 
         Each capture is anchored to the exact commit (``base_commit``)
@@ -480,7 +487,7 @@ class CoverageReporter:
         copy itself does not fold into the store until
         :meth:`_load_manual_store` runs later.
         """
-        if not self.capture_paths or self.project_root is None:
+        if not self.captures or self.project_root is None:
             return
         from .capture import gitio
         from .capture.model import Capture
@@ -501,14 +508,15 @@ class CoverageReporter:
                 "(cli/cov/report in the docs).",
                 self.project_root,
             )
-        for cap_path in self.capture_paths:
+        for ci in self.captures:
+            cap_path = ci.path
             capture = Capture.load(cap_path)
-            key = self._run_key(capture)
+            key = _capture_run_key(capture)
             if key in seen_runs:
                 logger.info("Skipping duplicate capture %s (already folded)", cap_path)
                 continue
             seen_runs.add(key)
-            run_id = register_capture_run(store, capture)
+            run_id = register_capture_run(store, capture, source="run", run_dir=str(ci.run_dir))
             if capture.base_commit != head:
                 raise CaptureCommitError(
                     capture=str(cap_path), taken_at=capture.base_commit, head=head
@@ -597,7 +605,7 @@ class CoverageReporter:
             raw_info = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.raw.info"
             info_out = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.info"
             if run_id is None:
-                run_id = loader.store.add_run(tier=view.tier, product=view.product)
+                run_id = loader.store.add_run(tier=view.tier, source="unit", product=view.product)
             kept = list(unit_dir.selection.kept)
             try:
                 await merger.capture_dir(
@@ -652,23 +660,17 @@ class CoverageReporter:
 
         Cross-source dedupe against e2e/unit runs already happened before
         this method runs (:meth:`run` seeds ``seen_runs`` with these
-        captures' keys ahead of :meth:`_load_captures`); this method only
-        needs to dedupe *within* ``manual_captures`` itself, so two
-        identical committed captures still fold once.
+        captures' keys ahead of :meth:`_load_captures`). *manual_captures*
+        are supersede's winners, one per context, so no two of them share a
+        run key and none needs a dedupe here.
         """
         if self.project_root is None or not manual_captures:
             return
         from .validity import apply_manual_capture, register_capture_run
 
         max_age_by_tier = {t.name: t.max_age_days for t in self.tier_configs}
-        seen: set[tuple[str, str, str, str, str]] = set()
         for capture in manual_captures:
-            key = self._run_key(capture)
-            if key in seen:
-                logger.info("Skipping duplicate manual capture %s (already folded)", key)
-                continue
-            seen.add(key)
-            run_id = register_capture_run(store, capture)
+            run_id = register_capture_run(store, capture, source="manual")
             apply_manual_capture(
                 store,
                 capture,
@@ -957,15 +959,28 @@ def _scan_run_inputs(cov_dirs: list[Path]) -> list[_RunInput]:
     return runs
 
 
-def _capture_run_key(capture: "Capture") -> tuple[str, str, str, str, str]:
-    """Return the dedupe key: one run-table entry per distinct capture across all sources."""
-    return (
-        capture.tier,
-        capture.base_commit,
-        capture.board,
-        capture.product,
-        capture.captured_at,
-    )
+class _CaptureRunKey(NamedTuple):
+    """A capture's identity across every source: its context, commit and capture time.
+
+    Two copies of one capture (a cov-dir copy of a committed manual capture,
+    or one ``capture.json`` in two run dirs) share it; two captures of one
+    context taken at different times do not.
+    """
+
+    context: "SupersedeKey"
+    base_commit: str
+    captured_at: str
+
+
+def _capture_run_key(capture: "Capture") -> _CaptureRunKey:
+    """Return the dedupe key: one run-table entry per distinct capture across all sources.
+
+    Its context is :func:`~otto.coverage.capture.supersede.supersede_key`, so
+    the dedupe and supersede read a capture's tier, host and product alike.
+    """
+    from .capture.supersede import supersede_key
+
+    return _CaptureRunKey(supersede_key(capture), capture.base_commit, capture.captured_at)
 
 
 def _refuse_moved_commits(runs: list[_RunInput], project_root: Path) -> None:
@@ -990,7 +1005,7 @@ def _refuse_moved_commits(runs: list[_RunInput], project_root: Path) -> None:
     if not any(run.meta is not None or run.states.captured for run in runs):
         return
     head = gitio.head_commit(project_root)
-    manual: set[tuple[str, str, str, str, str]] | None = None
+    manual: set[_CaptureRunKey] | None = None
     for run in runs:
         if run.meta is not None and run.meta["base_commit"] != head:
             raise CaptureCommitError(
@@ -1009,8 +1024,11 @@ def _refuse_moved_commits(runs: list[_RunInput], project_root: Path) -> None:
 
 async def _capture_states(
     runs: list[_RunInput], project_root: Path, objects: "ObjectListCache"
-) -> list[Path]:
+) -> list[CaptureInput]:
     """Capture every not-yet-captured product; return every ``capture.json`` to load.
+
+    Each comes with the run directory it was staged under,
+    :func:`~otto.layout.run_dir_of_cov` of its run's ``cov/``.
 
     Each cov dir's pending products are captured with the tier and commit
     its metadata records, through *objects*, the report's one object-list
@@ -1027,7 +1045,7 @@ async def _capture_states(
     from .capture.produce import produce_captures
     from .errors import CoverageCaptureError
 
-    captures: list[Path] = []
+    captures: list[CaptureInput] = []
     failed: list[Path] = []
     details: list[str] = []
     for run in runs:
@@ -1049,7 +1067,11 @@ async def _capture_states(
                 failed.extend(cov_dir / p.key.host / p.key.product for p in e.result.failed)
                 details.extend(e.details)
             states = _classify_product_dirs(cov_dir)
-        captures.extend(cov_dir / k.host / k.product / "capture.json" for k in states.captured)
+        run_dir = run_dir_of_cov(cov_dir)
+        captures.extend(
+            CaptureInput(path=cov_dir / k.host / k.product / "capture.json", run_dir=run_dir)
+            for k in states.captured
+        )
     if failed:
         names = ", ".join(dict.fromkeys(ProductKey(d.parent.name, d.name).label for d in failed))
         reasons = ", ".join(str(d / "capture.failed") for d in failed)
@@ -1064,7 +1086,7 @@ def _validate_report_inputs(
     """Refuse unusable report inputs, by field, before anything is read.
 
     *cov_dirs* entries name a ``<run dir>/cov`` layout; the check is against
-    the run directory (``cov_dir.parent``), not ``cov/`` itself, so a run
+    the run directory (:func:`~otto.layout.run_dir_of_cov`), not ``cov/`` itself, so a run
     without coverage data but with a committed manual store can still
     produce a report. Run directories need *project_root*: their captures
     are anchored to its commits. *tier_specs* mirrors the CLI's own
@@ -1075,7 +1097,7 @@ def _validate_report_inputs(
     from .errors import CoverageInputError
 
     for cov_dir in cov_dirs:
-        run_dir = cov_dir.parent
+        run_dir = run_dir_of_cov(cov_dir)
         if not run_dir.is_dir():
             raise CoverageInputError(
                 f"output directory does not exist: {run_dir}", field="cov_dirs"
@@ -1149,6 +1171,10 @@ async def run_coverage_report(
     alone does not. An empty *cov_dirs* plus a non-empty manual store still
     yields a report.
 
+    Once the report is written, one ``Sources:`` INFO line names what each tier
+    folded, from :meth:`~otto.coverage.store.model.CoverageStore.source_counts`:
+    a superseded or deduped capture and a missing tracefile are not counted.
+
     Every other field of *inputs* — ``exclusion_rules``, ``thresholds``,
     ``ticket_spec``, ``overrides`` — is documented on
     :class:`~otto.coverage.report_inputs.ReportInputs` itself: what config
@@ -1211,9 +1237,9 @@ async def run_coverage_report(
     prepare_destination(
         output_dir, overwrite=overwrite, field="output_dir", remedy_field="overwrite"
     )
-    capture_paths: list[Path] = []
+    captures: list[CaptureInput] = []
     if objects is not None:
-        capture_paths = await _capture_states(runs, objects.project_root, objects)
+        captures = await _capture_states(runs, objects.project_root, objects)
 
     reporter = CoverageReporter(
         source_root=inputs.project_root or Path.cwd(),
@@ -1223,7 +1249,7 @@ async def run_coverage_report(
         collection=CollectionInputs(
             project_root=inputs.project_root,
             tier_configs=list(inputs.tier_configs or []),
-            capture_paths=capture_paths,
+            captures=captures,
             exclusion_rules=list(inputs.exclusion_rules),
             project_name=inputs.project_name,
             objects=objects,
@@ -1234,4 +1260,10 @@ async def run_coverage_report(
         ticket_spec=inputs.ticket_spec,
         overrides=inputs.overrides,
     )
-    return await reporter.run()
+    store = await reporter.run()
+    # What the report folded, from the finished store: never what it was offered.
+    logger.info(
+        "Sources: %s",
+        "; ".join(f"{t.tier} — {t.describe()}" for t in store.source_counts()) or "none",
+    )
+    return store

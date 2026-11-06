@@ -210,6 +210,8 @@ const RUNS: RunJson[] = [
     id: 1,
     tier: "system",
     label: "nightly-full",
+    source: "run",
+    run_dir: "",
     board: "",
     host: "router-a",
     product: "",
@@ -226,6 +228,8 @@ const RUNS: RunJson[] = [
     id: 2,
     tier: "system",
     label: "legacy checksum",
+    source: "run",
+    run_dir: "",
     board: "bench-3",
     host: "",
     product: "",
@@ -242,6 +246,8 @@ const RUNS: RunJson[] = [
     id: 3,
     tier: "unit",
     label: "field bring-up",
+    source: "run",
+    run_dir: "",
     board: "",
     host: "bench-2",
     product: "",
@@ -847,6 +853,50 @@ describe("FilePage", () => {
     });
   });
 
+  // Store v9: one `<host>/<product>` label can hold captures from several
+  // tiers. Focused, each tier column shows that tier's member-run hits.
+  describe("under focus on a context spanning two tiers", () => {
+    function renderCrossTier() {
+      const index = makeFileIndex({
+        runs: [
+          { ...RUNS[0], id: 11, label: "h1/app", tier: "system" } as RunJson,
+          { ...RUNS[0], id: 12, label: "h1/app", tier: "unit" } as RunJson,
+          { ...RUNS[0], id: 13, label: "other", tier: "unit" } as RunJson,
+        ],
+      });
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/src/net/tcp.c?ctx=h1%2Fapp";
+      mockChunkLoad({
+        resolve: makeChunk({
+          lines: {
+            "1": {
+              hits: { system: 4, unit: 3 },
+              branches: [],
+              state: null,
+              run: { "11": 4, "12": 3 },
+            },
+            "2": { hits: { system: 0, unit: 9 }, branches: [], state: null, run: { "13": 9 } },
+          },
+        }),
+      });
+      renderPage({ index, segments: ["src", "net", "tcp.c"], node: NODE });
+    }
+
+    it("each tier column shows that tier's member-run hits", async () => {
+      renderCrossTier();
+      const row1 = await screen.findByTestId("code-row-1");
+      expect(row1.children[2]?.textContent).toBe("4"); // system: run 11
+      expect(row1.children[3]?.textContent).toBe("3"); // unit: run 12
+    });
+
+    it("a line only a non-member hit reads zero in the context's tier columns", async () => {
+      renderCrossTier();
+      const row2 = await screen.findByTestId("code-row-2");
+      expect((row2.textContent?.match(/·/gu) ?? []).length).toBe(2);
+      expect(row2.textContent).not.toContain("9");
+    });
+  });
+
   // Per-product spec §10: a pinned product is the same per-run numerator
   // narrowing as a focused context, over a different run set.
   describe("under a product pin", () => {
@@ -881,6 +931,12 @@ describe("FilePage", () => {
       const row1 = await screen.findByTestId("code-row-1"); // run 1, product ""
       expect(row1.className).toContain("s-unc");
       expect(screen.getByTestId("code-row-6").className).not.toContain("s-unc");
+    });
+
+    it("a bare product spans tiers: its hit line shows '·' in every tier column", async () => {
+      renderProductPinned();
+      const row6 = await screen.findByTestId("code-row-6"); // run 3 (unit, app) hit it
+      expect((row6.textContent?.match(/·/gu) ?? []).length).toBe(2);
     });
   });
 

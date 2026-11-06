@@ -874,10 +874,16 @@ class OttoContext:
 
     def _resolve_verdicts(self) -> "dict[str, ProjectScope]":
         """Refuse any load error that is fatal here, then resolve each parsed project's verdict."""
-        from .config.scope import _not_switched_off, resolve_scopes
+        from .config.scope import (
+            OUT_OF_SCOPE_REASON,
+            SWITCHED_OFF_REASON,
+            _not_switched_off,
+            resolve_scopes,
+        )
         from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
         from .session.errors import ProjectLoadError
         from .session.projects import classify_load_errors
+        from .utils import name_by_reason
 
         result = self._bootstrap_snapshot()
         verdicts = classify_load_errors(
@@ -907,11 +913,22 @@ class OttoContext:
             # universe is not counted (``scoped_ids`` drops it the same way).
             active = _not_switched_off(declared, self.exclude_projects)
             union = frozenset().union(*(scope.universe for scope in active))
+            declared_union = frozenset().union(*(scope.universe for scope in declared))
             excluded = sum(1 for scope in scopes.values() if scope.excluded)
-            logger.info(
+            # `local` is in no universe by construction (exclude_ids above),
+            # so it is never "outside" the fleet.
+            outside = {
+                host_id: SWITCHED_OFF_REASON if host_id in declared_union else OUT_OF_SCOPE_REASON
+                for host_id in self.lab.hosts
+                if host_id != BUILTIN_LOCAL_HOST_ID and host_id not in union
+            }
+            line = (
                 f"fleet of interest: {len(union)} of {len(self.lab.hosts)} lab hosts "
                 f"({len(scopes)} project(s), {excluded} excluded)"
             )
+            if outside:
+                line += f"; outside it: {name_by_reason(outside)}"
+            logger.info(line)
         return scopes
 
     def admissible_ids(

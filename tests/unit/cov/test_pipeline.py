@@ -16,6 +16,7 @@ from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.errors import CaptureCommitError, CoverageNotInstrumentedError
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import (
+    CaptureInput,
     CollectionInputs,
     CoverageReporter,
     _classify_product_dirs,
@@ -2152,7 +2153,7 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
         collection=CollectionInputs(
             project_root=project,
             tier_configs=load_tiers(cov, root=project),
-            capture_paths=[dup],
+            captures=[CaptureInput(path=dup, run_dir=tmp_path / "out")],
         ),
     )
     store = await reporter.run()
@@ -2177,7 +2178,7 @@ async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
     store = await reporter.run()
 
     (rec,) = store.runs
-    assert (rec.tier, rec.label, rec.base_commit) == ("unit", "unit", "")
+    assert (rec.tier, rec.label, rec.source, rec.base_commit) == ("unit", "unit", "tracefile", "")
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
     assert fr.lines[1].run_hits == {rec.id: 7}
 
@@ -2187,7 +2188,7 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
     project = _init_git_repo(tmp_path)
     head = head_commit(project)
     cov = tmp_path / "out" / "cov"
-    capture_paths = []
+    captures: list[CaptureInput] = []
     for board, product in contexts:
         cap = Capture(
             tier="system",
@@ -2199,7 +2200,7 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
         )
         path = cov / board / product / "capture.json"
         cap.save(path)
-        capture_paths.append(path)
+        captures.append(CaptureInput(path=path, run_dir=tmp_path / "out"))
 
     reporter = CoverageReporter(
         project,
@@ -2207,7 +2208,7 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
         collection=CollectionInputs(
             project_root=project,
             tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
-            capture_paths=capture_paths,
+            captures=captures,
         ),
     )
     store = await reporter.run()
@@ -2216,10 +2217,14 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
 
 @pytest.mark.asyncio
 async def test_two_products_on_one_host_are_two_runs(tmp_path):
-    """``_run_key`` carries ``product``: two captures identical but for the
+    """``_capture_run_key`` carries ``product``: two captures identical but for the
     product are two runs, not one deduped run."""
     runs = await _runs_for_captures(tmp_path, [("h1", "agent"), ("h1", "app")])
     assert [(r.host, r.product) for r in runs] == [("h1", "agent"), ("h1", "app")]
+    assert [(r.label, r.source, r.run_dir) for r in runs] == [
+        ("h1/agent", "run", str(tmp_path / "out")),
+        ("h1/app", "run", str(tmp_path / "out")),
+    ]
 
 
 @pytest.mark.asyncio
@@ -2292,7 +2297,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
         collection=CollectionInputs(
             project_root=project,
             tier_configs=load_tiers(cov_config, root=project),
-            capture_paths=[e2e_path],
+            captures=[CaptureInput(path=e2e_path, run_dir=tmp_path / "out")],
         ),
     )
     store = await reporter.run()
@@ -2355,7 +2360,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
         collection=CollectionInputs(
             project_root=project,
             tier_configs=load_tiers(cov_config, root=project),
-            capture_paths=[dup],
+            captures=[CaptureInput(path=dup, run_dir=tmp_path / "out")],
         ),
     )
     # Pre-fix (load-order dedupe): this would raise CaptureCommitError
@@ -2374,7 +2379,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
 @pytest.mark.asyncio
 async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     """Same shape as ``test_duplicate_survives_stale_base_commit_via_key_hoist``,
-    plus ONE extra committed re-capture of the same (tier, label, host)
+    plus ONE extra committed re-capture of the same (tier, host, product)
     context. Supersede drops the old committed capture from the winners
     list (:func:`select_manual_captures`), so seeding ``seen_runs`` from
     winners alone never recognizes the old run's key: the cov-dir copy of
@@ -2414,7 +2419,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     head2 = head_commit(project)
     assert head2 != head1
 
-    # Re-capture the SAME context (tier=manual, label falls back to board=b1)
+    # Re-capture the SAME context (tier=manual, host=b1, product=app)
     # at head2, newer captured_at -> supersedes cap_old.
     cap_new = cap_old.model_copy(
         update={"base_commit": head2, "captured_at": "2026-07-02T00:00:00Z"}
@@ -2428,7 +2433,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
         collection=CollectionInputs(
             project_root=project,
             tier_configs=load_tiers(cov_config, root=project),
-            capture_paths=[dup],
+            captures=[CaptureInput(path=dup, run_dir=tmp_path / "out")],
         ),
     )
     # Expected (intent of the key-hoist + supersede): the cov-dir copy of the

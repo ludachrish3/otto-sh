@@ -13,11 +13,12 @@
 // stats card up top rescopes, matching `contexts-page.html`'s own
 // `renderStats()`/`setFocus()`.
 //
-// Scalar per-context display fields not carried on `Context` itself (board/
-// labs/captured/tester/ticket/note/base commit) are read off
-// `ctx.runs[0]` — same one-value assumption contexts.ts documents for
-// `tier` (a label spanning members with different boards/labs/etc. is a
-// data anomaly, not a case this page tries to reconcile).
+// A context is one `<host>/<product>` label, which may hold captures from
+// several tiers (contexts.ts): the row shows a chip per tier, a tier filter
+// keeps any context with a capture in that tier, and the expanded detail
+// lists every capture's own metadata (board/labs/captured/tester/ticket/
+// note/base commit). The row's board/labs/date columns summarize from the
+// first capture; the detail is where each capture is told apart.
 import { ChevronRight, Target02 } from "@untitledui/icons";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -40,7 +41,7 @@ import {
   withHideAssertedSuffix,
 } from "../format";
 import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
-import type { IndexPayload } from "../types";
+import type { IndexPayload, RunJson } from "../types";
 
 // Pinned column widths (contexts-page.html's `.rhead`/`.rrow` grid). The
 // grid string, the table's minimum width and the row spacing all derive from
@@ -185,6 +186,40 @@ function StatusCell({ ctx }: { ctx: Context }) {
   );
 }
 
+/** One capture's own metadata. A context lists one of these per member run:
+ * captures of one label can come from different tiers, boards, testers and
+ * commits, so no single run speaks for the context. */
+function CaptureMeta({ run, index }: { run: RunJson; index: IndexPayload }) {
+  return (
+    <div
+      data-testid={`capture-meta-${run.id}`}
+      className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-secondary pt-2 text-xs"
+    >
+      <span className="text-quaternary">Tier</span>
+      <TierChip tier={run.tier} index={index} />
+      <span className="text-quaternary">Board</span>
+      <span className="break-words font-mono font-normal text-secondary">{run.board || "—"}</span>
+      <span className="text-quaternary">Labs</span>
+      <span className="break-words font-medium text-secondary">
+        {run.labs.length > 0 ? run.labs.join(", ") : "—"}
+      </span>
+      <span className="text-quaternary">Captured</span>
+      <span className="break-words font-medium text-secondary">{run.captured_at || "—"}</span>
+      <span className="text-quaternary">Tester</span>
+      <span className="break-words font-medium text-secondary">{run.tester?.name ?? "—"}</span>
+      <span className="text-quaternary">Ticket</span>
+      <span className="break-words font-medium text-secondary">{run.ticket ?? "—"}</span>
+      <span className="text-quaternary">Base commit</span>
+      <span className="break-words font-mono font-normal text-secondary">
+        {run.base_commit.slice(0, 12)}
+        {run.dirty_remap ? " → HEAD (remapped)" : ""}
+      </span>
+      <span className="text-quaternary">Note</span>
+      <span className="break-words font-medium text-secondary">{run.note ?? "—"}</span>
+    </div>
+  );
+}
+
 function ContextDetail({
   ctx,
   index,
@@ -194,7 +229,6 @@ function ContextDetail({
   index: IndexPayload;
   onFocus: (label: string) => void;
 }) {
-  const first = ctx.runs[0];
   const tierColor = index.tier_colors[ctx.tier] ?? "currentColor";
   const maxHost = Math.max(1, ...ctx.hosts.map(([, n]) => n));
   const topFiles = ctx.files.slice(0, 5);
@@ -216,32 +250,10 @@ function ContextDetail({
           <span className="break-words font-medium text-secondary">{ctx.label}</span>
           <span className="text-quaternary">Hosts</span>
           <HostPills hosts={ctx.hosts} />
-          <span className="text-quaternary">Board</span>
-          <span className="break-words font-mono font-normal text-secondary">
-            {first?.board || "—"}
-          </span>
-          <span className="text-quaternary">Labs</span>
-          <span className="break-words font-medium text-secondary">
-            {first && first.labs.length > 0 ? first.labs.join(", ") : "—"}
-          </span>
-          <span className="text-quaternary">Captured</span>
-          <span className="break-words font-medium text-secondary">
-            {first?.captured_at ?? "—"}
-          </span>
-          <span className="text-quaternary">Tester</span>
-          <span className="break-words font-medium text-secondary">
-            {first?.tester?.name ?? "—"}
-          </span>
-          <span className="text-quaternary">Ticket</span>
-          <span className="break-words font-medium text-secondary">{first?.ticket ?? "—"}</span>
-          <span className="text-quaternary">Base commit</span>
-          <span className="break-words font-mono font-normal text-secondary">
-            {first ? first.base_commit.slice(0, 12) : "—"}
-            {ctx.remapped ? " → HEAD (remapped)" : ""}
-          </span>
-          <span className="text-quaternary">Note</span>
-          <span className="break-words font-medium text-secondary">{first?.note ?? "—"}</span>
         </div>
+        {ctx.runs.map((run) => (
+          <CaptureMeta key={run.id} run={run} index={index} />
+        ))}
       </div>
 
       <div className="min-w-0">
@@ -438,7 +450,11 @@ function ContextRow({
             {ctx.label}
           </span>
         </div>
-        <TierChip tier={ctx.tier} index={index} />
+        <div data-testid="run-tiers" className="flex min-w-0 flex-wrap items-center gap-1">
+          {ctx.tiers.map((t) => (
+            <TierChip key={t} tier={t} index={index} />
+          ))}
+        </div>
         <HostPills hosts={ctx.hosts} />
         <span className="max-w-full break-words text-tertiary">{first?.board || "—"}</span>
         <span className="max-w-full break-words text-tertiary">
@@ -478,7 +494,7 @@ export function RunsPage({ index }: RunsPageProps) {
 
   const q = query.trim().toLowerCase();
   const visible = contexts.filter((ctx) => {
-    if (tier !== "all" && ctx.tier !== tier) return false;
+    if (tier !== "all" && !ctx.tiers.includes(tier)) return false;
     if (q !== "" && !searchHaystack(ctx).includes(q)) return false;
     // A pinned product HIDES contexts it isn't in — this page lists run
     // provenance, and a context with no run of that product contributes

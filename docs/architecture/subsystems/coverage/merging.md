@@ -199,18 +199,21 @@ to cover the line.
 
 The same capture can be reachable twice: once as a committed manual capture
 and once as a leftover copy inside a cov directory handed to `otto cov
-report`. `run()` therefore computes `_run_key(capture)` — `(tier,
-base_commit, board, captured_at)` — for **every** committed manual capture,
+report`. `run()` therefore computes `_capture_run_key(capture)` — the
+capture's supersede context ({ref}`coverage-supersede`) plus its
+`base_commit` and `captured_at` — for **every** committed manual capture,
 supersede losers included, and seeds `seen_runs` with those keys *before*
 `_load_captures` runs. A cov-dir duplicate is then skipped by key, before
 the e2e `base_commit` guard ever looks at it. Without the hoist that
 duplicate is an unrecognized run, which crashes the report once the tree has
 moved past its `base_commit` and silently double-counts while it hasn't.
 
-Note the two dedupe keys are different on purpose. `_run_key`'s 4-tuple
-identifies **one capture artifact** (two files with the same contents are
-the same capture). Supersede's 3-tuple below identifies **one capture
-context** (two captures of the same board, same tier, taken a week apart).
+The same key folds one `capture.json` found in two run directories once,
+from the first. The two keys differ on purpose, and the run key extends the
+supersede key rather than restating it. `_capture_run_key` identifies **one
+capture artifact** (two files with the same contents are the same capture);
+the supersede key below identifies **one capture context** (two captures of
+the same host and product, in the same tier, taken a week apart).
 
 ## Run accumulation
 
@@ -232,29 +235,39 @@ written into per-line data. Two properties fall out of the code:
   explicit `--tier` `.info` — carry `host = ""` and contribute nothing to
   derive.
 
+(coverage-supersede)=
 ## Supersede: same context replaces, never accumulates
 
 **Supersede-on-recapture**
 (`otto.coverage.capture.supersede.select_manual_captures`) runs before
-folding: manual captures are deduplicated by
-`(tier, label, host, product)`, the newest `captured_at` wins, and a replaced
-capture drops out of the runs table entirely rather than having its credits
-accumulate alongside the newer one.
+folding: manual captures compete within one context, `(tier, host,
+product)`, the newest `captured_at` wins, and a replaced capture drops out
+of the runs table entirely rather than having its credits accumulate
+alongside the newer one. Its `Superseded manual capture` INFO line names the
+capture it dropped and the context, `<host>/<product>`.
 
-The key is built in `_key` as
-`(tier, display_name or board, board, product)` — the label falls back to the
-board id when the capture carries no host display name, the third component
-is the board id itself, which is the same value store v4 carries in
-`RunRecord.host`, and the fourth is the capture's `product` (store v8). A
-host can carry several instrumented products, each producing its own
-capture; without `product` in the key the second would supersede the first
-and its coverage would vanish from the report — silently, because the
-reporter seeds its cross-source dedupe set from the committed manual
-captures, so the loser's cov-dir copy is skipped too. "Newest" is a plain string
-comparison on `captured_at`, which is sound because the stamp is a
-zero-padded UTC `%Y-%m-%dT%H:%M:%SZ` and therefore sorts lexicographically.
-Losers never reach `register_capture_run`, so they leave no row for the runs
-page to show — a superseded session is gone, not struck through.
+The key is `SupersedeKey`, built by `supersede_key` from the capture's
+`tier`, its `board` (the host id, the same value the store carries in
+`RunRecord.host`) and its `product`:
+
+- **Product** is in the key because a host can carry several instrumented
+  products, each producing its own capture. Without it the second would
+  supersede the first and its coverage would vanish from the report —
+  silently, because the reporter seeds its cross-source dedupe set from the
+  committed manual captures, so the loser's cov-dir copy is skipped too.
+- **Tier** is in the key, so one host and product captured in two tiers is
+  two contexts: both captures survive, each crediting its own tier.
+- **A capture's `display_name` is not.** It stays in `capture.json` but
+  never reaches the store, whose run label is `<host_id>/<product>`
+  ({ref}`coverage-store-json`). Two captures of one host and product that
+  differ only in `display_name` are one context, and the newer supersedes the
+  older.
+
+"Newest" is a plain string comparison on `captured_at`, which is sound
+because the stamp is a zero-padded UTC `%Y-%m-%dT%H:%M:%SZ` and therefore
+sorts lexicographically. Losers never reach `register_capture_run`, so they
+leave no row for the runs page to show — a superseded session is gone, not
+struck through.
 
 Only manual captures go through supersede. E2e captures live in per-run
 output directories; re-running the suite writes a new directory rather than

@@ -550,7 +550,7 @@ def _store(path: Path, *, tier: str, product: str, file: str, line: int, hits: i
     from otto.coverage.store.model import CoverageStore
 
     store = CoverageStore()
-    run_id = store.add_run(tier=tier, product=product)
+    run_id = store.add_run(tier=tier, source="unit", product=product)
     record = store.get_or_create_file(Path(file)).get_or_create_line(line)
     record.hits.add(tier, hits)
     record.run_hits[run_id] = hits
@@ -1085,7 +1085,7 @@ def _two_file_store(path: Path, *, product: str, other_hits: int) -> Path:
         f"SF:/p/x.cpp\nDA:1,2\nend_of_record\nSF:/p/foreign.cpp\nDA:1,{other_hits}\nend_of_record\n"
     )
     store = CoverageStore()
-    run_id = store.add_run(tier="unit", product=product)
+    run_id = store.add_run(tier="unit", source="unit", product=product)
     LCOVLoader(store).load(info, "unit", run_id=run_id)
     store.save(path)
     return path
@@ -1120,7 +1120,9 @@ def test_a_product_s_source_set_leaves_out_a_file_only_another_product_ran(tmp_p
     for product, sf in (("app", "/p/x.cpp"), ("other", "/p/foreign.cpp")):
         info = tmp_path / f"{product}.info"
         info.write_text(f"SF:{sf}\nDA:1,2\nend_of_record\n")
-        LCOVLoader(store).load(info, "unit", run_id=store.add_run(tier="unit", product=product))
+        LCOVLoader(store).load(
+            info, "unit", run_id=store.add_run(tier="unit", source="unit", product=product)
+        )
     store.save(tmp_path / "prepared.json")
     m = _sources_manifest(tmp_path, tmp_path / "prepared.json", "app")
     rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))

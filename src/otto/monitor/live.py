@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..utils import compile_host_pattern, validate_interval
+from ..utils import compile_host_pattern, name_by_reason, validate_interval
 from .errors import MonitorInputError, NoMonitorableHostsError
 
 if TYPE_CHECKING:
@@ -37,6 +37,9 @@ class LiveReport:
 def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[RemoteHost]":
     """Select the hosts to monitor from the active lab.
 
+    Hosts otto cannot sample are dropped and named, with their reason, in
+    one INFO line; nothing is logged when none is dropped.
+
     Args:
         pattern: Full-match regex over host ids; ``None`` or ``""`` selects
             the whole fleet of interest.
@@ -47,7 +50,7 @@ def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[Remot
         NoMonitorableHostsError: the selection holds no host otto can sample.
     """
     from ..fleet import all_hosts
-    from .factory import monitorable
+    from .factory import partition_monitorable
 
     if isinstance(pattern, str):
         try:
@@ -57,10 +60,15 @@ def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[Remot
     # Materialized inside the call: all_hosts is a generator and raises its
     # empty-selection refusal at the first next().
     walked = list(all_hosts(pattern=pattern))
-    selected = monitorable(walked)
-    if not selected:
+    selection = partition_monitorable(walked)
+    if not selection.hosts:
         raise NoMonitorableHostsError([h.id for h in walked])
-    return selected
+    if selection.dropped:
+        logger.info(
+            f"not monitoring {len(selection.dropped)} of {len(walked)} selected host(s): "
+            f"{name_by_reason(selection.dropped)}"
+        )
+    return selection.hosts
 
 
 def _enforce_driving_project_scope() -> None:

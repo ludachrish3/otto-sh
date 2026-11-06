@@ -6,17 +6,19 @@
 // consumed directly by contexts.test.ts and by RunsPage.tsx's render/filter
 // logic.
 //
-// Assumption (data anomaly, not a supported case): `tier` is read from the
-// FIRST member run encountered for a label. The spec's grouping key is
-// `label` alone — nothing requires every run sharing a label to share a
-// tier — so a label spanning tiers is possible in principle. Same for the
-// other per-context "scalar" display fields RunsPage.tsx reads off
-// `ctx.runs[0]` (board/labs/captured_at/tester/ticket/note/base_commit):
-// this module doesn't materialize them onto `Context` (the produced
-// interface, verbatim per the brief, only carries `runs`), so callers
-// needing them read `ctx.runs[0]` directly, with the same one-value
-// assumption.
-import type { IndexPayload, RunJson, Stats } from "./types";
+// A label is one product's identity (store v9, `<host>/<product>`), not one
+// tier's: the same product captured in `manual` and in `bench` is ONE
+// context with captures in both tiers. So a context carries every tier it
+// has a capture in (`tiers`), and its per-capture metadata (board/labs/
+// captured_at/tester/ticket/note/base_commit) stays on each member run —
+// callers list `ctx.runs`, never read one run as the context's.
+//
+// Line counts are never computed here. A context's total and per-file
+// counts are the tree's `Stats.ctx_lines` rollup (spa_data.py's
+// `_file_stats`, the one place that decides "lines this label hit"), which
+// counts a line once however many of the label's captures hit it. Summing
+// per-run `run_contrib` counts would credit such a line once per capture.
+import type { DirNode, IndexPayload, RunJson, Stats } from "./types";
 
 /** What the numerator is narrowed to: a context (run label), a product, or
  * both — the single value every page recomputes against, so a page never
@@ -26,9 +28,9 @@ import type { IndexPayload, RunJson, Stats } from "./types";
 export interface FocusScope {
   /** Display: "nightly", "app", or "nightly · app". */
   label: string;
-  /** `""` when the scope spans tiers (a bare product) — a product is not a
-   * tier-scoped thing, so callers must treat `""` as "no tier dot/column",
-   * never look it up in `tier_colors`. */
+  /** `""` when the scope spans tiers (a bare product, or a context with
+   * captures in several tiers) — callers must treat `""` as "no tier
+   * dot/column", never look it up in `tier_colors`. */
   tier: string;
   /** Member runs — the file-page numerator (`lineHasMemberHit`). */
   runs: RunJson[];
@@ -38,6 +40,11 @@ export interface FocusScope {
 
 export interface Context {
   label: string;
+  /** Every tier this context has a capture in, in `tier_order` precedence
+   * (a tier missing from `tier_order` follows, in first-appearance order). */
+  tiers: string[];
+  /** The one tier when `tiers` has exactly one, else `""` — the
+   * `FocusScope` "spans tiers" value. */
   tier: string;
   runs: RunJson[];
   /** Always the context's own `label` — the `FocusScope` half of a
@@ -46,14 +53,17 @@ export interface Context {
   /** Always `null`: a context is a run LABEL grouping, never a product
    * one (`resolveScope` builds the composed scope instead). */
   product: null;
-  /** `[hostDisplay, lines]` — one entry PER MEMBER RUN, even when two runs
-   * report the same host display (e.g. the same physical host run twice
-   * under one label). Never deduplicated by host. */
+  /** `[hostDisplay, lines]` — one entry PER MEMBER RUN, each that run's own
+   * `run_contrib` count, even when two runs report the same host display
+   * (e.g. the same product captured in two tiers). Never deduplicated. */
   hosts: [string, number][];
+  /** Distinct lines any member hit: the tree root's `ctx_lines[label]`. */
   lines: number;
+  /** Revoked CREDITS, summed over member runs (a credit is one run's hit on
+   * one line, so two runs' revoked credits on one line are two). */
   revoked: number;
-  /** `[displayPath, count]`, merged across every member run, sorted desc by
-   * count then asc by path (ties broken deterministically). */
+  /** `[displayPath, count]` from each file node's `ctx_lines[label]`,
+   * sorted desc by count then asc by path (ties broken deterministically). */
   files: [string, number][];
   status: "ok" | "aging" | "stale";
   remapped: boolean;
@@ -69,30 +79,49 @@ function hostDisplay(run: RunJson): string {
   return run.product ? `${host} · ${run.product}` : host;
 }
 
-/** Merges each member's `run_contrib[id].files` (path -> count) into one
- * sorted list. Desc by count; ties broken asc by path so output is
- * deterministic across runs/environments (JS object/Map iteration order
- * would otherwise leak insertion order into a tie). */
-function mergeFiles(fileLists: [string, number][][]): [string, number][] {
-  const totals = new Map<string, number>();
-  for (const files of fileLists) {
-    for (const [path, count] of files) {
-      totals.set(path, (totals.get(path) ?? 0) + count);
+/** Each label's `[displayPath, count]` list, read off every file node's
+ * `stats.ctx_lines` in one walk of the tree. Desc by count; ties broken asc
+ * by path so output is deterministic. */
+function filesByLabel(tree: DirNode): Map<string, [string, number][]> {
+  const out = new Map<string, [string, number][]>();
+  const walk = (node: DirNode) => {
+    for (const child of node.dirs) walk(child);
+    for (const file of node.files) {
+      for (const [label, count] of Object.entries(file.stats.ctx_lines)) {
+        if (count <= 0) continue;
+        const list = out.get(label) ?? [];
+        list.push([file.path, count]);
+        out.set(label, list);
+      }
     }
+  };
+  walk(tree);
+  for (const list of out.values()) {
+    list.sort(([pathA, countA], [pathB, countB]) => {
+      if (countB !== countA) return countB - countA;
+      return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
+    });
   }
-  return [...totals.entries()].sort(([pathA, countA], [pathB, countB]) => {
-    if (countB !== countA) return countB - countA;
-    return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
-  });
+  return out;
+}
+
+/** The distinct tiers of `runs`, in `tierOrder` precedence; a tier not in
+ * `tierOrder` follows in first-appearance order. */
+function tiersOf(runs: RunJson[], tierOrder: string[]): string[] {
+  const seen = new Set(runs.map((run) => run.tier));
+  return [
+    ...tierOrder.filter((tier) => seen.has(tier)),
+    ...[...seen].filter((tier) => !tierOrder.includes(tier)),
+  ];
 }
 
 /** Groups `payload.runs` by `label`, insertion order of first appearance
  * (both for the returned `Context[]` order and each context's own `runs`
- * member order). Per-run contribution comes from
- * `payload.run_contrib[String(run.id)]`, defensively defaulted (`?? 0`/
- * `?? []`) — a run with no matching `run_contrib` entry (shouldn't happen,
- * but the data contract doesn't guarantee it) contributes zero lines/
- * revoked/files rather than throwing. */
+ * member order). Line totals and per-file counts come from the tree's
+ * `ctx_lines` rollup; the per-host rows and revoked credits from
+ * `payload.run_contrib[String(run.id)]`, defensively defaulted (`?? 0`) — a
+ * run with no matching entry (the data contract doesn't guarantee one)
+ * contributes zero rather than throwing. */
 export function groupContexts(payload: IndexPayload): Context[] {
   const order: string[] = [];
   const members = new Map<string, RunJson[]>();
@@ -103,39 +132,39 @@ export function groupContexts(payload: IndexPayload): Context[] {
     }
     members.get(run.label)?.push(run);
   }
+  const files = filesByLabel(payload.tree);
 
   return order.map((label) => {
     const runs = members.get(label) ?? [];
     const hosts: [string, number][] = [];
-    let lines = 0;
     let revoked = 0;
-    const fileLists: [string, number][][] = [];
     let anyAging = false;
     let anyRemapped = false;
 
     for (const run of runs) {
       const contrib = payload.run_contrib[String(run.id)];
       hosts.push([hostDisplay(run), contrib?.lines ?? 0]);
-      lines += contrib?.lines ?? 0;
       revoked += contrib?.revoked ?? 0;
-      fileLists.push(contrib?.files ?? []);
       if (run.aging) anyAging = true;
       if (run.dirty_remap) anyRemapped = true;
     }
+    const lines = payload.tree.stats.ctx_lines[label] ?? 0;
+    const tiers = tiersOf(runs, payload.tier_order);
 
     const status: Context["status"] =
       lines === 0 && revoked > 0 ? "stale" : anyAging ? "aging" : "ok";
 
     return {
       label,
-      tier: runs[0]?.tier ?? "",
+      tiers,
+      tier: tiers.length === 1 ? (tiers[0] ?? "") : "",
       runs,
       ctxLabel: label,
       product: null,
       hosts,
       lines,
       revoked,
-      files: mergeFiles(fileLists),
+      files: files.get(label) ?? [],
       status,
       remapped: anyRemapped,
     };

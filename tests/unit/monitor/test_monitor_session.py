@@ -4,7 +4,7 @@ import fcntl
 import json
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,9 +15,10 @@ from otto.host.unix_host import UnixHost
 from otto.link.model import Link, LinkEndpoint
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MonitorTarget
-from otto.monitor.errors import MonitorInputError
+from otto.monitor.errors import UNMONITORABLE_REASON, UNMONITORABLE_REMEDY, MonitorInputError
 from otto.monitor.export import build_db_export
 from otto.monitor.session import MonitorSession
+from otto.monitor.snmp import SnmpSource
 
 
 def _unix(name: str = "box") -> UnixHost:
@@ -72,6 +73,19 @@ class TestBuildRefuses:
         with pytest.raises(MonitorInputError, match="cannot monitor z") as e:
             MonitorSession.build(targets=[target], interval=5, owns_hosts=False)
         assert e.value.field == "targets"
+
+    def test_the_refusal_names_the_reason_and_the_remedy(self):
+        with pytest.raises(MonitorInputError) as e:
+            MonitorSession.build([_unix(), _console("z")], interval=5, owns_hosts=True)
+        assert str(e.value) == f"cannot monitor z ({UNMONITORABLE_REASON}): {UNMONITORABLE_REMEDY}"
+
+
+def test_an_snmp_target_on_a_console_host_is_accepted():
+    """The targets branch judges by the target's own SNMP source, not the host's block."""
+    snmp = SnmpSource(client=MagicMock(), oids=["1.3.6.1.2.1.1.3.0"])
+    target = MonitorTarget(host=_console("z"), parsers={}, snmp=snmp)
+    session = MonitorSession.build(targets=[target], interval=5, owns_hosts=False)
+    assert [h.id for h in session.lab.hosts] == ["z"]
 
 
 def test_build_does_no_io(tmp_path):

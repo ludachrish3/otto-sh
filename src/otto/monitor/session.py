@@ -281,11 +281,11 @@ class MonitorSession:
             MonitorInputError: neither or both of hosts/targets, no hosts, an
                 interval below the floor, or a host otto cannot sample.
         """
-        from ..utils import validate_interval
+        from ..utils import name_by_reason, validate_interval
         from .collector import MetricCollector
-        from .errors import MonitorInputError
+        from .errors import UNMONITORABLE_REMEDY, MonitorInputError
         from .export import build_session_metric_db
-        from .factory import build_monitor_collector, is_monitorable
+        from .factory import build_monitor_collector, unmonitorable_reason
 
         if (hosts is None) == (targets is None):
             raise MonitorInputError("pass exactly one of hosts or targets", field="hosts")
@@ -296,18 +296,19 @@ class MonitorSession:
             raise MonitorInputError(str(exc), field="interval") from exc
         if hosts is not None:
             field, snapshot_hosts = "hosts", list(hosts)
-            bad = [h.id for h in snapshot_hosts if not is_monitorable(h)]
+            verdicts = {h.id: unmonitorable_reason(h) for h in snapshot_hosts}
         else:
             field, snapshot_hosts = "targets", [t.host for t in targets or []]
-            bad = [t.host.id for t in targets or [] if t.snmp is None and not _is_unix(t.host)]
+            verdicts = {
+                t.host.id: unmonitorable_reason(t.host, has_snmp=t.snmp is not None)
+                for t in targets or []
+            }
         if not snapshot_hosts:
             raise MonitorInputError("no hosts to monitor", field=field)
+        bad = {ident: reason for ident, reason in verdicts.items() if reason is not None}
         if bad:
             raise MonitorInputError(
-                f"cannot monitor {', '.join(sorted(bad))}: otto samples metrics over a "
-                "shell (Unix hosts) or over SNMP (a host declaring an `snmp` block), "
-                "and these offer neither",
-                field=field,
+                f"cannot monitor {name_by_reason(bad)}: {UNMONITORABLE_REMEDY}", field=field
             )
 
         def _collector(db: "MetricDB | None") -> "MetricCollector":
@@ -401,9 +402,3 @@ class MonitorSession:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.finish()
-
-
-def _is_unix(host: "RemoteHost") -> bool:
-    from ..host.unix_host import UnixHost
-
-    return isinstance(host, UnixHost)

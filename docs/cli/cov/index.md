@@ -225,5 +225,6 @@ tickets
 exclusions
 thresholds
 during-tests
+store
 instrumenting/index
 ```

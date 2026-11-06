@@ -81,14 +81,14 @@ def test_breadcrumb_home_returns_to_directory_page(page: Page, report_dir: Path)
 
 
 def test_ctx_panel_shows_struck_revoked_chip_for_stale_line(page: Page, report_dir: Path) -> None:
-    """main.c line 6 is smoke-old's fully-revoked stale mark (no live
+    """main.c line 6 is bench-3/bootloader's fully-revoked stale mark (no live
     hits, ``stale_run=[run_smoke_old]``) — its run chip shows the
     struck-through "revoked" label instead of a hit count."""
     _open_file(page, report_dir, "product/main.c")
     page.locator('[data-testid="code-expander-6"]').click()
     panel = page.locator('[data-testid="ctx-panel-6"]')
     expect(panel).to_be_visible()
-    expect(panel).to_contain_text("smoke-old")
+    expect(panel).to_contain_text("bench-3/bootloader")
     revoked_chip = panel.locator('[data-testid="run-chip"]')
     expect(revoked_chip).to_contain_text("revoked")
     count_span = revoked_chip.locator("span").last
@@ -96,14 +96,14 @@ def test_ctx_panel_shows_struck_revoked_chip_for_stale_line(page: Page, report_d
 
 
 def test_ctx_panel_shows_aging_suffix_for_aging_line(page: Page, report_dir: Path) -> None:
-    """main.c line 9 is field bring-up's aging manual claim (``run_hits =
+    """main.c line 9 is bench-7/bootloader's aging manual claim (``run_hits =
     {run_field: 3}``, ``run_field.aging = True``) — its run chip reads
     "x 3 . aging", not struck (it has live evidence, just old)."""
     _open_file(page, report_dir, "product/main.c")
     page.locator('[data-testid="code-expander-9"]').click()
     panel = page.locator('[data-testid="ctx-panel-9"]')
     expect(panel).to_be_visible()
-    expect(panel).to_contain_text("field bring-up")
+    expect(panel).to_contain_text("bench-7/bootloader")
     aging_chip = panel.locator('[data-testid="run-chip"]')
     expected = "× 3 · aging"  # noqa: RUF001 -- multiplication sign is the rendered glyph under test
     expect(aging_chip).to_contain_text(expected)

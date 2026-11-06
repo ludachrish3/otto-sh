@@ -116,7 +116,7 @@ class TestLCOVLoader:
         info = tmp_path / "x.info"
         info.write_text(f"TN:\nSF:{tmp_path / 'f.c'}\nDA:1,3\nDA:2,0\nend_of_record\n")
         store = CoverageStore()
-        run_id = store.add_run(tier="unit")
+        run_id = store.add_run(tier="unit", source="unit")
         loader = LCOVLoader(store)
         loader.load(info, "unit", run_id=run_id)
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ..config.coverage_settings import CoverageConfigError
+from ..layout import product_label
 
 
 class ProductKey(NamedTuple):
@@ -28,7 +29,7 @@ class ProductKey(NamedTuple):
     @property
     def label(self) -> str:
         """``<host>/<product>``: how every message names the product."""
-        return f"{self.host}/{self.product}"
+        return product_label(self.host, self.product)
 
 
 def _holds_data_directly(host_dir: Path) -> bool:

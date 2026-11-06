@@ -219,7 +219,7 @@ whole directory can be copied or published as it is. A second run into the
 same `--dir` is refused unless you pass `--overwrite-dir`.
 
 Every run in the report carries its product: the runs page lists them as
-`host · product`, so a lab with two products says which one each number came
+`<host>/<product>`, so a lab with two products says which one each number came
 from, and one of them can be pinned to narrow every page to its runs.
 {doc}`../cli/cov/report` is the full report tour, pinning included.
 

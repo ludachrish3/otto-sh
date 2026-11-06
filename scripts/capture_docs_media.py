@@ -235,9 +235,10 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
     ``build_fixture_report``'s docstring), so the routes, testids and
     fixture facts below are the ones that suite already pins — e.g.
     ``PROJ-204`` owns lines in ``product/main.c`` but nothing in
-    ``product/utils.c`` (so pinning it hides a real row), ``nightly-full``
-    is the three-run, two-host, two-product context, and ``agent`` is the
-    only product with evidence under ``lib/``.
+    ``product/utils.c`` (so pinning it hides a real row), every run is its
+    own ``<host>/<product>`` context (``router-a/firmware`` is one of the
+    three the nightly invocation made), and ``agent`` is the only product
+    with evidence under ``lib/``.
 
     Each shot opens its route in a fresh browser context (``_open``) so no
     pin, focus or expanded row leaks from one shot into the next — a plain
@@ -290,7 +291,7 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         # File page — main.c's annotated source with two lines' run
         # drilldowns open: line 3 (a system run on router-a and the unit
         # harvest, each with its hit count) and line 6 (the revoked
-        # smoke-old run, its "revoked" tag struck through).
+        # bench-3/bootloader run, its "revoked" tag struck through).
         page = _open("/coverage/product/main.c", "code-row-1")
         _tid(page, "code-expander-3").click()
         _tid(page, "code-expander-6").click()
@@ -315,21 +316,20 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
             bottom=_page_bottom(_tid(page, "code-row-4")),
         )
 
-        # Runs page — tier and product chips, one row per context, and
-        # nightly-full's detail open on its per-host lines: three member
-        # runs across two hosts, one of them carrying two products.
-        page = _open("/runs", "run-row-nightly-full", height=1200)
-        _tid(page, "run-row-nightly-full").click()
-        _tid(page, "run-detail-nightly-full").wait_for()
+        # Runs page — tier and product chips, one row per ``<host>/<product>``
+        # context, and router-a/firmware's detail open on its per-host lines.
+        page = _open("/runs", "run-row-router-a/firmware", height=1200)
+        _tid(page, "run-row-router-a/firmware").click()
+        _tid(page, "run-detail-router-a/firmware").wait_for()
         _clip_shot(page, "coverage-runs.png", _tid(page, "tier-chip-all"), _tid(page, "runs-card"))
 
-        # Context focus — nightly-full pinned from its own detail row, then
-        # main.c: the app bar's focus chip, the stats card scoped to that
-        # context, and every instrumented line no nightly-full run hit
+        # Context focus — router-a/firmware pinned from its own detail row,
+        # then main.c: the app bar's focus chip, the stats card scoped to
+        # that context, and every instrumented line its run did not hit
         # reading uncovered.
         _tid(page, "focus-context-btn").click()
         _tid(page, "focus-chip").wait_for()
-        page.evaluate("location.hash = '#/coverage/product/main.c?ctx=nightly-full'")
+        page.evaluate("location.hash = '#/coverage/product/main.c?ctx=router-a%2Ffirmware'")
         _tid(page, "code-row-12").wait_for()
         _wait_toasts_gone(page)
         _clip_shot(

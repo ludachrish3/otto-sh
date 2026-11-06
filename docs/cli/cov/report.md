@@ -50,6 +50,16 @@ browser. Without `--dir` it lands under this invocation's output directory
 from the committed manual-capture store (and any configured unit
 tiers) alone.
 
+Once the report is written, one log line names what each tier was built from,
+for example
+`Sources: system — 3 capture(s) from 2 run dir(s), 1 manual capture(s); unit — 1 product view(s)`.
+It counts what the report used, not what it was given: a manual capture that a
+newer one supersedes ({ref}`coverage-supersede`), a run directory's copy of a
+committed manual capture (counted once, as manual) and a missing `--tier`
+tracefile are not counted. It reads the store's per-run `source` and
+`run_dir` ({ref}`coverage-store-json`).
+`otto test --cov-report` logs the same line.
+
 A report whose assembled store ends up **empty** — no captures, no
 harvested counters, no manual store — exits `1` with a one-line error
 naming every location that was searched.
@@ -300,17 +310,17 @@ configure.
   ![The search palette: matches grouped by file, the Regex and
   Uncovered-only chips, and the total-count footer](../../_static/generated/coverage-search.png)
 
-- **Runs & contexts page** (`#/runs`) — one row per run (see
-  {ref}`coverage-runs`); multi-host runs show host pills reading
-  `host · product` with an expandable per-host lines breakdown, filterable by
+- **Runs & contexts page** (`#/runs`) — one row per `<host>/<product>`
+  context, the run's label (see {ref}`coverage-runs`), each with an
+  expandable per-host lines breakdown, filterable by
   tier, by product, and by free-text search over label/host/ticket/board/product. Per-run **branch** contribution
   isn't part of the stored data (**branch** hits are recorded per line, not
   per line-and-run — unlike line hits, which are) and renders as "not
   tracked per-run".
 
   ![Runs & contexts page: tier and product filter chips, one row per
-  context with its `host · product` pills, and nightly-full expanded to its
-  capture metadata, per-host lines, and top
+  `<host>/<product>` context, and router-a/firmware expanded to its capture
+  metadata, per-host lines, and top
   files](../../_static/generated/coverage-runs.png)
 
 - **Report-wide context focus** — pin a run's context from its row on the
@@ -323,9 +333,9 @@ configure.
   Branch cells show "—" while a focus is active; focus mode filters line
   stats only.
 
-  ![main.c with the nightly-full context pinned: the focus chip in the app
-  bar, the stats card scoped to that context, and every instrumented line
-  no nightly-full run hit reading
+  ![main.c with the router-a/firmware context pinned: the focus chip in the
+  app bar, the stats card scoped to that context, and every instrumented
+  line router-a/firmware did not hit reading
   uncovered](../../_static/generated/coverage-context-focus.png)
 
 - **Product focus** — pin a product from the chip row on the runs page, from
@@ -380,7 +390,8 @@ configure.
 `store.json` is written alongside the report with the same data —
 validity states, colors, runs, tickets, each file's excluded lines, and
 its functions with per-tier hits included — as the explicit data contract
-for tooling built on top of a report without touching the pipeline.
+for tooling built on top of a report without touching the pipeline. Its
+schema, `files[].functions` included, is {ref}`coverage-store-json`.
 `tickets.json` (see
 {ref}`coverage-tickets-json`) is a separate, public export built for
 consumers otto does not control.

@@ -741,6 +741,13 @@ def switched_off(project_name: str, ctx: "OttoContext") -> bool:
     return normalize_name(project_name) in _switched(ctx.exclude_projects)
 
 
+OUT_OF_SCOPE_REASON = "no declared project targets it"
+"""The reason a lab host is outside the fleet of interest when it is in no declared universe."""
+
+SWITCHED_OFF_REASON = "only switched-off projects target it"
+"""The reason a lab host is outside the fleet of interest when only ``-E``'d projects declare it."""
+
+
 def _not_switched_off(
     scopes: "list[ProjectScope]", exclude_projects: "tuple[str, ...]"
 ) -> "list[ProjectScope]":

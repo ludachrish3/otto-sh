@@ -16,22 +16,22 @@ has no ``LineRecord`` at all, only an ``excluded_lines`` entry.
 
 Rendered with ``prefix=base_dir`` so displayed paths are the
 deterministic ``product/main.c`` / ``product/utils.c`` / ``lib/ring.c``
-regardless of the tmp dir. Registers a run table (spec §10): three
-``system`` runs sharing the label "nightly-full" (multi-host:
-router-a/router-b, see Products below) crediting main.c's and ring.c's
-system-tier lines, two ``unit`` runs ("unit harvest" and "agent unit",
-both on host ci-01) crediting their unit-tier lines, one fully-revoked
-``manual`` run ("smoke-old" — a stale line with no live hits) and one
-aging, dirty-remapped ``manual`` run ("field bring-up", ticket FW-1188)
-— every state (``t-<tier>``/``s-excl``/``s-stale``/``s-aging``) the SPA's
+regardless of the tmp dir. Registers a run table (spec §10). Every run is
+labelled ``<host>/<product>`` (store v9): three ``system`` runs from one
+nightly invocation, ``router-a/firmware``, ``router-b/firmware`` and
+``router-b/agent`` (see Products below), crediting main.c's and ring.c's
+system-tier lines; two ``unit`` runs, ``ci-01/firmware`` and
+``ci-01/agent``, crediting their unit-tier lines; one fully-revoked
+``manual`` run, ``bench-3/bootloader`` (a stale line with no live hits); and
+one aging, dirty-remapped ``manual`` run, ``bench-7/bootloader`` (ticket
+FW-1188) — every state (``t-<tier>``/``s-excl``/``s-stale``/``s-aging``) the SPA's
 file-page row precedence renders is reachable from this one fixture.
 
 Products (per-run ``product``, the ``<product>`` segment of
-``cov/<host>/<product>/``): three. ``firmware`` owns both nightly-full
-runs above and the unit harvest; ``agent`` is a third nightly-full run on
-router-b (one host, two products, so that context's host pills read
-``host · product``) plus its own unit view ("agent unit", ci-01), and is
-the only product with evidence in ``lib/ring.c``; ``bootloader`` tags both
+``cov/<host>/<product>/``): three. ``firmware`` owns two of the nightly
+runs and ``ci-01/firmware``; ``agent`` is the third nightly run, on
+router-b (one host, two products, so two contexts), plus its own unit view
+``ci-01/agent``, and is the only product with evidence in ``lib/ring.c``; ``bootloader`` tags both
 manual runs. ``lib/ring.c`` is the second source directory: push/pop
 covered — the system run takes their happy paths, the unit view only
 their full-buffer and empty-buffer early returns — and ``ring_drain()``
@@ -199,10 +199,11 @@ def build_fixture_report(base_dir: Path) -> Path:
     store = CoverageStore(tier_order=["system", "unit", "manual", "bench"])
 
     # -- Runs (spec §10) -----------------------------------------------
-    # Two system runs sharing one label — a multi-host nightly run.
+    # One nightly invocation on two hosts: each host's product is its own
+    # context, labelled ``<host>/<product>``.
     run_sys_a = store.add_run(
         tier="system",
-        label="nightly-full",
+        source="run",
         board="router-a",
         host="router-a",
         product=PRODUCT_FIRMWARE,
@@ -212,7 +213,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     )
     run_sys_b = store.add_run(
         tier="system",
-        label="nightly-full",
+        source="run",
         board="router-b",
         host="router-b",
         product=PRODUCT_FIRMWARE,
@@ -221,12 +222,11 @@ def build_fixture_report(base_dir: Path) -> Path:
         base_commit=_BASE_COMMIT_NIGHTLY,
     )
     # The same nightly invocation also collected the agent product on
-    # router-b: one host, two products, two runs under one label — so the
-    # context carries three member runs and its host pills read
-    # ``host · product``.
+    # router-b: one host, two products — two runs, so two contexts
+    # (``router-b/firmware`` and ``router-b/agent``), never one.
     run_sys_b_agent = store.add_run(
         tier="system",
-        label="nightly-full",
+        source="run",
         board="router-b",
         host="router-b",
         product=PRODUCT_AGENT,
@@ -236,7 +236,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     )
     run_unit = store.add_run(
         tier="unit",
-        label="unit harvest",
+        source="unit",
         board="ci-01",
         host="ci-01",
         product=PRODUCT_FIRMWARE,
@@ -248,7 +248,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     # harvested as its own run, tagged with its product.
     run_unit_agent = store.add_run(
         tier="unit",
-        label="agent unit",
+        source="unit",
         board="ci-01",
         host="ci-01",
         product=PRODUCT_AGENT,
@@ -260,7 +260,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     # no live hits anywhere, just a stale mark and the revoked run id.
     run_smoke_old = store.add_run(
         tier="manual",
-        label="smoke-old",
+        source="manual",
         board="bench-3",
         host="bench-3",
         product=PRODUCT_BOOTLOADER,
@@ -271,7 +271,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     # Valid but old, and its anchor chain needed a dirty-tree remap.
     run_field = store.add_run(
         tier="manual",
-        label="field bring-up",
+        source="manual",
         board="bench-7",
         host="bench-7",
         product=PRODUCT_BOOTLOADER,
@@ -288,7 +288,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     # -- main.c ----------------------------------------------------------
     main_rec = FileRecord(path=src_dir / "main.c")
     # router-a covers checked_add()'s body; router-b covers main()'s body —
-    # same "nightly-full" label, two hosts, so ctx_lines rolls both up.
+    # two hosts, so two contexts in ctx_lines.
     for lineno, hits, run_hits in [
         (3, {"system": 4, "unit": 12}, {run_sys_a: 4, run_unit: 12}),
         (4, {"system": 4, "unit": 12}, {run_sys_a: 4, run_unit: 12}),
@@ -307,14 +307,14 @@ def build_fixture_report(base_dir: Path) -> Path:
         _branch(0, 2, {}, reachable=False),
     ]
     # Line 6 ("    }", the if-block's closing brace — gcov never emits a
-    # DA: for it, so no tier ever measures it): smoke-old's manual claim
+    # DA: for it, so no tier ever measures it): bench-3/bootloader's manual claim
     # here was fully revoked by report time — a stale mark, no hits, no
     # live evidence at all (s-stale).
     stale_line = main_rec.get_or_create_line(6)
     stale_line.state = "stale"
     stale_line.stale_runs = [run_smoke_old]
-    # Line 9 (blank, same reasoning): field bring-up's manual claim is
-    # still valid (unlike smoke-old above) but old enough to render aging
+    # Line 9 (blank, same reasoning): bench-7/bootloader's manual claim is
+    # still valid (unlike bench-3/bootloader above) but old enough to render aging
     # (s-aging) — credited via `run_hits` only, deliberately no per-tier
     # `hits` entry: the SPA's row-precedence (Global Constraints) reads a
     # tier hit ahead of aging/stale, so a `hits`-bearing "manual" entry

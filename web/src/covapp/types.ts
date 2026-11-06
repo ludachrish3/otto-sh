@@ -31,11 +31,18 @@ export interface Tester {
 export interface RunJson {
   id: number;
   tier: string;
+  /** The run's context: `<host>/<product>`, `<tier>/<product>` for a unit
+   * view, the tier alone for a `--tier` tracefile run. Opaque here: the SPA
+   * groups by it and never parses it. */
   label: string;
+  /** Which report input the run was folded from. */
+  source: "run" | "manual" | "unit" | "tracefile";
   board: string;
   host: string;
   /** The <product> segment of cov/<host>/<product>/; "" for a `--tier` tracefile run. */
   product: string;
+  /** The run directory an e2e (`source: "run"`) capture came from; "" otherwise. */
+  run_dir: string;
   labs: string[];
   captured_at: string;
   tester: Tester | null;

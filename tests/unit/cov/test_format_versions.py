@@ -37,7 +37,7 @@ def _capture_sample(version: int) -> Path:
     return SAMPLES / "coverage-capture" / f"{version}.json"
 
 
-def _store_v8(store: CoverageStore) -> None:
+def _store_v9(store: CoverageStore) -> None:
     (rec,) = list(store.files())
     assert str(rec.path) == "/work/src/app.c"
     assert rec.lines[1].hits.for_tier("system") == 3
@@ -55,6 +55,10 @@ def _store_v8(store: CoverageStore) -> None:
     assert [(r.tier, r.product, r.ticket) for r in store.runs] == [
         ("system", "app", None),
         ("manual", "app", "PROJ-1"),
+    ]
+    assert [(r.label, r.source, r.run_dir) for r in store.runs] == [
+        ("board1/app", "run", "/work/out/run1"),
+        ("board1/app", "manual", ""),
     ]
     assert store.tickets["PROJ-1"].commits == ["a" * 40]
     assert [(o.id, o.key) for o in store.overrides] == [(0, "line:src/app.c:2")]
@@ -74,7 +78,7 @@ def _capture_v3(capture: Capture) -> None:
     assert (capture.tester, capture.ticket) == ({"name": "Ada"}, "PROJ-2")
 
 
-STORE_MEANING = {8: _store_v8}
+STORE_MEANING = {9: _store_v9}
 """What each declared store read version's sample must load as; a version with no entry fails."""
 
 CAPTURE_MEANING = {3: _capture_v3}
@@ -102,9 +106,18 @@ def test_the_readers_and_writers_hold_the_declared_lists():
 
 
 def test_store_load_accepts_only_the_declared_read_versions(monkeypatch):
-    monkeypatch.setattr(store_model, "STORE_READ_VERSIONS", [9])
-    with pytest.raises(ValueError, match=r"coverage store format v9 required; found v8"):
-        CoverageStore.load(_store_sample(8))
+    monkeypatch.setattr(store_model, "STORE_READ_VERSIONS", [10])
+    with pytest.raises(ValueError, match=r"coverage store format v10 required; found v9"):
+        CoverageStore.load(_store_sample(9))
+
+
+def test_a_v8_store_names_the_regenerate_fix(tmp_path):
+    path = tmp_path / "store.json"
+    path.write_text(json.dumps({"format": 8}))
+    with pytest.raises(
+        ValueError, match=r"format v9 required; found v8 — regenerate with otto cov get/report"
+    ):
+        CoverageStore.load(path)
 
 
 def test_capture_load_accepts_only_the_declared_read_versions(monkeypatch):
@@ -114,16 +127,16 @@ def test_capture_load_accepts_only_the_declared_read_versions(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("stamp", "loads"), [(8.0, True), (True, False), ("8", False), (None, False)]
+    ("stamp", "loads"), [(9.0, True), (True, False), ("9", False), (None, False)]
 )
 def test_the_store_stamp_is_still_judged_by_equality(stamp, loads, tmp_path):
     """Membership in the read list judges a stamp exactly as ``!=`` did before it."""
-    data = json.loads(_store_sample(8).read_text())
+    data = json.loads(_store_sample(9).read_text())
     data["format"] = stamp
     path = tmp_path / "store.json"
     path.write_text(json.dumps(data))
     if loads:
-        _store_v8(CoverageStore.load(path))
+        _store_v9(CoverageStore.load(path))
     else:
         with pytest.raises(ValueError, match="regenerate"):
             CoverageStore.load(path)
@@ -170,7 +183,7 @@ def test_the_manual_store_rewrite_of_each_read_sample_keeps_it(version, tmp_path
 @pytest.mark.parametrize("version", formats.TICKETS_WRITE_VERSIONS)
 def test_tickets_export_stamps_the_declared_write_version(version):
     payload = build_ticket_export(
-        CoverageStore.load(_store_sample(8)),
+        CoverageStore.load(_store_sample(9)),
         project_root=Path("/work"),
         report_title="p",
         otto_version="0",

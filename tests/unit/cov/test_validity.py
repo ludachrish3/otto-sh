@@ -240,7 +240,7 @@ def test_unverifiable_zero_count_line_not_staled(git_repo: Path) -> None:
     for fc in bogus.files.values():
         fc.blob = "e" * 40
     store = CoverageStore(tier_order=["manual"])
-    rid = register_capture_run(store, bogus)
+    rid = register_capture_run(store, bogus, source="manual")
     apply_manual_capture(store, bogus, git_repo, max_age_days=None, run_id=rid)
     assert _find(store, git_repo, 1).state == "stale"
     assert rid in _find(store, git_repo, 1).stale_runs
@@ -264,22 +264,25 @@ def test_unverifiable_base_commit_warns_with_ticket_and_remedy(git_repo: Path, c
     assert "re-capture" in rec.message
 
 
-def test_register_capture_run_prefers_display_name(git_repo: Path) -> None:
+def test_register_capture_run_ignores_the_display_name(git_repo: Path) -> None:
     cap = _capture(git_repo)
     cap.display_name = "Rack 2 Slot 4"
     store = CoverageStore(tier_order=["manual"])
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="manual")
     rec = store.runs[rid]
-    assert rec.label == "Rack 2 Slot 4"
+    assert rec.label == "b/app"
+    assert (rec.source, rec.run_dir) == ("manual", "")
     assert rec.board == "b"
     assert rec.ticket == "T-1"
     assert rec.base_commit == cap.base_commit
 
 
-def test_register_capture_run_falls_back_to_board(git_repo: Path) -> None:
+def test_register_capture_run_labels_board_slash_product(git_repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
-    rid = register_capture_run(store, _capture(git_repo))
-    assert store.runs[rid].label == "b"
+    rid = register_capture_run(store, _capture(git_repo), source="run", run_dir="/runs/r1")
+    rec = store.runs[rid]
+    assert rec.label == "b/app"
+    assert (rec.source, rec.run_dir) == ("run", "/runs/r1")
 
 
 def test_register_capture_run_sets_host() -> None:
@@ -291,18 +294,18 @@ def test_register_capture_run_sets_host() -> None:
         display_name="Rig One",
     )
     store = CoverageStore(tier_order=["nightly"])
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="run")
     run = store.runs[rid]
     assert run.host == "rig-1"
     assert run.product == "app"
-    assert run.label == "Rig One"
+    assert run.label == "rig-1/app"
     assert run.board == "rig-1"
 
 
 def test_apply_manual_capture_credits_run_hits(git_repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(git_repo)  # lines {1: 2, 3: 1}
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="manual")
     apply_manual_capture(store, cap, git_repo, max_age_days=None, run_id=rid)
     assert _find(store, git_repo, 1).run_hits == {rid: 2}
     assert _find(store, git_repo, 3).run_hits == {rid: 1}
@@ -311,7 +314,7 @@ def test_apply_manual_capture_credits_run_hits(git_repo: Path) -> None:
 def test_stale_line_records_revoked_run(git_repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(git_repo)
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="manual")
     _commit_edit(git_repo, "int a;\nint b;\nint CHANGED;\n")  # stales line 3
     apply_manual_capture(store, cap, git_repo, max_age_days=None, run_id=rid)
     line3 = _find(store, git_repo, 3)
@@ -323,7 +326,7 @@ def test_stale_line_records_revoked_run(git_repo: Path) -> None:
 def test_aging_capture_flags_its_run_record(git_repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(git_repo, "2025-01-01T00:00:00Z")
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="manual")
     apply_manual_capture(
         store,
         cap,
@@ -339,12 +342,12 @@ def test_aging_capture_flags_its_run_record(git_repo: Path) -> None:
 def test_e2e_capture_load_credits_run(git_repo: Path) -> None:
     store = CoverageStore(tier_order=["system"])
     cap = _capture(git_repo)
-    rid = register_capture_run(store, cap)
+    rid = register_capture_run(store, cap, source="run")
     load_capture_into_store(store, cap, git_repo, run_id=rid)
     assert _find(store, git_repo, 1).run_hits == {rid: 2}
     # zero-count DA lines never credit a run (line 3 has count 1; craft a 0):
     cap0 = _capture(git_repo)
     cap0.files["f.c"].lines = {2: 0}
-    rid0 = register_capture_run(store, cap0)
+    rid0 = register_capture_run(store, cap0, source="run")
     load_capture_into_store(store, cap0, git_repo, run_id=rid0)
     assert _find(store, git_repo, 2).run_hits == {}

@@ -73,9 +73,11 @@ if TYPE_CHECKING:
     from .errors import NoMonitorableHostsError as NoMonitorableHostsError
     from .errors import ReviewSourceError as ReviewSourceError
     from .events import MonitorEvent as MonitorEvent
+    from .factory import MonitorSelection as MonitorSelection
     from .factory import build_monitor_collector as build_monitor_collector
     from .factory import is_monitorable as is_monitorable
-    from .factory import monitorable as monitorable
+    from .factory import partition_monitorable as partition_monitorable
+    from .factory import unmonitorable_reason as unmonitorable_reason
     from .live import LiveReport as LiveReport
     from .live import run_live as run_live
     from .live import select_monitor_hosts as select_monitor_hosts
@@ -98,7 +100,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "MonitorEvent": "otto.monitor.events",
     "build_monitor_collector": "otto.monitor.factory",
     "is_monitorable": "otto.monitor.factory",
-    "monitorable": "otto.monitor.factory",
+    "MonitorSelection": "otto.monitor.factory",
+    "partition_monitorable": "otto.monitor.factory",
+    "unmonitorable_reason": "otto.monitor.factory",
     # These three resolve into live.py, the lab-aware runner. No other file
     # under otto/monitor imports it (tests/unit/test_monitor_service_reads_no_lab.py):
     # the runner reads the lab and hands it to the collector, never the reverse.
@@ -136,6 +140,7 @@ __all__ = [
     "MetricParser",
     "MonitorEvent",
     "MonitorInputError",
+    "MonitorSelection",
     "MonitorServer",
     "MonitorSession",
     "MonitorTarget",
@@ -145,9 +150,10 @@ __all__ = [
     "build_monitor_collector",
     "is_monitorable",
     "load_review_document",
-    "monitorable",
+    "partition_monitorable",
     "resolve_monitor_tls",
     "run_live",
     "select_monitor_hosts",
     "serve_review",
+    "unmonitorable_reason",
 ]

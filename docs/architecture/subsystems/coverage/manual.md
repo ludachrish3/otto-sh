@@ -93,9 +93,9 @@ gone — has each of its executed lines marked stale under a warning naming
 the capture's ticket and the first twelve characters of `base_commit`.
 Evidence is never dropped quietly.
 
-Supersede runs before any of this: two captures of the same `(tier, label,
-host)` context never accumulate, and the older one leaves the runs table
-entirely — see {doc}`merging`.
+Supersede runs before any of this: a newer capture of the same context
+replaces the older one, which leaves the runs table entirely
+({ref}`coverage-supersede`).
 
 ## Anchor resolution: two paths, one contract
 

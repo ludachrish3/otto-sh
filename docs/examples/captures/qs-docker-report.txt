@@ -45,6 +45,8 @@ INFO     Loaded 1 files from unit_unit_banner_0.info
 INFO     === Rendering coverage report ===
 INFO     Report written to /tmp/otto-gs/xdir/quickstart-docker/report/index.html
 INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-docker/report/index.html
+INFO     Sources: system — 3 capture(s) from 1 run dir(s); manual — 1 manual capture(s); unit — 1
+         product view(s)
 INFO     Coverage: 100.0% overall (4 files)
 INFO     Report: /tmp/otto-gs/xdir/quickstart-docker/report/index.html
 

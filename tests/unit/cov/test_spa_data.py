@@ -109,7 +109,7 @@ class TestTreeRollupAndCtxLines:
         x = _write(tmp_path, "a/x.c", "int a;\nint b;\n")
         y = _write(tmp_path, "a/b/y.c", "int c;\nint d;\n")
         store = CoverageStore(tier_order=["system"])
-        run_r1 = store.add_run(tier="system", label="r1")
+        run_r1 = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
 
         fr_x = store.get_or_create_file(x)
         for lineno in (1, 2):
@@ -129,7 +129,7 @@ class TestTreeRollupAndCtxLines:
         assert root["name"] == "Proj"
         assert root["stats"]["lines"]["total"] == 4
         assert root["stats"]["lines"]["hit"] == 3
-        assert root["stats"]["ctx_lines"]["r1"] == 3
+        assert root["stats"]["ctx_lines"]["r1/app"] == 3
 
         dir_a = next(d for d in root["dirs"] if d["name"] == "a")
         assert any(d["name"] == "b" for d in dir_a["dirs"])
@@ -137,13 +137,36 @@ class TestTreeRollupAndCtxLines:
         assert dir_b["stats"]["lines"]["total"] == 2
         assert dir_b["stats"]["lines"]["hit"] == 1
 
+    def test_one_line_two_captures_of_one_label_counts_once(self, tmp_path):
+        """The covapp's per-context totals read ``ctx_lines`` (contexts.ts),
+        never a sum of ``run_contrib``: one product captured in two tiers
+        shares one ``<host>/<product>`` label, and a line both captures hit
+        is ONE line of that context (100%), though each capture's own
+        ``run_contrib`` credits it."""
+        src = _write(tmp_path, "a.c", "int a;\n")
+        store = CoverageStore(tier_order=["bench", "manual"])
+        r_manual = store.add_run(tier="manual", source="manual", host="h1", product="app")
+        r_bench = store.add_run(tier="bench", source="run", host="h1", product="app")
+        lr = store.get_or_create_file(src).get_or_create_line(1)
+        lr.hits.add("manual", 1)
+        lr.hits.add("bench", 1)
+        lr.run_hits = {r_manual: 1, r_bench: 1}
+
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
+
+        assert {r["label"] for r in payload["runs"]} == {"h1/app"}
+        assert payload["total_lines"] == 1
+        assert payload["tree"]["stats"]["ctx_lines"] == {"h1/app": 1}
+        assert payload["tree"]["files"][0]["stats"]["ctx_lines"] == {"h1/app": 1}
+        assert [payload["run_contrib"][str(r)]["lines"] for r in (r_manual, r_bench)] == [1, 1]
+
 
 class TestProductDimension:
     def _store(self, tmp_path):
         store = CoverageStore(tier_order=["e2e"])
-        r_app = store.add_run(tier="e2e", label="nightly", board="h1", host="h1", product="app")
-        r_agent = store.add_run(tier="e2e", label="nightly", board="h1", host="h1", product="agent")
-        r_unit = store.add_run(tier="unit")  # unnamed
+        r_app = store.add_run(tier="e2e", source="run", board="h1", host="h1", product="app")
+        r_agent = store.add_run(tier="e2e", source="run", board="h1", host="h1", product="agent")
+        r_unit = store.add_run(tier="unit", source="tracefile")  # unnamed
         fr = store.get_or_create_file(tmp_path / "a.c")
         l1 = fr.get_or_create_line(1)
         l1.hits.add("e2e", 1)
@@ -168,8 +191,8 @@ class TestProductDimension:
         )
         stats = payload["tree"]["stats"]
         assert stats["product_lines"] == {"app": 2, "agent": 1}
-        assert stats["ctx_product_lines"] == {"nightly": {"app": 2, "agent": 1}}
-        assert stats["ctx_lines"] == {"nightly": 2, "unit": 1}
+        assert stats["ctx_product_lines"] == {"h1/app": {"app": 2}, "h1/agent": {"agent": 1}}
+        assert stats["ctx_lines"] == {"h1/app": 2, "h1/agent": 1, "unit": 1}
 
     def test_product_maps_sum_through_directory_rollup(self, tmp_path):
         """A parent's product maps are the SUM of its children's, and the
@@ -185,15 +208,18 @@ class TestProductDimension:
         root = payload["tree"]
         sub = next(d for d in root["dirs"] if d["name"] == "sub")
         assert sub["stats"]["product_lines"] == {"app": 1}
-        assert sub["stats"]["ctx_product_lines"] == {"nightly": {"app": 1}}
+        assert sub["stats"]["ctx_product_lines"] == {"h1/app": {"app": 1}}
         assert root["stats"]["product_lines"] == {"app": 3, "agent": 1}
-        assert root["stats"]["ctx_product_lines"] == {"nightly": {"app": 3, "agent": 1}}
+        assert root["stats"]["ctx_product_lines"] == {
+            "h1/app": {"app": 3},
+            "h1/agent": {"agent": 1},
+        }
         assert (
             sub["files"][0]["stats"]["ctx_product_lines"] is not sub["stats"]["ctx_product_lines"]
         )
         assert (
-            sub["files"][0]["stats"]["ctx_product_lines"]["nightly"]
-            is not sub["stats"]["ctx_product_lines"]["nightly"]
+            sub["files"][0]["stats"]["ctx_product_lines"]["h1/app"]
+            is not sub["stats"]["ctx_product_lines"]["h1/app"]
         )
 
     def test_format_is_three(self):
@@ -205,8 +231,8 @@ class TestRunContrib:
         x = _write(tmp_path, "a.c", "int a;\nint b;\n")
         y = _write(tmp_path, "b.c", "int c;\n")
         store = CoverageStore(tier_order=["system"])
-        run_id = store.add_run(tier="system", label="r1")
-        other_run = store.add_run(tier="system", label="r2")
+        run_id = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
+        other_run = store.add_run(tier="system", source="run", board="r2", host="r2", product="app")
 
         fr_x = store.get_or_create_file(x)
         l1 = fr_x.get_or_create_line(1)
@@ -299,8 +325,8 @@ class TestEmitChunks:
     def test_file_chunk_wraps_call_and_matches_store_line_json(self, tmp_path):
         src = _write(tmp_path, "f.c", "int a;\nint b;\nint c;\n")
         store = CoverageStore(tier_order=["system", "manual"])
-        run_a = store.add_run(tier="system", label="r1")
-        run_b = store.add_run(tier="manual", label="r2")
+        run_a = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
+        run_b = store.add_run(tier="manual", source="manual", board="r2", host="r2", product="app")
         fr = store.get_or_create_file(src)
 
         lr1 = fr.get_or_create_line(1)

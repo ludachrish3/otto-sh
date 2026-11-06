@@ -79,11 +79,15 @@ def test_file_name_click_routes_to_file_and_code_rows_render(page: Page, report_
     expect(page.locator('[data-testid="code-row-1"]')).to_be_visible()
 
 
-def test_runs_disclosure_lists_nightly_full_and_remap_marker(page: Page, report_dir: Path) -> None:
-    """The fixture's two-host "nightly-full" system runs, and the "✎
-    remapped" marker on the dirty-remapped "field bring-up" manual run."""
+def test_runs_disclosure_lists_nightly_contexts_and_remap_marker(
+    page: Page, report_dir: Path
+) -> None:
+    """The fixture's two-host nightly system runs, one ``<host>/<product>``
+    context each, and the "✎ remapped" marker on the dirty-remapped
+    bench-7/bootloader manual run."""
     _goto(page, report_dir)
     disclosure = page.locator('[data-testid="runs-disclosure"]')
     disclosure.get_by_role("button").click()
-    expect(disclosure).to_contain_text("nightly-full")
+    for label in ("router-a/firmware", "router-b/firmware", "router-b/agent"):
+        expect(disclosure).to_contain_text(label)
     expect(disclosure).to_contain_text("✎ remapped")

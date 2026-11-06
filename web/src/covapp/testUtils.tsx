@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 import { FocusProvider } from "./focus";
 import { ToastProvider } from "./Toast";
-import type { IndexPayload, RunJson, Stats } from "./types";
+import type { DirNode, IndexPayload, RunJson, Stats } from "./types";
 import { EXPECTED_DATA_FORMAT } from "./types";
 
 // jsdom (pinned for this project) doesn't implement `CSS.escape`
@@ -40,6 +40,32 @@ export function emptyStats(overrides: Partial<Stats> = {}): Stats {
   };
 }
 
+/** A one-level tree whose file nodes carry the given per-label hit-line
+ * counts (`stats.ctx_lines`), rolled up into the root the way
+ * `spa_data._add_stats` rolls them: a line lives in one file, so the root's
+ * per-label count is the sum of its files'. `files` maps a display path to
+ * `{label: distinct lines that label's captures hit in that file}`. */
+export function ctxTree(files: Record<string, Record<string, number>>, total = 0): DirNode {
+  const root: Record<string, number> = {};
+  for (const perLabel of Object.values(files)) {
+    for (const [label, n] of Object.entries(perLabel)) root[label] = (root[label] ?? 0) + n;
+  }
+  return {
+    name: "acme-fw",
+    dirs: [],
+    files: Object.entries(files).map(([path, perLabel]) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      chunk: path.replaceAll("/", "_"),
+      stats: emptyStats({ ctx_lines: perLabel }),
+    })),
+    stats: emptyStats({
+      lines: { total, hit: 0, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+      ctx_lines: root,
+    }),
+  };
+}
+
 /** A minimal-but-valid `RunJson` — contexts.test.ts and RunsPage.test.tsx
  * both build several of these per test, and DirectoryPage.test.tsx
  * hand-rolled two before this existed. `id` defaults to 1 so a
@@ -51,9 +77,11 @@ export function makeRun(overrides: Partial<RunJson> = {}): RunJson {
     id: 1,
     tier: "system",
     label: "nightly-full",
+    source: "run",
     board: "stm32h7-rev3",
     host: "router-a",
     product: "",
+    run_dir: "",
     labs: [],
     captured_at: "2026-07-21",
     tester: null,

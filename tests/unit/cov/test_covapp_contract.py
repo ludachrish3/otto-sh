@@ -43,7 +43,7 @@ CONTRACT = json.loads((TESTS_ROOT / "_fixtures" / "covapp_contract.json").read_t
 def _ticket_store(tmp_path: Path) -> CoverageStore:
     """Two lines owned by PROJ-1, one hit — enough to emit every ticket key."""
     store = CoverageStore(tier_order=["unit"])
-    run_id = store.add_run(tier="unit")
+    run_id = store.add_run(tier="unit", source="unit")
     record = store.get_or_create_file(tmp_path / "a.c")
     first = record.get_or_create_line(1)
     first.ticket = ["PROJ-1"]
@@ -174,9 +174,12 @@ def _rich_store(tmp_path: Path) -> CoverageStore:
         RunRecord(
             id=0,
             tier="unit",
-            label="dut1",
+            label="dut1/app",
+            source="run",
             board="dut1",
+            host="dut1",
             product="app",
+            run_dir="/runs/r1",
             tester={"name": "chris", "email": "c@example.com"},
         )
     )

@@ -8,6 +8,20 @@ aiosqlite or uvicorn onto a CLI path (import budget).
 
 from ..errors import FieldError, OttoError
 
+UNMONITORABLE_REASON = "not a Unix host and has no `snmp` block"
+"""Why otto cannot sample a host.
+
+The one reason :func:`~otto.monitor.factory.unmonitorable_reason` returns;
+every message that names an unsampled host embeds it rather than restating
+it. otto samples metrics over a shell (a Unix host) or over SNMP (a host
+whose lab entry declares an ``snmp`` block); a host offering neither is
+left out. It holds no parentheses: ``otto.utils.name_by_reason`` wraps
+it in a pair.
+"""
+
+UNMONITORABLE_REMEDY = "give the host(s) you want monitored an `snmp` block, or select a Unix host"
+"""What makes an unsampled host monitorable; every refusal over one ends with it."""
+
 _MAX_NAMED_HOSTS = 5
 """How many ids the no-monitorable-hosts message spells out before summarizing.
 
@@ -74,8 +88,7 @@ def _message(ids: list[str]) -> str:
         shown += f" (+{len(ids) - _MAX_NAMED_HOSTS} more)"
     return (
         f"{len(ids)} host(s) selected, but none of them can be monitored: {shown}. "
-        "otto samples metrics over a shell (Unix hosts) or over SNMP (any host "
-        "declaring an `snmp` block in its lab entry), and these declare neither. "
-        "The selection is not the problem, so widening it will not help: give the "
-        "host(s) you want monitored an `snmp` block, or select a Unix host."
+        f"Each is {UNMONITORABLE_REASON}. "
+        "The selection is not the problem, so widening it will not help: "
+        f"{UNMONITORABLE_REMEDY}."
     )

@@ -267,6 +267,11 @@ def _file_stats(
     Iterates every :class:`LineRecord` the file has, including ones past
     the current source's EOF (shrunk-file tolerance) — they still count
     here even though they have no source line to annotate.
+
+    ``ctx_lines`` and ``ctx_product_lines`` are keyed by run label. A label is
+    one product's identity (store v9, ``<host>/<product>``), so each
+    ``ctx_product_lines`` bucket holds that one product; the per-label
+    product map stays because it is part of the covapp contract.
     """
     stats = _empty_stats(tier_order)
     lines = list(fr.lines.values())

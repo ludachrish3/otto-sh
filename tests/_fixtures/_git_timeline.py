@@ -62,7 +62,7 @@ class GitTimeline(TmpGitRepo):
     ) -> CoverageStore:
         store = CoverageStore()
         for cap in self.captures:
-            run_id = register_capture_run(store, cap)
+            run_id = register_capture_run(store, cap, source="manual")
             apply_manual_capture(
                 store,
                 cap,

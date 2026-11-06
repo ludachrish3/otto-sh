@@ -45,7 +45,10 @@ DEBUG    Skipping unrelated-lab link at index 1 in lab.json: {'_comment': "The b
          'endpoints': [{'host': 'test1', 'interface': 'bbeth-1350'}, {'host':
          'bb1350-qemu', 'interface': 'eth0'}], 'protocol': 'tcp'}
 DEBUG    Loaded lab 'embedded' with 8 hosts                                   json_repository.py:<n>
-INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded)           run_context.py:<n>
+INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded); outside  run_context.py:<n>
+         it: test4, zephyr27-fat, zephyr37-fat, zephyr37-lfs, zephyr37-llext,
+         zephyr37-nofs, zephyr44-lfs, zephyr44-llext (no declared project targets
+         it)
 DEBUG    Opening SSH tunnel through test4 for zephyr37_fat                        remote_host.py:<n>
 DEBUG    zephyr37_fat via test4: asyncssh.connect('10.10.200.14')                 connections.py:<n>
          kwargs={'username': 'vagrant', 'tunnel': None, 'port': 22,
