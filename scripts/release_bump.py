@@ -263,14 +263,22 @@ def decide_bump(
 def git_last_tag(cwd: "Path | None" = None) -> str:
     """Return the most recent reachable *version* tag, e.g. ``v0.11.0``.
 
-    ``--match 'v[0-9]*'`` mirrors ``cliff.toml``'s own ``tag_pattern`` so this
-    script and git-cliff agree on what a "version tag" is -- without it, a
+    ``--match`` takes ``cliff.toml``'s own ``tag_pattern``
+    (:func:`release_events.release_tag_glob`) so this script and git-cliff
+    agree on what a "version tag" is -- without it, a
     non-version tag (e.g. an archive marker) closer to HEAD than the last
     real release would be picked instead, and ``Version()`` would choke on
     it.
     """
-    return subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],  # noqa: S607 -- `git` via PATH
+    return subprocess.run(  # noqa: S603 -- fixed argv, no shell; the pattern is cliff.toml's
+        [  # noqa: S607 -- `git` via PATH
+            "git",
+            "describe",
+            "--tags",
+            "--abbrev=0",
+            "--match",
+            release_events.release_tag_glob(),
+        ],
         cwd=cwd,
         capture_output=True,
         text=True,

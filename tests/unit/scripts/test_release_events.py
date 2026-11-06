@@ -597,3 +597,17 @@ def test_describe_names_each_corrected_commit_under_the_event() -> None:
     assert Event(commit, [correction]).describe() == (
         f"{'a' * 12} fix(api)!: record it\n    corrects {'b' * 12} {ORIGINAL}"
     )
+
+
+def test_the_release_tag_glob_is_cliff_s_tag_pattern_and_selects_only_release_tags(tmp_path):
+    """One owner for "what is a release tag": cliff.toml. git reads the pattern as a glob."""
+    config = tmp_path / "cliff.toml"
+    config.write_text('[git]\ntag_pattern = "release-*"\n')
+    assert release_events.release_tag_glob(config) == "release-*"
+    repo = TmpGitRepo(tmp_path / "repo")
+    repo.write("a.txt", "a\n")
+    repo.commit("feat: first")
+    for tag in ("v0.9.0", "v0.10.0", "plans-archive-2026-08-03", "pre-rebase-item2", "vendor"):
+        repo.git("tag", tag)
+    listed = repo.git("tag", "--list", release_events.release_tag_glob()).split()
+    assert sorted(listed) == ["v0.10.0", "v0.9.0"]

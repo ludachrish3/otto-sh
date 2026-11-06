@@ -310,10 +310,19 @@ def commits_in_range(repo: Path, rev_range: str) -> "list[str]":
 
 def _golden_rel(repo: Path, golden: Path) -> str:
     """Return *golden* as a repo-relative POSIX path, or as given when it is not under *repo*."""
+    rel = repo_relative(repo, golden)
+    return str(golden) if rel is None else rel
+
+
+def repo_relative(repo: Path, path: Path) -> "str | None":
+    """Return *path* as a repo-relative POSIX path, or None when it is not under *repo*.
+
+    A relative *path* is relative to *repo*, wherever the caller's working directory is.
+    """
     try:
-        return golden.resolve().relative_to(repo.resolve()).as_posix()
+        return (repo / path).resolve().relative_to(repo.resolve()).as_posix()
     except ValueError:
-        return str(golden)
+        return None
 
 
 def golden_bytes_at(repo: Path, rev: str, golden: Path) -> "bytes | None":
