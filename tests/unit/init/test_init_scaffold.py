@@ -139,6 +139,143 @@ def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path
     )
 
 
+# ── --inline-hosts: one lab file, hosts inline (#787) ────────────────────────
+
+
+def _inline_scaffold(root: Path, *areas: str) -> ScaffoldReport:
+    return scaffold(InitConfig(root, "widget", "0.1.0", inline_hosts=True), list(areas))
+
+
+def test_inline_hosts_over_kept_live_tables_keeps_them_and_says_how_to_finish(
+    tmp_path: Path,
+) -> None:
+    # An existing project's settings are the user's: kept, never commented in
+    # place — but its live tables point at stubs this run did not write, so
+    # the run says so instead of leaving the doctor to report them missing.
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    before = settings.read_bytes()
+    report = _inline_scaffold(tmp_path, "lab")
+    assert settings.read_bytes() == before
+    assert not (tmp_path / "lab_data" / "inventory.json").exists()
+    assert not (tmp_path / "lab_data" / "creds.json").exists()
+    (notice,) = [n for n in report.notices if "[inventory]" in n]
+    assert "[creds]" in notice
+    assert ".otto/settings.toml" in notice
+
+
+def test_inline_hosts_with_fresh_settings_prints_no_tables_notice(tmp_path: Path) -> None:
+    report = _inline_scaffold(tmp_path, "settings", "lab")
+    assert not [n for n in report.notices if "[inventory]" in n]
+
+
+def test_default_lab_area_still_writes_the_inventory_and_creds_stubs(tmp_path: Path) -> None:
+    # A guard: the three-file area stays the default, and the settings render
+    # is byte-identical around the {inventory_tables} placeholder (#787).
+    import stat
+
+    import tomli
+
+    _scaffold(tmp_path, "settings", "lab")
+    lab_dir = tmp_path / "lab_data"
+    assert sorted(p.name for p in lab_dir.iterdir()) == [
+        "README.md",
+        "creds.json",
+        "inventory.json",
+        "lab.json",
+    ]
+    assert stat.S_IMODE((lab_dir / "creds.json").stat().st_mode) == 0o600
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    data = tomli.loads(text)
+    assert data["inventory"]["path"] == "lab_data/inventory.json"
+    assert data["creds"]["path"] == "lab_data/creds.json"
+    assert 'supplies = ["ip"]\n\n# [creds] is optional' in text
+    assert 'path = "lab_data/creds.json"\n\n# A NetBox inventory' in text
+    assert "\n\n\n" not in text
+
+
+def test_inline_hosts_writes_one_lab_file_that_loads_with_no_inventory(tmp_path: Path) -> None:
+    import stat
+
+    import tomli
+
+    from otto.init.templates import INLINE_LAB_README_TEMPLATE
+    from otto.labs.loader import load_lab
+
+    report = _inline_scaffold(tmp_path, "settings", "lab")
+    lab_dir = tmp_path / "lab_data"
+    assert {p for p in _paths(report) if p.parent == lab_dir} == {
+        lab_dir / "lab.json",
+        lab_dir / "README.md",
+    }
+    assert sorted(p.name for p in lab_dir.iterdir()) == ["README.md", "lab.json"]
+    assert (lab_dir / "README.md").read_text() == INLINE_LAB_README_TEMPLATE
+    assert not (lab_dir / "inventory.json").exists()
+    assert not (lab_dir / "creds.json").exists()
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    data = tomli.loads(text)
+    assert "inventory" not in data
+    assert "creds" not in data
+    assert "#[inventory]" in text
+    assert "#[creds]" in text
+    assert stat.S_IMODE((lab_dir / "lab.json").stat().st_mode) == 0o600
+    lab = load_lab("example_lab", search_paths=[lab_dir])  # inventory=None
+    host = lab.hosts["example-device"]
+    assert host.ip == "192.0.2.1"
+    assert [c.login for c in host.creds] == ["admin"]
+    assert host.inventory_ref.referenced is False
+
+
+_SAME_MACHINE_ATTRS = ["ip", "os_type", "valid_terms", "valid_transfers"]
+"""The machine facts both lab layouts must agree on (cf. the getting-started twin's _ATTRS)."""
+
+
+def test_inline_and_referenced_scaffolds_describe_the_same_machine(tmp_path: Path) -> None:
+    # One input, two entry points: the referenced host resolved through its
+    # inventory, and the inline host validated straight from lab.json.
+    from otto.host.specs import UnixHostSpec
+    from otto.init.doctor import _inventory_for
+    from otto.inventory import resolve_host_entry
+    from otto.models.lab import ElementSpec
+
+    referenced_root = tmp_path / "referenced"
+    inline_root = tmp_path / "inline"
+    referenced_root.mkdir()
+    inline_root.mkdir()
+    _scaffold(referenced_root, "settings", "lab")
+    _inline_scaffold(inline_root, "settings", "lab")
+
+    data = json.loads((referenced_root / "lab_data" / "lab.json").read_text())
+    element = ElementSpec.model_validate(data["elements"][0])
+    inventory = _inventory_for(referenced_root)
+    assert inventory is not None
+    resolved = resolve_host_entry(element.hosts[0], inventory, element.to_element()).host_data
+    referenced = UnixHostSpec.model_validate(resolved)
+
+    inline_data = json.loads((inline_root / "lab_data" / "lab.json").read_text())
+    inline = UnixHostSpec.model_validate(inline_data["elements"][0]["hosts"][0])
+
+    def facts(spec: UnixHostSpec) -> dict:
+        return {
+            **{k: getattr(spec, k) for k in _SAME_MACHINE_ATTRS},
+            "creds": [(c.login, c.password) for c in spec.creds],
+        }
+
+    assert facts(inline) == facts(referenced)
+
+
+def test_inline_hosts_requests_the_lab_area_through_the_requested_rule(tmp_path: Path) -> None:
+    assert scaffold_candidates(tmp_path, inline_hosts=True) == ["lab"]
+    # Prerequisites stay scaffold's job.
+    assert scaffold_prerequisites(tmp_path, ["lab"]) == ["settings", "instructions"]
+    assert scaffold_candidates(tmp_path) == []  # the False default adds nothing
+    assert scaffold_candidates(tmp_path, requested=["lab"], inline_hosts=True).count("lab") == 1
+    # A present lab is skipped, as requested=["lab"] skips it: it is not refreshable.
+    _scaffold(tmp_path, "settings", "lab")
+    assert "lab" not in scaffold_candidates(tmp_path, inline_hosts=True)
+    assert "lab" not in scaffold_candidates(tmp_path, requested=["lab"], inline_hosts=True)
+
+
 def test_creds_json_is_written_owner_only_and_nothing_is_overwritten(tmp_path: Path) -> None:
     import stat
 
@@ -1126,16 +1263,20 @@ def test_an_unparseable_settings_file_declaring_a_kmodcov_entry_is_left_alone(
 # ── otto init writes no ignore file ──────────────────────────────────────────
 
 
-def test_init_writes_no_ignore_file(tmp_path: Path) -> None:
-    # Runs land under $OTTO_HOME/otto-xdir by default, so a project holds no run
-    # output, and under `--xdir .` the tree is ./<command>/, which no fixed
-    # ignore line can name (#758). Kills: the old otto-output/ scaffolding
-    # coming back, or a user's own ignore file being edited.
+@pytest.mark.parametrize("areas", [["settings"], AREA_NAMES], ids=["settings", "every-area"])
+def test_init_writes_no_ignore_file_for_any_area(tmp_path: Path, areas: list[str]) -> None:
+    # Build-output ignores are the project's job (#787); the examples carry
+    # their own. Runs land under $OTTO_HOME/otto-xdir by default, so a project
+    # holds no run output, and under `--xdir .` the tree is ./<command>/, which
+    # no fixed ignore line can name (#758). The every-area row covers kmodcov
+    # and embedded-gcov, which write third_party/ trees. Kills: the old
+    # otto-output/ scaffolding coming back, an area writing build ignores, or a
+    # user's own ignore file being edited.
     existing = tmp_path / ".dockerignore"
     existing.write_bytes(b"build/\n*.o")
-    report = _scaffold(tmp_path, "settings")
-    assert not (tmp_path / ".gitignore").exists()
+    report = _scaffold(tmp_path, *areas)
+    assert sorted(tmp_path.rglob(".gitignore")) == []
+    assert sorted(tmp_path.rglob(".dockerignore")) == [existing]
     assert existing.read_bytes() == b"build/\n*.o"
-    written = {w.path for w in report.writes}
-    assert tmp_path / ".gitignore" not in written
-    assert existing not in written
+    written = {w.path.name for w in report.writes}
+    assert not written & {".gitignore", ".dockerignore"}

@@ -11,8 +11,8 @@ again after upgrading otto to refresh the generated editor schemas.
 ## Synopsis
 
 ```text
-otto init [--all | --schemas | --lab | --tests | --instructions] [--name NAME]
-          [--version X.Y.Z] [--path DIR] [--kmodcov [--kmodcov-dir DIR]]
+otto init [--all | --schemas | --lab | --tests | --instructions] [--inline-hosts]
+          [--name NAME] [--version X.Y.Z] [--path DIR] [--kmodcov [--kmodcov-dir DIR]]
           [--embedded-gcov [--embedded-gcov-dir DIR]]
 ```
 
@@ -24,6 +24,7 @@ it never creates an output directory.
 | `--all` | `False` | Scaffold every missing area without prompting |
 | `--schemas` | `False` | Scaffold (or refresh, if present) the schemas area: `.otto/schemas` + editor wiring + generated snippets |
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
+| `--inline-hosts` | `False` | Scaffold the lab area as one `lab_data/lab.json` whose hosts carry their own `ip` and `creds`, with no `inventory.json` or `creds.json`. It implies `--lab`, and never prompts. `lab.json` is written with mode 0600, because it holds creds. A `settings.toml` written in the same run has its `[inventory]` and `[creds]` tables commented out; an existing one is kept as is, and init prints a notice to comment out its live tables. On a present lab area it changes nothing. Separate files are the preferred layout |
 | `--tests` | `False` | Scaffold the tests area (example tests + conftest), plus the instructions area when it is missing; never overwrites an existing file |
 | `--instructions` | `False` | Scaffold the instructions area (the init module; `pylib/<name>_instructions/` in a fresh project) |
 | `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), write a consumer starter beside it, and append a commented `[[dev_tools]]` entry to `.otto/settings.toml` when it has none. Never scaffolded by `--all` or the prompts |
@@ -56,11 +57,15 @@ sections below).
 `otto init` writes no `.gitignore` or `.dockerignore`: a run's output goes to
 `$OTTO_HOME/otto-xdir` by default, outside the project. If you keep it in the
 project with `--xdir .`, {ref}`invocation-output-directory` says what to ignore.
+Ignoring build outputs is the project's job too: otto never writes `*.o`, `*.ko`,
+`*.gcno` or `build/` lines. The quickstart examples each carry their own
+`.gitignore`; the {doc}`../setup/tracks/kmod` and {doc}`../setup/tracks/embedded`
+tracks show theirs.
 
 | Owner | Files | When the file exists |
 | ----- | ----- | -------------------- |
 | otto | `.otto/schemas/*.schema.json`, `.vscode/otto.code-snippets`, the vendored `otto_kmodcov` library, the embedded-gcov patch | refreshed |
-| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov and embedded-gcov consumer starters | kept, byte for byte |
+| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` (`lab.json` alone with `--inline-hosts`) and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov and embedded-gcov consumer starters | kept, byte for byte |
 
 Each file in the run is listed as `created`, `refreshed`, `kept` or (for the
 kmodcov entry or embedded-gcov block added to an existing `settings.toml` — the
@@ -145,6 +150,15 @@ describing the equipment at that location (a `paths` entry may also name a
 `.json` file directly, or a glob).  The full schema — the `labs` table, the
 element entry, every host field, the connection-option tables and the link
 entry — lives in {doc}`../configuration/lab-config`.
+
+The default three-file layout (`lab.json`, `inventory.json`, `creds.json`) is
+the preferred practice: machine facts and secrets live in sources of their own,
+joined to `lab.json` by an inventory key. `--inline-hosts` is the explicit
+convenience for a small or throwaway lab: one `lab.json` whose hosts carry their
+own address and creds. An inventory declared in `~/.otto/settings.toml` still
+applies to such a project, and its records then show as unreferenced in the
+doctor's warnings. {doc}`../configuration/inventory` covers both layouts and
+moving a host between them.
 
 Everything `otto init` writes is read back by the same loader every other
 command uses — see {doc}`../configuration/settings` for the settings schema and

@@ -54,11 +54,43 @@ def test_area_flags_reach_scaffold_candidates_exactly(
     ):
         result = _invoke([*flags, "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    candidates.assert_called_once_with(tmp_path.resolve(), requested=requested, all_areas=all_areas)
+    candidates.assert_called_once_with(
+        tmp_path.resolve(), requested=requested, all_areas=all_areas, inline_hosts=False
+    )
     (config, chosen), _ = scaffold.call_args
     assert chosen == ["lab"]
     assert config.root == tmp_path.resolve()
     check.assert_called_once_with(tmp_path.resolve())
+
+
+def test_inline_hosts_alone_reaches_the_library_and_never_prompts(tmp_path: Path) -> None:
+    # The leaf adds no "lab": the implication is scaffold_candidates' alone.
+    with (
+        patch("otto.init.scaffolder.scaffold_candidates", return_value=["lab"]) as candidates,
+        patch("otto.init.scaffolder.scaffold", return_value=_EMPTY) as scaffold,
+        patch("otto.init.doctor.check_project", return_value=_OK),
+    ):
+        result = _invoke(["--inline-hosts", "--path", str(tmp_path)], input="")
+    assert result.exit_code == 0, result.output
+    candidates.assert_called_once_with(
+        tmp_path.resolve(), requested=[], all_areas=False, inline_hosts=True
+    )
+    assert scaffold.call_args.args[0].inline_hosts is True
+    assert "Scaffold the" not in result.output  # no prompt ran
+
+
+def test_lab_and_inline_hosts_reach_the_config(tmp_path: Path) -> None:
+    with (
+        patch("otto.init.scaffolder.scaffold_candidates", return_value=["lab"]) as candidates,
+        patch("otto.init.scaffolder.scaffold", return_value=_EMPTY) as scaffold,
+        patch("otto.init.doctor.check_project", return_value=_OK),
+    ):
+        result = _invoke(["--lab", "--inline-hosts", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    candidates.assert_called_once_with(
+        tmp_path.resolve(), requested=["lab"], all_areas=False, inline_hosts=True
+    )
+    assert scaffold.call_args.args[0].inline_hosts is True
 
 
 def test_name_version_and_kmodcov_dir_reach_the_config(tmp_path: Path) -> None:

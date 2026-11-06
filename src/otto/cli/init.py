@@ -51,6 +51,18 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
             "--lab", help="Scaffold the lab area (lab_data/lab.json + inventory.json + creds.json)."
         ),
     ] = False,
+    inline_hosts: Annotated[
+        bool,
+        typer.Option(
+            "--inline-hosts",
+            help=(
+                "Scaffold the lab area as one lab_data/lab.json (mode 0600) whose hosts carry "
+                "their own address and creds: no inventory.json or creds.json, and the "
+                "settings' \\[inventory] and \\[creds] tables commented out. Separate files "
+                "are the preferred layout."
+            ),
+        ),
+    ] = False,
     tests: Annotated[
         bool,
         typer.Option(
@@ -139,17 +151,21 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
         )
         if on
     ]
-    interactive = not (all_areas or requested)
+    interactive = not (all_areas or requested or inline_hosts)
     try:
         config = _config(
             path,
+            inline_hosts=inline_hosts,
             name=name,
             version=version,
             kmodcov_dir=kmodcov_dir,
             embedded_gcov_dir=embedded_gcov_dir,
         )
         candidates = scaffold_candidates(
-            config.root, requested=requested, all_areas=all_areas or interactive
+            config.root,
+            requested=requested,
+            all_areas=all_areas or interactive,
+            inline_hosts=inline_hosts,
         )
         if interactive:
             answers = _ask(config, candidates, name_given=bool(name))
@@ -175,10 +191,10 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
         raise typer.Exit(code=1)
 
 
-def _config(path: Path, **kwargs: str) -> "InitConfig":
+def _config(path: Path, *, inline_hosts: bool, **kwargs: str) -> "InitConfig":
     from ..init.config import InitConfig
 
-    return InitConfig.for_project(path, **kwargs)
+    return InitConfig.for_project(path, inline_hosts=inline_hosts, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
