@@ -115,16 +115,27 @@ def test_ancestors_of_a_gone_pid_is_empty() -> None:
 # ``&`` jobs with SIGINT ignored (POSIX async-list rule), so such a grandchild
 # could never be interrupted. Real lane descendants are spawned the Python way.
 
-_SPAWNER = (
-    "import subprocess, pathlib, sys; p = subprocess.Popen(['sleep', '30']); "
-    "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); p.wait()"
+#
+# The pid file is the spawner's "ready" signal, and the tests interrupt the group the
+# moment it exists. So it appears whole (written aside, then renamed: never an empty
+# file), and only after everything the test depends on is in place.
+_RECORD_PID = (
+    "aside = pathlib.Path(sys.argv[1] + '.tmp'); aside.write_text(str(p.pid)); "
+    "os.replace(aside, sys.argv[1]); "
 )
+_SPAWNER = (
+    "import subprocess, pathlib, sys, os; p = subprocess.Popen(['sleep', '30']); "
+    + _RECORD_PID
+    + "p.wait()"
+)
+# SIGINT is ignored before the grandchild starts, so both ignore it from their first
+# instruction (an ignored signal stays ignored across exec) and before the pid file says so.
 _SPAWNER_IGNORING_SIGINT = (
-    "import subprocess, pathlib, sys, signal; "
-    "p = subprocess.Popen([sys.executable, '-c', "
-    "'import signal, time; signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(30)']); "
-    "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); "
-    "signal.signal(signal.SIGINT, signal.SIG_IGN); p.wait()"
+    "import subprocess, pathlib, sys, os, signal; "
+    "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+    "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+    + _RECORD_PID
+    + "p.wait()"
 )
 
 
@@ -277,7 +288,8 @@ def test_more_interrupts_during_the_kill_drain_are_waited_out(tmp_path: Path, mo
 
 _SPAWNER_THEN_EXIT = (
     "import subprocess, pathlib, sys, os; p = subprocess.Popen(['sleep', '30']); "
-    "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); os._exit(0)"
+    + _RECORD_PID
+    + "os._exit(0)"
 )
 
 
