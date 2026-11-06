@@ -68,7 +68,9 @@ The host's id is its element's `name`, `dut`. The scaffold also wrote an
 `[inventory]` and a `[creds]` table in `.otto/settings.toml`, plus
 `lab_data/inventory.json` and `lab_data/creds.json`; they serve hosts that
 *reference* an inventory instead of carrying their own address. When every
-host is inline, delete both tables and both files.
+host is inline, delete both tables and both files, or scaffold with
+`otto init --all --inline-hosts`, which writes neither file and leaves both
+tables commented out.
 {doc}`../configuration/lab-config` documents every host field and the
 referenced form.
 

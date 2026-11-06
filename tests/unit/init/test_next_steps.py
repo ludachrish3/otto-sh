@@ -22,6 +22,25 @@ def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Pa
     ]
 
 
+@pytest.mark.parametrize("inline_hosts", [False, True])
+def test_inline_hosts_offers_the_same_commands_as_the_three_file_lab(
+    tmp_path: Path, inline_hosts: bool
+) -> None:
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0", inline_hosts=inline_hosts),
+        ["settings", "lab", "tests", "instructions"],
+    )
+    assert try_it_commands(
+        tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
+    ) == [
+        "otto --lab example_lab --list-hosts",
+        "otto test --list-tests",
+        "otto --lab example_lab test TestExample",
+        "otto --lab example_lab test test_example_function",
+        "otto --lab example_lab run smoke",
+    ]
+
+
 def test_a_kmodcov_only_project_gets_only_the_library_check(tmp_path: Path) -> None:
     scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["kmodcov"])
     assert try_it_commands(

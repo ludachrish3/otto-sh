@@ -9,7 +9,10 @@ from otto.init.templates import (
     CREDS_JSON_TEMPLATE,
     EXAMPLE_HOST_ENTRY,
     EXAMPLE_INVENTORY_KEY,
+    INLINE_HOST_ENTRY,
+    INLINE_LAB_JSON_TEMPLATE,
     INVENTORY_JSON_TEMPLATE,
+    INVENTORY_TABLES_TEMPLATE,
     LAB_JSON_TEMPLATE,
     LAB_README_TEMPLATE,
     SETTINGS_TEMPLATE,
@@ -57,7 +60,10 @@ _SECTION_SPECS = {
 
 def _uncommented() -> dict:
     rendered = SETTINGS_TEMPLATE.format(
-        name="widget", version="0.1.0", init_module="widget_instructions"
+        name="widget",
+        version="0.1.0",
+        init_module="widget_instructions",
+        inventory_tables=INVENTORY_TABLES_TEMPLATE,
     )
     text = "\n".join(_COMMENTED.sub("", line) for line in rendered.splitlines())
     return tomli.loads(text)
@@ -151,3 +157,36 @@ def test_lab_readme_documents_the_v2_shape_and_the_migration() -> None:
     assert "are NOT host fields" in LAB_README_TEMPLATE
     for phrase in ("inventory.json", "creds.json", "inventory key", "lab.json over"):
         assert phrase in LAB_README_TEMPLATE
+
+
+def test_inline_lab_template_differs_from_the_referenced_one_only_in_the_host_and_comments() -> (
+    None
+):
+    from otto.models.lab import HOISTED_HOST_KEYS
+
+    assert INLINE_LAB_JSON_TEMPLATE["labs"] == LAB_JSON_TEMPLATE["labs"]
+    assert INLINE_HOST_ENTRY["ip"] == INVENTORY_JSON_TEMPLATE[EXAMPLE_INVENTORY_KEY]["ip"]
+    assert INLINE_HOST_ENTRY["creds"] == CREDS_JSON_TEMPLATE[EXAMPLE_INVENTORY_KEY]
+    assert "inventory" not in INLINE_HOST_ENTRY
+    assert set(INLINE_HOST_ENTRY) & HOISTED_HOST_KEYS == set()
+    assert INVENTORY_TABLES_TEMPLATE.endswith('path = "lab_data/creds.json"\n')
+
+
+def test_commented_inventory_tables_uncomment_to_the_default_tables() -> None:
+    # The inline render comments the [inventory]/[creds] tables the template's
+    # way (#key), so the drift test's uncommenting restores exactly the default.
+    from otto.init.areas import _commented
+
+    def uncommented(tables: str) -> dict:
+        rendered = SETTINGS_TEMPLATE.format(
+            name="widget",
+            version="0.1.0",
+            init_module="widget_instructions",
+            inventory_tables=tables,
+        )
+        return tomli.loads("\n".join(_COMMENTED.sub("", line) for line in rendered.splitlines()))
+
+    inline = _commented(INVENTORY_TABLES_TEMPLATE)
+    assert "#[inventory]" in inline
+    assert "#[creds]" in inline
+    assert uncommented(inline) == uncommented(INVENTORY_TABLES_TEMPLATE)

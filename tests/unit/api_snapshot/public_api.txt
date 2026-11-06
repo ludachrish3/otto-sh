@@ -3280,13 +3280,14 @@ member	otto.init:FileWrite.path	field
 abstract	otto.init:FileWrite	-
 name	otto.init:InitConfig	class
 mro	otto.init:InitConfig	-
-call	otto.init:InitConfig	sync	PK:root:- PK:name:- PK:version:- PK:kmodcov_dir:S:"third_party/otto_kmodcov" PK:embedded_gcov_dir:S:"third_party/embedded-gcov-patch"
+call	otto.init:InitConfig	sync	PK:root:- PK:name:- PK:version:- PK:kmodcov_dir:S:"third_party/otto_kmodcov" PK:embedded_gcov_dir:S:"third_party/embedded-gcov-patch" PK:inline_hosts:B:false
 member	otto.init:InitConfig.__eq__	method	sync	PK:other:-
 member	otto.init:InitConfig.__hash__	method	sync	-
 member	otto.init:InitConfig.embedded_gcov_dir	field
 member	otto.init:InitConfig.embedded_gcov_path	property:g--
-member	otto.init:InitConfig.for_project	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov" KO:embedded_gcov_dir:S:"third_party/embedded-gcov-patch"
+member	otto.init:InitConfig.for_project	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov" KO:embedded_gcov_dir:S:"third_party/embedded-gcov-patch" KO:inline_hosts:B:false
 member	otto.init:InitConfig.init_module	property:g--
+member	otto.init:InitConfig.inline_hosts	field
 member	otto.init:InitConfig.kmodcov_dir	field
 member	otto.init:InitConfig.kmodcov_path	property:g--
 member	otto.init:InitConfig.module_base	property:g--
@@ -3315,7 +3316,7 @@ call	otto.init:detect_areas	sync	PK:root:-
 name	otto.init:scaffold	function
 call	otto.init:scaffold	sync	PK:config:- PK:areas:-
 name	otto.init:scaffold_candidates	function
-call	otto.init:scaffold_candidates	sync	PK:root:- KO:requested:N KO:all_areas:B:false
+call	otto.init:scaffold_candidates	sync	PK:root:- KO:requested:N KO:all_areas:B:false KO:inline_hosts:B:false
 name	otto.init:scaffold_prerequisites	function
 call	otto.init:scaffold_prerequisites	sync	PK:root:- PK:areas:-
 name	otto.instructions:instruction	function

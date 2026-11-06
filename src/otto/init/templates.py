@@ -115,18 +115,7 @@ paths = ["lab_data"]
 # (declared once per user); a table here overrides it for this project. Grow
 # `supplies` as inventory.json takes over more fields.
 # See https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html
-[inventory]
-backend = "json"
-path = "lab_data/inventory.json"
-supplies = ["ip"]
-
-# [creds] is optional: without it, creds come from inventory records and
-# lab.json alone. Other backends: netbox for [inventory] (below), and any
-# registered name for either table.
-[creds]
-backend = "json"
-path = "lab_data/creds.json"
-
+{inventory_tables}
 # A NetBox inventory instead of the json file — the token never sits in a file:
 #   backend = "netbox"
 #   url = "https://netbox.example"
@@ -225,45 +214,85 @@ EXAMPLE_INVENTORY_KEY = "device-01.lab.example"
 ``.example`` is the reserved documentation TLD, as ``192.0.2.1`` is TEST-NET.
 """
 
-EXAMPLE_HOST_ENTRY = {
-    "inventory": EXAMPLE_INVENTORY_KEY,
+EXAMPLE_ADDRESS = "192.0.2.1"
+"""The example host's address, in either lab layout."""
+
+EXAMPLE_CREDS: list[dict[str, str]] = [{"login": "admin", "password": "CHANGE_ME"}]
+"""The example host's creds, in either lab layout; ``CHANGE_ME`` is a placeholder."""
+
+EXAMPLE_HOST_FIELDS = {
     "os_type": "unix",
     "valid_terms": ["ssh"],
     "valid_transfers": ["scp", "sftp"],
 }
+"""The otto-specific fields of the example host, which lab.json carries in either layout."""
+
+EXAMPLE_HOST_ENTRY = {"inventory": EXAMPLE_INVENTORY_KEY, **EXAMPLE_HOST_FIELDS}
+"""The example host, referenced; its address and creds come from inventory.json and creds.json."""
+
+INLINE_HOST_ENTRY = {"ip": EXAMPLE_ADDRESS, **EXAMPLE_HOST_FIELDS, "creds": EXAMPLE_CREDS}
+"""The example host, inline (``otto init --inline-hosts``); it carries its own address and creds."""
+
+_ELEMENT_COMMENT_HEAD = (
+    "Example element — replace these values. An element is the smallest unit that "
+    "joins a lab: 'labs' lists regex patterns full-matched against lab names, and "
+    "'hosts' are the machines/boards it holds. Full schema: "
+    "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html"
+    " or `otto schema export`. The host below "
+)
 
 EXAMPLE_ELEMENT_ENTRY = {
     "_comment": (
-        "Example element — replace these values. An element is the smallest unit that "
-        "joins a lab: 'labs' lists regex patterns full-matched against lab names, and "
-        "'hosts' are the machines/boards it holds. Full schema: "
-        "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html"
-        " or `otto schema export`. The host below "
-        "is REFERENCED: its 'inventory' value is the machine's own name (typically its "
-        "DNS hostname), never an otto id; its address lives in inventory.json and its "
-        "creds in creds.json under that key."
+        _ELEMENT_COMMENT_HEAD + "is REFERENCED: its 'inventory' value is the machine's own name "
+        "(typically its DNS hostname), never an otto id; its address lives in inventory.json "
+        "and its creds in creds.json under that key."
     ),
     "name": "example-device",
     "labs": [EXAMPLE_LAB_NAME],
     "hosts": [EXAMPLE_HOST_ENTRY],
 }
 
+_LAB_COMMENT_HEAD = (
+    "otto lab database: 'labs' declares each lab (its reservable resources and "
+    "metadata); 'elements' groups hosts and says which labs they join; 'links' "
+    "declares data-plane routes (see "
+    "https://otto-sh.readthedocs.io/en/stable/configuration/lab/links.html#links). "
+    "Keys starting with _ are comments; $schema wires editor autocomplete. "
+)
+
 LAB_JSON_TEMPLATE: dict[str, Any] = {
     "$schema": "../.otto/schemas/lab.schema.json",
     "_comment": (
-        "otto lab database: 'labs' declares each lab (its reservable resources and "
-        "metadata); 'elements' groups hosts and says which labs they join; 'links' "
-        "declares data-plane routes (see "
-        "https://otto-sh.readthedocs.io/en/stable/configuration/lab/links.html#links). "
-        "Keys starting with _ are comments; $schema wires editor autocomplete. A host "
-        'that says "inventory" gets its machine facts from inventory.json and its '
-        "creds from creds.json under that key; everything otto-specific stays here, "
-        "and a creds entry here overrides the same login below it."
+        _LAB_COMMENT_HEAD + 'A host that says "inventory" gets its machine facts from '
+        "inventory.json and its creds from creds.json under that key; everything "
+        "otto-specific stays here, and a creds entry here overrides the same login below it."
     ),
     "labs": {EXAMPLE_LAB_NAME: {"resources": ["example-device"]}},
     "elements": [EXAMPLE_ELEMENT_ENTRY],
     "links": [],
 }
+
+INLINE_LAB_JSON_TEMPLATE: dict[str, Any] = {
+    **LAB_JSON_TEMPLATE,
+    "_comment": (
+        _LAB_COMMENT_HEAD + "Every host here is inline: it carries its own address and creds, "
+        "so otto writes this file at mode 0600; keep it that way, or out of version control. "
+        "Replace CHANGE_ME."
+    ),
+    "elements": [
+        {
+            **EXAMPLE_ELEMENT_ENTRY,
+            "_comment": (
+                _ELEMENT_COMMENT_HEAD + "is INLINE: it carries its own 'ip' and 'creds'. otto's "
+                "preferred layout keeps them in inventory.json and creds.json under an "
+                "inventory key; to move a host there, see "
+                "https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html"
+            ),
+            "hosts": [INLINE_HOST_ENTRY],
+        }
+    ],
+}
+"""``otto init --inline-hosts``'s lab.json, the referenced template with the host inline."""
 
 INVENTORY_JSON_TEMPLATE: dict[str, Any] = {
     "$schema": "../.otto/schemas/inventory.schema.json",
@@ -272,7 +301,7 @@ INVENTORY_JSON_TEMPLATE: dict[str, Any] = {
         "[inventory] supplies may appear; the rest stay in lab.json. Never rename a key: "
         "every lab.json entry naming it breaks."
     ),
-    EXAMPLE_INVENTORY_KEY: {"ip": "192.0.2.1"},
+    EXAMPLE_INVENTORY_KEY: {"ip": EXAMPLE_ADDRESS},
 }
 
 CREDS_JSON_TEMPLATE: dict[str, Any] = {
@@ -282,39 +311,28 @@ CREDS_JSON_TEMPLATE: dict[str, Any] = {
         "inventory.json or lab.json overrides these field by field. Replace CHANGE_ME; keep "
         "this file out of version control or at mode 0600."
     ),
-    EXAMPLE_INVENTORY_KEY: [{"login": "admin", "password": "CHANGE_ME"}],
+    EXAMPLE_INVENTORY_KEY: EXAMPLE_CREDS,
 }
 
-LAB_README_TEMPLATE = """\
-# lab_data/
+INVENTORY_TABLES_TEMPLATE = """\
+[inventory]
+backend = "json"
+path = "lab_data/inventory.json"
+supplies = ["ip"]
 
-Three files, one key. `otto init` wrote them together and they describe one
-example host between them:
+# [creds] is optional: without it, creds come from inventory records and
+# lab.json alone. Other backends: netbox for [inventory] (below), and any
+# registered name for either table.
+[creds]
+backend = "json"
+path = "lab_data/creds.json"
+"""
+"""The settings' live ``[inventory]`` and ``[creds]`` tables, the ``{inventory_tables}`` of
+``SETTINGS_TEMPLATE``. It owns the newline that ends its last line and no blank line after it;
+``otto init --inline-hosts`` writes it commented out.
+"""
 
-- **`lab.json`** — otto's lab database: the `labs` table, the `elements` that
-  hold host entries, and `links`. Everything otto-specific about a host lives
-  here (`os_type`, the term/transfer menus, `hop`, …). The example host does
-  not carry an address or a password: it says `"inventory": "<key>"` instead.
-- **`inventory.json`** — machine facts by inventory key, true whatever tool
-  asks: the address today, interfaces and location once you widen `supplies`
-  in `.otto/settings.toml`. Only the fields `supplies` lists may appear here.
-- **`creds.json`** — credentials by the same inventory key. Written at mode
-  `0600`; keep it that way, or out of version control. Optional: without the
-  `[creds]` table, creds come from `inventory.json` records or `lab.json`.
-
-The **inventory key** is the only thing the files share. It is the machine's
-own name — typically its DNS hostname — and never an otto id or element name;
-renaming one breaks every `lab.json` entry that names it.
-
-**Creds compose by login: lab.json over inventory.json over creds.json,
-field by field.** An entry in a higher file overrides the fields it states
-for the same login and cannot remove one (`null` states nothing); lab.json's
-order is the login order (the first entry is the default login). A cred
-change you want to try before the team's files change goes in `lab.json`.
-The full rules, the other backends (NetBox, your own store) and the
-`~/.otto/settings.toml` home for a shared inventory are in
-<https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html>.
-
+LAB_README_BODY = """\
 ## `lab.json`
 
 It is a JSON object with three sections, each optional:
@@ -371,8 +389,8 @@ exists and reserves nothing.
 
 ## Fields in the example host entry
 
-- **`inventory`** — the inventory key (see above). An inline host carries
-  **`ip`** here instead.
+- **`inventory`** or **`ip`** — a referenced host names its inventory key;
+  an inline host carries its own address in `ip` instead.
 - **`os_type`** — `"unix"` for a UnixHost-backed entry (SSH/telnet-capable
   Linux/BSD-like systems) or `"embedded"` for an EmbeddedHost-backed entry
   (Zephyr and similar). Determines which spec class validates the rest of
@@ -431,6 +449,59 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
 - Confirm otto sees your hosts once you've edited this file:
   `otto --lab example_lab --list-hosts`
 """
+"""The lab README after its head, the ``lab.json`` reference both lab layouts share."""
+
+LAB_README_TEMPLATE = (
+    """\
+# lab_data/
+
+Three files, one key. `otto init` wrote them together and they describe one
+example host between them:
+
+- **`lab.json`** — otto's lab database: the `labs` table, the `elements` that
+  hold host entries, and `links`. Everything otto-specific about a host lives
+  here (`os_type`, the term/transfer menus, `hop`, …). The example host does
+  not carry an address or a password: it says `"inventory": "<key>"` instead.
+- **`inventory.json`** — machine facts by inventory key, true whatever tool
+  asks: the address today, interfaces and location once you widen `supplies`
+  in `.otto/settings.toml`. Only the fields `supplies` lists may appear here.
+- **`creds.json`** — credentials by the same inventory key. Written at mode
+  `0600`; keep it that way, or out of version control. Optional: without the
+  `[creds]` table, creds come from `inventory.json` records or `lab.json`.
+
+The **inventory key** is the only thing the files share. It is the machine's
+own name — typically its DNS hostname — and never an otto id or element name;
+renaming one breaks every `lab.json` entry that names it.
+
+**Creds compose by login: lab.json over inventory.json over creds.json,
+field by field.** An entry in a higher file overrides the fields it states
+for the same login and cannot remove one (`null` states nothing); lab.json's
+order is the login order (the first entry is the default login). A cred
+change you want to try before the team's files change goes in `lab.json`.
+The full rules, the other backends (NetBox, your own store) and the
+`~/.otto/settings.toml` home for a shared inventory are in
+<https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html>.
+
+"""
+    + LAB_README_BODY
+)
+"""The three-file lab area's README."""
+
+INLINE_LAB_README_TEMPLATE = (
+    """\
+# lab_data/
+
+One file: `lab.json` holds every host with its address and creds inline, and
+otto writes it at mode 0600. otto's preferred layout keeps them in separate
+sources (`inventory.json`, `creds.json`, joined by an inventory key). To move
+a host there, see
+<https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html>.
+The `CHANGE_ME` password is a placeholder.
+
+"""
+    + LAB_README_BODY
+)
+"""``otto init --inline-hosts``'s lab README, for one file with its hosts inline."""
 
 TEST_EXAMPLE_TEMPLATE = '''\
 """Example otto tests — run hostless so they pass out of the box."""

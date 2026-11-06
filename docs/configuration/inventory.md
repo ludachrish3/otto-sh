@@ -29,7 +29,8 @@ elements[].hosts[]:               "device-01.lab.example":     "device-01.lab.ex
 ```
 
 `otto init` writes these three files and the two settings tables that tie
-them together. Three statements, each of which the loader enforces:
+them together (unless `--inline-hosts`: then one `lab.json` and commented
+tables). Three statements, each of which the loader enforces:
 
 1. **The inventory key is the only thing the files share.** A host entry that
    says `"inventory": "<key>"` gets its machine facts from the inventory
@@ -246,11 +247,13 @@ See [Path resolution](settings.md#path-resolution).
 
 ### The scaffolded tables
 
-`otto init` writes live `[inventory]` and `[creds]` tables into a new
-`.otto/settings.toml`, pointing at `lab_data/inventory.json` and
-`lab_data/creds.json`, with `supplies = ["ip"]` — so a new project starts in the
-three-file shape and grows `supplies` as the inventory takes over more
-fields. The user-level file is still where a shared inventory lives: delete
+Unless run with `--inline-hosts`, `otto init` writes live `[inventory]` and
+`[creds]` tables into a new `.otto/settings.toml`, pointing at
+`lab_data/inventory.json` and `lab_data/creds.json`, with `supplies = ["ip"]`
+— so a new project starts in the three-file shape and grows `supplies` as the
+inventory takes over more fields. With `--inline-hosts` it writes one
+`lab.json` and leaves both tables commented out. The user-level file is still
+where a shared inventory lives: delete
 the project tables once one exists, or keep them as this project's override.
 Two active projects that both keep their scaffolded tables fail bootstrap,
 naming both files: tables compare by their parsed configuration, paths

@@ -59,7 +59,11 @@ def _instructions_offered(root: Path) -> bool:
 
 
 def scaffold_candidates(
-    root: Path, *, requested: list[str] | None = None, all_areas: bool = False
+    root: Path,
+    *,
+    requested: list[str] | None = None,
+    all_areas: bool = False,
+    inline_hosts: bool = False,
 ) -> list[str]:
     """Return the areas a run would scaffold, in :data:`AREA_NAMES` order, without prerequisites.
 
@@ -67,13 +71,17 @@ def scaffold_candidates(
     and ``embedded-gcov`` also when present (they refresh). ``all_areas`` adds
     every other missing area except the opt-in ``kmodcov`` and
     ``embedded-gcov``, and except instructions when the settings declare no
-    ``init`` (a project with no init modules is legitimate).
+    ``init`` (a project with no init modules is legitimate). ``inline_hosts``
+    requests the lab area, as ``requested=["lab"]`` would: it is a candidate
+    when missing, never when present (the lab is not refreshable).
 
     Raises:
         InitInputError: a requested name is not an area (``field="areas"``).
     """
     requested = list(requested or [])
     _check_names(requested)
+    if inline_hosts and "lab" not in requested:
+        requested.append("lab")
     present = set(detect_areas(root))
     chosen: list[str] = []
     for name in AREA_NAMES:

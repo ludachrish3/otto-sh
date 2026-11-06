@@ -196,6 +196,50 @@ def test_valid_project_reports_all_ok(tmp_path: Path) -> None:
     assert report.warnings == []  # spec 2026-09-06 §8.1: a fresh scaffold warns of nothing
 
 
+def _scaffold_all_inline(tmp_path: Path) -> None:
+    """Scaffold every area an ``otto init --all --inline-hosts`` run offers."""
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0", inline_hosts=True),
+        scaffold_candidates(tmp_path, all_areas=True, inline_hosts=True),
+    )
+
+
+def test_an_inline_hosts_project_is_ok_and_warns_of_nothing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))  # no user settings
+    _scaffold_all_inline(tmp_path)
+    report = check_project(tmp_path)
+    assert report.ok, _text(report)
+    assert [(v.name, v.state) for v in report.verdicts] == [
+        ("settings", "ok"),
+        ("schemas", "ok"),
+        ("lab", "ok"),
+        ("tests", "ok"),
+        ("instructions", "ok"),
+        ("kmodcov", "absent"),
+        ("embedded-gcov", "absent"),
+    ]
+    assert report.warnings == []
+    assert report.inventory_label is None
+    assert report.creds_label is None
+
+
+def test_an_inline_hosts_project_inherits_the_user_inventory(tmp_path, monkeypatch) -> None:
+    # The kept fallback: commenting the project's tables out leaves the user's
+    # ~/.otto/settings.toml inventory in force, so its records show as unreferenced.
+    home = tmp_path / "home"
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    home.mkdir(parents=True)
+    (home / "inventory.json").write_text(json.dumps({"spare": {"ip": "10.0.0.2"}}))
+    (home / "settings.toml").write_text(  # scaffold-exempt: user-level settings under test
+        '[inventory]\nbackend = "json"\npath = "inventory.json"\n'
+    )
+    _scaffold_all_inline(tmp_path)
+    report = check_project(tmp_path)
+    assert report.ok, _text(report)
+    assert report.inventory_label == f"json:{home / 'inventory.json'}"
+    assert "1 record(s) referenced by no lab file here: spare" in _text(report)
+
+
 def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"

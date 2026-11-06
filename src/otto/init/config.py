@@ -33,6 +33,10 @@ class InitConfig:
     """Where the kmodcov area vendors the otto_kmodcov library, relative to *root*."""
     embedded_gcov_dir: str = DEFAULT_EMBEDDED_GCOV_DIR
     """Where the embedded-gcov area writes the runtime patch, relative to *root*."""
+    inline_hosts: bool = False
+    """Write the lab area as one lab.json (mode 0o600) whose hosts are inline, and the
+    settings' [inventory]/[creds] tables commented out. The default, False, is the
+    three-file area."""
 
     def __post_init__(self) -> None:
         if not self.root.is_dir():
@@ -59,6 +63,7 @@ class InitConfig:
         version: str = "0.1.0",
         kmodcov_dir: str = DEFAULT_KMODCOV_DIR,
         embedded_gcov_dir: str = DEFAULT_EMBEDDED_GCOV_DIR,
+        inline_hosts: bool = False,
     ) -> "InitConfig":
         """Build the config ``otto init`` uses for *root* (resolved).
 
@@ -72,6 +77,7 @@ class InitConfig:
             version=version,
             kmodcov_dir=kmodcov_dir,
             embedded_gcov_dir=embedded_gcov_dir,
+            inline_hosts=inline_hosts,
         )
 
     @property

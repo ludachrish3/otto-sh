@@ -25,8 +25,11 @@ from .templates import (
     CREDS_JSON_TEMPLATE,
     EMBEDDED_GCOV_SETTINGS_TEMPLATE,
     EMBEDDED_GCOV_STARTER_README_TEMPLATE,
+    INLINE_LAB_JSON_TEMPLATE,
+    INLINE_LAB_README_TEMPLATE,
     INSTRUCTIONS_TEMPLATE,
     INVENTORY_JSON_TEMPLATE,
+    INVENTORY_TABLES_TEMPLATE,
     KMODCOV_DEV_TOOL_TEMPLATE,
     KMODCOV_STARTER_KBUILD_TEMPLATE,
     KMODCOV_STARTER_README_TEMPLATE,
@@ -315,10 +318,35 @@ _VSCODE_SETTINGS_KEPT = (
 )
 
 
+_INLINE_TABLES_KEPT = (
+    "existing .otto/settings.toml left untouched — its live [inventory] and [creds] "
+    "tables still point at lab_data/inventory.json and creds.json, which --inline-hosts "
+    "does not write; comment out or delete both tables so the doctor stops looking for them"
+)
+
+
+def _commented(block: str) -> str:
+    """*block* with every TOML line commented the template's way (#key), prose and blanks kept."""
+    return "".join(
+        line if not line.strip() or line.startswith("#") else "#" + line
+        for line in block.splitlines(keepends=True)
+    )
+
+
 def _scaffold_settings(config: InitConfig, areas: list[str]) -> AreaWrite:
-    """Write the settings template, plus the commented block of each coverage area in the run."""
+    """Write the settings template, plus the commented block of each coverage area in the run.
+
+    With ``config.inline_hosts`` the ``[inventory]`` and ``[creds]`` tables are
+    written commented out: the inline lab names no inventory or creds file.
+    """
+    tables = (
+        _commented(INVENTORY_TABLES_TEMPLATE) if config.inline_hosts else INVENTORY_TABLES_TEMPLATE
+    )
     text = SETTINGS_TEMPLATE.format(
-        name=config.name, version=config.version, init_module=config.init_module
+        name=config.name,
+        version=config.version,
+        init_module=config.init_module,
+        inventory_tables=tables,
     )
     if "kmodcov" in areas:
         text += KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)
@@ -360,13 +388,26 @@ def _scaffold_schemas(config: InitConfig, areas: list[str]) -> AreaWrite:  # noq
 
 
 def _scaffold_lab(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
-    """Write the three-file lab area (spec 2026-09-06 creds-store §8.1); ``creds.json`` is 0o600."""
+    """Write the lab area: three files by key (spec 2026-09-06 §8.1), or one inline lab.json.
+
+    ``creds.json`` is 0o600; with ``config.inline_hosts`` there is no inventory
+    or creds file, and ``lab.json`` itself carries the creds, so it is 0o600.
+    """
     lab_dir = config.root / "lab_data"
-    return AreaWrite(
-        [
-            write_file(
-                lab_dir / "lab.json", json.dumps(LAB_JSON_TEMPLATE, indent=4) + "\n", "user"
-            ),
+    inline = config.inline_hosts
+    lab = INLINE_LAB_JSON_TEMPLATE if inline else LAB_JSON_TEMPLATE
+    # The inline lab.json carries creds: 0o600, through the same write_file(mode=)
+    # the creds.json write below uses.
+    writes = [
+        write_file(
+            lab_dir / "lab.json",
+            json.dumps(lab, indent=4) + "\n",
+            "user",
+            mode=0o600 if inline else None,
+        )
+    ]
+    if not inline:
+        writes += [
             write_file(
                 lab_dir / "inventory.json",
                 json.dumps(INVENTORY_JSON_TEMPLATE, indent=4) + "\n",
@@ -378,9 +419,15 @@ def _scaffold_lab(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: A
                 "user",
                 mode=0o600,
             ),
-            write_file(lab_dir / "README.md", LAB_README_TEMPLATE, "user"),
         ]
-    )
+    readme = INLINE_LAB_README_TEMPLATE if inline else LAB_README_TEMPLATE
+    writes.append(write_file(lab_dir / "README.md", readme, "user"))
+    # The settings area runs first, so a settings file written this run already
+    # carries the tables commented; live ones here are a kept user file's.
+    data = settings_data(config.root) or {}
+    if inline and ("inventory" in data or "creds" in data):
+        return AreaWrite(writes, [_INLINE_TABLES_KEPT])
+    return AreaWrite(writes)
 
 
 def _scaffold_tests(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
