@@ -69,3 +69,29 @@ describe("saveTheme / applyTheme", () => {
     expect(document.documentElement.classList.contains("dark-mode")).toBe(false);
   });
 });
+
+// plotSurfaces() reads the plot's real surface (--color-bg-primary) from the
+// stylesheet for BOTH themes at once, whichever theme is applied: CSS
+// variables inherit, so a light preview inside .dark-mode cannot get the
+// light value any other way. A fresh module per test, since it caches.
+describe("plotSurfaces", () => {
+  afterEach(() => {
+    document.querySelector("#plot-surface-test-css")?.remove();
+    vi.resetModules();
+  });
+
+  it("resolves the light and dark --color-bg-primary through their var() references", async () => {
+    const { installPlotSurfaceCss, TEST_PLOT_SURFACES } = await import("./_plotSurfaceCss");
+    installPlotSurfaceCss();
+    const { plotSurfaces } = await import("../theme");
+    expect(plotSurfaces()).toEqual(TEST_PLOT_SURFACES);
+    // The same answer under either applied theme.
+    applyTheme("dark");
+    expect(plotSurfaces()).toEqual(TEST_PLOT_SURFACES);
+  });
+
+  it("fails loudly in dev when the stylesheet declares no surface", async () => {
+    const { plotSurfaces } = await import("../theme");
+    expect(() => plotSurfaces()).toThrow(/--color-bg-primary/u);
+  });
+});
