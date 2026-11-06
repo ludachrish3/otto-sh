@@ -42,11 +42,39 @@ import {
 import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
 import type { IndexPayload } from "../types";
 
-// Pinned column widths (contexts-page.html's `.rhead`/`.rrow` grid) — kept
-// as a literal `gridTemplateColumns` string, not a Tailwind arbitrary class,
-// same technique ui/TreeView.tsx and ui/CodeView.tsx already use for their
-// own pinned-width grids.
-const ROW_GRID = "minmax(190px,1.2fr) 92px minmax(120px,1fr) 96px 82px 110px 150px 90px";
+// Pinned column widths (contexts-page.html's `.rhead`/`.rrow` grid). The
+// grid string, the table's minimum width and the row spacing all derive from
+// this one list, so a column added or resized here can never leave the
+// scrollable inner width (RUNS_MIN_WIDTH_PX) disagreeing with the grid.
+// `fr` makes a column flexible (`minmax(<minPx>px, <fr>fr)`); without it the
+// column is pinned at `minPx`. Applied as inline styles, not Tailwind
+// arbitrary classes — same technique ui/TreeView.tsx and ui/CodeView.tsx
+// already use for their own pinned-width grids.
+const RUN_COLUMNS: { key: string; minPx: number; fr?: number }[] = [
+  { key: "run", minPx: 190, fr: 1.2 },
+  { key: "tier", minPx: 92 },
+  { key: "host", minPx: 144, fr: 1 },
+  { key: "board", minPx: 96 },
+  { key: "labs", minPx: 82 },
+  { key: "date", minPx: 110 },
+  { key: "lines", minPx: 150 },
+  { key: "status", minPx: 90 },
+];
+const GAP_PX = 10;
+const PAD_PX = 16;
+const ROW_GRID = RUN_COLUMNS.map((c) =>
+  c.fr === undefined ? `${c.minPx}px` : `minmax(${c.minPx}px,${c.fr}fr)`,
+).join(" ");
+const RUNS_MIN_WIDTH_PX =
+  RUN_COLUMNS.reduce((sum, c) => sum + c.minPx, 0) + GAP_PX * (RUN_COLUMNS.length - 1) + 2 * PAD_PX;
+// Header row and run rows share one grid AND one spacing: both come through
+// this style, so the columns line up and the min-width above stays true.
+const ROW_STYLE = {
+  gridTemplateColumns: ROW_GRID,
+  columnGap: GAP_PX,
+  paddingLeft: PAD_PX,
+  paddingRight: PAD_PX,
+};
 const DETAIL_GRID = "250px 215px 230px 1fr";
 
 const STATUS_BADGE: Record<
@@ -110,7 +138,7 @@ function HostPills({ hosts }: { hosts: [string, number][] }) {
           // FilePage.tsx uses for its branch-pill list.
           // biome-ignore lint/suspicious/noArrayIndexKey: see above
           key={i}
-          className="whitespace-nowrap rounded border border-secondary bg-tertiary px-1.5 font-mono text-[10.5px] text-tertiary"
+          className="max-w-full break-words rounded border border-secondary bg-tertiary px-1.5 font-mono text-[10.5px] text-tertiary"
         >
           {host}
         </span>
@@ -179,53 +207,65 @@ function ContextDetail({
       className="grid gap-4.5 border-t border-dashed border-secondary bg-secondary px-4 py-3.5"
       style={{ gridTemplateColumns: DETAIL_GRID }}
     >
-      <div>
+      <div className="min-w-0">
         <h5 className="mb-1.5 text-[10.5px] font-semibold tracking-wide text-quaternary uppercase">
           Capture metadata
         </h5>
-        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
           <span className="text-quaternary">Run label</span>
-          <span className="font-medium text-secondary">{ctx.label}</span>
+          <span className="break-words font-medium text-secondary">{ctx.label}</span>
           <span className="text-quaternary">Hosts</span>
           <HostPills hosts={ctx.hosts} />
           <span className="text-quaternary">Board</span>
-          <span className="font-mono font-normal text-secondary">{first?.board || "—"}</span>
+          <span className="break-words font-mono font-normal text-secondary">
+            {first?.board || "—"}
+          </span>
           <span className="text-quaternary">Labs</span>
-          <span className="font-medium text-secondary">
+          <span className="break-words font-medium text-secondary">
             {first && first.labs.length > 0 ? first.labs.join(", ") : "—"}
           </span>
           <span className="text-quaternary">Captured</span>
-          <span className="font-medium text-secondary">{first?.captured_at ?? "—"}</span>
+          <span className="break-words font-medium text-secondary">
+            {first?.captured_at ?? "—"}
+          </span>
           <span className="text-quaternary">Tester</span>
-          <span className="font-medium text-secondary">{first?.tester?.name ?? "—"}</span>
+          <span className="break-words font-medium text-secondary">
+            {first?.tester?.name ?? "—"}
+          </span>
           <span className="text-quaternary">Ticket</span>
-          <span className="font-medium text-secondary">{first?.ticket ?? "—"}</span>
+          <span className="break-words font-medium text-secondary">{first?.ticket ?? "—"}</span>
           <span className="text-quaternary">Base commit</span>
-          <span className="font-mono font-normal text-secondary">
+          <span className="break-words font-mono font-normal text-secondary">
             {first ? first.base_commit.slice(0, 12) : "—"}
             {ctx.remapped ? " → HEAD (remapped)" : ""}
           </span>
           <span className="text-quaternary">Note</span>
-          <span className="font-medium text-secondary">{first?.note ?? "—"}</span>
+          <span className="break-words font-medium text-secondary">{first?.note ?? "—"}</span>
         </div>
       </div>
 
-      <div>
+      <div className="min-w-0">
         <h5 className="mb-1.5 text-[10.5px] font-semibold tracking-wide text-quaternary uppercase">
           Per-host lines
         </h5>
         <div className="flex flex-col gap-1">
           {ctx.hosts.map(([host, lines], i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: see HostPills
-            <div key={i} className="grid grid-cols-[auto_44px_1fr] items-center gap-2 text-xs">
-              <span className="whitespace-nowrap rounded border border-secondary bg-tertiary px-1.5 font-mono text-[10.5px] text-tertiary">
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: see HostPills
+              key={i}
+              className="grid grid-cols-[minmax(0,auto)_44px_1fr] items-center gap-2 text-xs"
+            >
+              <span className="break-words rounded border border-secondary bg-tertiary px-1.5 font-mono text-[10.5px] text-tertiary">
                 {host}
               </span>
               <span className="text-right tabular-nums text-quaternary">{lines}</span>
               <span className="h-1 overflow-hidden rounded-full bg-tertiary">
                 <span
                   className="block h-full rounded-full"
-                  style={{ width: `${(100 * lines) / maxHost}%`, backgroundColor: tierColor }}
+                  style={{
+                    width: `${(100 * lines) / maxHost}%`,
+                    backgroundColor: tierColor,
+                  }}
                 />
               </span>
             </div>
@@ -233,7 +273,7 @@ function ContextDetail({
         </div>
       </div>
 
-      <div>
+      <div className="min-w-0">
         <h5 className="mb-1.5 text-[10.5px] font-semibold tracking-wide text-quaternary uppercase">
           Contribution by type
         </h5>
@@ -308,12 +348,12 @@ function ContextDetail({
             {topFiles.map(([path, count]) => (
               <div
                 key={path}
-                className="grid grid-cols-[minmax(120px,1fr)_46px_90px] items-center gap-2.5 text-xs"
+                className="grid grid-cols-[minmax(0,1fr)_46px_90px] items-center gap-2.5 text-xs"
               >
                 <a
                   href={`#/coverage/${encodePath(path)}`}
                   data-testid={`file-link-${path}`}
-                  className="truncate font-mono text-secondary hover:text-brand-secondary hover:underline"
+                  className="break-all font-mono text-secondary hover:text-brand-secondary hover:underline"
                 >
                   {path}
                 </a>
@@ -321,7 +361,10 @@ function ContextDetail({
                 <span className="h-1 overflow-hidden rounded-full bg-tertiary">
                   <span
                     className="block h-full rounded-full"
-                    style={{ width: `${(100 * count) / maxFile}%`, backgroundColor: tierColor }}
+                    style={{
+                      width: `${(100 * count) / maxFile}%`,
+                      backgroundColor: tierColor,
+                    }}
                   />
                 </span>
               </div>
@@ -377,11 +420,11 @@ function ContextRow({
         onClick={onToggle}
         aria-expanded={expanded}
         className={cx(
-          "grid w-full cursor-pointer items-center gap-x-2.5 border-t border-secondary px-4 py-2.5 text-left",
+          "grid w-full cursor-pointer items-center border-t border-secondary py-2.5 text-left",
           "text-[12.5px] first:border-t-0 hover:bg-secondary",
           expanded && "bg-secondary",
         )}
-        style={{ gridTemplateColumns: ROW_GRID }}
+        style={ROW_STYLE}
       >
         <div className="flex min-w-0 items-center gap-2 font-medium text-primary">
           <ChevronRight
@@ -391,12 +434,14 @@ function ContextRow({
               expanded && "rotate-90",
             )}
           />
-          <span className="truncate">{ctx.label}</span>
+          <span title={ctx.label} className="truncate">
+            {ctx.label}
+          </span>
         </div>
         <TierChip tier={ctx.tier} index={index} />
         <HostPills hosts={ctx.hosts} />
-        <span className="truncate text-tertiary">{first?.board || "—"}</span>
-        <span className="truncate text-tertiary">
+        <span className="max-w-full break-words text-tertiary">{first?.board || "—"}</span>
+        <span className="max-w-full break-words text-tertiary">
           {first && first.labs.length > 0 ? first.labs.join(", ") : "—"}
         </span>
         <span className="text-tertiary tabular-nums">{first?.captured_at ?? "—"}</span>
@@ -549,30 +594,46 @@ export function RunsPage({ index }: RunsPageProps) {
         data-testid="runs-card"
         className="overflow-hidden rounded-xl border border-secondary shadow-xs"
       >
+        {/* Keyboard-reachable: a scroll container with no focusable child
+            would otherwise leave the right-hand columns unreachable. The
+            scrollport is held to the card's width; the table inside keeps
+            its full minimum width, so on a narrow page the header row, the
+            rows and any expanded detail scroll together and stay aligned. */}
+        {/* biome-ignore lint/a11y/useSemanticElements: section would trip noNoninteractiveTabindex, and a scroll region must be focusable */}
         <div
-          className="grid gap-x-2.5 border-b border-secondary bg-secondary px-4 py-2.5 text-[11px]
-            font-medium tracking-wide text-quaternary uppercase"
-          style={{ gridTemplateColumns: ROW_GRID }}
+          role="region"
+          aria-label="Runs table"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container must be focusable for keyboard scrolling
+          tabIndex={0}
+          className="w-full overflow-x-auto outline-focus-ring focus-visible:outline-2 focus-visible:-outline-offset-2"
         >
-          <div>Run</div>
-          <div>Tier</div>
-          <div>Host</div>
-          <div>Board</div>
-          <div>Labs</div>
-          <div>Date</div>
-          <div>Lines contributed</div>
-          <div>Status</div>
+          <div style={{ minWidth: RUNS_MIN_WIDTH_PX }}>
+            <div
+              className="grid border-b border-secondary bg-secondary py-2.5 text-[11px] font-medium
+              tracking-wide text-quaternary uppercase"
+              style={ROW_STYLE}
+            >
+              <div>Run</div>
+              <div>Tier</div>
+              <div>Host</div>
+              <div>Board</div>
+              <div>Labs</div>
+              <div>Date</div>
+              <div>Lines contributed</div>
+              <div>Status</div>
+            </div>
+            {visible.map((ctx) => (
+              <ContextRow
+                key={ctx.label}
+                ctx={ctx}
+                index={index}
+                expanded={expandedLabel === ctx.label}
+                onToggle={() => setExpandedLabel((prev) => (prev === ctx.label ? null : ctx.label))}
+                onFocus={setFocus}
+              />
+            ))}
+          </div>
         </div>
-        {visible.map((ctx) => (
-          <ContextRow
-            key={ctx.label}
-            ctx={ctx}
-            index={index}
-            expanded={expandedLabel === ctx.label}
-            onToggle={() => setExpandedLabel((prev) => (prev === ctx.label ? null : ctx.label))}
-            onFocus={setFocus}
-          />
-        ))}
       </div>
     </AppShell>
   );
