@@ -2001,6 +2001,7 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
 # row to two facts: it covers tests the release rows do not, and no release
 # stage reaches it (an exemption the release runs anyway is a stale lie).
 # Never add a row here without the owner.
+_CUT_SWEEP_MODULE = "tests/unit/host/test_probe_line_cut_sweep.py"
 _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
     # Chris, 2026-10-15: the chaos lanes are on demand only. They are
     # bed-hostile by construction (warm reboots, SIGKILL mid-impair, SSH
@@ -2010,6 +2011,16 @@ _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
     # scheduled dev-VM run so the lane keeps producing signal.
     _Leg("noxfile.py:chaos@default", "chaos and not embedded", ("tests/e2e/chaos",)),
     _Leg("noxfile.py:chaos_embedded@default", "chaos and embedded", ("tests/e2e/chaos",)),
+    # Chris, 2026-11-07 (#853): the every-offset probe-line cut sweep is nightly-only,
+    # plus one by-hand pass when it landed. It is deterministic, and its fixed
+    # hazard cases run on every push; the sweep adds exhaustiveness (~13k
+    # fresh shells, about two hours serial), which a release need not wait
+    # on. Nightly's `probe-cut-sweep` job runs it.
+    _Leg(
+        "Makefile:stability-cut-sweep",
+        "stability",
+        (_CUT_SWEEP_MODULE,),
+    ),
 )
 
 # Pinned by reachability: lanes whose items the hermetic collection cannot show
@@ -2332,7 +2343,8 @@ def test_the_exemptions_are_live_and_not_in_the_release(collect_marker_sets) -> 
     nothing the release misses is dead weight, or the lane was folded back in
     and the row now hides that); the second keeps it honest in the other (an
     exemption for a lane `make release` runs anyway is a stale lie — drop the
-    row). The chaos rows are the only ones today; the reason is beside them.
+    row). The chaos rows and the cut sweep's row are the only ones today; the
+    reasons are beside them.
     """
     assert _RELEASE_EXEMPT_LANES, "no exemptions — delete this test with the list"
     release_gaps = set(_release_census_gaps(RELEASE_LANES, collect_marker_sets))
@@ -2347,30 +2359,37 @@ def test_the_exemptions_are_live_and_not_in_the_release(collect_marker_sets) -> 
 
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
-def test_the_exempt_rows_are_exactly_the_chaos_targets_legs(collect_marker_sets) -> None:
-    """The exemption is spelled from the real lanes, and it covers the whole chaos tree.
+def test_the_exempt_rows_are_exactly_the_chaos_and_cut_sweep_targets_legs(
+    collect_marker_sets,
+) -> None:
+    """The exemption is spelled from the real lanes, and it covers the chaos tree and the sweep.
 
-    Walking `make chaos` and `make chaos-embedded` the way the release is walked
-    must give exactly the exempt rows: a narrowed `-m` in the noxfile, or a
-    chaos session moved elsewhere, reds here instead of silently leaving tests
-    in no lane. And what the exempt rows add to the release's selection is
-    every item collected under tests/e2e/chaos, no more and no fewer.
+    Walking `make chaos`, `make chaos-embedded` and `make stability-cut-sweep`
+    the way the release is walked must give exactly the exempt rows: a
+    narrowed `-m` in the noxfile, or a chaos session moved elsewhere, reds
+    here instead of silently leaving tests in no lane. And what the exempt
+    rows add to the release's selection is every item collected under
+    tests/e2e/chaos plus the cut sweep's module, no more and no fewer.
     """
+    exempt_targets = ("chaos", "chaos-embedded", "stability-cut-sweep")
     text = (_REPO / _MAKEFILE).read_text()
-    assert "chaos" not in make_reachable("release", text)
-    assert "chaos-embedded" not in make_reachable("release", text)
-    chaos_legs = set(make_legs("chaos")) | set(make_legs("chaos-embedded"))
-    assert chaos_legs == set(_RELEASE_EXEMPT_LANES), (
-        "the exempt rows and the chaos targets' legs differ:\n  "
-        + "\n  ".join(sorted(str(leg) for leg in chaos_legs ^ set(_RELEASE_EXEMPT_LANES)))
+    reached_by_release = make_reachable("release", text)
+    for target in exempt_targets:
+        assert target not in reached_by_release, f"`make release` reaches exempt `{target}`"
+    exempt_legs = {leg for target in exempt_targets for leg in make_legs(target)}
+    assert exempt_legs == set(_RELEASE_EXEMPT_LANES), (
+        "the exempt rows and the exempt targets' legs differ:\n  "
+        + "\n  ".join(sorted(str(leg) for leg in exempt_legs ^ set(_RELEASE_EXEMPT_LANES)))
     )
     release_only = set(_release_census_gaps(RELEASE_LANES, collect_marker_sets))
     with_exempt = set(
         _release_census_gaps(RELEASE_LANES + _RELEASE_EXEMPT_LANES, collect_marker_sets)
     )
     covered = release_only - with_exempt
-    chaos_items = {item.nodeid for item in collect_marker_sets(("tests/e2e/chaos",))}
-    assert covered == chaos_items, sorted(covered ^ chaos_items)[:10]
+    exempt_items = {
+        item.nodeid for item in collect_marker_sets(("tests/e2e/chaos", _CUT_SWEEP_MODULE))
+    }
+    assert covered == exempt_items, sorted(covered ^ exempt_items)[:10]
 
 
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
@@ -2508,6 +2527,7 @@ HOSTLESS_TARGETS = [
     "dashboard-all",
     "dashboard-soak",
     "stability-unit",
+    "stability-cut-sweep",
     "ci",
     "check-breaking",
     "check-python",

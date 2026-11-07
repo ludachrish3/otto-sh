@@ -47,8 +47,8 @@ from .telnet import (
 logger = logging.getLogger(__name__)
 
 _ANSI_RE = re.compile(
-    r"\x1b\[[0-9;?]*[ -/]*[@-~]"  # CSI: ESC [ params intermediates final
-    r"|\x1b\][^\x07]*\x07"  # OSC: ESC ] ... BEL (e.g. a terminal title)
+    r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI: ESC [ params (0x30-0x3F) intermediates final
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC: ESC ] ... BEL or ST (e.g. a terminal title)
     r"|\x1b[()][0-9A-Za-z]"  # charset select: ESC ( B / ESC ) 0 / etc.
     r"|\x1b[@-Z\\-_]"  # other two-byte escapes
 )
@@ -95,7 +95,7 @@ def console_prefix(name: str, server: str, options: ConsoleOptions) -> str:
 
 
 def strip_ansi(text: str) -> str:
-    """Drop CSI/escape sequences so prompt regexes see the characters a human sees."""
+    """Drop CSI, OSC and other escapes so prompt regexes see the characters a human sees."""
     return _ANSI_RE.sub("", text)
 
 

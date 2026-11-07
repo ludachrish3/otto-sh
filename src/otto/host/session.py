@@ -675,7 +675,7 @@ class ShellSession(ABC):
         marks the session ready without writing a byte.
 
         On bash that payload is ``__otto_probe=_READY__; stty -echo; echo;
-        <calibration>; echo __OTTO_<id>${__otto_probe-}``, read back until
+        <calibration>; echo __OTTO_<id>$__otto_probe``, read back until
         the marker and its line ending return: the deterministic readiness
         check that replaced telnet login's silence-drain — prompt-independent
         and content-independent. The calibration line

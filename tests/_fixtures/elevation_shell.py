@@ -21,14 +21,15 @@ from typing import Any
 
 from pydantic import SecretStr
 
+from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
+from tests._fixtures.fake_shell import probe_marker
 
 _FRAME_RE = re.compile(
     r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"\n',
     re.DOTALL,
 )
-_RECOVER_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__"')
 _SUDO_RE = re.compile(r"\ASUDO_PROMPT='([^']*)' sudo -S (.*)\Z", re.DOTALL)
 _SU_RE = re.compile(r"\Asu -c (.*)\Z", re.DOTALL)
 _SUDO_TRIES = 3
@@ -83,8 +84,8 @@ class ElevationShell:
         self.writes.append(text)
         if self._pending is not None:
             return self._answer_prompt(text)
-        if (m := _RECOVER_RE.search(text)) is not None:
-            return "" if self.wedged else f"{m.group(1)}0__\n"
+        if (marker := probe_marker(text)) is not None and marker.endswith(RECOVER_SUFFIX):
+            return "" if self.wedged else f"{marker}0__\n"
         if (m := _FRAME_RE.search(text)) is not None:
             typed = text if self.echo else ""
             return f"{typed}{m.group(1)}\n{self._start(m.group(2), m.group(3))}"

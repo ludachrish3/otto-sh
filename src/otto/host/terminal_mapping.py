@@ -39,13 +39,16 @@ __all__ = [
     "measure",
 ]
 
-CALIBRATION_COMMAND = r"printf 'X\r\nY\nZ\rW\n' 2>/dev/null"
+CALIBRATION_COMMAND = r"2>/dev/null printf X\\r\\nY\\nZ\\rW\\n"
 r"""The shell text the bash handshake runs before READY.
 
 ``X\r\nY`` and ``Y\nZ`` tell a translated ``\n`` from a program's own
-``\r\n``; ``Z\rW`` shows whether a lone CR survives. ``2>/dev/null`` keeps a
-target with no ``printf`` silent: its handshake still reaches READY and the
-mapping reads as unknown."""
+``\r\n``; ``Z\rW`` shows whether a lone CR survives. The format is unquoted
+and the redirection comes first, as the cut rules of
+:func:`~otto.host.command_frame.whole_line_echo` require: the shell turns
+each ``\\`` into ``\``, so ``printf`` receives ``X\r\nY\nZ\rW\n``.
+``2>/dev/null`` keeps a target with no ``printf`` silent: its handshake still
+reaches READY and the mapping reads as unknown."""
 
 IDENTITY = "identity"
 """The calibration came back as written, so the terminal translates nothing."""

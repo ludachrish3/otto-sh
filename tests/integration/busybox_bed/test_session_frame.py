@@ -52,10 +52,11 @@ _ORPHAN_PATTERN = "[s]leep 300"
 # construction, which is the very property recover() exists to have.
 _RECOVER_PROBE_SESSION_ID = "T8RECOVERPROBE"
 
-# The status the recover probe must carry back. Neither 0 (what a blank or
-# unexpanded status could coincidentally look like) nor a value ash produces by
-# accident, and set in a SUBSHELL so the shell survives to run the probe.
-_RECOVER_PROBE_CODE = 7
+# The status of the command before the recover probe, which the probe must NOT
+# carry back: it reports its own anchor assignment's status (0). Not a value
+# ash produces by accident, and set in a SUBSHELL so the shell survives to run
+# the probe.
+_PRECEDING_CODE = 7
 
 
 @pytest.mark.parametrize(("cmd", "code"), [("true", 0), ("false", 1), ("sh -c 'exit 42'", 42)])
@@ -76,22 +77,21 @@ async def test_the_exit_code_that_crosses_the_frame_is_the_commands(guest, cmd, 
     )
 
 
-async def test_the_recover_probes_baked_exit_code_is_the_preceding_commands(guest):
-    """The RECOVER marker carries the PRECEDING command's status, not any status.
+async def test_the_recover_probes_status_is_its_own_lines(guest):
+    """The RECOVER marker carries the status of the probe line's own statements.
 
     A DIFFERENT PAYLOAD from the one above, built by a different method, and it
-    needs its own measurement. ``recover()`` bakes the status into the RECOVER
-    token rather than into ``end_prefix`` precisely so the two cannot collide,
-    and so a dead shell (an echo, a REPL) can only reflect the literal dollar-?
-    back instead of digits.
+    needs its own measurement. ``recover()`` expands the status after the
+    RECOVER token rather than after ``end_prefix`` precisely so the two cannot
+    collide, and so a dead shell (an echo, a REPL) can only reflect the
+    literal dollar-? back instead of digits.
 
-    THE ORPHAN ROW ALREADY PROVES THE DIGITS HALF and nothing proves this one.
-    Every timed-out command in this module drives the real recovery, which
-    cannot complete unless the compiled RECOVER pattern matches digits on the
-    wire -- so "a number arrives" is live-covered five times over. What that
-    says nothing about is WHICH number: a frame that baked a constant, or a
-    shell that clamped the status, recovers exactly as well. 7 is the
-    discriminator.
+    The probe is a ``whole_line_echo`` line (#853): its first statement
+    assigns the variable holding the marker's end, so the status the echo
+    expands is that assignment's, 0, whatever the command before it exited.
+    Nothing reads the value (only digits prove execution), so this pins the
+    shell's semantics rather than otto's: a 7 here would mean ash leaves the
+    status alone across an assignment-only statement, which POSIX resets to 0.
 
     Both halves come from the product -- the payload from ``recover()``, the
     search from ``recover_pattern()`` -- so a change to either is caught here
@@ -112,7 +112,7 @@ async def test_the_recover_probes_baked_exit_code_is_the_preceding_commands(gues
     frame = BashFrame()
     markers = SessionMarkers.for_session(_RECOVER_PROBE_SESSION_ID)
     probe = frame.recover(markers).rstrip("\n")
-    res = await host.exec(f"(exit {_RECOVER_PROBE_CODE}); {probe}")
+    res = await host.exec(f"(exit {_PRECEDING_CODE}); {probe}")
 
     match = frame.recover_pattern(markers).search(res.value)
     assert match, (
@@ -120,11 +120,11 @@ async def test_the_recover_probes_baked_exit_code_is_the_preceding_commands(gues
         f"(BusyBox {version}) -- the shell did not expand a status into "
         f"recover()'s payload at all: {res.value!r}"
     )
-    assert match.group(1) == str(_RECOVER_PROBE_CODE), (
+    assert match.group(1) == "0", (
         f"{host.element.name} (BusyBox {version}) reported {match.group(1)} in the "
-        f"RECOVER marker where the preceding command exited "
-        f"{_RECOVER_PROBE_CODE} -- recover()'s status does not survive here, "
-        f"which is a real ash delta and belongs in AshFrame"
+        f"RECOVER marker after a command that exited {_PRECEDING_CODE} -- the "
+        f"probe's own assignment did not set the status here, which is a real "
+        f"ash delta and belongs in AshFrame"
     )
 
 

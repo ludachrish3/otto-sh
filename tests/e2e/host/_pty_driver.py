@@ -2,8 +2,8 @@
 
 ``InteractiveOttoSession`` spawns ``otto`` as a subprocess with a fresh
 pseudo-terminal wired to its stdin/stdout/stderr and set as its controlling
-terminal (via a post-exec ``TIOCSCTTY`` shim — see ``__enter__``; without a
-controlling terminal the kernel delivers resize SIGWINCH to nobody). That
+terminal (:func:`tests._fixtures.controlling_pty.spawn_on_controlling_pty`;
+without a controlling terminal the kernel delivers resize SIGWINCH to nobody). That
 gives the child process a real TTY, so code paths guarded by
 ``sys.stdin.isatty()`` (raw mode, SIGWINCH forwarding, the stdin worker
 thread inside :mod:`otto.host.interact`) run for real under test instead of
@@ -16,22 +16,15 @@ including the planned ``--no-log`` toggle for ``host login`` — can reuse it.
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import os
-import pty
 import re
 import select
-import struct
-import subprocess
-import sys
-import termios
 import time
 from pathlib import Path
 
 from typing_extensions import Self
 
-from scripts.process_group import signal_group
+from tests._fixtures.controlling_pty import ControllingPty, set_winsize, spawn_on_controlling_pty
 from tests.e2e._otto_subprocess import CHECKOUT_ROOT, OTTO_BIN, otto_subprocess_env
 
 
@@ -70,11 +63,11 @@ class InteractiveOttoSession:
         self._roots = roots
         self._extra_env = extra_env
         self._master_fd: int | None = None
-        self._proc: subprocess.Popen[bytes] | None = None
+        self._pty: ControllingPty | None = None
         self._buf = bytearray()
 
     def __enter__(self) -> Self:
-        # The shim below makes exec failures surface as a traceback on the
+        # The spawner's ctty shim makes exec failures surface as a traceback on the
         # PTY (Popen itself always succeeds — python exists), which reads as
         # an expect() timeout three layers from the cause. Name the one
         # recurring shape up front instead.
@@ -85,9 +78,6 @@ class InteractiveOttoSession:
             )
         self._xdir.mkdir(parents=True, exist_ok=True)
 
-        master_fd, slave_fd = pty.openpty()
-        self._set_winsize(slave_fd, self._cols, self._rows)
-
         # ``roots=None`` omits ``OTTOPATH`` (this driver has no default
         # project); TERM is inherited so the child sees the same terminal type
         # the suite runs under (the root conftest pins it to ``dumb``).
@@ -97,48 +87,17 @@ class InteractiveOttoSession:
             term=os.environ.get("TERM", "xterm"),
             extra_env=self._extra_env,
         )
-        # setsid() alone (start_new_session=True) leaves the child with NO
-        # controlling terminal — an inherited slave fd never acquires one —
-        # and the kernel delivers resize SIGWINCH only to the controlling
-        # terminal's foreground process group, i.e. to nobody. This shim
-        # runs AFTER exec in the fresh child interpreter (a preexec_fn
-        # would run between fork and exec, where a lock held by any other
-        # thread deadlocks — PLW1509), makes the slave (fd 0) the session's
-        # controlling terminal, then execs otto in place — same pid, so
-        # wait()/killpg semantics are unchanged and resize() is actually
-        # seen by otto's install_sigwinch handler.
-        ctty_shim = (
-            "import fcntl, os, sys, termios; "
-            "fcntl.ioctl(0, termios.TIOCSCTTY, 0); "
-            "os.execvp(sys.argv[1], sys.argv[1:])"
+        self._pty = spawn_on_controlling_pty(
+            self._argv, env=env, cwd=CHECKOUT_ROOT, cols=self._cols, rows=self._rows
         )
-        # -S skips site processing for the SHIM only (its coverage bootstrap
-        # would be discarded by the exec anyway); otto's own interpreter runs
-        # site normally and still sees the env.
-        self._proc = subprocess.Popen(
-            [sys.executable, "-S", "-c", ctty_shim, *self._argv],
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            start_new_session=True,
-            cwd=str(CHECKOUT_ROOT),
-            env=env,
-            close_fds=True,
-        )
-        os.close(slave_fd)
-        self._master_fd = master_fd
+        self._master_fd = self._pty.controller
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        proc = self._proc
-        if proc is not None and proc.poll() is None:
-            signal_group(proc.pid)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=2)
-        if self._master_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(self._master_fd)
+        if self._pty is not None:
+            self._pty.close()
             self._master_fd = None
+            self._pty = None
 
     # ------------------------------------------------------------------
     # I/O helpers
@@ -166,15 +125,15 @@ class InteractiveOttoSession:
         so a child that never acquired this PTY as its controlling terminal
         (the pre-shim driver's permanent state) receives nothing, ever.
         """
-        assert self._master_fd is not None
-        return os.tcgetpgrp(self._master_fd)
+        assert self._pty is not None
+        return self._pty.foreground_group()
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the PTY. The kernel delivers SIGWINCH to the child session."""
         assert self._master_fd is not None
         self._cols = cols
         self._rows = rows
-        self._set_winsize(self._master_fd, cols, rows)
+        set_winsize(self._master_fd, cols, rows)
 
     def expect(
         self,
@@ -257,19 +216,10 @@ class InteractiveOttoSession:
 
     def wait(self, timeout: float) -> int:
         """Wait for the child to exit and return its exit code."""
-        assert self._proc is not None
-        return self._proc.wait(timeout=timeout)
+        assert self._pty is not None
+        return self._pty.proc.wait(timeout=timeout)
 
     @property
     def pid(self) -> int:
-        assert self._proc is not None
-        return self._proc.pid
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _set_winsize(fd: int, cols: int, rows: int) -> None:
-        # struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        assert self._pty is not None
+        return self._pty.proc.pid

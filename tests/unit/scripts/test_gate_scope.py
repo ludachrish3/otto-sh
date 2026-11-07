@@ -560,6 +560,7 @@ def test_special_trees_route_to_their_lanes_and_never_to_quick():
         "tests/e2e/monitor/dashboard/test_live.py",
         "tests/e2e/monitor/dashboard/test_replay_soak.py",
         "tests/e2e/chaos/test_console_chaos.py",
+        "tests/unit/host/test_probe_line_cut_sweep.py",
     ]
     browser = "import pytest\npytestmark = pytest.mark.browser\ndef test_a(): pass\n"
     files = {
@@ -576,6 +577,7 @@ def test_special_trees_route_to_their_lanes_and_never_to_quick():
         "make coverage-unix",
         "make dashboard",
         "make dashboard-soak",
+        "make stability-cut-sweep",
     ]
     assert scope.special_tip == [
         "make busybox",

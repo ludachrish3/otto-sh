@@ -91,6 +91,7 @@ from hypothesis import strategies as st
 from otto.host.connections import ConnectionManager
 from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSession
 from otto.result import CommandResult
+from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
 
 pytestmark = pytest.mark.concurrency
@@ -152,16 +153,17 @@ class _StabilityFakeSession(ShellSession):
         elif self._begin_marker in data:
             self._read_queue.put_nowait(f"{self._begin_marker}\n")
             self._read_queue.put_nowait(f"{self._end_marker_prefix}0__\n")
-        elif self._recover_marker in data:
-            # Answer the post-timeout liveness probe (``echo "<RECOVER>$?__"``)
-            # the way a live shell would — the digits are what prove real
-            # execution to ``recover_pattern``. Without this branch every
-            # recovery is unsatisfiable and ``confirm_live`` resends until
-            # ``_RECOVERY_TIMEOUT`` (5 s) expires, which is how a single fired
-            # command budget used to cost 25x this module's whole runtime
-            # (issue #359). A fake that answers only the happy protocol does
-            # not make timeouts harmless — it makes them maximally expensive,
-            # because the error path is where the patient retry budgets live.
+        elif probe_marker(data) == self._recover_marker:
+            # Answer the post-timeout liveness probe (an anchored line ending
+            # in ``$?__``, see BashFrame.recover) the way a live shell would —
+            # the digits are what prove real execution to ``recover_pattern``.
+            # Without this branch every recovery is unsatisfiable and
+            # ``confirm_live`` resends until ``_RECOVERY_TIMEOUT`` (5 s)
+            # expires, which is how a single fired command budget used to cost
+            # 25x this module's whole runtime (issue #359). A fake that answers
+            # only the happy protocol does not make timeouts harmless — it
+            # makes them maximally expensive, because the error path is where
+            # the patient retry budgets live.
             self._read_queue.put_nowait(f"{self._recover_marker}0__\n")
 
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:

@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 
 from otto.host.console import strip_ansi
+from tests._fixtures.controlling_pty import set_winsize
 from tests._fixtures.literal_text import rejoin_column
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import otto_subprocess_env, run_otto
-from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 pytestmark = pytest.mark.hostless
 
@@ -206,7 +206,7 @@ def _probe_shim(
             continue
         master, slave = os.openpty()
         if size != (0, 0):
-            InteractiveOttoSession._set_winsize(slave, *size)
+            set_winsize(slave, *size)
         masters.append(master)
         slaves.append(slave)
         streams[name] = slave
