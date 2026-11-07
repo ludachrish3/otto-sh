@@ -286,3 +286,44 @@ describe("MarkControl pending gate (#867)", () => {
     expect(fetchMock.mock.calls.length).toBe(1);
   });
 });
+
+describe("MarkControl and a late result (#932)", () => {
+  function held() {
+    let release!: (r: Response) => void;
+    const promise = new Promise<Response>((res) => {
+      release = res;
+    });
+    return { fetchMock: vi.fn().mockReturnValue(promise), release };
+  }
+
+  it.each([
+    { outcome: "success", response: () => okJson(record(9, "checkpoint"), 201) },
+    { outcome: "failure", response: () => okJson({ error: "archive is locked" }, 409) },
+  ])(
+    "a $outcome after dismiss and reopen leaves the reopened popover alone",
+    async ({ response }) => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      const { fetchMock, release } = held();
+      vi.stubGlobal("fetch", fetchMock);
+      render(<MarkControl />);
+      await user.click(screen.getByTestId("mark-button"));
+      await user.type(await screen.findByTestId("mark-label-input"), "checkpoint");
+      await user.click(screen.getByTestId("mark-submit"));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByTestId("mark-popover")).toBeNull());
+      await user.click(screen.getByTestId("mark-button"));
+      await user.type(await screen.findByTestId("mark-label-input"), "next");
+      await act(() => Promise.resolve(release(response())));
+      await waitFor(() =>
+        expect(screen.getByTestId("mark-submit").hasAttribute("data-loading")).toBe(false),
+      );
+      expect(screen.getByTestId("mark-popover")).toBeTruthy();
+      expect((screen.getByTestId("mark-label-input") as HTMLInputElement).value).toBe("next");
+      expect(screen.queryByTestId("mark-error")).toBeNull();
+      // The old request's result still reached the store.
+      const events = useReviewStore.getState().sessions.find((s) => s.id === sid)?.events ?? [];
+      expect(events.some((ev) => ev.id === 9)).toBe(response().status === 201);
+    },
+  );
+});

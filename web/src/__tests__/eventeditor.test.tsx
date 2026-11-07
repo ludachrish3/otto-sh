@@ -962,6 +962,146 @@ describe("EventEditor pending gate (#867)", () => {
   });
 });
 
+describe("EventEditor and a late result (#932)", () => {
+  function held() {
+    let release!: (r: Response) => void;
+    const promise = new Promise<Response>((res) => {
+      release = res;
+    });
+    return { fetchMock: vi.fn().mockReturnValueOnce(promise), release };
+  }
+
+  function storedLabel(sid: string, id: number): string | undefined {
+    return useReviewStore
+      .getState()
+      .sessions.find((s) => s.id === sid)
+      ?.events.find((ev) => ev.id === id)?.label;
+  }
+
+  function open(sid: string, eventId: number): void {
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId });
+    });
+  }
+
+  it("event 2's late Save leaves event 3's editor and its custom colour; the store takes event 2's update", async () => {
+    installPlotSurfaceCss();
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid, 2);
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-save"));
+    open(sid, 3);
+    await user.click(screen.getByTestId("editor-color-custom-open"));
+    const hex = screen.getByTestId("custom-color-hex");
+    await user.clear(hex);
+    await user.type(hex, "#00abcd");
+    await user.click(screen.getByTestId("custom-color-apply"));
+    await act(() => Promise.resolve(release(okJson(record({ id: 2, label: "saved" }), 200))));
+    await waitFor(() => expect(storedLabel(sid, 2)).toBe("saved"));
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 3 });
+    expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
+    expect(screen.getByTestId("editor-color-name").textContent).toBe("· Custom — #00abcd");
+  });
+
+  it.each([
+    { outcome: "success", response: () => okJson(record({ id: 2, label: "saved" }), 200) },
+    { outcome: "failure", response: () => okJson({ error: "archive is locked" }, 409) },
+  ])(
+    "a Save's late $outcome after Cancel and reopening the same event leaves the reopened editor",
+    async ({ response }) => {
+      const user = userEvent.setup();
+      const sid = hydrate();
+      open(sid, 2);
+      const { fetchMock, release } = held();
+      vi.stubGlobal("fetch", fetchMock);
+      render(<EventEditor />);
+      await user.click(screen.getByTestId("editor-save"));
+      await user.click(screen.getByTestId("editor-cancel"));
+      expect(useUiStore.getState().eventEditor).toBeNull();
+      open(sid, 2);
+      await act(() => Promise.resolve(release(response())));
+      await waitFor(() =>
+        expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+      );
+      expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 2 });
+      expect(screen.getByTestId("event-editor")).toBeTruthy();
+      expect(screen.queryByTestId("editor-error")).toBeNull();
+    },
+  );
+
+  it("a Save's late success reseeds the reopened editor, and its next Save sends the landed values", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid, 2);
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    const label = screen.getByTestId("editor-label") as HTMLInputElement;
+    await user.clear(label);
+    await user.type(label, "saved");
+    await user.click(screen.getByTestId("editor-save"));
+    await user.click(screen.getByTestId("editor-cancel"));
+    open(sid, 2);
+    // Seeded before the update landed: the stored label.
+    expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("stress run");
+    await act(() =>
+      Promise.resolve(release(okJson(record({ id: 2, label: "saved", end_timestamp: null }), 200))),
+    );
+    await waitFor(() =>
+      expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("saved"),
+    );
+    fetchMock.mockResolvedValue(okJson(record({ id: 2, label: "saved" }), 200));
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    const body = jsonBody(fetchMock, 1);
+    expect(body["label"]).toBe("saved");
+    expect(body).toHaveProperty("end_timestamp", null);
+  });
+
+  it("a Delete's late success after Cancel and reopening the same event closes the editor", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid, 2);
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    act(() => useUiStore.getState().actions.closeEventEditor());
+    open(sid, 2);
+    expect(screen.getByTestId("event-editor")).toBeTruthy();
+    await act(() => Promise.resolve(release(new Response(null, { status: 204 }))));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(storedLabel(sid, 2)).toBeUndefined();
+    expect(screen.queryByTestId("event-editor")).toBeNull();
+  });
+
+  it("a Delete's late failure after Cancel and reopening the same event shows no error there", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid, 2);
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    act(() => useUiStore.getState().actions.closeEventEditor());
+    open(sid, 2);
+    await act(() => Promise.resolve(release(okJson({ error: "archive is locked" }, 409))));
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-delete").hasAttribute("disabled")).toBe(false),
+    );
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 2 });
+    expect(screen.queryByTestId("editor-error")).toBeNull();
+    // The dialog, reopened, carries no error from the old request.
+    await user.click(screen.getByTestId("editor-delete"));
+    expect(within(screen.getByTestId("confirm-delete")).queryByRole("alert")).toBeNull();
+  });
+});
+
 describe("EventEditor and the tracked span (#868)", () => {
   // kitchen-sink's event 1 has no end: track it as the open span.
   function trackEvent1(): string {
