@@ -136,7 +136,7 @@ async def test_post_hook_confirmation_runs_unconditionally_on_a_same_frame_host(
     h = _Harness(_export)
     try:
         await h.mgr._ensure_session()
-        readies = [w for w in h.shells[0].writes if "_READY__" in w]
+        readies = [w for w in h.shells[0].writes if "READY__" in w]
         assert len(readies) == 2  # landing handshake + post-hook frame entry
         assert readies[0] != readies[1]  # fresh markers
         assert h.sessions[0].opens == 1  # never reopened
@@ -171,7 +171,7 @@ async def test_hook_may_enter_the_frame_itself_and_run_in_the_target_dialect():
     h = _Harness(hook, landing=BashFrame(), target=ZephyrFrame())
     try:
         await h.mgr._ensure_session()
-        readies = [w for w in h.shells[0].writes if "_READY__" in w]
+        readies = [w for w in h.shells[0].writes if "READY__" in w]
         assert len(readies) == 3  # landing + hook's entry + manager's confirmation
     finally:
         h.unregister()
@@ -321,7 +321,7 @@ async def test_a_host_without_a_hook_is_unchanged():
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
     await mgr._ensure_session()
-    readies = [w for w in built[0].shell.writes if "_READY__" in w]
+    readies = [w for w in built[0].shell.writes if "READY__" in w]
     assert len(readies) == 1
     assert mgr._exec_route() is _ExecRoute.SSH_CHANNEL
 
@@ -439,8 +439,8 @@ async def test_frame_entry_after_an_app_shell_exit_sends_exactly_one_handshake()
         await h.mgr._ensure_session()
         writes = h.shells[0].writes
         assert _App.launch + "\n" in writes  # the app really was attached
-        recover = next(i for i, w in enumerate(writes) if "_RECOVER__" in w)
-        readies = [i for i, w in enumerate(writes) if "_READY__" in w]
+        recover = next(i for i, w in enumerate(writes) if "RECOVER__" in w)
+        readies = [i for i, w in enumerate(writes) if "READY__" in w]
         assert len(readies) == 2, writes  # landing handshake + frame entry
         assert readies[1] > recover  # the app's exit confirmed first
         assert h.sessions[0].opens == 1
@@ -465,7 +465,7 @@ async def test_frame_entry_carries_the_target_frames_history_prefix():
         await h.mgr._ensure_session()
         writes = h.shells[0].writes
         assert len(writes) == 1, writes
-        assert "_READY__" in writes[0]
+        assert "READY__" in writes[0]
         # Behind the line's anchor (whole_line_echo), which has to open it.
         assert writes[0].index(BashFrame().quiet_history()) < writes[0].index("stty -echo")
         assert RawFrame().quiet_history() == ""  # the landing could not have supplied it

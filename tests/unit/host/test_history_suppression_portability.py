@@ -26,7 +26,7 @@ shells gets more coverage and a runner with fewer never silently loses the
 baseline.
 
 THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
-bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo; …; echo <READY>``
+bottom. ``handshake()`` renders ``2>/dev/null stty -echo; echo; …; echo <READY>``
 (the bare ``echo`` puts READY at the start of a line whatever the terminal's
 echo state), and suppression rides in front of it, so they share one line
 and one failure mode: anything that aborts the line strands READY and takes a
@@ -39,70 +39,42 @@ measured.
 """
 
 import os
-import pty
-import select
+import re
 import shutil
 import subprocess
 
 import pytest
 
-from otto.host.command_frame import BashFrame, SessionMarkers
+from otto.host.command_frame import (
+    _PROBE_VAR,
+    READY_SUFFIX,
+    RECOVER_SUFFIX,
+    BashFrame,
+    SessionMarkers,
+)
+from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
 from otto.host.session import ready_pattern
-from otto.host.terminal_mapping import ONLCR, measure
-from otto.utils import WaitTimeoutError, wait_for
+from otto.host.terminal_mapping import CALIBRATION_COMMAND, IDENTITY, ONLCR, measure
+from tests._fixtures.interactive_shell import (
+    FAKE_RAN,
+    HAZARD_MARKERS,
+    OPTIONAL_SHELLS,
+    PROVISIONED_SHELLS,
+    READY_TIMEOUT,
+    REQUIRED_SHELLS,
+    RESEND_MARKERS,
+    SHELLS,
+    TAIL_MARKERS,
+    InteractiveShell,
+    cut_probe,
+    interactive_shell,
+    probe_answer,
+    render_probe,
+    terminal_reader_fakes,
+)
 
 PAYLOAD = BashFrame().quiet_history()
-
-# Always present on any machine that can run otto's own test suite; a missing
-# one is a broken runner, not a skip.
-_REQUIRED_SHELLS: dict[str, list[str]] = {
-    "sh": ["sh"],
-    "bash": ["bash"],
-}
-
-# Tested when installed, NOT skipped-if-absent: a runner with more shells gets
-# more coverage and a runner with fewer never silently loses the baseline. The
-# dev VM provisions zsh/ksh/mksh for exactly this matrix (Vagrantfile,
-# "dev-root"); CI's ubuntu-latest has neither ksh nor mksh, which is why these
-# cannot be promoted to _REQUIRED_SHELLS. Which ones actually ran is visible in
-# the parametrized test ids — this suite cannot warn about the gap because
-# `filterwarnings = ["error"]` would turn that into a failure.
-#
-# Each has earned its place by catching something the others could not:
-#   busybox-sh  the ash dialect on container/embedded-ish targets; rejects
-#               `set +o history`.
-#   zsh         its `command` is a precommand modifier restricted to EXTERNAL
-#               commands, so the POSIX de-specialization idiom is inert there.
-#   ksh         reports a readonly assignment from OUTSIDE the simple command's
-#               own redirection, which a plain trailing `2>/dev/null` misses.
-_OPTIONAL_SHELLS: dict[str, list[str]] = {
-    "dash": ["dash"],
-    "ash": ["ash"],
-    "zsh": ["zsh"],
-    "ksh": ["ksh"],
-    "mksh": ["mksh"],
-    "busybox-sh": ["busybox", "sh"],
-}
-
-
-# Installed by the dev VM's "dev-root" provisioner specifically for this
-# matrix. Not required (CI's ubuntu-latest lacks ksh/mksh) but their ABSENCE
-# from _OPTIONAL_SHELLS is a defect — see
-# test_every_installed_shell_of_interest_is_actually_in_the_matrix.
-_PROVISIONED_SHELLS: tuple[str, ...] = ("zsh", "ksh", "mksh")
-
-
-def _available() -> list[tuple[str, list[str]]]:
-    found = [(name, argv) for name, argv in _REQUIRED_SHELLS.items() if shutil.which(argv[0])]
-    missing = sorted(set(_REQUIRED_SHELLS) - {name for name, _ in found})
-    if missing:
-        raise RuntimeError(f"runner is missing baseline shell(s): {missing}")
-    found += [(name, argv) for name, argv in _OPTIONAL_SHELLS.items() if shutil.which(argv[0])]
-    return found
-
-
-SHELLS = _available()
 
 
 def _run(
@@ -115,6 +87,9 @@ def _run(
     variable ``subprocess`` searches to find the shell binary itself, so a
     bare name would fail to launch rather than fail to find ``stty``.
 
+    stdin is ``/dev/null``, so a command a tail runs that reads it ends at
+    once rather than waiting on whatever stdin pytest was given.
+
     *merge* folds stderr into stdout, which is what a PTY does. Bytes in,
     ``.decode()`` out: no newline translation, so :func:`measure` sees
     ``\r\n`` and a lone ``\r`` exactly as the shell wrote them.
@@ -123,6 +98,7 @@ def _run(
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
     proc = subprocess.run(
         [*argv, "-c", script],
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT if merge else subprocess.PIPE,
         timeout=10,
@@ -180,7 +156,7 @@ def test_payload_leaves_a_zero_exit_status(name: str, argv: list[str]):
     identity regex (it only needs digits) but it reads as a failure in a
     debug log.
     """
-    m = SessionMarkers.for_session("cafef00d")
+    m = TAIL_MARKERS
     proc = _run(argv, _identity_probe(m, PAYLOAD))
     assert f"{m.recover}0__" in proc.stdout, f"{name}: {proc.stdout!r}"
 
@@ -266,7 +242,7 @@ def test_payload_survives_errexit_and_nounset(name: str, argv: list[str]):
 
 def test_payload_composes_onto_a_handshake_without_splitting_the_line():
     """The frame composes suppression into its handshake as exactly one command line."""
-    m = SessionMarkers.for_session("cafef00d")
+    m = TAIL_MARKERS
     composed = BashFrame().handshake(m, PAYLOAD)
     assert PAYLOAD in composed
     assert composed.count("\n") == 1
@@ -281,7 +257,7 @@ def test_the_split_ready_marker_prints_whole_on_a_line_of_its_own(name: str, arg
     it. It only works if each shell joins the halves again, so the shell's
     output has the marker as the last line.
     """
-    m = SessionMarkers.for_session("cafef00d")
+    m = TAIL_MARKERS
     handshake = BashFrame().handshake(m, PAYLOAD)
     assert m.ready not in handshake
     proc = _run(argv, handshake)
@@ -325,7 +301,7 @@ def test_payload_carries_a_zsh_specific_clause():
 # ---------------------------------------------------------------------------
 # The handshake's other statement: a device with no `stty`
 #
-# `handshake()` renders `stty -echo 2>/dev/null; echo; echo <READY>`. `stty` is
+# `handshake()` renders `2>/dev/null stty -echo; echo; echo <READY>`. `stty` is
 # an ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so
 # a stripped userland can simply not have it — and then the shell, not stty,
 # produces the diagnostic ("not found"). That message has to be swallowed by
@@ -346,7 +322,7 @@ def test_payload_carries_a_zsh_specific_clause():
 # root it owned rather than edit an environment variable.
 # ---------------------------------------------------------------------------
 
-HANDSHAKE = BashFrame().handshake(SessionMarkers.for_session("cafef00d"))
+HANDSHAKE = BashFrame().handshake(TAIL_MARKERS)
 
 _STTY_PROBE = "command -v stty >/dev/null 2>&1 && echo FOUND || echo GONE"
 
@@ -404,7 +380,7 @@ def test_the_handshake_reaches_ready_when_stty_is_unreachable(name: str, argv: l
     """
     env = {**os.environ, "PATH": str(tmp_path)}
     proc = _run(argv, HANDSHAKE, env=env)
-    assert SessionMarkers.for_session("cafef00d").ready in proc.stdout, (
+    assert TAIL_MARKERS.ready in proc.stdout, (
         f"{name}: the handshake never reached READY with stty unresolvable "
         f"(rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}) — a "
         f"host on this shell would time out at startup as 'shell never became ready'"
@@ -424,9 +400,9 @@ def test_the_stty_arm_runs_on_the_shells_every_runner_has():
     any machine that can run this suite, so they are the floor.
     """
     covered = {name for name, _ in _STTY_ABSENT_SHELLS}
-    assert set(_REQUIRED_SHELLS) <= covered, (
+    assert set(REQUIRED_SHELLS) <= covered, (
         f"the stty-absent arm covers {sorted(covered)}, missing "
-        f"{sorted(set(_REQUIRED_SHELLS) - covered)}. Excluding a baseline shell "
+        f"{sorted(set(REQUIRED_SHELLS) - covered)}. Excluding a baseline shell "
         f"leaves the arm resting on optional shells a runner may not have"
     )
 
@@ -436,7 +412,7 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
 
     The matrix is deliberately opt-in-by-presence (CI's ubuntu-latest has
     neither ksh nor mksh, so these cannot be required), and that design has one
-    failure mode: someone edits ``_OPTIONAL_SHELLS``, drops an entry, and the
+    failure mode: someone edits ``OPTIONAL_SHELLS``, drops an entry, and the
     suite goes green having tested less than it did yesterday — silently,
     because a shrinking parametrization looks identical to a smaller runner.
 
@@ -446,9 +422,9 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
     # Static half — checked on every runner, including ones without these
     # shells, so removing an entry fails in CI too rather than only on the box
     # that would quietly lose the coverage.
-    for name in _PROVISIONED_SHELLS:
-        assert name in _OPTIONAL_SHELLS, (
-            f"{name} was removed from _OPTIONAL_SHELLS. It is provisioned "
+    for name in PROVISIONED_SHELLS:
+        assert name in OPTIONAL_SHELLS, (
+            f"{name} was removed from OPTIONAL_SHELLS. It is provisioned "
             f"specifically for this matrix (Vagrantfile, 'dev-root' block) and "
             f"has caught defects no other shell here can — put it back, or drop "
             f"it from provisioning too and say why."
@@ -456,7 +432,7 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
 
     # Dynamic half — installed implies tested, for every shell listed.
     tested = {name for name, _ in SHELLS}
-    for name, argv in _OPTIONAL_SHELLS.items():
+    for name, argv in OPTIONAL_SHELLS.items():
         if shutil.which(argv[0]):
             assert name in tested, f"{name} is installed here but missing from the matrix"
 
@@ -472,61 +448,169 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
 # them answers, on stdout or stderr, plain or under nounset.
 # ---------------------------------------------------------------------------
 
-M = SessionMarkers.for_session("cafef00d")
-LINE = BashFrame().handshake(M, PAYLOAD)  # the session's real first line, history suppressed
-RESYNC = _identity_probe(M, PAYLOAD)  # the su/sudo/exit resync line
+LINE = BashFrame().handshake(
+    TAIL_MARKERS, PAYLOAD
+)  # the session's real first line, history suppressed
+RESYNC = _identity_probe(TAIL_MARKERS, PAYLOAD)  # the su/sudo/exit resync line
+RECOVERY = BashFrame().recover(TAIL_MARKERS)  # the post-timeout recovery probe
 _ANCHOR_SPAN = LINE.index("; ") + 2 + 30  # the assignment plus the start of what follows
 
 
-def _assert_no_tail_answers(argv, line, marker, pattern, offsets, nounset):
+@pytest.fixture(scope="module")
+def fakes_env(tmp_path_factory) -> dict[str, str]:
+    """This environment with :func:`terminal_reader_fakes` first on ``PATH``.
+
+    A sweep then fails on every machine when a tail's first word is one of
+    those names, not only on a machine where it happens to be installed.
+    """
+    fakes = tmp_path_factory.mktemp("terminal-reader-fakes")
+    return {**os.environ, "PATH": terminal_reader_fakes(str(fakes))}
+
+
+def _assert_no_tail_answers(argv, line, marker, pattern, offsets, nounset, env):
+    """No tail of *line* from *offsets* prints *marker* or *pattern*, or runs a terminal reader."""
     shell = [*argv, "-u"] if nounset else argv
     bad = {}
     for k in offsets:
-        out = _run(shell, line[k:], merge=True).stdout
-        if marker in out or pattern.search(out):
+        out = _run(shell, line[k:], env, merge=True).stdout
+        if marker in out or pattern.search(out) or FAKE_RAN in out:
             bad[k] = out
-    assert bad == {}, f"{argv}: tails that answered: {bad}"
+    assert bad == {}, f"{argv}: tails that answered or ran a terminal reader: {bad}"
 
 
 @pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
-@pytest.mark.parametrize(
-    ("name", "argv"), list(_REQUIRED_SHELLS.items()), ids=list(_REQUIRED_SHELLS)
-)
-def test_a_handshake_cut_anywhere_never_answers(name, argv, nounset):
+@pytest.mark.parametrize(("name", "argv"), list(REQUIRED_SHELLS.items()), ids=list(REQUIRED_SHELLS))
+def test_a_handshake_cut_anywhere_never_answers(name, argv, nounset, fakes_env):
     """login(1) can flush a probe's head; no tail the shell then runs may print READY (#761)."""
     _assert_no_tail_answers(
-        argv, LINE, M.ready, ready_pattern(M, line_ending=True), range(1, len(LINE)), nounset
+        argv,
+        LINE,
+        TAIL_MARKERS.ready,
+        ready_pattern(TAIL_MARKERS, line_ending=True),
+        range(1, len(LINE)),
+        nounset,
+        fakes_env,
     )
 
 
 @pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
-@pytest.mark.parametrize(
-    ("name", "argv"), list(_REQUIRED_SHELLS.items()), ids=list(_REQUIRED_SHELLS)
-)
-def test_a_resync_probe_cut_anywhere_never_answers(name, argv, nounset):
+@pytest.mark.parametrize(("name", "argv"), list(REQUIRED_SHELLS.items()), ids=list(REQUIRED_SHELLS))
+def test_a_resync_probe_cut_anywhere_never_answers(name, argv, nounset, fakes_env):
     """su flushes the tty the same way; no tail of the resync probe may answer it (#761)."""
     _assert_no_tail_answers(
-        argv, RESYNC, M.recover, _identity_pattern(M), range(1, len(RESYNC)), nounset
+        argv,
+        RESYNC,
+        TAIL_MARKERS.recover,
+        _identity_pattern(TAIL_MARKERS),
+        range(1, len(RESYNC)),
+        nounset,
+        fakes_env,
+    )
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(("name", "argv"), list(REQUIRED_SHELLS.items()), ids=list(REQUIRED_SHELLS))
+def test_a_recovery_probe_cut_anywhere_never_answers(name, argv, nounset, fakes_env):
+    """After an interrupt the console may cut the recovery probe too; no tail may answer it."""
+    _assert_no_tail_answers(
+        argv,
+        RECOVERY,
+        TAIL_MARKERS.recover,
+        BashFrame().recover_pattern(TAIL_MARKERS),
+        range(1, len(RECOVERY)),
+        nounset,
+        fakes_env,
     )
 
 
 @pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
-def test_a_cut_inside_the_anchor_never_answers_on_any_shell(name, argv, nounset):
+def test_a_cut_inside_the_anchor_never_answers_on_any_shell(name, argv, nounset, fakes_env):
     """The anchor region is where shells differ most, so every installed shell runs it."""
-    # Offsets 1.._ANCHOR_SPAN cover a suffix-named assignment, `=_READY__` and
-    # `_READY__` run as commands, and the first statement after the anchor.
+    # Offsets 1.._ANCHOR_SPAN cover a suffix-named assignment, `=READY__` and
+    # `READY__` run as commands, and the first statement after the anchor.
     _assert_no_tail_answers(
-        argv, LINE, M.ready, ready_pattern(M, line_ending=True), range(1, _ANCHOR_SPAN), nounset
+        argv,
+        LINE,
+        TAIL_MARKERS.ready,
+        ready_pattern(TAIL_MARKERS, line_ending=True),
+        range(1, _ANCHOR_SPAN),
+        nounset,
+        fakes_env,
     )
 
 
 def test_the_bed_tail_answers_nothing():
     """The exact tail the bed ran, from inside the calibration's ``2>/dev/null``."""
-    k = LINE.rindex("dev/null; echo")
+    k = LINE.index(CALIBRATION_COMMAND) + CALIBRATION_COMMAND.index("dev/null")
+    assert LINE[k - 3 : k + 8] == "2>/dev/null", f"lost the calibration's redirection: {LINE!r}"
     out = _run(["bash"], LINE[k:], merge=True).stdout
-    assert M.ready not in out
-    assert not ready_pattern(M, line_ending=True).search(out)
+    assert TAIL_MARKERS.ready not in out
+    assert not ready_pattern(TAIL_MARKERS, line_ending=True).search(out)
+
+
+def _inside_the_calibrations_last_escape(line: str) -> range:
+    """The offsets of every tail that starts inside the calibration format's final escape.
+
+    That escape is the format's newline, the last word before ``; echo``. A
+    cut between its two backslashes once left the bare word ``n``, which is
+    a terminal-reading program on GitHub's ubuntu runner (#853). The range
+    starts there.
+    """
+    start = line.index(CALIBRATION_COMMAND)
+    end = start + len(CALIBRATION_COMMAND)
+    k = line.rindex("\\\\", start, end)
+    assert line[end:].startswith("; echo "), f"lost the calibration's end: {line!r}"
+    assert "\\" not in line[k + 2 : end], f"lost the calibration's last escape: {line!r}"
+    return range(k + 1, end)
+
+
+def _inside_the_ids_end(line: str, fragment: str) -> int:
+    """The offset in the echo word where the marker id's last characters, *fragment*, start.
+
+    The id is random hex, so it can end in a command's name (``ed``, ``fc``,
+    ``b``), and a cut there must not leave that name as a word of its own.
+    """
+    at = line.index("echo __OTTO_") + len("echo ")
+    head = line[at : line.index("$", at)]
+    session_id = head.removeprefix("__OTTO_").rstrip("_")
+    assert session_id.endswith(fragment), f"the id {session_id!r} does not end in {fragment!r}"
+    k = at + len("__OTTO_") + len(session_id) - len(fragment)
+    assert line[k:].startswith(fragment), f"lost the echo word: {line!r}"
+    return k
+
+
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_no_tail_inside_the_calibrations_last_escape_runs_a_command(name, argv, fakes_env):
+    """A tail inside the format's final ``\\n`` used to run ``n`` (#853); none runs anything."""
+    _assert_no_tail_answers(
+        argv,
+        LINE,
+        TAIL_MARKERS.ready,
+        ready_pattern(TAIL_MARKERS, line_ending=True),
+        _inside_the_calibrations_last_escape(LINE),
+        False,
+        fakes_env,
+    )
+
+
+@pytest.mark.parametrize("kind", ["handshake", "resync", "recovery"])
+@pytest.mark.parametrize("fragment", list(HAZARD_MARKERS))
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_no_tail_inside_the_marker_id_runs_the_ids_end(name, argv, fragment, kind, fakes_env):
+    """An id ending in ``ed``, ``fc`` or ``b``: a tail cut there must not run that command (#853).
+
+    The head's separator sits in the echo word, so the word is ``ed_``, not
+    ``ed``. ``fc`` is a builtin in bash, zsh, ksh and mksh, where the fake
+    on ``PATH`` is not what runs; under ``sh -c`` their ``fc`` has no
+    history to edit, so the fake pins the shells without one. The resync
+    and recovery words go on with ``$?__`` after the variable, so only the
+    handshake's ended at the id; all three are pinned.
+    """
+    m = HAZARD_MARKERS[fragment]
+    line = render_probe(kind, m)
+    k = _inside_the_ids_end(line, fragment)
+    _assert_no_tail_answers(argv, line, m.ready, probe_answer(kind, m), [k], False, fakes_env)
 
 
 @pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
@@ -535,107 +619,325 @@ def test_the_whole_line_prints_ready_last_calibrated_and_leaves_nothing_set(name
     """Run whole, the line prints READY last, calibrated, and unsets its variable."""
     shell = [*argv, "-u"] if nounset else argv
     proc = _run(shell, LINE + 'echo "[${__otto_probe-unset}]"\n')
-    assert proc.stdout.endswith(f"\n{M.ready}\n[unset]\n"), f"{name}: {proc.stdout!r}"
-    assert measure(proc.stdout.removesuffix("[unset]\n"), M.ready).mapping == "identity"
+    assert proc.stdout.endswith(f"\n{TAIL_MARKERS.ready}\n[unset]\n"), f"{name}: {proc.stdout!r}"
+    assert measure(proc.stdout.removesuffix("[unset]\n"), TAIL_MARKERS.ready).mapping == "identity"
 
 
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
 def test_the_whole_resync_line_answers_with_digits_and_the_user(name, argv):
     """Run whole, the resync probe answers with its exit code and the user."""
-    assert _identity_pattern(M).search(_run(argv, RESYNC).stdout)
+    assert _identity_pattern(TAIL_MARKERS).search(_run(argv, RESYNC).stdout)
 
 
 # ---------------------------------------------------------------------------
-# The same cut, typed into an INTERACTIVE shell on a pty
+# The same lines, typed into an INTERACTIVE shell on a pty (#853)
 #
 # The sweeps above run `sh -c`, where an unbalanced quote is a syntax error.
-# A login shell on a pty reads the line interactively instead, and there an
-# unbalanced quote is a CONTINUATION: the shell prints PS2 and joins every
-# following line into the open word. A tail cut inside a quoted echo word
-# would then swallow every whole line otto resends (each carries an even
-# number of quotes, so the word never closes) and the shell would never
-# become ready. So the probe's echo word carries no quotes at all, and this
-# arm types a tail cut inside it, then resends the whole line the way
-# confirm_live does, into `bash -i` on a real pty.
+# A login shell on a pty reads the line interactively instead, and there a
+# tail can leave the shell waiting for more: an open quote or an open
+# `${` is a CONTINUATION (PS2) that joins every line otto resends (each
+# carries an even number of quotes, so the word never closes), and in zsh a
+# command made only of redirections runs `$NULLCMD`, a `cat` that reads every
+# resend as its input. Either way the shell never becomes ready.
+#
+# So these cases type a tail cut at each such hazard into a fresh interactive
+# shell on its own controlling pty, then the whole line once, the way
+# confirm_live resends it (`cut_probe`), and require the answer. Every offset
+# is derived from the rendered line, and every locator asserts it found its
+# fragment, so a rewrite of the line moves the cut with it instead of
+# silently testing something else. The nightly sweep runs every offset.
 # ---------------------------------------------------------------------------
 
-_PTY_PROBE_INTERVAL = 0.5  # the session's own resend interval (_init_probe_interval)
+INTERACTIVE = [name for name, _ in SHELLS]
+_NOUNSET_SHELLS = [name for name in ("bash", "zsh") if name in INTERACTIVE]
+_HISTORY = pytest.mark.parametrize("history", [True, False], ids=["history", "no-history"])
 
 
-def _interactive_answer(tail: str, line: str, answered) -> str:
-    """Type *tail* into ``bash -i`` on a pty, then resend *line* until *answered*(output).
+def _after_the_calibration_x(line: str) -> int:
+    """The offset just past the calibration's ``X``, inside its format argument."""
+    k = line.index(CALIBRATION_COMMAND) + CALIBRATION_COMMAND.index("X") + 1
+    assert line[k - 1] == "X", f"lost the calibration format: {line!r}"
+    assert line[k] == "\\", f"lost the calibration format: {line!r}"
+    return k
 
-    Returns everything the terminal printed. A shell that never answers
-    fails the test with what it printed (a run of PS2 ``> `` is the wedge).
+
+def _inside_the_zsh_clause(line: str) -> int:
+    """The offset of the zsh clause's ``export``, past where a quote after ``eval`` sat."""
+    at = line.index("eval ")
+    k = line.index("export HISTFILE=/dev/null", at)
+    assert "ZSH_VERSION" in line[:at], f"lost the zsh clause: {line!r}"
+    assert k - at <= len("eval '"), f"lost the zsh clause's export: {line!r}"
+    return k
+
+
+# Each redirection is named by the statement it belongs to, the first of these
+# words that statement contains.
+_STATEMENT_NAMES = {
+    "command export": "export-group",
+    "command set": "set-group",
+    "eval": "eval",
+    "stty": "stty",
+    "printf": "printf",
+}
+
+
+def _statement_at(line: str, k: int) -> str:
+    """The statement around offset *k*, from its ``;``, its ``)`` or (closing a group) its ``{``."""
+    start = max(line.rfind("; ", 0, k), line.rfind(") ", 0, k)) + 2
+    if line[start:k].startswith("}"):
+        start = line.rfind("{", 0, k)
+    return line[start : line.index(";", k)]
+
+
+def _redirections(line: str, expected: "set[str]") -> dict[str, int]:
+    """The offset of every ``2>/dev/null``, keyed by its statement; exactly *expected* are found."""
+    found: dict[str, int] = {}
+    for hit in re.finditer(re.escape("2>/dev/null"), line):
+        statement = _statement_at(line, hit.start())
+        name = next(n for word, n in _STATEMENT_NAMES.items() if word in statement)
+        assert name not in found, f"two redirections in the {name} statement of {line!r}"
+        found[name] = hit.start()
+    assert set(found) == expected, f"redirections {sorted(found)} in {line!r}"
+    return found
+
+
+def _after_the_echo_word_dollar(line: str, m: SessionMarkers) -> int:
+    """The offset just past the ``$`` that expands the probe variable in the echo word."""
+    word = f"echo {m.recover.removesuffix(RECOVER_SUFFIX)}$"
+    k = line.index(word) + len(word)
+    assert line[k:].startswith(_PROBE_VAR), f"lost the echo word: {line!r}"
+    return k
+
+
+def _at_the_echo_words_head(line: str, m: SessionMarkers) -> int:
+    """The offset where the echo word's marker head starts, just past ``echo ``.
+
+    The recovery probe's old echo word was quoted, and a tail from just past
+    its opening quote began inside the word: its closing quote opened a new one.
     """
-    controller, terminal = pty.openpty()
-    env = {"PATH": os.environ["PATH"], "PS1": "$ ", "PS2": "> ", "TERM": "dumb"}
-    shell = subprocess.Popen(
-        ["bash", "--norc", "--noprofile", "-i"],
-        stdin=terminal,
-        stdout=terminal,
-        stderr=terminal,
-        env=env,
-        start_new_session=True,
+    head = m.recover.removesuffix(RECOVER_SUFFIX)
+    k = line.index(f"echo {head}") + len("echo ")
+    assert line[k:].startswith(f"{head}${_PROBE_VAR}"), f"lost the echo word: {line!r}"
+    return k
+
+
+def _inside_the_echo_word(line: str, m: SessionMarkers) -> int:
+    """The offset three characters into the echo word's marker head (``__O|TO_…``)."""
+    word = f"echo {m.ready.removesuffix(READY_SUFFIX)}"
+    k = line.index(word) + len("echo __O")
+    assert line[k - 3 : k] == "__O", f"lost the echo word: {line!r}"
+    return k
+
+
+def _hazards() -> list[tuple[str, str, int]]:
+    """``(id, kind, offset)`` of the fixed hazard tails, one per hazard, on the history line.
+
+    The recovery probe carries no history suppression, so its line is cut as it is.
+
+    The tail after an offset is the same with history suppression on or
+    off wherever both lines have it, so only the line with the most hazards
+    is cut. Every other offset is the nightly sweep's.
+    """
+    handshake, resync, recovery = (
+        render_probe("handshake", TAIL_MARKERS),
+        render_probe("resync", TAIL_MARKERS),
+        render_probe("recovery", TAIL_MARKERS),
     )
-    os.close(terminal)
-    out = bytearray()
-
-    def drain() -> str:
-        while select.select([controller], [], [], 0)[0]:
-            try:
-                chunk = os.read(controller, 65536)
-            except OSError:
-                break
-            if not chunk:
-                break
-            out.extend(chunk)
-        return out.decode(errors="replace")
-
-    def resend_until_answered() -> bool:
-        if answered(drain()):
-            return True
-        os.write(controller, line.encode())
-        return False
-
-    try:
-        wait_for(
-            lambda: drain().endswith("$ "),
-            5,
-            interval=0.05,
-            on_timeout=lambda: f"bash -i never prompted: {drain()!r}",
-        )
-        os.write(controller, tail.encode())
-        try:
-            wait_for(
-                resend_until_answered,
-                5,
-                interval=_PTY_PROBE_INTERVAL,
-                on_timeout="the shell never answered the resent line",
-            )
-        except WaitTimeoutError:
-            pytest.fail(f"no answer after the cut tail {tail!r}; the terminal: {drain()[-300:]!r}")
-        return drain()
-    finally:
-        shell.kill()
-        shell.wait(timeout=5)
-        os.close(controller)
+    _redirections(resync, {"export-group", "set-group", "eval"})
+    redirect = _redirections(handshake, {"export-group", "set-group", "eval", "stty", "printf"})
+    return [
+        ("calibration", "handshake", _after_the_calibration_x(handshake)),
+        ("zsh-clause", "handshake", _inside_the_zsh_clause(handshake)),
+        ("redirection-export-group", "handshake", redirect["export-group"]),
+        ("redirection-eval", "handshake", redirect["eval"]),
+        ("redirection-stty", "handshake", redirect["stty"]),
+        ("brace", "resync", _after_the_echo_word_dollar(resync, TAIL_MARKERS)),
+        ("recovery-quote", "recovery", _at_the_echo_words_head(recovery, TAIL_MARKERS)),
+    ]
 
 
-_NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash on a pty")
+HAZARDS = _hazards()
+_NOUNSET_HAZARDS = (
+    "calibration",
+    "zsh-clause",
+    "redirection-export-group",
+    "brace",
+    "recovery-quote",
+)
 
 
-@_NEEDS_BASH
-def test_a_handshake_cut_inside_the_echo_word_does_not_wedge_an_interactive_shell():
-    """A tail cut inside the echo word leaves the next whole line runnable, calibrated (#761)."""
-    pattern = ready_pattern(M, line_ending=True)
-    out = _interactive_answer(LINE[LINE.index("__OTTO_") + 3 :], LINE, pattern.search)
-    found = pattern.search(out)
+def _of(*cases: str) -> list:
+    return [pytest.param(kind, k, id=case) for case, kind, k in HAZARDS if case in cases]
+
+
+def _whole(shell: InteractiveShell, kind: str, history: bool = True) -> str:
+    """Type one whole *kind* line and return the terminal up to the end of its answer."""
+    mark = len(shell.output)
+    shell.send(render_probe(kind, TAIL_MARKERS, history))
+    out = shell.wait_for_output(probe_answer(kind, TAIL_MARKERS), READY_TIMEOUT)
+    found = probe_answer(kind, TAIL_MARKERS).search(out, mark)
     assert found is not None
-    assert measure(out[: found.end()], M.ready).mapping == ONLCR
+    return out[mark : found.end()]
 
 
-@_NEEDS_BASH
-def test_a_resync_probe_cut_inside_the_echo_word_does_not_wedge_an_interactive_shell():
-    """The resync probe's echo word takes the same cut; the whole probe still answers."""
-    _interactive_answer(RESYNC[RESYNC.index("__OTTO_") + 3 :], RESYNC, _identity_pattern(M).search)
+@_HISTORY
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_the_whole_handshake_answers_first_try(name, history):
+    """Typed whole once, the handshake prints READY and its calibration reads ``onlcr``."""
+    with interactive_shell(name) as shell:
+        reply = _whole(shell, "handshake", history)
+    assert measure(reply, TAIL_MARKERS.ready).mapping == ONLCR, f"{name}: {reply!r}"
+
+
+@_HISTORY
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_the_whole_resync_probe_answers_first_try(name, history):
+    """Typed whole once, the resync probe answers with its exit code and the user."""
+    with interactive_shell(name) as shell:
+        reply = _whole(shell, "resync", history)
+    assert _identity_pattern(TAIL_MARKERS).search(reply)
+
+
+@pytest.mark.parametrize(("kind", "k"), _of("calibration"))
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_tail_inside_the_calibration_does_not_wedge(name, kind, k):
+    """A tail starting inside the calibration's format leaves the resend runnable (#853)."""
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize(("kind", "k"), _of("zsh-clause"))
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_tail_inside_the_zsh_history_clause_does_not_wedge(name, kind, k):
+    """A tail starting at the zsh clause's ``export`` leaves the resend runnable (#853)."""
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize(
+    ("kind", "k"), _of("redirection-export-group", "redirection-eval", "redirection-stty")
+)
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_redirection_only_tail_does_not_feed_cat(name, kind, k):
+    """A tail that starts with ``2>/dev/null`` must not start a command reading the console (#853).
+
+    zsh runs a command made only of redirections as ``$NULLCMD``, ``cat`` by
+    default, and that ``cat`` would read every resend as its input. One
+    redirection of each form: closing a brace group, leading the zsh
+    clause's ``eval``, and on the ``stty`` statement.
+    """
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize(("kind", "k"), _of("brace"))
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_tail_inside_the_echo_word_brace_does_not_wedge(name, kind, k):
+    """A resync tail cut just past the echo word's ``$`` leaves the resend runnable (#853)."""
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize(("kind", "k"), _of("recovery-quote"))
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_recovery_probe_tail_at_the_echo_words_head_does_not_wedge(name, kind, k):
+    """A recovery tail starting at its echo word's marker head leaves the resend runnable.
+
+    The probe used to quote its echo word, so this tail began inside the
+    quotes and its closing quote opened a new one: every shell sat at PS2
+    and swallowed each resend (#853).
+    """
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_tail_inside_the_calibrations_last_escape_runs_no_terminal_reader(name):
+    """The tail cut between the final escape's backslashes used to run ``n`` and wedge (#853).
+
+    ``n`` (node's version manager on GitHub's ubuntu runner) waited for
+    input and ate every resend; here a fake ``n`` first on ``PATH`` does the
+    same on any machine (:func:`~tests._fixtures.interactive_shell.interactive_shell`).
+    """
+    k = _inside_the_calibrations_last_escape(LINE).start
+    cut_probe(name, "handshake", k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize("fragment", list(HAZARD_MARKERS))
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_handshake_tail_inside_the_marker_id_runs_no_terminal_reader(name, fragment):
+    """An id ending in a command's name: the tail cut there leaves the resend answering (#853).
+
+    BusyBox's real ``ed`` once ate the resend this way. Fakes of every name
+    lead ``PATH``. ``fc`` is a builtin in bash, zsh, ksh and mksh, so there
+    the builtin runs instead of the fake, and what it does with no history
+    to edit is the shell's own. The handshake is the line cut: its echo
+    word ends at the variable, where the resync and recovery words go on
+    with ``$?__``.
+    """
+    line = render_probe("handshake", HAZARD_MARKERS[fragment])
+    k = _inside_the_ids_end(line, fragment)
+    cut_probe(name, "handshake", k, HAZARD_MARKERS[fragment], RESEND_MARKERS)
+
+
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_the_whole_recovery_probe_answers_first_try(name):
+    """Typed whole once, the recovery probe answers with the digits of an exit status."""
+    with interactive_shell(name) as shell:
+        reply = _whole(shell, "recovery", history=False)
+    assert BashFrame().recover_pattern(TAIL_MARKERS).search(reply)
+
+
+@pytest.mark.parametrize(("kind", "k"), _of(*_NOUNSET_HAZARDS))
+@pytest.mark.parametrize("name", _NOUNSET_SHELLS)
+def test_the_hazard_tails_hold_under_nounset(name, kind, k):
+    """An rc file may leave ``set -u`` on; a tail at each hazard still leaves the resend working."""
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS, setup="set -u")
+
+
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_handshake_cut_inside_the_echo_word_does_not_wedge_an_interactive_shell(name):
+    """A tail cut inside the echo word leaves the next whole line runnable, calibrated (#761)."""
+    cut_probe(
+        name, "handshake", _inside_the_echo_word(LINE, TAIL_MARKERS), TAIL_MARKERS, RESEND_MARKERS
+    )
+
+
+@pytest.mark.parametrize("kind", ["handshake", "resync"])
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_the_whole_line_holds_under_a_readonly_histfile(name, kind):
+    """An admin-locked ``readonly HISTFILE``: the whole line answers, and says nothing about it.
+
+    A "read-only variable" complaint would land on the merged stream the
+    session parses as the reply.
+    """
+    with interactive_shell(name, setup="readonly HISTFILE") as shell:
+        reply = strip_ansi(_whole(shell, kind))
+    assert not re.search(r"read[- ]?only", reply, re.IGNORECASE), f"{name}: {reply!r}"
+    if kind == "handshake":
+        assert measure(reply, TAIL_MARKERS.ready).mapping == ONLCR, f"{name}: {reply!r}"
+
+
+_PRINTF_OFF = {"bash": "enable -n printf", "zsh": "disable printf"}
+
+
+@pytest.mark.parametrize("name", [name for name in _PRINTF_OFF if name in INTERACTIVE])
+def test_the_handshake_reaches_ready_without_printf(name, tmp_path):
+    """No ``printf``: READY still lands, uncalibrated, with no "not found" on the stream.
+
+    A shell function standing in for printf would not test this: the
+    builtin has to be disabled and ``PATH`` emptied, and the shell's own
+    lookup has to confirm it is gone before the line is typed.
+    """
+    with interactive_shell(name, setup=f"PATH={tmp_path}; {_PRINTF_OFF[name]}") as shell:
+        status = re.search(
+            r"\nTYPE_(\d+)\r*\n", shell.run('type printf >/dev/null 2>&1; echo TYPE_"$?"')
+        )
+        assert status is not None
+        assert status.group(1) != "0", f"{name}: printf is still reachable"
+        reply = _whole(shell, "handshake")
+    assert measure(reply, TAIL_MARKERS.ready).calibrated is False, f"{name}: {reply!r}"
+    assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
+
+
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_calibration_reads_identity_without_onlcr(name):
+    """A terminal with ``onlcr`` off before the shell starts measures ``identity``."""
+    with interactive_shell(name, onlcr=False) as shell:
+        reply = _whole(shell, "handshake")
+    assert measure(reply, TAIL_MARKERS.ready).mapping == IDENTITY, f"{name}: {reply!r}"

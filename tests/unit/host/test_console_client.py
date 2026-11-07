@@ -192,6 +192,17 @@ class TestClassify:
         # debris behind before this fix.
         assert strip_ansi("\x1b]0;title\x07\x1b(Bhi") == "hi"
 
+    def test_strip_ansi_drops_an_osc_title_ended_by_string_terminator(self):
+        # ST (ESC then a backslash) ends an OSC as well as BEL does; read as
+        # two stray two-byte escapes, it left the title text behind.
+        assert strip_ansi("a\x1b]0;title\x1b\\b$ ") == "ab$ "
+
+    def test_strip_ansi_drops_a_csi_with_private_or_colon_parameters(self):
+        # A CSI's parameter bytes are 0x30-0x3F: `>` (BusyBox's cursor query,
+        # sent right after its prompt) and `:` sub-parameters included.
+        assert strip_ansi("$ \x1b[>0c") == "$ "
+        assert strip_ansi("$ \x1b[1:2m") == "$ "
+
 
 @pytest.mark.asyncio
 class TestLoginSequence:

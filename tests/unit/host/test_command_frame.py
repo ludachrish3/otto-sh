@@ -18,6 +18,7 @@ import pytest
 from otto.host.command_frame import (
     FRAME_CLASSES,
     READY_SUFFIX,
+    RECOVER_SUFFIX,
     AshFrame,
     BashFrame,
     CommandFrame,
@@ -60,15 +61,32 @@ class TestBashFrame:
 
     def test_handshake_opens_with_the_anchor_then_silences_echo_calibrates_and_prints_ready(self):
         assert self.frame.handshake(M) == (
-            f"__otto_probe=_READY__; stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; "
-            "echo __OTTO_cafef00d${__otto_probe-}; unset __otto_probe\n"
+            f"__otto_probe=READY__; 2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; "
+            "echo __OTTO_cafef00d_$__otto_probe; unset __otto_probe\n"
         )
 
     def test_the_split_ignores_underscores_in_the_id(self):
         m = SessionMarkers.for_session("a_b")
-        assert whole_line_echo(m.ready, READY_SUFFIX).startswith("__otto_probe=_READY__; ")
+        assert whole_line_echo(m.ready, READY_SUFFIX).startswith("__otto_probe=READY__; ")
+        assert "echo __OTTO_a_b_$__otto_probe;" in whole_line_echo(m.ready, READY_SUFFIX)
         with pytest.raises(ValueError, match="does not end in"):
             whole_line_echo("__R__", READY_SUFFIX)
+
+    @pytest.mark.parametrize("marker", ["READY__", "__OTTO_cafef0edREADY__"])
+    def test_whole_line_echo_refuses_a_head_that_does_not_end_in_the_separator(self, marker):
+        # A cut inside the head leaves a suffix of it as the tail's command
+        # (#853): ending in `_`, no such fragment is a command; ending in the
+        # id, one ending in `ed` ran BusyBox's ed.
+        with pytest.raises(ValueError, match="head ending in _"):
+            whole_line_echo(marker, READY_SUFFIX)
+
+    @pytest.mark.parametrize("after", ["x", "[2]", ":l"])
+    def test_whole_line_echo_refuses_an_after_that_extends_the_variable_name(self, after):
+        # The probe variable is unbraced in the echo word (#853), so a word
+        # character in *after* would rename the variable it expands, and zsh
+        # reads a leading `[` or `:` as a subscript or modifier of it.
+        with pytest.raises(ValueError, match="would extend the variable name"):
+            whole_line_echo(M.ready, READY_SUFFIX, after=after)
 
     def test_the_history_prefix_rides_after_the_anchor(self):
         quiet = self.frame.quiet_history()
@@ -88,8 +106,9 @@ class TestBashFrame:
             f'echo "{M.begin}"; {{ ls /tmp\n}}; echo "{M.end_prefix}$?__"\n'
         )
 
-    def test_recover_is_exit_code_probe(self):
-        assert self.frame.recover(M) == f'echo "{M.recover}$?__"\n'
+    def test_recover_is_an_anchored_exit_code_probe(self):
+        # The same cut-tolerant line as the handshake (#853), the status after it.
+        assert self.frame.recover(M) == whole_line_echo(M.recover, RECOVER_SUFFIX, after="$?__")
 
     def test_end_pattern_captures_retcode_digits(self):
         pat = self.frame.end_pattern(M)
@@ -331,7 +350,13 @@ class TestRecoverProbe:
     zephyr = ZephyrFrame()
 
     def test_bash_recover_is_exit_code_probe(self):
-        assert self.bash.recover(M) == f'echo "{M.recover}$?__"\n'
+        assert self.bash.recover(M) == (
+            f"__otto_probe=RECOVER__; echo {M.recover.removesuffix(RECOVER_SUFFIX)}"
+            "$__otto_probe$?__; unset __otto_probe\n"
+        )
+
+    def test_the_typed_recover_probe_never_carries_recover_whole(self):
+        assert M.recover not in self.bash.recover(M)
 
     def test_bash_recover_pattern_matches_digit_form(self):
         pat = self.bash.recover_pattern(M)
@@ -341,7 +366,7 @@ class TestRecoverProbe:
     def test_bash_recover_pattern_rejects_echoed_literal_probe(self):
         # An echo/REPL reflects the probe text verbatim: literal "$?", no digits.
         pat = self.bash.recover_pattern(M)
-        assert pat.search(f'echo "{M.recover}$?__"') is None
+        assert pat.search(self.bash.recover(M)) is None
 
     def test_bash_recover_pattern_distinct_from_end_marker(self):
         # The whole point of the RECOVER marker: a dying command's own
@@ -503,10 +528,10 @@ class TestRestoreInteractive:
         assert Minimal().restore_interactive() is None
 
     def test_bash_restores_echo(self):
-        assert BashFrame().restore_interactive() == "stty echo 2>/dev/null"
+        assert BashFrame().restore_interactive() == "2>/dev/null stty echo"
 
     def test_ash_inherits_bash(self):
-        assert AshFrame().restore_interactive() == "stty echo 2>/dev/null"
+        assert AshFrame().restore_interactive() == "2>/dev/null stty echo"
 
     def test_zephyr_has_nothing_to_undo(self):
         assert ZephyrFrame().restore_interactive() is None

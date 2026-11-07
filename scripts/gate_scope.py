@@ -523,6 +523,10 @@ SPECIAL_TREES = [
         ["make console-release-bed"],
         [],
     ),
+    # The #853 every-offset cut sweep (`stability`, hostless): nightly's
+    # `probe-cut-sweep` job plus one by-hand pass; a change to it names the lane
+    # as a working check, and no tip runs it.
+    ("tests/unit/host/test_probe_line_cut_sweep.py", ["make stability-cut-sweep"], []),
     # its items are integration-marked: the tip's `make coverage-bed` runs them
     ("tests/integration/busybox_bed/*", ["make coverage-unix"], []),
     (
@@ -633,6 +637,7 @@ COMMIT_ONLY_GOALS = [
     "dashboard-soak",
     "stability-unit",
     "console-release-bed",
+    "stability-cut-sweep",
 ]
 """What the commit column may emit beyond the tip's goals: a working check, never stamped,
 never in a tip. Their landing venues are CI's jobs and nightly's."""

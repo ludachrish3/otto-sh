@@ -26,8 +26,8 @@ import pytest
 from rich.table import Table
 
 from otto.logger import formatters
+from tests._fixtures.controlling_pty import set_winsize
 from tests.e2e._otto_subprocess import coverage_subprocess_env
-from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 _PROBE = """\
 import logging
@@ -84,7 +84,7 @@ def _run_probe(tmp_path: Path, mode: str, env_name: str) -> dict[str, str]:
     argv = [sys.executable, str(probe), str(out), mode]
     if env_name == "pty-40x10":
         master, slave = os.openpty()
-        InteractiveOttoSession._set_winsize(slave, 40, 10)
+        set_winsize(slave, 40, 10)
         try:
             proc = subprocess.Popen(
                 argv, env=env, stdin=subprocess.DEVNULL, stdout=slave, stderr=subprocess.PIPE

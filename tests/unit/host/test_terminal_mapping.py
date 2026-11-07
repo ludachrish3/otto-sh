@@ -4,7 +4,7 @@ A shell session runs on a tty, and a tty's ``onlcr`` (on by default) turns
 every ``\\n`` the program writes into ``\\r\\n``. otto used to undo that by
 deleting every ``\\r``, which also deleted the program's own carriage returns
 (#713). Now the bash handshake prints one calibration line,
-``printf 'X\\r\\nY\\nZ\\rW\\n'``, before READY, and the session classifies what
+``printf X\\r\\nY\\nZ\\rW\\n``, before READY, and the session classifies what
 came back:
 
 * ``identity``: nothing was translated (a pipe, or a tty without ``onlcr``);
@@ -88,7 +88,7 @@ class TestTheMapping:
         ``echo <READY>``, never by READY at a line start; the output copy is
         the one right before READY.
         """
-        typed = f"stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; echo {R}"
+        typed = f"2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; echo {R}"
         reply = f"user@h:~$ {typed}\r\n\r\nX\r\r\nY\r\nZ\rW\r\n{R}\r\n"
         assert mapping(reply, R) == "onlcr"
 
@@ -104,7 +104,7 @@ class TestBashHandshakeCarriesTheCalibrationLine:
         assert hs.index("stty -echo") < hs.index(CALIBRATION_COMMAND) < hs.rindex("echo ")
 
     def test_the_calibration_command_is_silent_when_printf_is_missing(self):
-        assert CALIBRATION_COMMAND.endswith("2>/dev/null")
+        assert CALIBRATION_COMMAND.startswith("2>/dev/null ")
 
     def test_bash_ready_consumes_its_own_line_ending(self):
         pat = ready_pattern(M, line_ending=True)

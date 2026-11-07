@@ -164,10 +164,10 @@ async def test_bridge_sequence_for_a_hook_host(hook):
     writes = [w.decode() for w in console.sent]
     # -1 defaults on purpose: a step that never happened has to surface as a
     # failed comparison naming it, not as a StopIteration from the generator.
-    i_ready1 = next((i for i, w in enumerate(writes) if "_READY__" in w), -1)
+    i_ready1 = next((i for i, w in enumerate(writes) if "READY__" in w), -1)
     i_restore_landing = next((i for i, w in enumerate(writes) if "stty echo" in w), -1)
     i_hook = next((i for i, w in enumerate(writes) if "export APP_ENV" in w), -1)
-    i_ready2 = next((i for i, w in enumerate(writes) if "_READY__" in w and i > i_hook), -1)
+    i_ready2 = next((i for i, w in enumerate(writes) if "READY__" in w and i > i_hook), -1)
     i_restore_target = next(
         (i for i, w in enumerate(writes) if "stty echo" in w and i > i_ready2), -1
     )
@@ -485,7 +485,7 @@ async def test_the_bridge_never_quiets_history_whatever_the_host_field_says(hook
     assert host.shell_history is False  # the default, and the field under test
     writes = await _login_over_a_console(host, console, login_target="mysql")
 
-    readies = [w for w in writes if "_READY__" in w]
+    readies = [w for w in writes if "READY__" in w]
     assert len(readies) == 2, writes  # landing handshake + frame entry
     assert "su - mysql\n" in writes
     probes = [w for w in writes if "$(id -un)" in w]

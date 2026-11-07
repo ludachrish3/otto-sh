@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1598,6 +1598,28 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unit)
+
+# The every-offset cut sweep (#853): each tail of the handshake, the resync
+# probe and the recovery probe, typed into a fresh interactive shell on a
+# controlling pty, then the line whole once; the resend must answer.
+# Deterministic, but exhaustive and slow (~13k cases, each a fresh shell plus the session's 0.5 s probe
+# interval), so it is nightly's (`probe-cut-sweep`, CUT_SWEEP_WORKERS=16) and
+# no release stage's; its fast fixed hazard cases run on every push
+# (tests/unit/host/test_history_suppression_portability.py). Hostless: no bed
+# lease. `-p no:randomly` keeps collection order deterministic. The default of
+# 4 workers keeps the dev VM usable.
+CUT_SWEEP_WORKERS ?= 4
+
+stability-cut-sweep: ## Run the nightly every-offset probe-line cut sweep (#853, `stability`-marked; hostless, no lease) over every installed shell. CUT_SWEEP_WORKERS=N sets xdist workers (default 4; nightly passes 16); a dev-VM pass takes ~30 min at the default; pass LANE_TIMEOUT=3600s if the VM is loaded. JUnit XML lands in reports/junit/stability-cut-sweep/.
+	@$(SAY) "pytest sweep: every tail of the probe lines into each interactive shell (-n $(CUT_SWEEP_WORKERS))"
+	@$(TIMEOUT_CMD) uv run pytest \
+	    tests/unit/host/test_probe_line_cut_sweep.py \
+	    -m "stability" \
+	    -p no:randomly \
+	    -p no:cacheprovider \
+	    --no-cov \
+	    -n $(CUT_SWEEP_WORKERS) \
+	    $(call junitxml,stability-cut-sweep)
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	$(call bed_acquire,stability-unix)
