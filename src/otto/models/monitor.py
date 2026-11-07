@@ -249,10 +249,31 @@ class EventRecord(RowModel):
         return DEFAULT_EVENT_DASH if value is None else value
 
 
-def _checked_label(value: str) -> str:
+def checked_label(value: str) -> str:
+    """Return ``value``, refusing a blank label: the ONE label rule.
+
+    ``EventCreateBody`` and ``EventUpdateBody`` validate with it, and
+    ``otto.monitor.event_ops.check_revert_write`` applies it to a revert's
+    ``write``. ``EventRecord`` does not, so an old file still loads.
+    """
     if not value.strip():
         raise ValueError("label must not be empty")
     return value
+
+
+SPAN_ORDER_ERROR = "end_timestamp must be after timestamp"
+"""The span-order refusal's text, whichever caller raises it."""
+
+
+def span_is_forward(timestamp: datetime, end_timestamp: datetime | None) -> bool:
+    """Report whether a span ends after it starts: the ONE span-order rule.
+
+    A point event (no end) is always forward. ``EventCreateBody`` checks the
+    pair it holds with it, and ``otto.monitor.event_ops.check_span`` the pair
+    a create, an update merge or a revert is about to store. It lives here,
+    below both, because models never import the monitor package.
+    """
+    return end_timestamp is None or end_timestamp > timestamp
 
 
 class EventCreateBody(OttoModel):
@@ -293,7 +314,7 @@ class EventCreateBody(OttoModel):
     @field_validator("label")
     @classmethod
     def _label(cls, value: str) -> str:
-        return _checked_label(value)
+        return checked_label(value)
 
     @field_validator("color")
     @classmethod
@@ -307,12 +328,8 @@ class EventCreateBody(OttoModel):
 
     @model_validator(mode="after")
     def _span_forward(self) -> "EventCreateBody":
-        if (
-            self.timestamp is not None
-            and self.end_timestamp is not None
-            and self.end_timestamp <= self.timestamp
-        ):
-            raise ValueError("end_timestamp must be after timestamp")
+        if self.timestamp is not None and not span_is_forward(self.timestamp, self.end_timestamp):
+            raise ValueError(SPAN_ORDER_ERROR)
         return self
 
 
@@ -341,7 +358,7 @@ class EventUpdateBody(OttoModel):
     @field_validator("label")
     @classmethod
     def _label(cls, value: str | None) -> str | None:
-        return None if value is None else _checked_label(value)
+        return None if value is None else checked_label(value)
 
     @field_validator("color")
     @classmethod
@@ -352,6 +369,24 @@ class EventUpdateBody(OttoModel):
     @classmethod
     def _dash(cls, value: str | None) -> str | None:
         return None if value is None else check_event_dash(value)
+
+
+class EventRevertBody(OttoModel):
+    """``POST /api/session/{sid}/event/{id}/revert`` request body (#929).
+
+    ``expect`` is the state the event must be in now and ``write`` the state
+    to put it back to; ``None`` on either side means "no event" (see
+    ``event_ops.revert_leg``). Any ``id`` inside either
+    record is ignored in favour of the path's.
+
+    ``defer_build=False``: same FastAPI request-body reason as
+    :class:`EventCreateBody` — see its docstring.
+    """
+
+    model_config = ConfigDict(defer_build=False)
+
+    expect: EventRecord | None
+    write: EventRecord | None
 
 
 class LogEventRecord(RowModel):

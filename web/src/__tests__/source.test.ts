@@ -275,7 +275,11 @@ describe("(g) a mutation answering after an import of the same session ID", () =
     await importLocalFile(kitchenSinkFile());
     const imported = eventsOf();
 
-    held.resolve(new Response(null, { status: 204 }));
+    held.resolve(
+      new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+        status: 200,
+      }),
+    );
     const result = await pending;
 
     expect(isStale(result)).toBe(true);

@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -27,6 +28,7 @@ import aiosqlite
 from ..errors import OttoError
 from ..filesystem import network_fs_type
 from ..models.event_style import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
+from ..models.monitor import EventRecord
 from .events import MonitorEvent
 from .formats import MONITOR_DB_READ_VERSIONS, MONITOR_DB_WRITE_VERSIONS
 from .session import SessionFrame
@@ -110,6 +112,64 @@ EVENT_INSERT_SQL = (
     "VALUES (?, ?, ?, ?, ?, ?, ?)"
 )
 
+EVENT_RESTORE_SQL = (
+    "INSERT INTO events (id, session_id, ts, end_ts, label, source, color, dash) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+)
+"""EVENT_INSERT_SQL with an explicit ``id``: puts a deleted event back under its own id."""
+
+EVENT_ID_TAKEN_SQL = "SELECT 1 FROM events WHERE id = ?"
+"""Whether any session holds an event id. Ids are unique across an archive's
+sessions, so a restore must check the whole table, not its own session."""
+
+EVENT_SELECT_COLUMNS = "id, ts, end_ts, label, source, color, dash"
+"""The events columns every reader SELECTs, in the order :func:`event_row_record` expects."""
+
+
+def parse_ts(value: str) -> datetime:
+    """Parse one archived ISO-8601 timestamp column into a ``datetime``.
+
+    Every timestamp in a v2 archive was written by db.py as ``.isoformat()``,
+    so ``fromisoformat`` round-trips it exactly (tz-offset included). Parsing
+    here — rather than handing the raw string to a pydantic field declared
+    ``datetime`` and letting it coerce — keeps the record constructors
+    type-honest, which is what lets ``ty`` police the callers.
+    """
+    return datetime.fromisoformat(value)
+
+
+def event_row_record(row: Sequence[object]) -> EventRecord:
+    """Convert one events row to an :class:`EventRecord` (the one conversion).
+
+    ``row`` is in :data:`EVENT_SELECT_COLUMNS` order. ``color`` and ``dash`` are
+    passed through unchanged (``EventRecord`` keeps a legacy value such as
+    ``"red"`` rather than failing the load).
+    """
+    event_id, ts, end_ts, label, source, color, dash = row
+    return EventRecord.model_validate(
+        {
+            "id": event_id,
+            "timestamp": parse_ts(str(ts)),
+            "end_timestamp": parse_ts(str(end_ts)) if end_ts is not None else None,
+            "label": label,
+            "source": source,
+            "color": color,
+            "dash": dash,
+        }
+    )
+
+
+def _event_fields(event: MonitorEvent) -> dict[str, Any]:
+    """Return the persisted columns of ``event`` as keywords for the ``event_*_params`` builders."""
+    return {
+        "timestamp": event.timestamp,
+        "end_timestamp": event.end_timestamp,
+        "label": event.label,
+        "source": event.source,
+        "color": event.color,
+        "dash": event.dash,
+    }
+
 
 # PERMANENT(no-tuple-return): sqlite DB-API parameter row; the driver's contract.
 # ast-grep-ignore: no-tuple-return
@@ -137,6 +197,31 @@ def event_insert_params(
         color,
         dash,
     )
+
+
+# PERMANENT(no-tuple-return): sqlite DB-API parameter row; the driver's contract.
+# ast-grep-ignore: no-tuple-return
+def event_restore_params(
+    event_id: int,
+    session_id: str,
+    *,
+    timestamp: datetime,
+    end_timestamp: datetime | None,
+    label: str,
+    source: str,
+    color: str,
+    dash: str,
+) -> tuple[int, str, str, str | None, str, str, str, str]:
+    """Positional params matching EVENT_RESTORE_SQL."""
+    shared = {
+        "timestamp": timestamp,
+        "end_timestamp": end_timestamp,
+        "label": label,
+        "source": source,
+        "color": color,
+        "dash": dash,
+    }
+    return (event_id, *event_insert_params(session_id, **shared))
 
 
 class UnsupportedDBError(OttoError, RuntimeError):
@@ -441,19 +526,28 @@ class MetricDB:
             return 0
         cursor = await self._conn.execute(
             EVENT_INSERT_SQL,
-            event_insert_params(
-                self._frame.id,
-                timestamp=event.timestamp,
-                end_timestamp=event.end_timestamp,
-                label=event.label,
-                source=event.source,
-                color=event.color,
-                dash=event.dash,
-            ),
+            event_insert_params(self._frame.id, **_event_fields(event)),
         )
         await self._conn.commit()
         assert cursor.lastrowid is not None  # noqa: S101 — internal invariant: SQLite always sets lastrowid after a successful INSERT
         return cursor.lastrowid
+
+    async def event_id_taken(self, event_id: int) -> bool:
+        """Report whether any session in the file holds ``event_id``. False if not open."""
+        if not self._conn:
+            return False
+        async with self._conn.execute(EVENT_ID_TAKEN_SQL, (event_id,)) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def restore_event_row(self, event: MonitorEvent) -> None:
+        """Insert ``event`` under its own ``id`` (an undo of a delete). No-op if not open."""
+        if not self._conn:
+            return
+        await self._conn.execute(
+            EVENT_RESTORE_SQL,
+            event_restore_params(event.id, self._frame.id, **_event_fields(event)),
+        )
+        await self._conn.commit()
 
     async def delete_event(self, event_id: int) -> None:
         """Delete the event with the given id. No-op if the connection is not open."""
@@ -538,7 +632,7 @@ def read_sessions(path: str) -> list[SessionRow]:
                     (session_id,),
                 ).fetchall()
                 events = conn.execute(
-                    "SELECT id, ts, end_ts, label, source, color, dash FROM events "
+                    f"SELECT {EVENT_SELECT_COLUMNS} FROM events "  # noqa: S608 — module constant
                     "WHERE session_id = ? ORDER BY ts",
                     (session_id,),
                 ).fetchall()

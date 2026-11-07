@@ -5,9 +5,8 @@
 // needs a fixture IndexPayload imports from here instead of
 // re-declaring it.
 import type { ReactNode } from "react";
-
+import { ToastViewport } from "@/ui/Toast";
 import { FocusProvider } from "./focus";
-import { ToastProvider } from "./Toast";
 import type { DirNode, IndexPayload, RunJson, Stats } from "./types";
 import { EXPECTED_DATA_FORMAT } from "./types";
 
@@ -131,8 +130,9 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
  * each call site. */
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <ToastProvider>
-      <FocusProvider>{children}</FocusProvider>
-    </ToastProvider>
+    <FocusProvider>
+      {children}
+      <ToastViewport />
+    </FocusProvider>
   );
 }

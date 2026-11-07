@@ -14,7 +14,12 @@ GET  /api/stream    SSE stream — pushes metric updates and events in real time
 POST /api/session/{session_id}/event          Record a manual event
 POST /api/session/{session_id}/event/{id}/end Stamp a span event's end (server clock)
 PATCH /api/session/{session_id}/event/{id}    Edit an event's fields
-DELETE /api/session/{session_id}/event/{id}   Remove an event
+POST /api/session/{session_id}/event/{id}/revert  Undo or redo one event change
+(body ``{expect, write}``, each an event record or ``null``). Writes ``write``
+only if the event is still ``expect``: 200 with the stored record (``null``
+after a delete); 409 ``{code: "changed", current}`` when it is not (or is gone).
+DELETE /api/session/{session_id}/event/{id}   Remove an event: 200 with the
+deleted record (not 204), so a client can restore it
 GET  /api/export/json  Download the current data as a ``format:1`` document
 """
 
@@ -46,6 +51,7 @@ from ..logger.formatters import NO_LOCALS_ATTR
 from ..models.monitor import (
     EventCreateBody,
     EventRecord,
+    EventRevertBody,
     EventUpdateBody,
     LabSnapshot,
     MonitorExport,
@@ -469,6 +475,10 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             record.model_dump(mode="json", exclude_none=True), status_code=status_code
         )
 
+    def _archive_busy(err: archive_edit.ArchiveLockedError) -> JSONResponse:
+        """409 for an archive another otto holds: the ONE busy shape every event route sends."""
+        return JSONResponse({"error": str(err), "code": "busy"}, status_code=409)
+
     def _mutation_guard(session_id: str) -> JSONResponse | None:
         """404 for a session this server doesn't hold; 403 where editing is impossible."""
         if mode == "live":
@@ -527,7 +537,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     dash=body.dash,
                 )
             except archive_edit.ArchiveLockedError as err:
-                return JSONResponse({"error": str(err)}, status_code=409)
+                return _archive_busy(err)
             record = EventRecord(
                 id=rowid,
                 timestamp=timestamp,
@@ -571,14 +581,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 existing_timestamp=current.timestamp,
                 existing_end=current.end_timestamp,
             )
-            return dataclasses.replace(
-                current,
-                label=fields.label,
-                color=fields.color,
-                dash=fields.dash,
-                timestamp=fields.timestamp,
-                end_timestamp=fields.end_timestamp,
-            )
+            return dataclasses.replace(current, **event_ops.editable_fields(fields))
 
         try:
             updated = await collector.mutate_event(event_id, resolve)
@@ -625,7 +628,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 dash=fields.dash,
             )
         except archive_edit.ArchiveLockedError as err:
-            return JSONResponse({"error": str(err)}, status_code=409)
+            return _archive_busy(err)
         if not updated:
             return JSONResponse({"error": "Event not found"}, status_code=404)
         record = EventRecord(
@@ -676,7 +679,8 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     @app.delete("/api/session/{session_id}/event/{event_id}")
     @_observed
-    async def delete_event(session_id: str, event_id: int) -> Response:  # type: ignore[reportUnusedFunction]
+    async def delete_event(session_id: str, event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        """Remove an event, answering with the record removed (the undo of it restores that)."""
         refused = _mutation_guard(session_id)
         if refused is not None:
             return refused
@@ -687,14 +691,68 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     archive_edit.delete_event, str(archive_path), session_id, event_id
                 )
             except archive_edit.ArchiveLockedError as err:
-                return JSONResponse({"error": str(err)}, status_code=409)
-            if not deleted:
+                return _archive_busy(err)
+            if deleted is None:
                 return JSONResponse({"error": "Event not found"}, status_code=404)
             _drop_document_event(session_id, event_id)
-            return Response(status_code=204)
-        if await collector.delete_event(event_id):
-            return Response(status_code=204)
-        return JSONResponse({"error": "Event not found"}, status_code=404)
+            return JSONResponse(deleted.model_dump(mode="json", exclude_none=True))
+        removed = await collector.delete_event(event_id)
+        if removed is None:
+            return JSONResponse({"error": "Event not found"}, status_code=404)
+        return _event_response(removed.to_dict())
+
+    @app.post("/api/session/{session_id}/event/{event_id}/revert")
+    @_observed
+    async def revert_event(  # type: ignore[reportUnusedFunction]
+        session_id: str, event_id: int, body: EventRevertBody
+    ) -> JSONResponse:
+        """Move an event from ``expect`` to ``write`` only if it is still ``expect`` (#929)."""
+        refused = _mutation_guard(session_id)
+        if refused is not None:
+            return refused
+        try:
+            leg = event_ops.revert_leg(body.expect, body.write)
+            event_ops.check_revert_write(body.expect, body.write)
+        except EventValidationError as err:
+            return JSONResponse({"error": str(err)}, status_code=422)
+        try:
+            if mode == "review":
+                assert archive_path is not None  # noqa: S101 — guard enforced this
+                record = await asyncio.to_thread(
+                    archive_edit.revert_event,
+                    str(archive_path),
+                    session_id,
+                    event_id,
+                    body.expect,
+                    body.write,
+                )
+            else:
+                event = await collector.revert_event(event_id, body.expect, body.write)
+                record = EventRecord.model_validate(event.to_dict())
+        except event_ops.EventChanged as err:
+            current = (
+                None
+                if err.current is None
+                else err.current.model_dump(mode="json", exclude_none=True)
+            )
+            return JSONResponse(
+                {"error": str(err), "code": "changed", "current": current}, status_code=409
+            )
+        except archive_edit.ArchiveLockedError as err:
+            return _archive_busy(err)
+        except LookupError:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        except EventValidationError as err:
+            return JSONResponse({"error": str(err)}, status_code=422)
+        if mode == "review":
+            if leg == "delete":
+                _drop_document_event(session_id, event_id)
+            else:
+                assert record is not None  # noqa: S101 — only the delete leg returns no record to keep
+                _patch_document_event(session_id, record)
+        if leg == "delete" or record is None:
+            return JSONResponse(None)
+        return JSONResponse(record.model_dump(mode="json", exclude_none=True))
 
     @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]

@@ -19,7 +19,7 @@ import socket
 import ssl
 import urllib.error
 import urllib.request
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -325,23 +325,18 @@ class TestPortBinding:
 
 
 class TestDeleteEndpoint:
-    """Tests for DELETE /api/session/{session_id}/event/{event_id} — the 204 No Content response."""
+    """DELETE /api/session/{session_id}/event/{event_id} answers with the deleted record."""
 
     @pytest.mark.asyncio
-    async def test_delete_event_returns_204_empty_body(self):
-        """Deleting an existing event must return 204 with an empty body.
+    async def test_delete_returns_the_deleted_record(self):
+        """Deleting an existing event answers 200 with the record it removed (#929).
 
-        Before the fix, JSONResponse(None, status_code=204) sent a 4-byte
-        "null" body, causing h11 to raise LocalProtocolError because HTTP 204
-        responses must not have a body.
-
-        Tests the ASGI app directly to inspect the actual response body (the
-        h11 error is server-side — HTTP clients still receive 204). Builds
-        the app with a frame/lab (mirroring what ``MonitorServer.__init__``
-        does for a live server) and stamps ``collector.session_id`` itself
-        since ``_build_app`` is called directly here, bypassing that
-        constructor step — the path must match for ``_mutation_guard`` to
-        let the request through to the handler under test.
+        The dashboard's undo restores a deleted event from this body. Tests
+        the ASGI app directly. Builds the app with a frame/lab (mirroring
+        what ``MonitorServer.__init__`` does for a live server) and stamps
+        ``collector.session_id`` itself since ``_build_app`` is called
+        directly here, bypassing that constructor step — the path must
+        match for ``_mutation_guard`` to let the request through.
         """
         collector = _empty_collector()
         frame = new_frame(label=None, note=None)
@@ -376,14 +371,10 @@ class TestDeleteEndpoint:
         }
         await app(scope, receive, send)
 
-        assert status_code == 204, f"Expected 204, got {status_code}"
-        response_body = b"".join(body_chunks)
-        assert response_body == b"", (
-            f"HTTP 204 response must have an empty body — "
-            f"got {response_body!r} ({len(response_body)} bytes). "
-            f'h11 will raise "Too much data for declared Content-Length" '
-            f"when attempting to send a body with 204."
-        )
+        assert status_code == 200
+        record = json.loads(b"".join(body_chunks))
+        assert record["id"] == event.id
+        assert record["label"] == "test-event"
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_event_returns_404(self):
@@ -500,8 +491,9 @@ class TestSessionEventRoutes:
     ) -> None:
         sid = live_server.collector.session_id
         _, created = await post_json(live_server, f"/api/session/{sid}/event", {"label": "x"})
-        status, _ = await delete_(live_server, f"/api/session/{sid}/event/{created['id']}")
-        assert status == 204
+        status, deleted = await delete_(live_server, f"/api/session/{sid}/event/{created['id']}")
+        assert status == 200
+        assert deleted["id"] == created["id"]
         status, _ = await delete_(live_server, f"/api/session/{sid}/event/{created['id']}")
         assert status == 404
 
@@ -542,7 +534,7 @@ class TestSessionEventRoutes:
         assert status == 200
         assert_stamped(headers)
         status, headers, _ = await _request(live_server, "DELETE", f"{base}/{created['id']}", None)
-        assert status == 204
+        assert status == 200
         assert_stamped(headers)
 
     @pytest.mark.asyncio
@@ -644,8 +636,9 @@ class TestReviewDbEditing:
             fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                status, _ = await post_json(server, f"/api/session/{sid}/event", {"label": "x"})
+                status, body = await post_json(server, f"/api/session/{sid}/event", {"label": "x"})
                 assert status == 409
+                assert body["code"] == "busy"
             finally:
                 os.close(fd)
         finally:
@@ -673,8 +666,10 @@ class TestReviewDbEditing:
             assert any(e["label"] == "final" for e in events)
             assert not any(e["label"] == "draft" for e in events)
 
-            status, _ = await delete_(server, f"/api/session/{sid}/event/{created['id']}")
-            assert status == 204
+            status, deleted = await delete_(server, f"/api/session/{sid}/event/{created['id']}")
+            assert status == 200
+            assert deleted["id"] == created["id"]
+            assert deleted["label"] == "final"
 
             doc = json.loads(await get_text(server, "/api/monitor_sessions"))
             assert not any(e["id"] == created["id"] for e in doc["sessions"][0]["events"])
@@ -682,6 +677,366 @@ class TestReviewDbEditing:
             assert not any(e.id == created["id"] for e in fresh.sessions[0].events)
         finally:
             await server.aclose()
+
+
+@dataclass
+class _Served:
+    """A booted server in one of the two modes, with the ids a revert test needs."""
+
+    handle: _RunningServer
+    sid: str
+    mode: str
+    archive: str | None = None
+
+    @property
+    def base(self) -> str:
+        return f"/api/session/{self.sid}/event"
+
+    async def events(self) -> dict[int, dict[str, object]]:
+        """The served document's events by id: what a fresh tab would see."""
+        doc = json.loads(await get_text(self.handle, "/api/monitor_sessions"))
+        return {e["id"]: e for e in doc["sessions"][0]["events"]}
+
+    async def create(self, **fields: object) -> dict[str, object]:
+        status, body = await post_json(
+            self.handle,
+            self.base,
+            {"label": "x", "timestamp": "2026-07-18T12:01:00+00:00", **fields},
+        )
+        assert status == 201
+        return body
+
+    async def revert(
+        self,
+        event_id: int,
+        expect: dict[str, object] | None,
+        write: dict[str, object] | None,
+    ) -> tuple[int, dict[str, str], object]:
+        return await _request(
+            self.handle,
+            "POST",
+            f"{self.base}/{event_id}/revert",
+            {"expect": expect, "write": write},
+        )
+
+
+@pytest_asyncio.fixture(params=["live", "review"])
+async def served(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncGenerator[_Served, None]:
+    """The revert route's two backends behind one handle: live, and a ``.db`` review."""
+    if request.param == "live":
+        collector = FakeCollector()
+        frame = new_frame(label=None, note=None)
+        server = MonitorServer(
+            collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
+        )
+        handle = await _boot(server, collector=collector)
+        yield _Served(handle, collector.session_id, "live")
+    else:
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        handle = await _review_server(
+            document=build_db_export(path), source=path, archive_path=Path(path)
+        )
+        yield _Served(handle, sid, "review", archive=path)
+    await handle.aclose()
+
+
+@contextlib.contextmanager
+def _held_archive_lock(path: str):
+    fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+class TestEventRevertRoute:
+    """``POST .../event/{id}/revert`` and the DELETE-returns-its-record contract (#929)."""
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_the_deleted_record(self, served: _Served) -> None:
+        created = await served.create(label="doomed")
+        status, deleted = await delete_(served.handle, f"{served.base}/{created['id']}")
+        assert status == 200
+        assert deleted == created
+
+    @pytest.mark.asyncio
+    async def test_revert_changed_carries_current(self, served: _Served) -> None:
+        created = await served.create()
+        await patch_json(served.handle, f"{served.base}/{created['id']}", {"label": "other"})
+        status, _, body = await served.revert(created["id"], created, {**created, "label": "z"})
+        assert status == 409
+        assert body["code"] == "changed"
+        assert body["current"]["label"] == "other"
+        assert (await served.events())[created["id"]]["label"] == "other"
+
+    @pytest.mark.asyncio
+    async def test_revert_missing_event_is_changed_with_null_current(self, served: _Served) -> None:
+        created = await served.create()
+        await delete_(served.handle, f"{served.base}/{created['id']}")
+        status, _, body = await served.revert(created["id"], created, None)
+        assert status == 409
+        assert body["code"] == "changed"
+        assert body["current"] is None
+
+    @pytest.mark.asyncio
+    async def test_revert_busy_code(self, tmp_path: Path) -> None:
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        handle = await _review_server(
+            document=build_db_export(path), source=path, archive_path=Path(path)
+        )
+        served = _Served(handle, sid, "review", archive=path)
+        try:
+            created = await served.create()
+            with _held_archive_lock(path):
+                status, _, body = await served.revert(created["id"], created, None)
+            assert status == 409
+            assert body["code"] == "busy"
+            assert created["id"] in await served.events()
+        finally:
+            await handle.aclose()
+
+    @pytest.mark.asyncio
+    async def test_existing_routes_busy_code(self, tmp_path: Path) -> None:
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        handle = await _review_server(
+            document=build_db_export(path), source=path, archive_path=Path(path)
+        )
+        served = _Served(handle, sid, "review", archive=path)
+        try:
+            created = await served.create()
+            eid = created["id"]
+            with _held_archive_lock(path):
+                results = [
+                    await post_json(handle, served.base, {"label": "n"}),
+                    await patch_json(handle, f"{served.base}/{eid}", {"label": "p"}),
+                    await _request_json(handle, "POST", f"{served.base}/{eid}/end", {}),
+                    await delete_(handle, f"{served.base}/{eid}"),
+                ]
+            for status, body in results:
+                assert status == 409
+                assert body["code"] == "busy"
+        finally:
+            await handle.aclose()
+
+    @pytest.mark.asyncio
+    async def test_revert_is_observed(self, served: _Served) -> None:
+        created = await served.create()
+        status, headers, _ = await served.revert(created["id"], created, None)
+        assert status == 200
+        assert (OBSERVED_AT_HEADER.lower() in headers) == (served.mode == "live")
+
+    @pytest.mark.asyncio
+    async def test_revert_update_publishes(self, live_server: _RunningServer) -> None:
+        sid = live_server.collector.session_id
+        _, created = await post_json(
+            live_server,
+            f"/api/session/{sid}/event",
+            {"label": "a", "timestamp": "2026-07-18T12:01:00+00:00"},
+        )
+        queue = live_server.collector.subscribe()
+        while not queue.empty():
+            queue.get_nowait()
+        edited = {**created, "label": "b"}
+        status, _, body = await _request(
+            live_server,
+            "POST",
+            f"/api/session/{sid}/event/{created['id']}/revert",
+            {"expect": created, "write": edited},
+        )
+        assert status == 200
+        assert body["label"] == "b"
+        fragment = await asyncio.wait_for(queue.get(), timeout=5)
+        assert [e["label"] for e in fragment["events"]] == ["b"]
+
+    @pytest.mark.asyncio
+    async def test_revert_each_leg_round_trips(self, served: _Served) -> None:
+        h = served.handle
+
+        async def undo_redo(eid: int, before: dict | None, after: dict | None) -> None:
+            status, _, body = await served.revert(eid, after, before)
+            assert status == 200
+            assert body == before
+            assert (await served.events()).get(eid) == before
+            status, _, body = await served.revert(eid, before, after)
+            assert status == 200
+            assert body == after
+            assert (await served.events()).get(eid) == after
+
+        # create
+        created = await served.create(label="made")
+        await undo_redo(created["id"], None, created)
+        # update
+        _, edited = await patch_json(h, f"{served.base}/{created['id']}", {"label": "edited"})
+        await undo_redo(created["id"], created, edited)
+        # end
+        span = await served.create(label="span")
+        status, _, ended = await _request(h, "POST", f"{served.base}/{span['id']}/end", {})
+        assert status == 200
+        await undo_redo(span["id"], span, ended)
+        # delete
+        status, deleted = await delete_(h, f"{served.base}/{created['id']}")
+        assert status == 200
+        await undo_redo(created["id"], deleted, None)
+
+    @pytest.mark.asyncio
+    async def test_stale_tab_delete_restores_the_servers_record(self, served: _Served) -> None:
+        created = await served.create(label="mine")
+        # The server's event changes behind the client's back.
+        _, current = await patch_json(
+            served.handle,
+            f"{served.base}/{created['id']}",
+            {"label": "theirs", "color": "#ff0000"},
+        )
+        status, deleted = await delete_(served.handle, f"{served.base}/{created['id']}")
+        assert status == 200
+        assert deleted == current  # not the client's stale copy
+        status, _, restored = await served.revert(created["id"], None, deleted)
+        assert status == 200
+        assert restored["label"] == "theirs"
+        assert restored["color"] == "#ff0000"
+        assert (await served.events())[created["id"]]["label"] == "theirs"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "write_patch",
+        [{"end_timestamp": "2026-07-18T12:00:00+00:00"}],  # end before start
+        ids=["span-order"],
+    )
+    async def test_invalid_write_is_422_and_changes_nothing(
+        self, served: _Served, write_patch: dict[str, object]
+    ) -> None:
+        created = await served.create()
+        status, _, _ = await served.revert(created["id"], created, {**created, **write_patch})
+        assert status == 422
+        assert (await served.events())[created["id"]] == created
+        status, _, _ = await served.revert(created["id"], None, {**created, **write_patch})
+        assert status == 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "write_patch",
+        [{"color": "red"}, {"dash": "wavy"}],
+        ids=["legacy-colour", "unknown-dash"],
+    )
+    async def test_live_write_is_strict_and_review_restore_lenient(
+        self, served: _Served, write_patch: dict[str, object]
+    ) -> None:
+        """A live event is held strictly: a style no write route accepts is a
+        422 on both legs, never a 500. A review archive restores a legacy
+        style unchanged (EventRecord's lenient import rule)."""
+        created = await served.create()
+        status, _, _ = await served.revert(created["id"], created, {**created, **write_patch})
+        assert status == (422 if served.mode == "live" else 200)
+        if served.mode == "live":
+            assert (await served.events())[created["id"]] == created
+        other = await served.create(label="gone")
+        await delete_(served.handle, f"{served.base}/{other['id']}")
+        status, _, _ = await served.revert(other["id"], None, {**other, **write_patch})
+        assert status == (422 if served.mode == "live" else 200)
+        if served.mode == "live":
+            assert other["id"] not in await served.events()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("pick", "restorable"),
+        [
+            (lambda hw: 0, False),
+            (lambda hw: -1, False),
+            (lambda hw: 1, True),
+            (lambda hw: hw, True),
+            (lambda hw: hw + 1, False),
+        ],
+        ids=["zero", "negative", "first", "high-water", "above-high-water"],
+    )
+    async def test_restore_takes_only_a_handed_out_id(
+        self, served: _Served, pick: Callable[[int], int], restorable: bool
+    ) -> None:
+        """Both backends share one id rule: a restore may only reuse an id
+        that was handed out, 1 up to the high-water mark."""
+        first = await served.create(label="a")
+        last = await served.create(label="b")
+        assert first["id"] == 1
+        for made in (first, last):
+            await delete_(served.handle, f"{served.base}/{made['id']}")
+        event_id = pick(last["id"])
+        status, _, body = await served.revert(event_id, None, {**first, "id": event_id})
+        if restorable:
+            assert status == 200
+            assert body["id"] == event_id
+        else:
+            assert status == 409
+            assert body == {"error": body["error"], "code": "changed", "current": None}
+            assert event_id not in await served.events()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("end", "forward"),
+        [
+            (None, True),
+            ("2026-07-18T12:01:00.000001+00:00", True),
+            ("2026-07-18T12:01:00+00:00", False),
+            ("2026-07-18T12:00:59+00:00", False),
+        ],
+        ids=["point", "one-microsecond", "equal", "backwards"],
+    )
+    async def test_create_and_revert_share_the_span_rule(
+        self, served: _Served, end: str | None, forward: bool
+    ) -> None:
+        """POST and a revert's write accept and refuse the same spans."""
+        start = "2026-07-18T12:01:00+00:00"
+        status, _ = await post_json(
+            served.handle, served.base, {"label": "s", "timestamp": start, "end_timestamp": end}
+        )
+        assert status == (201 if forward else 422)
+        created = await served.create()
+        write = {**created, "timestamp": start, "end_timestamp": end}
+        status, _, _ = await served.revert(created["id"], created, write)
+        assert status == (200 if forward else 422)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("label", ["", "   "], ids=["empty", "blank"])
+    async def test_create_and_revert_share_the_label_rule(
+        self, served: _Served, label: str
+    ) -> None:
+        """POST and a revert's write refuse a blank label with the same status,
+        on the restore leg and on an update that changes the label."""
+        status, _ = await post_json(served.handle, served.base, {"label": label})
+        assert status == 422
+        created = await served.create()
+        status, _, _ = await served.revert(created["id"], created, {**created, "label": label})
+        assert status == 422
+        assert (await served.events())[created["id"]] == created
+        await delete_(served.handle, f"{served.base}/{created['id']}")
+        status, _, _ = await served.revert(created["id"], None, {**created, "label": label})
+        assert status == 422
+        assert created["id"] not in await served.events()
+
+    @pytest.mark.asyncio
+    async def test_revert_with_neither_state_is_422(self, served: _Served) -> None:
+        status, _, _ = await served.revert(1, None, None)
+        assert status == 422
+
+    @pytest.mark.asyncio
+    async def test_revert_restore_into_unknown_session_404s(self, tmp_path: Path) -> None:
+        path, _sid = await asyncio.to_thread(_make_archive, tmp_path)
+        handle = await _review_server(
+            document=build_db_export(path), source=path, archive_path=Path(path)
+        )
+        try:
+            status, _, body = await _request(
+                handle,
+                "POST",
+                "/api/session/nope/event/1/revert",
+                {
+                    "expect": None,
+                    "write": {"id": 1, "timestamp": "2026-07-18T12:01:00+00:00", "label": "x"},
+                },
+            )
+            assert status == 404
+            assert body["error"] == "unknown session"
+        finally:
+            await handle.aclose()
 
 
 def test_force_stop_before_serve_is_noop() -> None:

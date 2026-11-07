@@ -867,7 +867,7 @@ depends_on = ["otto.errors", "otto.models"]
 [[modules]]
 path = "otto.monitor.events"
 layer = "topology"
-depends_on = ["otto.models"]
+depends_on = ["otto.models", "otto.monitor.event_ops"]
 
 [[modules]]
 path = "otto.monitor.formats"
@@ -897,7 +897,7 @@ depends_on = ["otto.models.base", "otto.monitor.parsers", "otto.monitor.rates", 
 [[modules]]
 path = "otto.monitor.store"
 layer = "topology"
-depends_on = ["otto.models", "otto.monitor.events", "otto.monitor.parsers"]
+depends_on = ["otto.models", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.parsers"]
 
 [[modules]]
 path = "otto.monitor.tls"

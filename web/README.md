@@ -104,5 +104,5 @@ stays the default answer for new UI. The set widened once since, for
 picker, so the event editor's named swatches compose react-aria's
 `ColorSwatchPicker` with the vendored `Tooltip`. Adding a new `ui/**`
 component is an explicit decision to widen that set — say so in the PR and
-update this paragraph. (Decision history lives in the plans archive,
+update this paragraph. `Toast` joined it for the undo history (#929): the free set has no snackbar, and the dashboard and covapp now share this one. (Decision history lives in the plans archive,
 git tag `plans-archive-2026-08-03`.)

@@ -94,7 +94,11 @@ describe("eventApi follows the declared write version", () => {
       vi
         .fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(created), { status: 201 }))
-        .mockResolvedValueOnce(new Response(null, { status: 204 })),
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+            status: 200,
+          }),
+        ),
     );
     await createEvent("s", { label: "deploy" });
     await deleteEvent("s", 7);

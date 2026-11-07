@@ -8,6 +8,7 @@
 import { useEffect, useRef } from "react";
 import { Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
+import { formatBinding, UNDO_BINDING } from "../ui/shortcuts";
 
 // A double-click on the editor's Delete lands its second press on this
 // dialog's scrim. Scrim presses this soon after opening are the tail of the
@@ -65,7 +66,7 @@ export function ConfirmDeleteEvent({
               Delete event?
             </Heading>
             <p className="text-sm text-tertiary">
-              {subject} will be removed. This can't be undone.
+              {subject} will be removed. You can undo this with {formatBinding(UNDO_BINDING)}.
             </p>
           </div>
           {error !== null && (

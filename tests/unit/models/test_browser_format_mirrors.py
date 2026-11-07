@@ -55,3 +55,14 @@ def test_the_browser_observed_at_header_mirrors_the_server_one():
     )
     assert found, "OBSERVED_AT_HEADER is not declared in eventApi.ts"
     assert found.group(1) == OBSERVED_AT_HEADER
+
+
+def test_the_browser_same_event_runs_the_shared_cases_file():
+    """``sameevent.test.ts`` drives the SAME cases file ``same_event`` is tested on.
+
+    One file of cases holds the server's comparison and its browser mirror to
+    one rule; a test that loaded a copy would let the two drift.
+    """
+    source = (DATA.parent / "__tests__" / "sameevent.test.ts").read_text()
+    assert "tests/_fixtures/same_event_cases.json" in source
+    assert (CHECKOUT_ROOT / "tests" / "_fixtures" / "same_event_cases.json").is_file()

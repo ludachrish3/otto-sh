@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from otto.monitor.db import MetricDB, UnsupportedDBError, read_sessions
+from otto.monitor.db import MetricDB, UnsupportedDBError, event_row_record, read_sessions
 from otto.monitor.events import MonitorEvent
 from otto.monitor.session import new_frame
 
@@ -262,3 +262,41 @@ async def test_metric_db_open_non_sqlite_bytes_raises_unsupported(tmp_path):
     db = MetricDB(str(path), frame_at("x"), lab_json="{}", meta_json="{}")
     with pytest.raises(UnsupportedDBError, match="not a monitor database"):
         await db.open()
+
+
+def test_event_row_record_round_trips_a_legacy_colour():
+    row = (5, "2026-11-07T10:00:00+00:00", None, "x", "auto", "red", "wavy")
+    rec = event_row_record(row)
+    assert (rec.id, rec.color, rec.dash, rec.source) == (5, "red", "wavy", "auto")
+    assert rec.end_timestamp is None
+
+
+@pytest.mark.asyncio
+async def test_restore_event_row_keeps_the_id(tmp_path):
+    db = MetricDB(str(tmp_path / "lab.db"), frame_at("run-1"), lab_json="{}", meta_json="{}")
+    await db.open()
+    first = MonitorEvent(
+        timestamp=T0,
+        label="one",
+        source="manual",
+        color="#112233",
+        end_timestamp=T0 + timedelta(minutes=1),
+    )
+    first.id = await db.write_event(first)
+    second = MonitorEvent(timestamp=T0, label="two")
+    second.id = await db.write_event(second)
+    await db.delete_event(first.id)
+    await db.restore_event_row(first)
+    await db.finalize(T0 + timedelta(minutes=5))
+    await db.close()
+
+    events = {e[0]: e for e in read_sessions(str(tmp_path / "lab.db"))[0].events}
+    assert set(events) == {first.id, second.id}
+    rec = event_row_record(events[first.id])
+    assert (rec.label, rec.color, rec.end_timestamp) == ("one", "#112233", first.end_timestamp)
+
+
+@pytest.mark.asyncio
+async def test_restore_event_row_without_a_connection_is_a_noop(tmp_path):
+    db = MetricDB(str(tmp_path / "lab.db"), frame_at("run-1"), lab_json="{}", meta_json="{}")
+    await db.restore_event_row(MonitorEvent(timestamp=T0, label="x", id=3))

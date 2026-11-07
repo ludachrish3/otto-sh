@@ -16,6 +16,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastViewport } from "@/ui/Toast";
 import { allowConsoleOutput } from "../../vitest.setup";
 import {
   FocusProvider,
@@ -26,7 +27,6 @@ import {
   useFocus,
   useHashLocation,
 } from "./focus";
-import { ToastProvider } from "./Toast";
 import { makeIndex, makeRun } from "./testUtils";
 import type { IndexPayload } from "./types";
 
@@ -105,11 +105,10 @@ function Consumer() {
 
 function renderConsumer() {
   return render(
-    <ToastProvider>
-      <FocusProvider>
-        <Consumer />
-      </FocusProvider>
-    </ToastProvider>,
+    <FocusProvider>
+      <Consumer />
+      <ToastViewport />
+    </FocusProvider>,
   );
 }
 

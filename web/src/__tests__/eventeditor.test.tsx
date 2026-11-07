@@ -10,8 +10,10 @@ import userEvent from "@testing-library/user-event";
 import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import kitchenSink from "../../fixtures/kitchen-sink.json" with { type: "json" };
+import { createEvent, updateEvent } from "../data/eventApi";
 import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
+import { undo } from "../data/undoRedo";
 import { EventEditor } from "../shell/EventEditor";
 import { editorGateKey, useMutationGates } from "../shell/useMutationGate";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
@@ -283,7 +285,11 @@ describe("EventEditor", () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+        status: 200,
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     const deleteButton = screen.getByTestId("editor-delete");
@@ -294,7 +300,8 @@ describe("EventEditor", () => {
     expect(dialog.getAttribute("role")).toBe("alertdialog");
     expect(within(dialog).getByText("Delete event?")).toBeTruthy();
     expect(dialog.textContent).toContain("\u201cstress run\u201d will be removed.");
-    expect(dialog.textContent).toContain("This can't be undone.");
+    expect(dialog.textContent).toContain("You can undo this with Ctrl Z.");
+    expect(dialog.textContent).not.toContain("can't be undone");
     expect(screen.getByTestId("editor-delete").textContent).toBe("Delete");
     expect(document.activeElement).toBe(screen.getByTestId("confirm-delete-cancel"));
   });
@@ -318,7 +325,11 @@ describe("EventEditor", () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+        status: 200,
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
@@ -723,8 +734,9 @@ describe("EventEditor", () => {
       await user.click(screen.getByTestId("editor-color-custom-open"));
       expect(screen.getByTestId("custom-color-apply").hasAttribute("disabled")).toBe(false);
       // The popover covers Save, so a request starts here the way a held
-      // one looks to the editor: its target's gate goes pending.
-      const key = editorGateKey(sid, null);
+      // one looks to the editor: ANOTHER event's gate goes pending, and
+      // the one-mutation-at-a-time gate shuts this editor all the same.
+      const key = editorGateKey(sid, 99);
       act(() => {
         useMutationGates.setState({ pending: { [key]: { action: "save", run: Symbol(key) } } });
       });
@@ -1029,7 +1041,15 @@ describe("EventEditor pending gate (#867)", () => {
     await user.click(screen.getByTestId("confirm-delete-confirm"));
     expect(fetchMock.mock.calls.length).toBe(1);
     expect(screen.getByTestId("confirm-delete-confirm").hasAttribute("data-loading")).toBe(true);
-    await act(() => Promise.resolve(release(new Response(null, { status: 204 }))));
+    await act(() =>
+      Promise.resolve(
+        release(
+          new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+            status: 200,
+          }),
+        ),
+      ),
+    );
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(fetchMock.mock.calls.length).toBe(1);
   });
@@ -1094,20 +1114,27 @@ describe("EventEditor pending gate (#867)", () => {
     expect(jsonBody(fetchMock, 1)).toMatchObject({ label: "config reload v2", color: "#2ca02c" });
   });
 
-  it("a Save still pending for one event does not make another event's editor busy (#932)", async () => {
+  it("a Save pending for one event disables another event's editor until it settles, and only the pressing button spins", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-    vi.stubGlobal("fetch", held().fetchMock);
+    const { fetchMock, release } = held();
+    vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-save"));
+    expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
     act(() => {
       useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 3 });
     });
     await waitFor(() =>
-      expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+      expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(true),
     );
-    expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(false);
+    expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false);
+    expect(screen.getByTestId("editor-delete").hasAttribute("disabled")).toBe(true);
+    await act(() => Promise.resolve(release(okJson(record({ id: 2 }), 200))));
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(false),
+    );
   });
 });
 
@@ -1143,16 +1170,20 @@ describe("EventEditor and a late result (#932)", () => {
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-save"));
     open(sid, 3);
+    // Event 3's editor is shut while event 2's Save is pending, so its custom
+    // colour can only be set once the late result has landed.
+    expect(screen.getByTestId("editor-color-custom-open").hasAttribute("disabled")).toBe(true);
+    await act(() => Promise.resolve(release(okJson(record({ id: 2, label: "saved" }), 200))));
+    await waitFor(() => expect(storedLabel(sid, 2)).toBe("saved"));
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 3 });
+    expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
     await user.click(screen.getByTestId("editor-color-custom-open"));
     const hex = screen.getByTestId("custom-color-hex");
     await user.clear(hex);
     await user.type(hex, "#00abcd");
     await user.click(screen.getByTestId("custom-color-apply"));
-    await act(() => Promise.resolve(release(okJson(record({ id: 2, label: "saved" }), 200))));
-    await waitFor(() => expect(storedLabel(sid, 2)).toBe("saved"));
-    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 3 });
-    expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
     expect(screen.getByTestId("editor-color-name").textContent).toBe("· Custom — #00abcd");
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 3 });
   });
 
   it.each([
@@ -1222,7 +1253,15 @@ describe("EventEditor and a late result (#932)", () => {
     act(() => useUiStore.getState().actions.closeEventEditor());
     open(sid, 2);
     expect(screen.getByTestId("event-editor")).toBeTruthy();
-    await act(() => Promise.resolve(release(new Response(null, { status: 204 }))));
+    await act(() =>
+      Promise.resolve(
+        release(
+          new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+            status: 200,
+          }),
+        ),
+      ),
+    );
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(storedLabel(sid, 2)).toBeUndefined();
     expect(screen.queryByTestId("event-editor")).toBeNull();
@@ -1272,7 +1311,14 @@ describe("EventEditor and the tracked span (#868)", () => {
     const user = userEvent.setup();
     const sid = trackEvent1();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: 2, timestamp: "2026-07-18T12:00:00+00:00" }), {
+          status: 200,
+        }),
+      ),
+    );
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
     await user.click(screen.getByTestId("confirm-delete-confirm"));
@@ -1294,5 +1340,69 @@ describe("EventEditor and the tracked span (#868)", () => {
     await user.click(screen.getByTestId("editor-save"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(useUiStore.getState().openSpan).toBeNull();
+  });
+});
+
+// #929, spec §3: an undo is a mutation like any other, so an editor opened on
+// its target while it is pending inherits it (#932): it reseeds from the
+// store when the undo settles, or closes if the undo deleted the event.
+describe("EventEditor and a pending undo (#929)", () => {
+  function heldRevert() {
+    let release!: (r: Response) => void;
+    const promise = new Promise<Response>((res) => {
+      release = res;
+    });
+    return { promise, release };
+  }
+
+  const label = () => (screen.getByTestId("editor-label") as HTMLInputElement).value;
+
+  it("an editor opened on the target while an undo is pending reseeds from the store when it settles", async () => {
+    const sid = hydrate();
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(record({ id: 2, label: "renamed" })));
+    vi.stubGlobal("fetch", fetchMock);
+    await updateEvent(sid, 2, { label: "renamed" });
+    const { promise, release } = heldRevert();
+    fetchMock.mockReturnValueOnce(promise);
+    let undoing!: Promise<void>;
+    act(() => {
+      undoing = undo();
+    });
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    });
+    render(<EventEditor />);
+    expect(label()).toBe("renamed");
+    expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(true);
+    await act(async () => {
+      release(okJson(record({ id: 2, label: "stress run" })));
+      await undoing;
+    });
+    await waitFor(() => expect(label()).toBe("stress run"));
+    expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(false);
+  });
+
+  it("an editor opened on the target while an undo is pending closes if the undo deleted the event", async () => {
+    const sid = hydrate();
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(record({ id: 101 }), 201));
+    vi.stubGlobal("fetch", fetchMock);
+    await createEvent(sid, { label: "deploy" });
+    const { promise, release } = heldRevert();
+    fetchMock.mockReturnValueOnce(promise);
+    let undoing!: Promise<void>;
+    act(() => {
+      undoing = undo();
+    });
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 101 });
+    });
+    render(<EventEditor />);
+    expect(screen.getByTestId("event-editor")).toBeTruthy();
+    await act(async () => {
+      release(okJson(null));
+      await undoing;
+    });
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(screen.queryByTestId("event-editor")).toBeNull();
   });
 });

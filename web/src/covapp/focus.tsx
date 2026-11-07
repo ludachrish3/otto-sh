@@ -21,7 +21,7 @@
 // other's pinned focus).
 //
 // Centralized here rather than per-page: ONE `FocusProvider` (mounted once
-// at App.tsx's root, inside `ToastProvider` — `setFocus` toasts on
+// at App.tsx's root — `setFocus` toasts on
 // pin/clear) owns the state, the persistence, and the "survive navigation"
 // correction. Every page reads/writes focus through `useFocus()` only —
 // never `location.hash`/`localStorage` directly.
@@ -35,10 +35,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-
+import { useToastStore } from "@/ui/Toast";
 import { groupContexts } from "./contexts";
 import { getIndex } from "./data";
-import { useToast } from "./Toast";
 import type { IndexPayload } from "./types";
 
 const CTX_PARAM = "ctx";
@@ -385,13 +384,13 @@ function initialHideAsserted(index: IndexPayload | null): boolean {
   return false;
 }
 
-/** Mounted once at App.tsx's root, inside `ToastProvider` (this provider
- * calls `useToast()` itself, to fire the pin/clear toast from the ONE
+/** Mounted once at App.tsx's root, (this provider
+ * calls `showToast` itself, to fire the pin/clear toast from the ONE
  * place `focus` actually changes, rather than duplicating that call at
  * every `setFocus` call site). */
 export function FocusProvider({ children }: { children: ReactNode }) {
   const index = getIndex();
-  const { show } = useToast();
+  const show = useToastStore((s) => s.showToast);
   const [focus, setFocusState] = useState<string | null>(() => initialFocus(index));
   // A second, independent piece of state — never derived from or combined
   // with `focus` above (see this module's header comment on why ctx/ticket
@@ -689,7 +688,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
 }
 
 /** Must be called under a `FocusProvider` (mounted once near the app root —
- * see App.tsx), the same contract `Toast.tsx`'s `useToast()` already
+ * see App.tsx), the same contract the toast store already
  * establishes for this codebase. */
 export function useFocus(): UseFocusResult {
   const ctx = useContext(FocusContext);

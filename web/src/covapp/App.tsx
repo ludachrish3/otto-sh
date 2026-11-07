@@ -8,7 +8,7 @@
 // against the tree, then renders DirectoryPage for a DirNode, FilePage for a
 // FileNode, or NotFoundPlaceholder when nothing resolves.
 import { Route, Router, Switch, useParams } from "wouter";
-
+import { ToastViewport } from "@/ui/Toast";
 import { dataGuard, getIndex } from "./data";
 import { FocusProvider, useHashLocation } from "./focus";
 import { DirectoryPage } from "./pages/DirectoryPage";
@@ -17,7 +17,6 @@ import { GuardScreen } from "./pages/GuardScreen";
 import { RunsPage } from "./pages/RunsPage";
 import { TicketsPage } from "./pages/TicketsPage";
 import { findNode } from "./stats";
-import { ToastProvider } from "./Toast";
 import type { IndexPayload } from "./types";
 
 /** wouter's OWN router already runs the whole location string through a
@@ -110,9 +109,9 @@ function CoverageApp() {
   );
 }
 
-/** Providers mounted ONCE at the true app root — `FocusProvider` calls
- * `useToast()` itself (see focus.tsx), so it must nest inside
- * `ToastProvider`, not the other way round. Wrapping unconditionally
+/** Providers mounted ONCE at the true app root — `FocusProvider` raises
+ * toasts through the shared store (see focus.tsx), and the one
+ * `<ToastViewport />` renders them. Wrapping unconditionally
  * (rather than only inside the `dataGuard() === "ok"` branch) keeps this a
  * single mount point regardless of guard state — harmless when
  * `GuardScreen` renders instead of the router, since nothing in that
@@ -122,11 +121,10 @@ function CoverageApp() {
  * bearing once `?ctx=` lives inside the hash fragment. */
 function App() {
   return (
-    <ToastProvider>
-      <FocusProvider>
-        <CoverageApp />
-      </FocusProvider>
-    </ToastProvider>
+    <FocusProvider>
+      <CoverageApp />
+      <ToastViewport />
+    </FocusProvider>
   );
 }
 

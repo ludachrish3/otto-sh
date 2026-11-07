@@ -17,6 +17,7 @@ from ..models.event_style import (
     check_event_dash,
     normalize_event_color,
 )
+from .event_ops import EventValidationError
 
 __all__ = ["AUTO_EVENT_COLORS", "MonitorEvent"]
 
@@ -37,7 +38,7 @@ class MonitorEvent:
     color: str = DEFAULT_EVENT_COLOR
     """Marker colour, ``#rrggbb`` or ``#rgb`` in any case, stored as lowercase
     ``#rrggbb``. Anything else (a CSS name such as ``"red"``, ``rgb()``) raises
-    ``ValueError`` at construction."""
+    ``EventValidationError`` (a ``ValueError``) at construction."""
 
     dash: str = DEFAULT_EVENT_DASH
     """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""  # noqa: E501 — long field docstring
@@ -49,10 +50,15 @@ class MonitorEvent:
     """End timestamp for span events; ``None`` for instantaneous events."""
 
     def __post_init__(self) -> None:
-        # Every construction is a write boundary: the collector's add_event
-        # and any direct caller get the same colour/dash contract.
-        self.color = normalize_event_color(self.color)
-        check_event_dash(self.dash)
+        # Every construction is a write boundary: the collector's add_event,
+        # a revert and any direct caller get the same colour/dash contract.
+        # Refused as EventValidationError, still a ValueError for library
+        # callers, so every HTTP route's existing 422 path answers it.
+        try:
+            self.color = normalize_event_color(self.color)
+            check_event_dash(self.dash)
+        except ValueError as err:
+            raise EventValidationError(str(err)) from err
 
     def to_dict(self) -> dict[str, object]:
         """Serialize to a JSON-safe dict for the dashboard API."""

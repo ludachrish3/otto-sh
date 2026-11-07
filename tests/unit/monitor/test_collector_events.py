@@ -5,6 +5,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from otto.models.monitor import EventRecord
+from otto.monitor import event_ops
+from otto.monitor.events import MonitorEvent
+
 
 @pytest.mark.asyncio
 async def test_update_event_moves_start_timestamp(tmp_path) -> None:
@@ -217,3 +221,178 @@ async def test_update_event_normalises_color() -> None:
     )
     assert updated is not None
     assert updated.color == "#aabbcc"
+
+
+def _record(event: MonitorEvent) -> EventRecord:
+    """The event as an EventRecord, through the one conversion (server.py's _event_response)."""
+    return EventRecord.model_validate(event.to_dict())
+
+
+@pytest.mark.asyncio
+async def test_delete_event_returns_the_removed_event() -> None:
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="gone", color="#ABC")
+    removed = await collector.delete_event(ev.id)
+    assert removed is not None
+    assert (removed.id, removed.label, removed.color) == (ev.id, "gone", "#aabbcc")
+    assert collector.get_events() == []
+    assert await collector.delete_event(ev.id) is None
+
+
+@pytest.mark.asyncio
+async def test_revert_update_writes_back_only_when_expected() -> None:
+    from otto.models.monitor import MonitorSessionFragment
+    from otto.monitor.collector import MetricCollector
+    from otto.monitor.event_ops import EventChanged, same_event
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="before", color="#111111", dash="dot")
+    original = _record(ev)
+    edited = await collector.update_event(
+        ev.id,
+        label="after",
+        color="#222222",
+        dash="dash",
+        timestamp=ev.timestamp + timedelta(seconds=5),
+        end_timestamp=ev.timestamp + timedelta(seconds=9),
+    )
+    assert edited is not None
+    expect = _record(edited)
+
+    q = collector.subscribe()
+    reverted = await collector.revert_event(ev.id, expect, original)
+    assert reverted is not None
+    assert same_event(_record(reverted), original)
+    frag = MonitorSessionFragment.model_validate(q.get_nowait())
+    assert [e.id for e in frag.events or []] == [ev.id]
+
+    with pytest.raises(EventChanged) as caught:
+        await collector.revert_event(ev.id, expect, original)  # expect is stale now
+    assert caught.value.current is not None
+    assert same_event(caught.value.current, original)
+    [stored] = collector.get_events()
+    assert same_event(_record(stored), original)
+    assert q.empty()  # the refused revert published nothing
+    collector.unsubscribe(q)
+
+
+@pytest.mark.asyncio
+async def test_revert_delete_leg_and_a_missing_event() -> None:
+    from otto.monitor.collector import MetricCollector
+    from otto.monitor.event_ops import EventChanged
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="x")
+    record = _record(ev)
+    removed = await collector.revert_event(ev.id, record, None)
+    assert removed is not None
+    assert removed.id == ev.id
+    assert collector.get_events() == []
+    with pytest.raises(EventChanged) as caught:
+        await collector.revert_event(ev.id, record, None)
+    assert caught.value.current is None
+
+
+@pytest.mark.asyncio
+async def test_revert_restore_keeps_id_and_source() -> None:
+    from otto.models.monitor import MonitorSessionFragment
+    from otto.monitor.collector import MetricCollector
+
+    collector = MetricCollector(hosts=[])
+    await collector.add_event(label="first")
+    ev = await collector.add_event(label="lifecycle", source="auto", color="#333333")
+    removed = await collector.delete_event(ev.id)
+    assert removed is not None
+
+    q = collector.subscribe()
+    restored = await collector.revert_event(ev.id, None, _record(removed))
+    assert restored is not None
+    assert (restored.id, restored.source, restored.label, restored.color) == (
+        ev.id,
+        "auto",
+        "lifecycle",
+        "#333333",
+    )
+    assert collector._store.find_event(ev.id) is not None
+    frag = MonitorSessionFragment.model_validate(q.get_nowait())
+    assert [(e.id, e.source) for e in frag.events or []] == [(ev.id, "auto")]
+    collector.unsubscribe(q)
+
+
+@pytest.mark.asyncio
+async def test_restore_refuses_present_or_unallocated_id() -> None:
+    from otto.monitor.collector import MetricCollector
+    from otto.monitor.event_ops import EventChanged
+
+    collector = MetricCollector(hosts=[])
+    ev = await collector.add_event(label="here")
+    q = collector.subscribe()
+    with pytest.raises(EventChanged) as present:
+        await collector.restore_event(ev.id, _record(ev))
+    assert present.value.current is not None
+    assert present.value.current.label == "here"
+    with pytest.raises(EventChanged) as unallocated:
+        await collector.restore_event(ev.id + 100, _record(ev))
+    assert unallocated.value.current is None
+    assert q.empty()
+    assert [e.id for e in collector.get_events()] == [ev.id]
+    collector.unsubscribe(q)
+
+
+@pytest.mark.asyncio
+async def test_restore_on_reused_db_keeps_rowid(tmp_path) -> None:
+    """A reused --db's rowids run ahead of a fresh store's counter: the restore
+    still finds the id allocated and puts the event back under it."""
+    from otto.models import LabSnapshot
+    from otto.monitor.collector import MetricCollector
+    from otto.monitor.db import read_sessions
+    from otto.monitor.export import build_session_metric_db
+    from otto.monitor.session import new_frame
+
+    path = str(tmp_path / "reused.db")
+
+    async def open_collector(now: datetime) -> MetricCollector:
+        frame = new_frame(label=None, note=None, now=now)
+        db = build_session_metric_db(
+            path, frame, LabSnapshot(), MetricCollector(hosts=[]), interval=5.0
+        )
+        collector = MetricCollector(hosts=[], db=db)
+        collector.session_id = frame.id
+        await collector.init_db()
+        return collector
+
+    t0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+    earlier = await open_collector(t0)
+    try:
+        assert earlier._db is not None
+        await earlier._db.restore_event_row(
+            MonitorEvent(timestamp=datetime.now(tz=timezone.utc), label="old", id=56)
+        )
+    finally:
+        await earlier.close_db()
+
+    collector = await open_collector(t0 + timedelta(hours=1))
+    try:
+        ev = await collector.add_event(label="live")
+        assert ev.id == 57
+        removed = await collector.delete_event(ev.id)
+        assert removed is not None
+        restored = await collector.revert_event(ev.id, None, _record(removed))
+        assert restored is not None
+        assert restored.id == 57
+        # The earlier session's 56 lies inside this collector's handed-out
+        # range (1..57) but belongs to another session: refused as changed,
+        # never an IntegrityError.
+        with pytest.raises(event_ops.EventChanged) as caught:
+            await collector.revert_event(56, None, EventRecord(id=56, timestamp=t0, label="mine"))
+        assert caught.value.current is None
+    finally:
+        await collector.close_db()
+
+    live = [s for s in read_sessions(path) if s.id == collector.session_id]
+    assert [row[0] for row in live[0].events] == [57]  # the archive holds it under 57 too
+
+    old = [s for s in read_sessions(path) if s.id == earlier.session_id]
+    assert [row[0] for row in old[0].events] == [56]  # untouched by the refusal below

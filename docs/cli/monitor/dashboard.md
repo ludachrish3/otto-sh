@@ -233,7 +233,8 @@ shows under the field. Editing or deleting an existing event reuses the
 same panel; **Delete** opens a dialog that names the event ("Delete
 event?") and removes it only when you press **Delete** in the dialog.
 **Cancel**, **Esc** or a click outside the dialog closes just the dialog
-and leaves the editor open.
+and leaves the editor open. Every change made here can be taken back; see
+[Undo and redo](#undo-and-redo).
 
 **Crowded labels.** Event labels stack in up to three rows at the top of
 each chart. Where more events crowd one spot, the earliest ones keep their
@@ -248,6 +249,52 @@ test](../../setup/test-recipes.md#monitoring-from-a-test)) nor the run-wide
 the automatic per-test start/pass/fail marks of `--monitor`, are recorded into
 the archive; see them on the timeline by [reviewing the
 capture](review.md#reviewing-a-capture).
+
+## Undo and redo
+
+The dashboard remembers the event changes you make in this tab, so a mistaken
+mark, edit, end or delete can be taken back. It works on every editable
+session: a live run, or a review opened from a `.db` archive. A review opened
+from a `.json` file has nothing to undo, and the commands are disabled there.
+
+- **Shortcuts.** **Ctrl Z** undoes the latest change and **Ctrl Y** redoes
+  it; on a Mac they are **⌘Z** and **⌘Y**, and **⌘⇧Z** (**Ctrl Shift Z**)
+  redoes too. The command palette offers the same two commands, named for the
+  change ("Undo delete “test fail”"), and disabled while there is nothing to
+  undo.
+- **Depth.** The last 10 changes can be undone, newest first, and redone in
+  the other direction. The 11th change forgets the oldest. A new change after
+  an undo discards what was left to redo.
+- **The toast.** Every successful undo and redo shows a short toast such as
+  **Undid: delete “test fail”**, with a button for the opposite step (**Redo**
+  or **Undo**). It stays longer than an ordinary toast, waits while you hover
+  or focus it, and is announced by screen readers, even while the Events panel
+  is open. **F6** moves keyboard focus to the toast from anywhere, the Events
+  panel included; Tab then reaches its button.
+- **What is recorded.** Marks and spans started from the app bar or the Events
+  panel, events added in the editor or by sweeping the chart, saving an edit,
+  **End span** and **End now**, and deletes. Undoing a delete brings back the
+  same event, with the same id, label, times, colour, dash and source. An undo
+  of an edit puts back only the fields that edit sent; if anything else about
+  the event changed meanwhile, the undo is skipped (next item). View actions (zoom, range, pause) are not part of the history, and
+  neither is anything done by another tab, another client or a test run.
+- **A conflict is skipped.** If the event was changed elsewhere since your
+  change, undo will not overwrite it: a toast says "Can't undo: “test fail”
+  changed elsewhere" and that step is dropped, so the next press reaches the
+  step before it. If the archive is busy, or the request fails, a toast says
+  "Couldn't undo — try again" and the step is kept for you to retry.
+- **One change at a time.** The tab sends one event change at a time. While
+  one is in flight, the other event controls and the Undo and Redo commands
+  are disabled, and their shortcuts do nothing. Nothing is queued: press again
+  once the change finishes. The toast's own **Undo** or **Redo** button,
+  pressed meanwhile, says "Wait for the current change to finish".
+- **When it does not apply.** **Ctrl Z** inside a text field, date field or
+  menu, and while the event editor, the mark popover, the palette or the
+  delete dialog is open, keeps its ordinary meaning; the Events panel is not
+  one of those, so undo works from it.
+- **When it is forgotten.** The history lives in the tab only. A reload or a
+  new tab starts empty, and so does importing or opening another file, or the
+  tab becoming read-only.
 
 ## Live status, pause, and reconnect
 

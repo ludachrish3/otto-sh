@@ -30,15 +30,22 @@ def test_snapshot_is_a_copy() -> None:
     assert len(store.snapshot_series()["h/x"]) == 1
 
 
-def test_event_id_quirk_preserved() -> None:
-    """rowid wins when nonzero, but next_id advances regardless (legacy behavior)."""
+def test_counter_stays_ahead_of_every_assigned_id() -> None:
     store = MetricStore()
     e1 = store.add_event(MonitorEvent(timestamp=TS, label="a"), rowid=0)
-    assert e1.id == 1
     e2 = store.add_event(MonitorEvent(timestamp=TS, label="b"), rowid=7)
-    assert e2.id == 7
     e3 = store.add_event(MonitorEvent(timestamp=TS, label="c"), rowid=0)
-    assert e3.id == 3  # next_id advanced past e2 despite the rowid
+    assert (e1.id, e2.id, e3.id) == (1, 7, 8)
+    assert store.allocated(8)
+    assert not store.allocated(9)
+
+
+def test_restoring_an_old_id_never_raises_the_ceiling() -> None:
+    store = MetricStore()
+    e1 = store.add_event(MonitorEvent(timestamp=TS, label="a"), rowid=0)
+    store.remove_event(e1.id)
+    store.note_imported_event(MonitorEvent(timestamp=TS, label="a", id=1))
+    assert not store.allocated(2)
 
 
 def test_hosts_from_series_ignores_bare_labels() -> None:

@@ -504,3 +504,21 @@ export interface EventUpdateBody {
   color?: Color2;
   dash?: Dash2;
 }
+/**
+ * ``POST /api/session/{sid}/event/{id}/revert`` request body (#929).
+ *
+ * ``expect`` is the state the event must be in now and ``write`` the state
+ * to put it back to; ``None`` on either side means "no event" (see
+ * ``event_ops.revert_leg``). Any ``id`` inside either
+ * record is ignored in favour of the path's.
+ *
+ * ``defer_build=False``: same FastAPI request-body reason as
+ * :class:`EventCreateBody` — see its docstring.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "EventRevertBody".
+ */
+export interface EventRevertBody {
+  expect: EventRecord | null;
+  write: EventRecord | null;
+}

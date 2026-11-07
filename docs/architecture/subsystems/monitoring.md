@@ -168,19 +168,37 @@ resync, never replayed. The cost is deliberate: a tab that is alive but
 sustainedly slower than the stream lapses, resyncs and lapses again rather
 than silently showing stale data. Only the live view and live exports age
 out — the DB keeps everything, so a review opened from a `.db` archive is
-always complete. A resync's snapshot is captured somewhere between its
-request and its response, so an event mutation answered in that interval
-may be newer than the snapshot or already in it. The review store logs the
-event changes it applies from the moment the request starts
-(`beginResync` in `web/src/data/reviewStore.ts`) and, before its one write,
-replays a logged change only if its `observed_at` is strictly later than
-the snapshot session's; a tie or a missing stamp keeps the snapshot. That
-comparison is the server's own order because `event_ops.utc_now` is
-strictly increasing at microsecond resolution, and each stamp is read in
-the same synchronous step as the state it describes: the collector writes
-an event to the database first and then changes memory and publishes, and
-the snapshot reads its stamp and its state together. A session's
-server-observed horizon never moves back.
+always complete.
+
+**Event changes are ordered by the server's stamp.** An event can reach a
+tab by three routes that race: the HTTP response to the tab's own mutation,
+the SSE echo of that mutation or of another actor's, and a bootstrap or
+resync snapshot. Every one of them lands through the one merge path,
+`applyFragment` (`web/src/data/fragment.ts`), and its `admitEventChanges`
+decides, per event id, whether the change is newer than what the session
+holds. The order is the server's own: every SSE fragment, every live
+mutation response (the `X-Otto-Observed-At` header) and every snapshot
+carries an `observed_at` from `event_ops.utc_now`, which is strictly
+increasing at microsecond resolution, and each stamp is read in the same
+synchronous step as the state it describes (the collector writes an event to
+the database first, then changes memory and publishes). The session keeps
+the stamp of the last change it applied to each id, deletions included, so
+a deleted id keeps a tombstone; a snapshot seeds every id it carries and
+sets the session's floor from its own `observed_at`. An upsert or a deletion
+applies only when its stamp is strictly later than both the floor and that
+id's stamp: a late echo never rolls an event back, in either direction, and
+a delayed response never resurrects an event a later snapshot showed
+deleted. A mutation's response stamp is read after its publish stamp, so the
+tab's own echo is always older than the response it already applied and is
+dropped; its content is identical. Review mode has no stamps, so every change
+applies there. A resync is one caller of this rule: its snapshot is captured
+somewhere between request and response, so the review store logs the event
+changes applied meanwhile (`beginResync` in `web/src/data/reviewStore.ts`)
+and replays them onto the snapshot through `applyFragment`, which keeps only
+those ordered after the capture. A session's server-observed horizon never
+moves back. Undo leans on this ordering (spec
+`docs/superpowers/specs/2026-11-07-event-undo-design.md`, section 4); what
+undo does for a user is in [the dashboard guide](../../cli/monitor/dashboard.md#undo-and-redo).
 
 **Streams end when the server drains.** An open `/api/stream` response
 never finishes on its own, and sse_starlette notices a shutdown only through

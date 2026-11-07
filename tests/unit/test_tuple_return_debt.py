@@ -45,6 +45,10 @@ _IGNORE = "# ast-grep-ignore: no-tuple-return"
 # the fix.
 PERMANENT: dict[tuple[str, str], str] = {
     ("monitor/db.py", "event_insert_params"): "sqlite DB-API parameter row — the driver's contract",
+    (
+        "monitor/db.py",
+        "event_restore_params",
+    ): "sqlite DB-API parameter row — the driver's contract",
     ("suite/plugin.py", "pytest_report_teststatus"): "pytest dictates this hook's return shape",
 }
 

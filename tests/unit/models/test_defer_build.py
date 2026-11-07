@@ -1,7 +1,7 @@
 """Every OttoModel builds lazily, and every one of them still builds (spec 2026-09-26 §5.3)."""
 
 from otto.models.base import OttoModel
-from otto.models.monitor import EventCreateBody, EventUpdateBody
+from otto.models.monitor import EventCreateBody, EventRevertBody, EventUpdateBody
 from tests._fixtures.otto_modules import import_otto_modules
 
 
@@ -31,7 +31,7 @@ def _all_subclasses(cls):
 # own docstring in ``otto.models.monitor`` for the full mechanism. Matched by
 # identity (not name): a rename would otherwise silently drop the class out
 # of this set while leaving the string behind, exempting nothing.
-_EAGER_BUILD_EXCEPTIONS = frozenset({EventCreateBody, EventUpdateBody})
+_EAGER_BUILD_EXCEPTIONS = frozenset({EventCreateBody, EventRevertBody, EventUpdateBody})
 
 
 def test_every_otto_model_defers_its_build():

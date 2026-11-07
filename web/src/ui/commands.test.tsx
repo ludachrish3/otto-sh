@@ -4,9 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
-import { useCommands } from "./commands";
-import { MARK_NOW_BINDING } from "./shortcuts";
+import { type HistoryEntry, useUndoHistory } from "../data/undoHistory";
+import { redo, undo } from "../data/undoRedo";
+import { HISTORY_GATE_KEY, useMutationGates } from "../shell/useMutationGate";
+import { type Command, useCommands } from "./commands";
+import {
+  MARK_NOW_BINDING,
+  matchesBindingFor,
+  REDO_ALT_BINDING,
+  REDO_BINDING,
+  UNDO_BINDING,
+} from "./shortcuts";
 import { useUiStore } from "./uiStore";
+
+// The history's replay is undoRedo.ts's (undohistory.test.ts); here only
+// which one a command runs matters.
+vi.mock("../data/undoRedo", () => ({
+  undo: vi.fn(() => Promise.resolve()),
+  redo: vi.fn(() => Promise.resolve()),
+}));
 
 // Minimal session shape the registry reads: lab.hosts (id/board/slot),
 // elements (id), plus store mode/windowMs. Matches NormalizedSession's
@@ -337,5 +353,91 @@ describe("useCommands — marking rows (Plan 5c)", () => {
     expect(useReviewStore.getState().warnings[0]).toContain("archive is locked");
     // The failure does not clear the still-open span.
     expect(useUiStore.getState().openSpan).toEqual({ sessionId: "s1", eventId: 3 });
+  });
+});
+
+describe("useCommands — undo and redo (#929)", () => {
+  const deleted: HistoryEntry = {
+    verb: "delete",
+    sessionId: "s1",
+    eventId: 3,
+    label: "x",
+    after: null,
+    before: null,
+    trackedSpan: false,
+  };
+  const byId = (cs: Command[], id: string) => cs.find((c) => c.id === id);
+
+  it('the palette lists "Undo delete “x”" and a disabled "Undo" when empty', () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUndoHistory.getState().actions.record(deleted);
+    const { result } = renderHook(() => useCommands());
+    expect(byId(result.current, "edit-undo")).toMatchObject({
+      label: "Undo delete “x”",
+      enabled: true,
+      binding: UNDO_BINDING,
+      yieldsToEditing: true,
+    });
+    expect(byId(result.current, "edit-redo")).toMatchObject({
+      label: "Redo",
+      enabled: false,
+      binding: REDO_BINDING,
+      extraBindings: [REDO_ALT_BINDING],
+      yieldsToEditing: true,
+    });
+    act(() => useUndoHistory.getState().actions.clear());
+    expect(byId(result.current, "edit-undo")).toMatchObject({ label: "Undo", enabled: false });
+  });
+
+  it("labels Redo from the redo stack's top and runs undo / redo", () => {
+    seedStore(null);
+    useReviewStore.setState({ editable: true, mode: "review" });
+    useUndoHistory.getState().actions.record(deleted);
+    useUndoHistory.getState().actions.shiftUndoToRedo();
+    const { result } = renderHook(() => useCommands());
+    expect(byId(result.current, "edit-redo")).toMatchObject({
+      label: "Redo delete “x”",
+      enabled: true,
+    });
+    byId(result.current, "edit-redo")?.run();
+    expect(redo).toHaveBeenCalledOnce();
+    byId(result.current, "edit-undo")?.run();
+    expect(undo).toHaveBeenCalledOnce();
+  });
+
+  it('read-only or a pending mutation with a non-empty stack: a disabled plain "Undo"', () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: false });
+    useUndoHistory.setState({ undo: [deleted], redo: [] });
+    const { result } = renderHook(() => useCommands());
+    expect(byId(result.current, "edit-undo")).toMatchObject({ label: "Undo", enabled: false });
+    act(() => useReviewStore.setState({ editable: true }));
+    expect(byId(result.current, "edit-undo")).toMatchObject({
+      label: "Undo delete “x”",
+      enabled: true,
+    });
+    act(() =>
+      useMutationGates.setState({
+        pending: { [HISTORY_GATE_KEY]: { action: "undo", run: Symbol("t") } },
+      }),
+    );
+    // A pending mutation with a non-empty stack: a disabled, plain "Undo".
+    expect(byId(result.current, "edit-undo")).toMatchObject({ label: "Undo", enabled: false });
+    act(() => useMutationGates.setState({ pending: {} }));
+  });
+
+  it("⌘⇧Z redoes on mac", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUndoHistory.setState({ undo: [deleted], redo: [deleted] });
+    const { result } = renderHook(() => useCommands());
+    const e = new KeyboardEvent("keydown", { key: "Z", metaKey: true, shiftKey: true });
+    const hit = result.current.filter((c) =>
+      [c.binding, ...(c.extraBindings ?? [])].some(
+        (b) => b !== undefined && matchesBindingFor(e, b, true),
+      ),
+    );
+    expect(hit.map((c) => c.id)).toEqual(["edit-redo"]);
   });
 });

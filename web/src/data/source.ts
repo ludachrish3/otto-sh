@@ -39,7 +39,8 @@ export function registerStreamStop(stop: () => void): void {
 /** Cuts the server source off, in one synchronous turn: in-flight server
  * work goes stale, the stream closes, the shell drops to read-only review,
  * and every piece of UI state bound to the server (the open span, the
- * editor, the sweep, the mark popover) is cleared. */
+ * editor, the sweep, the mark popover) is cleared; setEditable(false) also
+ * clears the undo history. */
 function detachServerSource(): void {
   generation += 1;
   const stop = stopStream;

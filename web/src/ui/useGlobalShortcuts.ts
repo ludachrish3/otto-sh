@@ -7,7 +7,14 @@ import { useEffect } from "react";
 
 import type { Command } from "./commands";
 import { focusSearchInput } from "./searchFocus";
-import { matchesBinding, PALETTE_BINDING, SEARCH_BINDING, shouldSuppressSlash } from "./shortcuts";
+import {
+  editingOverlayOpen,
+  isTextEditingTarget,
+  matchesBinding,
+  PALETTE_BINDING,
+  SEARCH_BINDING,
+  shouldSuppressSlash,
+} from "./shortcuts";
 import { useUiStore } from "./uiStore";
 
 export function useGlobalShortcuts(commands: Command[]): void {
@@ -39,7 +46,14 @@ export function useGlobalShortcuts(commands: Command[]): void {
         return;
       }
       for (const command of commands) {
-        if (command.binding && command.enabled && matchesBinding(e, command.binding)) {
+        if (!command.enabled) continue;
+        const bindings = command.binding
+          ? [command.binding, ...(command.extraBindings ?? [])]
+          : (command.extraBindings ?? []);
+        if (bindings.some((b) => matchesBinding(e, b))) {
+          if (command.yieldsToEditing && (isTextEditingTarget(e.target) || editingOverlayOpen())) {
+            continue;
+          }
           e.preventDefault();
           // A palette row already closes the palette before running its
           // command (see CommandMenu.tsx); the same command fired by its chord

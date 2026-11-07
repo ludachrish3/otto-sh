@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
 import { eventMarkers } from "../charts/options";
-import { parseExportDocument } from "../data/exportDoc";
+import { observedAtMicros, parseExportDocument } from "../data/exportDoc";
 import { applyFragment } from "../data/fragment";
 import { seriesKey } from "../data/seriesIndex";
 import { displayEndMs, liveRange } from "../data/time";
@@ -481,5 +481,95 @@ describe("applyFragment observed_at", () => {
     );
     expect(displayEndMs(next)).toBe(T + 1000);
     expect(eventMarkers(next.events, liveRange(displayEndMs(next), 5 * 60_000))).toEqual([]);
+  });
+});
+
+// #929 §4: a late change never rolls an event back. Each change carries the
+// server's stamp; the store keeps the last one applied per id (tombstones
+// included) and a snapshot floor, and ignores anything older.
+describe("applyFragment event ordering", () => {
+  const base = () => synthSession({ hosts: 1, seriesPerHost: 1, ticks: 2, intervalS: 5 });
+  // Microsecond stamps one step apart: the server's clock, strictly increasing.
+  const at = (us: number) => `2026-07-12T01:00:00.${String(us).padStart(6, "0")}+00:00`;
+  const event = (id: number, label: string) => ({
+    id,
+    timestamp: "2026-07-12T00:00:01Z",
+    label,
+    source: "manual",
+    color: "#888888",
+    dash: "dash",
+  });
+  const ids = (s: ReturnType<typeof base>) => s.events.map((e) => e.id);
+
+  it("an older upsert after a newer delete is ignored", () => {
+    // Undo of a create: the DELETE response (t3) lands before the create's echo (t1).
+    let s = applyFragment(base(), frag({ events: [event(7, "x")] as never, observed_at: at(1) }));
+    s = applyFragment(s, frag({ deleted_event_ids: [7], observed_at: at(3) }));
+    s = applyFragment(s, frag({ events: [event(7, "x")] as never, observed_at: at(2) }));
+    expect(ids(s)).toEqual([]);
+  });
+
+  it("an older delete after a newer upsert is ignored", () => {
+    // Undo of a delete: the restore (t3) lands before the delete's echo (t2).
+    let s = applyFragment(base(), frag({ events: [event(7, "x")] as never, observed_at: at(1) }));
+    s = applyFragment(s, frag({ events: [event(7, "restored")] as never, observed_at: at(3) }));
+    s = applyFragment(s, frag({ deleted_event_ids: [7], observed_at: at(2) }));
+    expect(s.events.map((e) => e.label)).toEqual(["restored"]);
+  });
+
+  it("a change older than the snapshot floor is ignored, even for an id the snapshot lacks", () => {
+    // The horizon is already past these stamps, so only the events could change.
+    const s = { ...base(), eventFloor: observedAtMicros(at(5)), observedMs: Date.parse(at(9)) };
+    expect(applyFragment(s, frag({ events: [event(9, "old")] as never, observed_at: at(4) }))).toBe(
+      s,
+    );
+    expect(applyFragment(s, frag({ events: [event(9, "tie")] as never, observed_at: at(5) }))).toBe(
+      s,
+    );
+    const next = applyFragment(s, frag({ events: [event(9, "new")] as never, observed_at: at(6) }));
+    expect(ids(next)).toEqual([9]);
+  });
+
+  it("an unstamped fragment always applies", () => {
+    let s = applyFragment(base(), frag({ deleted_event_ids: [7], observed_at: at(9) }));
+    s = applyFragment(s, frag({ events: [event(7, "review")] as never }));
+    expect(ids(s)).toEqual([7]);
+    s = applyFragment(
+      { ...s, eventFloor: observedAtMicros(at(9)) },
+      frag({ deleted_event_ids: [7] }),
+    );
+    expect(ids(s)).toEqual([]);
+  });
+
+  it("a response stamped after its own echo makes the echo a no-op", () => {
+    // The server publishes (t1) before it stamps the response header (t2),
+    // and the HTTP response may land first: the echo then changes nothing.
+    const created = applyFragment(
+      base(),
+      frag({ events: [event(7, "x")] as never, observed_at: at(2) }),
+    );
+    expect(
+      applyFragment(created, frag({ events: [event(7, "x")] as never, observed_at: at(1) })),
+    ).toBe(created);
+  });
+
+  it("copies the stamps only when the fragment changes an event", () => {
+    const s = base();
+    const touched = applyFragment(
+      s,
+      frag({ events: [event(7, "x")] as never, observed_at: at(1) }),
+    );
+    expect(touched.eventStamps).not.toBe(s.eventStamps);
+    expect(s.eventStamps.has(7)).toBe(false);
+    expect(touched.eventStamps.get(7)).toBe(observedAtMicros(at(1)));
+    const ts = new Date(touched.endMs + 5000).toISOString();
+    const tick = applyFragment(
+      touched,
+      frag({
+        metrics: [{ host: "h0", label: "m0", timestamp: ts, value: 1 }] as never,
+        observed_at: at(2),
+      }),
+    );
+    expect(tick.eventStamps).toBe(touched.eventStamps);
   });
 });

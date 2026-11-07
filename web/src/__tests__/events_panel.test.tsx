@@ -589,4 +589,19 @@ describe("EventsPanel pending gate (#867)", () => {
     expect(fetchMock.mock.calls.length).toBe(1);
     expect(screen.getByTestId("event-endnow-1").hasAttribute("data-loading")).toBe(true);
   });
+
+  it("End now on one row spins only that row while every row is disabled", async () => {
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live", editable: true });
+    load();
+    const fetchMock = held();
+    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByTestId("event-endnow-1"));
+    expect(screen.getByTestId("event-endnow-1").hasAttribute("data-loading")).toBe(true);
+    const other = screen.getByTestId("event-endnow-4");
+    expect(other.hasAttribute("data-loading")).toBe(false);
+    expect(other.hasAttribute("disabled")).toBe(true);
+    await user.click(other);
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
 });

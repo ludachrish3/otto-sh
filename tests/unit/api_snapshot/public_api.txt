@@ -4686,6 +4686,8 @@ member	otto.monitor:MetricCollector.get_series	method	sync	-
 member	otto.monitor:MetricCollector.get_tunnel_records	method	sync	-
 member	otto.monitor:MetricCollector.init_db	method	coroutine	-
 member	otto.monitor:MetricCollector.mutate_event	method	coroutine	PK:event_id:- PK:resolve:-
+member	otto.monitor:MetricCollector.restore_event	method	coroutine	PK:event_id:- PK:write:-
+member	otto.monitor:MetricCollector.revert_event	method	coroutine	PK:event_id:- PK:expect:- PK:write:-
 member	otto.monitor:MetricCollector.run	method	coroutine	PK:interval:O PK:duration:N
 member	otto.monitor:MetricCollector.spawn_collection	method	coroutine	PK:interval:- PK:duration:N
 member	otto.monitor:MetricCollector.subscribe	method	sync	-

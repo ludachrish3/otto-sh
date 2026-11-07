@@ -41,6 +41,8 @@ function subMinuteDownSession(): NormalizedSession {
     },
     metrics,
     events: [],
+    eventStamps: new Map(),
+    eventFloor: null,
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: { cpu: "CPU" },

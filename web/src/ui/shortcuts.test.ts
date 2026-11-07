@@ -4,6 +4,7 @@ import {
   type Binding,
   detectMac,
   formatBindingFor,
+  isTextEditingTarget,
   matchesBindingFor,
   shouldSuppressSlash,
 } from "./shortcuts";
@@ -106,5 +107,43 @@ describe("shouldSuppressSlash", () => {
   it("fires on a plain body target", () => {
     expect(shouldSuppressSlash(document.body, false)).toBe(false);
     expect(shouldSuppressSlash(null, false)).toBe(false);
+  });
+});
+
+describe("shift bindings", () => {
+  const MOD_SHIFT_Z: Binding = { key: "z", mod: true, shift: true };
+  const MOD_Z: Binding = { key: "z", mod: true };
+  it("mod+shift+z matches only the shift binding", () => {
+    const e = keyEvent({ key: "Z", ctrlKey: true, shiftKey: true });
+    expect(matchesBindingFor(e, MOD_SHIFT_Z, false)).toBe(true);
+    expect(matchesBindingFor(e, MOD_Z, false)).toBe(false);
+  });
+  it("mod+z does not match a shift binding", () => {
+    expect(matchesBindingFor(keyEvent({ key: "z", ctrlKey: true }), MOD_SHIFT_Z, false)).toBe(
+      false,
+    );
+  });
+  it("formats shift per platform", () => {
+    expect(formatBindingFor(MOD_SHIFT_Z, true)).toBe("⌘⇧Z");
+    expect(formatBindingFor(MOD_SHIFT_Z, false)).toBe("Ctrl Shift Z");
+  });
+});
+
+describe("isTextEditingTarget / widened slash suppression", () => {
+  it("is a slash-suppressing editing target for bare contenteditable and spinbutton", () => {
+    const bare = document.createElement("div");
+    bare.setAttribute("contenteditable", "");
+    const plain = document.createElement("div");
+    plain.setAttribute("contenteditable", "plaintext-only");
+    const spin = document.createElement("div");
+    spin.setAttribute("role", "spinbutton");
+    const off = document.createElement("div");
+    off.setAttribute("contenteditable", "false");
+    for (const el of [bare, plain, spin]) {
+      expect(isTextEditingTarget(el)).toBe(true);
+      expect(shouldSuppressSlash(el, false)).toBe(true);
+    }
+    expect(isTextEditingTarget(off)).toBe(false);
+    expect(isTextEditingTarget(null)).toBe(false);
   });
 });

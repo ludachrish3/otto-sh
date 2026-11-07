@@ -35,3 +35,23 @@ def _make_archive(tmp_path) -> tuple[str, str]:
 
     asyncio.run(_build())
     return path, frame.id
+
+
+def _add_session(path: str, now: datetime) -> str:
+    """Append a second finalized session (opened at *now*) to *path*; returns its id.
+
+    Event ids are unique across an archive's sessions, so two sessions are
+    what a cross-session id test needs.
+    """
+    frame = new_frame(label=None, note=None, now=now)
+    db = build_session_metric_db(
+        path, frame, LabSnapshot(), MetricCollector(hosts=[]), interval=5.0
+    )
+
+    async def _build() -> None:
+        await db.open()
+        await db.finalize(now + timedelta(minutes=10))
+        await db.close()
+
+    asyncio.run(_build())
+    return frame.id

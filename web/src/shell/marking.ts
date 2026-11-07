@@ -36,7 +36,7 @@ export async function markNow(label: string): Promise<StaleResult | undefined> {
 export async function startSpan(label: string): Promise<StaleResult | undefined> {
   const sessionId = requireActiveSessionId();
   const current = sourceGuard();
-  const record = current(await createEvent(sessionId, { label }));
+  const record = current(await createEvent(sessionId, { label }, { trackSpan: true }));
   if (isStale(record)) return record;
   if (record.id != null) {
     useUiStore.getState().actions.setOpenSpan({ sessionId, eventId: record.id });

@@ -1,7 +1,12 @@
 // web/src/__tests__/mutationgate.test.ts
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { useMutationGate } from "../shell/useMutationGate";
+import {
+  anyMutationPending,
+  HISTORY_GATE_KEY,
+  runGate,
+  useMutationGate,
+} from "../shell/useMutationGate";
 
 function deferred() {
   let resolve!: () => void;
@@ -73,7 +78,7 @@ describe("useMutationGate", () => {
     expect(again.result.current.pendingAction).toBeNull();
   });
 
-  it("names the pressed action, and another key is not shut by it", async () => {
+  it("any pending key shuts every gate's pending and run; pendingAction names only the pressed key's action", async () => {
     const a = renderHook(() => useMutationGate("a"));
     const b = renderHook(() => useMutationGate("b"));
     const d = deferred();
@@ -82,16 +87,30 @@ describe("useMutationGate", () => {
       p = a.result.current.run(() => d.promise, "stop");
     });
     expect(a.result.current.pendingAction).toBe("stop");
-    expect(b.result.current.pending).toBe(false);
+    expect(b.result.current.pendingAction).toBeNull();
+    expect(a.result.current.pending).toBe(true);
+    expect(b.result.current.pending).toBe(true);
+    expect(anyMutationPending()).toBe(true);
     const fn = vi.fn(async () => {});
     await act(async () => {
       await b.result.current.run(fn);
+      await runGate("c", "x", fn);
     });
-    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).not.toHaveBeenCalled();
     await act(async () => {
       d.resolve();
       await p;
     });
+    expect(b.result.current.pending).toBe(false);
+    expect(anyMutationPending()).toBe(false);
+    await act(async () => {
+      await runGate("c", "x", fn);
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("HISTORY_GATE_KEY is the history's own key", () => {
+    expect(HISTORY_GATE_KEY).toBe("history");
   });
 
   it("a rejection propagates and releases the gate", async () => {
