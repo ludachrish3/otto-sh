@@ -5,6 +5,126 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-11-07
+
+### Added
+
+- **BREAKING** **cov**: otto computes GCOV_PREFIX_STRIP from the product's build root (#788)
+- **init**: --inline-hosts writes one lab file with its hosts inline (#787)
+- **gate**: carry a bed stamp across a rebase when the landing replays and main's delta has no bed lane
+- **BREAKING** **env**: otto depends on uv, and otto env runs the uv installed with otto (#555 step 0)
+- **gate**: landing enforcement — the slim local gate, the local-gate status, main closed to direct pushes, the release through a pull request
+- **scripts**: a src-leaf tip runs the bed half and its scoped quick, not make coverage
+- **make**: a coverage-bed lane, the bed half of the coverage selection
+- **scripts**: the full gate's static lanes include the TypeScript checks
+- **scripts**: land through a pull request; drop the local hostless tip lane
+- **scripts**: reap the bed at every lane's start and green exit, and by hand
+- **scripts**: lease the bed per lane, readable by otto reservation
+- **scripts**: run the full gate's static lanes before its test suites
+- **scripts**: record what every gate lane costs, and print it
+
+
+### Changed
+
+- **cli**: render --dry-run plans in one place for link and tunnel
+- type-check clean under ty 0.0.95's typeshed and override rules, ahead of the bump
+
+
+### Dependencies
+
+- **deps-dev**: bump greenlet from 3.5.3 to 3.5.6 for Python 3.15
+- **deps-dev**: bump @biomejs/biome from 2.5.14 to 2.6.4 in /web
+- **deps-dev**: bump knip from 6.38.0 to 6.43.0 in /web
+- **deps-dev**: bump the flagged transitive web packages
+- **deps**: bump the Python lock for the open Dependabot security alerts
+- **deps-dev**: bump jsdom from 30.1.1 to 30.1.3 in /web
+- **deps-dev**: bump @vitejs/plugin-react from 6.1.1 to 6.1.2 in /web
+- **deps-dev**: bump vite from 8.3.0 to 8.3.5 in /web
+- **deps-dev**: bump ruff from 0.16.9 to 0.17.3
+- **deps**: bump wouter from 3.12.0 to 3.13.0 in /web
+- **deps-dev**: bump ty from 0.0.84 to 0.0.95
+- **deps-dev**: bump hypothesis from 6.168.3 to 6.168.5
+- **deps**: bump astral-sh/setup-uv from 10.2.0 to 10.3.3
+- **deps**: bump pyasn1 from 0.6.4 to 0.6.5
+- **deps-dev**: bump undici from 8.10.2 to 8.12.3 in /web
+- **deps**: bump fastapi from 0.141.1 to 0.156.8
+- **deps-dev**: update uv-build requirement from <0.13.0 to <0.14.0
+- **deps-dev**: bump @types/node from 26.6.3 to 26.6.4 in /web
+- **deps**: bump shiki from 4.4.3 to 4.5.0 in /web
+- **deps-dev**: bump monocart-coverage-reports in /web
+- **deps-dev**: Bump the vitest group across 1 directory with 2 updates
+- **deps-dev**: bump types-requests
+- **deps**: bump actions/setup-node from 7.0.0 to 7.1.0
+- **deps**: bump sse-starlette from 3.4.11 to 3.5.0
+- **deps**: bump pysnmp from 7.1.29 to 7.1.30
+- **deps**: bump uvicorn from 0.52.4 to 0.54.0
+- **deps**: bump starlette from 1.6.0 to 1.7.0
+
+
+### Documentation
+
+- **specs**: landing enforcement — BED_REACH no longer holds for every script
+- **spec**: coverage and docker bed batch design (#778, #783, #782, #777)
+- **spec**: non-tty output width design (#785)
+- **spec**: every release of a single-client console drains it to quiet first (#386)
+- **contributing**: landing a batch, the ordering rule, the review tiers
+- **specs**: landing throughput — rebase-tolerant bed stamps, one hostless session per tier, bookend certificates, the batch text
+- **contributing**: the author gates and opens the PR; only the maintainer pushes to main
+- **contributing**: a gate may be stopped whenever its result is moot
+- **specs**: coverage-bed tip, what the census and the reviews corrected (#797)
+- **specs**: coverage-bed tip design (#797)
+- **specs**: bed lease and bed reap design (#794, #759)
+
+
+### Fixed
+
+- **monitor**: deleting an event asks in a dialog that names it
+- **monitor**: Stop and End span disable as soon as the tracked span ends anywhere
+- **monitor**: event actions ignore repeat presses while a request is pending
+- **monitor**: a new event shows at once in the live window, without waiting for the next metric
+- **monitor**: crowded event labels keep the earliest events, and "(+N)" lists the hidden ones
+- **BREAKING** **cov**: name the hosts and sources a run used; label runs <host>/<product> (#790)
+- **gate**: lanes run without the gate's lease budget (#821)
+- **BREAKING** **suite**: --cov-dir names the run dir that otto cov report reads
+- **cov**: the report header and the runs table hold their layout from 820 px up
+- **cov**: tier chips keep their colour off the text; one function decides tier default colours
+- **monitor**: event labels never overprint or leave the plot
+- **monitor**: the event editor refuses incomplete dates and says why
+- **BREAKING** **monitor**: importing a file while live makes the file the only data source
+- **BREAKING** **host**: install passes over products that are already installed
+- **BREAKING** **session**: a login that cuts the first shell line short no longer leaves output with \r\n
+- **BREAKING** **layout**: one default xdir and one run shape for the CLI and library calls
+- **monitor**: one SIGINT with a dashboard stream open drains instead of forcing
+- **cli**: print user text in status lines literally, emoji included
+- **init**: suggest template test names only when the template tests exist
+- **cli**: error and help text points at the answer
+- **cli**: hint that global options go before the subcommand
+- **BREAKING** **cov**: coverage data belongs to cleanup, never to uninstall
+- **cov**: reset counters with POSIX find -exec and prove none remain
+- **cov**: cov report reads a stopped docker_image product's objects (#782)
+- **docker**: install over a stopped container of the same name (#783)
+- **BREAKING** **cov**: declare a unit build directory once, under the product it tests (#778)
+- **cli**: render whole lines and literal ids when no terminal is attached (#785)
+- **completion**: serve a host enumeration that missed its deadline for 5 minutes, not a day (#744)
+- **BREAKING** **cli**: predicate verbs exit 1 when they answer False (#781)
+- **snmp**: survive cancelling snmp_get under pysnmp 7.1.30 (#742)
+- **BREAKING** **telnet**: drain a single-client console to quiet before every release (#386)
+- **test**: a pytest session a test starts takes a temp root of its own
+- **web**: satisfy the style rules Biome 2.6 promotes to the default set
+- **scripts**: let Biome's run summary through the web warnings gate
+- **web**: satisfy the checks biome 2.6 adds, ahead of the bump
+
+
+### Maintenance
+
+- **matrix**: re-measure the kmodcov matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.18.0] - 2026-11-01
 
 ### Added
@@ -2388,7 +2508,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/ludachrish3/otto-sh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/ludachrish3/otto-sh/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ludachrish3/otto-sh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/ludachrish3/otto-sh/compare/v0.16.0...v0.16.1
