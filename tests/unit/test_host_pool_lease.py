@@ -31,7 +31,7 @@ from tests._fixtures._host_pool import (
 )
 from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV, bed_lock_root
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests._fixtures.process_group import abort_group_in_turn
+from tests._fixtures.process_group import abort_group_in_turn, start_dumping_group
 
 
 def test_lease_yields_a_pool_member(tmp_path: Path) -> None:
@@ -113,23 +113,14 @@ class _Session(NamedTuple):
 def _start_session(
     cmd: list[str], *, env: dict[str, str], cwd: Path, log: Path, stack: ExitStack
 ) -> _Session:
-    """Start a child pytest session in a process group of its own, its output in *log*.
+    """Start a child pytest session that can dump its stacks, its output in *log*.
 
-    PYTHONFAULTHANDLER keeps faulthandler armed in every process of the group,
-    the xdist worker included, for the whole life of the interpreter: pytest's
-    own faulthandler plugin disarms at unconfigure, before the teardown a
-    session can hang in. PYTHONUNBUFFERED keeps what was printed before an
-    abort. *stack* kills whatever is left of the group on the way out.
+    The group is started by
+    :func:`~tests._fixtures.process_group.start_dumping_group`; *stack* kills
+    whatever is left of it on the way out.
     """
     sink = stack.enter_context(log.open("wb"))
-    proc = subprocess.Popen(
-        cmd,
-        env={**env, "PYTHONFAULTHANDLER": "1", "PYTHONUNBUFFERED": "1"},
-        cwd=cwd,
-        stdout=sink,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    proc = start_dumping_group(cmd, env=env, cwd=cwd, sink=sink)
     stack.callback(_kill_session, proc)
     return _Session(cmd, proc, log)
 
