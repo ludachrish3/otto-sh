@@ -5,6 +5,7 @@
 // the popover's own testids are the assertion surface for the rest.
 import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { setInteractionModality } from "react-aria";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
@@ -82,6 +83,30 @@ describe("MarkControl", () => {
     expect(await screen.findByTestId("mark-popover")).toBeTruthy();
     expect(screen.getByTestId("mark-submit").textContent).toBe("Mark");
   });
+
+  // ui/useOpenFocus.ts (#957): synchronously on the opening render, in every
+  // modality, so react-aria's useDialog finds focus inside the popover.
+  it.each(["keyboard", "virtual"] as const)(
+    "the popover opens with focus in its label field, arming no refocus timer, under %s modality",
+    (modality) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        setInteractionModality(modality);
+        hydrate();
+        vi.stubGlobal("fetch", vi.fn());
+        render(<MarkControl />);
+        act(() => useUiStore.getState().actions.openMarkPopover("mark"));
+        expect(document.activeElement).toBe(screen.getByTestId("mark-label-input"));
+        // An armed timer would pull focus lost to <body> back to the Dialog.
+        act(() => setInteractionModality("keyboard"));
+        act(() => (document.activeElement as HTMLElement).blur());
+        act(() => vi.advanceTimersByTime(500));
+        expect(document.activeElement).toBe(document.body);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("typing a label and pressing Enter POSTs to the create route and closes the popover", async () => {
     const user = userEvent.setup();

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
@@ -210,6 +211,37 @@ describe("EventsPanel compose row", () => {
     expect(screen.getByTestId("events-compose-stop")).toBeTruthy();
     expect(screen.queryByTestId("events-compose-add")).toBeNull();
   });
+
+  // The panel launches the event editor, a nested overlay: it must not mount
+  // with nothing focused, or react-aria's useDialog arms the 500 ms refocus
+  // timer that can take focus from the editor's restore (#957). Under virtual
+  // (screen-reader) modality react-aria's own autoFocus waited a frame, too
+  // late for that check, so focus must already be there on the first render.
+  it.each([
+    ["live", "events-compose-label", "keyboard"],
+    ["review", "events-compose-add", "keyboard"],
+    ["live", "events-compose-label", "virtual"],
+    ["review", "events-compose-add", "virtual"],
+  ] as const)(
+    "%s + editable: the panel opens with focus on %s, arming no refocus timer, under %s modality (#957)",
+    (mode, testId, modality) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        setInteractionModality(modality);
+        useReviewStore.setState({ mode, editable: true });
+        load();
+        // Synchronously after the render: a frame later is too late.
+        expect(document.activeElement).toBe(screen.getByTestId(testId));
+        // An armed timer would pull focus lost to <body> back to the Dialog.
+        act(() => setInteractionModality("keyboard"));
+        act(() => (document.activeElement as HTMLElement).blur());
+        act(() => vi.advanceTimersByTime(500));
+        expect(document.activeElement).toBe(document.body);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("review + editable: renders only the Add event… button", async () => {
     useReviewStore.setState({ mode: "review", editable: true });

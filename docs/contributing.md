@@ -379,7 +379,11 @@ user-facing behavior so that an existing user has to change something (a
 caller, a subclass, a script, a lab file), is a breaking change. Behavior a
 user does not have to act on is not breaking, even when it shows: a
 verdict that becomes more reliable, a run that takes a little longer, an
-internal budget or timeout. Neither is any change to maintainer tooling
+internal budget or timeout. Nor is a visual or aesthetic change (layout,
+colour, styling, wrapping of otto's own output, where focus starts) that
+leaves every function in place: it is a `feat:` or a `fix:`. It becomes
+breaking only when functionality changes or is taken away. Neither is any
+change to maintainer tooling
 (`make` targets, `scripts/`, the gates, the hooks, CI), even one a
 maintainer must adapt to; say what changed in the commit body instead.
 A public name is any name in the `__all__` of a namespace declared in

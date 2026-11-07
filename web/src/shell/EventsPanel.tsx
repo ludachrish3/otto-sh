@@ -19,6 +19,7 @@
 // matching where the pre-migration SlideOver put it.
 import { Edit01 } from "@untitledui/icons";
 import { useEffect, useState } from "react";
+import { ButtonContext } from "react-aria-components";
 
 import {
   Dialog,
@@ -40,6 +41,7 @@ import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatClockTime, formatSpan, parseTs } from "../data/time";
 import { TextInput } from "../ui/TextInput";
 import { type EventEditorTarget, useUiStore } from "../ui/uiStore";
+import { useOpenFocus } from "../ui/useOpenFocus";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "./marking";
 import { endNowGateKey, markGateKey, useMutationGate } from "./useMutationGate";
 
@@ -53,13 +55,20 @@ const COMPOSE_STOP = "events-stop";
 /** The compose row: live+editable sessions mark/start/stop inline; review+
  * editable sessions get "Add event…" (there's no "now" to mark/start/end in
  * a review session). Rendered only when `editable` (see EventsPanel below)
- * -- a read-only server must not offer affordances it cannot fulfil. */
+ * -- a read-only server must not offer affordances it cannot fulfil.
+ *
+ * Its first control takes `focusRef`, so it has focus when the panel opens
+ * (ui/useOpenFocus.ts, #957). The panel stays open under the event editor
+ * it launches, a nested overlay whose close restores focus here. The
+ * exposure is only within the panel's first 500 ms: opening and closing the
+ * editor inside that window. A read-only panel launches no editor. */
 function EventsComposeRow(props: {
   session: NormalizedSession;
   mode: "live" | "review" | null;
   openEventEditor: (target: EventEditorTarget) => void;
+  focusRef: (el: HTMLElement | null) => void;
 }) {
-  const { session, mode, openEventEditor } = props;
+  const { session, mode, openEventEditor, focusRef } = props;
   const openSpan = useUiStore((s) => s.openSpan);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +85,21 @@ function EventsComposeRow(props: {
   if (mode !== "live") {
     return (
       <div data-testid="events-compose">
-        <Button
-          size="sm"
-          color="secondary"
-          data-testid="events-compose-add"
-          onPress={() => openEventEditor({ kind: "draft", draft: blankDraft(session) })}
-        >
-          Add event…
-        </Button>
+        {/* The vendored Button's props declare no `ref`; RAC's ButtonContext
+            is the supported way to hand the AriaButton it renders one. This
+            Provider REPLACES RAC Dialog's slotted ButtonContext for the row,
+            so a slot="close" button added inside it would stop closing the
+            panel: keep such a button outside the Provider. */}
+        <ButtonContext.Provider value={{ ref: focusRef }}>
+          <Button
+            size="sm"
+            color="secondary"
+            data-testid="events-compose-add"
+            onPress={() => openEventEditor({ kind: "draft", draft: blankDraft(session) })}
+          >
+            Add event…
+          </Button>
+        </ButtonContext.Provider>
       </div>
     );
   }
@@ -122,7 +138,13 @@ function EventsComposeRow(props: {
   const stopBusy = busy(COMPOSE_STOP);
   return (
     <div data-testid="events-compose" className="flex flex-wrap items-end gap-2 pb-1">
-      <TextInput label="Label" testId="events-compose-label" value={label} onChange={setLabel} />
+      <TextInput
+        label="Label"
+        testId="events-compose-label"
+        value={label}
+        onChange={setLabel}
+        inputRef={focusRef}
+      />
       <Button
         size="sm"
         color="secondary"
@@ -196,6 +218,8 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
   const editable = useReviewStore((s) => s.editable);
   const openEventEditor = useUiStore((s) => s.actions.openEventEditor);
   const [jumpNotice, setJumpNotice] = useState<string | null>(null);
+  // The overlay below is mounted exactly while this holds.
+  const composeFocus = useOpenFocus<HTMLElement>(isOpen && session !== null);
 
   // Cleared on reopen: a refusal from the panel's last time open must not
   // linger into the next one.
@@ -262,12 +286,18 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
     >
       <Modal>
         <Dialog data-testid="events-panel" aria-label="Events">
+          {composeFocus.scope}
           <SlideoutMenu.Header onClose={onClose}>
             <h2 className="text-sm font-semibold text-primary">Events</h2>
           </SlideoutMenu.Header>
           <SlideoutMenu.Content className="gap-1 pb-4">
             {editable && (
-              <EventsComposeRow session={session} mode={mode} openEventEditor={openEventEditor} />
+              <EventsComposeRow
+                session={session}
+                mode={mode}
+                openEventEditor={openEventEditor}
+                focusRef={composeFocus.ref}
+              />
             )}
             {jumpNotice !== null && (
               <p data-testid="jump-notice" className="text-xs text-error-primary">
