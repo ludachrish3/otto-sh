@@ -26,6 +26,10 @@ here. The rules are ``docs/api/stability.md``'s "How these pages mark it":
   what lets a ``~otto.`` prefix through. An Internals page's other signatures
   are not checked: CLI internals take Typer's ``OptionInfo`` objects as
   defaults;
+* every manifest note (``docs_api_reference.notes_for``: a class's withdrawn
+  rights, a callable's positional subjects) is under the object its
+  ``[symbols]`` key names, and no object carries a note its entry does not
+  require;
 * while the release is before 1.0, every page carries ``otto-api-provisional``.
 
 Usage: ``python scripts/check_docs_api_marks.py docs/_build/html [--manifest PATH]``.
@@ -40,6 +44,7 @@ import posixpath
 import re
 import sys
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -50,10 +55,16 @@ from typing_extensions import Self
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts.api_manifest import load_manifest  # noqa: E402 -- path set up above
+from scripts.api_manifest import load_manifest, load_symbols  # noqa: E402
 from scripts.docs_api_reference import (  # noqa: E402 -- path set up above
     MANIFEST,
+    Noted,
     blank_string_literals,
+    build_reference,
+    documented_notes,
+    load_golden,
+    load_namespaces,
+    notes_for,
     trackable,
 )
 
@@ -68,6 +79,8 @@ _VALUE_SIGNATURE = re.compile(
 _SIGNATURE = re.compile(r"<dt\b([^>]*)>(.*?)</dt>", re.DOTALL)
 _ID = re.compile(r'\bid="([^"]*)"')
 _TAG = re.compile(r"<[^>]+>")
+_NOTE_MARK = re.compile(r"\botto-(?:rights|positional)-[\w-]+")
+_DT_OPEN = re.compile(r'<dl class="py [^"]*">\s*<dt\b([^>]*)>')
 
 
 class _Leak(NamedTuple):
@@ -350,14 +363,84 @@ def _signature_findings(site: Site, pages: "list[str]") -> "list[str]":
     return out
 
 
+def _marks(lines: "list[str]") -> "set[str]":
+    """Return the note marks reST *lines* (or HTML text) carry."""
+    return set(_NOTE_MARK.findall("\n".join(lines)))
+
+
+def _noted_objects(site: Site, pages: "list[str]") -> "dict[str, set[str]]":
+    """Map each object anchor under ``api/`` to the note marks its own description opens with.
+
+    Only object entries (``<dl class="py ...">``) are read, so a prose page's
+    code sample is never a note. A note sits before the object's members, so
+    an object's text runs from its ``<dt>`` to the next object's ``<dt>``.
+    """
+    out: dict[str, set[str]] = {}
+    for page in pages:
+        if not page.startswith("api/"):
+            continue
+        text = (site.root / page).read_text(encoding="utf-8")
+        opens = list(_DT_OPEN.finditer(text))
+        for i, match in enumerate(opens):
+            anchor = _ID.search(match.group(1))
+            end = opens[i + 1].start() if i + 1 < len(opens) else len(text)
+            marks = _marks([text[match.end() : end]])
+            if anchor and marks:
+                out.setdefault(anchor.group(1), set()).update(marks)
+    return out
+
+
+def _note_findings(site: Site, notes: "Mapping[str, Noted]", pages: "list[str]") -> "list[str]":
+    """Each manifest note is at its object's documented home; no other object carries one.
+
+    *notes* is ``docs_api_reference.documented_notes``: aliases already resolve to
+    their one home, and an inheriting member carries its effective entry. A member
+    the reference does not index (autodoc leaves out a public dunder such as
+    ``__call__``) has no anchor to carry a note, so its entry is skipped; an
+    unindexed binding is a finding.
+    """
+    found = _noted_objects(site, pages)
+    expected: dict[str, set[str]] = {}
+    out: list[str] = []
+    for path in sorted(notes):
+        noted = notes[path]
+        marks = _marks(notes_for(noted.symbol))
+        if not marks:
+            continue
+        if path not in site.objects:
+            if not noted.member:
+                out.append(
+                    f"{noted.key}: the manifest requires a note,"
+                    f" and the reference indexes no {path}"
+                )
+            continue
+        expected[path] = marks
+    for path in sorted(set(found) | set(expected)):
+        have, want = found.get(path, set()), expected.get(path, set())
+        out.extend(
+            f"{path}: lacks {mark}, which the manifest requires" for mark in sorted(want - have)
+        )
+        out.extend(
+            f"{path}: carries {mark}, which the manifest does not back"
+            for mark in sorted(have - want)
+        )
+    return out
+
+
 def findings(
-    site: Site, stabilities: "dict[str, str]", groups: "list[list[str]]", pages: "list[str]"
+    site: Site,
+    stabilities: "dict[str, str]",
+    groups: "list[list[str]]",
+    pages: "list[str]",
+    *,
+    notes: "Mapping[str, Noted] | None" = None,
 ) -> "list[str]":
     """Return every way the built site breaks the marking rules.
 
     *stabilities* maps each declared namespace to its tier. Each of *groups*
     lists the public paths (``namespace.name``) of one object. *pages* lists
-    every HTML page, relative to the site root.
+    every HTML page, relative to the site root. *notes* maps each documented
+    path to its manifest note entry (``docs_api_reference.documented_notes``).
     """
     out: list[str] = []
     if not (site.root / "api/stability.html").is_file():
@@ -368,6 +451,7 @@ def findings(
     out.extend(_reindexed_findings(site, groups, sections))
     out.extend(_internal_findings(site, stabilities))
     out.extend(_signature_findings(site, pages))
+    out.extend(_note_findings(site, notes or {}, pages))
     if _before_1_0(site.version):
         out.extend(
             f"{page}: no pre-1.0 notice"
@@ -408,7 +492,17 @@ def main(argv: "list[str]") -> int:
     args = parser.parse_args(argv)
     stabilities = {name: ns.stability for name, ns in load_manifest(args.manifest).items()}
     site = load_site(args.html)
-    problems = findings(site, stabilities, public_groups(stabilities), html_pages(args.html))
+    problems = findings(
+        site,
+        stabilities,
+        public_groups(stabilities),
+        html_pages(args.html),
+        notes=documented_notes(
+            build_reference(load_namespaces(args.manifest)),
+            load_symbols(args.manifest),
+            load_golden(),
+        ),
+    )
     for problem in problems:
         print(f"FAIL {problem}")
     if problems:

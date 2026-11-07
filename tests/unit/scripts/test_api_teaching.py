@@ -889,3 +889,99 @@ def test_a_parenthesized_import_is_checked_and_an_otto_lookalike_is_not(tmp_path
         ("undeclared-import", "otto.host:Missing", 2),
         ("undeclared-import", "otto.host:AlsoMissing", 11),
     ]
+
+
+WITHDRAWN_DECL = StaticDeclaration(
+    members={"otto.host": {"UnixHost", "Outer"}, "otto": {"Thing"}},
+    private={"otto.host:UnixHost": set(), "otto.host:Outer": set(), "otto:Thing": set()},
+    withdrawn={"otto.host:UnixHost"},
+)
+
+
+def test_a_taught_construction_of_a_withdrawn_class_is_a_finding(tmp_path):
+    path = _page(
+        tmp_path,
+        "```python\nfrom otto.host import UnixHost, Outer\nOuter()\nUnixHost()\n```\n",
+    )
+    findings = check_file(path, WITHDRAWN_DECL, set(), repo_root=tmp_path, corpus={path})
+    assert [(f.line, f.render().split(": ", 2)[2]) for f in findings] == [
+        (4, "constructs otto.host:UnixHost, whose constructor is withdrawn (construct = false)")
+    ]
+
+
+def test_a_withdrawn_class_is_not_a_finding_when_only_named(tmp_path):
+    path = _page(
+        tmp_path,
+        "```python\nfrom otto.host import UnixHost\nclass M(UnixHost):\n    pass\n```\n",
+    )
+    assert check_file(path, WITHDRAWN_DECL, set(), repo_root=tmp_path, corpus={path}) == []
+
+
+def test_a_local_subclass_construction_exercises_the_otto_base_constructor(tmp_path):
+    path = _page(
+        tmp_path,
+        "```python\nfrom otto.host import UnixHost\nclass M(UnixHost):\n    pass\nM()\n```\n",
+    )
+    constructed = set()
+    findings = check_file(
+        path, WITHDRAWN_DECL, set(), repo_root=tmp_path, corpus={path}, constructed=constructed
+    )
+    assert [(f.line, f.kind, f.detail) for f in findings] == [
+        (
+            5,
+            "withdrawn-constructor",
+            "constructs otto.host:UnixHost, whose constructor is withdrawn (construct = false)",
+        )
+    ]
+    assert constructed == {"otto.host:UnixHost"}
+
+
+def test_untaught_constructors_lists_only_never_constructed_classes(tmp_path, capsys):
+    root = _repo(
+        tmp_path / "repo",
+        {
+            "src/otto/__init__.py": (
+                '__all__ = ["Thing", "Other", "Gone", "Sub", "Proto", "OttoError", "Boom", "Hue"]\n'
+                "import enum\nfrom typing import Protocol\nfrom otto.errors import OttoError\n"
+                "class Hue(enum.Enum):\n    RED = 1\n"
+                "class Thing:\n    pass\nclass Other:\n    pass\nclass Gone:\n    pass\n"
+                "class Proto(Protocol):\n    def f(self) -> None: ...\n"
+                "class Sub(Thing):\n    pass\nclass Boom(OttoError):\n    pass\n"
+            ),
+            "src/otto/errors.py": (
+                '__all__ = ["OttoError"]\nclass OttoError(Exception):\n    pass\n'
+            ),
+            "docs/conf.py": 'doctest_global_setup = ""\n',
+            "docs/page.md": "```python\nfrom otto import Thing\nThing()\n```\n",
+        },
+    )
+    manifest = tmp_path / "public.toml"
+    manifest.write_text(
+        '[namespaces."otto"]\ntier = 1\nstability = "provisional"\n'
+        '[namespaces."otto.errors"]\ntier = 1\nstability = "provisional"\n'
+        '[symbols."otto:Gone"]\nconstruct = false\nwhy = "built by otto only"\n'
+    )
+    argv = ["--manifest", str(manifest), "--root", str(root), "--untaught-constructors"]
+    assert teaching_main(argv) == 0
+    assert capsys.readouterr().out.splitlines() == ["otto:Other", "otto:Sub"]
+
+
+def test_untaught_constructors_on_a_refused_dump_prints_refusals_only(tmp_path, capsys):
+    root = _repo(
+        tmp_path / "repo",
+        {
+            "src/otto/__init__.py": '__all__ = ["Thing"]\nclass Thing:\n    pass\n',
+            "docs/conf.py": 'doctest_global_setup = ""\n',
+            "docs/page.md": "text\n",
+        },
+    )
+    manifest = tmp_path / "public.toml"
+    manifest.write_text(
+        '[namespaces."otto"]\ntier = 1\nstability = "provisional"\n'
+        '[symbols."otto:Nope"]\nsubclass = false\nwhy = "w"\n'
+    )
+    argv = ["--manifest", str(manifest), "--root", str(root), "--untaught-constructors"]
+    assert teaching_main(argv) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "producer refusal: otto:Nope: symbol entry names no public binding or member"
+    ]

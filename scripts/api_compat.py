@@ -18,9 +18,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts import api_records  # noqa: E402 -- path set up above
+from scripts.api_manifest import Symbol  # noqa: E402 -- path set up above
 
 _SLOT_KINDS = ("PO", "PK")
 _PROPERTY_PARTS = ("getter", "setter", "deleter")
+_TUPLE_MRO = api_records.builtin_mro("tuple")
 
 
 def _defaults(
@@ -35,10 +37,31 @@ def _defaults(
     return []
 
 
-def compare_params(
-    where: str, old: "list[api_records.Param]", new: "list[api_records.Param]"
+def _implementer_additions(
+    where: str, old: "list[api_records.Param]", new: "list[api_records.Param]", *, implementer: bool
 ) -> "list[str]":
-    """Return the §4.2 call findings between two parameter lists."""
+    if not implementer:
+        return []
+    every_old = {p.name for p in old}
+    return [
+        f"{where}: new parameter {np.name} on an implementer-facing member"
+        for np in new
+        if np.kind != "VK" and np.name not in every_old
+    ]
+
+
+def compare_params(
+    where: str,
+    old: "list[api_records.Param]",
+    new: "list[api_records.Param]",
+    *,
+    implementer: bool = False,
+) -> "list[str]":
+    """Return the §4.2 call findings between two parameter lists.
+
+    An *implementer* member is one otto calls and the user overrides: any new
+    parameter but ``**kwargs`` breaks an override that lacks it.
+    """
     out: list[str] = []
     old_slots = [p for p in old if p.kind in _SLOT_KINDS]
     new_slots = [p for p in new if p.kind in _SLOT_KINDS]
@@ -103,10 +126,15 @@ def compare_params(
     for np in new:
         if np.kind == "KO" and np.default is None and np.name not in old_names:
             out.append(f"{where}: new required parameter {np.name}")
+    out += _implementer_additions(where, old, new, implementer=implementer)
     return list(dict.fromkeys(out))
 
 
-def _compare_call(where: str, old: api_records.Call, new: api_records.Call) -> "list[str]":
+def _compare_call(
+    where: str, old: api_records.Call, new: api_records.Call, *, implementer: bool = False
+) -> "list[str]":
+    if old.withdrawn or new.withdrawn:
+        return [f"{where}: constructor withdrawn"] if not old.withdrawn else []
     out = []
     if old.callkind != new.callkind:
         out.append(f"{where}: call kind {old.callkind} -> {new.callkind}")
@@ -116,7 +144,7 @@ def _compare_call(where: str, old: api_records.Call, new: api_records.Call) -> "
                 f"{where}: constructor {old.builtin or 'signature'} -> {new.builtin or 'signature'}"
             )
         return out
-    return out + compare_params(where, old.params or [], new.params or [])
+    return out + compare_params(where, old.params or [], new.params or [], implementer=implementer)
 
 
 def _mro(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
@@ -124,19 +152,19 @@ def _mro(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
     if old_rec is None or new_rec is None:
         return []
     new_entries = api_records.split_list(new_rec.fields[0])
-    new_sets = [set(e[1:-1].split(",")) for e in new_entries if e.startswith("{")]
+    new_sets = [s for s in map(api_records.mro_set, new_entries) if s is not None]
     out = []
     for entry in api_records.split_list(old_rec.fields[0]):
-        if entry.startswith("{"):
-            found = any(set(entry[1:-1].split(",")) & s for s in new_sets)
-        else:
-            found = entry in new_entries
+        bases = api_records.mro_set(entry)
+        found = any(bases & s for s in new_sets) if bases is not None else entry in new_entries
         if not found:
             out.append(f"{key}: no longer a subclass of {entry}")
     return out
 
 
-def _members(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
+def _members(
+    key: str, old: api_records.Dump, new: api_records.Dump, implementer: "frozenset[str]"
+) -> "list[str]":
     out = []
     new_members = new.members_of(key)
     for name, orec in sorted(old.members_of(key).items()):
@@ -155,7 +183,10 @@ def _members(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[st
             continue
         if okind in ("method", "classmethod", "staticmethod"):
             out += _compare_call(
-                orec.key, api_records.parse_call(orec), api_records.parse_call(nrec)
+                orec.key,
+                api_records.parse_call(orec),
+                api_records.parse_call(nrec),
+                implementer=orec.key in implementer,
             )
     return out
 
@@ -171,8 +202,12 @@ def _format_site(name: str) -> str:
 
 
 def _inputs(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
-    out = []
     old_inputs, new_inputs = old.inputs_of(key), new.inputs_of(key)
+    old_gone = any(api_records.is_withdrawn(r) for r in old_inputs.values())
+    new_gone = any(api_records.is_withdrawn(r) for r in new_inputs.values())
+    if old_gone or new_gone:
+        return [f"{key}: constructor withdrawn"] if not old_gone else []
+    out = []
     for sub, orec in old_inputs.items():
         where = _input_site(key, sub)
         nrec = new_inputs.get(sub)
@@ -203,6 +238,10 @@ def _obligations(key: str, old: api_records.Dump, new: api_records.Dump) -> "lis
     for kind in ("abstract", "requires"):
         old_rec, new_rec = old.get(kind, key), new.get(kind, key)
         if old_rec is None or new_rec is None:
+            continue
+        if api_records.is_withdrawn(old_rec) or api_records.is_withdrawn(new_rec):
+            if not api_records.is_withdrawn(old_rec):
+                out.append(f"{key}: obligations withdrawn")
             continue
         gained = sorted(
             set(api_records.split_list(new_rec.fields[0]))
@@ -244,8 +283,57 @@ def _formats(old: api_records.Dump, new: api_records.Dump) -> "list[str]":
     return out
 
 
-def compare_dumps(old: api_records.Dump, new: api_records.Dump) -> "list[str]":
+def implementer_members(dump: api_records.Dump, symbols: "dict[str, Symbol]") -> "frozenset[str]":
+    """Return the implementer-facing member keys of *dump* under *symbols* (spec §6.3).
+
+    A member is implementer-facing when a non-withdrawn ``requires`` or
+    ``abstract`` record names it, or its manifest entry says ``implementer``.
+    """
+    out = {key for key, sym in symbols.items() if sym.implementer}
+    for key in dump.bindings:
+        for kind in ("abstract", "requires"):
+            rec = dump.get(kind, key)
+            if rec is not None and not api_records.is_withdrawn(rec):
+                out.update(f"{key}.{name}" for name in api_records.split_list(rec.fields[0]))
+    return frozenset(out)
+
+
+def implementer_withdrawals(
+    old_syms: "dict[str, Symbol]", new_syms: "dict[str, Symbol]"
+) -> "list[str]":
+    """Return a finding for every key whose ``implementer = true`` the newer manifest drops."""
+    return [
+        f"{key}: implementer status withdrawn"
+        for key, sym in sorted(old_syms.items())
+        if sym.implementer and not (key in new_syms and new_syms[key].implementer)
+    ]
+
+
+def _is_tuple_record(key: str, dump: api_records.Dump) -> bool:
+    rec = dump.get("mro", key)
+    return rec is not None and rec.fields[0] == _TUPLE_MRO
+
+
+def _call(key: str, old: api_records.Dump, new: api_records.Dump) -> "list[str]":
+    old_rec, new_rec = old.get("call", key), new.get("call", key)
+    if old_rec is None or new_rec is None:
+        return []
+    old_call, new_call = api_records.parse_call(old_rec), api_records.parse_call(new_rec)
+    # A tuple record's fields are its length and its unpacking order (spec §6.1);
+    # a withdrawal on either side is _compare_call's to judge, tuple or not.
+    withdrawn = old_call.withdrawn or new_call.withdrawn
+    if not withdrawn and _is_tuple_record(key, old) and _is_tuple_record(key, new):
+        return [] if old_call == new_call else [f"{key}: tuple record changed shape"]
+    return _compare_call(key, old_call, new_call)
+
+
+def compare_dumps(
+    old: api_records.Dump, new: api_records.Dump, *, implementer: "frozenset[str]" = frozenset()
+) -> "list[str]":
     """Return every breaking finding from *old* to *new* (dump spec §4.2), each once.
+
+    *implementer* is the implementer-facing member set (:func:`implementer_members`);
+    the caller passes the union over both commits.
 
     One fact can surface through two record families: a nested class is both a
     binding and a member of its outer class, so removing it reads ``removed``
@@ -261,13 +349,9 @@ def compare_dumps(old: api_records.Dump, new: api_records.Dump) -> "list[str]":
             out.append(f"{key}: kind changed {kind} -> {new.bindings[key]}")
             continue
         out += _mro(key, old, new)
-        old_call, new_call = old.get("call", key), new.get("call", key)
-        if old_call is not None and new_call is not None:
-            out += _compare_call(
-                key, api_records.parse_call(old_call), api_records.parse_call(new_call)
-            )
+        out += _call(key, old, new)
         out += _inputs(key, old, new)
-        out += _members(key, old, new)
+        out += _members(key, old, new, implementer)
         out += _obligations(key, old, new)
         out += _enums(key, old, new)
     out += _formats(old, new)
@@ -292,7 +376,7 @@ def sites(dump: api_records.Dump) -> "dict[str, str]":
             out[rec.key] = rec.key
         elif rec.kind == "member":
             out[rec.key] = api_records.binding_of(rec)
-        elif rec.kind == "input":
+        elif rec.kind == "input" and not api_records.is_withdrawn(rec):
             out[_input_site(rec.key, rec.fields[0])] = rec.key
         elif rec.kind == api_records.FORMAT:
             out[_format_site(rec.key)] = _format_site(rec.key)

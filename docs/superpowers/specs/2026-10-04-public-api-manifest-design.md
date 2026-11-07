@@ -1,7 +1,8 @@
 # Public surface declaration — design (spec 1 of the #590 contract-first series)
 
 **Status:** v7, for owner approval. v6 was approved and P0 built against it. **Date:**
-2026-10-04, amended 2026-10-05; spec 4 amended §7 and the appendix on 2026-10-06.
+2026-10-04, amended 2026-10-05; spec 4 amended §7 and the appendix on 2026-10-06; the keyword-only
+design amended §4 on 2026-11-07.
 - v1 tried to freeze otto's contracts. Codex rejected it, and the owner then said a freeze is not
   the goal (§1).
 - v2 declared the surface, but its transition dropped protection for paths the docs teach today.
@@ -178,7 +179,10 @@ lacks evidence (§4, K).
 - Every other module path is internal.
 
 **Membership authority for namespace bindings: `__all__`, and nothing else.** A name is public
-if and only if it is in the `__all__` of a declared namespace. Every package facade has one
+if and only if it is in the `__all__` of a declared namespace. Namespaces decide publicness; the
+`[symbols]` table carries per-path facts about names that are already public and never makes a
+name public (amended 2026-11-07 by the keyword-only design,
+`2026-11-07-keyword-only-public-interfaces-design.md` §4). Every package facade has one
 today (`otto.host.transfer` included), and so does `otto.tls`. P1 gives every other declared
 module its first `__all__` (appendix F).
 

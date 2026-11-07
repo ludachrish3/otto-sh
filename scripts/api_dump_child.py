@@ -1,7 +1,9 @@
 """Produce the API dump records for one source tree's declared namespaces.
 
 Run as a FILE, in a fresh interpreter: ``python scripts/api_dump_child.py --src
-<dir> [--assume-dir] [--format NAME READS WRITES]... <namespace>...``.
+<dir> [--assume-dir] [--format NAME READS WRITES]... [--symbol KEY SPEC]...
+<namespace>...``; ``SPEC`` is the ``k=v,...`` runtime keys one ``[symbols]`` entry
+wrote (keyword-only design §4.3).
 ``scripts/api_regen.py`` runs it with a commit archive's ``src`` and
 dependency-only environment; ``make api-snapshot`` runs it on the working tree.
 It puts ``--src`` first on ``sys.path``, imports every namespace, and prints ONE
@@ -295,11 +297,38 @@ def code_kind(target: "types.FunctionType | type") -> str:
     return "sync"
 
 
+def _method_call_target(raw: object) -> "tuple[str, object, bool] | None":
+    """Return a method member's (member kind, function the dump reads, drop receiver), or None.
+
+    A plain function and a classmethod drop the receiver; a staticmethod keeps
+    every parameter. ``_member`` records from it and ``_symbol_target`` judges by it.
+    """
+    if type(raw) is types.FunctionType:
+        return "method", raw, True
+    if issubclass(type(raw), (staticmethod, classmethod)):
+        wrapper = typing.cast(
+            "classmethod[typing.Any, ..., typing.Any] | staticmethod[..., typing.Any]", raw
+        )
+        is_class = issubclass(type(raw), classmethod)
+        return ("classmethod" if is_class else "staticmethod"), wrapper.__func__, is_class
+    return None
+
+
+_MODEL_CONSTRUCTOR = "a model's constructor is its fields; remove __init__ or declare a dataclass"
+
+
 class Producer:
     """Collect every public binding first, then emit each one's records."""
 
-    def __init__(self, api: types.ModuleType, src: str, assume_dir: bool) -> None:
+    def __init__(
+        self,
+        api: types.ModuleType,
+        src: str,
+        assume_dir: bool,
+        symbols: "dict[str, dict[str, object]]",
+    ) -> None:
         self.api = api
+        self.symbols = symbols  # key -> only the keys its entry wrote
         self.src = os.path.realpath(src)
         self.assume_dir = assume_dir
         self.records: list = []
@@ -315,6 +344,9 @@ class Producer:
         """Collect *namespaces*, emit every binding and format, and return the JSON report."""
         for ns in namespaces:
             self._collect_namespace(ns)
+        for key in sorted(self.symbols):
+            self._check_symbol(key, self.symbols[key])
+        self._check_aliases()
         for key in sorted(self.bindings):
             self._emit(key, self.bindings[key])
         for spec in formats or []:
@@ -350,9 +382,10 @@ class Producer:
     def _add_binding(self, key: str, obj: object, path: "list[tuple[int, str]]") -> None:
         self.bindings[key] = obj
         self.paths[key] = path
+        if callable(obj):  # a class, function or callable: aliases are judged per object
+            self.keys_by_id.setdefault(id(obj), []).append(key)
         if not _is_class(obj):
             return
-        self.keys_by_id.setdefault(id(obj), []).append(key)
         inner_path = [*path, (id(obj), key)]
         try:
             members = self._members(obj)
@@ -472,6 +505,11 @@ class Producer:
             raise _RefuseError(f"enum default {exc}") from exc
 
     def _call(self, obj: object, drop_receiver: bool) -> "list[str]":
+        callkind, params = self._call_params(obj, drop_receiver)
+        return [callkind, self.api.render_params(params)]
+
+    def _call_params(self, obj: object, drop_receiver: bool) -> "tuple[str, list[typing.Any]]":
+        """Return the call kind and the encoded parameters the dump records for *obj*."""
         try:
             sig = inspect.signature(obj)
         except (TypeError, ValueError) as exc:
@@ -492,7 +530,7 @@ class Producer:
             callkind = code_kind(target)
         if drop_receiver and params and params[0].kind in ("PO", "PK"):
             params = params[1:]
-        return [callkind, self.api.render_params(params)]
+        return callkind, params
 
     def _params(self, sig: inspect.Signature) -> list:
         """Return *sig*'s parameters as encoded ``Param`` tokens (dump spec §2.4)."""
@@ -505,14 +543,27 @@ class Producer:
             for p in sig.parameters.values()
         ]
 
-    def _class_call(self, cls: type) -> "list[str]":
+    def _constructor_token(self, key: str, cls: type) -> "str | None":
+        """Return the token a class's ``call`` records in place of parameters, or None.
+
+        None means the call records *cls*'s own parameters; ``_class_call`` emits
+        from this and ``_check_symbol`` judges a class's ``positional`` by it.
+        """
+        if self._withdrawn(key, "construct"):
+            return self.api.WITHDRAWN_CONSTRUCT
         init_owner = next((c for c in cls.__mro__ if "__init__" in vars(c)), object)
         new_owner = next((c for c in cls.__mro__ if "__new__" in vars(c)), object)
         if init_owner.__module__ == "builtins" and new_owner.__module__ == "builtins":
             if init_owner is object and new_owner is object:
-                return ["sync", self.api.EMPTY]
+                return self.api.EMPTY
             first = next(c for c in cls.__mro__ if c.__module__ == "builtins" and c is not object)
-            return ["sync", f"@builtin:builtins.{first.__qualname__}"]
+            return self.api.builtin_mro(first.__qualname__)
+        return None
+
+    def _class_call(self, key: str, cls: type) -> "list[str]":
+        token = self._constructor_token(key, cls)
+        if token is not None:
+            return ["sync", token]
         return self._call(cls, drop_receiver=False)
 
     # -- emission ---------------------------------------------------------
@@ -555,7 +606,7 @@ class Producer:
             if base is object:
                 continue
             if base.__module__ == "builtins":
-                entries.append(f"@builtin:builtins.{base.__qualname__}")
+                entries.append(self.api.builtin_mro(base.__qualname__))
                 continue
             classes = self._class_set(base)
             if classes is not None:
@@ -579,25 +630,33 @@ class Producer:
         finally:
             self.private[key] = self._private(cls, call_params)
 
+    def _obligations(self, key: str, names: "list[str]") -> str:
+        if self._withdrawn(key, "subclass"):
+            return self.api.WITHDRAWN_SUBCLASS
+        return self._names_field(key, names)
+
     def _class_records(self, key: str, cls: type, kind: str, call_params: list) -> None:
         import typing_extensions
 
         check_metaclass_call(cls)
         self._add("mro", key, [self._mro(cls)])
         if kind == "class":
-            call = self._class_call(cls)
+            call = self._class_call(key, cls)
             self._add("call", key, call)
             call_params += self.api.parse_call(self.api.Record("call", key, call)).params or []
         if kind == "model":
+            init_owner = next(c for c in cls.__mro__ if "__init__" in vars(c))
+            if self._otto(init_owner):
+                raise _RefuseError(_MODEL_CONSTRUCTOR)
             self._model_inputs(key, cls)
         for name, raw in sorted(self._members(cls).items()):
             self._try_member(key, name, raw)
         if kind in ("class", "model"):
             abstract = sorted(getattr(cls, "__abstractmethods__", ()))
-            self._add("abstract", key, [self._names_field(key, abstract)])
+            self._add("abstract", key, [self._obligations(key, abstract)])
         if kind == "protocol":
             required = sorted(typing_extensions.get_protocol_members(cls))
-            self._add("requires", key, [self._names_field(key, required)])
+            self._add("requires", key, [self._obligations(key, required)])
         if kind == "enum":
             for name, member in cls.__members__.items():
                 self._enum_member(key, name, member.value)
@@ -623,12 +682,12 @@ class Producer:
 
     def _member(self, key: str, name: str, raw: object) -> None:
         mkey = f"{key}.{name}"
+        method = _method_call_target(raw)
         if raw is _FIELD:
             self._add("member", mkey, ["field"])
-        elif issubclass(type(raw), staticmethod):
-            self._add("member", mkey, ["staticmethod", *self._call(raw.__func__, False)])
-        elif issubclass(type(raw), classmethod):
-            self._add("member", mkey, ["classmethod", *self._call(raw.__func__, True)])
+        elif method is not None:
+            label, func, drop = method
+            self._add("member", mkey, [label, *self._call(func, drop)])
         elif issubclass(type(raw), property):
             letters = "".join(
                 c if f is not None else "-"
@@ -637,8 +696,6 @@ class Producer:
             self._add("member", mkey, [f"property:{letters}"])
         elif issubclass(type(raw), functools.cached_property):
             self._add("member", mkey, ["property:g--"])
-        elif type(raw) is types.FunctionType:
-            self._add("member", mkey, ["method", *self._call(raw, True)])
         elif issubclass(type(raw), functools.partial):  # partial has __get__ only on 3.13+
             self._add("member", mkey, ["attribute"])
         elif type(raw) is types.MemberDescriptorType:  # a __slots__ entry (§3.4)
@@ -681,6 +738,10 @@ class Producer:
         return bool(by_name), by_alias is None or bool(by_alias)
 
     def _model_inputs(self, key: str, cls: type) -> None:
+        if self._withdrawn(key, "construct"):
+            empty = self.api.EMPTY
+            self._add("input", key, [self.api.WITHDRAWN_CONSTRUCT, empty, empty, empty])
+            return
         by_name, by_alias = self._validation_routes(getattr(cls, "model_config", {}) or {})
         for name, info in cls.model_fields.items():
             alias = info.validation_alias if info.validation_alias is not None else info.alias
@@ -718,6 +779,125 @@ class Producer:
             if self._otto(owner):
                 names |= {n for n in vars(owner) if _is_private(n)}
         return sorted(names)
+
+    # -- the symbols table (keyword-only design §4.3) ---------------------
+
+    def _withdrawn(self, key: str, right: str) -> bool:
+        return self.symbols.get(key, {}).get(right, True) is False
+
+    def _symbol_target(self, key: str) -> "tuple[str | None, object, bool] | None":
+        """Return the (kind, call object, drop-receiver) *key* names, or None for nothing.
+
+        A binding's kind is the dump's (``None`` when it cannot be read: emission
+        refuses it); a member's is ``method`` for a plain, static or class method.
+        """
+        if key in self.bindings:
+            obj = self.bindings[key]
+            try:
+                return self._kind(obj), obj, False
+            except _RefuseError:
+                return None, obj, False
+        owner_key, _, name = key.rpartition(".")
+        owner = self.bindings.get(owner_key)
+        if not (_is_class(owner) and isinstance(owner, type)):
+            return None
+        try:
+            members = self._members(owner)
+        except Exception:  # noqa: BLE001 -- reported by _add_binding
+            return None
+        if name not in members:
+            return None
+        method = _method_call_target(members[name])
+        if method is None:
+            return "member", members[name], False
+        _, func, drop = method
+        return "method", func, drop
+
+    _APPLIES = (
+        ("construct", ("class", "model"), "a class or model"),
+        ("subclass", ("class", "model", "protocol"), "a class, model or protocol"),
+        (
+            "positional",
+            ("function", "callable", "method", "class", "model"),
+            "a callable, method or class",
+        ),
+        ("implementer", ("method",), "a method"),
+    )
+
+    def _check_symbol(self, key: str, entry: "dict[str, object]") -> None:
+        target = self._symbol_target(key)
+        if target is None:
+            self.refusals.append(f"{key}: symbol entry names no public binding or member")
+            return
+        kind, obj, drop = target
+        if kind is None:
+            return  # emission refuses a binding whose kind cannot be read
+        wrong = [
+            f"{key}: {name} applies to {what}"
+            for name, kinds, what in self._APPLIES
+            if name in entry and kind not in kinds
+        ]
+        self.refusals.extend(wrong)
+        if wrong or "positional" not in entry:
+            return
+        names = typing.cast("list[str]", entry["positional"])
+        if kind == "model":
+            self.refusals.append(f"{key}: {_MODEL_CONSTRUCTOR}")
+            return
+        token = self._constructor_token(key, typing.cast("type", obj)) if kind == "class" else None
+        if token == self.api.WITHDRAWN_CONSTRUCT:
+            self.refusals.append(f"{key}: positional names a withdrawn constructor")
+        elif token is not None and token != self.api.EMPTY:
+            self.refusals.append(f"{key}: positional names a builtin constructor")
+        else:
+            self._check_positional(key, obj, drop, names, none=token is not None)
+
+    def _check_positional(
+        self, key: str, obj: object, drop: bool, names: "list[str]", *, none: bool = False
+    ) -> None:
+        """Refuse *names* unless they lead the recorded parameters, by name and order.
+
+        *none* says the call records no parameters at all (``object``'s constructor).
+        """
+        params: list = []
+        if not none:
+            try:
+                _, params = self._call_params(obj, drop)
+            except Exception:  # noqa: BLE001 -- emission refuses an unreadable signature
+                return
+        for i, name in enumerate(names):
+            param = params[i] if i < len(params) else None
+            last = i == len(names) - 1
+            leading = param is not None and param.name == name
+            if leading and (param.kind in ("PO", "PK") or (param.kind == "VP" and last)):
+                continue
+            if any(p.name == name and p.kind == "KO" for p in params):
+                self.refusals.append(f"{key}: positional names {name} which is keyword-only")
+            else:
+                self.refusals.append(
+                    f"{key}: positional names {name} which is not a leading parameter"
+                )
+            return
+
+    def _check_aliases(self) -> None:
+        """Refuse binding paths to one object whose entries disagree (absent = default)."""
+
+        def view(k: str) -> "tuple[object, ...]":
+            entry = self.symbols.get(k, {})
+            return (
+                tuple(typing.cast("list[str]", entry.get("positional", []))),
+                entry.get("construct", True),
+                entry.get("subclass", True),
+            )
+
+        for keys in self.keys_by_id.values():
+            first, *rest = sorted(keys)
+            other = next((k for k in rest if view(k) != view(first)), None)
+            if other is not None:
+                self.refusals.append(
+                    f"{first}: paths {first} and {other} to one object"
+                    " carry different symbol entries"
+                )
 
     # -- formats (dump spec §13) ------------------------------------------
 
@@ -797,6 +977,17 @@ class Producer:
         return problems
 
 
+def _symbol_entry(spec: str) -> "dict[str, object]":
+    """Parse ``positional=a|b,construct=false,...`` into only the keys it names."""
+    entry: dict[str, object] = {}
+    for pair in spec.split(",") if spec else []:
+        name, _, value = pair.partition("=")
+        entry[name] = (
+            [n for n in value.split("|") if n] if name == "positional" else value == "true"
+        )
+    return entry
+
+
 def main(argv: "list[str]") -> int:
     """Run the producer on the command line *argv*; print the JSON report last."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -809,12 +1000,15 @@ def main(argv: "list[str]") -> int:
         default=[],
         metavar=("NAME", "READS", "WRITES"),
     )
+    parser.add_argument("--symbol", nargs=2, action="append", default=[], metavar=("KEY", "SPEC"))
     parser.add_argument("namespaces", nargs="*")
     args = parser.parse_args(argv)
     sys.path.insert(0, args.src)
     import api_records
 
-    report = Producer(api_records, args.src, args.assume_dir).run(args.namespaces, args.format)
+    symbols = {key: _symbol_entry(spec) for key, spec in args.symbol}
+    producer = Producer(api_records, args.src, args.assume_dir, symbols)
+    report = producer.run(args.namespaces, args.format)
     sys.__stdout__.write(json.dumps(report) + "\n")
     sys.__stdout__.flush()
     return 0

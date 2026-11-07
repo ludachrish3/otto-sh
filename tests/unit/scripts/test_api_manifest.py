@@ -9,11 +9,13 @@ from scripts.api_manifest import (
     Format,
     ManifestError,
     Namespace,
+    Symbol,
     load_formats,
     load_manifest,
     manifest_breaks,
     parse_formats,
     parse_manifest,
+    parse_symbols,
 )
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -166,3 +168,66 @@ def test_a_pointer_must_match_whole():
     text = NS + '[formats.link]\nreads = "otto.a:R x"\n'
     with pytest.raises(ManifestError, match="not an otto pointer"):
         parse_formats(text)
+
+
+MANIFEST = """
+[namespaces."otto.host"]
+tier = 1
+stability = "provisional"
+"""
+
+
+def test_parses_symbols_with_defaults():
+    syms = parse_symbols(MANIFEST + '\n[symbols."otto.host:Host.run"]\npositional = ["cmds"]\n')
+    assert syms["otto.host:Host.run"] == Symbol(
+        "otto.host:Host.run", positional=("cmds",), given=frozenset({"positional"})
+    )
+
+
+def test_an_explicit_default_is_recorded_as_given():
+    syms = parse_symbols(MANIFEST + '\n[symbols."otto.host:ConnectionManager"]\nconstruct = true\n')
+    assert syms["otto.host:ConnectionManager"].given == frozenset({"construct"})
+
+
+def test_parse_manifest_accepts_the_symbols_key():
+    got = parse_manifest(MANIFEST + '\n[symbols."otto.host:Host.run"]\npositional = ["cmds"]\n')
+    assert list(got) == ["otto.host"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        (
+            '[symbols."otto.host:Host.run"]\npositional = ["a", "b"]\n',
+            "two or more names need a why",
+        ),
+        (
+            '[symbols."otto.host:ConnectionManager"]\nconstruct = false\npositional = ["x"]\n',
+            "construct = false carries no positional",
+        ),
+        ('[symbols."otto.host:Host.run"]\nbogus = 1\n', "unknown key"),
+        ('[symbols."not.otto:Thing"]\nconstruct = false\n', "not under a declared namespace"),
+        ('[symbols."otto.host:Host.run"]\npositional = "cmds"\n', "positional is a list of names"),
+        ('[symbols."otto.host:Host"]\nconstruct = "no"\n', "construct must be true or false"),
+        ('[symbols."otto.host:Host.run"]\nwhy = 3\n', "why must be a string"),
+    ],
+)
+def test_refuses_malformed_symbols(entry, message):
+    for parse in (parse_symbols, parse_manifest):
+        with pytest.raises(ManifestError) as exc:
+            parse(MANIFEST + "\n" + entry)
+        assert message in str(exc.value)
+
+
+def test_an_empty_symbols_table_and_an_empty_entry_take_the_defaults():
+    assert parse_symbols(MANIFEST + "\n[symbols]\n") == {}
+    (sym,) = parse_symbols(MANIFEST + '\n[symbols."otto.host:Host.run"]\n').values()
+    assert sym == Symbol("otto.host:Host.run")
+    assert (sym.positional, sym.why, sym.construct, sym.subclass, sym.implementer) == (
+        (),
+        "",
+        True,
+        True,
+        False,
+    )
+    assert sym.given == frozenset()

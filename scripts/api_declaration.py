@@ -25,6 +25,14 @@ class Declaration(Protocol):
         """Return the underscore members of declared class *module*:*name*, else None."""
         ...
 
+    def constructor_withdrawn(self, key: str) -> bool:
+        """Return True when declared class *key* (``module:Class``) has ``construct = false``."""
+        ...
+
+    def declared_classes(self) -> "list[str]":
+        """Return the sorted ``module:Class`` key of every class the API dump reported."""
+        ...
+
 
 @dataclass
 class StaticDeclaration:
@@ -32,6 +40,7 @@ class StaticDeclaration:
 
     members: dict[str, set[str]]
     private: "dict[str, set[str]]" = field(default_factory=dict)
+    withdrawn: "set[str]" = field(default_factory=set)
 
     def is_namespace(self, module: str) -> bool:
         """Return True when *module* is a key of :attr:`members`."""
@@ -44,3 +53,15 @@ class StaticDeclaration:
     def underscore_members(self, module: str, name: str) -> "set[str] | None":
         """Return ``private["module:name"]``, or None when that key is absent."""
         return self.private.get(f"{module}:{name}")
+
+    def constructor_withdrawn(self, key: str) -> bool:
+        """Return True when *key* is in :attr:`withdrawn`."""
+        return key in self.withdrawn
+
+    def declared_classes(self) -> "list[str]":
+        """Return the keys of :attr:`private`, sorted: every class the dump reported.
+
+        That includes protocols and errors; a caller that wants only constructible
+        classes filters them with the dump's records.
+        """
+        return sorted(self.private)

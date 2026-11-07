@@ -8,7 +8,9 @@ import zlib
 
 import pytest
 
+from scripts.api_manifest import Namespace, Symbol
 from scripts.check_docs_api_marks import findings, inventory_uri, load_site
+from scripts.docs_api_reference import build_reference, documented_notes, load_golden
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -529,3 +531,101 @@ def test_an_internals_data_signature_showing_a_factory_fails_but_a_typer_default
             "shows a default that is not Python (<factory>)"
         )
     ]
+
+
+def _notes(symbols):
+    ref = build_reference({n: Namespace(n, 1, t) for n, t in STABILITIES.items()})
+    return documented_notes(ref, symbols, load_golden())
+
+
+HOST_SYMBOL = _notes({"otto.host:UnixHost": Symbol("otto.host:UnixHost", construct=False)})
+RIGHTS = '<div class="admonition otto-rights otto-rights-no-construct">r</div>'
+
+
+def test_the_built_site_check_refuses_a_note_the_manifest_does_not_back(tmp_path):
+    host = HOST.replace(
+        '<dt id="otto.host.UnixHost">U</dt>',
+        '<dl class="py class"><dt id="otto.host.UnixHost">U</dt><dd>' + RIGHTS + "</dd></dl>",
+    )
+    site, pages = _site(tmp_path, pages={**_pages(), "api/host/index.html": host})
+    assert findings(site, STABILITIES, GROUPS, pages, notes=HOST_SYMBOL) == []
+    assert findings(site, STABILITIES, GROUPS, pages) == [
+        "otto.host.UnixHost: carries otto-rights-no-construct, which the manifest does not back"
+    ]
+
+
+def test_the_built_site_check_refuses_a_missing_note_the_manifest_requires(tmp_path):
+    site, pages = _site(tmp_path)
+    assert findings(site, STABILITIES, GROUPS, pages, notes=HOST_SYMBOL) == [
+        "otto.host.UnixHost: lacks otto-rights-no-construct, which the manifest requires"
+    ]
+    missing = _notes({"otto.host:Gone": Symbol("otto.host:Gone", subclass=False)})
+    assert findings(site, STABILITIES, GROUPS, pages, notes=missing) == [
+        "otto.host:Gone: the manifest requires a note, and the reference indexes no otto.host.Gone"
+    ]
+
+
+def _pages():
+    return {
+        "api/otto.html": ROOT,
+        "api/host/index.html": HOST,
+        "api/internals/host/unixhost.html": UNIX,
+        "api/stability.html": STABILITY,
+    }
+
+
+def test_a_note_mark_on_a_prose_page_is_not_an_object_note(tmp_path):
+    stability = STABILITY + '<dt id="x">x</dt><dd>' + RIGHTS + "</dd>"
+    site, pages = _site(tmp_path, pages={**_pages(), "api/stability.html": stability})
+    assert findings(site, STABILITIES, GROUPS, pages) == []
+
+
+def test_an_alias_keyed_entry_is_expected_once_at_the_home(tmp_path):
+    # otto:get_host is an alias of otto.lab:get_host: one note, at the home, no finding.
+    ref = build_reference({n: Namespace(n, 1, "provisional") for n in ("otto", "otto.lab")})
+    sym = Symbol("otto:get_host", ("host_id",), "the subject")
+    alias = documented_notes(ref, {"otto:get_host": sym, "otto.lab:get_host": sym}, load_golden())
+    assert [n for n in alias if "get_host" in n] == ["otto.lab.get_host"]
+    objects = [
+        ("otto", "py:module", "api/otto.html#module-otto"),
+        ("otto.host", "py:module", "api/host/index.html#module-otto.host"),
+        (
+            "otto.host.unix_host",
+            "py:module",
+            "api/internals/host/unixhost.html#module-otto.host.unix_host",
+        ),
+        ("otto.host.UnixHost", "py:class", "api/host/index.html#otto.host.UnixHost"),
+        ("otto.lab.get_host", "py:function", "api/host/index.html#otto.lab.get_host"),
+    ]
+    site, pages = _site(tmp_path, objects=objects)
+    assert findings(site, STABILITIES, GROUPS, pages, notes=alias) == [
+        "otto.lab.get_host: lacks otto-positional-parameters, which the manifest requires"
+    ]
+
+
+def test_an_entry_on_an_unindexed_member_is_skipped(tmp_path):
+    # autodoc indexes no public dunder: its entry has no anchor to carry a note.
+    dunder = _notes({"otto.host:UnixHost.__call__": Symbol("x", ("a",), "w")})
+    site, pages = _site(tmp_path)
+    assert findings(site, STABILITIES, GROUPS, pages, notes=dunder) == []
+
+
+def test_an_inherited_entry_is_required_on_the_subclass(tmp_path):
+    inherited = _notes({"otto.host:Host.run": Symbol("otto.host:Host.run", ("cmds",), "w")})
+    assert inherited["otto.host.UnixHost.run"].key == "otto.host:UnixHost.run"
+    objects = [
+        ("otto", "py:module", "api/otto.html#module-otto"),
+        ("otto.host", "py:module", "api/host/index.html#module-otto.host"),
+        (
+            "otto.host.unix_host",
+            "py:module",
+            "api/internals/host/unixhost.html#module-otto.host.unix_host",
+        ),
+        ("otto.host.UnixHost", "py:class", "api/host/index.html#otto.host.UnixHost"),
+        ("otto.host.UnixHost.run", "py:method", "api/host/index.html#otto.host.UnixHost.run"),
+    ]
+    site, pages = _site(tmp_path, objects=objects)
+    assert (
+        "otto.host.UnixHost.run: lacks otto-positional-parameters, which the manifest requires"
+        in findings(site, STABILITIES, GROUPS, pages, notes=inherited)
+    )

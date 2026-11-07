@@ -32,10 +32,13 @@ from scripts import api_records  # noqa: E402 -- path set up above
 from scripts.api_manifest import (  # noqa: E402
     Format,
     ManifestError,
+    Symbol,
     load_formats,
     load_manifest,
+    load_symbols,
     parse_formats,
     parse_manifest,
+    parse_symbols,
 )
 from scripts.process_group import signal_group  # noqa: E402
 
@@ -99,6 +102,7 @@ def run_child(
     assume_dir: bool = False,
     timeout: float = CHILD_TIMEOUT,
     formats: "list[Format] | None" = None,
+    symbols: "list[Symbol] | None" = None,
 ) -> "dict[str, Any]":
     """Run the producer child with *python* on *src*; return its JSON report."""
     argv = [str(python), str(CHILD), "--src", str(src)]
@@ -111,6 +115,8 @@ def run_child(
             fmt.reads or api_records.EMPTY,
             fmt.writes or api_records.EMPTY,
         ]
+    for sym in symbols or []:
+        argv += ["--symbol", sym.key, _symbol_spec(sym)]
     with tempfile.TemporaryDirectory(prefix="otto-api-dump-") as tmp:
         proc = subprocess.Popen(  # noqa: S603 -- fixed argv, no shell
             [*argv, *namespaces],
@@ -135,6 +141,20 @@ def run_child(
         raise EnvError(f"the dump child printed no report: {exc}") from exc
     _check_report(report)
     return report
+
+
+def _symbol_spec(sym: Symbol) -> str:
+    """Return the child's ``k=v,...`` spec for the runtime keys *sym*'s entry wrote.
+
+    ``why`` stays in this process: only the lint rule reads it (design §4.3).
+    """
+    values = {
+        "positional": "|".join(sym.positional),
+        "construct": str(sym.construct).lower(),
+        "subclass": str(sym.subclass).lower(),
+        "implementer": str(sym.implementer).lower(),
+    }
+    return ",".join(f"{k}={values[k]}" for k in values if k in sym.given)
 
 
 def _check_report(report: object) -> None:
@@ -425,10 +445,13 @@ def generate_at_commit(repo: Path, sha: str, manifest_rel: str, env: "DepsEnv") 
             text = (tree / manifest_rel).read_bytes().decode("utf-8")
             namespaces = sorted(parse_manifest(text))
             formats = list(parse_formats(text).values())
+            symbols = list(parse_symbols(text).values())
         except (OSError, UnicodeDecodeError, ManifestError) as exc:
             return Generated(None, [f"manifest: {exc}"])
         try:
-            report = run_child(env.python(tree), tree / "src", namespaces, formats=formats)
+            report = run_child(
+                env.python(tree), tree / "src", namespaces, formats=formats, symbols=symbols
+            )
         except EnvError as exc:
             return Generated(None, [f"environment: {exc}"])
         return _generated(report)
@@ -445,6 +468,7 @@ def generate_worktree(
     try:
         namespaces = sorted(load_manifest(manifest))
         formats = list(load_formats(manifest).values())
+        symbols = list(load_symbols(manifest).values())
     except ManifestError as exc:
         return Generated(None, [f"manifest: {exc}"])
     try:
@@ -455,6 +479,7 @@ def generate_worktree(
             seed=seed,
             assume_dir=assume_dir,
             formats=formats,
+            symbols=symbols,
         )
     except EnvError as exc:
         return Generated(None, [f"environment: {exc}"])

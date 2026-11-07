@@ -9,7 +9,7 @@ import pydantic
 import pytest
 
 from scripts import api_records
-from scripts.api_manifest import Format
+from scripts.api_manifest import Format, Symbol
 from tests._fixtures.api_dump import dump_of, run_child_json, write_tree
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -1089,3 +1089,212 @@ def test_a_format_that_cannot_be_recorded_is_a_refusal_not_a_crash(tmp_path):
     assert msg.startswith("format s: cannot be recorded")
     assert "boom" in msg
     assert not [r for r in data["records"] if r.startswith("format\t")]
+
+
+# -- the symbols table (keyword-only design §4.2, §4.3) ----------------------
+
+
+def _sym(key, **kw):
+    return Symbol(key, given=frozenset(kw), **kw)
+
+
+def _with_symbols(tmp_path, body, symbols, module="otto/p.py"):
+    src = write_tree(tmp_path, {"otto/__init__.py": "", module: body})
+    return run_child_json(src, ["otto.p"], symbols=symbols)
+
+
+def test_a_withdrawn_constructor_is_a_token(tmp_path):
+    src = write_tree(
+        tmp_path,
+        {
+            "otto/__init__.py": "",
+            "otto/p.py": "__all__=['C']\nclass C:\n    def __init__(self, a): ...",
+        },
+    )
+    rep = run_child_json(src, ["otto.p"], symbols=[_sym("otto.p:C", construct=False)])
+    assert rep["refusals"] == []
+    assert "call\totto.p:C\tsync\t@manifest:construct=false" in rep["records"]
+    assert not any(r.startswith("call\totto.p:C\tsync\tPK") for r in rep["records"])
+
+
+def test_a_withdrawn_subclass_token_on_class_and_protocol(tmp_path):
+    body = (
+        "from typing import Protocol\n__all__=['C', 'P']\n"
+        "class C: ...\nclass P(Protocol):\n    def run(self): ...\n"
+    )
+    rep = _with_symbols(
+        tmp_path, body, [_sym("otto.p:C", subclass=False), _sym("otto.p:P", subclass=False)]
+    )
+    assert rep["refusals"] == []
+    assert "abstract\totto.p:C\t@manifest:subclass=false" in rep["records"]
+    assert "requires\totto.p:P\t@manifest:subclass=false" in rep["records"]
+
+
+def test_a_withdrawn_model_constructor_is_one_input_line(tmp_path):
+    body = (
+        "from pydantic import BaseModel\n__all__=['M']\n"
+        "class M(BaseModel):\n    a: int\n    b: str = 'x'\n"
+    )
+    rep = _with_symbols(tmp_path, body, [_sym("otto.p:M", construct=False)])
+    assert rep["refusals"] == []
+    inputs = [r for r in rep["records"] if r.startswith("input\t")]
+    assert inputs == ["input\totto.p:M\t@manifest:construct=false\t-\t-\t-"]
+    lines = [api_records.parse_record(line) for line in rep["records"]]
+    api_records.parse_dump(api_records.render_dump(lines))
+
+
+def test_positional_must_be_a_leading_prefix(tmp_path):
+    rep = _with_symbols(
+        tmp_path, "__all__=['f']\ndef f(a, b): ...\n", [_sym("otto.p:f", positional=("b",))]
+    )
+    assert rep["refusals"] == ["otto.p:f: positional names b which is not a leading parameter"]
+
+
+def test_positional_may_end_with_the_variadic_name(tmp_path):
+    body = "__all__=['f', 'C']\ndef f(a, *args): ...\nclass C:\n    def m(self, x, y): ...\n"
+    syms = [_sym("otto.p:f", positional=("a", "args")), _sym("otto.p:C.m", positional=("x",))]
+    rep = _with_symbols(tmp_path, body, syms)
+    assert rep["refusals"] == []
+
+
+def test_a_listed_keyword_only_parameter_is_refused(tmp_path):
+    rep = _with_symbols(
+        tmp_path, "__all__=['f']\ndef f(*, x): ...\n", [_sym("otto.p:f", positional=("x",))]
+    )
+    assert rep["refusals"] == ["otto.p:f: positional names x which is keyword-only"]
+
+
+def test_entries_on_two_paths_to_one_function_must_agree(tmp_path):
+    src = write_tree(
+        tmp_path,
+        {
+            "otto/__init__.py": "",
+            "otto/p.py": "__all__=['f']\ndef f(a): ...\n",
+            "otto/q.py": "from otto.p import f\n__all__=['f']\n",
+        },
+    )
+    one = [_sym("otto.p:f", positional=("a",))]
+    rep = run_child_json(src, ["otto.p", "otto.q"], symbols=one)
+    assert rep["refusals"] == [
+        "otto.p:f: paths otto.p:f and otto.q:f to one object carry different symbol entries"
+    ]
+    both = [*one, _sym("otto.q:f", positional=("a",))]
+    assert run_child_json(src, ["otto.p", "otto.q"], symbols=both)["refusals"] == []
+
+
+def test_a_nested_class_and_its_classref_must_agree(tmp_path):
+    body = "__all__=['Outer', 'Inner']\nclass Outer:\n    class Inner: ...\nInner = Outer.Inner\n"
+    rep = _with_symbols(tmp_path, body, [_sym("otto.p:Outer.Inner", construct=False)])
+    paths = "otto.p:Inner: paths otto.p:Inner and otto.p:Outer.Inner"
+    assert rep["refusals"] == [f"{paths} to one object carry different symbol entries"]
+    both = [_sym("otto.p:Outer.Inner", construct=False), _sym("otto.p:Inner", construct=False)]
+    assert _with_symbols(tmp_path, body, both)["refusals"] == []
+
+
+def test_a_model_with_its_own_init_is_refused(tmp_path):
+    body = (
+        "from pydantic import BaseModel\n__all__=['M']\n"
+        "class M(BaseModel):\n    a: int\n    def __init__(self, a): super().__init__(a=a)\n"
+    )
+    rep = _with_symbols(tmp_path, body, [])
+    assert rep["refusals"] == [
+        "otto.p:M: a model's constructor is its fields; remove __init__ or declare a dataclass"
+    ]
+
+
+def test_a_tree_without_symbols_dumps_as_before(tmp_path):
+    body = "__all__=['C', 'f']\nclass C:\n    def __init__(self, a): ...\ndef f(a, *, b): ...\n"
+    src = write_tree(tmp_path, {"otto/__init__.py": "", "otto/p.py": body})
+    assert run_child_json(src, ["otto.p"], symbols=[]) == run_child_json(src, ["otto.p"])
+
+
+def test_kind_mismatch_refusals(tmp_path):
+    body = (
+        "import enum\n__all__=['f', 'C', 'E', 'V']\ndef f(a): ...\n"
+        "class C:\n    def m(self): ...\nclass E(enum.Enum):\n    A = 1\nV = 3\n"
+    )
+    syms = [
+        _sym("otto.p:f", construct=False),
+        _sym("otto.p:C", implementer=True),
+        _sym("otto.p:E", subclass=False),
+        _sym("otto.p:V", positional=()),
+        _sym("otto.p:C.m", construct=True),
+        _sym("otto.p:Nope", subclass=False),
+    ]
+    rep = _with_symbols(tmp_path, body, syms)
+    assert rep["refusals"] == [
+        "otto.p:C: implementer applies to a method",
+        "otto.p:C.m: construct applies to a class or model",
+        "otto.p:E: subclass applies to a class, model or protocol",
+        "otto.p:Nope: symbol entry names no public binding or member",
+        "otto.p:V: positional applies to a callable, method or class",
+        "otto.p:f: construct applies to a class or model",
+    ]
+
+
+def test_a_withdrawn_constructor_leaves_no_private_call_parameter(tmp_path):
+    body = "__all__=['C']\nclass C:\n    def __init__(self, _hidden): ...\n"
+    shown = _with_symbols(tmp_path, body, [])
+    assert "_hidden" in shown["private"]["otto.p:C"]
+    rep = _with_symbols(tmp_path, body, [_sym("otto.p:C", construct=False)])
+    assert rep["refusals"] == []
+    assert "_hidden" not in rep["private"]["otto.p:C"]
+
+
+def test_entries_that_fit_their_kind_pass(tmp_path):
+    body = (
+        "from pydantic import BaseModel\n__all__=['C', 'M']\n"
+        "class C:\n    def m(self): ...\n"
+        "    @classmethod\n    def make(cls, a, b): ...\n"
+        "    @staticmethod\n    def s(a, b): ...\n"
+        "class M(BaseModel):\n    a: int\n"
+    )
+    syms = [
+        _sym("otto.p:C.m", implementer=True),
+        _sym("otto.p:C.make", positional=("a",)),
+        _sym("otto.p:C.s", positional=("a",)),
+        _sym("otto.p:M", construct=False, subclass=False),
+    ]
+    rep = _with_symbols(tmp_path, body, syms)
+    assert rep["refusals"] == []
+    assert "abstract\totto.p:M\t@manifest:subclass=false" in rep["records"]
+    wrong = _with_symbols(tmp_path, body, [_sym("otto.p:C.make", positional=("cls",))])
+    assert wrong["refusals"] == [
+        "otto.p:C.make: positional names cls which is not a leading parameter"
+    ]
+
+
+def test_positional_on_a_class_key_is_judged_against_its_constructor(tmp_path):
+    body = (
+        "import dataclasses\nfrom typing import NamedTuple\n__all__=['T', 'Err', 'D']\n"
+        "class T(NamedTuple):\n    a: int\n    b: str\n"
+        "class Err(Exception):\n    def __init__(self, message): super().__init__(message)\n"
+        "@dataclasses.dataclass\nclass D:\n    x: int\n    y: int = 0\n"
+    )
+    syms = [
+        _sym("otto.p:T", positional=("a", "b")),
+        _sym("otto.p:Err", positional=("message",)),
+        _sym("otto.p:D", positional=("x",)),
+    ]
+    assert _with_symbols(tmp_path, body, syms)["refusals"] == []
+    wrong = _with_symbols(tmp_path, body, [_sym("otto.p:D", positional=("y",))])
+    assert wrong["refusals"] == ["otto.p:D: positional names y which is not a leading parameter"]
+
+
+def test_positional_on_a_constructor_without_parameters_is_refused(tmp_path):
+    body = (
+        "from pydantic import BaseModel\n__all__=['B', 'W', 'M']\n"
+        "class B(Exception): ...\n"
+        "class W:\n    def __init__(self, a): ...\n"
+        "class M(BaseModel):\n    a: int\n"
+    )
+    syms = [
+        _sym("otto.p:B", positional=("args",)),
+        _sym("otto.p:W", construct=False, positional=("a",)),
+        _sym("otto.p:M", positional=("a",)),
+    ]
+    assert _with_symbols(tmp_path, body, syms)["refusals"] == [
+        "otto.p:B: positional names a builtin constructor",
+        "otto.p:M: a model's constructor is its fields; remove __init__ or declare a dataclass",
+        "otto.p:W: positional names a withdrawn constructor",
+    ]

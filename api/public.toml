@@ -1,7 +1,10 @@
 # otto's public namespaces and versioned formats: spec
 # docs/superpowers/specs/2026-10-04-public-api-manifest-design.md §4 and dump spec
 # docs/superpowers/specs/2026-10-05-api-dump-design.md §13. A name is public exactly
-# when it is in the __all__ of a namespace listed here. scripts/api_manifest.py
+# when it is in the __all__ of a namespace listed here: namespaces decide
+# publicness, and a [symbols."otto.module:Qualname"] table carries per-path facts
+# about names that are already public, never making one public (keyword-only
+# interfaces spec §4 and §10). scripts/api_manifest.py
 # reads it: `make api-snapshot` dumps these namespaces into the golden and
 # `make check-api-teaching` checks what the docs teach against them. Removing a
 # namespace, or downgrading one from stable, is a breaking change.

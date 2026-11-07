@@ -2535,6 +2535,7 @@ HOSTLESS_TARGETS = [
     "check",
     "check-api-snapshot",
     "check-api-teaching",
+    "check-api-keywords",
     "api-snapshot",
     "api-surface-report",
     "gate-scope",

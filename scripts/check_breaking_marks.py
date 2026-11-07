@@ -108,8 +108,10 @@ from scripts import (  # noqa: E402 -- path set up above
 from scripts.api_manifest import (  # noqa: E402 -- path set up above
     ManifestError,
     Namespace,
+    Symbol,
     manifest_breaks,
     parse_manifest,
+    parse_symbols,
 )
 from scripts.api_resolver_env import resolver_env as _resolver_env  # noqa: E402
 from scripts.release_events import is_breaking_commit  # noqa: E402 -- path set up above
@@ -517,17 +519,26 @@ def _host_verdict(line: str, added: "list[str]", repo: Path) -> "tuple[str, str]
     return "other", ""
 
 
-def manifest_at(repo: Path, rev: str, manifest: Path) -> "dict[str, Namespace]":
-    """Parse the manifest as committed at *rev*; ManifestError when absent or malformed."""
+def _manifest_text_at(repo: Path, rev: str, manifest: Path) -> str:
+    """Return the manifest text as committed at *rev*; ManifestError when absent or not UTF-8."""
     rel = _golden_rel(repo, manifest)
     data = _blob_at(repo, rev, rel)
     if data is None:
         raise ManifestError(f"{rel} does not exist")
     try:
-        text = _decode(data)
+        return _decode(data)
     except UnicodeDecodeError as exc:
         raise ManifestError(f"{rel} is not UTF-8: {exc}") from exc
-    return parse_manifest(text)
+
+
+def manifest_at(repo: Path, rev: str, manifest: Path) -> "dict[str, Namespace]":
+    """Parse the manifest as committed at *rev*; ManifestError when absent or malformed."""
+    return parse_manifest(_manifest_text_at(repo, rev, manifest))
+
+
+def symbols_at(repo: Path, rev: str, manifest: Path) -> "dict[str, Symbol]":
+    """Parse the manifest's ``[symbols]`` at *rev*; ManifestError when absent or malformed."""
+    return parse_symbols(_manifest_text_at(repo, rev, manifest))
 
 
 HOST_BINDING = "otto.host:Host"
@@ -767,11 +778,21 @@ def evaluate_commit(
             before_dump = api_records.parse_dump(before or "")
         except api_records.DumpError as exc:
             return Verdict(refused=[f"the parent's dump does not parse: {exc}"])
-        breaking = api_compat.group_findings(api_compat.compare_dumps(before_dump, after_dump))
         try:
             before_ns = manifest_at(repo, parent, manifest)
+            before_syms = symbols_at(repo, parent, manifest)
         except ManifestError:
-            before_ns = {}
+            before_ns, before_syms = {}, {}
+        after_syms = symbols_at(repo, sha, manifest)
+        implementer = api_compat.implementer_members(
+            before_dump, before_syms
+        ) | api_compat.implementer_members(after_dump, after_syms)
+        breaking = api_compat.group_findings(
+            [
+                *api_compat.compare_dumps(before_dump, after_dump, implementer=implementer),
+                *api_compat.implementer_withdrawals(before_syms, after_syms),
+            ]
+        )
         return Verdict(breaking=breaking + manifest_breaks(before_ns, after_ns))
     breaking, info = conversion_breaks(
         api_lines.data_lines(before or ""),

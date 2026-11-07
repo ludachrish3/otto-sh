@@ -6,7 +6,7 @@ import itertools
 import pytest
 
 from scripts import api_compat, api_records
-from scripts.api_manifest import Format
+from scripts.api_manifest import Format, Symbol
 from tests._fixtures.api_dump import dump_of, run_child_json, write_tree
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -14,11 +14,11 @@ pytestmark = pytest.mark.interpreter_agnostic
 _PRE = "import abc, dataclasses, enum, functools\nfrom typing import Protocol\n"
 
 
-def _dump(root, body, names, extra=None):
+def _dump(root, body, names, extra=None, symbols=None):
     src = write_tree(
         root, {"otto/__init__.py": f"__all__ = {names!r}\n{_PRE}{body}", **(extra or {})}
     )
-    return dump_of(src, ["otto"])
+    return dump_of(src, ["otto"], symbols)
 
 
 def _findings(tmp_path, before, after, names, extra_before=None, extra_after=None):
@@ -817,3 +817,131 @@ def test_a_call_shape_is_found_exactly_when_an_old_call_breaks(
     broken = _broken_calls(old_src, new_src)
     assert bool(broken) is breaks, broken
     assert bool(call_shape_findings.get(case)) is breaks, (broken, call_shape_findings.get(case))
+
+
+def _sym(key, **kw):
+    return Symbol(key, given=frozenset(kw), **kw)
+
+
+def _withdrawal(tmp_path, body, names, before, after):
+    old = _dump(tmp_path / "a", body, names, symbols=before)
+    new = _dump(tmp_path / "b", body, names, symbols=after)
+    return api_compat.compare_dumps(old, new)
+
+
+_CLASS = "class C:\n    def __init__(self, a): pass\n"
+_MODEL = "from pydantic import BaseModel\nclass M(BaseModel):\n    a: int\n"
+
+
+def test_a_withdrawn_class_constructor_is_a_finding(tmp_path):
+    withdrawn = [_sym("otto:C", construct=False)]
+    assert _withdrawal(tmp_path, _CLASS, ["C"], None, withdrawn) == [
+        "otto:C: constructor withdrawn"
+    ]
+
+
+def test_a_withdrawn_model_constructor_is_a_finding(tmp_path):
+    withdrawn = [_sym("otto:M", construct=False)]
+    assert _withdrawal(tmp_path, _MODEL, ["M"], None, withdrawn) == [
+        "otto:M: constructor withdrawn"
+    ]
+
+
+def test_withdrawn_obligations_are_a_finding(tmp_path):
+    body = "class P(Protocol):\n    def run(self): ...\n"
+    withdrawn = [_sym("otto:P", subclass=False)]
+    assert _withdrawal(tmp_path, body, ["P"], None, withdrawn) == ["otto:P: obligations withdrawn"]
+
+
+def test_token_to_contract_is_not_a_finding(tmp_path):
+    body = _CLASS + _MODEL + "class P(Protocol):\n    def run(self): ...\n"
+    names = ["C", "M", "P"]
+    withdrawn = [
+        _sym("otto:C", construct=False),
+        _sym("otto:M", construct=False),
+        _sym("otto:P", subclass=False),
+    ]
+    assert _withdrawal(tmp_path, body, names, withdrawn, None) == []
+    assert _withdrawal(tmp_path / "same", body, names, withdrawn, withdrawn) == []
+
+
+def test_a_withdrawn_dump_still_has_its_sites(tmp_path):
+    dump = _dump(tmp_path, _MODEL, ["M"], symbols=[_sym("otto:M", construct=False)])
+    assert not any(" input " in site for site in api_compat.sites(dump))
+    assert "otto:M" in api_compat.sites(dump)
+
+
+_PROTOCOL = "class P(Protocol):\n    def run(self, x): ...\n"
+_PROTOCOL_WIDE = "class P(Protocol):\n    def run(self, x, y=0): ...\n"
+
+
+def test_a_new_parameter_on_an_implementer_member_is_a_finding(tmp_path):
+    old = _dump(tmp_path / "a", _PROTOCOL, ["P"])
+    new = _dump(tmp_path / "b", _PROTOCOL_WIDE, ["P"])
+    members = api_compat.implementer_members(old, {})
+    assert members == frozenset({"otto:P.run"})
+    assert api_compat.compare_dumps(old, new, implementer=members) == [
+        "otto:P.run: new parameter y on an implementer-facing member"
+    ]
+    assert api_compat.compare_dumps(old, new) == []
+
+
+def test_a_new_kwargs_on_an_implementer_member_is_not_a_finding(tmp_path):
+    old = _dump(tmp_path / "a", _PROTOCOL, ["P"])
+    new = _dump(tmp_path / "b", "class P(Protocol):\n    def run(self, x, **kw): ...\n", ["P"])
+    members = api_compat.implementer_members(old, {})
+    assert api_compat.compare_dumps(old, new, implementer=members) == []
+
+
+def test_withdrawn_obligations_are_not_implementer_facing(tmp_path):
+    dump = _dump(tmp_path, _PROTOCOL, ["P"], symbols=[_sym("otto:P", subclass=False)])
+    assert api_compat.implementer_members(dump, {}) == frozenset()
+
+
+def test_implementer_true_in_either_manifest_counts(tmp_path):
+    body = "class C:\n    def hook(self, x): pass\n"
+    wide = "class C:\n    def hook(self, x, y=0): pass\n"
+    old = _dump(tmp_path / "a", body, ["C"])
+    new = _dump(tmp_path / "b", wide, ["C"])
+    hook = {"otto:C.hook": _sym("otto:C.hook", implementer=True)}
+    # One manifest says so, the other does not: the caller passes the union.
+    union = api_compat.implementer_members(old, {}) | api_compat.implementer_members(new, hook)
+    assert union == frozenset({"otto:C.hook"})
+    assert api_compat.compare_dumps(old, new, implementer=union) == [
+        "otto:C.hook: new parameter y on an implementer-facing member"
+    ]
+
+
+def test_removing_implementer_status_is_a_finding():
+    hook = {"otto:C.hook": _sym("otto:C.hook", implementer=True)}
+    plain = {"otto:C.hook": _sym("otto:C.hook")}
+    assert api_compat.implementer_withdrawals(hook, plain) == [
+        "otto:C.hook: implementer status withdrawn"
+    ]
+    assert api_compat.implementer_withdrawals(hook, {}) == [
+        "otto:C.hook: implementer status withdrawn"
+    ]
+    assert api_compat.implementer_withdrawals(plain, hook) == []
+
+
+_TUPLE = "from typing import NamedTuple\nclass T(NamedTuple):\n    a: int\n"
+
+
+def test_a_defaulted_append_on_a_namedtuple_is_a_finding(tmp_path):
+    findings = _findings(tmp_path, _TUPLE, _TUPLE + "    b: int = 0\n", ["T"])
+    assert findings == ["otto:T: tuple record changed shape"]
+
+
+def test_a_namedtuple_field_rename_is_two_findings(tmp_path):
+    findings = _findings(tmp_path, _TUPLE, _TUPLE.replace("a: int", "z: int"), ["T"])
+    # The tuple rule replaces the call comparison; the field member is its own site.
+    assert findings == ["otto:T: tuple record changed shape", "otto:T.a: removed"]
+
+
+def test_withdrawing_a_namedtuple_constructor_is_a_withdrawal(tmp_path):
+    shut = [_sym("otto:T", construct=False)]
+    open_ = _dump(tmp_path / "a", _TUPLE, ["T"])
+    closed = _dump(tmp_path / "b", _TUPLE, ["T"], symbols=shut)
+    # The withdrawal is judged before the tuple-shape rule, either way round.
+    assert api_compat.compare_dumps(open_, closed) == ["otto:T: constructor withdrawn"]
+    assert api_compat.compare_dumps(closed, open_) == []

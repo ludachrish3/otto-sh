@@ -1,7 +1,9 @@
 """Read, validate and compare ``api/public.toml``, the list of otto's public namespaces.
 
-The manifest lists NAMESPACES, never names: a name is public if and only if it
-is in a declared namespace's ``__all__`` (spec §4). Each entry records the
+Namespaces decide publicness: a name is public if and only if it is in a
+declared namespace's ``__all__`` (spec §4). The ``[symbols]`` table carries
+per-path facts about names that are already public and never makes a name
+public. Each namespace entry records the
 tier, the stability and an optional free-text *pending* note::
 
     [namespaces."otto.host"]
@@ -17,6 +19,12 @@ A ``[formats.<name>]`` table declares one retained versioned interface (dump
 spec §13): ``reads`` and ``writes`` point at literal-list constants
 (``"otto.link.sentinel:READ_VERSIONS"``). The manifest holds the pointers; the
 dump records the values, and ``scripts/api_compat.py`` judges them.
+
+A ``[symbols."otto.module:Qualname"]`` table holds the per-symbol facts
+(keyword-only spec §4): which leading parameters stay positional and why, and
+which rights (construct, subclass, implementer) a class or method gives users.
+The reader checks TOML facts only; which keys fit which kind is the dump
+child's call, so :class:`Symbol` records the keys an entry wrote.
 """
 
 import re
@@ -32,6 +40,9 @@ _NAMESPACE_RE = re.compile(r"otto(?:\.\w+)*")
 _FORMAT_NAME_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 _POINTER_RE = re.compile(r"otto(?:\.\w+)*:\w+")
 _FORMAT_KEYS = {"reads", "writes"}
+_WHY_NEEDED_AT = 2
+SYMBOL_KEYS = {"positional", "why", "construct", "subclass", "implementer"}
+_SYMBOL_KEY_RE = re.compile(r"(\w+(?:\.\w+)*):\w+(?:\.\w+)*")
 
 
 class ManifestError(Exception):
@@ -55,6 +66,23 @@ class Format:
     name: str
     reads: "str | None"
     writes: "str | None"
+
+
+@dataclass(frozen=True)
+class Symbol:
+    """Per-symbol facts for one binding or member key (``otto.host:Host.run``).
+
+    ``given`` holds the keys the entry wrote explicitly: an omitted key and an
+    explicit default differ for the child's kind checks.
+    """
+
+    key: str
+    positional: "tuple[str, ...]" = ()
+    why: str = ""
+    construct: bool = True
+    subclass: bool = True
+    implementer: bool = False
+    given: "frozenset[str]" = frozenset()
 
 
 def _formats_of(doc: dict) -> "dict[str, Format]":
@@ -92,10 +120,53 @@ def parse_formats(text: str) -> "dict[str, Format]":
     return _formats_of(_load_toml(text))
 
 
+def _symbols_of(doc: dict) -> "dict[str, Symbol]":
+    table = doc.get("symbols", {})
+    if not isinstance(table, dict) or not all(isinstance(v, dict) for v in table.values()):
+        raise ManifestError("[symbols]: expected tables, one per symbol")
+    declared = doc.get("namespaces", {})
+    out: dict[str, Symbol] = {}
+    for key, entry in table.items():
+        match = _SYMBOL_KEY_RE.fullmatch(key)
+        if match is None:
+            raise ManifestError(f"symbols.{key}: not an otto binding key ('otto.module:Qualname')")
+        if match.group(1) not in declared:
+            raise ManifestError(
+                f"symbols.{key}: {match.group(1)} is not under a declared namespace"
+            )
+        extra = sorted(set(entry) - SYMBOL_KEYS)
+        if extra:
+            raise ManifestError(f"symbols.{key}: unknown key(s) {extra}")
+        positional = entry.get("positional", [])
+        if not isinstance(positional, list) or not all(
+            isinstance(n, str) and n.isidentifier() for n in positional
+        ):
+            raise ManifestError(f"symbols.{key}: positional is a list of names")
+        why = entry.get("why", "")
+        if not isinstance(why, str):
+            raise ManifestError(f"symbols.{key}: why must be a string")
+        flags = {}
+        for flag, default in (("construct", True), ("subclass", True), ("implementer", False)):
+            flags[flag] = entry.get(flag, default)
+            if not isinstance(flags[flag], bool):
+                raise ManifestError(f"symbols.{key}: {flag} must be true or false")
+        if flags["construct"] is False and positional:
+            raise ManifestError(f"symbols.{key}: construct = false carries no positional")
+        if len(positional) >= _WHY_NEEDED_AT and not why:
+            raise ManifestError(f"symbols.{key}: two or more names need a why")
+        out[key] = Symbol(key, tuple(positional), why, given=frozenset(entry), **flags)
+    return out
+
+
+def parse_symbols(text: str) -> "dict[str, Symbol]":
+    """Parse manifest *text*'s ``[symbols.*]`` tables; raise :class:`ManifestError`."""
+    return _symbols_of(_load_toml(text))
+
+
 def parse_manifest(text: str) -> dict[str, Namespace]:
     """Parse manifest *text* into ``{namespace: Namespace}``; raise :class:`ManifestError`."""
     doc = _load_toml(text)
-    unknown_top = sorted(set(doc) - {"namespaces", "formats"})
+    unknown_top = sorted(set(doc) - {"namespaces", "formats", "symbols"})
     if unknown_top:
         raise ManifestError(f"unknown top-level key(s): {unknown_top}")
     table = doc.get("namespaces")
@@ -123,6 +194,7 @@ def parse_manifest(text: str) -> dict[str, Namespace]:
             raise ManifestError(f"{name}: pending must be a string")
         out[name] = Namespace(name, tier, stability, pending)
     _formats_of(doc)
+    _symbols_of(doc)
     return out
 
 
@@ -150,6 +222,11 @@ def load_manifest(path: Path) -> dict[str, Namespace]:
 def load_formats(path: Path) -> "dict[str, Format]":
     """Read the manifest at *path* and parse its formats; raise :class:`ManifestError`."""
     return parse_formats(_read(path))
+
+
+def load_symbols(path: Path) -> "dict[str, Symbol]":
+    """Read the manifest at *path* and parse its symbols; raise :class:`ManifestError`."""
+    return parse_symbols(_read(path))
 
 
 def manifest_breaks(parent: dict[str, Namespace], current: dict[str, Namespace]) -> list[str]:

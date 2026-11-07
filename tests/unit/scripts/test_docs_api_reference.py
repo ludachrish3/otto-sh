@@ -15,7 +15,7 @@ import typing
 import pytest
 from typing_extensions import override
 
-from scripts.api_manifest import Namespace
+from scripts.api_manifest import Namespace, Symbol
 from scripts.docs_api_reference import (
     REPO_ROOT,
     Home,
@@ -27,25 +27,31 @@ from scripts.docs_api_reference import (
     choose_home,
     data_sources,
     defining_module,
+    documented_notes,
+    documented_path,
     documenting_module,
     drop_annotated_marker,
     drop_annotated_markers,
     factory_default,
     field_factories,
     internal_note,
+    load_golden,
     module_docstring,
     object_default,
     owner_module,
+    positional_note,
     provisional_notice,
     public_target,
     python_defaults,
     qualify_relative_roles,
     replace_defaults,
+    rights_note,
     shows_value,
     single_none,
     single_none_in_signature,
     skip_member,
     stability_banner,
+    symbol_notes,
     trackable,
 )
 
@@ -737,3 +743,60 @@ def test_sphinx_s_own_signature_with_non_python_defaults_parses_once_rewritten()
         " anon: object = ..., terms: list[str] = ..., sep: str = 'a,b')"
     )
     signature_from_str(rewritten)
+
+
+def test_a_withdrawn_right_renders_a_note():
+    """A class that withdraws a right says so; one that keeps both says nothing."""
+    assert rights_note(Symbol("otto.host:Host")) == []
+    note = "\n".join(rights_note(Symbol("otto.host:Host", construct=False, subclass=False)))
+    assert "otto-rights-no-construct" in note
+    assert "otto-rights-no-subclass" in note
+    assert "not constructed by callers" in note
+    assert "not for subclassing" in note
+    only = "\n".join(rights_note(Symbol("otto.host:Host", subclass=False)))
+    assert "otto-rights-no-subclass" in only
+    assert "no-construct" not in only
+    construct = "Its constructor makes no compatibility promise."
+    members = "Its abstract members make no compatibility promise."
+    assert construct in note
+    assert members in note
+    assert members in only
+    assert construct not in only
+    built = "\n".join(rights_note(Symbol("otto.host:Host", construct=False)))
+    assert construct in built
+    assert members not in built
+
+
+def test_a_positional_entry_renders_the_subjects():
+    assert positional_note(Symbol("otto.host:Host.run")) == []
+    note = "\n".join(positional_note(Symbol("otto.host:Host.run", ("cmd",), "the subject")))
+    assert ":class: otto-positional" in note
+    assert "``cmd``" in note
+    assert "the subject" in note
+    assert "keyword-only" in note
+    assert "()" not in "\n".join(positional_note(Symbol("otto.host:Host.run", ("cmd",))))
+    assert symbol_notes({}, "otto.host.Host.run") == []
+
+
+def test_an_inherited_entry_renders_its_note_on_the_subclass():
+    ref = build_reference(_ns("otto", "otto.host"))
+    entry = Symbol("otto.host:Host.run", ("cmds",), "the subject")
+    notes = documented_notes(ref, {"otto.host:Host.run": entry}, load_golden())
+    assert symbol_notes(notes, "otto.host.Host.run") == positional_note(entry)
+    assert symbol_notes(notes, "otto.host.UnixHost.run") == positional_note(entry)
+    assert notes["otto.host.UnixHost.run"].member
+
+
+def test_alias_keys_resolve_to_one_documented_home():
+    ref = build_reference(_ns("otto", "otto.lab"))
+    assert documented_path(ref, "otto:get_host") == "otto.lab.get_host"
+    assert documented_path(ref, "otto.lab:get_host") == "otto.lab.get_host"
+    assert documented_path(ref, "otto.lab:Nope") == "otto.lab.Nope"
+
+
+def test_a_tuple_record_note_names_the_shape_break():
+    record = Symbol("otto.monitor:LogEvent", ("ts", "line"), "tuple record")
+    note = "\n".join(positional_note(record))
+    assert "otto-positional-tuple-record" in note
+    assert "``ts``, ``line``" in note
+    assert "breaking change" in note

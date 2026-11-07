@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts import api_records, api_regen
-from scripts.api_manifest import Format
+from scripts.api_manifest import Format, Symbol
 
 
 def write_tree(root: Path, files: "dict[str, str]") -> Path:
@@ -28,6 +28,7 @@ def run_child_json(
     assume_dir: bool = False,
     seed: str = "0",
     formats: "list[Format] | None" = None,
+    symbols: "list[Symbol] | None" = None,
 ) -> "dict[str, Any]":
     """Run the producer child on *src* and return its JSON report."""
     return api_regen.run_child(
@@ -37,12 +38,15 @@ def run_child_json(
         seed=seed,
         assume_dir=assume_dir,
         formats=formats,
+        symbols=symbols,
     )
 
 
-def dump_of(src: Path, namespaces: "list[str]") -> "api_records.Dump":
+def dump_of(
+    src: Path, namespaces: "list[str]", symbols: "list[Symbol] | None" = None
+) -> "api_records.Dump":
     """Return the parsed dump of *src*; fail the test on any refusal."""
-    data = run_child_json(src, namespaces)
+    data = run_child_json(src, namespaces, symbols=symbols)
     assert data["refusals"] == [], data
     assert data["provenance"] == [], data
     records = [api_records.parse_record(line) for line in data["records"]]

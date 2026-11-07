@@ -39,6 +39,11 @@ The finding kinds:
   declared member of ``otto.x``. A resolver ``getattr``-s the member and
   never imports a submodule, so a declared namespace ``otto.x.N`` does not
   excuse it.
+* ``withdrawn-constructor`` -- taught code constructs a declared class whose manifest
+  ``[symbols]`` entry says ``construct = false``: the docs may not teach what the
+  manifest withdraws. A local subclass that inherits the constructor
+  (``class M(UnixHost): ...; M()``) constructs its first otto base, so the finding
+  names that base and ``--untaught-constructors`` counts the base as taught.
 * ``star-import`` -- ``from otto.x import *``.
 * ``dynamic-import`` -- ``import_module("otto...")`` or ``__import__``.
 * ``setup-only-name`` -- a name only ``doctest_global_setup`` binds.
@@ -264,9 +269,11 @@ class _Checker(ast.NodeVisitor):
         nums: list[int],
         state: _State,
         out: list[Finding],
+        constructed: "set[str] | None" = None,
     ) -> None:
         self.decl, self.setup, self.package = decl, setup_names, package
         self.label, self.nums, self.state, self.out = label, nums, state, out
+        self.constructed = constructed
 
     def _add(self, node: ast.AST, kind: str, detail: str) -> None:
         lineno = getattr(node, "lineno", 1)
@@ -604,6 +611,15 @@ class _Checker(ast.NodeVisitor):
             ):
                 self._add(node, "dynamic-import", first.value)
         cls = self._class_expr(func)
+        if cls is not None:
+            if self.constructed is not None:
+                self.constructed.add(cls.label)
+            if self.decl.constructor_withdrawn(cls.label):
+                self._add(
+                    node,
+                    "withdrawn-constructor",
+                    f"constructs {cls.label}, whose constructor is withdrawn (construct = false)",
+                )
         for kw in node.keywords:
             if kw.arg is not None:
                 self._private_use(kw, cls, kw.arg, "passed as a constructor keyword")
@@ -909,6 +925,7 @@ def _check_scope(
     page: bool,
     label: str,
     out: list[Finding],
+    constructed: "set[str] | None" = None,
 ) -> None:
     """Append one scope's findings to *out* (see :func:`check_file`)."""
     if path.suffix == ".py":
@@ -934,7 +951,7 @@ def _check_scope(
                 out.extend(_object_path_findings(decl, label, no, text))
             continue
         source, nums = _block_source(block)
-        checker = _Checker(decl, setup_names, package, label, nums, state, out)
+        checker = _Checker(decl, setup_names, package, label, nums, state, out, constructed)
         tree = _try_parse(source)
         if tree is None:
             _check_unparseable(source, nums, checker)
@@ -949,6 +966,7 @@ def check_file(
     *,
     repo_root: Path,
     corpus: set[Path],
+    constructed: "set[str] | None" = None,
 ) -> list[Finding]:
     """Check one scope and return its findings.
 
@@ -963,17 +981,32 @@ def check_file(
     out: list[Finding] = []
     page = path.suffix in {".md", ".rst"} and (path in corpus or path.resolve() in corpus)
     try:
-        _check_scope(path, decl, setup_names, repo_root, page=page, label=label, out=out)
+        _check_scope(
+            path,
+            decl,
+            setup_names,
+            repo_root,
+            page=page,
+            label=label,
+            out=out,
+            constructed=constructed,
+        )
     except Exception as exc:  # noqa: BLE001 -- one file's crash must never stop the corpus
         out.append(Finding(label, 1, "internal-error", f"{type(exc).__name__}: {exc}"))
     return out
 
 
-def check_corpus(repo_root: Path, decl: Declaration, setup_names: set[str]) -> list[Finding]:
+def check_corpus(
+    repo_root: Path,
+    decl: Declaration,
+    setup_names: set[str],
+    constructed: "set[str] | None" = None,
+) -> list[Finding]:
     """Check every scope of the teaching corpus under *repo_root*, then every include target.
 
     Each file is checked once, however many pages include it, and a target
-    that is itself in the corpus is checked as what it is there.
+    that is itself in the corpus is checked as what it is there. When *constructed*
+    is given, every ``module:Class`` key the corpus constructs is added to it.
     """
     corpus = blocks.teaching_corpus(repo_root)
     corpus_set = {p.resolve() for p in corpus}
@@ -990,7 +1023,39 @@ def check_corpus(repo_root: Path, decl: Declaration, setup_names: set[str]) -> l
                 walk.setdefault(target.resolve(), target)
     out: list[Finding] = []
     for path in walk.values():
-        out.extend(check_file(path, decl, setup_names, repo_root=repo_root, corpus=corpus_set))
+        out.extend(
+            check_file(
+                path,
+                decl,
+                setup_names,
+                repo_root=repo_root,
+                corpus=corpus_set,
+                constructed=constructed,
+            )
+        )
+    return out
+
+
+OTTO_ERROR = "otto.errors:OttoError"
+
+
+def _constructor_candidates(dump_text: str) -> set[str]:
+    """Return the bindings whose constructor ``construct = false`` could withdraw.
+
+    Read from the dump's own records: a ``name`` record of kind ``class`` or
+    ``model`` (the kinds the child accepts ``construct`` on), less every binding
+    whose ``mro`` reaches :data:`OTTO_ERROR` and that error base itself.
+    """
+    from scripts import api_records
+
+    dump = api_records.parse_dump(dump_text)
+    out = {key for key, kind in dump.bindings.items() if kind in ("class", "model")}
+    for key in list(out):
+        mro = dump.get("mro", key)
+        for entry in api_records.split_list(mro.fields[0]) if mro is not None else []:
+            bases = api_records.mro_set(entry)
+            if bases is not None and OTTO_ERROR in bases:
+                out -= {key, *bases}
     return out
 
 
@@ -1012,7 +1077,7 @@ def main(argv: list[str]) -> int:
         declaration_from,
         namespace_reports,
     )
-    from scripts.api_manifest import ManifestError, load_manifest
+    from scripts.api_manifest import ManifestError, load_manifest, load_symbols
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, required=True)
@@ -1024,10 +1089,19 @@ def main(argv: list[str]) -> int:
         help="repository to check: its src/, docs/ (conf.py included) and README "
         "(default: this script's own repo root)",
     )
+    parser.add_argument(
+        "--untaught-constructors",
+        action="store_true",
+        help="list declared constructible classes no corpus snippet constructs "
+        "(a review aid for choosing `construct = false`; exits 0 with the list, or 1 with "
+        "the producer refusals when the dump is refused; protocols, enums and OttoError "
+        "subclasses are left out)",
+    )
     args = parser.parse_args(argv)
 
     try:
         names = sorted(load_manifest(args.manifest))
+        withdrawn = {k for k, sym in load_symbols(args.manifest).items() if not sym.construct}
     except ManifestError as exc:
         print(f"FAIL {exc}")
         return 1
@@ -1043,8 +1117,22 @@ def main(argv: list[str]) -> int:
         reports,
         assume_dir_when_missing=args.report,
         private={key: set(members) for key, members in generated.private.items()},
+        withdrawn=withdrawn,
     )
-    findings = check_corpus(args.root, decl, setup_otto_names(args.root / "docs" / "conf.py"))
+    constructed: set[str] = set()
+    findings = check_corpus(
+        args.root, decl, setup_otto_names(args.root / "docs" / "conf.py"), constructed
+    )
+    if args.untaught_constructors:
+        if generated.text is None or refusals:
+            for refusal in refusals:
+                print(f"producer refusal: {refusal}")
+            return 1
+        candidates = _constructor_candidates(generated.text) - withdrawn - constructed
+        for key in decl.declared_classes():
+            if key in candidates:
+                print(key)
+        return 0
     for failure in failures:
         print(f"agreement: {failure}")
     for finding in findings:
