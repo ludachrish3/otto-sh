@@ -6,7 +6,7 @@
 // header comment -- the all-in-one `SlideoutMenu` wrapper puts `data-testid`
 // on the outer backdrop ModalOverlay, not the visible Dialog panel.
 import { X } from "@untitledui/icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   Modal,
@@ -17,46 +17,23 @@ import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
-import { cx } from "@/utils/cx";
-import type { EventRecord } from "../api/export.gen";
-import {
-  createEvent,
-  deleteEvent,
-  isStale,
-  type StaleResult,
-  sourceGuard,
-  updateEvent,
-} from "../data/eventApi";
+import { EVENT_DASH_STYLES, type EventDash } from "../api/eventStyle.gen";
+import { createEvent, deleteEvent, type EventUpdateInput, updateEvent } from "../data/eventApi";
+import { customStyleName, isEventDash } from "../data/eventStyle";
 import { useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
+import { EventColorField } from "../ui/EventColorField";
 import { TextInput } from "../ui/TextInput";
-import { type EventDraft, useUiStore } from "../ui/uiStore";
+import { type EventDraft, type EventEditorTarget, useUiStore } from "../ui/uiStore";
 import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
+import { settleOnOpening } from "./settleOnOpening";
 import { editorGateKey, useMutationGate } from "./useMutationGate";
 
-// Default manual grey + the app's event accent + the auto lifecycle colors --
-// mirrors AUTO_EVENT_COLORS (otto/monitor/events.py: start/pass/fail =
-// #888888/#2ca02c/#d62728) plus two extra chart hues for manual marking.
-// Not exported (knip's unused-exports check) -- nothing outside this module
-// consumes it yet; an earlier draft marked it `export` in anticipation of a
-// future consumer that never arrived, and a dead export is exactly what that
-// gate is there to catch.
-const EVENT_COLOR_SWATCHES = [
-  "#888888",
-  "#7c5cff",
-  "#2ca02c",
-  "#d62728",
-  "#1f77b4",
-  "#ff7f0e",
-] as const;
-
-// Mirrors otto/models/monitor.py's VALID_DASH_STYLES. No TS export exists
-// for it (that module is Python-only) -- this list is hand-kept in sync; a
-// mismatched entry just 422s loudly (server-side validation catches it),
-// it does not silently corrupt data.
-const DASH_STYLES = ["solid", "dot", "dash", "longdash", "dashdot", "longdashdot"] as const;
+// The swatches (ui/EventColorField.tsx) and the dash list are the
+// event-style registry's (otto/models/event_style.py, mirrored in
+// api/eventStyle.gen.ts).
 
 type Form = EventDraft;
 
@@ -91,8 +68,8 @@ function formFromRecord(
     timestamp: string;
     end_timestamp?: string | null;
     label?: string;
-    color?: string;
-    dash?: string;
+    color: string;
+    dash: EventDash;
   },
 ): Form {
   return {
@@ -100,8 +77,28 @@ function formFromRecord(
     timestampMs: parseTs(record.timestamp),
     endTimestampMs: record.end_timestamp != null ? parseTs(record.end_timestamp) : null,
     label: record.label ?? "",
-    color: record.color ?? "#888888",
-    dash: record.dash ?? "dash",
+    color: record.color,
+    dash: record.dash,
+  };
+}
+
+/** The style fields the user chose for this target (even the value already
+ * shown). */
+interface StyleTouched {
+  color: boolean;
+  dash: boolean;
+}
+
+const UNTOUCHED: StyleTouched = { color: false, dash: false };
+
+/** An update PATCH's style fields: only the ones the user chose, so a
+ * label-only Save leaves the stored colour and dash -- a legacy one
+ * (data/eventStyle.ts) included -- untouched on the server. A create always
+ * sends both. */
+function styleChanges(form: Form, touched: StyleTouched): Pick<EventUpdateInput, "color" | "dash"> {
+  return {
+    ...(touched.color && { color: form.color }),
+    ...(touched.dash && { dash: form.dash }),
   };
 }
 
@@ -133,6 +130,17 @@ export function EventEditor() {
           ?.events.find((ev) => ev.id === editor.eventId)?.label ?? "")
       : "",
   );
+  // The stored record's dash when it is not a registry style
+  // (data/eventStyle.ts): until the user picks a dash, the select shows it
+  // as custom with NO selected key, so picking any dash -- the drawn default
+  // included -- is a change and replaces it, as a colour pick does.
+  const storedLegacyDash = useReviewStore((s) =>
+    editor?.kind === "edit"
+      ? s.sessions
+          .find((sess) => sess.id === editor.sessionId)
+          ?.events.find((ev) => ev.id === editor.eventId)?.legacyDash
+      : undefined,
+  );
   // The delete confirmation dialog, and the failure it shows (the dialog
   // owns its own error so it stays open to retry).
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -151,6 +159,10 @@ export function EventEditor() {
   // react-stately would keep the previous target's half-typed segments.
   // A counter, not the target's ids: two drafts have no ids to tell apart.
   const [targetKey, setTargetKey] = useState(0);
+  // Which style fields the user chose for this target: styleChanges.
+  const [touched, setTouched] = useState<StyleTouched>(UNTOUCHED);
+  // The edited record's non-hex stored colour (data/eventStyle.ts), if any.
+  const [legacyColor, setLegacyColor] = useState<string | undefined>(undefined);
 
   // Each field's controlled value is memoised on its epoch: react-stately
   // resets a field's displayed segments whenever the value's IDENTITY
@@ -185,7 +197,23 @@ export function EventEditor() {
   // a stable module-level import; `.getState()` is a plain, one-shot pull,
   // exactly like marking.ts's requireActiveSessionId -- not a reactive
   // dependency Biome's exhaustive-deps rule needs to see in the array.
+  //
+  // It also reseeds ONCE more when a request from an EARLIER opening of the
+  // same target settles (#932): an opening that finds the target's gate
+  // already pending seeds from the store as it was, so that request's update
+  // lands after the seed. Every field is disabled meanwhile, so the form
+  // holds no edit of the user's to lose. A request sent from THIS opening
+  // never reseeds: a failed Save keeps the user's draft. A target whose
+  // record is gone (that request was a Delete) closes the editor.
+  const seeded = useRef<{ editor: EventEditorTarget | null; inherited: boolean }>({
+    editor: null,
+    inherited: false,
+  });
   useEffect(() => {
+    const fresh = seeded.current.editor !== editor;
+    const inheritedSettled = seeded.current.inherited && !gate.pending;
+    if (!fresh && !inheritedSettled) return;
+    seeded.current = { editor, inherited: fresh && gate.pending };
     setError(null);
     setConfirmOpen(false);
     setDeleteError(null);
@@ -193,19 +221,27 @@ export function EventEditor() {
       setForm(null);
       return;
     }
-    let next: Form | null;
+    let next: Form;
+    let legacy: string | undefined;
     if (editor.kind === "draft") {
       next = editor.draft;
     } else {
       const session = useReviewStore.getState().sessions.find((s) => s.id === editor.sessionId);
       const record = session?.events.find((ev) => ev.id === editor.eventId);
-      next = record ? formFromRecord(editor.sessionId, record) : null;
+      if (!record) {
+        closeEventEditor();
+        return;
+      }
+      next = formFromRecord(editor.sessionId, record);
+      legacy = record.legacyColor;
     }
     setForm(next);
+    setTouched(UNTOUCHED);
+    setLegacyColor(legacy);
     setTargetKey((k) => k + 1);
     setStartEmpty(false);
-    setFill({ start: "complete", end: next?.endTimestampMs == null ? "empty" : "complete" });
-  }, [editor]);
+    setFill({ start: "complete", end: next.endTimestampMs == null ? "empty" : "complete" });
+  }, [editor, gate.pending, closeEventEditor]);
 
   if (editor === null || form === null) return null;
 
@@ -213,53 +249,50 @@ export function EventEditor() {
   const endMsg = endMessage(form, fill, startEmpty);
   const invalid = form.label.trim() === "" || startMsg !== null || endMsg !== null;
 
+  // Each request settles on the editor opening that sent it: a late result
+  // never closes, or shows an error in, a newer opening (settleOnOpening).
   const save = () =>
-    gate.run(async () => {
-      try {
-        // A stale result: a file import overtook the request and already
-        // closed the editor (data/source.ts), so there is nothing left to do.
-        const current = sourceGuard();
-        let result: EventRecord | StaleResult;
-        if (editor.kind === "draft") {
-          result = await createEvent(form.sessionId, {
-            label: form.label,
-            timestamp: new Date(form.timestampMs).toISOString(),
-            ...(form.endTimestampMs !== null
-              ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
-              : {}),
-            color: form.color,
-            dash: form.dash,
-          });
-        } else {
-          result = await updateEvent(editor.sessionId, editor.eventId, {
-            label: form.label,
-            timestamp: new Date(form.timestampMs).toISOString(),
-            end_timestamp:
-              form.endTimestampMs !== null ? new Date(form.endTimestampMs).toISOString() : null,
-            color: form.color,
-            dash: form.dash,
-          });
-        }
-        if (isStale(current(result))) return;
-        closeEventEditor();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    }, SAVE);
+    gate.run(
+      () =>
+        settleOnOpening(
+          "eventEditor",
+          () =>
+            editor.kind === "draft"
+              ? createEvent(form.sessionId, {
+                  label: form.label,
+                  timestamp: new Date(form.timestampMs).toISOString(),
+                  ...(form.endTimestampMs !== null
+                    ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
+                    : {}),
+                  color: form.color,
+                  dash: form.dash,
+                })
+              : updateEvent(editor.sessionId, editor.eventId, {
+                  label: form.label,
+                  timestamp: new Date(form.timestampMs).toISOString(),
+                  end_timestamp:
+                    form.endTimestampMs !== null
+                      ? new Date(form.endTimestampMs).toISOString()
+                      : null,
+                  ...styleChanges(form, touched),
+                }),
+          { done: closeEventEditor, fail: setError },
+        ),
+      SAVE,
+    );
 
   // Confirm runs through the same gate as Save, so the two stay exclusive.
   const confirmDelete = () => {
     if (editor.kind !== "edit") return;
     setDeleteError(null);
-    void gate.run(async () => {
-      try {
-        const current = sourceGuard();
-        if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
-        closeEventEditor();
-      } catch (err) {
-        setDeleteError(err instanceof Error ? err.message : String(err));
-      }
-    }, DELETE);
+    void gate.run(
+      () =>
+        settleOnOpening("eventEditor", () => deleteEvent(editor.sessionId, editor.eventId), {
+          done: closeEventEditor,
+          fail: setDeleteError,
+        }),
+      DELETE,
+    );
   };
 
   return (
@@ -288,6 +321,9 @@ export function EventEditor() {
             <TextInput
               label="Label"
               testId="editor-label"
+              // Every draft field shares Delete's predicate: nothing the
+              // draft holds can change under an in-flight request.
+              isDisabled={gate.pending}
               value={form.label}
               onChange={(value) => setForm({ ...form, label: value })}
             />
@@ -296,6 +332,7 @@ export function EventEditor() {
               label="Start"
               granularity="second"
               data-testid="editor-start"
+              isDisabled={gate.pending}
               value={startEmpty ? null : startValue}
               isInvalid={startMsg !== null}
               hint={<DateFieldCompleteness onFillChange={onStartFill} message={startMsg} />}
@@ -320,6 +357,7 @@ export function EventEditor() {
                 label="End"
                 granularity="second"
                 data-testid="editor-end"
+                isDisabled={gate.pending}
                 className="col-start-1 row-span-3 row-start-1 grid grid-cols-1 grid-rows-subgrid"
                 value={endValue}
                 isInvalid={endMsg !== null}
@@ -339,40 +377,44 @@ export function EventEditor() {
                 icon={X}
                 size="sm"
                 data-testid="editor-end-clear"
-                isDisabled={form.endTimestampMs === null && fill.end !== "partial"}
+                isDisabled={
+                  gate.pending || (form.endTimestampMs === null && fill.end !== "partial")
+                }
                 onClick={() => {
                   setForm({ ...form, endTimestampMs: null });
                   setEndKey((k) => k + 1);
                 }}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-secondary">Color</span>
-              <div className="flex gap-2">
-                {EVENT_COLOR_SWATCHES.map((hex) => (
-                  <button
-                    key={hex}
-                    type="button"
-                    aria-label={`Color ${hex}`}
-                    aria-pressed={form.color === hex}
-                    data-testid={`editor-color-${hex}`}
-                    onClick={() => setForm({ ...form, color: hex })}
-                    className={cx(
-                      "size-6 shrink-0 cursor-pointer rounded-full ring-2 ring-offset-2 ring-offset-primary transition",
-                      form.color === hex ? "ring-brand" : "ring-transparent hover:ring-secondary",
-                    )}
-                    style={{ backgroundColor: hex }}
-                  />
-                ))}
-              </div>
-            </div>
+            <EventColorField
+              // Remounts per target, like the InputDates: its custom slot
+              // is per-editor-session state and must not carry over.
+              key={`color:${targetKey}`}
+              value={form.color}
+              dash={form.dash}
+              isDisabled={gate.pending}
+              // Once a colour is picked the repair is made: the note goes.
+              {...(!touched.color && legacyColor !== undefined && { legacyColor })}
+              onChange={(color) => {
+                setTouched((t) => ({ ...t, color: true }));
+                setForm({ ...form, color });
+              }}
+            />
             <Select
               aria-label="Dash style"
               label="Dash"
               data-testid="editor-dash"
-              items={DASH_STYLES.map((d) => ({ id: d, label: d }))}
-              selectedKey={form.dash}
-              onSelectionChange={(key) => key !== null && setForm({ ...form, dash: String(key) })}
+              isDisabled={gate.pending}
+              items={EVENT_DASH_STYLES.map((d) => ({ id: d, label: d }))}
+              {...(!touched.dash && storedLegacyDash !== undefined
+                ? { selectedKey: null, placeholder: customStyleName(storedLegacyDash) }
+                : { selectedKey: form.dash })}
+              onSelectionChange={(key) => {
+                const dash = String(key);
+                if (key === null || !isEventDash(dash)) return;
+                setTouched((t) => ({ ...t, dash: true }));
+                setForm({ ...form, dash });
+              }}
             >
               {/* Conditional spread, not `label={item.label}`: the vendored
                   `SelectItemProps` declares `label?: string`, and the render

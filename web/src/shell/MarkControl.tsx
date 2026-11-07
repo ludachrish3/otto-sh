@@ -11,11 +11,11 @@ import { Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import { isStale, sourceGuard } from "../data/eventApi";
 import { useActiveSession } from "../data/reviewStore";
 import { TextInput } from "../ui/TextInput";
 import { useUiStore } from "../ui/uiStore";
 import { blankDraft, endSpanReporting, markNow, startSpan } from "./marking";
+import { settleOnOpening } from "./settleOnOpening";
 import { markGateKey, useMutationGate } from "./useMutationGate";
 
 /** This control's action names on the shared mark gate. */
@@ -50,17 +50,17 @@ export function MarkControl() {
 
   const submit = () => {
     if (!label.trim()) return Promise.resolve();
-    return gate.run(async () => {
-      try {
-        // Stale: a file import overtook the request and already closed this.
-        const current = sourceGuard();
-        if (isStale(current(await (markPopover === "start" ? startSpan(label) : markNow(label)))))
-          return;
-        closeMarkPopover();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    }, SUBMIT);
+    // Settles on the popover opening that sent it: a late result never
+    // closes, or shows an error in, a reopened popover (settleOnOpening).
+    return gate.run(
+      () =>
+        settleOnOpening(
+          "markPopover",
+          () => (markPopover === "start" ? startSpan(label) : markNow(label)),
+          { done: closeMarkPopover, fail: setError },
+        ),
+      SUBMIT,
+    );
   };
 
   return (

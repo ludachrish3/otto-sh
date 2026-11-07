@@ -119,9 +119,10 @@ async def test_performance_under_load(monitor) -> None:
   still read what was collected after `stop()`.
 - **Events** appear as vertical markers on the dashboard timeline, making it
   easy to correlate metric spikes with specific test actions. `label` can't
-  be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
-  and `dash` must be one of the six styles the dashboard's event editor
-  offers; `monitor.event` validates all three immediately and raises rather
+  be blank, `color` must be a hex string, `#rrggbb` or the short `#rgb`
+  (stored as lowercase `#rrggbb`), and `dash` must be one of the six styles
+  the dashboard's event editor offers. A CSS color name such as `"red"`
+  raises. `monitor.event` validates all three immediately and raises rather
   than persisting an unrenderable event. Under `otto test --monitor`, an
   event from a test that started no monitor of its own lands on the run's
   timeline instead.

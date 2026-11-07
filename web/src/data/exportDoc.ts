@@ -7,6 +7,7 @@
 import type {
   ChartSpecRecord,
   ElementRecord,
+  EventRecord,
   HostSnapshot,
   LinkSnapshot,
   MetricRecord,
@@ -15,6 +16,7 @@ import type {
   TabSpecRecord,
   TunnelRecord,
 } from "../api/export.gen";
+import { type EventStyled, normalizeEventStyle, storedEventStyle } from "./eventStyle";
 import { EXPORT_FORMAT, MONITOR_EXPORT_READ_VERSIONS } from "./exportFormat";
 import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
 import { displayEndMs, parseTs } from "./time";
@@ -72,6 +74,10 @@ interface NormalizedMeta {
   tabs: TabSpecRecord[];
 }
 
+/** A wire event row with its style resolved at the boundary (eventStyle.ts):
+ * `color` is always drawable, `dash` always a known style. */
+type NormalizedEvent = EventStyled<EventRecord>;
+
 export interface NormalizedSession {
   id: string;
   label: string | null;
@@ -89,7 +95,7 @@ export interface NormalizedSession {
   };
   meta: NormalizedMeta;
   metrics: MetricRecord[];
-  events: NonNullable<SessionRecord["events"]>;
+  events: NormalizedEvent[];
   logEvents: NonNullable<SessionRecord["log_events"]>;
   /** Per-series index over `metrics` — what review AND live read from instead
    * of scanning the flat array (see seriesIndex.ts). */
@@ -227,7 +233,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     raw.id,
     warnings,
     (e) => e.end_timestamp,
-  );
+  ).map(normalizeEventStyle);
   const logEvents = dropInvalidTimestamps(raw.log_events ?? [], "log event", raw.id, warnings);
   // `metrics` above already excludes every NaN-timestamp row, so this scan
   // can never resolve to NaN the way the raw array could — a single
@@ -314,7 +320,7 @@ function sessionToRecord(session: NormalizedSession): SessionRecord {
       tabs: session.meta.tabs,
     },
     metrics: session.metrics,
-    events: session.events,
+    events: session.events.map(storedEventStyle),
     log_events: session.logEvents,
     chart_map: session.chartMap,
     tunnels: session.tunnels,

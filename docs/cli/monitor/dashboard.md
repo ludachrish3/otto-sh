@@ -188,10 +188,43 @@ for them to persist to.
 
 **The event editor**, opened from any of the flows above, has a **Label**,
 second-granularity **Start**/**End** date-time fields (clearing **End**
-turns a span back into a point event), a row of color swatches, and a
+turns a span back into a point event), a row of named color swatches
+(**Grey**, the default, **Violet**, **Green** and **Red**; the automatic test
+marks use Grey for a start, Green for a pass and Red for a failure), and a
 **Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
 `longdashdot`) applied to the event's chart overlay — a point event's marker
-line and the border drawn around a span. **Save** stays disabled until
+line and the border drawn around a span. Each swatch shows its name in a
+tooltip when you hover it or reach it with the keyboard: Tab enters the row
+on the selected swatch, the arrow keys move along it, and Space or Enter
+picks one. The selected colour's name also stays beside the label, as in
+**Color · Grey**. An event whose colour is not one of the four keeps it as
+an extra swatch named for its value, such as **Custom — #00abcd**, and you
+can switch to a preset and back to it.
+
+**Custom…**, after the swatches (the next Tab stop), picks any other colour.
+It opens a popover with a hue wheel around a saturation and brightness
+square, and a **Hex** field for an exact value: six hexadecimal digits, with
+or without the `#`. While the field holds anything else, it keeps what you
+typed, says "Enter six hexadecimal digits, for example #00abcd", and
+**Use colour** stays disabled; moving the wheel or the square replaces the
+text with that colour's hex. Two previews, **Light chart** and **Dark
+chart**, draw the event's marker, dash and span fill in the chosen
+colour over each theme's chart background. **Use colour** puts the
+colour in the editor, selecting a preset swatch if it matches one;
+**Cancel**, Esc or a click outside discards it, and Esc closes only the
+popover. Nothing is sent until you press **Save**.
+
+Saving an edit sends the colour only if you picked one, so changing just the
+label never rewrites it. An event
+colour is always a hex value. An event from an older capture whose colour is
+not hex (a name such as `red`) is drawn in Grey. Its colour is kept as it
+was, in the archive and in an export, until you pick a new one: the editor
+says so under the swatches, and its **Use Grey** button picks Grey for you.
+The dash works the same way: saving sends it only if you choose one. A
+dash that is not one of the listed styles is drawn as the default dash and
+kept; the editor shows it as custom (for example **Custom — wavy**), and
+choosing any dash, the default included, replaces it.
+**Save** stays disabled until
 **Start** is complete and **End** is either complete or empty; the reason
 shows under the field. Editing or deleting an existing event reuses the
 same panel; **Delete** opens a dialog that names the event ("Delete

@@ -99,7 +99,10 @@ without a hand-edit.
 `web/src/ui/` holds otto-authored building blocks. The set is closed by
 decision, not convention: the coverage-SPA work (2026-07) capped authored
 additions at `TreeView` and `CodeView` so the vendored Untitled UI layer
-stays the default answer for new UI. Adding a new `ui/**` component is an
-explicit decision to widen that set — say so in the PR and update this
-paragraph. (Decision history lives in the plans archive,
+stays the default answer for new UI. The set widened once since, for
+`EventColorField` (Chris, 2026-11-05): Untitled UI's free set has no colour
+picker, so the event editor's named swatches compose react-aria's
+`ColorSwatchPicker` with the vendored `Tooltip`. Adding a new `ui/**`
+component is an explicit decision to widen that set — say so in the PR and
+update this paragraph. (Decision history lives in the plans archive,
 git tag `plans-archive-2026-08-03`.)

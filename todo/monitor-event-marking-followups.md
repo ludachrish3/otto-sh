@@ -3,7 +3,8 @@
 Recorded from the 2026-07-18 final whole-branch review of Plan 5c (event
 marking). None of these are merge-blocking.
 
-1. **Literal/enum-typed dash + color in the exported schema.** `dash` and
+1. ✅ Resolved differently: one Python registry generates web/src/api/eventStyle.gen.ts (#857); the wire type stays `string`, but no hand-copied list remains.
+   **Literal/enum-typed dash + color in the exported schema.** `dash` and
    `color` currently round-trip as loose `string` on the wire
    (`web/src/api/export.gen.ts`'s generated `Dash1`/`Color1` types), so
    `web/src/shell/EventEditor.tsx` keeps its own hand-copied

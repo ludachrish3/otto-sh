@@ -26,6 +26,7 @@ import aiosqlite
 
 from ..errors import OttoError
 from ..filesystem import network_fs_type
+from ..models.event_style import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
 from .events import MonitorEvent
 from .formats import MONITOR_DB_READ_VERSIONS, MONITOR_DB_WRITE_VERSIONS
 from .session import SessionFrame
@@ -72,7 +73,9 @@ CREATE TABLE IF NOT EXISTS metrics (
     source     TEXT
 )
 """,
-    """
+    # The style defaults are the registry's (otto.models.event_style); both
+    # are plain tokens (no quote to escape), interpolated, never restated.
+    f"""
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT    NOT NULL REFERENCES sessions(id),
@@ -80,8 +83,8 @@ CREATE TABLE IF NOT EXISTS events (
     end_ts     TEXT,
     label      TEXT    NOT NULL,
     source     TEXT    NOT NULL DEFAULT 'manual',
-    color      TEXT    NOT NULL DEFAULT '#888888',
-    dash       TEXT    NOT NULL DEFAULT 'dash'
+    color      TEXT    NOT NULL DEFAULT '{DEFAULT_EVENT_COLOR}',
+    dash       TEXT    NOT NULL DEFAULT '{DEFAULT_EVENT_DASH}'
 )
 """,
     """

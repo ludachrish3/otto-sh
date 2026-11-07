@@ -3,6 +3,7 @@
 // here: if you find yourself writing one, the wire has drifted from the payload and
 // the fix belongs in the model, not here.
 import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
+import { normalizeEventStyle } from "./eventStyle";
 import { dropInvalidTimestamps, type NormalizedSession, parseObservedAt } from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
 
@@ -52,13 +53,14 @@ export function applyFragment(
 
   const metrics = dropInvalidTimestamps(frag.metrics ?? [], "metric", session.id, warnings);
   const logEvents = dropInvalidTimestamps(frag.log_events ?? [], "log event", session.id, warnings);
+  // Style resolved here, once, as on the import path (exportDoc.ts).
   const fragEvents = dropInvalidTimestamps(
     frag.events ?? [],
     "event",
     session.id,
     warnings,
     (e) => e.end_timestamp,
-  );
+  ).map(normalizeEventStyle);
   const deletedIds = frag.deleted_event_ids ?? [];
   const chartMapPatch = frag.chart_map ?? {};
   const hasMetaPatch = frag.meta !== null && frag.meta !== undefined;

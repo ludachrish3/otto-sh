@@ -3,8 +3,10 @@
 // are encoded here: 2px lines, no point symbols (hover emphasis only),
 // hairline recessive grid, axis text in muted ink (never series colors),
 // one y-axis per chart, crosshair tooltip on by default.
+import type { EventDash } from "../api/eventStyle.gen";
 import type { NormalizedSession, TimeRange } from "../data/exportDoc";
 import { parseTs } from "../data/time";
+import { dashType, MARKER_LINE_WIDTH, SPAN_FILL_ALPHA, withAlpha } from "./markerStyle";
 import { MUTED_SERIES_DARK, MUTED_SERIES_LIGHT, SERIES_DARK, SERIES_LIGHT } from "./palette";
 
 export interface ChartTheme {
@@ -60,44 +62,9 @@ export interface EventMarker {
   color: string;
   fromMs: number;
   toMs: number | null;
-  /** plotly-style dash name (VALID_DASH_STYLES). eventMarkers always sets it
-   * (defaulting to "dash"); optional so callers building a marker by hand need
-   * not restate the default. */
-  dash?: string;
-}
-
-/** Maps a plotly-style dash name (otto/models/monitor.py VALID_DASH_STYLES,
- * mirrored in EventEditor's DASH_STYLES) onto the value ECharts' lineStyle.type
- * / itemStyle.borderType accepts: the three named types, or a numeric
- * dash-pattern array for the names ECharts has no word for (longdash etc.).
- * Unknown/absent names fall back to "dashed" — the style markLines always used
- * before the dash field was honored (TODO item 5). */
-const DASH_TO_ECHARTS: Record<string, "solid" | "dashed" | "dotted" | number[]> = {
-  solid: "solid",
-  dot: "dotted",
-  dash: "dashed",
-  longdash: [12, 6],
-  dashdot: [8, 4, 2, 4],
-  longdashdot: [14, 4, 2, 4],
-};
-
-function dashType(dash: string | undefined): "solid" | "dashed" | "dotted" | number[] {
-  return DASH_TO_ECHARTS[dash ?? "dash"] ?? "dashed";
-}
-
-/** Exactly `#rrggbb` — the only shape `withAlpha` can append a byte to. */
-const SIX_DIGIT_HEX = /^#[0-9a-fA-F]{6}$/u;
-
-/** A #rrggbb hex with an alpha byte appended (#rrggbbaa). Used for a span's
- * faint fill so its dashed border can stay full-strength — itemStyle.opacity
- * would fade the border too, leaving the dash unreadable. Non-6-digit-hex
- * colors (never produced by the palette) pass through unchanged. */
-function withAlpha(color: string, alpha: number): string {
-  if (!SIX_DIGIT_HEX.test(color)) return color;
-  const byte = Math.round(alpha * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `${color}${byte}`;
+  /** The registry's dash style (api/eventStyle.gen.ts), resolved by
+   * normalizeEventStyle where the event entered the store. */
+  dash: EventDash;
 }
 
 /** Window-overlap filter over the session's wire event rows. */
@@ -118,10 +85,10 @@ export function eventMarkers(
       // Real wire ids are non-negative; negative synthetics can't collide.
       id: ev.id ?? -1 - out.length,
       label: ev.label ?? "",
-      color: ev.color ?? "#7c5cff",
+      color: ev.color,
       fromMs,
       toMs,
-      dash: ev.dash ?? "dash",
+      dash: ev.dash,
     });
   }
   return out;
@@ -543,7 +510,7 @@ export function eventOverlay(
           // The marker's id, for a later click on the line to resolve the
           // event it draws (no handler reads it yet).
           eventId: e.id,
-          lineStyle: { color: e.color, type: dashType(e.dash), width: 1 },
+          lineStyle: { color: e.color, type: dashType(e.dash), width: MARKER_LINE_WIDTH },
           // "end" is the line's top; a negative distance pulls the label back
           // down INSIDE the plot (clear of the y-axis name above it), and the
           // offset moves its left edge from the line to the layout's leftPx.
@@ -582,10 +549,10 @@ export function eventOverlay(
           // per-side border and the span is full-height, so the top/bottom lines
           // land on the plot edges; accepted (the chosen dash on every edge).
           itemStyle: {
-            color: withAlpha(e.color, 0.12),
+            color: withAlpha(e.color, SPAN_FILL_ALPHA),
             borderColor: e.color,
             borderType: dashType(e.dash),
-            borderWidth: 1,
+            borderWidth: MARKER_LINE_WIDTH,
           },
           // A coordinate-array position is relative to the area's polygon
           // origin — its CLIPPED start, at the plot top — so the layout's

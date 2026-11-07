@@ -239,6 +239,207 @@ def test_end_clear_button_aligns_with_end_input(page: Page, live_stream_dash) ->
     assert_level()
 
 
+def test_color_swatches_are_named(page: Page, live_stream_dash) -> None:
+    """The colour swatches are named options (#858): hovering Violet shows
+    its name as a tooltip, the arrow keys move along the row, Space picks
+    Green, the persistent name follows, and the POST carries Green's hex."""
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    _tid(page, "mark-menu").click()
+    _tid(page, "menu-add-event").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    _tid(page, "editor-label").fill("named swatch")
+    expect(_tid(page, "editor-color-name")).to_have_text("· Grey")
+
+    violet = editor.get_by_role("option", name="Violet")
+    violet.hover()
+    expect(page.get_by_role("tooltip")).to_have_text("Violet")
+
+    # The selected swatch is the row's one tab stop; the arrows move on.
+    grey = editor.get_by_role("option", name="Grey")
+    grey.focus()
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("ArrowRight")
+    expect(editor.get_by_role("option", name="Green")).to_be_focused()
+    page.keyboard.press("Space")
+    expect(_tid(page, "editor-color-success")).to_have_attribute("aria-selected", "true")
+    expect(_tid(page, "editor-color-name")).to_have_text("· Green")
+    # One tab stop for the whole row: Tab leaves the options (for Custom…).
+    page.keyboard.press("Tab")
+    expect(editor.locator('[role="option"]:focus')).to_have_count(0)
+    expect(_tid(page, "editor-color-custom-open")).to_be_focused()
+
+    with page.expect_request(
+        lambda r: r.method == "POST" and r.url.endswith("/event")
+    ) as request_info:
+        _tid(page, "editor-save").click()
+    assert request_info.value.post_data_json["color"] == "#2ca02c"
+    editor.wait_for(state="detached")
+
+
+_HEX_ERROR = "Enter six hexadecimal digits, for example #00abcd"
+
+
+def _open_subject(page: Page, dash) -> None:
+    """Push a fresh point for r1 and open its subject page."""
+    _push_tick(dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    page.goto(dash.url)
+    page.goto(f"{dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+
+def _open_new_event_editor_by_keyboard(page: Page) -> Locator:
+    """Mark menu -> Add event, by keyboard only; returns the editor."""
+    _tid(page, "mark-menu").focus()
+    page.keyboard.press("Enter")
+    expect(_tid(page, "menu-start-span")).to_be_visible()
+    # Add event is the menu's last item.
+    page.keyboard.press("End")
+    expect(_tid(page, "menu-add-event")).to_be_focused()
+    page.keyboard.press("Enter")
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    return editor
+
+
+def _open_custom_by_keyboard(page: Page) -> Locator:
+    """Focus Custom…, press Enter; the hex field takes focus."""
+    _tid(page, "editor-color-custom-open").focus()
+    page.keyboard.press("Enter")
+    dialog = _tid(page, "custom-color-dialog")
+    expect(dialog).to_be_visible()
+    expect(_tid(page, "custom-color-hex")).to_be_focused()
+    return dialog
+
+
+def _replace_hex(page: Page, text: str) -> None:
+    """Select the hex field's text and type *text* over it, keystroke by keystroke."""
+    hex_input = _tid(page, "custom-color-hex")
+    hex_input.press("ControlOrMeta+a")
+    hex_input.press_sequentially(text)
+
+
+def test_custom_color_exact_value(page: Page, live_stream_dash) -> None:
+    """Custom… (#859), keyboard only: type an exact hex, Use colour, Save --
+    the POST carries exactly that colour."""
+    _open_subject(page, live_stream_dash)
+    _open_new_event_editor_by_keyboard(page)
+    _tid(page, "editor-label").fill("exact custom")
+    _open_custom_by_keyboard(page)
+    _replace_hex(page, "#00abcd")
+    _tid(page, "custom-color-apply").focus()
+    page.keyboard.press("Enter")
+    expect(_tid(page, "custom-color-dialog")).to_have_count(0)
+    expect(_tid(page, "editor-color-name")).to_have_text("· Custom — #00abcd")
+    expect(_tid(page, "editor-color-custom")).to_have_attribute("aria-selected", "true")
+
+    with page.expect_request(
+        lambda r: r.method == "POST" and r.url.endswith("/event")
+    ) as request_info:
+        _tid(page, "editor-save").click()
+    assert request_info.value.post_data_json["color"] == "#00abcd"
+
+
+def test_custom_color_incomplete_hex_is_refused_without_blur(page: Page, live_stream_dash) -> None:
+    """An incomplete hex refuses Use colour at once, with no blur (#859):
+    react-stately's commit would revert the text to the old colour, so a
+    stale value must never be applied. Enter and an explicit blur (both
+    commits) leave it refused."""
+    _open_subject(page, live_stream_dash)
+    _open_new_event_editor_by_keyboard(page)
+    dialog = _open_custom_by_keyboard(page)
+    _replace_hex(page, "#00ab")
+    apply = _tid(page, "custom-color-apply")
+    expect(apply).to_be_disabled()
+    expect(dialog.get_by_text(_HEX_ERROR)).to_be_visible()
+    expect(_tid(page, "editor-color-name")).to_have_text("· Grey")
+
+    page.keyboard.press("Enter")
+    expect(apply).to_be_disabled()
+    expect(dialog.get_by_text(_HEX_ERROR)).to_be_visible()
+    _tid(page, "custom-color-hex").blur()
+    # The field keeps the refused text beside the error, never the old colour.
+    expect(_tid(page, "custom-color-hex")).to_have_value("#00ab")
+    expect(apply).to_be_disabled()
+    expect(dialog.get_by_text(_HEX_ERROR)).to_be_visible()
+    expect(_tid(page, "editor-color-name")).to_have_text("· Grey")
+
+
+def test_custom_color_nested_escape(page: Page, live_stream_dash) -> None:
+    """Escape closes only the Custom… popover: focus returns to Custom… and
+    the editor slideout stays open (#859)."""
+    _open_subject(page, live_stream_dash)
+    editor = _open_new_event_editor_by_keyboard(page)
+    _open_custom_by_keyboard(page)
+    page.keyboard.press("Escape")
+    expect(_tid(page, "custom-color-dialog")).to_have_count(0)
+    expect(_tid(page, "editor-color-custom-open")).to_be_focused()
+    expect(editor).to_be_visible()
+
+
+def test_custom_color_existing_event(page: Page, live_stream_dash) -> None:
+    """An existing ``#00abcd`` event opens with its custom slot selected, and
+    a label-only edit's PATCH carries no ``color`` key (#858/#859)."""
+    _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
+    session_id = live_stream_dash.collector.session_id
+    status, body = _post_json(
+        live_stream_dash.api_url(f"/api/session/{session_id}/event"),
+        {"label": "teal", "color": "#00abcd"},
+    )
+    assert status == 201, body
+    _open_subject(page, live_stream_dash)
+    _tid(page, "events-button").click()
+    _tid(page, "events-panel").wait_for()
+    _tid(page, f"event-edit-{body['id']}").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    expect(_tid(page, "editor-color-custom")).to_have_attribute("aria-selected", "true")
+    expect(_tid(page, "editor-color-name")).to_have_text("· Custom — #00abcd")
+
+    _tid(page, "editor-label").fill("teal v2")
+    with page.expect_request(lambda r: r.method == "PATCH") as request_info:
+        _tid(page, "editor-save").click()
+    sent = request_info.value.post_data_json
+    assert sent["label"] == "teal v2"
+    assert "color" not in sent
+
+
+def test_custom_color_previews_paint_the_plot_surface(page: Page, live_stream_dash) -> None:
+    """Both previews' backgrounds equal the computed ``bg-primary`` of a probe
+    under each app theme -- the plot's real surface -- whichever theme the
+    app is in while the popover is open (#859)."""
+    _open_subject(page, live_stream_dash)
+    _open_new_event_editor_by_keyboard(page)
+    _open_custom_by_keyboard(page)
+    read = """(dark) => {
+        document.documentElement.classList.toggle('dark-mode', dark);
+        const probe = document.createElement('div');
+        probe.className = 'bg-primary';
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const bg = (id) => getComputedStyle(
+            document.querySelector(`[data-testid="${id}"]`)).backgroundColor;
+        return {
+            surface,
+            light: bg('custom-color-preview-light'),
+            dark: bg('custom-color-preview-dark'),
+        };
+    }"""
+    in_light = page.evaluate(read, False)
+    in_dark = page.evaluate(read, True)
+    assert in_light["surface"] != in_dark["surface"], (in_light, in_dark)
+    for seen in (in_light, in_dark):
+        assert seen["light"] == in_light["surface"], seen
+        assert seen["dark"] == in_dark["surface"], seen
+
+
 def test_drag_zoom_select(page: Page, live_stream_dash) -> None:
     """A plain drag across the chart canvas (no modifier) zoom-selects: the
     window shrinks toward the dragged sub-range and, in live mode, pause

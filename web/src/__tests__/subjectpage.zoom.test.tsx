@@ -227,7 +227,15 @@ describe("SubjectPage bounds past a stalled collector", () => {
     const stalled: NormalizedSession = {
       ...liveSession(),
       observedMs: at,
-      events: [{ id: 1, timestamp: new Date(at).toISOString(), label: "stalled-mark" }],
+      events: [
+        {
+          id: 1,
+          timestamp: new Date(at).toISOString(),
+          label: "stalled-mark",
+          color: "#888888",
+          dash: "dash",
+        },
+      ],
     };
     const text = JSON.stringify(documentFromSessions([stalled]));
     const [imported] = parseExportDocument(text).sessions;
@@ -265,7 +273,15 @@ describe("SubjectPage live window past a stall longer than the window", () => {
     const stalled: NormalizedSession = {
       ...liveSession(),
       observedMs: at,
-      events: [{ id: 1, timestamp: new Date(at - 1_000).toISOString(), label: "stalled-mark" }],
+      events: [
+        {
+          id: 1,
+          timestamp: new Date(at - 1_000).toISOString(),
+          label: "stalled-mark",
+          color: "#888888",
+          dash: "dash",
+        },
+      ],
     };
     useReviewStore.setState({
       sessions: [stalled],

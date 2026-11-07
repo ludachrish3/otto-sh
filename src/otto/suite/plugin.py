@@ -1233,12 +1233,20 @@ class OttoPlugin:
         if collector is None:
             yield
             return
+        # The lifecycle styles come from the leaf registry (stdlib-only), not
+        # from the monitor package, which the suite may not import; the
+        # import sits here only beside its one use.
+        from ..models.event_style import AUTO_EVENT_COLORS, LIFECYCLE_DASHES
+
         cls = getattr(request, "cls", None)
         owner = cls.__name__ if cls is not None else Path(str(node.path)).stem
         runner = runner_for(request)
         runner.run(
             collector.add_event(
-                label=f"{owner}.{node.name}: start", color="#888888", dash="dash", source="auto"
+                label=f"{owner}.{node.name}: start",
+                color=AUTO_EVENT_COLORS["start"],
+                dash=LIFECYCLE_DASHES["start"],
+                source="auto",
             ),
             context=contextvars.copy_context(),
         )
@@ -1248,8 +1256,8 @@ class OttoPlugin:
         runner.run(
             collector.add_event(
                 label=f"{owner}.{node.name}: {outcome}",
-                color="#2ca02c" if outcome == "pass" else "#d62728",
-                dash="solid",
+                color=AUTO_EVENT_COLORS[outcome],
+                dash=LIFECYCLE_DASHES[outcome],
                 source="auto",
             ),
             context=contextvars.copy_context(),

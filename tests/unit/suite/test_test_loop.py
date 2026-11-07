@@ -89,11 +89,29 @@ def test_class_tests_keep_the_class_name_and_record_a_failure(pytester, otto_plu
         ),
     )
     result.assert_outcomes(passed=1, failed=1)
+    from otto.models.event_style import AUTO_EVENT_COLORS
+
     assert [(e.label, e.color) for e in events()] == [
-        ("TestRouter.test_up: start", "#888888"),
-        ("TestRouter.test_up: pass", "#2ca02c"),
-        ("TestRouter.test_down: start", "#888888"),
-        ("TestRouter.test_down: fail", "#d62728"),
+        ("TestRouter.test_up: start", AUTO_EVENT_COLORS["start"]),
+        ("TestRouter.test_up: pass", AUTO_EVENT_COLORS["pass"]),
+        ("TestRouter.test_down: start", AUTO_EVENT_COLORS["start"]),
+        ("TestRouter.test_down: fail", AUTO_EVENT_COLORS["fail"]),
+    ]
+    # The lifecycle colours are the registry's presets, resolved by id.
+    from otto.models.event_style import LIFECYCLE_COLOR_IDS, preset_hex
+    from otto.monitor import events as monitor_events
+
+    assert {k: preset_hex(v) for k, v in LIFECYCLE_COLOR_IDS.items()} == AUTO_EVENT_COLORS
+    # The monitor package re-exports the registry's map, never a second copy.
+    assert monitor_events.AUTO_EVENT_COLORS is AUTO_EVENT_COLORS
+    # ...and the dashes are the registry's, by the same phase/outcome keys.
+    from otto.models.event_style import LIFECYCLE_DASHES
+
+    assert [(e.label, e.dash) for e in events()] == [
+        ("TestRouter.test_up: start", LIFECYCLE_DASHES["start"]),
+        ("TestRouter.test_up: pass", LIFECYCLE_DASHES["pass"]),
+        ("TestRouter.test_down: start", LIFECYCLE_DASHES["start"]),
+        ("TestRouter.test_down: fail", LIFECYCLE_DASHES["fail"]),
     ]
 
 
