@@ -160,10 +160,8 @@ function ValidatedHexField({
     // that the arrow keys and the mouse wheel do not step the hex.
     <ColorField
       value={color}
-      // RAC's autoFocus, not the input's: React focuses an autoFocus input
-      // during commit, before the popover's focus scope registers, and the
-      // editor slideout's contained scope then pulls focus back out.
-      // react-aria focuses in an effect, once the scope is in place.
+      // RAC's autoFocus: the popover hosts no nested overlay, so the rule
+      // in ui/useOpenFocus.ts says it suffices.
       autoFocus
       isInvalid={invalidAttempt}
       // The draft's text is the user's choice; RAC's own invalid styling

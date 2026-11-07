@@ -180,7 +180,9 @@ Its dropdown adds:
 The **Events** slide-over carries the same flows inline, so you never have
 to leave it: a live session's compose row has **Mark**/**Start**/**Stop**
 buttons; a review session (there's no "now" to stamp against) gets a
-single **Add event…** button instead. Each row also grows **Edit** and
+single **Add event…** button instead. On an editable session the
+slide-over opens with focus on the compose row's first control (live: the
+label field; review: **Add event…**). Each row also grows **Edit** and
 **End now** controls once the session is editable — **End now** stamps an
 open span's end without opening the editor. Both disappear entirely (not
 just disabled) on a read-only source, since there's nothing on the server
@@ -193,7 +195,8 @@ turns a span back into a point event), a row of named color swatches
 marks use Grey for a start, Green for a pass and Red for a failure), and a
 **Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
 `longdashdot`) applied to the event's chart overlay — a point event's marker
-line and the border drawn around a span. Each swatch shows its name in a
+line and the border drawn around a span. It opens with focus in **Label**,
+so you can type straight away. Each swatch shows its name in a
 tooltip when you hover it or reach it with the keyboard: Tab enters the row
 on the selected swatch, the arrow keys move along it, and Space or Enter
 picks one. The selected colour's name also stays beside the label, as in

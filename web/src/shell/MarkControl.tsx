@@ -5,7 +5,7 @@
 // Mark-now and Start-span (uiStore.markPopover carries which); flows that
 // need explicit times live in the EventEditor, reachable from the menu.
 import { ChevronDown } from "@untitledui/icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogTrigger, Popover } from "react-aria-components";
 
 import { Button } from "@/components/base/buttons/button";
@@ -14,6 +14,7 @@ import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { useActiveSession } from "../data/reviewStore";
 import { TextInput } from "../ui/TextInput";
 import { useUiStore } from "../ui/uiStore";
+import { useOpenFocus } from "../ui/useOpenFocus";
 import { blankDraft, endSpanReporting, markNow, startSpan } from "./marking";
 import { settleOnOpening } from "./settleOnOpening";
 import { markGateKey, useMutationGate } from "./useMutationGate";
@@ -31,17 +32,17 @@ export function MarkControl() {
   );
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const inputElRef = useRef<HTMLInputElement | null>(null);
   // One request in flight for this session's marking, shared with the Events
   // compose row and the palette (see useMutationGate.ts's keys).
   const gate = useMutationGate(markGateKey(session?.id ?? ""));
+  // The label field has focus each time the popover opens (ui/useOpenFocus.ts).
+  const labelFocus = useOpenFocus<HTMLInputElement>(session ? markPopover : null);
 
-  // Reset the draft label/error each time the popover opens, then focus.
+  // Reset the draft label/error each time the popover opens.
   useEffect(() => {
     if (markPopover !== null) {
       setLabel("");
       setError(null);
-      inputElRef.current?.focus();
     }
   }, [markPopover]);
 
@@ -82,15 +83,14 @@ export function MarkControl() {
             className="flex items-start gap-2 rounded-xl bg-primary p-3 shadow-lg ring
               ring-secondary_alt focus:outline-hidden"
           >
+            {labelFocus.scope}
             <div className="flex flex-col gap-1">
               <TextInput
                 label="Label"
                 testId="mark-label-input"
                 value={label}
                 onChange={setLabel}
-                inputRef={(el) => {
-                  inputElRef.current = el;
-                }}
+                inputRef={labelFocus.ref}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void submit();
                 }}

@@ -5,9 +5,10 @@
 // everything else. Renders <EventEditor /> directly (not the whole <App />)
 // -- opening/closing is driven straight through uiStore's actions, exactly
 // how MarkControl/EventsPanel trigger it in production.
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setInteractionModality } from "react-aria";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import kitchenSink from "../../fixtures/kitchen-sink.json" with { type: "json" };
 import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
@@ -563,6 +564,154 @@ describe("EventEditor", () => {
         expect(document.activeElement).toBe(screen.getByTestId("editor-color-custom-open")),
       );
     });
+
+    // #957: react-aria's useDialog focuses a Dialog that mounts with nothing
+    // focused inside it and arms a 500 ms timer that re-focuses the Dialog
+    // when focus is on it or on <body>. A nested popover closed by Escape
+    // leaves focus on <body> until FocusScope's restore frame, which restores
+    // only from <body>: a timer firing in between took focus for good. Fake
+    // timers drive the 500 ms and a held requestAnimationFrame holds the
+    // restore, so the timer fires inside that window every time. Each case
+    // runs per OPENING modality: under virtual (screen-reader) modality
+    // react-aria's own autoFocus waits a frame, which armed the timer.
+    describe.each(["keyboard", "virtual"] as const)(
+      "the editor opened under %s modality focuses its first field (#957)",
+      (modality) => {
+        // Held frames: monotonic ids, and cancelAnimationFrame really cancels,
+        // so a callback react-aria cancels on unmount never runs.
+        let frames = new Map<number, FrameRequestCallback>();
+        let nextFrame = 1;
+        function flushFrames(): void {
+          act(() => {
+            while (frames.size > 0) {
+              const batch = [...frames];
+              frames = new Map();
+              for (const [, cb] of batch) cb(0);
+            }
+          });
+        }
+
+        beforeEach(() => {
+          frames = new Map();
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+            const id = nextFrame++;
+            frames.set(id, cb);
+            return id;
+          });
+          vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+            frames.delete(id);
+          });
+          setInteractionModality(modality);
+        });
+
+        afterEach(() => {
+          vi.useRealTimers();
+        });
+
+        function openDraft(): void {
+          installPlotSurfaceCss();
+          const sid = hydrate();
+          useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
+          vi.stubGlobal("fetch", vi.fn());
+          render(<EventEditor />);
+        }
+
+        // fireEvent, not userEvent: RTL's async wrapper waits on a real
+        // setTimeout(0), which these fake timers never fire.
+        function press(key: string): void {
+          const target = document.activeElement as HTMLElement;
+          fireEvent.keyDown(target, { key });
+          fireEvent.keyUp(target, { key });
+        }
+
+        it("on open, focus is in the Label field and no refocus timer is armed", () => {
+          openDraft();
+          expect(document.activeElement).toBe(screen.getByTestId("editor-label"));
+          // An armed timer would pull focus lost to <body> back to the Dialog,
+          // synchronously once the user is on the keyboard. The frames stay
+          // held: the editor's contained FocusScope would refocus the field.
+          act(() => setInteractionModality("keyboard"));
+          act(() => (document.activeElement as HTMLElement).blur());
+          act(() => vi.advanceTimersByTime(500));
+          expect(document.activeElement).toBe(document.body);
+        });
+
+        it("Escape on Custom… restores focus to it even when 500 ms pass before the restore frame", () => {
+          openDraft();
+          const open = screen.getByTestId("editor-color-custom-open");
+          act(() => open.focus());
+          press("Enter");
+          flushFrames();
+          expect(document.activeElement).toBe(screen.getByTestId("custom-color-hex"));
+          press("Escape");
+          expect(screen.queryByTestId("custom-color-dialog")).toBeNull();
+          expect(document.activeElement).toBe(document.body);
+          act(() => vi.advanceTimersByTime(500));
+          flushFrames();
+          expect(document.activeElement).toBe(screen.getByTestId("editor-color-custom-open"));
+          expect(useUiStore.getState().eventEditor).not.toBeNull();
+        });
+
+        // Save → Cancel → reopen while the Save is still pending: the Label
+        // is disabled, so the open focus falls back to an enabled control.
+        // Without the fallback the Dialog armed its timer at the reopen, and
+        // Custom… opened and closed once the Save settled lost its restore.
+        it("reopened during a pending Save, Escape on Custom… still restores focus to it", async () => {
+          installPlotSurfaceCss();
+          const sid = hydrate();
+          let release!: (r: Response) => void;
+          const pending = new Promise<Response>((res) => {
+            release = res;
+          });
+          vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(pending));
+          // The editor's opener, where its close restores focus (the Events
+          // panel's Edit button in the app).
+          const opener = document.createElement("button");
+          document.body.append(opener);
+          onTestFinished(() => opener.remove());
+          act(() => opener.focus());
+          const openEvent2 = () =>
+            act(() =>
+              useUiStore
+                .getState()
+                .actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 }),
+            );
+          openEvent2();
+          render(<EventEditor />);
+          act(() => screen.getByTestId("editor-save").focus());
+          press("Enter");
+          act(() => screen.getByTestId("editor-cancel").focus());
+          press("Enter");
+          expect(useUiStore.getState().eventEditor).toBeNull();
+          // The closed editor's own frames run: its restore returns focus to
+          // the opener, as in the app.
+          flushFrames();
+          expect(document.activeElement).toBe(opener);
+          act(() => setInteractionModality(modality));
+          openEvent2();
+          expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(true);
+          expect(screen.getByTestId("event-editor").contains(document.activeElement)).toBe(true);
+          await act(async () => {
+            release(okJson(record({ id: 2, label: "stress run" }), 200));
+            await pending;
+          });
+          // The settled Save gives the fields back.
+          for (let i = 0; i < 5; i++) await act(async () => {});
+          const open = screen.getByTestId("editor-color-custom-open");
+          expect(open.hasAttribute("disabled")).toBe(false);
+          act(() => open.focus());
+          press("Enter");
+          flushFrames();
+          expect(document.activeElement).toBe(screen.getByTestId("custom-color-hex"));
+          press("Escape");
+          expect(document.activeElement).toBe(document.body);
+          act(() => vi.advanceTimersByTime(500));
+          flushFrames();
+          expect(document.activeElement).toBe(screen.getByTestId("editor-color-custom-open"));
+        });
+      },
+    );
 
     it("a held Save disables Custom…, and Use colour in a popover already open", async () => {
       installPlotSurfaceCss();

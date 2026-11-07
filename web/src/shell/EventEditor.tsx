@@ -26,6 +26,7 @@ import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { EventColorField } from "../ui/EventColorField";
 import { TextInput } from "../ui/TextInput";
 import { type EventDraft, type EventEditorTarget, useUiStore } from "../ui/uiStore";
+import { useOpenFocus } from "../ui/useOpenFocus";
 import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
 import { settleOnOpening } from "./settleOnOpening";
@@ -243,6 +244,9 @@ export function EventEditor() {
     setFill({ start: "complete", end: next.endTimestampMs == null ? "empty" : "complete" });
   }, [editor, gate.pending, closeEventEditor]);
 
+  // The overlay below is mounted exactly while this holds.
+  const labelFocus = useOpenFocus<HTMLInputElement>(editor !== null && form !== null);
+
   if (editor === null || form === null) return null;
 
   const startMsg = startMessage(fill.start, startEmpty);
@@ -312,6 +316,7 @@ export function EventEditor() {
           data-testid="event-editor"
           aria-label={editor.kind === "edit" ? "Edit event" : "New event"}
         >
+          {labelFocus.scope}
           <SlideoutMenu.Header onClose={closeEventEditor}>
             <h2 className="text-sm font-semibold text-primary">
               {editor.kind === "edit" ? "Edit event" : "New event"}
@@ -321,6 +326,10 @@ export function EventEditor() {
             <TextInput
               label="Label"
               testId="editor-label"
+              // The editor opens with focus here, so a nested overlay
+              // (Custom…, the dash Select, the delete confirmation) restores
+              // focus when it closes: ui/useOpenFocus.ts (#957).
+              inputRef={labelFocus.ref}
               // Every draft field shares Delete's predicate: nothing the
               // draft holds can change under an in-flight request.
               isDisabled={gate.pending}
