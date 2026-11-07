@@ -703,7 +703,8 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
 | `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | `make check-breaking` and the static lanes, `make coverage-bed`, the package's bed lane |
 | `scripts` | `scripts/` | `make quick-guards`, ty, ruff | `make check-breaking` and the static lanes, and `make coverage-bed` when a changed script is one the bed half runs on (`BED_SCRIPTS`) |
-| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | `make check-breaking` and the static lanes, `make coverage-bed` and the bed lanes |
+| `workflow` | every `.github/workflows/` file except `ci.yml`, each a row in `WORKFLOW_ROWS` (a new workflow needs one) | `make quick` over the test modules that read the workflows, `make quick-guards` for those in the `interpreter_agnostic` family | `make check-breaking` |
+| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI's `ci.yml`, which decides what a pull request runs), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (a build file or a `workflow` path in the diff) | `make check-breaking` and the static lanes, `make coverage-bed` and the bed lanes |
 | `full` | any path with no row | the full gate | as `escalate` |
 
 The static lanes are `make check-python` and `make collect-check`: every

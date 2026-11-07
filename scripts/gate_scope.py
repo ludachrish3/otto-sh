@@ -2,8 +2,8 @@
 
 Each changed path gets a class by location (and, for test modules, by whether the
 change is structural): ``none``, ``docs``, ``web``, ``tests-leaf``,
-``tests-structural``, ``src-leaf``, ``scripts``, ``escalate``, ``full``. A path with no
-row is ``full``. Only a landing's tip is gated: whatever reaches ``main`` in one push,
+``tests-structural``, ``src-leaf``, ``scripts``, ``workflow``, ``escalate``, ``full``. A
+path with no row is ``full``. Only a landing's tip is gated: whatever reaches ``main`` in one push,
 one squash or several persisting commits, runs the tip list once, at its final tip, and
 every earlier commit runs only its likely breakage areas plus ruff. The commit list is a
 working check, not a landing gate. The pure classifier, the command
@@ -89,6 +89,7 @@ SRC_LEAF = "src-leaf"
 SCRIPTS = "scripts"
 ESCALATE = "escalate"
 FULL = "full"
+WORKFLOW = "workflow"
 
 # ── data: every row the classification reads; pinned against the live tree by the tests ──
 # fnmatch has no `**`; its `*` crosses `/`, and every glob below is written for that.
@@ -363,6 +364,36 @@ MEASURED_ROWS = {
 }
 """The bed and kmodcov lanes rewrite these with what they measured (the Makefile says review
 and commit the diff); the commit is a tests-leaf change over the readers, never a full gate."""
+WORKFLOW_READERS = [
+    "tests/unit/api_snapshot/test_api_gate_wiring.py",
+    "tests/unit/host/test_busybox_artifacts.py",
+    "tests/unit/scripts/test_ci_breaking_marks_checkout.py",
+    "tests/unit/test_ci_color_env.py",
+    "tests/unit/test_ci_gate_admission.py",
+    "tests/unit/test_ci_playwright_container.py",
+    "tests/unit/test_ci_web_gate.py",
+    "tests/unit/test_declared_harness_bounds.py",
+    "tests/unit/test_support_matrix.py",
+    "tests/unit/test_tach_layers.py",
+    "tests/unit/test_tier_marker_invariants.py",
+    "tests/unit/test_workflow_interpreter_selection.py",
+]
+"""The test modules that read the workflow files (:func:`workflow_readers`). Two of them
+enumerate every workflow and are outside the `interpreter_agnostic` family, so every row of
+:data:`WORKFLOW_ROWS` names the whole list: the family readers route to `make quick-guards`,
+the others to `make quick`."""
+WORKFLOW_ROWS = {
+    ".github/workflows/nightly.yml": WORKFLOW_READERS,
+    ".github/workflows/release.yml": WORKFLOW_READERS,
+    ".github/workflows/release-testpypi.yml": WORKFLOW_READERS,
+    ".github/workflows/untitledui-drift.yml": WORKFLOW_READERS,
+}
+"""The workflows no gate runs (#952): the commit runs the tests that read them (`make quick`
+over the non-family readers, `make quick-guards` for the family ones), and the tip adds
+nothing of its own. `ci.yml` is not here: it decides what pull-request CI
+runs, so it stays a trigger and build file, and escalates."""
+READER_ROWS = {**MEASURED_ROWS, **WORKFLOW_ROWS}
+"""Every path that is no test module but is read by tests: a change runs its surviving readers."""
 
 _BUMP_CONFIG_VERSION = re.compile(r'^current_version = "([^"\n]+)"$', re.MULTILINE)
 _LOCK_VERSION = re.compile(r'^name = "otto-sh"\nversion = "([^"\n]+)"$', re.MULTILINE)
@@ -485,14 +516,13 @@ def _imports_a_gate_pin(source: str) -> bool:
     return tree is not None and any(n in _GATE_PIN_MODULES for n in _imported_names(tree))
 
 
-def matrix_readers(sources: "dict[str, str]") -> "list[str]":
-    """Return the test modules among *sources* that read a measured matrix.
+def readers_of(sources: "dict[str, str]", names: "list[str]") -> "list[str]":
+    """Return the test modules among *sources* whose text names any of *names*.
 
-    A module names a matrix file either to read it or to pin this oracle's row for it;
-    the pins import the oracle or the runner, the readers do not. An unparsable module
-    that names a matrix counts as a reader (judged conservatively, as `_parse` callers do).
+    A module names a read-by-tests file either to read it or to pin this oracle's row for
+    it; the pins import the oracle or the runner, the readers do not. An unparsable module
+    that names one counts as a reader (judged conservatively, as `_parse` callers do).
     """
-    names = [name.rsplit("/", 1)[-1] for name in MEASURED_ROWS]
     return sorted(
         path
         for path, text in sources.items()
@@ -500,6 +530,16 @@ def matrix_readers(sources: "dict[str, str]") -> "list[str]":
         and any(name in text for name in names)
         and not _imports_a_gate_pin(text)
     )
+
+
+def matrix_readers(sources: "dict[str, str]") -> "list[str]":
+    """Return the test modules among *sources* that read a measured matrix."""
+    return readers_of(sources, [name.rsplit("/", 1)[-1] for name in MEASURED_ROWS])
+
+
+def workflow_readers(sources: "dict[str, str]") -> "list[str]":
+    """Return the test modules among *sources* that read the workflow files."""
+    return readers_of(sources, ["workflows"])
 
 
 # (glob, commit-time commands, tip-time commands): a directory-stamped tree — every item is
@@ -722,8 +762,8 @@ def classify_path(path: str) -> "str | None":
         return DOCS  # AGENTS.md never reaches here: NONE_GLOBS matched it first
     if path.startswith("web/src/"):
         return None if _match(path, WEB_EXCLUDED) else WEB
-    if path in MEASURED_ROWS:
-        return TESTS_LEAF
+    if path in READER_ROWS:  # read by tests, run by none
+        return TESTS_LEAF if path in MEASURED_ROWS else WORKFLOW
     if path.startswith("tests/"):
         return TESTS_LEAF if _is_test_module(path) else None
     if path.startswith("src/otto/"):
@@ -1133,10 +1173,15 @@ class _QuickRoots:
         return any(self._selected_from(p) for p in self._modules if _within(p, [root]))
 
 
-def _surviving_root(path: str, runnable: "Callable[[str], bool]") -> "str | None":
-    """Return the nearest enclosing root (package, tree, `tests`) quick can run, else None."""
+def _surviving_root(
+    path: str, runnable: "Callable[[str], bool]", *, own: bool = False
+) -> "str | None":
+    """Return the nearest enclosing root (package, tree, `tests`) quick can run, else None.
+
+    *own* tries the module itself first: an unchanged reader of a changed input.
+    """
     parts = path.split("/")
-    candidates = [_package_of_test(path), "/".join(parts[:2]), parts[0]]
+    candidates = [*([path] if own else []), _package_of_test(path), "/".join(parts[:2]), parts[0]]
     for candidate in candidates:
         if runnable(candidate):
             return candidate
@@ -1249,24 +1294,30 @@ def _present_paths(changes: "list[Change]") -> "list[str]":
     return sorted({c.path for c in changes if c.status != "D"})
 
 
-def _route_measured(
+def _route_readers(
     path: str,
+    readers: "list[str]",
     read: Reader,
     head_rev: str,
     head_paths: "set[str]",
-    add_root: "Callable[[str], None]",
+    add_root: "Callable[..., None]",
     guards: "set[str]",
     full_commit: "list[str]",
 ) -> None:
-    """Route a measured matrix to its surviving readers: family to guards, others to quick."""
-    readers = [p for p in MEASURED_ROWS[path] if p in head_paths]
-    if not readers:
+    """Route a path no test module is (a measured matrix, a workflow) to its surviving *readers*.
+
+    A family reader goes to the guards, any other to quick over its own module (the reader
+    is unchanged: what changed is its input, not its package); none surviving is a
+    full-gate reason.
+    """
+    alive = [p for p in readers if p in head_paths]
+    if not alive:
         full_commit.append(f"{path}: no surviving reader")
-    for reader in readers:
+    for reader in alive:
         if carries_family_mark(read(head_rev, reader)):
             guards.add(reader)
         else:
-            add_root(reader)
+            add_root(reader, own=True)
 
 
 def full_gate(classes: "set[str]", full_at_commit: "list[str]") -> bool:
@@ -1345,8 +1396,8 @@ def classify(
 
     runnable = _QuickRoots(read, head_rev, head_paths).runnable
 
-    def add_root(path: str) -> None:
-        root = _surviving_root(path, runnable)
+    def add_root(path: str, *, own: bool = False) -> None:
+        root = _surviving_root(path, runnable, own=own)
         if root is None:
             full_commit.append(f"{path}: no surviving test root")
         else:
@@ -1366,9 +1417,11 @@ def classify(
             full_commit.append(f"no row: {path}")
             classes.add(FULL)
             continue
-        if path in MEASURED_ROWS:
-            _route_measured(path, read, head_rev, head_paths, add_root, guards, full_commit)
-            classes.add(TESTS_LEAF)
+        if path in READER_ROWS:
+            _route_readers(
+                path, READER_ROWS[path], read, head_rev, head_paths, add_root, guards, full_commit
+            )
+            classes.add(cls)
             continue
         if cls == TESTS_LEAF:
             head = None if change.status == "D" else read(head_rev, path)
@@ -1465,10 +1518,10 @@ def _commit_lines(scope: Scope) -> "list[str]":
     if full_gate(classes, scope.full_at_commit):
         out += FULL_GATE
         out += scope.bed_lanes
-        if set(scope.changed_paths) & BUILD_FILES:
+        if set(scope.changed_paths) & (BUILD_FILES | set(WORKFLOW_ROWS)):
             out.append("make quick-guards")  # the bed half does not run the family
     else:
-        if running and scope.quick_paths:
+        if (running or WORKFLOW in classes) and scope.quick_paths:
             out.append(f'make quick PATHS="{" ".join(scope.quick_paths)}"')
         if SCRIPTS in classes and not running:
             out.append("make quick-guards")
@@ -1512,7 +1565,8 @@ def commands(scope: Scope, *, tip: bool, base: str, tip_rev: str = "HEAD") -> "l
     `make docs`; web: check-ts + test-ts; tests-leaf: quick over the surviving roots +
     ruff + lint-arch (a family module runs quick-guards instead); tests-structural: the
     same + quick-guards; src-leaf: quick (trees + riders) + ty + ruff + lint-arch +
-    quick-guards; scripts: quick-guards + ty + ruff; escalate / full, or a `full_at_commit`
+    quick-guards; scripts: quick-guards + ty + ruff; workflow: quick over the surviving
+    non-family readers, quick-guards for the family ones; escalate / full, or a `full_at_commit`
     reason: the full gate (:data:`FULL_GATE`) + bed lanes, + quick-guards when a build file
     changed. Special rows add their commit lines, full column or not; a full column
     replaces quick/ty/ruff/lint-arch but never a web or docs line. Every stability line is
