@@ -61,7 +61,7 @@ class TestBashFrame:
 
     def test_handshake_opens_with_the_anchor_then_silences_echo_calibrates_and_prints_ready(self):
         assert self.frame.handshake(M) == (
-            f"__otto_probe=READY__; 2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; "
+            f"__otto_probe=READY__; 2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; "
             "echo __OTTO_cafef00d_$__otto_probe; unset __otto_probe\n"
         )
 
@@ -528,10 +528,10 @@ class TestRestoreInteractive:
         assert Minimal().restore_interactive() is None
 
     def test_bash_restores_echo(self):
-        assert BashFrame().restore_interactive() == "2>/dev/null stty echo"
+        assert BashFrame().restore_interactive() == "2>/dev/null stty echo || :"
 
     def test_ash_inherits_bash(self):
-        assert AshFrame().restore_interactive() == "2>/dev/null stty echo"
+        assert AshFrame().restore_interactive() == "2>/dev/null stty echo || :"
 
     def test_zephyr_has_nothing_to_undo(self):
         assert ZephyrFrame().restore_interactive() is None

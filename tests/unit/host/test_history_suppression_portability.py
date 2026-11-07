@@ -26,7 +26,7 @@ shells gets more coverage and a runner with fewer never silently loses the
 baseline.
 
 THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
-bottom. ``handshake()`` renders ``2>/dev/null stty -echo; echo; …; echo <READY>``
+bottom. ``handshake()`` renders ``2>/dev/null stty -echo || :; echo; …; echo <READY>``
 (the bare ``echo`` puts READY at the start of a line whatever the terminal's
 echo state), and suppression rides in front of it, so they share one line
 and one failure mode: anything that aborts the line strands READY and takes a
@@ -301,11 +301,12 @@ def test_payload_carries_a_zsh_specific_clause():
 # ---------------------------------------------------------------------------
 # The handshake's other statement: a device with no `stty`
 #
-# `handshake()` renders `2>/dev/null stty -echo; echo; echo <READY>`. `stty` is
+# `handshake()` renders `2>/dev/null stty -echo || :; echo; …; echo <READY>`. `stty` is
 # an ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so
 # a stripped userland can simply not have it — and then the shell, not stty,
 # produces the diagnostic ("not found"). That message has to be swallowed by
-# the same `2>/dev/null`, and the line has to carry on to `echo; echo <READY>`:
+# the same `2>/dev/null`, and the line has to carry on to `echo`, the
+# calibration and `echo <READY>`:
 # stdout and stderr are one merged stream on a PTY, so a leaked complaint is
 # parsed as command output, and a stranded READY hangs session startup until
 # it times out as "shell never became ready" — a working host reported
@@ -560,7 +561,7 @@ def _inside_the_calibrations_last_escape(line: str) -> range:
     start = line.index(CALIBRATION_COMMAND)
     end = start + len(CALIBRATION_COMMAND)
     k = line.rindex("\\\\", start, end)
-    assert line[end:].startswith("; echo "), f"lost the calibration's end: {line!r}"
+    assert line[end:].startswith(" || :; echo "), f"lost the calibration's end: {line!r}"
     assert "\\" not in line[k + 2 : end], f"lost the calibration's last escape: {line!r}"
     return range(k + 1, end)
 
@@ -729,6 +730,21 @@ def _inside_the_echo_word(line: str, m: SessionMarkers) -> int:
     return k
 
 
+def _inside_the_or_colons(line: str) -> dict[str, dict[str, int]]:
+    """Every tail from inside the ``|| :`` after ``stty`` and ``printf``: ``|| :``, ``| :``, ``:``.
+
+    ``|| :`` keeps either statement's failure from ending the line under
+    ``set -e`` (#953). A tail from it starts with a syntax error (``||``,
+    ``|``) or runs ``:``, and none may leave the resend unanswered.
+    """
+    found: dict[str, dict[str, int]] = {}
+    for statement, text in (("stty", "stty -echo || :"), ("printf", f"{CALIBRATION_COMMAND} || :")):
+        k = line.index(text) + len(text) - len("| :")
+        assert line[k - 1 :].startswith("|| :; echo"), f"lost the {statement} statement's || :"
+        found[statement] = {"oror": k - 1, "pipe": k, "colon": k + len("| ")}
+    return found
+
+
 def _hazards() -> list[tuple[str, str, int]]:
     """``(id, kind, offset)`` of the fixed hazard tails, one per hazard, on the history line.
 
@@ -751,6 +767,11 @@ def _hazards() -> list[tuple[str, str, int]]:
         ("redirection-export-group", "handshake", redirect["export-group"]),
         ("redirection-eval", "handshake", redirect["eval"]),
         ("redirection-stty", "handshake", redirect["stty"]),
+        *(
+            (f"or-{statement}-{cut}", "handshake", k)
+            for statement, cuts in _inside_the_or_colons(handshake).items()
+            for cut, k in cuts.items()
+        ),
         ("brace", "resync", _after_the_echo_word_dollar(resync, TAIL_MARKERS)),
         ("recovery-quote", "recovery", _at_the_echo_words_head(recovery, TAIL_MARKERS)),
     ]
@@ -823,6 +844,27 @@ def test_a_redirection_only_tail_does_not_feed_cat(name, kind, k):
     default, and that ``cat`` would read every resend as its input. One
     redirection of each form: closing a brace group, leading the zsh
     clause's ``eval``, and on the ``stty`` statement.
+    """
+    cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
+
+
+@pytest.mark.parametrize(
+    ("kind", "k"),
+    _of(
+        *(
+            f"or-{statement}-{cut}"
+            for statement in ("stty", "printf")
+            for cut in ("oror", "pipe", "colon")
+        )
+    ),
+)
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_a_tail_inside_an_or_colon_does_not_wedge(name, kind, k):
+    """A tail from inside the ``|| :`` after ``stty`` or the calibration leaves the resend runnable.
+
+    The ``|| :`` keeps a target without either command answering under
+    ``set -e`` (#953); a tail that begins inside it is a syntax error or a
+    bare ``:``.
     """
     cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
 
@@ -933,6 +975,74 @@ def test_the_handshake_reaches_ready_without_printf(name, tmp_path):
         reply = _whole(shell, "handshake")
     assert measure(reply, TAIL_MARKERS.ready).calibrated is False, f"{name}: {reply!r}"
     assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
+
+
+def _reachable(shell: InteractiveShell, command: str) -> bool:
+    """Whether *shell*'s own ``type`` finds *command*; ask before ``set -e``, which a miss ends."""
+    status = re.search(
+        r"\nTYPE_(\d+)\r*\n", shell.run(f'type {command} >/dev/null 2>&1; echo TYPE_"$?"')
+    )
+    assert status is not None
+    return status.group(1) == "0"
+
+
+def _absent_under_errexit(shell: InteractiveShell, command: str) -> None:
+    """Confirm *command* is unreachable in *shell*, then turn ``set -e`` on.
+
+    The lookup fails by design, so it runs before errexit is on: under
+    ``set -e`` the failing ``type`` would end the shell instead.
+    """
+    assert not _reachable(shell, command), f"{shell.name}: {command} is still reachable"
+    shell.run("set -e")
+
+
+@pytest.mark.parametrize("name", [name for name in _PRINTF_OFF if name in INTERACTIVE])
+def test_the_handshake_reaches_ready_under_errexit_without_printf(name, tmp_path):
+    """``set -e`` and no ``printf``: the failed calibration must not end the line (#953).
+
+    Under errexit a failing statement exits the shell, so READY never
+    printed and the host timed out as never ready.
+    """
+    with interactive_shell(name, setup=f"PATH={tmp_path}; {_PRINTF_OFF[name]}") as shell:
+        _absent_under_errexit(shell, "printf")
+        reply = _whole(shell, "handshake")
+    assert measure(reply, TAIL_MARKERS.ready).calibrated is False, f"{name}: {reply!r}"
+    assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
+
+
+@pytest.mark.parametrize("name", [name for name, _ in _STTY_ABSENT_SHELLS])
+def test_the_handshake_reaches_ready_under_errexit_without_stty(name, tmp_path):
+    """``set -e`` and no ``stty``: the failed ``stty -echo`` must not end the line (#953).
+
+    An empty ``PATH`` removes ``stty`` on every shell outside
+    ``_STANDALONE_SHELLS``. It removes ``printf`` too where printf is
+    external rather than a builtin (mksh), so the calibration reads
+    ``onlcr`` exactly where printf is still reachable and is unmeasured
+    elsewhere.
+    """
+    with interactive_shell(name, setup=f"PATH={tmp_path}") as shell:
+        printf_reachable = _reachable(shell, "printf")
+        _absent_under_errexit(shell, "stty")
+        reply = _whole(shell, "handshake")
+    calibration = measure(reply, TAIL_MARKERS.ready)
+    assert calibration.calibrated is printf_reachable, f"{name}: {reply!r}"
+    if printf_reachable:
+        assert calibration.mapping == ONLCR, f"{name}: {reply!r}"
+    assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"), _STTY_ABSENT_SHELLS, ids=[n for n, _ in _STTY_ABSENT_SHELLS]
+)
+def test_restoring_echo_survives_errexit_without_stty(name: str, argv: list[str], tmp_path):
+    """``restore_interactive`` under ``set -e`` with no ``stty`` lets the line go on (#953)."""
+    restore = BashFrame().restore_interactive()
+    assert restore is not None
+    env = {**os.environ, "PATH": str(tmp_path)}
+    assert _stty_lookup(argv, env=env) == "GONE", f"{name}: stty is still reachable"
+    proc = _run(argv, f"set -e; {restore}; echo AFTER", env=env)
+    assert proc.stdout == "AFTER\n", f"{name}: rc={proc.returncode} {proc.stdout!r}"
+    assert proc.stderr == "", f"{name}: {proc.stderr!r}"
 
 
 @pytest.mark.parametrize("name", INTERACTIVE)

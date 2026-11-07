@@ -187,7 +187,8 @@ class DialectShell:
         variable's expansion; the anchor's assignment, the history prefix and
         the trailing ``unset`` print nothing.
         """
-        clauses = [c.strip() for c in payload.split(";")]
+        # A clause's `|| :` only ignores its failure; it prints what the bare clause does.
+        clauses = [c.strip().removesuffix(" || :") for c in payload.split(";")]
         expansion = "$" + _PROBE_VAR
         at = next((i for i, c in enumerate(clauses) if expansion in c), len(clauses))
         before = clauses[:at]
