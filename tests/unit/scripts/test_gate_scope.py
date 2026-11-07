@@ -88,6 +88,11 @@ collect_marker_sets = _lane_invariants.collect_marker_sets
         ("noxfile.py", gs.ESCALATE),
         (".coveragerc", gs.ESCALATE),
         (".github/workflows/ci.yml", gs.ESCALATE),
+        (".github/workflows/nightly.yml", gs.WORKFLOW),
+        (".github/workflows/release.yml", gs.WORKFLOW),
+        (".github/workflows/release-testpypi.yml", gs.WORKFLOW),
+        (".github/workflows/untitledui-drift.yml", gs.WORKFLOW),
+        (".github/workflows/new.yml", None),
         (".githooks/pre-push", gs.ESCALATE),
         ("api/public.toml", None),
         ("uv.lock", None),
@@ -1112,10 +1117,155 @@ def test_every_other_tree_scripts_web_docs_and_build_file_has_a_row():
         "pyproject.toml",
         ".coveragerc",
         ".github/workflows/ci.yml",
+        ".github/workflows/nightly.yml",
         ".githooks/pre-push",
     }
     unknown = sorted(p for p in probes if gs.classify_path(p) is None)
     assert unknown == [], unknown
+
+
+def test_every_workflow_file_has_a_row():
+    """A new workflow must join WORKFLOW_ROWS (or, like ci.yml, the build files), or it is a
+    stray path that sends its commit to the full gate and its tip to the bed half (#952)."""
+    workflows = sorted(
+        p.relative_to(CHECKOUT_ROOT).as_posix()
+        for p in (CHECKOUT_ROOT / ".github" / "workflows").iterdir()
+        if p.suffix in (".yml", ".yaml")
+    )
+    assert workflows, "premise: the checkout has workflow files"
+    stray = [p for p in workflows if p not in gs.WORKFLOW_ROWS and p not in gs.BUILD_FILES]
+    assert stray == [], f"workflows with no row: {stray}"
+    gone = sorted(set(gs.WORKFLOW_ROWS) - set(workflows))
+    assert gone == [], f"rows naming workflows that do not exist: {gone}"
+
+
+def test_the_workflow_readers_row_is_every_reader_in_the_test_tree():
+    """A new reader of the workflows must join the row, or a workflow edit under-gates it."""
+    sources = {
+        p: (CHECKOUT_ROOT / p).read_text()
+        for p in _head_paths()
+        if p.startswith("tests/") and p.endswith(".py")
+    }
+    assert gs.workflow_readers(sources) == gs.WORKFLOW_READERS
+    for rows in gs.WORKFLOW_ROWS.values():
+        assert rows == gs.WORKFLOW_READERS, "two readers enumerate every workflow"
+
+
+def test_the_reader_census_is_one_function_for_matrices_and_workflows():
+    sources = {
+        "tests/unit/test_reads.py": 'P = ".github/workflows"\n',
+        "tests/unit/test_pin.py": "from scripts import gate_scope\nP = '.github/workflows'\n",
+        "tests/unit/test_unparsable.py": "def test_a(:\n    'workflows'\n",
+        "tests/_fixtures/workflows.py": "workflows = 1\n",
+    }
+    assert gs.workflow_readers(sources) == gs.readers_of(sources, ["workflows"])
+    assert gs.workflow_readers(sources) == [
+        "tests/unit/test_reads.py",
+        "tests/unit/test_unparsable.py",
+    ]
+
+
+_WORKFLOW_QUICK = (
+    'make quick PATHS="tests/unit/host/test_busybox_artifacts.py '
+    'tests/unit/test_declared_harness_bounds.py"'
+)
+
+
+@pytest.mark.parametrize("workflow", sorted(gs.WORKFLOW_ROWS))
+def test_a_workflow_routes_to_the_guards_that_pin_it_not_the_full_gate(workflow):
+    scope = gs.classify(
+        [gs.Change(workflow, "M")], _at_head(workflow, "on: push\n"), "base", "head", _head_paths()
+    )
+    assert scope.classes == [gs.WORKFLOW]
+    assert scope.full_at_commit == []
+    assert scope.unknown == []
+    commit = gs.commands(scope, tip=False, base="origin/main")
+    assert commit == ["make check-breaking", _WORKFLOW_QUICK, "make quick-guards"]
+    assert not set(gs.FULL_GATE) & set(commit)
+    assert gs.commands(scope, tip=True, base="origin/main") == ["make check-breaking"]
+
+
+def test_a_workflow_beside_a_src_file_adds_its_readers_to_the_src_column():
+    workflow, src = ".github/workflows/nightly.yml", "src/otto/cli/expose.py"
+    head = _head_paths()
+    scope = gs.classify(
+        [gs.Change(workflow, "M"), gs.Change(src, "M")],
+        _at_head(workflow, "on: push\n"),
+        "base",
+        "head",
+        head,
+    )
+    assert scope.classes == [gs.SRC_LEAF, gs.WORKFLOW]
+    assert scope.full_at_commit == []
+    assert "tests/unit/test_declared_harness_bounds.py" in scope.quick_paths
+    assert "tests/unit/host/test_busybox_artifacts.py" in scope.quick_paths
+    assert "tests/unit/cli" in scope.quick_paths
+    commit = gs.commands(scope, tip=False, base="origin/main")
+    assert commit.count("make quick-guards") == 1
+    assert not set(gs.FULL_GATE) & set(commit)
+    tip = gs.commands(scope, tip=True, base="origin/main")
+    assert "make coverage-bed" in tip, "the src file, not the workflow, reaches the bed half"
+
+
+def test_a_workflow_beside_ci_yml_keeps_ci_ymls_escalation():
+    workflow, ci = ".github/workflows/nightly.yml", ".github/workflows/ci.yml"
+    scope = gs.classify(
+        [gs.Change(workflow, "M"), gs.Change(ci, "M")],
+        _at_head(workflow, "on: push\n"),
+        "base",
+        "head",
+        _head_paths(),
+    )
+    assert scope.classes == [gs.ESCALATE, gs.WORKFLOW]
+    commit = gs.commands(scope, tip=False, base="origin/main")
+    assert set(gs.FULL_GATE) <= set(commit)
+    assert "make quick-guards" in commit
+    assert "make coverage-bed" in gs.commands(scope, tip=True, base="origin/main")
+
+
+def test_a_workflow_whose_readers_are_gone_is_a_full_gate():
+    workflow = ".github/workflows/nightly.yml"
+    scope = _scope([gs.Change(workflow, "M")], {}, head_paths={workflow})
+    assert scope.quick_paths == []
+    assert any("no surviving reader" in reason for reason in scope.full_at_commit)
+
+
+@pytest.mark.parametrize(
+    ("path", "cls"),
+    [
+        (".github/workflows/nightly.yml", gs.WORKFLOW),
+        ("schemas/support_matrix.json", gs.TESTS_LEAF),
+    ],
+)
+def test_a_reader_row_with_no_readers_is_no_surviving_reader(monkeypatch, path, cls):
+    """An empty row is still a row: it never falls through to the other routes."""
+    monkeypatch.setitem(gs.READER_ROWS, path, [])
+    scope = _scope([gs.Change(path, "M")], {}, head_paths=_head_paths())
+    assert scope.classes == [cls]
+    assert scope.unknown == []
+    assert scope.full_at_commit == [f"{path}: no surviving reader"]
+
+
+def test_a_workflow_beside_a_script_runs_its_readers_and_a_static_tip():
+    workflow, script = ".github/workflows/nightly.yml", "scripts/gate_scope.py"
+    scope = gs.classify(
+        [gs.Change(workflow, "M"), gs.Change(script, "M")],
+        _at_head(workflow, "on: push\n"),
+        "base",
+        "head",
+        _head_paths(),
+    )
+    assert scope.classes == [gs.SCRIPTS, gs.WORKFLOW]
+    assert scope.full_at_commit == []
+    commit = gs.commands(scope, tip=False, base="origin/main")
+    assert _WORKFLOW_QUICK in commit, "the workflow's readers run though no test class does"
+    assert "make quick-guards" in commit
+    assert not set(gs.FULL_GATE) & set(commit)
+    assert gs.commands(scope, tip=True, base="origin/main") == [
+        "make check-breaking",
+        "make check-python",
+        "make collect-check",
+    ]
 
 
 def test_every_path_and_lane_the_tables_name_exists():
@@ -1123,6 +1273,7 @@ def test_every_path_and_lane_the_tables_name_exists():
         {p for trees in gs.UNIT_TREES.values() for p in trees}
         | set(gs.GUARD_RIDERS)
         | set(gs.STABILITY_FILES)
+        | set(gs.WORKFLOW_READERS)
     )
     missing = sorted(p for p in paths if not (CHECKOUT_ROOT / p).exists())
     assert missing == [], f"rows naming paths that do not exist: {missing}"
