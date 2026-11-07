@@ -29,6 +29,10 @@ export type EventEditorTarget =
   | { kind: "edit"; sessionId: string; eventId: number }
   | { kind: "draft"; draft: EventDraft };
 
+/** The surfaces a request can outlive: a late result must tell their
+ * openings apart (shell/settleOnOpening.ts). */
+export type Surface = "eventEditor" | "markPopover";
+
 interface UiState {
   paletteOpen: boolean;
   theme: Theme;
@@ -44,6 +48,9 @@ interface UiState {
   /** Event marking: which inline popover ("Mark now…" vs "Start span…")
    * is open, or null. */
   markPopover: "mark" | "start" | null;
+  /** Bumped by every open and close of each surface, so an opening is told
+   * apart from the next one even on the same target. */
+  openings: Readonly<Record<Surface, number>>;
   actions: {
     openPalette: () => void;
     closePalette: () => void;
@@ -59,6 +66,11 @@ interface UiState {
   };
 }
 
+/** The state change for `surface` becoming `value`: a new opening. */
+function reopen<K extends Surface>(s: UiState, surface: K, value: UiState[K]): Partial<UiState> {
+  return { [surface]: value, openings: { ...s.openings, [surface]: s.openings[surface] + 1 } };
+}
+
 export const useUiStore = create<UiState>()((set, get) => ({
   paletteOpen: false,
   theme: loadTheme(),
@@ -66,6 +78,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   sweepArmed: false,
   openSpan: null,
   markPopover: null,
+  openings: { eventEditor: 0, markPopover: 0 },
   actions: {
     openPalette: () => set({ paletteOpen: true }),
     closePalette: () => set({ paletteOpen: false }),
@@ -75,12 +88,12 @@ export const useUiStore = create<UiState>()((set, get) => ({
       saveTheme(next);
       set({ theme: next });
     },
-    openEventEditor: (target) => set({ eventEditor: target }),
-    closeEventEditor: () => set({ eventEditor: null }),
+    openEventEditor: (target) => set((s) => reopen(s, "eventEditor", target)),
+    closeEventEditor: () => set((s) => reopen(s, "eventEditor", null)),
     armSweep: () => set({ sweepArmed: true }),
     disarmSweep: () => set({ sweepArmed: false }),
     setOpenSpan: (span) => set({ openSpan: span }),
-    openMarkPopover: (kind) => set({ markPopover: kind }),
-    closeMarkPopover: () => set({ markPopover: null }),
+    openMarkPopover: (kind) => set((s) => reopen(s, "markPopover", kind)),
+    closeMarkPopover: () => set((s) => reopen(s, "markPopover", null)),
   },
 }));

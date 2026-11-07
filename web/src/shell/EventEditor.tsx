@@ -6,7 +6,7 @@
 // header comment -- the all-in-one `SlideoutMenu` wrapper puts `data-testid`
 // on the outer backdrop ModalOverlay, not the visible Dialog panel.
 import { X } from "@untitledui/icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   Modal,
@@ -18,25 +18,17 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
 import { EVENT_DASH_STYLES, type EventDash } from "../api/eventStyle.gen";
-import type { EventRecord } from "../api/export.gen";
-import {
-  createEvent,
-  deleteEvent,
-  type EventUpdateInput,
-  isStale,
-  type StaleResult,
-  sourceGuard,
-  updateEvent,
-} from "../data/eventApi";
+import { createEvent, deleteEvent, type EventUpdateInput, updateEvent } from "../data/eventApi";
 import { customStyleName, isEventDash } from "../data/eventStyle";
 import { useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { EventColorField } from "../ui/EventColorField";
 import { TextInput } from "../ui/TextInput";
-import { type EventDraft, useUiStore } from "../ui/uiStore";
+import { type EventDraft, type EventEditorTarget, useUiStore } from "../ui/uiStore";
 import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
+import { settleOnOpening } from "./settleOnOpening";
 import { editorGateKey, useMutationGate } from "./useMutationGate";
 
 // The swatches (ui/EventColorField.tsx) and the dash list are the
@@ -205,7 +197,23 @@ export function EventEditor() {
   // a stable module-level import; `.getState()` is a plain, one-shot pull,
   // exactly like marking.ts's requireActiveSessionId -- not a reactive
   // dependency Biome's exhaustive-deps rule needs to see in the array.
+  //
+  // It also reseeds ONCE more when a request from an EARLIER opening of the
+  // same target settles (#932): an opening that finds the target's gate
+  // already pending seeds from the store as it was, so that request's update
+  // lands after the seed. Every field is disabled meanwhile, so the form
+  // holds no edit of the user's to lose. A request sent from THIS opening
+  // never reseeds: a failed Save keeps the user's draft. A target whose
+  // record is gone (that request was a Delete) closes the editor.
+  const seeded = useRef<{ editor: EventEditorTarget | null; inherited: boolean }>({
+    editor: null,
+    inherited: false,
+  });
   useEffect(() => {
+    const fresh = seeded.current.editor !== editor;
+    const inheritedSettled = seeded.current.inherited && !gate.pending;
+    if (!fresh && !inheritedSettled) return;
+    seeded.current = { editor, inherited: fresh && gate.pending };
     setError(null);
     setConfirmOpen(false);
     setDeleteError(null);
@@ -213,23 +221,27 @@ export function EventEditor() {
       setForm(null);
       return;
     }
-    let next: Form | null;
+    let next: Form;
     let legacy: string | undefined;
     if (editor.kind === "draft") {
       next = editor.draft;
     } else {
       const session = useReviewStore.getState().sessions.find((s) => s.id === editor.sessionId);
       const record = session?.events.find((ev) => ev.id === editor.eventId);
-      next = record ? formFromRecord(editor.sessionId, record) : null;
-      legacy = record?.legacyColor;
+      if (!record) {
+        closeEventEditor();
+        return;
+      }
+      next = formFromRecord(editor.sessionId, record);
+      legacy = record.legacyColor;
     }
     setForm(next);
     setTouched(UNTOUCHED);
     setLegacyColor(legacy);
     setTargetKey((k) => k + 1);
     setStartEmpty(false);
-    setFill({ start: "complete", end: next?.endTimestampMs == null ? "empty" : "complete" });
-  }, [editor]);
+    setFill({ start: "complete", end: next.endTimestampMs == null ? "empty" : "complete" });
+  }, [editor, gate.pending, closeEventEditor]);
 
   if (editor === null || form === null) return null;
 
@@ -237,52 +249,50 @@ export function EventEditor() {
   const endMsg = endMessage(form, fill, startEmpty);
   const invalid = form.label.trim() === "" || startMsg !== null || endMsg !== null;
 
+  // Each request settles on the editor opening that sent it: a late result
+  // never closes, or shows an error in, a newer opening (settleOnOpening).
   const save = () =>
-    gate.run(async () => {
-      try {
-        // A stale result: a file import overtook the request and already
-        // closed the editor (data/source.ts), so there is nothing left to do.
-        const current = sourceGuard();
-        let result: EventRecord | StaleResult;
-        if (editor.kind === "draft") {
-          result = await createEvent(form.sessionId, {
-            label: form.label,
-            timestamp: new Date(form.timestampMs).toISOString(),
-            ...(form.endTimestampMs !== null
-              ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
-              : {}),
-            color: form.color,
-            dash: form.dash,
-          });
-        } else {
-          result = await updateEvent(editor.sessionId, editor.eventId, {
-            label: form.label,
-            timestamp: new Date(form.timestampMs).toISOString(),
-            end_timestamp:
-              form.endTimestampMs !== null ? new Date(form.endTimestampMs).toISOString() : null,
-            ...styleChanges(form, touched),
-          });
-        }
-        if (isStale(current(result))) return;
-        closeEventEditor();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    }, SAVE);
+    gate.run(
+      () =>
+        settleOnOpening(
+          "eventEditor",
+          () =>
+            editor.kind === "draft"
+              ? createEvent(form.sessionId, {
+                  label: form.label,
+                  timestamp: new Date(form.timestampMs).toISOString(),
+                  ...(form.endTimestampMs !== null
+                    ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
+                    : {}),
+                  color: form.color,
+                  dash: form.dash,
+                })
+              : updateEvent(editor.sessionId, editor.eventId, {
+                  label: form.label,
+                  timestamp: new Date(form.timestampMs).toISOString(),
+                  end_timestamp:
+                    form.endTimestampMs !== null
+                      ? new Date(form.endTimestampMs).toISOString()
+                      : null,
+                  ...styleChanges(form, touched),
+                }),
+          { done: closeEventEditor, fail: setError },
+        ),
+      SAVE,
+    );
 
   // Confirm runs through the same gate as Save, so the two stay exclusive.
   const confirmDelete = () => {
     if (editor.kind !== "edit") return;
     setDeleteError(null);
-    void gate.run(async () => {
-      try {
-        const current = sourceGuard();
-        if (isStale(current(await deleteEvent(editor.sessionId, editor.eventId)))) return;
-        closeEventEditor();
-      } catch (err) {
-        setDeleteError(err instanceof Error ? err.message : String(err));
-      }
-    }, DELETE);
+    void gate.run(
+      () =>
+        settleOnOpening("eventEditor", () => deleteEvent(editor.sessionId, editor.eventId), {
+          done: closeEventEditor,
+          fail: setDeleteError,
+        }),
+      DELETE,
+    );
   };
 
   return (
