@@ -60,11 +60,16 @@ __all__ = [
 ]
 
 
-READY_SUFFIX = "_READY__"
-"""The fixed end of :attr:`SessionMarkers.ready`, where :func:`whole_line_echo` splits it."""
+READY_SUFFIX = "READY__"
+"""The fixed end of :attr:`SessionMarkers.ready`, where :func:`whole_line_echo` splits it.
 
-RECOVER_SUFFIX = "_RECOVER__"
-"""The fixed end of :attr:`SessionMarkers.recover`, where :func:`whole_line_echo` splits it."""
+It follows the head's ``_`` separator, so the head a probe line's echo word
+carries ends in ``_`` (the cut rules of :func:`whole_line_echo`)."""
+
+RECOVER_SUFFIX = "RECOVER__"
+"""The fixed end of :attr:`SessionMarkers.recover`, where :func:`whole_line_echo` splits it.
+
+It follows the head's ``_`` separator, as :data:`READY_SUFFIX` does."""
 
 
 @dataclass(frozen=True)
@@ -102,8 +107,8 @@ class SessionMarkers:
         return cls(
             begin=f"__OTTO_{session_id}_BEGIN__",
             end_prefix=f"__OTTO_{session_id}_END__",
-            ready=f"__OTTO_{session_id}{READY_SUFFIX}",
-            recover=f"__OTTO_{session_id}{RECOVER_SUFFIX}",
+            ready=f"__OTTO_{session_id}_{READY_SUFFIX}",
+            recover=f"__OTTO_{session_id}_{RECOVER_SUFFIX}",
         )
 
 
@@ -275,7 +280,7 @@ _PROBE_VAR = "__otto_probe"
 
 
 def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str = "") -> str:
-    """Render a probe line that prints *marker* only when the shell ran it from its first byte.
+    r"""Render a probe line that prints *marker* only when the shell ran it from its first byte.
 
     The line's first statement sets ``__otto_probe`` to *suffix*, the
     marker's fixed end (:data:`READY_SUFFIX` or :data:`RECOVER_SUFFIX`).
@@ -288,31 +293,65 @@ def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str =
       message quoting it can carry the marker;
     * only the statement at offset 0 assigns the variable, so every tail
       reaches the echo with it empty and prints the head alone;
-    * the variable is never stale: every whole line unsets it, it is never
-      exported, and ``${…-}`` is safe under ``set -u``;
-    * the anchor and the echo add no quote, so a tail cut inside them never
-      leaves one open. (Quotes inside *statements*, such as the calibration's
-      ``printf``, still can: #853.) Under ``sh -c`` an open quote is only
-      a syntax error, but a login shell on a pty reads interactively, and
-      there it is a continuation (PS2): every whole line resent after it
-      would join the open word, and the shell would never answer.
+    * the variable is never stale: every whole line unsets it, and it is
+      never exported. Under ``set -u`` a tail may print an unset-variable
+      error instead of the marker's head; that is harmless, because the
+      typed line never carries the marker.
+
+    **The cut rules** (#853). Every probe line keeps them, *statements*
+    included, and the sites that build one link here. Under ``sh -c`` a
+    broken tail is only a syntax error, but a login shell on a pty reads
+    interactively, and there a tail can leave the shell waiting for more
+    input: every whole line resent after it is swallowed, and the shell
+    never answers. So no tail, cut at any byte, may:
+
+    * **open a quote.** The line holds no quoted span, because a cut inside
+      one turns its closing quote into an opening one (PS2).
+    * **open a brace or another construct.** The echo word expands
+      ``$__otto_probe``, not ``${__otto_probe-}``: a tail cut just after
+      that ``$`` began with a ``{`` that zsh waited to see closed. A brace
+      group, such as the history prefix's, is safe only because every tail
+      that holds its ``{`` holds its ``}``.
+    * **be a redirection-only statement that reads stdin.** zsh runs one as
+      ``$NULLCMD`` (``cat``), which reads the terminal and swallows every
+      resend. So a redirection comes before its command (``2>/dev/null
+      stty -echo``), where a tail that keeps the redirection keeps the
+      command too. One that must follow a brace group's ``}`` is paired with
+      ``<&-``, so a leftover ``cat`` finds stdin closed and ends at once.
+    * **start with a word that runs a program that reads the terminal.** A
+      tail's first word is a suffix of some word of the line, and the shell
+      runs it, so no word a tail can start inside may have a suffix naming
+      such a program on ``PATH`` or as a builtin: it would swallow every
+      resend. (Fragments that run and exit, such as ``tty`` or ``set``, are
+      harmless; a user's own aliases are out of reach.) The
+      calibration's last escape is octal (``\\012``), because a cut inside
+      ``\\n`` left ``n`` (node's version manager on GitHub's runner). The
+      marker's head ends in its ``_`` separator, here in the echo word and
+      not in the variable's value, because the id is random hex and one
+      ending in ``ed``, ``fc`` or ``b`` left that command (BusyBox's ``ed``
+      read the resend); every fragment of the head ends in ``_``.
 
     The marker's id must be shell word characters (see
     :meth:`SessionMarkers.for_session`), so neither the assignment nor the
     echo word needs quoting against expansion or globbing. *after* is
     expanded unquoted as well: ``$?__$(id -un)__`` is safe for any user name
     made of word characters, dots and dashes (no blanks, no glob
-    characters).
+    characters). It must not begin with a variable-name character, which
+    would extend the unbraced variable's name, nor with ``[`` or ``:``, which
+    zsh reads as a subscript or a modifier of it.
 
     Raises:
-        ValueError: *marker* does not end in *suffix*, or has nothing before it.
+        ValueError: *marker* does not end in *suffix*, or the head before it
+            is empty or does not end in ``_``; or *after* begins with a
+            variable-name character, ``[`` or ``:``.
     """
     head = marker.removesuffix(suffix)
-    if not marker.endswith(suffix) or not head:
-        raise ValueError(f"marker {marker!r} does not end in {suffix!r} after a non-empty head")
+    if not marker.endswith(suffix) or not head.endswith("_"):
+        raise ValueError(f"marker {marker!r} does not end in {suffix!r} after a head ending in _")
+    if re.match(r"[A-Za-z0-9_\[:]", after):
+        raise ValueError(f"after {after!r} would extend the variable name {_PROBE_VAR!r}")
     return (
-        f"{_PROBE_VAR}={suffix}; {statements}"
-        f"echo {head}${{{_PROBE_VAR}-}}{after}; unset {_PROBE_VAR}\n"
+        f"{_PROBE_VAR}={suffix}; {statements}echo {head}${_PROBE_VAR}{after}; unset {_PROBE_VAR}\n"
     )
 
 
@@ -362,9 +401,11 @@ class BashFrame(CommandFrame):
         # half the history prefix, which rides after the anchor) prints only
         # READY's head, so confirm_live sends the line again whole. The typed
         # line never carries READY, so neither does its echo, even where a
-        # wrap puts a carriage return right before the marker.
+        # wrap puts a carriage return right before the marker. Every statement
+        # keeps whole_line_echo's cut rules (#853): each redirection comes
+        # before its command, and stdin stays open because `stty` acts on it.
         return whole_line_echo(
-            m.ready, READY_SUFFIX, f"{prefix}stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; "
+            m.ready, READY_SUFFIX, f"{prefix}2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; "
         )
 
     @override
@@ -392,14 +433,23 @@ class BashFrame(CommandFrame):
     @override
     def recover(self, m: SessionMarkers) -> str:
         # Echo-proof liveness probe on a marker distinct from the normal
-        # end-of-command sentinel: bake $? into the RECOVER marker (not
+        # end-of-command sentinel: expand $? after the RECOVER marker (not
         # end_prefix), so a real shell emits `..._RECOVER__<digits>__` while an
-        # echo/REPL can only reproduce the literal `$?`. Using RECOVER rather
-        # than end_prefix keeps recover_pattern distinct from end_pattern, so a
-        # dying command's own compound-line tail echo (`{end_prefix}<code>__`,
-        # appended by `frame`) never matches this probe's reply — no collision,
-        # nothing to drain.
-        return f'echo "{m.recover}$?__"\n'
+        # echo/REPL can only reproduce the literal `$?`. The digits are the
+        # status of the line's own anchor assignment, not the hung command's:
+        # they prove the shell executed the line, and nothing reads their
+        # value (ShellSession._confirm_recovered keeps only what came before
+        # the marker). Using RECOVER rather than end_prefix keeps
+        # recover_pattern distinct from end_pattern, so a dying command's own
+        # compound-line tail echo (`{end_prefix}<code>__`, appended by
+        # `frame`) never matches this probe's reply — no collision, nothing
+        # to drain.
+        #
+        # whole_line_echo's cut rules hold here as in the handshake (#853):
+        # the interrupt can leave a console that delivers input in pieces,
+        # and a tail of a quoted echo left every shell at PS2, swallowing
+        # each resend until recovery gave the session up.
+        return whole_line_echo(m.recover, RECOVER_SUFFIX, after="$?__")
 
     @override
     def quiet_history(self) -> str:
@@ -459,7 +509,9 @@ class BashFrame(CommandFrame):
         # effective and survivable on zsh (its failure is contained and
         # testable). It is NOT usable as the general mechanism — dash strands
         # on `eval` even in a clean environment, and busybox strands under
-        # readonly — hence a zsh-scoped clause rather than a rewrite.
+        # readonly — hence a zsh-scoped clause rather than a rewrite. Its
+        # argument is unquoted, since no word in it needs quoting, and its
+        # redirection comes first (whole_line_echo's cut rules, #853).
         #
         # `case` (not `[ ]`/`test`) keeps this a pure shell construct with no
         # external dependency, and `${ZSH_VERSION:-}` is `set -u` safe. It is
@@ -473,19 +525,22 @@ class BashFrame(CommandFrame):
         # `command export … 2>/dev/null` still leaks that line onto the merged
         # PTY stream. Redirecting the group captures it. (Not fatal there —
         # ksh carries on — but it is exactly the kind of stray output the
-        # READY parse must never see.)
+        # READY parse must never see.) A group's redirection has to follow
+        # its `}`, so a tail can be that redirection alone; the `<&-` beside
+        # it closes stdin for the `cat` zsh would run there
+        # (whole_line_echo's cut rules, #853). Nothing in a group reads stdin.
         return (
-            "{ command export HISTFILE=/dev/null; } 2>/dev/null || :; "
-            "{ command set +o history; } 2>/dev/null || :; "
+            "{ command export HISTFILE=/dev/null; } 2>/dev/null <&- || :; "
+            "{ command set +o history; } 2>/dev/null <&- || :; "
             "case ${ZSH_VERSION:-} in ?*) "
-            "eval 'export HISTFILE=/dev/null' 2>/dev/null || :;; esac; "
+            "2>/dev/null eval export HISTFILE=/dev/null || :;; esac; "
         )
 
     @override
     def restore_interactive(self) -> str | None:
-        # Mirrors the handshake's `stty -echo 2>/dev/null`; silent on a pty-less
+        # Mirrors the handshake's `2>/dev/null stty -echo`; silent on a pty-less
         # channel, where there is nothing to restore either.
-        return "stty echo 2>/dev/null"
+        return "2>/dev/null stty echo"
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:

@@ -283,6 +283,7 @@ MAINTAINER_TARGETS = frozenset(
         "repeat",
         "schema",
         "stability",
+        "stability-cut-sweep",
         "stability-embedded",
         "stability-tunnel",
         "stability-unit",

@@ -49,7 +49,9 @@ async def test_a_probe_line_that_lost_its_head_is_resent_whole(monkeypatch):
 
         async def cut_head(data):
             if "full" not in cut and isinstance(data, str) and "stty -echo" in data:
-                k = data.rindex("dev/null; echo")
+                # Inside the calibration's leading `2>/dev/null`, so the tail
+                # runs `dev/null` as a command and skips the calibration.
+                k = data.rindex("dev/null printf")
                 cut["full"], cut["tail"] = data, data[k:]
                 writes.append(cut["tail"])
                 await original(cut["tail"])

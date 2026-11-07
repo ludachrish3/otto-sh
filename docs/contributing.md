@@ -766,7 +766,10 @@ for `src/otto/host/`, and a stability tier for `src/otto/link/`
 areas, the stability test files (the files the `stability-*` Makefile targets
 run) and the tunnel-stability tree, which name their lanes in both columns. So a
 commit that changes only a src leaf under `src/otto/link/` runs no stability
-lane before the tip, and the landing's tip runs it. Whichever area selects it, a
+lane before the tip, and the landing's tip runs it. The probe-line cut sweep
+(`make stability-cut-sweep`) names its lane in the commit column only, as a
+working check. No tip runs it; it runs in nightly's `probe-cut-sweep` job,
+and once by hand before a change to it lands. Whichever area selects it, a
 stability lane runs **once**: `make stability-<tier> COUNT=1`, and for the tunnel
 tier, whose tests loop internally, `make stability-tunnel COUNT=1 CYCLES=2`, its
 smoke depth. It never runs at the Makefile's soak count or depth, and a diff
@@ -1415,6 +1418,7 @@ what you want to exercise:
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
 | Stability / soak — every tier runs and the target fails at the end if any did (so `make release-campaign` can rely on it) | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
+| Probe-line cut sweep (#853): every tail of the readiness handshake, the resync probe and the recovery probe, typed into each installed interactive shell on a pty, then the line whole (`stability`-marked; nightly's `probe-cut-sweep` job; never a release stage) | `make stability-cut-sweep` (`CUT_SWEEP_WORKERS=N`, default 4) | none |
 | The #386 console-release bed proof (opt-in, dev VM only; `make release-campaign` runs it; what it runs: `tests/integration/host/test_console_release_bed.py`) | `make console-release-bed` | the telnet Zephyr guests and their hop |
 | Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded`. On demand only — never part of `make release` (owner decision, 2026-10-15; see [quality gates](architecture/quality-gates.md#the-last-two-rows-are-the-point)). | leased unix host, incl. test3 for docker (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |

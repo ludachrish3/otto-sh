@@ -39,7 +39,7 @@ from otto.logger.mode import LogMode
 # variable is set by the line's FIRST statement, and the echo prints the
 # marker's head followed by it. Both built from the product's own name.
 _PROBE_ASSIGN_RE = re.compile(rf"{_PROBE_VAR}=(\w+); ")
-_PROBE_ECHO_RE = re.compile(rf"echo ([^\s$]+)\$\{{{_PROBE_VAR}-\}}")
+_PROBE_ECHO_RE = re.compile(rf"echo ([^\s$]+)\${_PROBE_VAR}(?!\w)")
 _SWITCH_RE = re.compile(r"^\s*(?:sudo\s+)?su\b(.*)$", re.MULTILINE)
 _EXIT_RE = re.compile(r"^\s*exit\s*$", re.MULTILINE)
 
