@@ -4,7 +4,12 @@
 // the fix belongs in the model, not here.
 import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
 import { normalizeEventStyle } from "./eventStyle";
-import { dropInvalidTimestamps, type NormalizedSession, parseObservedAt } from "./exportDoc";
+import {
+  dropInvalidTimestamps,
+  type NormalizedSession,
+  observedAtMicros,
+  parseObservedAt,
+} from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
 
 /**
@@ -54,14 +59,14 @@ export function applyFragment(
   const metrics = dropInvalidTimestamps(frag.metrics ?? [], "metric", session.id, warnings);
   const logEvents = dropInvalidTimestamps(frag.log_events ?? [], "log event", session.id, warnings);
   // Style resolved here, once, as on the import path (exportDoc.ts).
-  const fragEvents = dropInvalidTimestamps(
-    frag.events ?? [],
-    "event",
-    session.id,
-    warnings,
-    (e) => e.end_timestamp,
-  ).map(normalizeEventStyle);
-  const deletedIds = frag.deleted_event_ids ?? [];
+  const stamped = admitEventChanges(
+    session,
+    observedAtMicros(frag.observed_at),
+    dropInvalidTimestamps(frag.events ?? [], "event", session.id, warnings, (e) => e.end_timestamp),
+    frag.deleted_event_ids ?? [],
+  );
+  const fragEvents = stamped.upserts.map(normalizeEventStyle);
+  const deletedIds = stamped.deletedIds;
   const chartMapPatch = frag.chart_map ?? {};
   const hasMetaPatch = frag.meta !== null && frag.meta !== undefined;
   const hasChartMapPatch = Object.keys(chartMapPatch).length > 0;
@@ -78,7 +83,8 @@ export function applyFragment(
       : session.observedMs;
   const hasObservation = observedMs !== session.observedMs;
 
-  // A heartbeat/no-op fragment (right session, nothing else set) has nothing
+  // A heartbeat/no-op fragment (right session, nothing else set, or only
+  // event changes that admitEventChanges found overtaken) has nothing
   // to mutate or replace below — return the SAME session object rather than
   // a fresh copy. Checked BEFORE any mutation (not by comparing fields
   // after) since metrics/logEvents are appended IN PLACE further down: a
@@ -154,5 +160,49 @@ export function applyFragment(
 
   const tunnels = hasTunnels ? (frag.tunnels as TunnelRecord[]) : session.tunnels;
 
-  return { ...session, events, endMs, observedMs, meta, chartMap, tunnels };
+  return {
+    ...session,
+    events,
+    eventStamps: stamped.eventStamps,
+    endMs,
+    observedMs,
+    meta,
+    chartMap,
+    tunnels,
+  };
+}
+
+/** The event changes in one fragment that are newer than what the session
+ * already holds (#929 §4): a late echo must never roll an event back. With a
+ * server `stamp`, an upsert or deletion for id X is dropped when the stamp is
+ * no later than the session's snapshot floor or than X's last applied stamp;
+ * what is kept records the stamp, tombstones included. Without one (review
+ * mode, an older server), every change applies and no stamp is recorded.
+ * Every change in the fragment is judged against the stamps BEFORE it, so
+ * one fragment's upsert and delete of the same id both stand, as before.
+ * O(changes in the fragment); the Map is copied only when a change is kept,
+ * never on a metrics-only tick, and never mutated in place. Id-less rows
+ * cannot be addressed, so cannot be overtaken: they always apply. */
+function admitEventChanges<E extends { id?: number | null }>(
+  session: NormalizedSession,
+  stamp: number | null,
+  upserts: E[],
+  deletedIds: number[],
+): { upserts: E[]; deletedIds: number[]; eventStamps: Map<number, number> } {
+  if (stamp === null || (upserts.length === 0 && deletedIds.length === 0)) {
+    return { upserts, deletedIds, eventStamps: session.eventStamps };
+  }
+  const floor = session.eventFloor;
+  const held = session.eventStamps;
+  const isLate = (id: number): boolean =>
+    (floor !== null && stamp <= floor) || stamp <= (held.get(id) ?? Number.NEGATIVE_INFINITY);
+  const keptUpserts = upserts.filter((e) => e.id == null || !isLate(e.id));
+  const keptDeletes = deletedIds.filter((id) => !isLate(id));
+  let eventStamps = held;
+  for (const id of [...keptUpserts.map((e) => e.id), ...keptDeletes]) {
+    if (id == null) continue;
+    if (eventStamps === held) eventStamps = new Map(held);
+    eventStamps.set(id, stamp);
+  }
+  return { upserts: keptUpserts, deletedIds: keptDeletes, eventStamps };
 }

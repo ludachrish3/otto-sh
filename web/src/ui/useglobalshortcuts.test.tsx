@@ -163,3 +163,77 @@ describe("useGlobalShortcuts — lifecycle", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("useGlobalShortcuts — yieldsToEditing", () => {
+  const UNDO = { key: "z", mod: true };
+  function setup() {
+    const run = vi.fn();
+    renderHook(() =>
+      useGlobalShortcuts([makeCommand({ binding: UNDO, yieldsToEditing: true, run })]),
+    );
+    return run;
+  }
+  it("is inert in an input, a textarea, a [role=spinbutton] and a [role=listbox]", () => {
+    const run = setup();
+    for (const [tag, role] of [
+      ["input", null],
+      ["textarea", null],
+      ["div", "spinbutton"],
+      ["div", "listbox"],
+    ] as const) {
+      const el = document.createElement(tag);
+      if (role) el.setAttribute("role", role);
+      document.body.appendChild(el);
+      const e = press({ key: "z", ctrlKey: true }, el);
+      expect(e.defaultPrevented).toBe(false);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["eventEditor", { eventEditor: { mode: "create" } }],
+    ["markPopover", { markPopover: "mark" }],
+    ["palette", { paletteOpen: true }],
+  ])("is inert while the %s is open", (_n, state) => {
+    const run = setup();
+    useUiStore.setState(state as never);
+    const e = press({ key: "z", ctrlKey: true });
+    expect(run).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    useUiStore.setState({ eventEditor: null, markPopover: null, paletteOpen: false });
+  });
+  it("is NOT inert inside a [role=dialog] that is no editing overlay", () => {
+    const run = setup();
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const btn = document.createElement("button");
+    dialog.appendChild(btn);
+    document.body.appendChild(dialog);
+    const e = press({ key: "z", ctrlKey: true }, btn);
+    expect(run).toHaveBeenCalledOnce();
+    expect(e.defaultPrevented).toBe(true);
+  });
+  it("a command without yieldsToEditing still fires in an input", () => {
+    const run = vi.fn();
+    renderHook(() => useGlobalShortcuts([makeCommand({ binding: UNDO, run })]));
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    press({ key: "z", ctrlKey: true }, input);
+    expect(run).toHaveBeenCalledOnce();
+  });
+  it("matches extraBindings (shift) but only when the shift is exact", () => {
+    const run = vi.fn();
+    renderHook(() =>
+      useGlobalShortcuts([
+        makeCommand({
+          binding: { key: "y", mod: true },
+          extraBindings: [{ key: "z", mod: true, shift: true }],
+          run,
+        }),
+      ]),
+    );
+    press({ key: "z", ctrlKey: true });
+    expect(run).not.toHaveBeenCalled();
+    press({ key: "Z", ctrlKey: true, shiftKey: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+});

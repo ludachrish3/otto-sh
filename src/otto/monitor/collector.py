@@ -31,6 +31,7 @@ from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
 from ..models.monitor import (
     DEFAULT_MAX_SERIES_PER_CHART,
     ChartSpec,
+    EventRecord,
     MetricPoint,
     MonitorMeta,
     TabSpec,
@@ -897,11 +898,8 @@ class MetricCollector:
             edited = replace(resolved, id=current.id, source=current.source)
             if self._db:
                 await self._db.update_event(edited)
-            current.label = edited.label
-            current.color = edited.color
-            current.dash = edited.dash
-            current.timestamp = edited.timestamp
-            current.end_timestamp = edited.end_timestamp
+            for name, value in event_ops.editable_fields(edited).items():
+                setattr(current, name, value)
             # No separate "updated" kind: the client upserts events by id, so
             # an edited event is just an event. One merge rule, not two.
             self._publish(
@@ -909,9 +907,92 @@ class MetricCollector:
             )
             return current
 
-    async def delete_event(self, event_id: int) -> bool:
-        """Remove an event by id. Returns True if found and removed, False otherwise."""
-        return await self.mutate_event(event_id, lambda _current: None) is not None
+    async def delete_event(self, event_id: int) -> "MonitorEvent | None":
+        """Remove an event by id. Returns the removed event, or ``None`` if no event has this id.
+
+        The removed event is the one read under the mutation lock, so a caller
+        that records it (the dashboard's undo) records what was really deleted.
+        """
+        return await self.mutate_event(event_id, lambda _current: None)
+
+    async def restore_event(self, event_id: int, write: EventRecord) -> MonitorEvent:
+        """Put a deleted event back under its own id (the undo of a delete).
+
+        Under the mutation lock, like every other event mutation, and in the
+        same order: DB write, then memory and publish together. Refused with
+        ``event_ops.EventChanged`` when an event already
+        has the id (carrying it), when the id was never handed out (the
+        store's counter is the high-water mark), or when another session in
+        a reused ``--db`` holds it (``current`` None: not this session's
+        event), so a restore can neither overwrite an event nor claim an id
+        a later create would collide with.
+        ``write`` is validated strictly, as every live write is: a legacy
+        colour or dash raises ``event_ops.EventValidationError`` (the
+        route's 422) before anything is written.
+        ``source`` is kept from ``write``: a restored ``auto`` event stays
+        ``auto``.
+        """
+        async with self._mutation_lock():
+            present = self._store.find_event(event_id)
+            if present is not None:
+                raise event_ops.EventChanged(EventRecord.model_validate(present.to_dict()))
+            if not self._store.allocated(event_id):
+                raise event_ops.EventChanged(None)
+            # A reused --db holds earlier sessions' ids inside this range.
+            if self._db and await self._db.event_id_taken(event_id):
+                raise event_ops.EventChanged(None)
+            event = MonitorEvent(
+                timestamp=write.timestamp,
+                label=write.label,
+                source=write.source,
+                color=write.color,
+                dash=write.dash,
+                id=event_id,
+                end_timestamp=write.end_timestamp,
+            )
+            if self._db:
+                await self._db.restore_event_row(event)
+            self._store.note_imported_event(event)
+            self._publish(
+                {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
+            )
+        return event
+
+    async def revert_event(
+        self, event_id: int, expect: EventRecord | None, write: EventRecord | None
+    ) -> MonitorEvent:
+        """Move an event from ``expect`` to ``write``, only if it is still ``expect`` (#929).
+
+        The dashboard's undo and redo: ``expect`` is the state the step left
+        behind, ``write`` the state to return to, and ``None`` on either side
+        means "no event" (``event_ops.revert_leg``). The
+        update and delete legs run through :meth:`mutate_event`, whose
+        resolver compares the event as it stands under the lock with
+        ``event_ops.same_event``; the restore leg is
+        :meth:`restore_event`. Any mismatch raises
+        ``event_ops.EventChanged`` carrying the actual
+        state, with nothing written or published. ``source`` is compared,
+        never written, on the update leg.
+
+        Returns the stored event after an update or restore, or the removed
+        event after a delete.
+        """
+        if event_ops.revert_leg(expect, write) == "restore":
+            assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
+            return await self.restore_event(event_id, write)
+
+        def resolve(current: MonitorEvent) -> "MonitorEvent | None":
+            current_record = EventRecord.model_validate(current.to_dict())
+            if not event_ops.same_event(current_record, expect):
+                raise event_ops.EventChanged(current_record)
+            if write is None:
+                return None
+            return replace(current, **event_ops.editable_fields(write))
+
+        result = await self.mutate_event(event_id, resolve)
+        if result is None:
+            raise event_ops.EventChanged(None)
+        return result
 
     async def update_event(
         self,
@@ -935,16 +1016,11 @@ class MetricCollector:
         # No check here: replace() runs MonitorEvent.__post_init__, which
         # normalises the colour and refuses a bad colour or dash inside the
         # resolver -- before mutate_event writes anything.
+        written = event_ops.ResolvedEventFields(
+            label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
+        )
         return await self.mutate_event(
-            event_id,
-            lambda current: replace(
-                current,
-                label=label,
-                color=color,
-                dash=dash,
-                timestamp=timestamp,
-                end_timestamp=end_timestamp,
-            ),
+            event_id, lambda current: replace(current, **event_ops.editable_fields(written))
         )
 
     # ------------------------------------------------------------------

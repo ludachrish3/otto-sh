@@ -20,7 +20,7 @@ import { Select } from "@/components/base/select/select";
 import { EVENT_DASH_STYLES, type EventDash } from "../api/eventStyle.gen";
 import { createEvent, deleteEvent, type EventUpdateInput, updateEvent } from "../data/eventApi";
 import { customStyleName, isEventDash } from "../data/eventStyle";
-import { useReviewStore } from "../data/reviewStore";
+import { storedEvent, useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { EventColorField } from "../ui/EventColorField";
@@ -112,9 +112,9 @@ export function EventEditor() {
   const { closeEventEditor } = useUiStore((s) => s.actions);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Save and Delete share one gate, keyed by the editor's target: one
-  // request in flight per event, and a request still pending for one event
-  // never makes another event's editor look busy.
+  // Save and Delete share one gate, keyed by the editor's target. One
+  // request in flight per tab: a request pending for ANY event (or surface)
+  // disables this editor, and only the pressing button spins.
   const gate = useMutationGate(
     editor === null
       ? ""
@@ -125,11 +125,7 @@ export function EventEditor() {
   // The delete dialog names the STORED record, not the unsaved form: the
   // delete removes what is stored, whatever the label field holds now.
   const storedLabel = useReviewStore((s) =>
-    editor?.kind === "edit"
-      ? (s.sessions
-          .find((sess) => sess.id === editor.sessionId)
-          ?.events.find((ev) => ev.id === editor.eventId)?.label ?? "")
-      : "",
+    editor?.kind === "edit" ? (storedEvent(editor.sessionId, editor.eventId, s)?.label ?? "") : "",
   );
   // The stored record's dash when it is not a registry style
   // (data/eventStyle.ts): until the user picks a dash, the select shows it
@@ -137,9 +133,7 @@ export function EventEditor() {
   // included -- is a change and replaces it, as a colour pick does.
   const storedLegacyDash = useReviewStore((s) =>
     editor?.kind === "edit"
-      ? s.sessions
-          .find((sess) => sess.id === editor.sessionId)
-          ?.events.find((ev) => ev.id === editor.eventId)?.legacyDash
+      ? storedEvent(editor.sessionId, editor.eventId, s)?.legacyDash
       : undefined,
   );
   // The delete confirmation dialog, and the failure it shows (the dialog
@@ -199,13 +193,16 @@ export function EventEditor() {
   // exactly like marking.ts's requireActiveSessionId -- not a reactive
   // dependency Biome's exhaustive-deps rule needs to see in the array.
   //
-  // It also reseeds ONCE more when a request from an EARLIER opening of the
-  // same target settles (#932): an opening that finds the target's gate
-  // already pending seeds from the store as it was, so that request's update
-  // lands after the seed. Every field is disabled meanwhile, so the form
-  // holds no edit of the user's to lose. A request sent from THIS opening
-  // never reseeds: a failed Save keeps the user's draft. A target whose
-  // record is gone (that request was a Delete) closes the editor.
+  // It also reseeds ONCE more when a mutation that was pending at this
+  // opening settles (#932): the gate is global, so that is ANY pending
+  // mutation, not only one on this target. An opening that finds the gate
+  // pending seeds from the store as it was, so that request's update lands
+  // after the seed; re-reading the stored record when it settles is correct,
+  // and harmless when it was another target's. Every field is disabled
+  // meanwhile, so the form holds no edit of the user's to lose. A request
+  // sent from THIS opening never reseeds: a failed Save keeps the user's
+  // draft. A target whose record is gone (that request was a Delete) closes
+  // the editor.
   const seeded = useRef<{ editor: EventEditorTarget | null; inherited: boolean }>({
     editor: null,
     inherited: false,
@@ -227,8 +224,7 @@ export function EventEditor() {
     if (editor.kind === "draft") {
       next = editor.draft;
     } else {
-      const session = useReviewStore.getState().sessions.find((s) => s.id === editor.sessionId);
-      const record = session?.events.find((ev) => ev.id === editor.eventId);
+      const record = storedEvent(editor.sessionId, editor.eventId);
       if (!record) {
         closeEventEditor();
         return;

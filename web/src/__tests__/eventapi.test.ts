@@ -1,9 +1,12 @@
 // web/src/__tests__/eventapi.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
-import { createEvent, deleteEvent, EventApiError, endEvent, updateEvent } from "../data/eventApi";
+import { createEvent, deleteEvent, endEvent, revertEvent, updateEvent } from "../data/eventApi";
+import { EventApiError } from "../data/eventApiError";
+import { EventChangedError } from "../data/eventChangedError";
 import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs } from "../data/time";
+import { useUndoHistory } from "../data/undoHistory";
 
 // minimal.json's first session id — see the fixture; hydrate once per test so
 // the synthetic fragments have a session to land on.
@@ -74,9 +77,107 @@ describe("eventApi", () => {
     const sid = hydrate();
     vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
-    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy")));
     await deleteEvent(sid, 7);
     expect(useReviewStore.getState().sessions[0].events.find((e) => e.id === 7)).toBeUndefined();
+  });
+
+  it("deleteEvent resolves to the deleted record", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy")));
+    expect(await deleteEvent(sid, 7)).toEqual(record(7, "deploy"));
+  });
+
+  it("a 409 changed throws EventChangedError with current and the observed header", async () => {
+    const sid = hydrate();
+    const res = new Response(
+      JSON.stringify({ error: "changed", code: "changed", current: record(7, "other") }),
+      { status: 409, headers: { "X-Otto-Observed-At": "2026-07-18T12:05:00.000001+00:00" } },
+    );
+    vi.mocked(fetch).mockResolvedValueOnce(res);
+    const err = await revertEvent(sid, 7, record(7, "a"), record(7, "b")).catch((e) => e);
+    expect(err).toBeInstanceOf(EventChangedError);
+    expect(err.status).toBe(409);
+    expect(err.current).toEqual(record(7, "other"));
+    expect(err.observed).toBe("2026-07-18T12:05:00.000001+00:00");
+  });
+
+  it("a 409 changed with a deleted event carries current null", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      okJson({ error: "changed", code: "changed", current: null }, 409),
+    );
+    const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
+    expect(err).toBeInstanceOf(EventChangedError);
+    expect(err.current).toBeNull();
+  });
+
+  // A conflict's `current` passes the same check as a success's record: an
+  // undo recovering a lost response applies it under its id.
+  it("a 409 changed whose current has no id is refused, not an EventChangedError", async () => {
+    const sid = hydrate();
+    const { id: _id, ...anonymous } = record(7, "other");
+    vi.mocked(fetch).mockResolvedValueOnce(
+      okJson({ error: "changed", code: "changed", current: anonymous }, 409),
+    );
+    const err = await revertEvent(sid, 7, record(7, "a"), record(7, "b")).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err).not.toBeInstanceOf(EventChangedError);
+    expect(err.message).toMatch("no event id");
+  });
+
+  it("a 409 changed without a current key is malformed, not a deletion", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(okJson({ error: "changed", code: "changed" }, 409));
+    const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err).not.toBeInstanceOf(EventChangedError);
+    expect(err.status).toBe(409);
+  });
+
+  it("a 409 busy is a plain EventApiError", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(okJson({ error: "locked", code: "busy" }, 409));
+    const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err).not.toBeInstanceOf(EventChangedError);
+    expect(err.status).toBe(409);
+  });
+
+  it("a network error has status null", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("down"));
+    const err = await deleteEvent(sid, 7).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err.status).toBeNull();
+    expect(err.observed).toBeNull();
+  });
+
+  it("revertEvent with write null applies a deletion", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+    await createEvent(sid, { label: "deploy" });
+    vi.mocked(fetch).mockResolvedValueOnce(okJson(null));
+    expect(await revertEvent(sid, 7, record(7, "deploy"), null)).toBeNull();
+    expect(useReviewStore.getState().sessions[0].events.find((e) => e.id === 7)).toBeUndefined();
+    const [path, init] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
+    expect(path).toBe(`/api/session/${encodeURIComponent(sid)}/event/7/revert`);
+    expect(JSON.parse(init.body as string)).toEqual({ expect: record(7, "deploy"), write: null });
+  });
+
+  it("revertEvent applies the record with the observed stamp", async () => {
+    const sid = hydrate();
+    const later = "2026-07-18T12:10:00+00:00";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(record(7, "back")), {
+        status: 200,
+        headers: { "X-Otto-Observed-At": later },
+      }),
+    );
+    expect(await revertEvent(sid, 7, null, record(7, "back"))).toEqual(record(7, "back"));
+    const s = useReviewStore.getState().sessions[0];
+    expect(s.events.find((e) => e.id === 7)?.label).toBe("back");
+    expect(displayEndMs(s)).toBe(Date.parse(later));
   });
 
   it("a non-2xx surfaces the server's error and applies nothing", async () => {
@@ -107,6 +208,27 @@ describe("eventApi", () => {
       createEvent(sid, { label: "x" }).catch((e) => Promise.reject(e.message)),
     ).rejects.toMatch("Field required");
     expect(useReviewStore.getState().sessions[0].events).toHaveLength(before);
+  });
+
+  // otto never invents identity: a success response is the server's record,
+  // and the server always names its id. One without fails loud instead of
+  // filing the event (and its history entry) under a made-up id.
+  it.each([
+    ["createEvent", (sid: string) => createEvent(sid, { label: "x" })],
+    ["updateEvent", (sid: string) => updateEvent(sid, 7, { label: "x" })],
+    ["endEvent", (sid: string) => endEvent(sid, 7)],
+    ["deleteEvent", (sid: string) => deleteEvent(sid, 7)],
+    ["revertEvent", (sid: string) => revertEvent(sid, 7, null, record(7, "x"))],
+  ])("%s: a response record without an id rejects and applies nothing", async (_, call) => {
+    const sid = hydrate();
+    const before = useReviewStore.getState().sessions[0].events;
+    const { id: _id, ...anonymous } = record(7, "x");
+    vi.mocked(fetch).mockResolvedValueOnce(okJson(anonymous));
+    const err = await call(sid).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err.message).toMatch("no event id");
+    expect(useReviewStore.getState().sessions[0].events).toEqual(before);
+    expect(useUndoHistory.getState().undo).toEqual([]);
   });
 
   it("a network failure surfaces as EventApiError and applies nothing", async () => {
@@ -164,7 +286,7 @@ describe("eventApi", () => {
 
     it("deleteEvent applies the header too", async () => {
       const sid = hydrate();
-      vi.mocked(fetch).mockResolvedValueOnce(stamped(null, 204));
+      vi.mocked(fetch).mockResolvedValueOnce(stamped(record(7, "deploy"), 200));
       await deleteEvent(sid, 7);
       expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(T + 600_000);
     });

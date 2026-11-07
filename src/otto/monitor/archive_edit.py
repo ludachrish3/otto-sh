@@ -17,9 +17,21 @@ import os
 import sqlite3
 from collections.abc import Generator
 from datetime import datetime
+from typing import Any
 
 from ..errors import OttoError
-from .db import EVENT_INSERT_SQL, event_insert_params
+from ..models.monitor import EventRecord
+from . import event_ops
+from .db import (
+    EVENT_ID_TAKEN_SQL,
+    EVENT_INSERT_SQL,
+    EVENT_RESTORE_SQL,
+    EVENT_SELECT_COLUMNS,
+    event_insert_params,
+    event_restore_params,
+    event_row_record,
+)
+from .event_ops import EventChanged, same_event
 
 
 class ArchiveLockedError(OttoError, RuntimeError):
@@ -84,6 +96,91 @@ def insert_event(
         return rowid
 
 
+def _current(conn: sqlite3.Connection, session_id: str, event_id: int) -> EventRecord | None:
+    """Read the event ``(session_id, event_id)`` as it stands, or ``None`` when absent."""
+    row = conn.execute(
+        f"SELECT {EVENT_SELECT_COLUMNS} FROM events WHERE id = ? AND session_id = ?",  # noqa: S608 — module constant
+        (event_id, session_id),
+    ).fetchone()
+    return event_row_record(row) if row is not None else None
+
+
+def _require_expected(
+    conn: sqlite3.Connection, session_id: str, event_id: int, expect: EventRecord | None
+) -> EventRecord | None:
+    """Return the event's current state, raising :class:`EventChanged` unless it is ``expect``."""
+    current = _current(conn, session_id, event_id)
+    if not same_event(current, expect):
+        raise EventChanged(current)
+    return current
+
+
+def _update_row(
+    conn: sqlite3.Connection, session_id: str, event_id: int, fields: dict[str, Any]
+) -> bool:
+    """Run the one UPDATE of an event's editable fields (``fields`` is ``editable_fields``)."""
+    cursor = conn.execute(
+        "UPDATE events SET label = ?, color = ?, dash = ?, ts = ?, end_ts = ? "
+        "WHERE id = ? AND session_id = ?",
+        (
+            fields["label"],
+            fields["color"],
+            fields["dash"],
+            fields["timestamp"].isoformat(),
+            fields["end_timestamp"].isoformat() if fields["end_timestamp"] else None,
+            event_id,
+            session_id,
+        ),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def _delete_row(conn: sqlite3.Connection, session_id: str, event_id: int) -> bool:
+    """Run the one DELETE of an event row."""
+    cursor = conn.execute(
+        "DELETE FROM events WHERE id = ? AND session_id = ?", (event_id, session_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def _restore_row(
+    conn: sqlite3.Connection, session_id: str, event_id: int, write: EventRecord
+) -> EventRecord:
+    """Put ``write`` back under ``event_id``, if this session may reuse that id.
+
+    Refused when the id is present, held by another session, or never handed out.
+    """
+    _require_session(conn, "archive", session_id)
+    present = _current(conn, session_id, event_id)
+    if present is not None:
+        raise EventChanged(present)
+    seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'events'").fetchone()
+    if not event_ops.id_handed_out(event_id, high_water=seq[0] if seq is not None else 0):
+        raise EventChanged(None)
+    # Another session's event: not this session's to show, so `current` is None.
+    if conn.execute(EVENT_ID_TAKEN_SQL, (event_id,)).fetchone() is not None:
+        raise EventChanged(None)
+    conn.execute(
+        EVENT_RESTORE_SQL,
+        event_restore_params(
+            event_id,
+            session_id,
+            timestamp=write.timestamp,
+            end_timestamp=write.end_timestamp,
+            label=write.label,
+            source=write.source,
+            color=write.color,
+            dash=write.dash,
+        ),
+    )
+    conn.commit()
+    restored = _current(conn, session_id, event_id)
+    assert restored is not None  # noqa: S101 — just inserted under the same connection
+    return restored
+
+
 def update_event(
     path: str,
     session_id: str,
@@ -96,29 +193,59 @@ def update_event(
     dash: str,
 ) -> bool:
     """Overwrite an event's editable fields. False if (session, id) matches nothing."""
+    fields = event_ops.ResolvedEventFields(
+        label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
+    )
     with _locked_connection(path) as conn:
-        cursor = conn.execute(
-            "UPDATE events SET label = ?, color = ?, dash = ?, ts = ?, end_ts = ? "
-            "WHERE id = ? AND session_id = ?",
-            (
-                label,
-                color,
-                dash,
-                timestamp.isoformat(),
-                end_timestamp.isoformat() if end_timestamp else None,
-                event_id,
-                session_id,
-            ),
-        )
-        conn.commit()
-        return cursor.rowcount > 0
+        return _update_row(conn, session_id, event_id, event_ops.editable_fields(fields))
 
 
-def delete_event(path: str, session_id: str, event_id: int) -> bool:
-    """Delete one event row. False if (session, id) matches nothing."""
+def delete_event(path: str, session_id: str, event_id: int) -> EventRecord | None:
+    """Delete one event row; return the removed row, or ``None`` if (session, id) matches none."""
     with _locked_connection(path) as conn:
-        cursor = conn.execute(
-            "DELETE FROM events WHERE id = ? AND session_id = ?", (event_id, session_id)
-        )
-        conn.commit()
-        return cursor.rowcount > 0
+        removed = _current(conn, session_id, event_id)
+        if removed is not None:
+            _delete_row(conn, session_id, event_id)
+        return removed
+
+
+def restore_event(path: str, session_id: str, event_id: int, write: EventRecord) -> EventRecord:
+    """Put a deleted event back under its own id (the undo of a delete).
+
+    Raises :class:`~otto.monitor.event_ops.EventChanged` when an event already
+    has the id (carrying it) or the id was never handed out (the table's
+    ``sqlite_sequence`` is the high-water mark), so a restore can neither
+    overwrite an event nor claim an id a later create would collide with. A
+    legacy colour or dash in ``write`` is written unchanged.
+    """
+    with _locked_connection(path) as conn:
+        return _restore_row(conn, session_id, event_id, write)
+
+
+def revert_event(
+    path: str,
+    session_id: str,
+    event_id: int,
+    expect: EventRecord | None,
+    write: EventRecord | None,
+) -> EventRecord | None:
+    """Move an event from ``expect`` to ``write``, only if it is still ``expect`` (#929).
+
+    The review-mode twin of ``MetricCollector.revert_event``; the leg comes
+    from :func:`~otto.monitor.event_ops.revert_leg`. Returns the stored row
+    after an update or restore, the removed row after a delete. A missing
+    event on the update or delete leg raises ``EventChanged(None)``.
+    """
+    leg = event_ops.revert_leg(expect, write)
+    with _locked_connection(path) as conn:
+        if leg == "restore":
+            assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
+            return _restore_row(conn, session_id, event_id, write)
+        current = _require_expected(conn, session_id, event_id, expect)
+        if current is None:
+            raise EventChanged(None)
+        if write is None:
+            _delete_row(conn, session_id, event_id)
+            return current
+        _update_row(conn, session_id, event_id, event_ops.editable_fields(write))
+        return _current(conn, session_id, event_id)

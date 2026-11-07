@@ -45,6 +45,8 @@ export function synthSession(args: {
     meta: { interval: intervalS, charts: [], tabs: [] },
     metrics,
     events: [],
+    eventStamps: new Map(),
+    eventFloor: null,
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: {},

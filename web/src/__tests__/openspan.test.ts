@@ -4,7 +4,7 @@
 // subscription, so every case below drives a different store write.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
-import { installOpenSpanReconciler } from "../data/openSpan";
+import { adoptOpenSpan, installOpenSpanReconciler, isTrackedSpanLive } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { useUiStore } from "../ui/uiStore";
 
@@ -218,5 +218,45 @@ describe("open-span reconciler across a resync that raced a Start span", () => {
     actions.appendFragment({ format: 1, session: sid, events: [record(9)] });
     actions.resyncMonitorSessions(snapshot(sid, [], CAPTURED_AT), "live", token);
     expect(ids()).not.toContain(9);
+  });
+});
+
+// #929, spec §7: undo / redo re-adopt a span through adoptOpenSpan, which
+// shares the reconciler's "present and still open" predicate and YIELDS to a
+// span already tracked (an explicit Start span replaces; a re-adoption never
+// does).
+describe("isTrackedSpanLive / adoptOpenSpan", () => {
+  function seedEvents(events: ReturnType<typeof record>[]): string {
+    const sid = hydrate();
+    useReviewStore.getState().actions.appendFragment({ format: 1, session: sid, events });
+    return sid;
+  }
+
+  it("is live only for a present, open event of an existing session", () => {
+    const sid = seedEvents([record(9), record(10, END)]);
+    expect(isTrackedSpanLive(sid, 9)).toBe(true);
+    expect(isTrackedSpanLive(sid, 10)).toBe(false);
+    expect(isTrackedSpanLive(sid, 11)).toBe(false);
+    expect(isTrackedSpanLive("no-such-session", 9)).toBe(false);
+  });
+
+  it("adopts an open event when nothing is tracked", () => {
+    const sid = seedEvents([record(9)]);
+    expect(adoptOpenSpan(sid, 9)).toBe(true);
+    expect(useUiStore.getState().openSpan).toEqual({ sessionId: sid, eventId: 9 });
+  });
+
+  it("never adopts an ended or missing event", () => {
+    const sid = seedEvents([record(10, END)]);
+    expect(adoptOpenSpan(sid, 10)).toBe(false);
+    expect(adoptOpenSpan(sid, 11)).toBe(false);
+    expect(useUiStore.getState().openSpan).toBeNull();
+  });
+
+  it("never replaces a span already tracked", () => {
+    const sid = seedEvents([record(9), record(10)]);
+    useUiStore.getState().actions.setOpenSpan({ sessionId: sid, eventId: 10 });
+    expect(adoptOpenSpan(sid, 9)).toBe(false);
+    expect(useUiStore.getState().openSpan).toEqual({ sessionId: sid, eventId: 10 });
   });
 });

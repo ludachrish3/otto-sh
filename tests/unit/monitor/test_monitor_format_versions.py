@@ -227,7 +227,7 @@ def test_a_review_edit_on_a_copy_of_each_archive_keeps_it(version, tmp_path):
     """A review edit keeps each read version's rows and stamp; it checks no version yet."""
     path = _archive(version, tmp_path)
     rowid = _note(path)
-    assert delete_event(str(path), FIRST, 1) is True
+    assert delete_event(str(path), FIRST, 1) is not None
     first, open_ = read_sessions(str(path))
     assert [(e[0], e[3]) for e in first.events] == [(2, "outage"), (rowid, "note")]
     assert (len(first.metrics), len(open_.metrics)) == (2, 1)

@@ -8,11 +8,23 @@ is invalid. Callers translate :class:`EventValidationError` into their own
 surface's failure shape (HTTP 422; a raised ValueError in library code).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..errors import OttoError
-from ..models.monitor import EventCreateBody, EventUpdateBody
+from ..models.monitor import (
+    SPAN_ORDER_ERROR,
+    EventCreateBody,
+    EventRecord,
+    EventUpdateBody,
+    checked_label,
+    span_is_forward,
+)
+
+if TYPE_CHECKING:
+    # Annotation only: event_ops sits below events in tach's layering.
+    from .events import MonitorEvent
 
 
 def utc_now() -> datetime:
@@ -55,6 +67,109 @@ class EventValidationError(OttoError, ValueError):
     """A semantically invalid event mutation (e.g. span end not after start)."""
 
 
+class EventChanged(OttoError):  # noqa: N818 — name fixed by the #929 spec: a state mismatch, not a caller error
+    """A revert found the event in a state other than the one it expected.
+
+    ``current`` is the event as it actually stands (``None`` when no event
+    has the id), so the caller can show it and the dashboard can drop the
+    step that no longer applies.
+    """
+
+    def __init__(self, current: EventRecord | None) -> None:
+        super().__init__("the event changed since this step was recorded")
+        self.current = current
+
+
+def same_event(a: EventRecord | None, b: EventRecord | None) -> bool:
+    """Report whether two event states are the same: the ONE "is this the expected state" test.
+
+    Two ``None`` are the same (both absent); ``None`` and a record are not.
+    Timestamps compare as aware datetimes, i.e. as instants, never as text:
+    the wire's ``Z``, the store's ``+00:00`` and the browser's ``.000Z`` all
+    name one instant. ``color`` compares after ``EventRecord``'s lenient
+    normalisation (``#ABC`` is ``#aabbcc``; a legacy ``"red"`` is itself).
+    ``id`` is ignored: the caller has already chosen the event by id.
+    """
+    if a is None or b is None:
+        return a is b
+    return (
+        a.timestamp == b.timestamp
+        and a.end_timestamp == b.end_timestamp
+        and a.label == b.label
+        and a.color == b.color
+        and a.dash == b.dash
+        and a.source == b.source
+    )
+
+
+def revert_leg(
+    expect: EventRecord | None, write: EventRecord | None
+) -> Literal["update", "delete", "restore"]:
+    """Select a revert's leg from which of its two states are present.
+
+    ``expect`` and ``write`` both present put the event back to ``write``
+    (``"update"``); only ``expect`` deletes it (``"delete"``); only ``write``
+    restores it under its id (``"restore"``). Neither is not a change.
+    """
+    if expect is None and write is None:
+        raise EventValidationError("a revert needs expect, write, or both")
+    if expect is None:
+        return "restore"
+    if write is None:
+        return "delete"
+    return "update"
+
+
+FIRST_EVENT_ID = 1
+"""The lowest id an event can hold: both backends count from 1 (the
+collector's counter, SQLite's AUTOINCREMENT)."""
+
+
+def id_handed_out(event_id: int, high_water: int) -> bool:
+    """Report whether ``event_id`` was ever handed out: the ONE restore-id rule.
+
+    ``high_water`` is the highest id the backend has handed out (``0`` when
+    none). A restore may only reuse an id in ``FIRST_EVENT_ID..high_water``:
+    one above would collide with a later create, and one below the first was
+    never anybody's. The live collector and the review archive both call it.
+    """
+    return FIRST_EVENT_ID <= event_id <= high_water
+
+
+def check_span(timestamp: datetime, end_timestamp: datetime | None) -> None:
+    """Refuse a span that does not end after it starts, as :class:`EventValidationError`.
+
+    Create, a PATCH or /end merge and a revert's ``write``
+    (:func:`check_revert_write`) all call it on the
+    pair they are about to store. The rule itself is
+    ``otto.models.monitor.span_is_forward``, which the create body's own
+    validator shares.
+    """
+    if not span_is_forward(timestamp, end_timestamp):
+        raise EventValidationError(SPAN_ORDER_ERROR)
+
+
+def check_revert_write(expect: EventRecord | None, write: EventRecord | None) -> None:
+    """Refuse a revert's ``write`` that a create or an update would refuse.
+
+    The span is checked as :func:`check_span` checks every stored pair. The
+    label goes through ``otto.models.monitor.checked_label``, the create and
+    update bodies' own rule, only where one of them would apply it: on a
+    restore (no ``expect``, so the label is new, as on a create) and on an
+    update that changes the label (as a PATCH that sends it). A label the
+    event already holds is put back as it is, as a PATCH that omits it would
+    leave it: an older archive may hold one that is now refused.
+    """
+    if write is None:
+        return
+    check_span(write.timestamp, write.end_timestamp)
+    if expect is None or write.label != expect.label:
+        try:
+            checked_label(write.label)
+        except ValueError as err:
+            raise EventValidationError(str(err)) from err
+
+
 @dataclass
 class ResolvedEventFields:
     """The full field set an update resolves to — what a backend writes."""
@@ -64,6 +179,17 @@ class ResolvedEventFields:
     dash: str
     timestamp: datetime
     end_timestamp: datetime | None
+
+
+def editable_fields(source: "ResolvedEventFields | EventRecord | MonitorEvent") -> dict[str, Any]:
+    """Return ``source``'s editable event fields, by name: the one list of what an edit writes.
+
+    The list is :class:`ResolvedEventFields`'s fields, so a field added there
+    reaches every site that overwrites a live event (a PATCH or /end merge, a
+    full-set update, a revert, the collector's in-place copy-back) at once.
+    Use it as ``dataclasses.replace(event, **editable_fields(source))``.
+    """
+    return {f.name: getattr(source, f.name) for f in fields(ResolvedEventFields)}
 
 
 # DEBT(no-tuple-return): (start, end) pair; wants a frozen dataclass.
@@ -77,8 +203,7 @@ def resolve_create(body: EventCreateBody) -> tuple[datetime, datetime | None]:
     pair here.
     """
     timestamp = body.timestamp or utc_now()
-    if body.end_timestamp is not None and body.end_timestamp <= timestamp:
-        raise EventValidationError("end_timestamp must be after timestamp")
+    check_span(timestamp, body.end_timestamp)
     return timestamp, body.end_timestamp
 
 
@@ -107,8 +232,7 @@ def merge_update(
         else existing_timestamp
     )
     end_timestamp = body.end_timestamp if "end_timestamp" in provided else existing_end
-    if end_timestamp is not None and end_timestamp <= timestamp:
-        raise EventValidationError("end_timestamp must be after timestamp")
+    check_span(timestamp, end_timestamp)
     return ResolvedEventFields(
         label=body.label if body.label is not None else existing_label,
         color=body.color if body.color is not None else existing_color,

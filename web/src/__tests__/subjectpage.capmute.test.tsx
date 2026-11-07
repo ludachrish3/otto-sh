@@ -108,6 +108,8 @@ function baseSession(overrides: Partial<NormalizedSession>): NormalizedSession {
     meta: { interval: 5, charts: [], tabs: [] },
     metrics: [],
     events: [],
+    eventStamps: new Map(),
+    eventFloor: null,
     logEvents: [],
     index: buildIndex([]),
     chartMap: {},

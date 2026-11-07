@@ -7,16 +7,31 @@
 // fragments, whose event rows may be dropped as invalid) from one store
 // subscription, instead of each flow clearing it by hand.
 import { useUiStore } from "../ui/uiStore";
-import { useReviewStore } from "./reviewStore";
+import { storedEvent, useReviewStore } from "./reviewStore";
 
-/** Clear `uiStore.openSpan` when its session is gone, the session has no
- * event with that id, or that event now has an end. */
+/** The ONE "present and still open" predicate: the session exists, it has
+ * an event with that id, and that event has no end. */
+export function isTrackedSpanLive(sessionId: string, eventId: number): boolean {
+  const event = storedEvent(sessionId, eventId);
+  return event !== undefined && event.end_timestamp == null;
+}
+
+/** Clear `uiStore.openSpan` when it is no longer live. */
 function reconcileOpenSpan(): void {
   const { openSpan, actions } = useUiStore.getState();
   if (openSpan === null) return;
-  const session = useReviewStore.getState().sessions.find((s) => s.id === openSpan.sessionId);
-  const event = session?.events.find((e) => e.id === openSpan.eventId);
-  if (event === undefined || event.end_timestamp != null) actions.setOpenSpan(null);
+  if (!isTrackedSpanLive(openSpan.sessionId, openSpan.eventId)) actions.setOpenSpan(null);
+}
+
+/** Track `(sessionId, eventId)` again after an undo or redo (#929) -- only
+ * when no span is tracked and the event is live. A re-adoption YIELDS: it
+ * never replaces a tracked span, unlike an explicit Start span
+ * (shell/marking.ts's startSpan), which does. Returns whether it adopted. */
+export function adoptOpenSpan(sessionId: string, eventId: number): boolean {
+  const { openSpan, actions } = useUiStore.getState();
+  if (openSpan !== null || !isTrackedSpanLive(sessionId, eventId)) return false;
+  actions.setOpenSpan({ sessionId, eventId });
+  return true;
 }
 
 /** Subscribe the reconciler to the review store; returns the unsubscribe. */

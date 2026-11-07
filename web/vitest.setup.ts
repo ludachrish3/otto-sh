@@ -16,7 +16,9 @@
 import { cleanup } from "@testing-library/react";
 import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach } from "vitest";
+import { useUndoHistory } from "./src/data/undoHistory";
 import { useMutationGates } from "./src/shell/useMutationGate";
+import { useToastStore } from "./src/ui/Toast";
 
 // React 19 requires this flag for act() (which Testing Library wraps every
 // render/event in). Testing Library's own auto-setup would set it, but that
@@ -82,6 +84,9 @@ afterEach(() => {
   // work too, but only under an assumption about the order vitest runs sibling
   // hooks in; this construction needs no such assumption.
   cleanup();
+  // The toast store is module-global: without this a toast outlives its test
+  // and a later assertion on toast text can pass on the leftover.
+  useToastStore.setState({ toast: null });
   // react-aria's CURRENT INTERACTION MODALITY is module-level state, shared by
   // every test in a file and reset by nothing — `cleanup()` above unmounts
   // trees, it cannot unmount a module. A jsdom `fireEvent.click()` is a
@@ -105,6 +110,9 @@ afterEach(() => {
   // they outlive the surface that pressed. A test that holds a request open
   // and never settles it would otherwise leave its key shut for the next.
   useMutationGates.setState({ pending: {} });
+  // The undo history (data/undoHistory.ts) is module-level too: every
+  // successful mutation in a test records into it.
+  useUndoHistory.getState().actions.clear();
   console.warn = original.warn;
   console.error = original.error;
   if (!allowed && captured.length > 0) {

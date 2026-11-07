@@ -1012,7 +1012,9 @@ def test_delete_asks_and_escape_keeps_the_editor(page: Page, live_stream_dash) -
     _tid(page, "editor-delete").dblclick()
     dialog = _tid(page, "confirm-delete")
     expect(dialog).to_be_visible()
-    expect(dialog).to_contain_text("\u201csoak run\u201d will be removed. This can't be undone.")
+    expect(dialog).to_contain_text(
+        "\u201csoak run\u201d will be removed. You can undo this with Ctrl Z."
+    )
     expect(_tid(page, "confirm-delete-cancel")).to_be_focused()
     assert deletes == []
 

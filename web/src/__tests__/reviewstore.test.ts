@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { MonitorSessionFragment } from "../api/export.gen";
+import { observedAtMicros } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs } from "../data/time";
 
@@ -173,6 +174,46 @@ describe("reviewStore", () => {
         expect(actions.resyncMonitorSessions(snapshot, "live", token)).toBe(true);
         s = useReviewStore.getState().sessions[0];
         expect(s.events.map((e) => e.id).sort()).toEqual([1, 2]);
+      });
+
+      it("resync reseeds stamps from the snapshot", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(withEvents([event(1)]), "live");
+        const sid = useReviewStore.getState().sessions[0].id;
+        // A tombstone far ahead of the snapshot, from before the resync began.
+        actions.appendFragment({
+          format: 1,
+          session: sid,
+          deleted_event_ids: [1],
+          observed_at: "2026-07-01T08:39:00.000000+00:00",
+        });
+        const token = actions.beginResync();
+        const capturedAt = "2026-07-01T08:31:00.000001+00:00";
+        const doc = JSON.parse(withEvents([event(1)])) as { sessions: Record<string, unknown>[] };
+        for (const session of doc.sessions) session["observed_at"] = capturedAt;
+        expect(actions.resyncMonitorSessions(JSON.stringify(doc), "live", token)).toBe(true);
+        let s = useReviewStore.getState().sessions[0];
+        const floor = observedAtMicros(capturedAt);
+        expect(s.eventFloor).toBe(floor);
+        expect([...s.eventStamps]).toEqual([[1, floor]]);
+        // The snapshot is the authority now: a change after it applies, though
+        // it is older than the tombstone the store held before.
+        actions.appendFragment({
+          format: 1,
+          session: sid,
+          events: [{ ...event(1), label: "edited" }],
+          observed_at: "2026-07-01T08:32:00.000000+00:00",
+        });
+        s = useReviewStore.getState().sessions[0];
+        expect(s.events.map((e) => e.label)).toEqual(["edited"]);
+        // And one older than the snapshot does not.
+        actions.appendFragment({
+          format: 1,
+          session: sid,
+          deleted_event_ids: [1],
+          observed_at: "2026-07-01T08:31:00.000000+00:00",
+        });
+        expect(useReviewStore.getState().sessions[0].events.map((e) => e.id)).toEqual([1]);
       });
 
       it("never lowers a kept session's observedMs", () => {

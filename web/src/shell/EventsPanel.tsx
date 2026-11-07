@@ -185,9 +185,10 @@ function EventsComposeRow(props: {
   );
 }
 
-/** One row's End now: each row has its own gate key, so ending one event
- * never blocks another, and a repeat press on the same row is ignored, even
- * across the panel closing and reopening. */
+/** One row's End now: each row has its own gate key, so only the pressed row
+ * spins, but the gate is global, so every row (and every other mutation) is
+ * disabled while one is in flight; a repeat press is ignored, even across the
+ * panel closing and reopening. */
 function EndNowButton(props: { sessionId: string; eventId: number }) {
   const { sessionId, eventId } = props;
   const gate = useMutationGate(endNowGateKey(sessionId, eventId));
@@ -201,7 +202,8 @@ function EndNowButton(props: { sessionId: string; eventId: number }) {
       size="sm"
       color="secondary"
       data-testid={`event-endnow-${eventId}`}
-      isLoading={gate.pending}
+      isLoading={gate.pendingAction !== null}
+      isDisabled={gate.pending && gate.pendingAction === null}
       showTextWhileLoading
       onPress={() => void onPress()}
     >

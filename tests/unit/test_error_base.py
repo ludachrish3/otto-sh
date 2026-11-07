@@ -117,7 +117,7 @@ from otto.monitor.errors import (
     NoMonitorableHostsError,
     ReviewSourceError,
 )
-from otto.monitor.event_ops import EventValidationError
+from otto.monitor.event_ops import EventChanged, EventValidationError
 from otto.params import (
     OptionsCollisionError,
     OptionsNotAvailableError,
@@ -251,6 +251,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ArchiveLockedError, RuntimeError),
     (UnsupportedDBError, RuntimeError),
     (EventValidationError, ValueError),
+    (EventChanged, Exception),
     (ReservationBackendError, Exception),
     (ReservationConstructionError, ValueError),
     (MissingReservationError, Exception),
@@ -302,6 +303,10 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         ReviewSourceError,
         NoMonitorableHostsError,
         MonitorTlsError,
+        # A revert that found the event in another state than it expected
+        # (#929): otto's own compare-then-write verdict, answered as a 409 by
+        # the dashboard route, never a stdlib type a caller was already catching.
+        EventChanged,
         # The init library's input refusal: a FieldError subclass, rootless like its base.
         InitInputError,
         # otto.session's refusals: a run that cannot start because of otto's

@@ -1,0 +1,256 @@
+[
+  {
+    "name": "Z equals +00:00",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00+00:00",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": true
+  },
+  {
+    "name": "Z equals .000Z",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00.000Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": true
+  },
+  {
+    "name": "end +00:00 equals .000Z",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": "2026-11-07T12:05:00+00:00",
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": "2026-11-07T12:05:00.000Z",
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": true
+  },
+  {
+    "name": "1 microsecond apart",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00.000001+00:00",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00+00:00",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "point vs span",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": "2026-11-07T12:05:00Z",
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "#ABC equals #aabbcc",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#ABC",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#aabbcc",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": true
+  },
+  {
+    "name": "legacy red equals red",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "red",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "red",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": true
+  },
+  {
+    "name": "different label",
+    "a": {
+      "label": "a",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": {
+      "label": "b",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "different dash",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "dot",
+      "source": "manual"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "null equals null",
+    "a": null,
+    "b": null,
+    "equal": true
+  },
+  {
+    "name": "null vs record",
+    "a": null,
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "record vs null",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "b": null,
+    "equal": false
+  },
+  {
+    "name": "different source",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "auto"
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual"
+    },
+    "equal": false
+  },
+  {
+    "name": "different id, same fields",
+    "a": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual",
+      "id": 1
+    },
+    "b": {
+      "label": "soak",
+      "timestamp": "2026-11-07T12:00:00Z",
+      "end_timestamp": null,
+      "color": "#888888",
+      "dash": "solid",
+      "source": "manual",
+      "id": 2
+    },
+    "equal": true
+  }
+]

@@ -21,7 +21,7 @@ from ..models.monitor import (
     TunnelRecord,
 )
 from .collector import MetricCollector
-from .db import MetricDB, SessionRow, read_sessions
+from .db import MetricDB, SessionRow, event_row_record, parse_ts, read_sessions
 from .session import SessionFrame
 
 [EXPORT_FORMAT] = MONITOR_EXPORT_WRITE_VERSIONS
@@ -224,18 +224,6 @@ def build_live_export(
     )
 
 
-def _ts(value: str) -> datetime:
-    """Parse one archived ISO-8601 timestamp column into a ``datetime``.
-
-    Every timestamp in a v2 archive was written by db.py as ``.isoformat()``,
-    so ``fromisoformat`` round-trips it exactly (tz-offset included). Parsing
-    here — rather than handing the raw string to a pydantic field declared
-    ``datetime`` and letting it coerce — keeps the record constructors
-    type-honest, which is what lets ``ty`` police this module.
-    """
-    return datetime.fromisoformat(value)
-
-
 def _fallback_end(row: SessionRow) -> datetime:
     """Crash-tolerant session end (the producer's job, not db.py's).
 
@@ -246,10 +234,10 @@ def _fallback_end(row: SessionRow) -> datetime:
     to its own ``start``.
     """
     if row.end is not None:
-        return _ts(row.end)
+        return parse_ts(row.end)
     if row.metrics:
-        return _ts(row.metrics[-1][0])  # (ts, host, label, value, source) — ts first
-    return _ts(row.start)
+        return parse_ts(row.metrics[-1][0])  # (ts, host, label, value, source) — ts first
+    return parse_ts(row.start)
 
 
 def _session_record(row: SessionRow) -> SessionRecord:
@@ -268,30 +256,19 @@ def _session_record(row: SessionRow) -> SessionRecord:
     series would become its own ungrouped, unit-less chart.
     """
     metrics = [
-        MetricRecord(timestamp=_ts(ts), host=host, label=label, value=value, source=source)
+        MetricRecord(timestamp=parse_ts(ts), host=host, label=label, value=value, source=source)
         for ts, host, label, value, source in row.metrics
     ]
-    events = [
-        EventRecord(
-            id=event_id,
-            timestamp=_ts(ts),
-            end_timestamp=_ts(end_ts) if end_ts is not None else None,
-            label=label,
-            source=source,
-            color=color,
-            dash=dash,
-        )
-        for event_id, ts, end_ts, label, source, color, dash in row.events
-    ]
+    events = [event_row_record(event_row) for event_row in row.events]
     log_events = [
-        LogEventRecord(timestamp=_ts(ts), host=host, tab=tab, fields=json.loads(fields_json))
+        LogEventRecord(timestamp=parse_ts(ts), host=host, tab=tab, fields=json.loads(fields_json))
         for ts, host, tab, fields_json in row.log_events
     ]
     return SessionRecord(
         id=row.id,
         label=row.label,
         note=row.note,
-        start=_ts(row.start),
+        start=parse_ts(row.start),
         end=_fallback_end(row),
         lab=LabSnapshot.model_validate_json(row.lab_json),
         meta=SessionMeta.model_validate_json(row.meta_json),

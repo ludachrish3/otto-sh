@@ -36,7 +36,8 @@ export function parseObservedAt(observedAt: string | null | undefined): number |
  * unparsable: the server stamps at microsecond resolution and every stamp is
  * strictly later than the one before (event_ops.utc_now), so this is the
  * exact order of two server steps, which epoch ms (parseObservedAt) is not.
- * A resync orders a logged mutation against its snapshot with it (#868). */
+ * applyFragment orders every event change with it, a resync's replay
+ * against its snapshot included (#868, #929). */
 export function observedAtMicros(observedAt: string | null | undefined): number | null {
   if (observedAt == null) return null;
   const groups = STAMP_PARTS.exec(observedAt)?.groups;
@@ -96,6 +97,16 @@ export interface NormalizedSession {
   meta: NormalizedMeta;
   metrics: MetricRecord[];
   events: NormalizedEvent[];
+  /** Per event id, the server stamp (`observedAtMicros`) of the last change
+   * applied to it, deleted ids included as tombstones: `applyFragment`
+   * (fragment.ts) ignores any change no later than this, so a late echo never
+   * rolls an event back (#929). Bounded: events change at human rate. A new
+   * Map whenever a fragment changes it, never mutated in place. */
+  eventStamps: Map<number, number>;
+  /** The snapshot's own stamp (`observedAtMicros` of `observed_at`), or null
+   * for an unstamped document: a change no later than it is already in the
+   * snapshot or overtaken by it, even for an id the snapshot lacks. */
+  eventFloor: number | null;
   logEvents: NonNullable<SessionRecord["log_events"]>;
   /** Per-series index over `metrics` — what review AND live read from instead
    * of scanning the flat array (see seriesIndex.ts). */
@@ -256,6 +267,12 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
   const endMs = parsedEnd ?? lastSampleMs ?? startMs;
   // An old or imported document has no observed_at: fall back to endMs.
   const observedMs = parseObservedAt(raw.observed_at) ?? endMs;
+  // Every event the snapshot carries was last changed no later than its capture.
+  const eventFloor = observedAtMicros(raw.observed_at);
+  const eventStamps = new Map<number, number>();
+  if (eventFloor !== null) {
+    for (const e of events) if (e.id != null) eventStamps.set(e.id, eventFloor);
+  }
 
   const hostIds = new Set<string>();
   for (const h of hosts) {
@@ -279,6 +296,8 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     },
     metrics,
     events,
+    eventStamps,
+    eventFloor,
     logEvents,
     index: buildIndex(metrics),
     chartMap: raw.chart_map ?? {},

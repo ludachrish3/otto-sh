@@ -211,7 +211,7 @@ async def test_a_patch_racing_a_pending_delete_does_not_resurrect_it() -> None:
     live.archive.release()
     (delete_status, _), (patch_status, _) = await asyncio.gather(delete, patch)
 
-    assert delete_status == 204
+    assert delete_status == 200
     assert patch_status == 404
     assert live.stored() is None
     assert live.archive.rows[live.event_id] is None, "the archive row came back"

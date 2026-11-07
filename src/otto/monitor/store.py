@@ -1,13 +1,14 @@
 """MetricStore — the monitor's in-memory time-series and event state.
 
 Series are keyed ``"hostname/label"`` (bare ``label`` for historical imports
-without a host column). Extracted from MetricCollector; the id-assignment
-quirk in add_event is deliberately preserved (see test_store.py).
+without a host column). Extracted from MetricCollector; the event-id counter
+stays ahead of every assigned id (see test_store.py).
 """
 
 from collections import deque
 
 from ..models.monitor import MetricPoint
+from .event_ops import FIRST_EVENT_ID, id_handed_out
 from .events import MonitorEvent
 from .parsers import LogEvent
 
@@ -28,7 +29,7 @@ class MetricStore:
         self.series: dict[str, deque[MetricPoint]] = {}
         self.chart_map: dict[str, str] = {}
         self._events: list[MonitorEvent] = []
-        self._next_event_id: int = 1
+        self._next_event_id: int = FIRST_EVENT_ID
         self.log_events: dict[tuple[str, str], deque[LogEvent]] = {}
 
     def append_point(self, key: str, point: MetricPoint, *, label: str, chart: str) -> None:
@@ -66,16 +67,23 @@ class MetricStore:
         return next((e for e in self._events if e.id == event_id), None)
 
     def add_event(self, event: MonitorEvent, rowid: int) -> MonitorEvent:
-        """Assign the id (DB rowid wins; the counter advances regardless) and store."""
+        """Assign the id (DB rowid wins, else the counter) and store; the counter stays ahead."""
         event.id = rowid or self._next_event_id
-        self._next_event_id += 1
-        self._events.append(event)
+        self._track(event)
         return event
 
     def note_imported_event(self, event: MonitorEvent) -> None:
         """Track an event loaded from a file, keeping the id counter ahead of it."""
-        self._next_event_id = max(self._next_event_id, event.id) + 1
+        self._track(event)
+
+    def _track(self, event: MonitorEvent) -> None:
+        """Store ``event`` and keep the counter ahead of its id (never lowered)."""
+        self._next_event_id = max(self._next_event_id, event.id + 1)
         self._events.append(event)
+
+    def allocated(self, event_id: int) -> bool:
+        """Report whether ``event_id`` was handed out or imported (``event_ops.id_handed_out``)."""
+        return id_handed_out(event_id, high_water=self._next_event_id - 1)
 
     def remove_event(self, event_id: int) -> bool:
         """Remove the event with this id. Returns True if found and removed."""

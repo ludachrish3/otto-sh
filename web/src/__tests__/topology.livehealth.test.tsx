@@ -47,6 +47,8 @@ function liveSession(lastSampleMs: number): NormalizedSession {
     meta: { interval: INTERVAL_S, charts: [], tabs: [] },
     metrics,
     events: [],
+    eventStamps: new Map(),
+    eventFloor: null,
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: {},

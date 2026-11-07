@@ -29,6 +29,7 @@ import { ReconnectingBanner } from "./shell/ReconnectingBanner";
 import { ReviewBar } from "./shell/ReviewBar";
 import { TopologyPage } from "./topo/TopologyPage";
 import { CommandLayer } from "./ui/CommandLayer";
+import { ToastViewport } from "./ui/Toast";
 
 function App() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
@@ -88,6 +89,7 @@ function App() {
         ) : (
           <EmptyState />
         )}
+        <ToastViewport />
       </div>
     </ImportProvider>
   );

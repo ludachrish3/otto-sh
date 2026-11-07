@@ -9,6 +9,8 @@ import {
   Dataflow03,
   Download01,
   Flag01,
+  FlipBackward,
+  FlipForward,
   List,
   Monitor01,
   Moon01,
@@ -23,6 +25,8 @@ import { useMemo } from "react";
 import { useHashLocation } from "wouter/use-hash-location";
 
 import { useActiveSession, useIsPaused, useReviewStore } from "../data/reviewStore";
+import { type HistoryEntry, truncateLabel, useUndoHistory } from "../data/undoHistory";
+import { redo, undo } from "../data/undoRedo";
 import { exportLoadedDocument, openImportPicker } from "../shell/ImportExport";
 import { blankDraft, endSpanReporting } from "../shell/marking";
 import { markGateKey, useMutationGate } from "../shell/useMutationGate";
@@ -32,6 +36,9 @@ import {
   IMPORT_BINDING,
   MARK_NOW_BINDING,
   PAUSE_BINDING,
+  REDO_ALT_BINDING,
+  REDO_BINDING,
+  UNDO_BINDING,
 } from "./shortcuts";
 import { type EventEditorTarget, useUiStore } from "./uiStore";
 
@@ -46,6 +53,11 @@ export interface Command {
   icon: FC<{ className?: string }>;
   /** Absent on navigation rows (decision 4) and preset rows. */
   binding?: Binding;
+  /** Further chords for the same command: matched like `binding`, never shown. */
+  extraBindings?: Binding[];
+  /** Chord inert (and not preventDefault-ed) while text is being edited or an
+   * editing overlay is open, so the browser's own undo keeps working there. */
+  yieldsToEditing?: boolean;
   /** false renders a disabled row (Export without data) — still listed. */
   enabled: boolean;
   /** Live-window rows: the active preset. */
@@ -60,6 +72,18 @@ export const LIVE_WINDOW_PRESETS = [
   { id: "15m", label: "15m", ms: 900_000 },
   { id: "1h", label: "1h", ms: 3_600_000 },
 ] as const;
+
+/** A history row: `Undo delete “x”` while it can run; the bare verb,
+ * disabled, when its stack is empty, the tab is read-only or a mutation is
+ * pending (spec §5). */
+function historyRow(
+  name: "Undo" | "Redo",
+  top: HistoryEntry | undefined,
+  ready: boolean,
+): Pick<Command, "label" | "enabled"> {
+  if (top === undefined || !ready) return { label: name, enabled: false };
+  return { label: `${name} ${top.verb} “${truncateLabel(top.label)}”`, enabled: true };
+}
 
 export function useCommands(): Command[] {
   const [, navigate] = useHashLocation();
@@ -79,7 +103,11 @@ export function useCommands(): Command[] {
   const openMarkPopover = useUiStore((s) => s.actions.openMarkPopover);
   // The palette's one mutation (End span) rides the session's shared mark
   // gate, so it is shut while any surface's Mark / Start / End is pending.
+  // `pending` is global (any event mutation in flight), so it also shuts
+  // Undo / Redo while one is pending.
   const { run: runGated, pending } = useMutationGate(markGateKey(session?.id ?? ""));
+  const undoTop = useUndoHistory((s) => s.undo.at(-1));
+  const redoTop = useUndoHistory((s) => s.redo.at(-1));
 
   return useMemo(() => {
     const commands: Command[] = [
@@ -153,6 +181,28 @@ export function useCommands(): Command[] {
         // toggle is a click-only palette/overflow row, like Navigation rows.
         enabled: true,
         run: toggleTheme,
+      },
+      // Listed in every mode, disabled when there is nothing to replay, the
+      // tab is read-only or a mutation is pending. Each entry addresses its
+      // own session, so the active session does not gate them.
+      {
+        id: "edit-undo",
+        ...historyRow("Undo", undoTop, editable && !pending),
+        section: "Actions",
+        icon: FlipBackward,
+        binding: UNDO_BINDING,
+        yieldsToEditing: true,
+        run: () => void undo(),
+      },
+      {
+        id: "edit-redo",
+        ...historyRow("Redo", redoTop, editable && !pending),
+        section: "Actions",
+        icon: FlipForward,
+        binding: REDO_BINDING,
+        extraBindings: [REDO_ALT_BINDING],
+        yieldsToEditing: true,
+        run: () => void redo(),
       },
     );
     // Event-marking rows: add-event/sweep-span are available in either
@@ -257,5 +307,7 @@ export function useCommands(): Command[] {
     openMarkPopover,
     runGated,
     pending,
+    undoTop,
+    redoTop,
   ]);
 }

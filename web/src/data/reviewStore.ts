@@ -9,12 +9,12 @@ import type { MonitorHistoricalExportDocument, MonitorSessionFragment } from "..
 import {
   ExportParseError,
   type NormalizedSession,
-  observedAtMicros,
   parseExportDocument,
   type TimeRange,
 } from "./exportDoc";
 import { applyFragment } from "./fragment";
 import { displayEndMs } from "./time";
+import { useUndoHistory } from "./undoHistory";
 
 /** Pure merge step shared by appendFragment/appendFragments: applies each
  * fragment in order to `sessions`, returning the SAME array reference if
@@ -56,7 +56,7 @@ function mergeFragments(
  * started: a fragment applied meanwhile (a Start span's POST response, a
  * delete) may be newer than it or already reflected in it, so the resync
  * replays one only when the server ordered it after the capture (see
- * `orderedAfterCapture`). Not store state: nothing renders it. */
+ * `capturedWithStamp` and applyFragment). Not store state: nothing renders it. */
 const resyncLogs = new Map<number, MonitorSessionFragment[]>();
 let lastResyncToken = 0;
 
@@ -76,36 +76,37 @@ function replayable(frag: MonitorSessionFragment): MonitorSessionFragment | null
   return out.events !== undefined || out.deleted_event_ids !== undefined ? out : null;
 }
 
-/** Whether the server ordered `frag` after the snapshot captured its
- * session: replay iff the fragment's stamp is STRICTLY later than the
- * snapshot session's. Both come from the server's one clock
- * (event_ops.utc_now, strictly increasing at microsecond resolution), each
- * read in the same synchronous step as the state it describes, so the
- * comparison is the server's own order. A tie or a missing stamp means the
+/** Whether a logged fragment may be replayed onto the snapshot: only when
+ * its session's snapshot carries a capture stamp (`eventFloor`). The order
+ * itself is applyFragment's (fragment.ts): it keeps a change only when its
+ * stamp is STRICTLY later than the floor. Both come from the server's one
+ * clock (event_ops.utc_now, strictly increasing at microsecond resolution),
+ * each read in the same synchronous step as the state it describes, so the
+ * comparison is the server's own order. A tie, a missing fragment stamp
+ * (never logged: `replayable`) or a missing snapshot stamp means the
  * snapshot wins: it may already reflect the change, or a later remote end
  * or delete of the same event. */
-function orderedAfterCapture(
+function capturedWithStamp(
   frag: MonitorSessionFragment,
-  captured: ReadonlyMap<string, number | null>,
+  fresh: readonly NormalizedSession[],
 ): boolean {
-  const fragUs = observedAtMicros(frag.observed_at);
-  const capturedUs = captured.get(frag.session) ?? null;
-  return fragUs !== null && capturedUs !== null && fragUs > capturedUs;
+  return fresh.find((s) => s.id === frag.session)?.eventFloor != null;
 }
 
 /** Fold a resync's snapshot sessions with what the store held: replay the
  * logged fragments the server ordered after the capture onto them, and
  * never lower a kept session's `observedMs` (the server's clock only moves
- * forward). `captured` holds each snapshot session's own raw `observed_at`.
+ * forward). Each snapshot session's capture is its `eventFloor`, which
+ * also seeds its event stamps (normalizeSession), so the replay is ordered
+ * against the snapshot by applyFragment's one rule, not a second one here.
  * A replayed row that is dropped as invalid was already warned about when it
  * first applied, so the replay's own warnings are discarded. */
 function reconcileResync(
   fresh: NormalizedSession[],
   held: readonly NormalizedSession[],
   log: readonly MonitorSessionFragment[],
-  captured: ReadonlyMap<string, number | null>,
 ): NormalizedSession[] {
-  const later = log.filter((frag) => orderedAfterCapture(frag, captured));
+  const later = log.filter((frag) => capturedWithStamp(frag, fresh));
   const replayed = mergeFragments(fresh, later, []);
   return replayed.map((s) => {
     const before = held.find((h) => h.id === s.id);
@@ -168,7 +169,9 @@ interface ReviewActions {
   /** Which server mode the shell booted against — set once from `/api/mode`. */
   setMode: (mode: "live" | "review" | null) => void;
   /** From /api/mode: whether this server accepts event mutations
-   * (live, or a .db-sourced review). Gates every marking affordance. */
+   * (live, or a .db-sourced review). Gates every marking affordance. A
+   * read-only tab also drops its undo history (#929): nothing in it could
+   * be replayed. */
   setEditable: (editable: boolean) => void;
   /** Append one message to the warnings channel (rendered by
    * DataWarningsBanner) — the surface for mutation failures issued from
@@ -274,12 +277,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
         const idStillPresent =
           activeSessionId !== null && result.sessions.some((s) => s.id === activeSessionId);
         set({
-          sessions: reconcileResync(
-            result.sessions,
-            held,
-            log,
-            new Map(result.document.sessions.map((r) => [r.id, observedAtMicros(r.observed_at)])),
-          ),
+          sessions: reconcileResync(result.sessions, held, log),
           rawMonitorSessions: result.document,
           sourceName,
           warnings: result.warnings,
@@ -362,7 +360,10 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
     },
     setImportError: (message) => set({ importError: message }),
     setMode: (mode) => set({ mode }),
-    setEditable: (editable) => set({ editable }),
+    setEditable: (editable) => {
+      if (!editable) useUndoHistory.getState().actions.clear();
+      set({ editable });
+    },
     addWarning: (message) => set({ warnings: [...get().warnings, message] }),
     setConnection: (connection) => set({ connection }),
     togglePause: () => {
@@ -408,4 +409,16 @@ export function useActiveSession(): NormalizedSession | null {
  * drag-zoom's direct `setRange` call). */
 export function useIsPaused(): boolean {
   return useReviewStore((s) => s.mode === "live" && s.range !== null);
+}
+
+/** The ONE lookup of an event as the store holds it (normalised), by its
+ * session and id; undefined when either is gone. `state` defaults to the
+ * store now; a selector passes its own snapshot. */
+export function storedEvent(
+  sessionId: string,
+  eventId: number,
+  state: Pick<ReviewState, "sessions"> = useReviewStore.getState(),
+): NormalizedSession["events"][number] | undefined {
+  const session = state.sessions.find((s) => s.id === sessionId);
+  return session?.events.find((e) => e.id === eventId);
 }
