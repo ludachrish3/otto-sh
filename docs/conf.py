@@ -14,7 +14,7 @@ from typing_extensions import override
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from scripts import docs_api_reference, docs_build_stamp
+from scripts import api_manifest, docs_api_reference, docs_build_stamp
 
 project = "otto"
 author = "otto contributors"
@@ -754,8 +754,22 @@ def _api_skip_member(app, what, name, obj, skip, options):  # noqa: ARG001 — S
     )
 
 
+@functools.cache
+def _api_symbols() -> "dict[str, api_manifest.Symbol]":
+    """The manifest's ``[symbols]`` table, read once per build."""
+    return api_manifest.load_symbols(docs_api_reference.MANIFEST)
+
+
+@functools.cache
+def _api_notes() -> "dict[str, docs_api_reference.Noted]":
+    """Each documented path's manifest note entry, resolved once per build over the golden."""
+    return docs_api_reference.documented_notes(
+        _api_reference(), _api_symbols(), docs_api_reference.load_golden()
+    )
+
+
 def _api_docstring(app, what, name, obj, options, lines):  # noqa: ARG001 — Sphinx event signature
-    """Mark module docstrings; spell out a re-homed docstring's relative roles."""
+    """Mark module docstrings; note manifest facts; spell out re-homed relative roles."""
     reference = _api_reference()
     if what == "module":
         docs_api_reference.module_docstring(reference, name, options, lines)
@@ -769,6 +783,8 @@ def _api_docstring(app, what, name, obj, options, lines):  # noqa: ARG001 — Sp
         defined_in = sources[0] if sources else None
     if documented_in and defined_in:
         lines[:] = docs_api_reference.qualify_relative_roles(lines, documented_in, defined_in)
+    if documented_in:
+        lines[:0] = docs_api_reference.symbol_notes(_api_notes(), name)
 
 
 def _resolve_public_home(app, env, node, contnode):

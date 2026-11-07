@@ -295,6 +295,21 @@ or `__delete__` and is none of the above (a function, `classmethod`, `staticmeth
 declared composite flags are all recorded, in definition order. A member whose value cannot be
 encoded is a producer refusal: its encoding is `O`, or holds `O` anywhere inside a `T:` or `Z:`.
 
+### 3.8 Withdrawn contracts (amended 2026-11-07 by the keyword-only design)
+
+A class can withdraw a right in `api/public.toml`'s `[symbols]` table
+(`2026-11-07-keyword-only-public-interfaces-design.md` §4). The record stays, so a dropped record
+is still caught; a **withdrawn token** stands where the contract would be:
+
+- `construct = false`: the class's `call` record is `call\t<key>\tsync\t@manifest:construct=false`;
+  a model's field inputs are one `input\t<key>\t@manifest:construct=false\t-\t-\t-` line;
+- `subclass = false`: the `abstract` (class) or `requires` (protocol) name list is
+  `@manifest:subclass=false`.
+
+The token is refused anywhere else. The parent passes each entry's runtime keys to the child as
+`--symbol <key> <spec>` (§5.3), so the child reads no manifest. The full rules are in that
+design's §4.2 and §4.3.
+
 ## 4. Compatibility rules
 
 Rules compare a commit with its parent, record by record. Shape rules apply only to bindings that
@@ -357,6 +372,15 @@ the parent.
 
 **Formats:** a version removed from a format's `reads` or `writes`, or a declared format removed
 (§13.3).
+
+**Withdrawals and implementers (amended 2026-11-07 by the keyword-only design):**
+- a contract becoming a withdrawn token (§3.8): `<key>: constructor withdrawn` or
+  `<key>: obligations withdrawn`. Token to contract is an addition; token to token is nothing;
+- a new parameter other than `VK` on an implementer-facing member (a `requires` or `abstract`
+  name of a class whose `subclass` is not withdrawn, or a member whose entry says
+  `implementer = true`, on either side): `<key>: new parameter <name> on an implementer-facing
+  member`, optional or not, since an existing override does not accept it;
+- `implementer = true` removed: `<key>: implementer status withdrawn`.
 
 ### 4.3 Not breaking
 
@@ -468,6 +492,11 @@ so their bytes agree.
   - facts the older schema protected stay protected.
 
   No migration framework is built before then.
+
+**Not a bump: the withdrawn tokens (amended 2026-11-07 by the keyword-only design).** §3.8's
+tokens extend the field grammar, not the schema: no committed dump's bytes change under the new
+producer, because no committed tree has a `[symbols]` table. The retained-producer clause above is
+not triggered.
 
 | Schema | Introduced by | Change |
 |---|---|---|

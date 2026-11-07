@@ -172,3 +172,42 @@ def test_each_invariance_leg_checks_under_its_own_hash_seed():
     seeds = [version.replace(".", "") for version in _python_versions()]
     assert len(set(seeds)) == len(seeds)
     assert api_regen.GATE_HASH_SEED not in seeds
+
+
+MAKEFILE = CHECKOUT_ROOT / "Makefile"
+
+
+def _recipe(target: str) -> "list[str]":
+    """The recipe lines of Makefile ``target``, tab stripped."""
+    lines = MAKEFILE.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"{target}:"))
+    out = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("\t"):
+            break
+        out.append(line[1:])
+    return out
+
+
+def test_lint_python_runs_check_api_keywords_after_ruff():
+    """``make lint-python`` runs the keyword rule after ruff (design §5.4)."""
+    recipe = _recipe("lint-python")
+    keywords = next(i for i, r in enumerate(recipe) if re.search(r"\bcheck-api-keywords\b", r))
+    assert keywords > max(i for i, r in enumerate(recipe) if "ruff" in r)
+    assert _recipe("check-api-keywords")[-1] == (
+        "@uv run python scripts/check_api_keywords.py --manifest api/public.toml"
+    )
+
+
+def test_the_nox_lint_session_runs_check_api_keywords():
+    """CI's ``nox -s lint`` runs the keyword rule, the Makefile recipe's twin (design §5.4)."""
+    _, tree = _noxfile()
+    (session,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "lint"]
+    runs = [
+        [ast.literal_eval(a) for a in node.args]
+        for node in ast.walk(session)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+    ]
+    assert ["python", "scripts/check_api_keywords.py", "--manifest", "api/public.toml"] in runs

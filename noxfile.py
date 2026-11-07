@@ -858,7 +858,9 @@ def lint(session: nox.Session) -> None:
     its own motivating example is a silent gate loss); the duplicate-code
     ratchet (scripts/check_duplicate_code.py) refuses a clone pair pylint's
     similarities checker reports that scripts/duplicate_code_baseline.txt
-    does not list, and a listed pair that no longer reports.
+    does not list, and a listed pair that no longer reports; check-api-keywords
+    (scripts/check_api_keywords.py) refuses a public positional parameter
+    api/public.toml does not list.
     The tach layer canary runs the installed tach on a throwaway project and
     fails if tach.toml's layer switch stops meaning what tach.toml assumes; the
     monitor boundary canary runs the monitor boundary test's fixtures through
@@ -881,6 +883,7 @@ def lint(session: nox.Session) -> None:
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
     session.run("python", "scripts/check_duplicate_code.py")
+    session.run("python", "scripts/check_api_keywords.py", "--manifest", "api/public.toml")
 
 
 @nox.session(venv_backend="none")

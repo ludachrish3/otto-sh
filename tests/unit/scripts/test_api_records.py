@@ -2,10 +2,11 @@
 
 import enum
 import math
+from pathlib import Path
 
 import pytest
 
-from scripts import api_records
+from scripts import api_compat, api_records
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -402,3 +403,93 @@ def test_every_python_identifier_is_a_grammar_name(name):
 def test_a_name_python_would_not_accept_is_refused(line):
     with pytest.raises(api_records.DumpError):
         api_records.parse_record(line)
+
+
+_WITHDRAWN_HEADER = f"{api_records.V2_HEADER}\n{api_records.SCHEMA_PREFIX}1\n"
+_GOLDEN = Path(__file__).parents[1] / "api_snapshot" / "public_api.txt"
+
+
+def test_a_withdrawn_constructor_parses_as_a_withdrawn_call():
+    rec = api_records.parse_record("call\totto.x:C\tsync\t@manifest:construct=false")
+    call = api_records.parse_call(rec)
+    assert call.withdrawn
+    assert call.params is None
+    assert call.builtin is None
+    assert api_records.is_withdrawn(rec)
+
+
+def test_a_method_member_cannot_carry_the_construct_token():
+    line = "member\totto.x:C.m\tmethod\tsync\t@manifest:construct=false"
+    with pytest.raises(api_records.DumpError, match="construct token"):
+        api_records.parse_record(line)
+
+
+def test_a_withdrawn_input_belongs_to_a_model_only():
+    td = (
+        _WITHDRAWN_HEADER
+        + "name\totto.x:T\ttypeddict\n"
+        + "input\totto.x:T\t@manifest:construct=false\t-\t-\t-\n"
+    )
+    with pytest.raises(api_records.DumpError, match="withdrawn input on a typeddict"):
+        api_records.parse_dump(td)
+
+
+def test_builtin_mro_is_the_grammars_builtin_token():
+    assert api_records.builtin_mro("tuple") == "@builtin:builtins.tuple"
+    rec = api_records.parse_record(f"mro\totto.x:T\t{api_records.builtin_mro('tuple')}")
+    assert rec.fields == ["@builtin:builtins.tuple"]
+    assert api_records.builtin_mro("tuple") == api_compat._TUPLE_MRO
+
+
+@pytest.mark.parametrize("kind", ["abstract", "requires"])
+def test_withdrawn_obligations_parse(kind):
+    rec = api_records.parse_record(f"{kind}\totto.x:C\t@manifest:subclass=false")
+    assert api_records.is_withdrawn(rec)
+    assert not api_records.is_withdrawn(api_records.parse_record(f"{kind}\totto.x:C\tfoo"))
+
+
+def test_a_withdrawn_input_must_stand_alone():
+    lone = (
+        _WITHDRAWN_HEADER
+        + "name\totto.x:M\tmodel\nmro\totto.x:M\t-\n"
+        + "input\totto.x:M\t@manifest:construct=false\t-\t-\t-\nabstract\totto.x:M\t-\n"
+    )
+    dump = api_records.parse_dump(lone)
+    (rec,) = dump.inputs_of("otto.x:M").values()
+    assert api_records.is_withdrawn(rec)
+    mixed = lone.replace("abstract", 'input\totto.x:M\tS:"a"\trequired\t-\tS:"a"\nabstract', 1)
+    with pytest.raises(api_records.DumpError, match="withdrawn constructor mixed with inputs"):
+        api_records.parse_dump(mixed)
+
+
+def test_a_withdrawn_input_needs_dashes():
+    with pytest.raises(api_records.DumpError, match="withdrawn input has"):
+        api_records.parse_record("input\totto.x:M\t@manifest:construct=false\trequired\t-\t-")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["@manifest:construct=true", "@manifest:other=false", "@manifest:construct=false extra"],
+)
+def test_other_manifest_tokens_are_refused(field):
+    with pytest.raises(api_records.DumpError):
+        api_records.parse_record(f"call\totto.x:C\tsync\t{field}")
+    with pytest.raises(api_records.DumpError):
+        api_records.parse_record(f"abstract\totto.x:C\t{field}")
+
+
+def test_the_committed_golden_still_parses():
+    assert api_records.parse_dump(_GOLDEN.read_text()).schema == 1
+
+
+def test_dunder_slots_cover_every_supported_dunder():
+    assert set(api_records.DUNDER_SLOTS) == set(api_records.SUPPORTED_DUNDERS)
+    assert api_records.DUNDER_SLOTS["__exit__"] == 3
+    assert api_records.DUNDER_SLOTS["__call__"] == 0
+
+
+@pytest.mark.parametrize(
+    "form", ["field", "attribute", "class", "property:g--", "classref=otto.x:C"]
+)
+def test_a_non_method_member_is_not_withdrawn(form):
+    assert not api_records.is_withdrawn(api_records.parse_record(f"member\totto.x:C.f\t{form}"))

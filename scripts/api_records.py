@@ -62,6 +62,20 @@ SUPPORTED_DUNDERS = frozenset(
         "__hash__",
     }
 )
+# Leading positional slots the interpreter fills per dunder; a caller never writes them.
+DUNDER_SLOTS = {
+    **dict.fromkeys(SUPPORTED_DUNDERS, 0),
+    "__eq__": 1,
+    "__getitem__": 1,
+    "__setitem__": 2,
+    "__delitem__": 1,
+    "__contains__": 1,
+    "__exit__": 3,
+    "__aexit__": 3,
+}
+# Tokens recording a contract the manifest withdrew (design §4.2).
+WITHDRAWN_CONSTRUCT = "@manifest:construct=false"
+WITHDRAWN_SUBCLASS = "@manifest:subclass=false"
 # Which records a binding kind must carry, and which it may carry (dump spec §2.3).
 REQUIRED = {
     "function": {"call"},
@@ -84,7 +98,8 @@ ALLOWED = {
     "value": {"name"},
 }
 _PARAM = re.compile(r"(PO|PK|VP|KO|VK):([^:\s]+):(.+)")
-_BUILTIN = re.compile(r"@builtin:builtins\.\w+")
+_BUILTIN_PREFIX = "@builtin:builtins."
+_BUILTIN = re.compile(re.escape(_BUILTIN_PREFIX) + r"\w+")
 _CLASS_SET = re.compile(r"\{[^{}\s,]+(?:,[^{}\s,]+)*\}")
 _ENUM_VALUE = re.compile(r"E:(\{[^{}\s]+\}):([^:=\s]+)=(.+)")
 _FLOAT = re.compile(r"F:(?:nan|inf|-inf|-?0x[0-9a-f]\.[0-9a-f]+p[+-][0-9]+)")
@@ -289,6 +304,7 @@ class Call:
     callkind: str
     params: "list[Param] | None"
     builtin: "str | None"
+    withdrawn: bool = False  # the params field is WITHDRAWN_CONSTRUCT
 
 
 def binding_of(rec: Record) -> str:
@@ -301,6 +317,16 @@ def identity(rec: Record) -> tuple:
     if rec.kind in ("input", "enum"):
         return (rec.kind, rec.key, rec.fields[0])
     return (rec.kind, rec.key)
+
+
+def mro_set(entry: str) -> "set[str] | None":
+    """Return the binding keys of one ``mro`` entry's ``{a,b}`` class set; None for ``@builtin``."""
+    return set(entry[1:-1].split(",")) if entry.startswith("{") else None
+
+
+def builtin_mro(name: str) -> str:
+    """Return the ``@builtin`` token naming the builtin class *name* (``tuple``, say)."""
+    return f"{_BUILTIN_PREFIX}{name}"
 
 
 def split_list(field: str) -> "list[str]":
@@ -333,7 +359,7 @@ def render_params(params: "list[Param]") -> str:
 def _check_call_fields(callkind: str, params: str) -> None:
     if callkind not in CALL_KINDS:
         raise DumpError(f"unknown call kind {callkind!r}")
-    if not _BUILTIN.fullmatch(params):
+    if params != WITHDRAWN_CONSTRUCT and not _BUILTIN.fullmatch(params):
         _parse_params(params)
 
 
@@ -349,6 +375,8 @@ def _check_member(fields: "list[str]", line: str) -> None:
     if fields[0] in _METHOD_FORMS:
         if len(fields) != _METHOD_FIELDS:
             raise DumpError(f"a {fields[0]} member needs a call: {line!r}")
+        if fields[2] == WITHDRAWN_CONSTRUCT:
+            raise DumpError(f"a method member cannot carry the construct token: {line!r}")
         _check_call_fields(fields[1], fields[2])
     elif len(fields) != 1 or not (
         fields[0] in ("field", "attribute", "class")
@@ -359,6 +387,10 @@ def _check_member(fields: "list[str]", line: str) -> None:
 
 
 def _check_input(fields: "list[str]") -> None:
+    if fields[0] == WITHDRAWN_CONSTRUCT:
+        if fields[1:] != [EMPTY] * 3:
+            raise DumpError("a withdrawn input has '-' in its other fields")
+        return
     _check_value(fields[0])
     if fields[1] not in ("required", "optional"):
         raise DumpError(f"malformed input requiredness {fields[1]!r}")
@@ -378,7 +410,7 @@ def _check_fields(kind: str, fields: "list[str]") -> None:
                 raise DumpError(f"malformed mro entry {entry!r}")
     if kind == "call":
         _check_call_fields(fields[0], fields[1])
-    if kind in ("abstract", "requires"):
+    if kind in ("abstract", "requires") and fields[0] != WITHDRAWN_SUBCLASS:
         for name in split_list(fields[0]):
             if not _is_name(name):
                 raise DumpError(f"malformed name {name!r}")
@@ -433,17 +465,30 @@ def render_record(rec: Record) -> str:
     return "\t".join([rec.kind, rec.key, *rec.fields])
 
 
+def carries_call(rec: Record) -> bool:
+    """Return whether *rec* is a ``call`` record or a method ``member`` record."""
+    return rec.kind == "call" or (rec.kind == "member" and rec.fields[0] in _METHOD_FORMS)
+
+
 def parse_call(rec: Record) -> Call:
     """Read the call a ``call`` record or a method ``member`` record carries."""
-    if rec.kind == "call":
-        callkind, params = rec.fields[0], rec.fields[1]
-    elif rec.kind == "member" and rec.fields[0] in _METHOD_FORMS:
-        callkind, params = rec.fields[1], rec.fields[2]
-    else:
+    if not carries_call(rec):
         raise DumpError(f"{rec.kind} {rec.key} carries no call")
+    callkind, params = rec.fields[-2], rec.fields[-1]
+    if params == WITHDRAWN_CONSTRUCT:
+        return Call(callkind, None, None, withdrawn=True)
     if _BUILTIN.fullmatch(params):
         return Call(callkind, None, params.removeprefix("@builtin:"))
     return Call(callkind, _parse_params(params), None)
+
+
+def is_withdrawn(rec: Record) -> bool:
+    """Return whether *rec* records a withdrawn constructor or subclass obligation."""
+    if rec.kind in ("abstract", "requires"):
+        return rec.fields[0] == WITHDRAWN_SUBCLASS
+    if rec.kind == "input":
+        return rec.fields[0] == WITHDRAWN_CONSTRUCT
+    return carries_call(rec) and parse_call(rec).withdrawn
 
 
 def _sort_key(rec: Record) -> tuple:
@@ -506,9 +551,14 @@ class Dump:
             index = {"member": self._members, "input": self._inputs, "enum": self._enums}.get(
                 rec.kind
             )
+            if rec.kind == "input" and rec.fields[0] == WITHDRAWN_CONSTRUCT and kind != "model":
+                raise DumpError(f"withdrawn input on a {kind} binding: {rec.key}")
             if index is not None:
                 sub = rec.key.rpartition(".")[2] if rec.kind == "member" else rec.fields[0]
                 index.setdefault(owner, {})[sub] = rec
+        for owner, inputs in self._inputs.items():
+            if len(inputs) > 1 and WITHDRAWN_CONSTRUCT in inputs:
+                raise DumpError(f"withdrawn constructor mixed with inputs: {owner}")
         for key, kind in self.bindings.items():
             for needed in sorted(REQUIRED.get(kind, set())):
                 if (needed, key) not in self.records:

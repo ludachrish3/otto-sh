@@ -5,12 +5,14 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from otto.utils import WaitTimeoutError, wait_for
 from scripts import api_regen
+from scripts.api_manifest import Symbol
 from tests._fixtures.api_dump import write_tree
 from tests._fixtures.gitrepo import TmpGitRepo
 
@@ -590,3 +592,56 @@ def test_a_path_dependency_outside_the_archived_inputs_is_an_environment_refusal
     assert out.text is None
     assert len(out.refusals) == 1
     assert out.refusals[0].startswith("environment: uv lock --check failed"), out.refusals
+
+
+_ECHO_CHILD = (
+    "import json, sys\n"
+    "sys.stdout.write(json.dumps({'records': [], 'refusals': sys.argv[1:],"
+    " 'provenance': [], 'private': {}}) + '\\n')\n"
+)
+
+
+def _echo_child(tmp_path, monkeypatch):
+    child = tmp_path / "echo_child.py"
+    child.write_text(_ECHO_CHILD)
+    monkeypatch.setattr(api_regen, "CHILD", child)
+
+
+def test_run_child_passes_each_symbol_as_its_given_keys(tmp_path, monkeypatch):
+    _echo_child(tmp_path, monkeypatch)
+    syms = [
+        Symbol("otto:f", ("a", "b"), why="w", given=frozenset({"positional", "why"})),
+        Symbol(
+            "otto:C", construct=False, subclass=True, given=frozenset({"construct", "subclass"})
+        ),
+        Symbol("otto:g", given=frozenset({"positional"})),
+        Symbol("otto:C.m", implementer=True, given=frozenset({"implementer"})),
+    ]
+    rep = api_regen.run_child(Path(sys.executable), tmp_path, ["otto"], symbols=syms)
+    argv = rep["refusals"]
+    assert argv[argv.index("--symbol") :] == [
+        "--symbol", "otto:f", "positional=a|b",
+        "--symbol", "otto:C", "construct=false,subclass=true",
+        "--symbol", "otto:g", "positional=",
+        "--symbol", "otto:C.m", "implementer=true",
+        "otto",
+    ]  # fmt: skip
+
+
+def test_generate_worktree_passes_the_manifests_symbols(tmp_path, monkeypatch):
+    _echo_child(tmp_path, monkeypatch)
+    text = MANIFEST + '[symbols."otto:C"]\nconstruct = false\n'
+    (tmp_path / "manifest.toml").write_text(text)
+    out = api_regen.generate_worktree(tmp_path, tmp_path / "manifest.toml")
+    assert out.refusals[-4:] == ["--symbol", "otto:C", "construct=false", "otto"]
+
+
+def test_generate_at_commit_passes_the_archived_symbols(tmp_path, monkeypatch):
+    repo = TmpGitRepo(tmp_path / "repo")
+    repo.write("api/public.toml", MANIFEST + '[symbols."otto:C"]\nsubclass = false\n')
+    repo.write("src/otto/__init__.py", "__all__ = []\n")
+    sha = repo.commit("c")
+    repo.write("api/public.toml", MANIFEST)  # the worktree's manifest drops it: not read
+    _echo_child(tmp_path, monkeypatch)
+    out = api_regen.generate_at_commit(repo.root, sha, "api/public.toml", api_regen.CurrentEnv())
+    assert out.refusals[-4:] == ["--symbol", "otto:C", "subclass=false", "otto"]

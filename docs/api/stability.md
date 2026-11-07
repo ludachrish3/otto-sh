@@ -57,8 +57,53 @@ signed off by the owner.
   the tier. Today that is every public module.
 - Every page carries a notice that otto's API is provisional before 1.0.
 - An Internals module opens with a note that it is internal.
+- A class or callable with facts in the manifest's `[symbols]` table carries
+  them as notes: *Rights* for a withdrawn right, *Positional parameters* or
+  *Positional fields* for what it takes by position
+  ([Calling conventions](#calling-conventions)).
 - Once a module mixes tiers, each of its non-stable names carries a badge
   instead.
+
+(api-calling-conventions)=
+## Calling conventions
+
+otto's public callables take **keyword arguments only**: call
+`f(name=value)`, never `f(value)`, and build a record as
+`Cls(name=..., value=...)`. A keyword call keeps working when a parameter is
+added or the parameters are reordered; a positional one would not.
+
+- **Positional subjects are the exceptions.** A few callables let you pass
+  their leading parameters by position, because the call reads naturally
+  that way. Each is listed in `api/public.toml`'s `[symbols]` table, with a
+  reason whenever the entry lists two or more names or covers a
+  positional-only or variadic (`*args`) parameter; a single plain subject
+  needs none. Its entry in the {doc}`API reference <index>` carries a
+  *Positional parameters* note naming them, and so does every override or
+  conforming implementation the entry reaches. A parameter no note names is
+  keyword-only.
+- **A NamedTuple record is a tuple.** `MetricDataPoint` and `LogEvent` stay
+  tuples, so their fields are positional, in their documented order, and you
+  may unpack them. That makes their shape the contract: inserting, removing,
+  reordering or even appending a field is a breaking change. Their entries
+  carry a *Positional fields* note saying so.
+- **Positional `match` patterns do not work on records.** A keyword-only
+  dataclass has an empty `__match_args__`, so `case Cls(a, b)` raises
+  `TypeError` when it is matched. Use keyword patterns:
+  `case Cls(name=name, value=value)`.
+- **otto's errors pickle.** An error rebuilds from its `args` when it is
+  unpickled, so every error otto raises either keeps the parameters it does
+  not carry in `args` defaulted, or defines `__reduce__`. An error can cross
+  a process boundary and come back as the same class.
+- **Some classes withdraw a right.** A class marked *not constructed by
+  callers* is one otto builds and hands to you: its constructor makes no
+  compatibility promise. A class marked *not for subclassing* makes no
+  promise about its abstract members. The reference shows the
+  mark as a *Rights* note under the class; a class without one may be
+  constructed and subclassed.
+
+Switching a callable to keyword-only was a marked breaking change, made
+once, before 1.0. How the rule is enforced is in
+[the quality-gates table](../architecture/quality-gates.md#what-binds-each-gate).
 
 ## Removal and deprecation
 

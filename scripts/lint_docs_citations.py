@@ -210,6 +210,7 @@ MAINTAINER_TARGETS = frozenset(
         "changelog",
         "chaos",
         "chaos-embedded",
+        "check-api-keywords",
         "check-api-snapshot",
         "check-api-teaching",
         "check-breaking",

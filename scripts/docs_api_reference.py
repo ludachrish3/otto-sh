@@ -41,10 +41,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts.api_manifest import Namespace, load_manifest  # noqa: E402 -- path set up above
+from scripts import check_api_keywords  # noqa: E402 -- path set up above
+from scripts.api_manifest import Namespace, Symbol, load_manifest  # noqa: E402 -- path set up above
+from scripts.api_records import Dump  # noqa: E402 -- path set up above
 
 #: The namespace declaration the reference follows.
 MANIFEST = REPO_ROOT / "api" / "public.toml"
+#: The committed dump the reference's notes resolve inherited entries over.
+GOLDEN = REPO_ROOT / "tests" / "unit" / "api_snapshot" / "public_api.txt"
 
 _IMMUTABLE = (int, float, complex, str, bytes, bool, type(None), tuple, frozenset)
 _ROLE = re.compile(r"(:(?:py:)?(?:class|func|meth|attr|data|exc|obj):)`([^`]+)`")
@@ -184,6 +188,140 @@ def stability_banner(namespace: str, stability: str) -> "list[str]":
         "   See :doc:`/api/stability`.",
         "",
     ]
+
+
+TUPLE_RECORD = "tuple record"
+
+
+def rights_note(symbol: Symbol) -> "list[str]":
+    """Return the reST note under a class that withdraws a right; nothing when it keeps both.
+
+    The note's classes (``otto-rights-no-construct``, ``otto-rights-no-subclass``)
+    are what ``scripts/check_docs_api_marks.py`` reads back from the built site.
+    """
+    withdrawn = [
+        (right, text, consequence)
+        for right, kept, text, consequence in [
+            (
+                "construct",
+                symbol.construct,
+                "**not constructed by callers**: otto builds it",
+                "Its constructor makes no compatibility promise.",
+            ),
+            (
+                "subclass",
+                symbol.subclass,
+                "**not for subclassing**",
+                "Its abstract members make no compatibility promise.",
+            ),
+        ]
+        if not kept
+    ]
+    if not withdrawn:
+        return []
+    classes = " ".join(f"otto-rights-no-{right}" for right, _, _ in withdrawn)
+    lines = [".. admonition:: Rights", f"   :class: otto-rights {classes}", ""]
+    for _, text, consequence in withdrawn:
+        lines.append(f"   This class is {text}. {consequence}")
+    lines += ["   See :ref:`api-calling-conventions`.", ""]
+    return lines
+
+
+def positional_note(symbol: Symbol) -> "list[str]":
+    """Return the reST note under a callable whose manifest entry lists positional subjects.
+
+    A ``tuple record`` (a public NamedTuple) also states the shape-break rule:
+    its fields are positional, so any change to them is a breaking change.
+    """
+    if not symbol.positional:
+        return []
+    names = ", ".join(f"``{name}``" for name in symbol.positional)
+    if symbol.why == TUPLE_RECORD:
+        return [
+            ".. admonition:: Positional fields",
+            "   :class: otto-positional otto-positional-tuple-record",
+            "",
+            f"   A tuple record: its fields are positional, in this order: {names}.",
+            "   Its shape is its contract, so inserting, removing, reordering or",
+            "   appending a field is a breaking change.",
+            "   See :ref:`api-calling-conventions`.",
+            "",
+        ]
+    return [
+        ".. admonition:: Positional parameters",
+        "   :class: otto-positional otto-positional-parameters",
+        "",
+        f"   {names} may be passed by position{f' ({symbol.why})' if symbol.why else ''}.",
+        "   Every other parameter is keyword-only.",
+        "   See :ref:`api-calling-conventions`.",
+        "",
+    ]
+
+
+def notes_for(symbol: "Symbol | None") -> "list[str]":
+    """Return every manifest note *symbol* renders, in page order."""
+    return [] if symbol is None else rights_note(symbol) + positional_note(symbol)
+
+
+@dataclass(frozen=True)
+class Noted:
+    """One object a manifest note renders under: its documented path and its entry."""
+
+    key: str  # the dump key the entry applies to
+    path: str  # the documented home path the note renders at
+    symbol: Symbol
+    member: bool  # a class member, which autodoc may not index (a public dunder)
+
+
+def documented_path(ref: Reference, key: str) -> str:
+    """Return the documented home path of the ``namespace:qualname`` *key*.
+
+    The binding's home is :func:`build_reference`'s, so every alias of one object
+    (``otto:get_host``, ``otto.lab:get_host``) resolves to the one path it is
+    documented at; a member's path is its owner's home path plus its name. A key
+    with no home (nothing binds it) keeps its own dotted spelling.
+    """
+    namespace, _, qualname = key.partition(":")
+    first, dot, rest = qualname.partition(".")
+    obj = getattr(sys.modules.get(namespace), first, None) if namespace in ref.namespaces else None
+    home = ref.homes.get(id(obj)) if obj is not None and trackable(obj) else None
+    base = home.path if home is not None else f"{namespace}.{first}"
+    return f"{base}{dot}{rest}"
+
+
+def documented_notes(
+    ref: Reference, symbols: "Mapping[str, Symbol]", dump: Dump
+) -> "dict[str, Noted]":
+    """Map each documented path to the entry whose notes render there.
+
+    A callable's entry is its effective one (``check_api_keywords.effective_entries``
+    over *dump*, a parsed :class:`scripts.api_records.Dump`): an inheriting or
+    structurally conforming member shows the note of the entry that applies to it.
+    Every other key carries its own entry. Aliases collapse onto their one home.
+    """
+    applied: dict[str, Symbol] = dict(symbols)
+    effective = check_api_keywords.effective_entries(dump, dict(symbols))
+    applied.update({key: entry for key, (entry, _) in effective.items()})
+    out: dict[str, Noted] = {}
+    for key in sorted(applied):
+        path = documented_path(ref, key)
+        if path not in out:
+            member = "." in key.partition(":")[2]
+            out[path] = Noted(key, path, applied[key], member)
+    return out
+
+
+def load_golden(path: Path = GOLDEN) -> Dump:
+    """Parse the committed golden dump the notes resolve effective entries over."""
+    from scripts import api_records
+
+    return api_records.parse_dump(path.read_text(encoding="utf-8"))
+
+
+def symbol_notes(documented: "Mapping[str, Noted]", name: str) -> "list[str]":
+    """Return the notes for the autodoc entry *name* (its documented dotted path)."""
+    noted = documented.get(name)
+    return notes_for(noted.symbol if noted is not None else None)
 
 
 def internal_note(module: str) -> "list[str]":

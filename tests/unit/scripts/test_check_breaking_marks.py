@@ -1469,3 +1469,48 @@ def test_an_amend_that_drops_the_breaking_marker_is_rejected_over_the_same_range
     repo.git("commit", "--amend", "-q", "-m", "feat(api): drop Beta")
     amended = repo.git("rev-parse", "HEAD").strip()
     assert main([f"{base}..{amended}", *argv]) == 1
+
+
+_HOOK_FLAGGED = OTTO_ONLY + '\n[symbols."otto:C.hook"]\nimplementer = true\n'
+_HOOK_BODY = "class C:\n    def hook(self, x): pass\n"
+_HOOK_WIDE = "class C:\n    def hook(self, x, y=0): pass\n"
+
+
+def test_a_widened_implementer_hook_needs_a_mark_even_when_the_flag_is_dropped_in_the_same_commit(
+    tmp_path, capsys
+):
+    repo = TmpGitRepo(tmp_path)
+    _commit_dump(repo, _init(["C"], _HOOK_BODY), "feat: hook", manifest=_HOOK_FLAGGED)
+    tip = _commit_dump(repo, _init(["C"], _HOOK_WIDE), "feat: widen the hook", manifest=OTTO_ONLY)
+    assert _run(repo, f"{tip}~1..{tip}") == 1
+    out = capsys.readouterr().out
+    assert "C.hook: new parameter y on an implementer-facing member [otto]" in out
+    assert "C.hook: implementer status withdrawn [otto]" in out
+
+
+def test_withdrawing_a_constructor_needs_a_mark(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    body = _init(["C"], "class C:\n    def __init__(self, a): pass\n")
+    _commit_dump(repo, body, "feat: C")
+    withdrawn = OTTO_ONLY + '\n[symbols."otto:C"]\nconstruct = false\n'
+    tip = _commit_dump(repo, body, "feat: C is no longer built", manifest=withdrawn)
+    assert _run(repo, f"{tip}~1..{tip}") == 1
+    assert "C: constructor withdrawn [otto]" in capsys.readouterr().out
+
+
+def test_withdrawing_implementer_status_needs_a_mark(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    body = _init(["C"], _HOOK_BODY)
+    _commit_dump(repo, body, "feat: hook", manifest=_HOOK_FLAGGED)
+    tip = _commit_dump(repo, body, "chore: unflag the hook", manifest=OTTO_ONLY)
+    assert _run(repo, f"{tip}~1..{tip}") == 1
+    assert "C.hook: implementer status withdrawn [otto]" in capsys.readouterr().out
+
+
+def test_adding_a_right_back_is_free(tmp_path):
+    repo = TmpGitRepo(tmp_path)
+    body = _init(["C"], "class C:\n    def __init__(self, a): pass\n")
+    withdrawn = OTTO_ONLY + '\n[symbols."otto:C"]\nconstruct = false\n'
+    _commit_dump(repo, body, "feat: C", manifest=withdrawn)
+    tip = _commit_dump(repo, body, "feat: C is built again", manifest=OTTO_ONLY)
+    assert _run(repo, f"{tip}~1..{tip}") == 0

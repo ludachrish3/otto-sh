@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke check-api-keywords
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1846,6 +1846,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 	@$(SAY) "ruff: lint + format check"
 	@uv run ruff check .
 	@uv run ruff format --check .
+	@$(MAKE) --no-print-directory check-api-keywords
 
 # lint-arch enforces the architecture rules ruff cannot express: tach.toml is
 # the module-dependency ratchet baseline (its comments explain every DEBT
@@ -2025,6 +2026,10 @@ check-api-snapshot: ## (Quality) Fail if the public-API golden is not, byte for 
 check-api-teaching: ## (Quality) Fail if the docs, README or a shipped example teach an otto name api/public.toml does not declare, or a declared namespace disagrees with its runtime (scripts/api_teaching.py; spec 2026-10-04-public-api-manifest-design.md §6)
 	@$(SAY) "checking every taught otto name against api/public.toml"
 	@uv run python scripts/api_teaching.py --manifest api/public.toml
+
+check-api-keywords: ## (Quality) Fail if a public callable takes a positional parameter api/public.toml's [symbols] table does not list, or an entry's shape, sources or why do not hold (scripts/check_api_keywords.py; spec 2026-11-07-keyword-only-public-interfaces-design.md §5)
+	@$(SAY) "checking every public positional parameter against api/public.toml"
+	@uv run python scripts/check_api_keywords.py --manifest api/public.toml
 
 api-surface-report: ## (Dev) Measure the declared surface's open work without gating: agreement failures, validator findings and API-dump producer refusals against api/public.toml (`check-api-teaching` and `check-api-snapshot` are the gates). Always exits 0
 	@uv run python scripts/api_teaching.py --manifest api/public.toml --report

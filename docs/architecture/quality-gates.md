@@ -271,6 +271,7 @@ job that enforces it on the pull request and again on the push to `main`.
 | uv floor: otto's env code and the `otto env` e2e run against the declared minimum uv, binary and package both | — | `tests_uv_floor` | `uv-floor` |
 | breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking` (the one live goal of every tip; the hook runs it at the push) | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
 | docs teach only declared names (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
+| public callables take keywords only, except the positional parameters `api/public.toml`'s `[symbols]` table lists (`scripts/check_api_keywords.py`) | `check-api-keywords` (inside `make lint-python`, so `make check-python` runs it) | `lint` | `lint-python` |
 | test-isolation leak guard | `nox-unit-repeat` (by hand only; `make gate-scope` never names it) | `tests_unit_repeat` | `unit-repeat` — a nightly lane (since #795; it was CI's longest job by a factor of two): a leak shows up there, never in a local lane or a PR check |
 | import budget | `profile` — gates each gated surface's file operations against its per-interpreter ceilings and target ratio, and prints the tracked surfaces (see {doc}`startup-performance`); never wall-clock, which fails for reasons outside the change | via `tests_hostless_unit` | `tests-primary`, `tests-canary`, `tests` — enforced by `tests/unit/import_budget/` |
 | build-lane invariants: an `addopts` override keeps `-p no:tach`; every lane that excludes `serial_timing` re-appends it in a paired `-n0` leg (an exclusion without its leg makes the discriminators CI-invisible). **Not attempted:** the complement — that no lane running under xdist *selects* a `serial_timing` test — is not gated. The leg check can only audit lanes that *spell* an exclusion, and resource markers like `integration` and `browser` are applied by conftest hooks at collection, so no source scan can see them; asking pytest per lane (`--collect-only -m "<expr> and serial_timing"`) was run once as a hand audit when the marker was introduced, and never wired up as a standing check. The protection in force is the root conftest, which errors any `serial_timing` test that reaches an xdist worker. Make macros in a lane's `-m` are expanded first; an unexpanded one is reported, never handed to pytest | via `coverage*` | via `tests_hostless_guards` | `tests-primary` — enforced by `tests/unit/test_lane_invariants.py` |
@@ -429,12 +430,16 @@ The declaration in spec 1 of
 - `scripts/api_teaching.py` checks every otto name the docs and the shipped
   examples teach, including taught use of an otto class's underscore
   members. It gates in CI; run it locally with `make check-api-teaching`.
+- `scripts/check_api_keywords.py` refuses a public callable that takes a
+  positional parameter the manifest's `[symbols]` table does not list. It
+  runs in `make lint-python` and CI's `lint` session; run it alone with
+  `make check-api-keywords`.
 - `scripts/api_agreement.py` proves each declared namespace's `__all__`
   against a fresh interpreter.
 - The API reference follows the declaration: one page per declared
   namespace, and *Internals* for every other module.
   `scripts/check_docs_api_marks.py` checks the built site's stability marks
-  against it ({doc}`../api/stability`).
+  and the manifest's per-symbol notes against it ({doc}`../api/stability`).
 
 What a golden is, and how a commit is marked breaking, is in
 [Branching and commits](../contributing.md#branching-and-commits).

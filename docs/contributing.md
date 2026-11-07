@@ -1136,6 +1136,25 @@ git branch -d <your-branch>
 - [ ] Commit subject reads as the changelog entry it will become (see below)
 - [ ] No manual edits to `CHANGELOG.md` or the version string
 
+### Public API review checklist
+
+A change to a public name (one a declared namespace's `__all__` holds,
+{doc}`api/stability`) is reviewed against the calling conventions in
+[Calling conventions](api/stability.md#calling-conventions):
+
+- [ ] A new public callable is keyword-only, unless its `[symbols]` entry in
+  `api/public.toml` lists positional parameters and says why.
+- [ ] A new public record is `@dataclass(kw_only=True)`, and so is every
+  dataclass base in its chain: `kw_only` is not inherited.
+- [ ] A class otto constructs for the user is declared `construct = false`
+  in its `[symbols]` entry.
+- [ ] An implementer-facing member (one you write when you subclass) never
+  gains a parameter without a breaking mark.
+
+`make check-api-keywords` holds the first item mechanically
+([the quality-gates table](architecture/quality-gates.md#what-binds-each-gate));
+review holds the rest.
+
 ## Version management
 
 Versioning is owned by maintainers and driven by
