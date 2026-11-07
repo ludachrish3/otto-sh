@@ -31,11 +31,20 @@ name: Nightly
 # or is pulled). A commit here can break it too, and that shows up the next
 # night, not on the pull request.
 #
+# Also runs the probe-line cut sweep (`probe-cut-sweep` below, #853), and it
+# is the one DETERMINISTIC lane here: every tail of the readiness handshake
+# and the resync probe, typed into a fresh interactive shell on a controlling
+# pty, then the line whole once. It gives the same answer every run; it is
+# here because it is exhaustive and slow (~12k cases, each a fresh shell and
+# the session's 0.5 s probe interval), which the per-push unit lane cannot
+# afford. Its fast fixed hazard cases run on every push in ci.yml.
+#
 # Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
 # deliberately NOT duplicated here — they run on every push in ci.yml and
 # produce the same result each time, so a nightly rerun adds no signal. What
 # belongs in this workflow is a lane whose result can differ between two runs
-# of the same commit: the flaky ones above, and the sampled one below.
+# of the same commit: the flaky ones above, and the sampled one below; the cut
+# sweep is the one exception (above).
 on:
   schedule:
     # Nightly at 06:00 UTC. cron is in UTC regardless of repo timezone.
@@ -817,6 +826,49 @@ jobs:
       - name: Dashboard soak
         run: make dashboard-soak
 
+  # The every-offset probe-line cut sweep (#853; why a deterministic lane is
+  # here: the header). Hostless: no lab, no bed lease. zsh, ksh, mksh and
+  # BusyBox join the runner's sh, bash and dash so the sweep covers the shell
+  # matrix of tests/_fixtures/interactive_shell.py; a shell the runner lacks
+  # is left out of the matrix, never skipped, so its absence shows in the
+  # test ids. 16 workers: each case mostly waits on the probe interval.
+  probe-cut-sweep:
+    runs-on: ubuntu-latest
+    # ABOVE the Makefile's LANE_TIMEOUT wrap (2400s) around `make
+    # stability-cut-sweep`, plus the sync and apt setup ahead of it, so a
+    # stall reports through `timeout`'s exit 124 rather than a GitHub cancel.
+    # Pinned by tests/unit/test_declared_harness_bounds.py.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Install the interactive shells of the matrix (zsh, ksh, mksh, BusyBox)
+        run: sudo apt-get update && sudo apt-get install -y zsh ksh mksh busybox
+
+      - name: Probe-line cut sweep, every offset, every shell
+        run: make stability-cut-sweep CUT_SWEEP_WORKERS=16
+
+      # The JUnit XML names every failing case by shell, line, history,
+      # nounset and offset, so a red night is readable without a rerun.
+      - name: Upload the sweep's JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-cut-sweep-junit
+          path: reports/junit/stability-cut-sweep/
+          retention-days: 30
+
   # If any job fails, open (or update) a tracking issue so a flaky nightly
   # surfaces without anyone having to watch the Actions tab.
   report-failure:
@@ -834,6 +886,7 @@ jobs:
         conformance-hermetic,
         busybox-upstream-drift,
         python-canary,
+        probe-cut-sweep,
       ]
     # Only a run on main files an issue, the same condition as ci.yml's
     # reporter: a workflow_dispatch on a branch is someone's experiment, and its
@@ -846,18 +899,20 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the dashboard soak, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
+            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the dashboard soak, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, the probe-line cut sweep, and/or the next-Python canary moving off its expected rung)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability-matrix /"
             echo "playwright-version / unit-matrix / unit-repeat / dashboard / dashboard-soak / chaos-tier2 / chaos-docker /"
-            echo "conformance-hermetic / busybox-upstream-drift / python-canary),"
+            echo "conformance-hermetic / busybox-upstream-drift / python-canary / probe-cut-sweep),"
             echo "the Python version or browser, and the pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"
             echo "cell it drew in the test id; reproduce it with the"
-            echo "--randomly-seed=N printed in that job's own pytest header."
+            echo "--randomly-seed=N printed in that job's own pytest header. A"
+            echo "probe-cut-sweep failure is deterministic: its test id names the"
+            echo "shell, line, history, nounset and offset; rerun that one case."
             echo
             echo "**busybox-upstream-drift is not a test failure.** It reads"
             echo "busybox.net directly, and it fails ONLY when upstream has"

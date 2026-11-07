@@ -706,8 +706,8 @@ the history file at exit.
 ## Session setup
 
 otto runs two commands of its own on every shell it opens — the readiness
-handshake (`__otto_probe=_READY__; stty -echo; echo; printf 'X\r\nY\nZ\rW\n';
-echo __OTTO_<id>${__otto_probe-}` on bash) and, on Unix hosts, history
+handshake (`__otto_probe=_READY__; stty -echo; echo; printf X\\r\\nY\\nZ\\rW\\n;
+echo __OTTO_<id>$__otto_probe` on bash) and, on Unix hosts, history
 suppression — and then, by default, nothing else. The `printf` is the
 handshake's calibration line: how its known bytes come back shows how the
 session's terminal translates line endings, which is what lets otto return a

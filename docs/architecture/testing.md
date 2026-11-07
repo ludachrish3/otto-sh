@@ -145,7 +145,9 @@ of the tests every contributor runs on every push:
   out any other worker's concurrent SSH to that same host. `stability` tests
   therefore only ever run in the dedicated `make stability` family
   (`stability-unit`, `stability-unix`, `stability-tunnel`,
-  `stability-embedded`), never mixed into a general run — with one
+  `stability-embedded`) or
+  [the probe-line cut sweep's lane](../contributing.md#regression-test-categories),
+  never mixed into a general run — with one
   deliberate exception: `make repeat`'s selection is `-m "not browser and
   not chaos"`, which excludes `browser` and `chaos` but says nothing about
   `stability`, so a `make repeat` soak co-selects `stability`-marked tests

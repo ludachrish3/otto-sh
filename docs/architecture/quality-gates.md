@@ -374,7 +374,9 @@ by construction — they SIGKILL sessions, reboot hosts, and hold a lease on
 the shared testbed — so they are excluded from every default gate and from
 `ci.yml` entirely. Nightly runs only the legs that need no lab: the
 tier-2 real-signal chaos suite over a loopback sshd, a dockerized tier-3
-slice, and `stability-unit` across the Python matrix. Everything that needs
+slice, and `stability-unit` across the Python matrix. Nightly also runs the
+hostless [probe-line cut sweep](../contributing.md#regression-test-categories).
+Everything that needs
 a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
 `stability-embedded` — runs when a human decides to run it. The gate oracle
 never names a stability soak, only a single pass of a stability tier, and only
@@ -392,7 +394,8 @@ not wait on that;
 scheduled dev-VM run so the lane keeps producing signal. The release census
 in `tests/unit/test_lane_invariants.py` proves that every test pytest
 collects is selected by some stage of the release **or named in the owner's
-exemption list** beside its reason (the chaos rows are that list), so a lane
+exemption list** beside its reason (the chaos rows and the cut sweep's
+nightly-only row are that list), so a lane
 cannot quietly fall out of the release, and an exemption the release runs
 anyway, or one that covers nothing, reddens too.
 

@@ -62,7 +62,6 @@ _BASH_FRAME_RE = re.compile(
     r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"',
     re.DOTALL,
 )
-_BASH_RECOVER_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__"')
 _ZEPHYR_FRAME_RE = re.compile(
     r"(__OTTO_[0-9a-f]+_BEGIN__)\r(.*)\rretval\r(__OTTO_[0-9a-f]+_END__)\r"
 )
@@ -140,10 +139,12 @@ class DialectShell:
             return f"{self._prompt()}{m.group(1)}\nbash:{m.group(2)}\n{m.group(3)}0__\n"
         marker = probe_marker(text)
         if marker is not None and marker.endswith(RECOVER_SUFFIX):
+            # The resync probe names the user after the status; the
+            # recovery probe stops at the status.
+            if "$(id -un)" not in text:
+                return f"{self._prompt()}{marker}0__\n"
             user = replay(self.writes, user=self.user).user
             return f"{self._prompt()}{marker}0__{user}__\n"
-        if (m := _BASH_RECOVER_RE.search(text)) is not None:
-            return f"{self._prompt()}{m.group(1)}0__\n"
         if marker is not None and marker.endswith(READY_SUFFIX):
             return self._bash_handshake_reply(text, marker)
         return None
@@ -187,7 +188,7 @@ class DialectShell:
         the trailing ``unset`` print nothing.
         """
         clauses = [c.strip() for c in payload.split(";")]
-        expansion = "${" + _PROBE_VAR + "-}"
+        expansion = "$" + _PROBE_VAR
         at = next((i for i, c in enumerate(clauses) if expansion in c), len(clauses))
         before = clauses[:at]
         printed = {"echo": "\r\n", CALIBRATION_COMMAND: "X\r\r\nY\r\nZ\rW\r\n"}

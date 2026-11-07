@@ -176,6 +176,11 @@ async def session() -> MockSession:
     return s
 
 
+def _probes_recovery(session: ShellSession, written: str) -> bool:
+    """Whether *written* is the session's recovery probe (an anchored line naming its marker)."""
+    return probe_marker(written) == session._recover_marker
+
+
 # ---------------------------------------------------------------------------
 # Basic run_cmd
 # ---------------------------------------------------------------------------
@@ -513,13 +518,14 @@ class TestTimeout:
             # recover marker to appear in `written` guarantees the parrot
             # lands inside the recovery read; expiry names the failed
             # premise (recovery never probed) instead of passing vacuously.
+            # The parrot is the probe line exactly as it was typed.
             await wait_for_async(
-                lambda: any(session._recover_marker in w for w in session.written),
+                lambda: any(_probes_recovery(session, w) for w in session.written),
                 5.0,
                 interval=0.005,
                 on_timeout="recovery never wrote its probe — REPL-parrot premise failed",
             )
-            session.feed(f'echo "{session._recover_marker}$?__"\n')
+            session.feed(next(w for w in session.written if _probes_recovery(session, w)))
 
         repl_task = asyncio.create_task(echo_probe_literally())
 
@@ -537,7 +543,7 @@ class TestTimeout:
         # the parrot bytes (fed-but-unread would reopen the old vacuity).
         # StreamReader._buffer is CPython-private — a rename fails loudly by
         # name, the acceptable failure mode for a test-double internal.
-        assert any(session._recover_marker in w for w in session.written)
+        assert any(_probes_recovery(session, w) for w in session.written)
         assert session._out_reader is not None
         assert not session._out_reader._buffer, (
             "parrot bytes were fed but never consumed by the recovery read"
@@ -790,7 +796,7 @@ class TestShellHistorySuppression:
         # stty -echo is what keeps the probe text out of the read stream; the
         # prefix must not displace it.
         _, probe = await self._first_probe(shell_history=False)
-        assert "stty -echo 2>/dev/null" in probe
+        assert "2>/dev/null stty -echo" in probe
 
     @pytest.mark.asyncio
     async def test_zephyr_session_unaffected_even_when_suppressed(self):
