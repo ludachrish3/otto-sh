@@ -223,16 +223,68 @@ async def test_cancelling_a_pending_real_get_propagates_the_cancel(silent_agent,
 
 
 @pytest.mark.asyncio
-async def test_the_survey_reports_a_timeout_row_for_a_cancelled_real_get(silent_agent):
-    """``_bounded`` catches only the timeout; no ``TypeError`` may replace it."""
-    from otto.host.survey.engine import _Deadline, _snmp_row
+async def test_the_survey_reports_a_timeout_row_for_a_cancelled_real_get(silent_agent, monkeypatch):
+    """``_bounded`` catches only the timeout; no ``TypeError`` may replace it.
+
+    The survey's ``wait_for`` must expire while the GET is pending, so the
+    timeout here fires only once the request is on the wire. A wall-clock
+    deadline cannot promise that. The window also holds the lazy pysnmp
+    import, which is synchronous: cold in a fresh venv, it outlasted a 0.5 s
+    deadline, and the cancel landed before anything was sent (#960).
+
+    So pysnmp is imported here first, outside any deadline. The patched
+    ``wait_for`` intercepts only the survey's own call, matched by identity
+    with the coroutine its ``check_snmp`` returned, and that check runs with
+    pysnmp's own timeout off, so nothing but the survey can end the GET. It
+    waits for the agent to receive the request, then lets the real
+    ``wait_for`` time out at once.
+    That is equivalent to a spent budget: the pending GET is cancelled, the
+    timeout is caught, and a ``TypeError`` from pysnmp's ``close()`` would
+    still surface. The 30 s bound on the wait is reached only when the
+    request is never sent.
+    """
+    import asyncio
+
+    import pysnmp.hlapi.v1arch.asyncio  # noqa: F401 — warm, outside every deadline
+
+    from otto.host.survey import engine
 
     port, agent = silent_agent
-    verdict = await _snmp_row(
-        port, _Deadline(0.5), address="127.0.0.1", community="public", version="2c"
+    checks: list[object] = []
+    expired: list[object] = []
+    real_check = engine.check_snmp
+    real_wait_for = asyncio.wait_for
+
+    def _recording_check(*args, **kwargs):
+        # pysnmp's own expiry is off, so the GET is still pending when the
+        # survey's timeout fires, however late that is.
+        checks.append(real_check(*args, **{**kwargs, "timeout": float("inf")}))
+        return checks[-1]
+
+    async def _expire_once_sent(awaitable, timeout):
+        if not checks or awaitable is not checks[-1]:
+            return await real_wait_for(awaitable, timeout)
+        expired.append(awaitable)
+        get = asyncio.ensure_future(awaitable)
+        try:
+            await real_wait_for(agent.received.wait(), 30.0)
+        except BaseException:
+            get.cancel()
+            await asyncio.gather(get, return_exceptions=True)
+            raise
+        return await real_wait_for(get, 0)
+
+    monkeypatch.setattr(engine, "check_snmp", _recording_check)
+    monkeypatch.setattr(asyncio, "wait_for", _expire_once_sent)
+    verdict = await engine._snmp_row(
+        port, engine._Deadline(30.0), address="127.0.0.1", community="public", version="2c"
     )
+    assert len(checks) == 1, "the survey did not run its check through check_snmp"
+    assert expired == checks, "the survey's wait_for on its check was not the one intercepted"
     assert agent.received.is_set(), "the request never reached the agent"
-    assert verdict.state == "timeout"
+    assert (verdict.state, verdict.detail) == ("timeout", "survey budget exhausted"), (
+        "the row did not come from the survey's own timeout"
+    )
 
 
 @pytest.mark.asyncio
