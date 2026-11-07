@@ -10,7 +10,7 @@ hazard nobody has named yet is found too.
 
 The case space is every shell, the three lines (handshake, resync, recovery),
 history suppression on and off for the two that carry it, ``set -u`` off and
-on, and every offset ``1..len(line)-1``: 13,384 cases on the dev VM's seven
+on, and every offset ``1..len(line)-1``: 13,664 cases on the dev VM's seven
 shells, each in a fresh shell on a fresh controlling pty, each paying the
 session's one probe interval between tail and resend. At about 0.56 s a case
 (measured over bash's handshake cases at 4 workers) that is about two hours

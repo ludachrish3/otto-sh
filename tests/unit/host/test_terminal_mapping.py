@@ -88,7 +88,7 @@ class TestTheMapping:
         ``echo <READY>``, never by READY at a line start; the output copy is
         the one right before READY.
         """
-        typed = f"2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; echo {R}"
+        typed = f"2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; echo {R}"
         reply = f"user@h:~$ {typed}\r\n\r\nX\r\r\nY\r\nZ\rW\r\n{R}\r\n"
         assert mapping(reply, R) == "onlcr"
 

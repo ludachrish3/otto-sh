@@ -404,8 +404,12 @@ class BashFrame(CommandFrame):
         # wrap puts a carriage return right before the marker. Every statement
         # keeps whole_line_echo's cut rules (#853): each redirection comes
         # before its command, and stdin stays open because `stty` acts on it.
+        # `|| :` keeps a target without `stty` or `printf` on the line under
+        # `set -e`, which would otherwise exit before READY (#953).
         return whole_line_echo(
-            m.ready, READY_SUFFIX, f"{prefix}2>/dev/null stty -echo; echo; {CALIBRATION_COMMAND}; "
+            m.ready,
+            READY_SUFFIX,
+            f"{prefix}2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; ",
         )
 
     @override
@@ -538,9 +542,10 @@ class BashFrame(CommandFrame):
 
     @override
     def restore_interactive(self) -> str | None:
-        # Mirrors the handshake's `2>/dev/null stty -echo`; silent on a pty-less
-        # channel, where there is nothing to restore either.
-        return "2>/dev/null stty echo"
+        # Mirrors the handshake's `2>/dev/null stty -echo || :`; silent on a
+        # pty-less channel, where there is nothing to restore either, and
+        # harmless under `set -e` on a target without `stty` (#953).
+        return "2>/dev/null stty echo || :"
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
