@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.ports import reserved_port
+
 from . import _sshd
 from ._driver import spawn_otto
 from ._target import ChaosTarget, probe
@@ -47,8 +49,8 @@ def test_start_terminates_hung_child_before_raising(
     monkeypatch.setattr(_sshd, "_READY_TIMEOUT", 0.5)
 
     sshd = _sshd.LoopbackSshd(tmp_path / "unused_config", tmp_path / "sshd.log")
-    with pytest.raises(RuntimeError, match="not accepting"):
-        sshd.start(_sshd.free_port())
+    with reserved_port() as port, pytest.raises(RuntimeError, match="never logged listening"):
+        sshd.start(port)
 
     assert sshd._proc is not None
     assert sshd._proc.poll() is not None, "start()'s timeout branch leaked the child process"

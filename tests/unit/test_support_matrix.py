@@ -1556,12 +1556,28 @@ def _run_conformance(
     return selected, read_records(observations)
 
 
+def _not_passed(records: list) -> str:
+    """Every record that did not pass, one per line, with how it failed.
+
+    The inner run is ``-q --tb=no`` with its output captured, so a set
+    comparison over outcomes is the only trace a failing cell leaves in the
+    outer log. Each record already names its cell (in the nodeid) and carries
+    its ``failure_summary``; this puts them in the assertion message so a red
+    run says WHICH cell went red and WHY, rather than only that one did.
+    """
+    return "\n".join(
+        f"{record['nodeid']}: {record['outcome']}: {record.get('failure_summary')}"
+        for record in records
+        if record["outcome"] != PASSED
+    )
+
+
 def test_a_real_run_leaves_one_record_per_cell_it_exercised(tmp_path):
     """The base claim, against a real session: every item, one well-formed record."""
     selected, records = _run_conformance(tmp_path, _EXEC_CONTRACT)
     observations = [r for r in records if r["kind"] == "observation"]
     assert {r["nodeid"] for r in observations} == set(selected)
-    assert {r["outcome"] for r in observations} == {PASSED}
+    assert {r["outcome"] for r in observations} == {PASSED}, _not_passed(observations)
     assert {r["venue"] for r in observations} == {"hermetic"}
     assert {r["surface"] for r in observations} == {"exec-exit-code"}
     assert all(r["contract"] == _EXEC_CONTRACT for r in observations)
@@ -2138,7 +2154,7 @@ def test_a_positive_control_leaves_a_control_record_and_never_an_observation(tmp
         nodeid for nodeid in selected if nodeid.startswith(_EXEC_CONTROL)
     }, "every control item must leave a control record naming the cell it ran on"
     assert {record["surface"] for record in controls} == {"exec-exit-code"}
-    assert {record["outcome"] for record in controls} == {PASSED}
+    assert {record["outcome"] for record in controls} == {PASSED}, _not_passed(records)
     assert all(record["surface"] is not None for record in records), (
         f"a record carries surface: null, which only a non-contract can produce: {records}"
     )

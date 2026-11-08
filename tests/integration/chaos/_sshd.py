@@ -6,15 +6,19 @@ tmp directory owned by the test session. The daemon runs foreground
 dev VM and on ubuntu-latest runners alike, no sudo, no system state.
 """
 
+import contextlib
 import ctypes
+import dataclasses
+import getpass
 import os
 import shutil
 import signal
-import socket
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 from otto.utils import WaitTimeoutError, wait_for
+from tests._fixtures.ports import reserved_port
 
 _SSHD = shutil.which("sshd") or "/usr/sbin/sshd"
 _READY_TIMEOUT = 15.0
@@ -56,13 +60,6 @@ def _die_with_parent() -> None:
         return
     if os.getppid() != parent:
         os._exit(1)
-
-
-def free_port() -> int:
-    """Reserve an ephemeral loopback port (bind/close; sequential suite makes the race moot)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 def generate_keypairs(keys_dir: Path) -> "tuple[Path, Path]":
@@ -109,7 +106,7 @@ LogLevel VERBOSE
 
 
 class LoopbackSshd:
-    """Foreground sshd child; ``start()`` blocks until the port accepts."""
+    """Foreground sshd child; ``start()`` blocks until sshd logs that it listens."""
 
     def __init__(self, config: Path, log_path: Path) -> None:
         self._config = config
@@ -128,21 +125,26 @@ class LoopbackSshd:
         finally:
             log.close()  # sshd holds its own fd now
 
-        def accepting() -> bool:
+        # Readiness is THIS daemon saying it listens on THIS port. A connect
+        # probe is satisfied by whoever holds the port: against a foreign
+        # listener it returned at once and the session then hung in the ssh
+        # handshake (#968, measured past 120s). sshd itself cannot bind a held
+        # port and exits, which the poll below reports with its log.
+        listening = f"Server listening on 127.0.0.1 port {port}."
+
+        def listening_logged() -> bool:
             if self._proc.poll() is not None:
                 raise RuntimeError(
                     f"loopback sshd died at startup (rc={self._proc.returncode}); "
                     f"log:\n{self._log_path.read_text(errors='replace')}"
                 )
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    return True
-            except OSError:
-                return False
+            return listening in self._log_path.read_text(errors="replace")
 
-        never_bound = f"loopback sshd not accepting on 127.0.0.1:{port} after {_READY_TIMEOUT}s"
+        never_bound = (
+            f"loopback sshd never logged listening on 127.0.0.1:{port} after {_READY_TIMEOUT}s"
+        )
         try:
-            wait_for(accepting, _READY_TIMEOUT, interval=0.05, on_timeout=never_bound)
+            wait_for(listening_logged, _READY_TIMEOUT, interval=0.05, on_timeout=never_bound)
         except WaitTimeoutError:
             # Still alive but never bound: tear it down before raising, or a hung child
             # outlives the fixture (conftest's stop() only runs once start() *returns*).
@@ -164,3 +166,38 @@ class LoopbackSshd:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
+
+
+@dataclasses.dataclass(frozen=True)
+class LoopbackEndpoint:
+    """Where a running :func:`loopback_sshd` answers, and the key it lets in."""
+
+    port: int
+    client_key: Path
+
+
+@contextlib.contextmanager
+def loopback_sshd(root: Path) -> Iterator[LoopbackEndpoint]:
+    """Keys, a reserved port, a config and a running sshd under *root*; torn down on exit.
+
+    THE one open/teardown sequence for every loopback sshd in this tree (the
+    chaos lane's target, the hermetic conformance cell, the docker e2e
+    parent). The port stays reserved (:func:`tests._fixtures.ports.reserved_port`)
+    until sshd has stopped, so no other worker can be handed it while this
+    daemon may still hold it.
+    """
+    host_key, client_key = generate_keypairs(root / "keys")
+    with reserved_port() as port:
+        config = write_sshd_config(
+            root / "sshd_config",
+            port=port,
+            host_key=host_key,
+            authorized_keys=root / "keys" / "authorized_keys",
+            user=getpass.getuser(),
+        )
+        sshd = LoopbackSshd(config, root / "sshd.log")
+        sshd.start(port)
+        try:
+            yield LoopbackEndpoint(port=port, client_key=client_key)
+        finally:
+            sshd.stop()

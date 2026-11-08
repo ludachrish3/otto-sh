@@ -40,6 +40,7 @@ from otto.host.daemon import PS_FAILED
 from otto.link import check_live
 from otto.tunnel.check_probes import SWEEP_COMMAND
 from otto.utils import wait_for
+from tests._fixtures.ports import reserved_port
 from tests._fixtures.ps_scans import PS_SCAN_CASES, assert_the_scan_reads_the_argv_whole, run_scan
 from tests.busybox._rows import ROWS, SYSTEM_BUSYBOX, binary_for, run_via_dash, version_tuple
 
@@ -508,23 +509,6 @@ _LISTEN_DEADLINE_S = 10
 _LISTEN_POLL_S = 0.05
 
 
-def _free_port() -> int:
-    """An OS-assigned port, released before the applet is told to bind it.
-
-    Never a hardcoded port. This tier runs under `-n auto`, and two workers
-    sharing a constant collide as `bind: Address in use` on whichever loses --
-    a flake that reads exactly like the parsing regression these rows exist to
-    catch, which is the worst thing a flake can look like. The gap between
-    this close and the applet's bind is a real race and it is the standard
-    one: the kernel will not hand the same ephemeral port to another asker
-    while this socket is open, and the applet claims it microseconds after it
-    is not.
-    """
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
 def _reap(proc: subprocess.Popen) -> None:
     """Leave no applet running, however the block above exited.
 
@@ -707,29 +691,31 @@ def test_the_listener_accepts_dash_l_dash_p_and_exits_on_the_peers_close(release
     binary = binary_for(release)
     received = tmp_path / "received.bin"
     errors = tmp_path / "listener.err"
-    port = _free_port()
-
-    # `stdin=DEVNULL` mirrors the product's `< /dev/null` on the receiving
-    # listener, and stderr goes to a FILE rather than a pipe: the diagnostics
-    # above read it while the process is still running, which a pipe cannot
-    # serve without risking the reader deadlocking against a full buffer.
-    with received.open("wb") as sink, errors.open("wb") as err:
-        proc = subprocess.Popen(
-            [str(binary), "nc", "-l", "-p", str(port)],
-            stdin=subprocess.DEVNULL,
-            stdout=sink,
-            stderr=err,
-        )
-    try:
-        with _connect_to_the_listener(proc, port, errors, release) as client:
-            client.settimeout(_SOCKET_TIMEOUT_S)
-            client.sendall(_PAYLOAD)
-        # The `with` closed the client. Nothing else is done to the applet --
-        # no signal, no timeout, no option -- so whatever happens next is the
-        # applet's own response to the peer going away.
-        rc = _wait_for_exit(proc, release, errors)
-    finally:
-        _reap(proc)
+    # Reserved, not picked-and-released: the applet binds it after this
+    # returns, and a released port is anyone's in that gap (#968; see
+    # `tests/_fixtures/ports.py`). Held until the applet is reaped.
+    with reserved_port() as port:
+        # `stdin=DEVNULL` mirrors the product's `< /dev/null` on the receiving
+        # listener, and stderr goes to a FILE rather than a pipe: the diagnostics
+        # above read it while the process is still running, which a pipe cannot
+        # serve without risking the reader deadlocking against a full buffer.
+        with received.open("wb") as sink, errors.open("wb") as err:
+            proc = subprocess.Popen(
+                [str(binary), "nc", "-l", "-p", str(port)],
+                stdin=subprocess.DEVNULL,
+                stdout=sink,
+                stderr=err,
+            )
+        try:
+            with _connect_to_the_listener(proc, port, errors, release) as client:
+                client.settimeout(_SOCKET_TIMEOUT_S)
+                client.sendall(_PAYLOAD)
+            # The `with` closed the client. Nothing else is done to the applet --
+            # no signal, no timeout, no option -- so whatever happens next is the
+            # applet's own response to the peer going away.
+            rc = _wait_for_exit(proc, release, errors)
+        finally:
+            _reap(proc)
 
     seen = received.read_bytes()
     assert seen == _PAYLOAD, (
