@@ -39,6 +39,7 @@ from otto.monitor.export import build_db_export
 from otto.monitor.server import OBSERVED_AT_HEADER, MonitorServer, _build_app
 from otto.monitor.session import new_frame
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures.ports import reserved_port
 
 _FIXED_NOW = datetime(2030, 6, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
 """A fixed server clock for patching :func:`otto.monitor.event_ops.utc_now`."""
@@ -281,29 +282,15 @@ class TestPortBinding:
     @pytest.mark.asyncio
     async def test_explicit_port_is_used(self):
         """An explicit port should be passed through to uvicorn, not ignored."""
-        # Bind to port 0 first to get a known-free port, then re-bind to it
-        # explicitly. The gap between the probe releasing that port and the
-        # re-bind is a real TOCTOU: anything else on the machine (another
-        # xdist worker's ephemeral bind, most likely) can grab it in
-        # between, so a collision gets a fresh probe + retry instead of
-        # failing the test outright.
-        last_collision: RuntimeError | None = None
-        for _ in range(3):
-            probe = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
-            free_port = await _start_and_stop(probe)
-
-            server = MonitorServer(_empty_collector(), host="127.0.0.1", port=free_port)
-            try:
-                actual = await _start_and_stop(server)
-            except RuntimeError as err:
-                last_collision = err
-                continue
-            assert actual == free_port, (
-                f"Requested port {free_port} but server bound to {actual} — "
-                "is port= being passed to uvicorn.Config?"
-            )
-            return
-        raise AssertionError(f"probe port was re-taken on all 3 attempts: {last_collision}")
+        # Reserved, not probed-and-released: a released port is anyone's
+        # until uvicorn binds it (#968; see `tests/_fixtures/ports.py`).
+        with reserved_port() as port:
+            server = MonitorServer(_empty_collector(), host="127.0.0.1", port=port)
+            actual = await _start_and_stop(server)
+        assert actual == port, (
+            f"Requested port {port} but server bound to {actual} — "
+            "is port= being passed to uvicorn.Config?"
+        )
 
     @pytest.mark.asyncio
     async def test_busy_port_raises_instead_of_system_exit(self):

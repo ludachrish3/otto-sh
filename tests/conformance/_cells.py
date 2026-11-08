@@ -59,7 +59,6 @@ tested by the venue it runs in.
 
 import asyncio
 import contextlib
-import getpass
 import json
 import subprocess
 import tempfile
@@ -77,12 +76,7 @@ from tests.conformance._bed import bed_space
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
 from tests.conformance._vocabulary import POSIX
-from tests.integration.chaos._sshd import (
-    LoopbackSshd,
-    free_port,
-    generate_keypairs,
-    write_sshd_config,
-)
+from tests.integration.chaos._sshd import loopback_sshd
 from tests.integration.chaos._target import make_loopback_target
 
 LOCAL = "local"
@@ -112,6 +106,13 @@ _NEEDS_A_LAB_TRANSFERS = frozenset({"console"})
 # not a discriminator: no assertion reads it, so widening it can only make this
 # more patient.
 _INSTALL_TIMEOUT_S = 60
+
+
+#: The port the RESOLVE-time lab entry names. Resolution only reads menus off
+#: the host it builds and never connects, so any valid port serves; a literal
+#: rather than a reserved one, because reserving a port for a daemon that is
+#: never started would hold a lock for nothing.
+_RESOLVE_TIME_PORT = 22
 
 
 def _servable(term: str, transfer: str) -> bool:
@@ -200,7 +201,9 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
     """
     with tempfile.TemporaryDirectory(prefix="conformance-resolve-") as tmp:
         root = Path(tmp)
-        make_loopback_target(root, port=free_port(), client_key=root / "unused-at-resolve-time")
+        make_loopback_target(
+            root, port=_RESOLVE_TIME_PORT, client_key=root / "unused-at-resolve-time"
+        )
         entry = _loopback_entry(root)
         host = create_host_from_dict(entry_of(entry), element=element_of(entry))
         element = host.element.name
@@ -242,36 +245,25 @@ def _loopback_opener(
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
-        with tempfile.TemporaryDirectory(prefix="conformance-loopback-") as tmp:
+        with (
+            tempfile.TemporaryDirectory(prefix="conformance-loopback-") as tmp,
+            loopback_sshd(Path(tmp)) as endpoint,
+        ):
             root = Path(tmp)
-            host_key, client_key = generate_keypairs(root / "keys")
-            port = free_port()
-            config = write_sshd_config(
-                root / "sshd_config",
-                port=port,
-                host_key=host_key,
-                authorized_keys=root / "keys" / "authorized_keys",
-                user=getpass.getuser(),
-            )
-            sshd = LoopbackSshd(config, root / "sshd.log")
-            sshd.start(port)
-            try:
-                make_loopback_target(root, port=port, client_key=client_key)
-                # `term`/`transfer` are the spec's optional ACTIVE PIN, not a
-                # menu edit: the host still validates them against the menu it
-                # resolved, so a pair this venue drew but the host does not
-                # serve fails here loudly rather than being quietly rewritten
-                # to the menu's first entry. Measured against this very entry
-                # -- `{"term": "telnet"}` raises
-                # `ValueError: term 'telnet' is not in this host's term menu
-                # ['ssh']`, and `{"transfer": "console"}` and
-                # `{"transfer": "nc"}` raise the transfer analogue.
-                flat = _loopback_entry(root)
-                pinned = entry_of(flat) | {"term": term, "transfer": transfer}
-                async with create_host_from_dict(pinned, element=element_of(flat)) as host:
-                    yield host
-            finally:
-                sshd.stop()
+            make_loopback_target(root, port=endpoint.port, client_key=endpoint.client_key)
+            # `term`/`transfer` are the spec's optional ACTIVE PIN, not a
+            # menu edit: the host still validates them against the menu it
+            # resolved, so a pair this venue drew but the host does not
+            # serve fails here loudly rather than being quietly rewritten
+            # to the menu's first entry. Measured against this very entry
+            # -- `{"term": "telnet"}` raises
+            # `ValueError: term 'telnet' is not in this host's term menu
+            # ['ssh']`, and `{"transfer": "console"}` and
+            # `{"transfer": "nc"}` raise the transfer analogue.
+            flat = _loopback_entry(root)
+            pinned = entry_of(flat) | {"term": term, "transfer": transfer}
+            async with create_host_from_dict(pinned, element=element_of(flat)) as host:
+                yield host
 
     return opener
 

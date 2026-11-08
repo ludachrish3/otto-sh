@@ -30,12 +30,7 @@ from otto.host.login_proxy import Cred
 from otto.host.options import SshOptions
 from otto.host.unix_host import UnixHost
 from tests._ambient_env import ambient
-from tests.integration.chaos._sshd import (
-    LoopbackSshd,
-    free_port,
-    generate_keypairs,
-    write_sshd_config,
-)
+from tests.integration.chaos._sshd import loopback_sshd
 
 
 def docker_venue() -> str:
@@ -65,24 +60,13 @@ def bed_parent() -> UnixHost:
 def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
     """Hermetic docker parent: this runner's own daemon via a throwaway sshd.
 
-    Mirrors ``tests/integration/chaos/conftest.py``'s ``chaos_target`` setup
-    (keypairs -> sshd config -> ``LoopbackSshd`` on a free loopback port),
-    but wraps THIS host's docker daemon rather than generating a lab/SUT
+    The same :func:`~tests.integration.chaos._sshd.loopback_sshd` sequence as
+    ``tests/integration/chaos/conftest.py``'s ``chaos_target``, but wraps THIS
+    host's docker daemon rather than generating a lab/SUT
     pair — the caller already has a ``Project``/``Lab`` of its own. Stops the
     sshd on exit no matter what happened inside the ``with`` block.
     """
-    host_key, client_key = generate_keypairs(work_dir / "keys")
-    port = free_port()
-    cfg = write_sshd_config(
-        work_dir / "sshd_config",
-        port=port,
-        host_key=host_key,
-        authorized_keys=work_dir / "keys" / "authorized_keys",
-        user=getpass.getuser(),
-    )
-    sshd = LoopbackSshd(cfg, work_dir / "sshd.log")
-    sshd.start(port)
-    try:
+    with loopback_sshd(work_dir) as endpoint:
         yield UnixHost(
             ip="127.0.0.1",
             element=Element(name="loopback"),
@@ -92,10 +76,8 @@ def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
             term="ssh",
             transfer="sftp",
             docker_capable=True,
-            ssh_options=SshOptions(port=port, client_keys=[str(client_key)]),
+            ssh_options=SshOptions(port=endpoint.port, client_keys=[str(endpoint.client_key)]),
         )
-    finally:
-        sshd.stop()
 
 
 def fresh_project() -> str:
