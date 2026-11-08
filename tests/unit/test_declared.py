@@ -51,8 +51,8 @@ def _host(**attrs):
         ({"os_version": ">=3.7"}, {"os_version": "2.7"}, False),
         ({"os_version": "!=3.7"}, {"os_version": "3.8"}, True),
         # bool / number = equality
-        ({"element.id": 3}, {"element": Element("e", id=3)}, True),
-        ({"element.id": 3}, {"element": Element("e", id=4)}, False),
+        ({"element.id": 3}, {"element": Element(name="e", id=3)}, True),
+        ({"element.id": 3}, {"element": Element(name="e", id=4)}, False),
         # list = any-of, elements typed by the same rules
         ({"os_name": ["Linux", "Zephyr"]}, {"os_name": "Zephyr"}, True),
         ({"os_name": ["Linux", "Zephyr"]}, {"os_name": "VxWorks"}, False),
@@ -78,7 +78,7 @@ def test_value_semantics(match, attrs, expected):
 def test_dotted_metadata_paths():
     host = _host(
         metadata={"hw_version": "rev2", "nested": {"deep": "x"}},
-        element=Element("e", metadata={"site": "lab-a"}),
+        element=Element(name="e", metadata={"site": "lab-a"}),
     )
     assert host_matches({"metadata.hw_version": "rev2"}, host)
     assert host_matches({"metadata.nested.deep": "x"}, host)
@@ -164,7 +164,7 @@ def _element_host(**overrides):
     """
     attrs: dict = {
         "id": "dut-cpu-1",
-        "element": Element("dut", id=7, metadata={"rev": "B", "site": {"row": 3}}),
+        "element": Element(name="dut", id=7, metadata={"rev": "B", "site": {"row": 3}}),
         "metadata": {"tag": "x"},
         "os_type": "unix",
         "os_name": "Linux",
@@ -270,7 +270,7 @@ def _toy_kinds() -> Registry:
 @pytest.fixture
 def kinds():
     table = _toy_kinds()
-    table.register("toy", KindEntry(_toy_factory))
+    table.register(name="toy", entry=KindEntry(_toy_factory))
     return KindBuilder(table)
 
 
@@ -302,7 +302,7 @@ def test_build_stamps_owner_unless_the_factory_already_named_one(kinds):
     def opinionated(entry, host):
         return SimpleNamespace(name=entry.name, owner="handed-over")
 
-    kinds.kinds.register("opinionated", KindEntry(opinionated))
+    kinds.kinds.register(name="opinionated", entry=KindEntry(opinionated))
     built = kinds.build([_entry("a"), _entry("b", kind="opinionated")], _host())
     assert [(b.name, b.owner) for b in built] == [("a", "acme"), ("b", "handed-over")]
 
@@ -392,12 +392,12 @@ def test_a_variant_entry_with_an_unknown_kind_still_fails_every_ingest(kinds):
 def test_the_registry_reads_the_real_variant_when_nothing_patches_it(kinds):
     from otto import context
 
-    token = context.set_variant("field")
+    token = context.set_variant(value="field")
     try:
         entries = [_variant_entry("fw", "field", artifact="field.bin")]
         assert [b.artifact for b in kinds.build(entries, _host())] == ["field.bin"]
     finally:
-        context.reset_variant(token)
+        context.reset_variant(token=token)
 
 
 def test_a_class_entry_is_built_by_the_registrys_class_factory():
@@ -405,8 +405,8 @@ def test_a_class_entry_is_built_by_the_registrys_class_factory():
 
     reg = KindBuilder(
         _toy_kinds(),
-        class_factory=Ref("tests.unit.test_declared:_toy_factory"),
-        class_resolver=Ref("tests.unit.test_declared:_toy_resolver"),
+        class_factory=Ref(target="tests.unit.test_declared:_toy_factory"),
+        class_resolver=Ref(target="tests.unit.test_declared:_toy_resolver"),
     )
     entry = _entry("fw", kind=None, cls="acme.products:Firmware", artifact="x.bin")
     (built,) = reg.build([entry], _host(id="h1"))
@@ -424,8 +424,8 @@ def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_
 
     reg = KindBuilder(
         _toy_kinds(),
-        class_factory=Ref("tests.unit.test_declared:_toy_factory"),
-        class_resolver=Ref("tests.unit.test_declared:_boom_resolver"),
+        class_factory=Ref(target="tests.unit.test_declared:_toy_factory"),
+        class_resolver=Ref(target="tests.unit.test_declared:_boom_resolver"),
     )
     entry = _entry(
         "fw",
@@ -436,7 +436,7 @@ def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_
     )
     entries = [entry]
     if skipped_by == "taken":
-        reg.kinds.register("toy", KindEntry(_toy_factory))
+        reg.kinds.register(name="toy", entry=KindEntry(_toy_factory))
         entries.insert(0, _entry("fw", artifact="first.bin"))
     with _run_under("debug"), pytest.raises(ValueError, match="boom"):
         reg.build(entries, _host(os_version="1.0"))
@@ -449,7 +449,7 @@ def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_
 def test_a_builder_with_only_one_class_hook_is_refused(hooks):
     from otto.registry import Ref
 
-    refs = {k: Ref(f"tests.unit.test_declared:{v}") for k, v in hooks.items()}
+    refs = {k: Ref(target=f"tests.unit.test_declared:{v}") for k, v in hooks.items()}
     with pytest.raises(ValueError, match=r"`class_factory` and `class_resolver`"):
         KindBuilder(_toy_kinds(), **refs)
 

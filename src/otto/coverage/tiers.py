@@ -118,7 +118,7 @@ def load_tiers(cov_config: dict[str, Any], *, root: Path) -> list[TierConfig]:
     return sorted(tiers, key=lambda t: t.precedence)
 
 
-def resolve_get_tier(tiers: list[TierConfig], name: str | None) -> TierConfig:
+def resolve_get_tier(*, tiers: list[TierConfig], name: str | None) -> TierConfig:
     """Resolve the target tier for ``otto cov get``.
 
     ``None`` selects the sole e2e-kind tier; ambiguity or an unknown name

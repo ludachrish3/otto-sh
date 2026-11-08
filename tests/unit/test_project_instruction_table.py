@@ -149,7 +149,7 @@ def test_the_instructions_view_derives_a_data_entry():
     entry = INSTRUCTIONS.get("provision")
     assert entry.project == PROJECT_INSTRUCTIONS.get("provision")
     assert entry.handler is None
-    assert INSTRUCTIONS.project("provision") is None
+    assert INSTRUCTIONS.project(name="provision") is None
 
 
 def test_the_shipped_install_verbs_opt_in_to_the_dry_run_preview():

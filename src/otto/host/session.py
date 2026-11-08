@@ -280,8 +280,8 @@ def refuse_if_line_editor_would_truncate(
     """
     if not isinstance(frame, AshFrame):
         return
-    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
-    longest = max(len(line) for line in frame.frame(cmd, markers).rstrip("\n").split("\n"))
+    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
+    longest = max(len(line) for line in frame.frame(cmd, m=markers).rstrip("\n").split("\n"))
     if longest <= ASH_TYPED_LINE_MAX:
         return
     overhead = framed_line_overhead(frame)
@@ -398,13 +398,13 @@ def framed_line_overhead(frame: "CommandFrame") -> int:
     the marker LENGTH affects the arithmetic.
     """
     probe = "OTTOFRAMEPROBE"
-    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
-    lines = frame.frame(probe, markers).rstrip("\n").split("\n")
+    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
+    lines = frame.frame(probe, m=markers).rstrip("\n").split("\n")
     line = next((line for line in lines if probe in line), None)
     if line is None:
         # A frame that transforms the command beyond recognition: charge the
         # whole empty frame, as before the bash/ash frame split its lines.
-        return len(frame.frame("", markers).rstrip("\n"))
+        return len(frame.frame("", m=markers).rstrip("\n"))
     return len(line) - len(probe)
 
 
@@ -443,6 +443,7 @@ class ShellSession(ABC):
 
     def __init__(
         self,
+        *,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         shell_history: bool = True,
@@ -471,7 +472,7 @@ class ShellSession(ABC):
         # Unique per-session sentinels, handed to the frame for every
         # render/parse call. Aliased as individual attributes too because the
         # session orchestration (and its tests) reference them directly.
-        self._markers = SessionMarkers.for_session(self._session_id)
+        self._markers = SessionMarkers.for_session(session_id=self._session_id)
         self._begin_marker = self._markers.begin
         self._end_marker_prefix = self._markers.end_prefix
         self._ready_marker = self._markers.ready
@@ -548,7 +549,7 @@ class ShellSession(ABC):
         ...
 
     @abstractmethod
-    async def write_transport(self, data: str | SecretStr) -> None:
+    async def write_transport(self, *, data: str | SecretStr) -> None:
         """Write raw text to the transport's stdin.
 
         A hook: a transport implements it, and callers use
@@ -563,7 +564,7 @@ class ShellSession(ABC):
         ...
 
     @abstractmethod
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         """Read the transport until *pattern* matches; return the data, match included.
 
         A hook: a transport implements it, and callers use
@@ -641,7 +642,7 @@ class ShellSession(ABC):
         (:meth:`~otto.host.command_frame.CommandFrame.handshake`), after the
         anchor that has to open it.
         """
-        return self._frame.handshake(m, history_prefix(self._frame, self._shell_history))
+        return self._frame.handshake(m, prefix=history_prefix(self._frame, self._shell_history))
 
     async def _ensure_initialized(self) -> None:
         """Open the transport, then run the dialect handshake. Idempotent.
@@ -727,13 +728,13 @@ class ShellSession(ABC):
 
         async def _expect(pat: re.Pattern[str], t: float) -> str:
             nonlocal reply
-            reply = await asyncio.wait_for(self.read_transport_until(pat), t)
+            reply = await asyncio.wait_for(self.read_transport_until(pattern=pat), t)
             return reply
 
         confirmed = False
         with suppress(asyncio.IncompleteReadError):
             confirmed = await confirm_live(
-                self.write_transport,
+                lambda data: self.write_transport(data=data),
                 _expect,
                 self._handshake_payload,
                 lambda m: ready_pattern(m, line_ending=measures),
@@ -782,7 +783,7 @@ class ShellSession(ABC):
                 f"command output is left as it arrived"
             )
 
-    async def enter_frame(self, frame: CommandFrame, *, timeout: float | None = None) -> None:
+    async def enter_frame(self, *, frame: CommandFrame, timeout: float | None = None) -> None:
         """Switch this session to *frame* and run that frame's handshake.
 
         The whole of "invoking the CommandFrame" after a session-setup hook
@@ -814,7 +815,7 @@ class ShellSession(ABC):
                 f"or the hook already lost the shell"
             )
         self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
-        self._markers = SessionMarkers.for_session(self._session_id)
+        self._markers = SessionMarkers.for_session(session_id=self._session_id)
         self._begin_marker = self._markers.begin
         self._end_marker_prefix = self._markers.end_prefix
         self._ready_marker = self._markers.ready
@@ -905,7 +906,7 @@ class ShellSession(ABC):
         await self._ensure_ready()
         self._require_alive()
         try:
-            await self.write_transport(text)
+            await self.write_transport(data=text)
         except asyncio.CancelledError:
             self._needs_recovery = True
             raise
@@ -913,6 +914,7 @@ class ShellSession(ABC):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for a pattern in the output stream.
@@ -926,7 +928,7 @@ class ShellSession(ABC):
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
         try:
             return await asyncio.wait_for(
-                self.read_transport_until(compiled),
+                self.read_transport_until(pattern=compiled),
                 timeout=timeout,
             )
         except tuple(self._connection_lost_errors()):
@@ -947,6 +949,7 @@ class ShellSession(ABC):
 
     async def run_cmd(
         self,
+        *,
         cmd: str,
         expects: list[Expect | CredentialExpect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
@@ -1099,7 +1102,7 @@ class ShellSession(ABC):
         # Write the framed command. The framing — BEGIN/END sentinels and how
         # the exit code is captured — is supplied by the session's CommandFrame
         # so that a target can diverge from the bash form (see ZephyrFrame).
-        framed = self._frame.frame(cmd, self._markers)
+        framed = self._frame.frame(cmd, m=self._markers)
         # Truncate for the log so a multi-line script doesn't dominate the
         # output. The frame seam is the natural call site to instrument once —
         # every dialect then gets the visibility for free.
@@ -1117,7 +1120,7 @@ class ShellSession(ABC):
             logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         self._write_progress = write_progress
         try:
-            await self.write_transport(framed)
+            await self.write_transport(data=framed)
         finally:
             self._write_progress = None
 
@@ -1131,7 +1134,7 @@ class ShellSession(ABC):
         seen_begin = False
         answered: set[int] = set()
         while True:
-            data = await self.read_transport_until(combined)
+            data = await self.read_transport_until(pattern=combined)
             buffer += data
 
             # Check if the end sentinel was matched
@@ -1151,7 +1154,7 @@ class ShellSession(ABC):
             # shell echoes the wrapped command (which embeds the marker
             # inside quotes on the same line).
             began_before = seen_begin
-            if not seen_begin and self._frame.marks_begin(data, self._markers):
+            if not seen_begin and self._frame.marks_begin(data, m=self._markers):
                 if not redact:
                     logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
                 seen_begin = True
@@ -1171,8 +1174,8 @@ class ShellSession(ABC):
             # arrived with a CR the terminal added in front of it, so this is
             # the exact inverse, and a CR the program wrote stays.
             buffer = buffer.replace("\r\n", "\n")
-        output = self._frame.parse_output(buffer, cmd, self._markers)
-        retcode = self._frame.extract_retcode(buffer, self._markers)
+        output = self._frame.parse_output(buffer, cmd=cmd, m=self._markers)
+        retcode = self._frame.extract_retcode(buffer, m=self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
         # Buffered frames (raw stream not clean line-by-line) emit the parsed
         # output once here — identical to the returned CommandResult.value, so
@@ -1237,7 +1240,7 @@ class ShellSession(ABC):
                         raise _CredentialRefusedError(expect)
                     continue  # answered once already: this match is output
                 answered.add(i)
-            await self.write_transport(response)
+            await self.write_transport(data=response)
             if not redact:
                 logger.debug(
                     f"{self._log_tag}: expect matched "
@@ -1301,7 +1304,7 @@ class ShellSession(ABC):
 
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
         try:
-            await self.write_transport("\x03")
+            await self.write_transport(data="\x03")
         except tuple(self._connection_lost_errors()):
             # This entry write is its OWN choke point, upstream of
             # _confirm_recovered's: a dead-but-idle channel (e.g. a docker
@@ -1352,12 +1355,12 @@ class ShellSession(ABC):
 
         async def _expect(pat: re.Pattern[str], t: float) -> str:
             nonlocal captured
-            captured = await asyncio.wait_for(self.read_transport_until(pat), t)
+            captured = await asyncio.wait_for(self.read_transport_until(pattern=pat), t)
             return captured
 
         try:
             confirmed = await confirm_live(
-                self.write_transport,
+                lambda data: self.write_transport(data=data),
                 _expect,
                 self._frame.recover,
                 self._frame.recover_pattern,
@@ -1454,12 +1457,12 @@ class SshSession(ShellSession):
             )
 
     @override
-    async def write_transport(self, data: str | SecretStr) -> None:
+    async def write_transport(self, *, data: str | SecretStr) -> None:
         assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before write_transport()
         self._process.stdin.write(reveal(data))
 
     @override
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before read_transport_until()
         return await self._process.stdout.readuntil(pattern, _MAX_SEPARATOR_LEN)
 
@@ -1549,7 +1552,7 @@ class TelnetSession(ShellSession):
         pass
 
     @override
-    async def write_transport(self, data: str | SecretStr) -> None:
+    async def write_transport(self, *, data: str | SecretStr) -> None:
         # Line ends are TELNET_EOL (CR alone); see its docstring for why.
         if isinstance(data, SecretStr):
             # A password is one short line: never chunked, and unwrapped only
@@ -1573,7 +1576,7 @@ class TelnetSession(ShellSession):
                 self._write_progress(total, total)
 
     @override
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
         # Bound once, and both reads run inside the gate: a read admitted
@@ -1709,14 +1712,14 @@ class LocalSession(ShellSession):
         self._pid = self._process.pid
 
     @override
-    async def write_transport(self, data: str | SecretStr) -> None:
+    async def write_transport(self, *, data: str | SecretStr) -> None:
         assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
         assert self._process.stdin is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
         self._process.stdin.write(reveal(data).encode())
         await self._process.stdin.drain()
 
     @override
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
         assert self._process.stdout is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
         buf = ""
@@ -1997,7 +2000,7 @@ class HostSession:
         """
         refuse_declined_elevation(verb, user, self._host_id, self._log_command)
 
-    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
+    async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
 
         Posix-only — raises ``NotImplementedError`` on
@@ -2029,7 +2032,7 @@ class HostSession:
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
+        self, *, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AsyncGenerator[HostSession, None]":
         """Run a block as *user* on this session, restoring the prior user on exit.
 
@@ -2098,6 +2101,7 @@ class HostSession:
     async def run(
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        *,
         expects: Expect | list[Expect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
@@ -2158,7 +2162,7 @@ class HostSession:
             pc = _prepared(_resolve_command(cmds, default_expects, timeout, log))
             # _resolve_command collapsed the None sentinel into a concrete float.
             result = await _run_pc(pc, pc.timeout if pc.timeout is not None else timeout)
-            return Results.collect([result])
+            return Results.collect(items=[result])
 
         prepared = [_prepared(_resolve_command(c, default_expects, None, log)) for c in cmds]
         return await _run_cmds_with_budget(_run_pc, prepared, timeout)
@@ -2179,11 +2183,11 @@ class HostSession:
         no route reaches the session's ``run_cmd`` under one.
         """
         if is_dry_run():
-            return self._decline_command(ShellCommand(cmd, timeout=timeout, log=log))
+            return self._decline_command(ShellCommand(cmd=cmd, timeout=timeout, log=log))
         if log is not LogMode.NEVER:
             self._log_command(cmd, log)
         return await self._session.run_cmd(
-            cmd,
+            cmd=cmd,
             expects=expects,
             timeout=timeout,
             on_output=_sink_for(self._log_output, log),
@@ -2240,10 +2244,13 @@ class HostSession:
         default_expects = _normalize_expects(expects)
         items = [cmds] if isinstance(cmds, (str, ShellCommand)) else list(cmds)
         return Results.collect(
-            [self._decline_command(_resolve_command(c, default_expects, None, log)) for c in items]
+            items=[
+                self._decline_command(_resolve_command(c, default_expects, None, log))
+                for c in items
+            ]
         )
 
-    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin.
 
         See :meth:`~otto.host.host.BaseHost.send`. Under a dry run the
@@ -2266,6 +2273,7 @@ class HostSession:
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for a pattern in this session's output. See :meth:`~otto.host.host.BaseHost.expect`.
@@ -2280,11 +2288,11 @@ class HostSession:
         timeout = _validate_timeout(timeout)
         if is_dry_run():
             refuse_declined_match(pattern, self._host_id, self._log_command)
-        result = await self._session.expect(pattern, timeout)
+        result = await self._session.expect(pattern, timeout=timeout)
         self._log_output(result, LogMode.NORMAL)
         return result
 
-    async def enter_frame(self, timeout: float | None = None) -> None:
+    async def enter_frame(self, *, timeout: float | None = None) -> None:
         """Enter the host's ``command_frame`` now, from inside a session-setup hook.
 
         Optional: a hook that returns without calling it has frame entry
@@ -2298,7 +2306,7 @@ class HostSession:
                 "enter_frame() is only available on the session handle a "
                 "session_setup hook receives"
             )
-        await self._session.enter_frame(self._target_frame, timeout=timeout)
+        await self._session.enter_frame(frame=self._target_frame, timeout=timeout)
 
     async def console_login(self) -> None:
         """Run the console login sequence, for a raw-landing hook that just drove a boot menu.
@@ -2381,15 +2389,15 @@ class _NoTransport(ShellSession):
 
     @override
     async def open_transport(self) -> None:
-        raise CommandNotRunError("open a shell session", self._host_id)
+        raise CommandNotRunError("open a shell session", host=self._host_id)
 
     @override
-    async def write_transport(self, data: str | SecretStr) -> None:
-        raise CommandNotRunError(shown(data), self._host_id)
+    async def write_transport(self, *, data: str | SecretStr) -> None:
+        raise CommandNotRunError(shown(data), host=self._host_id)
 
     @override
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
-        raise CommandNotRunError(f"read until {pattern.pattern!r}", self._host_id)
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
+        raise CommandNotRunError(f"read until {pattern.pattern!r}", host=self._host_id)
 
     @override
     async def close(self) -> None:
@@ -2490,6 +2498,7 @@ class DeclinedSession(HostSession):
     async def run(
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        *,
         expects: "Expect | list[Expect] | None" = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
@@ -2498,7 +2507,7 @@ class DeclinedSession(HostSession):
         return self._declined_results(cmds, expects, timeout, log)
 
     @override
-    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Announce the text and write nothing."""
         self._log_command(f"[DRY RUN] send({text!r})", log)
 
@@ -2506,6 +2515,7 @@ class DeclinedSession(HostSession):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Announce the wait and refuse to invent its match.
@@ -2520,7 +2530,7 @@ class DeclinedSession(HostSession):
         refuse_declined_match(pattern, self._host_id, self._log_command)
 
     @override
-    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
+    async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """Announce the elevation and refuse to claim it happened.
 
         The dry-run stand-in for :meth:`HostSession.switch_user`; its scoped
@@ -2535,7 +2545,7 @@ class DeclinedSession(HostSession):
     @asynccontextmanager
     @override
     async def as_user(
-        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
+        self, *, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AsyncGenerator[HostSession, None]":
         """Announce the elevation and refuse to claim it happened.
 
@@ -2583,9 +2593,9 @@ class _SessionProxyIO:
         await self._session.send(text)
 
     async def expect(
-        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+        self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
-        out = await self._session.expect(pattern, timeout)
+        out = await self._session.expect(pattern, timeout=timeout)
         self._log_output(out, LogMode.NORMAL)
         return out
 
@@ -2868,7 +2878,7 @@ class SessionManager:
         """
         return resolve_init_timeout(self._init_timeout, self._default_init_timeout)
 
-    def open_budget(self, term: str | None = None) -> float:
+    def open_budget(self, *, term: str | None = None) -> float:
         """Seconds opening the default session can take to report a shell that never became ready.
 
         Two attempts when ``_ensure_session`` retries a failed handshake on a
@@ -2893,9 +2903,9 @@ class SessionManager:
         default = ShellSession._init_timeout  # noqa: SLF001 — the class default every session without an override uses
         deadline = default if resolved is None else resolved
         conns = self._connections
-        connect = 0.0 if conns is None else conns.connect_allowance(term)
-        release = 0.0 if conns is None else conns.release_allowance(term)
-        retried = conns is None or conns.retries_failed_open(term)
+        connect = 0.0 if conns is None else conns.connect_allowance(term=term)
+        release = 0.0 if conns is None else conns.release_allowance(term=term)
+        retried = conns is None or conns.retries_failed_open(term=term)
         attempt = connect + deadline + release
         return 2 * attempt + self._retry_backoff if retried else attempt
 
@@ -3341,6 +3351,7 @@ class SessionManager:
 
     async def run_cmd(
         self,
+        *,
         cmd: str,
         expects: list[Expect | CredentialExpect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
@@ -3380,7 +3391,7 @@ class SessionManager:
             self._log_command(cmd, mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         return await self._session.run_cmd(
-            cmd,
+            cmd=cmd,
             expects=expects,
             timeout=timeout,
             on_output=_sink_for(self._log_output, mode),
@@ -3390,10 +3401,10 @@ class SessionManager:
 
     async def exec(
         self,
+        *,
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
-        *,
         expects: "list[Expect | CredentialExpect] | None" = None,
         user: str | None = None,
         needs_shell: bool = False,
@@ -3462,7 +3473,7 @@ class SessionManager:
                 )
             case _ExecRoute.SSH_CHANNEL:
                 ssh_conn = await self._connections.ssh()
-                return await self.exec_on(ssh_conn, cmd, timeout=timeout, log=log)
+                return await self.exec_on(conn=ssh_conn, cmd=cmd, timeout=timeout, log=log)
             case _:
                 raise ValueError(
                     f'{self._name}: unsupported terminal type "{self._connections.term}"'
@@ -3470,6 +3481,7 @@ class SessionManager:
 
     async def exec_on(
         self,
+        *,
         conn: "SSHClientConnection",
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
@@ -3618,7 +3630,7 @@ class SessionManager:
                 f"session as {current!r}, so it cannot run as {user!r} here — "
                 f"switch the session first (host.exec(user=...) does)"
             )
-        return await self.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
+        return await self.run_cmd(cmd=cmd, expects=expects, timeout=timeout, log=log)
 
     async def _exec_pooled(
         self,
@@ -3665,7 +3677,7 @@ class SessionManager:
                 return await session._run_one(cmd, expects=expects, timeout=timeout, log=log)  # noqa: SLF001 — the manager's own pooled session, on its internal entry
             result: CommandResult | None = None
             try:
-                async with session.as_user(user):
+                async with session.as_user(user=user):
                     switched_ok = True
                     result = await session._run_one(  # noqa: SLF001 — as above
                         cmd, expects=expects, timeout=timeout, log=log
@@ -3802,9 +3814,9 @@ class SessionManager:
             if session.alive:
                 return session
         self._exec_pool_count += 1
-        return await self.open_session(f"__exec_pool_{self._exec_pool_count}__")
+        return await self.open_session(name=f"__exec_pool_{self._exec_pool_count}__")
 
-    async def open_session(self, name: str) -> "HostSession":
+    async def open_session(self, *, name: str) -> "HostSession":
         """Open or reuse a named persistent shell session.
 
         Serialized via a per-name lock with a double-checked-locking
@@ -3898,7 +3910,7 @@ class SessionManager:
             self._named_sessions[name] = host_session
             return host_session
 
-    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
         mode = log
@@ -3910,12 +3922,13 @@ class SessionManager:
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for *pattern* in the default session's output, creating the session if needed."""
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        result = await self._session.expect(pattern, timeout)
+        result = await self._session.expect(pattern, timeout=timeout)
         self._log_output(result, LogMode.NORMAL)
         return result
 

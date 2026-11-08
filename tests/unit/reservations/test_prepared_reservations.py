@@ -23,13 +23,15 @@ class _Backend:
     def backend_name(self) -> str:
         return "spy"
 
-    def fetch_reservations(self, username, start, end):
+    def fetch_reservations(self, username, *, start, end):
         return []
 
 
 def test_url_reaches_a_custom_backend_through_the_env(tmp_path):
     register_reservation_backend("spy", config=_Cfg, factory=lambda c: _Backend(c.env))
-    backend = build_backend({"backend": "spy", "url": "http://x"}, tmp_path, username="me")
+    backend = build_backend(
+        settings={"backend": "spy", "url": "http://x"}, project_root=tmp_path, username="me"
+    )
     assert (backend.env.url, backend.env.username, backend.env.project_root) == (
         "http://x",
         "me",
@@ -38,7 +40,9 @@ def test_url_reaches_a_custom_backend_through_the_env(tmp_path):
 
 
 def test_an_absent_table_selects_none(tmp_path):
-    assert type(build_backend({}, tmp_path)).__name__ == "NullReservationBackend"
+    assert (
+        type(build_backend(settings={}, project_root=tmp_path)).__name__ == "NullReservationBackend"
+    )
 
 
 def test_skip_check_prepares_and_builds_nothing_and_a_status_report_reuses_one_preparation(
@@ -57,7 +61,7 @@ def test_skip_check_prepares_and_builds_nothing_and_a_status_report_reuses_one_p
         "spy", config=Counted, factory=lambda c: builds.append(1) or _Backend(c.env)
     )
     gate = gate_from_settings(
-        {"backend": "spy"}, tmp_path, holder="me", skip_reservation_check=True
+        {"backend": "spy"}, project_root=tmp_path, holder="me", skip_reservation_check=True
     )
     assert (parses, builds, gate.backend) == ([], [], None)
     gate.backend_factory()
@@ -68,9 +72,9 @@ def test_skip_check_prepares_and_builds_nothing_and_a_status_report_reuses_one_p
 def test_a_backend_missing_fetch_reservations_is_a_result_error(tmp_path):
     register_reservation_backend("bad", config=_Cfg, factory=lambda c: object())
     with pytest.raises(ReservationConstructionError, match="result"):
-        build_backend({"backend": "bad"}, tmp_path)
+        build_backend(settings={"backend": "bad"}, project_root=tmp_path)
 
 
 def test_an_unknown_backend_lists_names(tmp_path):
     with pytest.raises(ReservationConstructionError, match=r"lookup.*json"):
-        build_backend({"backend": "jsno"}, tmp_path)
+        build_backend(settings={"backend": "jsno"}, project_root=tmp_path)

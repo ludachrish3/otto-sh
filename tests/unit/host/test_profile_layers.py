@@ -38,21 +38,26 @@ SRC = CHECKOUT_ROOT / "src" / "otto"
 
 def _data(**profiles: OsProfile) -> ProfileContext:
     return ProfileContext(
-        profiles=FrozenMap(profiles), owners=FrozenMap(dict.fromkeys(profiles, "proj-a"))
+        profiles=FrozenMap(mapping=profiles),
+        owners=FrozenMap(mapping=dict.fromkeys(profiles, "proj-a")),
     )
 
 
 def test_a_data_table_named_unix_replaces_the_whole_class_profile():
-    data = _data(unix=OsProfile("unix", "unix", ProfileFields(FrozenMap({"has_bash": False}))))
-    got = resolve_os_profile("unix", data=data)
+    data = _data(
+        unix=OsProfile(
+            "unix", "unix", ProfileFields(defaults=FrozenMap(mapping={"has_bash": False}))
+        )
+    )
+    got = resolve_os_profile(name="unix", data=data)
     assert got.fields.login_prompt is None
     assert dict(got.fields.defaults) == {"has_bash": False}
 
 
 def test_a_code_profile_beats_data_regardless_of_order():
     data = _data(mine=OsProfile("mine", "unix"))
-    register_os_profile("mine", "unix", {"has_bash": True})
-    assert dict(resolve_os_profile("mine", data=data).fields.defaults) == {"has_bash": True}
+    register_os_profile("mine", "unix", defaults={"has_bash": True})
+    assert dict(resolve_os_profile(name="mine", data=data).fields.defaults) == {"has_bash": True}
 
 
 def test_registering_a_host_class_writes_no_profile():
@@ -61,17 +66,21 @@ def test_registering_a_host_class_writes_no_profile():
 
     register_host_class("mine-cls", Mine)
     assert "mine-cls" not in OS_PROFILES
-    assert resolve_os_profile("mine-cls", data=ProfileContext.empty()).base == "mine-cls"
+    assert resolve_os_profile(name="mine-cls", data=ProfileContext.empty()).base == "mine-cls"
 
 
 def test_a_data_table_named_after_a_class_registered_later_still_wins():
-    data = _data(late=OsProfile("late", "unix", ProfileFields(FrozenMap({"has_bash": False}))))
+    data = _data(
+        late=OsProfile(
+            "late", "unix", ProfileFields(defaults=FrozenMap(mapping={"has_bash": False}))
+        )
+    )
 
     class Late(UnixHost):
         pass
 
     register_host_class("late", Late)
-    assert dict(resolve_os_profile("late", data=data).fields.defaults) == {"has_bash": False}
+    assert dict(resolve_os_profile(name="late", data=data).fields.defaults) == {"has_bash": False}
 
 
 def test_re_registering_a_host_class_or_profile_needs_overwrite():
@@ -95,9 +104,9 @@ def test_shadowing_a_built_in_needs_no_overwrite_and_warns(caplog):
 
 def test_a_data_only_name_resolves_only_through_its_context():
     data = _data(dataonly=OsProfile("dataonly", "unix"))
-    assert build_os_profile("dataonly", data=data).base == "unix"
+    assert build_os_profile(name="dataonly", data=data).base == "unix"
     with pytest.raises(ValueError, match="dataonly"):
-        build_os_profile("dataonly")  # no data= → code, class and built-in layers only
+        build_os_profile(name="dataonly")  # no data= → code, class and built-in layers only
     assert "dataonly" not in registered_profile_names()
     assert "dataonly" in registered_profile_names(data=data)
 
@@ -120,7 +129,7 @@ def test_check_data_profiles_names_the_project_and_table_for_an_unknown_base(tmp
     with pytest.raises(
         ValueError, match=r"\[os_profiles\.broken\] in project 'proj-a': .*base must"
     ):
-        check_data_profiles([project])
+        check_data_profiles(projects=[project])
 
 
 def test_check_data_profiles_names_the_project_and_table_for_an_unknown_defaults_key(tmp_path):
@@ -128,14 +137,14 @@ def test_check_data_profiles_names_the_project_and_table_for_an_unknown_defaults
     with pytest.raises(
         ValueError, match=r"\[os_profiles\.broken\] in project 'proj-a': .*unknown default field"
     ):
-        check_data_profiles([project])
+        check_data_profiles(projects=[project])
 
 
 def test_check_data_profiles_twice_is_idempotent(tmp_path):
     project = _project(tmp_path, "proj-a", '[os_profiles.fine]\nbase = "unix"\nhas_bash = false\n')
     revisions = (HOST_CLASSES.revision, OS_PROFILES.revision)
-    check_data_profiles([project])
-    check_data_profiles([project])
+    check_data_profiles(projects=[project])
+    check_data_profiles(projects=[project])
     assert (HOST_CLASSES.revision, OS_PROFILES.revision) == revisions
     assert "fine" not in OS_PROFILES
 
@@ -150,25 +159,29 @@ def test_a_data_profile_over_a_custom_host_class_resolves(tmp_path):
         pass
 
     register_host_class("custom-late", CustomLate)  # the init import
-    check_data_profiles([project])
-    profile = resolve_os_profile("mine-v1", data=ProfileContext.from_projects([project]))
+    check_data_profiles(projects=[project])
+    profile = resolve_os_profile(
+        name="mine-v1", data=ProfileContext.from_projects(projects=[project])
+    )
     assert profile.base == "custom-late"
     assert dict(profile.fields.defaults) == {"has_bash": False}
 
 
 def test_the_resolver_checks_a_data_profile_it_selects():
-    data = _data(bad=OsProfile("bad", "unix", ProfileFields(FrozenMap({"osTyp": "unix"}))))
+    data = _data(
+        bad=OsProfile("bad", "unix", ProfileFields(defaults=FrozenMap(mapping={"osTyp": "unix"})))
+    )
     with pytest.raises(ValueError, match=r"\[os_profiles\.bad\] in project 'proj-a'"):
-        resolve_os_profile("bad", data=data)
+        resolve_os_profile(name="bad", data=data)
 
 
 def test_the_later_project_wins_a_same_named_table(tmp_path):
     a = _project(tmp_path, "proj-a", '[os_profiles.x]\nbase = "unix"\nhas_bash = true\n')
     b = _project(tmp_path, "proj-b", '[os_profiles.x]\nbase = "unix"\nhas_bash = false\n')
-    context = ProfileContext.from_projects([a, b])
+    context = ProfileContext.from_projects(projects=[a, b])
     assert dict(context.profiles["x"].fields.defaults) == {"has_bash": False}
     assert context.owners["x"] == "proj-b"
-    assert dict(ProfileContext.from_projects([b, a]).profiles["x"].fields.defaults) == {
+    assert dict(ProfileContext.from_projects(projects=[b, a]).profiles["x"].fields.defaults) == {
         "has_bash": True
     }
 
@@ -177,12 +190,12 @@ _DIGEST_CONTEXT = (
     "from otto.host.os_profile import OsProfile, ProfileContext, ProfileFields\n"
     "from otto.registry import FrozenMap\n"
     "defaults = {'has_bash': False, 'valid_transfers': ['scp']}\n"
-    "fields = ProfileFields(FrozenMap.freeze_json(defaults))\n"
+    "fields = ProfileFields(defaults=FrozenMap.freeze_json(value=defaults))\n"
     "context = ProfileContext(\n"
-    "    profiles=FrozenMap(\n"
+    "    profiles=FrozenMap(mapping=\n"
     "        {'x': OsProfile('x', 'unix', fields), 'a': OsProfile('a', 'embedded')}\n"
     "    ),\n"
-    "    owners=FrozenMap({'x': 'proj-a', 'a': 'proj-b'}),\n"
+    "    owners=FrozenMap(mapping={'x': 'proj-a', 'a': 'proj-b'}),\n"
     ")\n"
     "def no_key():\n"
     "    raise AssertionError('a digest without a secret never asks for the key')\n"
@@ -211,7 +224,9 @@ _PINNED_DIGEST = "f1df610d12730d108bcf950163aa95e91051a4cdfbc373ebf38d426385d215
 
 # --- console prompts follow the profile the host was built from ---------------
 
-_DATA_UNIX = OsProfile("unix", "unix", ProfileFields(FrozenMap({"has_bash": True})))
+_DATA_UNIX = OsProfile(
+    "unix", "unix", ProfileFields(defaults=FrozenMap(mapping={"has_bash": True}))
+)
 
 
 def _built_under_data_unix() -> UnixHost:
@@ -222,7 +237,7 @@ def _built_under_data_unix() -> UnixHost:
             "valid_terms": ["ssh", "telnet", "console"],
             "console_options": {"server": "cs1", "port": 7001},
         },
-        element=Element("ne"),
+        element=Element(name="ne"),
         profiles=_data(unix=_DATA_UNIX),
     )
     assert isinstance(host, UnixHost)
@@ -242,13 +257,13 @@ def test_a_rebuilt_unix_host_keeps_its_data_profile_prompts():
 
 
 def test_a_directly_constructed_unix_host_gets_class_prompts():
-    host = UnixHost(ip="10.0.0.6", creds=[], element=Element("ne"))
+    host = UnixHost(ip="10.0.0.6", creds=[], element=Element(name="ne"))
     assert _prompts(host) == (UNIX_LOGIN_PROMPT, UNIX_PASSWORD_PROMPT)
 
 
 def test_the_construction_profile_does_not_leak_to_the_next_host():
     _built_under_data_unix()
-    host = UnixHost(ip="10.0.0.6", creds=[], element=Element("ne"))
+    host = UnixHost(ip="10.0.0.6", creds=[], element=Element(name="ne"))
     assert _prompts(host) == (UNIX_LOGIN_PROMPT, UNIX_PASSWORD_PROMPT)
 
 
@@ -257,7 +272,7 @@ def test_a_host_of_another_os_type_built_inside_a_construction_resolves_its_own(
     from otto.host.os_profile import constructing_with
 
     with constructing_with("outer-os", ProfileFields()):
-        host = UnixHost(ip="10.0.0.7", creds=[], element=Element("ne"))
+        host = UnixHost(ip="10.0.0.7", creds=[], element=Element(name="ne"))
     assert _prompts(host) == (UNIX_LOGIN_PROMPT, UNIX_PASSWORD_PROMPT)
 
 

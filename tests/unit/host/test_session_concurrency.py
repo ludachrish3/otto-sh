@@ -311,7 +311,7 @@ class _SwallowOneCommandFakeSession(_StabilityFakeSession):
         if self.swallow_next_command and self._begin_marker in data:
             self.swallow_next_command = False
             return  # the reply the caller is waiting for never comes
-        await super().write_transport(data)
+        await super().write_transport(data=data)
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_recovery_after_a_timed_out_command_confirms_against_the_fake() ->
     await session._ensure_initialized()
     session.swallow_next_command = True
 
-    result = await session.run_cmd("echo", timeout=0.01)
+    result = await session.run_cmd(cmd="echo", timeout=0.01)
 
     assert result.timed_out, "the swallowed command should have hit its budget"
     assert session.alive, (
@@ -390,7 +390,7 @@ async def test_exec_pool_connects_concurrently() -> None:
 
     N = 10  # noqa: N806 — single-letter math dimension
 
-    results = await asyncio.gather(*(mgr.exec(f"echo {i}") for i in range(N)))
+    results = await asyncio.gather(*(mgr.exec(cmd=f"echo {i}") for i in range(N)))
 
     assert all(r.status.is_ok for r in results), "some execs returned non-ok status"
     # A peak of N already implies at least N sessions existed (one open_transport()
@@ -419,7 +419,7 @@ async def test_exec_pool_high_fanout() -> None:
     mgr = _make_mgr(factory)
 
     N = 200  # noqa: N806 — single-letter math dimension
-    results = await _gather_settled(*(mgr.exec(f"echo {i}") for i in range(N)))
+    results = await _gather_settled(*(mgr.exec(cmd=f"echo {i}") for i in range(N)))
 
     exceptions = [r for r in results if isinstance(r, Exception)]
     assert not exceptions, f"{len(exceptions)} exec() calls raised; first: {exceptions[0]!r}"
@@ -452,7 +452,7 @@ async def test_named_session_alive_check_race() -> None:
     mgr = _make_mgr(factory)
 
     # Open + warm so the alive guard becomes meaningful.
-    handle = await mgr.open_session("router1")
+    handle = await mgr.open_session(name="router1")
     await handle.run("echo init")
     assert handle.alive
 
@@ -461,7 +461,7 @@ async def test_named_session_alive_check_race() -> None:
 
     # Fan-out: 30 concurrent open_session calls on the same name.
     sessions = await asyncio.gather(
-        *(mgr.open_session("router1") for _ in range(30)),
+        *(mgr.open_session(name="router1") for _ in range(30)),
     )
 
     # All callers should resolve to a single underlying ShellSession.
@@ -504,7 +504,7 @@ async def test_ensure_default_session_recreation_race() -> None:
     mgr = _make_mgr(factory)
 
     # Create + warm the default session.
-    await mgr.run_cmd("echo init", timeout=5.0)
+    await mgr.run_cmd(cmd="echo init", timeout=5.0)
     assert factory.created_count == 1
     initial = mgr._session
     assert initial is not None
@@ -512,7 +512,7 @@ async def test_ensure_default_session_recreation_race() -> None:
     initial._alive = False
 
     M = 50  # noqa: N806 — single-letter math dimension
-    results = await _gather_settled(*(mgr.run_cmd(f"echo {i}", timeout=5.0) for i in range(M)))
+    results = await _gather_settled(*(mgr.run_cmd(cmd=f"echo {i}", timeout=5.0) for i in range(M)))
 
     exceptions = [r for r in results if isinstance(r, Exception)]
     assert not exceptions, f"{len(exceptions)} run_cmd calls raised; first: {exceptions[0]!r}"
@@ -581,11 +581,11 @@ async def _exec_ops(ops: list[str]) -> None:
     try:
         for op in ops:
             if op == "open_a":
-                await mgr.open_session("A")
+                await mgr.open_session(name="A")
             elif op == "open_b":
-                await mgr.open_session("B")
+                await mgr.open_session(name="B")
             elif op == "exec":
-                await mgr.exec("echo")
+                await mgr.exec(cmd="echo")
             elif op == "run_default":
                 # No finite budget: the fakes answer in memory, so any wall
                 # clock here is a stimulus this test never wanted. A 5.0 s
@@ -593,7 +593,7 @@ async def _exec_ops(ops: list[str]) -> None:
                 # the module docstring on issue #359. The runaway guard for
                 # this test is its ``@pytest.mark.timeout``, which is the only
                 # bound in this module allowed to discriminate nothing.
-                await mgr.run_cmd("echo", timeout=math.inf)
+                await mgr.run_cmd(cmd="echo", timeout=math.inf)
             elif op == "kill_default" and mgr._session is not None:
                 mgr._session._alive = False
             elif op == "kill_a" and "A" in mgr._named_sessions:
@@ -687,7 +687,7 @@ async def test_open_session_closes_session_when_init_cancelled() -> None:
         session_factory=factory,
     )
     with pytest.raises((asyncio.TimeoutError, asyncio.CancelledError)):
-        await asyncio.wait_for(mgr.open_session("x"), timeout=0.05)
+        await asyncio.wait_for(mgr.open_session(name="x"), timeout=0.05)
 
     assert len(created) == 1
     assert created[0].closed, "open_session leaked the session on cancellation"
@@ -715,7 +715,7 @@ class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
                 "but the shell never reached a prompt; the shell may never have "
                 "started, or the login never completed (e.g. bad credentials)"
             )
-        await super().write_transport(data)
+        await super().write_transport(data=data)
 
 
 @pytest.mark.asyncio
@@ -748,7 +748,7 @@ async def test_ensure_session_retries_once_on_handshake_failure() -> None:
 
     # Single run_cmd: first session fails its handshake, retry builds a
     # fresh session that completes. The caller observes a success.
-    result = await mgr.run_cmd("echo hello", timeout=2.0)
+    result = await mgr.run_cmd(cmd="echo hello", timeout=2.0)
     assert result.status.is_ok, f"expected success after retry, got {result!r}"
     assert factory.created_count == 2, (
         f"expected exactly 2 session builds (1 failed + 1 retry), got {factory.created_count}"
@@ -782,7 +782,7 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     )
 
     with pytest.raises(ConnectionError):
-        await mgr.run_cmd("echo hello", timeout=2.0)
+        await mgr.run_cmd(cmd="echo hello", timeout=2.0)
     assert factory.created_count == 2, (
         f"expected exactly 2 attempts before giving up, got {factory.created_count}"
     )
@@ -857,7 +857,7 @@ async def test_ensure_session_retry_backoff_is_configurable(
     )
 
     with pytest.raises(ConnectionError):
-        await mgr.run_cmd("echo hello", timeout=2.0)
+        await mgr.run_cmd(cmd="echo hello", timeout=2.0)
 
     assert factory.created_count == 2, f"expected exactly 2 attempts, got {factory.created_count}"
     assert slept.count(injected_backoff) == 1, (

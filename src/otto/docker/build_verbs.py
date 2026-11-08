@@ -167,7 +167,9 @@ async def _build_plan(
             continue
         if names is not None and not names:
             continue  # declares images, but none of the requested ones
-        results = await build_images(project, parent, image_names=names, options=options)
+        results = await build_images(
+            project=project, parent=parent, image_names=names, options=options
+        )
         entries.append(ProjectBuild(project.name, parent.id, "built", dict(results)))
     return entries
 
@@ -215,8 +217,8 @@ def _plan_text(
 
 
 async def build_on(
-    parent: "str | None" = None,
     *,
+    parent: "str | None" = None,
     project: "str | None" = None,
     images: "Sequence[str] | None" = None,
     tags: "Sequence[str] | None" = None,
@@ -259,7 +261,7 @@ async def build_on(
     from ..invocation import require_run
 
     lab = require_run().lab
-    parent_host = docker_parent(lab, parent)
+    parent_host = docker_parent(lab=lab, parent=parent)
     projects = _dependency_order(_select_docker_projects(project))
     _check_images(projects, images)
     plan = [(parent_host, r, _names_for(r, images)) for r in projects]
@@ -273,7 +275,9 @@ async def build_on(
     )
     if is_dry_run():
         raise CommandNotRunError(
-            f"build_on({parent_host.id})", parent_host.id, _plan_text(plan, options=options)
+            f"build_on({parent_host.id})",
+            host=parent_host.id,
+            detail=_plan_text(plan, options=options),
         )
     return BuildReport(projects=await _build_plan(plan, options=options))
 
@@ -343,8 +347,8 @@ async def compose_build(
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_build({use_case})",
-            ", ".join(sorted(resolution.placed)),
-            _plan_text(plan, resolution.selection.displaced, options=options),
+            host=", ".join(sorted(resolution.placed)),
+            detail=_plan_text(plan, resolution.selection.displaced, options=options),
         )
     return BuildReport(
         projects=await _build_plan(plan, options=options),

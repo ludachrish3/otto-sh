@@ -224,7 +224,7 @@ class TestSelectionMessageForACliUser:
         monitors nothing, so neither "do not widen it" nor that pointer applies.
         """
         cli = EmptySelectionError(
-            "local", 4, excluded_by=["include_local"], matched_size=1
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
         ).cli_message()
         assert "name a lab host in the pattern instead" in cli
         assert "do not widen" not in cli
@@ -232,7 +232,7 @@ class TestSelectionMessageForACliUser:
 
     def test_both_flags_join_in_sorted_flag_order(self):
         exc = EmptySelectionError(
-            "x.*", 5, excluded_by=["include_local", "include_containers"], matched_size=2
+            "x.*", base_size=5, excluded_by=["include_local", "include_containers"], matched_size=2
         )
         cli = exc.cli_message()
         assert "does not walk container hosts or the built-in 'local' host" in cli
@@ -242,7 +242,9 @@ class TestSelectionMessageForACliUser:
 
     def test_walker_names_who_did_not_walk_the_hosts(self):
         """A path a library caller reaches too names the walk, not "this command"."""
-        exc = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        exc = EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
         cli = exc.cli_message(walker="coverage")
         assert "but coverage does not walk the built-in 'local' host" in cli
         assert "this command" not in cli
@@ -255,14 +257,18 @@ class TestSelectionMessageForACliUser:
     def test_selection_message_renders_the_error_itself(self):
         from otto.config.scope import selection_message
 
-        exc = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        exc = EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
         assert selection_message(exc) == exc.cli_message()
 
     def test_selection_message_reaches_through_a_wrapping_cause(self):
         """A wrapper's own prefix survives; only the wrapped library text is swapped."""
         from otto.config.scope import selection_message
 
-        cause = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        cause = EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
         wrapped = ValueError(f"nothing to clean: {cause}")
         wrapped.__cause__ = cause  # what `raise ... from cause` sets
         text = selection_message(wrapped)
@@ -404,7 +410,7 @@ class TestRunOnAllHosts:
     async def test_serial(self, three_hosts):
         """run_on_all_hosts delegates to run and returns a Results per host."""
         expected = Results.collect(
-            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+            items=[CommandResult(status=Status.Success, value="out", command="ls", retcode=0)]
         )
         with patch(
             "otto.host.unix_host.UnixHost.run",
@@ -421,7 +427,7 @@ class TestRunOnAllHosts:
     async def test_concurrent(self, three_hosts):
         """run_on_all_hosts works in concurrent mode."""
         expected = Results.collect(
-            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+            items=[CommandResult(status=Status.Success, value="out", command="ls", retcode=0)]
         )
         with patch(
             "otto.host.unix_host.UnixHost.run",
@@ -438,7 +444,7 @@ class TestRunOnAllHosts:
     async def test_pattern_filters(self, three_hosts):
         """run_on_all_hosts respects the pattern filter."""
         expected = Results.collect(
-            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+            items=[CommandResult(status=Status.Success, value="out", command="ls", retcode=0)]
         )
         with patch(
             "otto.host.unix_host.UnixHost.run",

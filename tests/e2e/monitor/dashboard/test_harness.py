@@ -675,7 +675,7 @@ def test_sse_event_lifecycle_wire_contract(
 
         live_dash.run(
             live_dash.collector.update_event(
-                ev.id, label="pin2", color="#445566", dash="dash", timestamp=ev.timestamp
+                event_id=ev.id, label="pin2", color="#445566", dash="dash", timestamp=ev.timestamp
             )
         )
         updated = _next_sse_payload(resp)
@@ -684,7 +684,7 @@ def test_sse_event_lifecycle_wire_contract(
         # event is just an event.
         assert updated["events"][0]["label"] == "pin2"
 
-        live_dash.run(live_dash.collector.delete_event(ev.id))
+        live_dash.run(live_dash.collector.delete_event(event_id=ev.id))
         deleted = _next_sse_payload(resp)
         assert set(deleted) == SSE_EVENT_DELETED_KEYS
         assert isinstance(deleted.pop("observed_at"), str)

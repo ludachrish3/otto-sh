@@ -36,9 +36,9 @@ def _host_project(tmp_path: Path) -> Project:
 def test_preparation_follows_the_selected_projects_without_a_revision_change(tmp_path):
     a, b = _profile_project(tmp_path), _host_project(tmp_path)
     revision = LAB_REPOSITORIES.revision
-    build_lab_sources([b])  # prepared for B alone: no alpha profile in its env
+    build_lab_sources(projects=[b])  # prepared for B alone: no alpha profile in its env
     assert LAB_REPOSITORIES.revision == revision
-    lab = build_lab_sources([a, b]).load_lab("e")
+    lab = build_lab_sources(projects=[a, b]).load_lab("e")
     assert LAB_REPOSITORIES.revision == revision
     host = lab.hosts["b1"]
     assert host.os_type == "alpha"
@@ -51,7 +51,7 @@ def test_a_build_for_the_project_alone_does_not_displace_the_selection_s_prepara
     from otto.labs.sources import prepared_lab_sources
 
     a, b = _profile_project(tmp_path), _host_project(tmp_path)
-    selection = ProfileContext.from_projects([a, b])
+    selection = ProfileContext.from_projects(projects=[a, b])
     (first,) = prepared_lab_sources(b, profiles=selection)
     prepared_lab_sources(b)  # the project alone, as Project.get_lab_panel builds it
     (again,) = prepared_lab_sources(b, profiles=selection)

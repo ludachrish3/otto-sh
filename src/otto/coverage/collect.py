@@ -95,8 +95,8 @@ class CollectResult:
 
 
 async def clean_coverage(
-    projects: "list[Project] | None" = None,
     *,
+    projects: "list[Project] | None" = None,
     host_ids: "list[str] | None" = None,
     pairs: "list[ProductKey] | None" = None,
     record_presence: bool = False,
@@ -219,8 +219,8 @@ async def clean_coverage(
             if named is not None
             else [p.name for p in instrumented_products(host)]
         )
-        return {name: Result(Status.Error, msg=reason) for name in names} or {
-            "(host)": Result(Status.Error, msg=reason)
+        return {name: Result(status=Status.Error, msg=reason) for name in names} or {
+            "(host)": Result(status=Status.Error, msg=reason)
         }
 
     by_host: dict[str, dict[str, Result]] = {}
@@ -275,7 +275,7 @@ async def _reset_products(
         results[product.name] = await product.reset_coverage(host)
     for name in sorted((wanted or set()) - set(results)):
         results[name] = Result(
-            Status.Error, msg=f"{name!r} is not an instrumented product on {host.id!r}"
+            status=Status.Error, msg=f"{name!r} is not an instrumented product on {host.id!r}"
         )
     return results, evidence
 
@@ -547,7 +547,7 @@ async def collect_coverage(
         # A failed reset is reported, never logged and dropped — the caller
         # (otto test) fails the run on it.
         try:
-            clean_report = await clean_coverage(projects, pairs=produced.captured)
+            clean_report = await clean_coverage(projects=projects, pairs=produced.captured)
         except Exception:
             if failure is not None:
                 # The clean's own exception propagates; this keeps the capture
@@ -652,7 +652,7 @@ def _resolve_tier(
 
     if isinstance(tier, TierConfig):
         return tier
-    return resolve_get_tier(load_tiers(cov_config, root=root), tier)
+    return resolve_get_tier(tiers=load_tiers(cov_config, root=root), name=tier)
 
 
 def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:

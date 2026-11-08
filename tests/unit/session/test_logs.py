@@ -25,7 +25,7 @@ class TestLoggingLevelsMerge:
 
     def test_tables_union_across_projects(self):
         merged = merge_logging_levels(
-            [
+            projects=[
                 _LevelsProject("alpha", {"asyncssh": "DEBUG"}),
                 _LevelsProject("beta", {"vendor": "ERROR"}),
             ]
@@ -35,7 +35,7 @@ class TestLoggingLevelsMerge:
     def test_the_same_level_twice_is_not_a_conflict(self):
         """A shared vendor SDK quieted by two projects must not error."""
         merged = merge_logging_levels(
-            [
+            projects=[
                 _LevelsProject("alpha", {"vendor": "ERROR"}),
                 _LevelsProject("beta", {"vendor": "ERROR"}),
             ]
@@ -45,7 +45,7 @@ class TestLoggingLevelsMerge:
     def test_a_conflict_names_both_projects_and_the_logger(self):
         with pytest.raises(LoggingLevelsConflictError) as exc:
             merge_logging_levels(
-                [
+                projects=[
                     _LevelsProject("alpha", {"vendor": "DEBUG"}),
                     _LevelsProject("beta", {"vendor": "ERROR"}),
                 ]
@@ -67,7 +67,7 @@ class TestLoggingLevelsMerge:
         """
         with pytest.raises(LoggingLevelsConflictError) as exc:
             merge_logging_levels(
-                [
+                projects=[
                     _LevelsProject("alpha", {"vendor": "DEBUG"}),
                     _LevelsProject("beta", {"vendor": "DEBUG"}),
                     _LevelsProject("gamma", {"vendor": "ERROR"}),
@@ -182,7 +182,7 @@ def test_a_prior_cli_install_leaves_exactly_one_host_filter(monkeypatch):
     from otto.host.host import _HostFilter
 
     _projects(monkeypatch)
-    management.install("INFO")
+    management.install(log_level="INFO")
     management.attach_console_suppress_filter(_HostFilter())
     install_logging()
     console = management._state.console_handler

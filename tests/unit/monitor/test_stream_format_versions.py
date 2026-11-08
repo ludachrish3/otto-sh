@@ -95,11 +95,11 @@ async def _publish_every_kind() -> "list[dict]":
     fake.session_id = SESSION
     q = fake.subscribe()
     await fake.push("rack1-a", "cpu", 12.5, ts=datetime(2026, 7, 1, 8, 0, 5, tzinfo=UTC))
-    ev = await fake.add_event("deploy", timestamp=datetime(2026, 7, 1, 8, 0, 6, tzinfo=UTC))
+    ev = await fake.add_event(label="deploy", timestamp=datetime(2026, 7, 1, 8, 0, 6, tzinfo=UTC))
     await fake.update_event(
-        ev.id, label="deploy v2", color="#111111", dash="solid", timestamp=ev.timestamp
+        event_id=ev.id, label="deploy v2", color="#111111", dash="solid", timestamp=ev.timestamp
     )
-    await fake.delete_event(ev.id)
+    await fake.delete_event(event_id=ev.id)
     await fake.push_log_events(
         "rack1-a", tab="syslog", rows=[(datetime(2026, 7, 1, 8, 0, 8, tzinfo=UTC), {"m": "up"})]
     )
@@ -114,7 +114,7 @@ async def _publish_every_kind() -> "list[dict]":
     published = []
     while not q.empty():
         published.append(q.get_nowait())
-    fake.unsubscribe(q)
+    fake.unsubscribe(q=q)
     return published
 
 

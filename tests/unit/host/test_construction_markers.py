@@ -96,7 +96,7 @@ def test_two_markers_on_one_field_are_refused():
 
 
 @pytest.mark.parametrize(
-    "marker", [Convert(lambda v, b: v), Resolve(lambda b: 1), Consume("r"), Pass()]
+    "marker", [Convert(lambda v, b: v), Resolve(fn=lambda b: 1), Consume("r"), Pass()]
 )
 def test_a_marker_repr_names_only_the_marker(marker):
     assert repr(marker) == f"otto.host.{type(marker).__name__}"
@@ -134,7 +134,7 @@ _PARITY_EXPECTED = {
 def test_each_marker_converts_to_the_runtime_value_the_host_holds(name):
     """The built host holds the runtime value and type each Convert produces, stated here."""
     expected = _PARITY_EXPECTED[name]
-    host = create_host_from_dict(dict(_PARITY_ENTRY), element=Element("lab"))
+    host = create_host_from_dict(dict(_PARITY_ENTRY), element=Element(name="lab"))
     assert type(getattr(host, name)) is type(expected)
     assert getattr(host, name) == expected
     spec = UnixHostSpec.model_validate(_PARITY_ENTRY)

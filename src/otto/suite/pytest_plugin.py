@@ -116,7 +116,7 @@ async def _converge(step: str, source: "OptionsSource") -> None:
     from .. import project
 
     converge = getattr(project, ENSURE_VERBS[step])
-    _raise_unless_converged(await converge(source), step)
+    _raise_unless_converged(await converge(opts=source), step)
 
 
 @final
@@ -208,7 +208,7 @@ class OttoFixturesPlugin:
     def _expect(self, request: pytest.FixtureRequest) -> ExpectCollector:
         """Return a callable :class:`~otto.suite.expect.ExpectCollector` for non-fatal checks.
 
-        ``expect(condition, msg)`` records a failure and keeps the test running;
+        ``expect(condition, msg=msg)`` records a failure and keeps the test running;
         every failure is logged as it happens and the test FAILS — in the call
         phase, as one combined report — once the body returns. A hard ``assert``
         in the body still wins. ``expect.failures`` is inspectable.

@@ -56,8 +56,7 @@ A second positional argument is a usage error — `exec` takes one command.
 
 ## Upgrading from 0.15.0 (Python callers)
 
-The Python `exec`'s positional order changed with this verb: it is now
-`exec(cmd, expects, timeout, log, sudo, user)` — `run`'s order minus the
-command sequence. A 0.15.0 call of the form `host.exec(cmd, 10.0)` binds the
-timeout to `expects` and now raises `TypeError` naming the parameter; pass
-`timeout=` by keyword.
+The Python `exec` takes the command positionally and everything else by
+keyword: `exec(cmd, *, expects, timeout, log, sudo, user)`. A 0.15.0 call of
+the form `host.exec(cmd, 10.0)` raises `TypeError`; pass `timeout=` by
+keyword.

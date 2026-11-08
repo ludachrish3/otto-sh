@@ -48,7 +48,7 @@ def _endpoint_key(e: LinkEndpoint) -> tuple[str, str]:
     return (e.host, e.interface or "")
 
 
-def make_link_id(a: LinkEndpoint, b: LinkEndpoint, protocol: str) -> str:
+def make_link_id(*, a: LinkEndpoint, b: LinkEndpoint, protocol: str) -> str:
     """Deterministic id for the *route* ``a <-> b`` over *protocol*.
 
     STABILITY CONTRACT — changing this algorithm invalidates every recorded
@@ -68,7 +68,7 @@ def make_link_id(a: LinkEndpoint, b: LinkEndpoint, protocol: str) -> str:
     return "lnk-" + hashlib.sha256(canon.encode()).hexdigest()[:12]
 
 
-def make_static_link_id(a: LinkEndpoint, b: LinkEndpoint, name: str | None) -> str:
+def make_static_link_id(*, a: LinkEndpoint, b: LinkEndpoint, name: str | None) -> str:
     """Readable handle for a static link — the declared ``name`` or ``a--b``.
 
     No hash: static links (implicit hop edges, declared routes) are described
@@ -101,4 +101,4 @@ class Link:
 
     def __post_init__(self) -> None:
         if not self.id:
-            object.__setattr__(self, "id", make_static_link_id(self.a, self.b, self.name))
+            object.__setattr__(self, "id", make_static_link_id(a=self.a, b=self.b, name=self.name))

@@ -222,7 +222,7 @@ async def _ssh_as(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:
 
     monkeypatch.setattr(asyncssh, "connect", connect)
     creds = [Cred(login="admin", password="other"), Cred(login="postgres", password=PLANTED)]
-    await _mgr(creds, "ssh").ssh_as("postgres")
+    await _mgr(creds, "ssh").ssh_as(user="postgres")
 
 
 async def _hop_tunnel(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:
@@ -234,13 +234,13 @@ async def _hop_tunnel(monkeypatch: pytest.MonkeyPatch, received: _Received) -> N
     monkeypatch.setattr(asyncssh, "connect", connect)
     jumpbox = UnixHost(
         ip="10.10.0.1",
-        element=Element("jumpbox"),
+        element=Element(name="jumpbox"),
         creds=[Cred(login="admin", password=PLANTED)],
         log=LogMode.QUIET,
     )
     target = UnixHost(
         ip="10.10.0.2",
-        element=Element("target"),
+        element=Element(name="target"),
         creds=[Cred(login="user", password="other")],
         hop="jumpbox",
         log=LogMode.QUIET,
@@ -310,7 +310,7 @@ async def _sudo_answer(monkeypatch: pytest.MonkeyPatch, received: _Received) -> 
 
     host = _Host(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password=PLANTED)],
         log=LogMode.QUIET,
     )
@@ -319,7 +319,7 @@ async def _sudo_answer(monkeypatch: pytest.MonkeyPatch, received: _Received) -> 
     session = _local_session(received, b"")
     # sudo prompts after BEGIN: the answer is armed only once the command began.
     session._process.stdout.feed_data(f"{session._markers.begin}\n{prompt}".encode())  # type: ignore[union-attr]
-    await session.run_cmd(elevated.command, expects=elevated.expects, timeout=5)
+    await session.run_cmd(cmd=elevated.command, expects=elevated.expects, timeout=5)
 
 
 async def _interact_write(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:
@@ -467,7 +467,7 @@ async def test_an_ssh_session_writes_a_secret_as_its_value_and_a_newline():
 
     session = SshSession(conn=MagicMock())
     session._process = MagicMock()
-    await session.write_transport(SecretStr(PLANTED))
+    await session.write_transport(data=SecretStr(PLANTED))
     session._process.stdin.write.assert_called_once_with(PLANTED + "\n")
 
 
@@ -480,7 +480,7 @@ async def test_a_telnet_session_writes_a_secret_once_with_a_cr_even_when_chunkin
     session = TelnetSession(
         reader=reader, writer=writer, client=stream_client(reader, writer), write_chunk_size=4
     )
-    await session.write_transport(SecretStr(PLANTED))
+    await session.write_transport(data=SecretStr(PLANTED))
     writer.write.assert_called_once_with(PLANTED.encode() + b"\r")
 
 
@@ -498,7 +498,7 @@ async def test_a_bridge_hands_a_secret_to_write_remote_still_wrapped(newline):
         write_remote, AsyncMock(), newline=newline, command_frame=None
     )
     await bridge_io.send(SecretStr(PLANTED))
-    await session.write_transport(SecretStr(PLANTED))
+    await session.write_transport(data=SecretStr(PLANTED))
     assert all(isinstance(s, SecretBytes) for s in sent)
     assert [s.get_secret_value() for s in sent] == [PLANTED.encode() + newline] * 2  # type: ignore[attr-defined]
 
@@ -508,7 +508,7 @@ async def test_a_dry_run_refusal_names_the_mask_not_the_password():
     from otto.host.session import _NoTransport
 
     with pytest.raises(Exception) as ei:  # noqa: PT011 — the refusal type is the dry run's own
-        await _NoTransport("h1").write_transport(SecretStr(PLANTED))
+        await _NoTransport("h1").write_transport(data=SecretStr(PLANTED))
     assert PLANTED not in str(ei.value)
 
 

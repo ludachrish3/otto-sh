@@ -47,18 +47,18 @@ class TunnelCarrier:
     def ingress_args(
         self,
         protocol: str,
+        *,
         service_port: int,
         bind_ip: str,
         next_ip: str,
         carrier_port: int,
-        *,
         idle_timeout: int | None = None,
     ) -> list[str]:
         """Argv accepting client traffic on the service port, shipping to the carrier."""
         raise NotImplementedError
 
     def relay_args(
-        self, protocol: str, carrier_port: int, next_ip: str, *, idle_timeout: int | None = None
+        self, protocol: str, *, carrier_port: int, next_ip: str, idle_timeout: int | None = None
     ) -> list[str]:
         """Argv for an intermediate-hop pass-through (same carrier port both sides)."""
         raise NotImplementedError
@@ -66,10 +66,10 @@ class TunnelCarrier:
     def egress_args(
         self,
         protocol: str,
+        *,
         service_port: int,
         deliver_ip: str,
         carrier_port: int,
-        *,
         idle_timeout: int | None = None,
     ) -> list[str]:
         """Argv accepting the carrier and delivering to the local service."""
@@ -107,7 +107,7 @@ CARRIERS: "Registry[ClassEntry[TunnelCarrier]]" = Registry(
     check_resolved=lambda name, entry: _check_carrier_class(name, resolved(entry.cls)),
 )
 """The tunnel carrier classes ``--carrier`` can name, keyed by carrier name."""
-CARRIERS.register("socat", ClassEntry(Ref("otto.tunnel.socat:SocatCarrier")))
+CARRIERS.register(name="socat", entry=ClassEntry(cls=Ref(target="otto.tunnel.socat:SocatCarrier")))
 
 
 @registration_boundary
@@ -128,9 +128,9 @@ def register_carrier(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite*
             is false.
     """
-    CARRIERS.register(name, ClassEntry(cls), overwrite=overwrite)
+    CARRIERS.register(name=name, entry=ClassEntry(cls=cls), overwrite=overwrite)
 
 
-def build_carrier(name: str) -> type[TunnelCarrier]:
+def build_carrier(*, name: str) -> type[TunnelCarrier]:
     """Return the carrier class registered under *name* (rich unknown-name error)."""
     return resolved(CARRIERS.get(name).cls)

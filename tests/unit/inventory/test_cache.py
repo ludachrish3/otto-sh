@@ -511,7 +511,7 @@ def _json_kwargs(tmp_path):
 def _compiled(backend, table, ttl, tmp_path):
     """The table prepared as ``compile_inventory`` prepares it, at *ttl*."""
     compiled = compile_inventory(
-        InventoryConfigSpec.model_validate({"backend": backend, **table}),
+        cfg=InventoryConfigSpec.model_validate({"backend": backend, **table}),
         anchor_dir=tmp_path,
         origin="o",
     )
@@ -523,27 +523,27 @@ def test_construct_wraps_netbox_but_never_json_and_ttl_zero_disables(tmp_path, m
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
     (tmp_path / "i.json").write_text("{}")
     json_inv = construct_inventory(
-        _compiled("json", _json_kwargs(tmp_path), timedelta(hours=24), tmp_path)
+        compiled=_compiled("json", _json_kwargs(tmp_path), timedelta(hours=24), tmp_path)
     )
     assert isinstance(json_inv, JsonInventory)
     nb = construct_inventory(
-        _compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(hours=24), tmp_path)
+        compiled=_compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(hours=24), tmp_path)
     )
     assert isinstance(nb, SnapshotCache)
     assert nb.snapshot_path.parent == tmp_path / "home" / "inventory-cache"
     assert isinstance(
         construct_inventory(
-            _compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(0), tmp_path)
+            compiled=_compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(0), tmp_path)
         ),
         _NetBoxInventory,
     )
     creds = tmp_path / "c.json"
     creds.write_text("{}")
     wrapped = construct_inventory(
-        dataclasses.replace(
+        compiled=dataclasses.replace(
             _compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(hours=1), tmp_path),
             creds=compile_creds_table(
-                {"backend": "json", "path": str(creds)}, anchor_dir=tmp_path, origin="o"
+                table={"backend": "json", "path": str(creds)}, anchor_dir=tmp_path, origin="o"
             ),
         )
     )
@@ -561,7 +561,7 @@ def test_construction_never_probes_the_json_backend(tmp_path, monkeypatch):
 
     monkeypatch.setattr(JsonInventory, "fingerprint", _boom)
     built = construct_inventory(
-        _compiled("json", _json_kwargs(tmp_path), timedelta(hours=24), tmp_path)
+        compiled=_compiled("json", _json_kwargs(tmp_path), timedelta(hours=24), tmp_path)
     )
     assert isinstance(built, JsonInventory)
 
@@ -570,10 +570,10 @@ def test_two_configurations_never_share_a_snapshot(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
     a = construct_inventory(
-        _compiled("netbox", {"url": "http://a", "filter": {"site": "x"}}, _HOUR, tmp_path)
+        compiled=_compiled("netbox", {"url": "http://a", "filter": {"site": "x"}}, _HOUR, tmp_path)
     )
     b = construct_inventory(
-        _compiled("netbox", {"url": "http://a", "filter": {"site": "y"}}, _HOUR, tmp_path)
+        compiled=_compiled("netbox", {"url": "http://a", "filter": {"site": "y"}}, _HOUR, tmp_path)
     )
     assert a.snapshot_path != b.snapshot_path
 
@@ -582,8 +582,12 @@ def test_two_spellings_of_one_url_share_a_snapshot(tmp_path, monkeypatch):
     """The slug hashes the backend's NORMALISED label, not the raw settings kwarg."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
-    a = construct_inventory(_compiled("netbox", {"url": "http://a"}, timedelta(hours=1), tmp_path))
-    b = construct_inventory(_compiled("netbox", {"url": "http://a/"}, timedelta(hours=1), tmp_path))
+    a = construct_inventory(
+        compiled=_compiled("netbox", {"url": "http://a"}, timedelta(hours=1), tmp_path)
+    )
+    b = construct_inventory(
+        compiled=_compiled("netbox", {"url": "http://a/"}, timedelta(hours=1), tmp_path)
+    )
     assert a.snapshot_path == b.snapshot_path
 
 
@@ -592,13 +596,13 @@ def test_end_to_end_against_the_stub_one_round_per_ttl(tmp_path, monkeypatch):
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
     with NetBoxStub([device(1, "d1"), device(2, "d2"), device(3, "d3")], page_size=2) as stub:
         first = construct_inventory(
-            _compiled("netbox", {"url": stub.base}, timedelta(hours=24), tmp_path)
+            compiled=_compiled("netbox", {"url": stub.base}, timedelta(hours=24), tmp_path)
         )
         assert first.list_keys() == ["d1", "d2", "d3"]
         rounds = len(stub.queries)
         assert rounds > 0
         second = construct_inventory(
-            _compiled("netbox", {"url": stub.base}, timedelta(hours=24), tmp_path)
+            compiled=_compiled("netbox", {"url": stub.base}, timedelta(hours=24), tmp_path)
         )
         assert second.lookup("d2").ip == "10.0.0.1"
         assert len(stub.queries) == rounds  # not one request

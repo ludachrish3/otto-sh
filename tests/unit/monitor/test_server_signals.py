@@ -208,7 +208,7 @@ async def test_a_fresh_server_reuses_the_collector_after_a_drain() -> None:
     second, second_task = await start()
     try:
         reader, writer = await _open_stream(second._port, second.key)
-        await collector.add_event("boot")
+        await collector.add_event(label="boot")
         received = b""
         while b"data:" not in received:
             chunk = await asyncio.wait_for(reader.read(4096), timeout=10.0)

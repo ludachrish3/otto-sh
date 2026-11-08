@@ -219,9 +219,9 @@ def _check_providing_projects_declare_scope(
             continue
         scope = project.project_scope
         if scope is None or not scope.lab_patterns:
-            raise ProjectScopeError(project.root, _NO_LAB_PATTERNS.format(name=name))
+            raise ProjectScopeError(project.root, message=_NO_LAB_PATTERNS.format(name=name))
         if not scope.host_patterns:
-            raise ProjectScopeError(project.root, _NO_HOST_PATTERNS.format(name=name))
+            raise ProjectScopeError(project.root, message=_NO_HOST_PATTERNS.format(name=name))
 
 
 def _contain_data_profile_errors(projects: "list[Project]", errors: list[BootstrapError]) -> None:
@@ -253,9 +253,9 @@ def _contain_data_profile_errors(projects: "list[Project]", errors: list[Bootstr
 
     for project in projects:
         try:
-            check_data_profiles([project])
+            check_data_profiles(projects=[project])
         except ValueError as e:  # noqa: PERF203 — containment seam: one project's bad table
-            errors.append(BootstrapError(project.root, str(TOML_SETTINGS_PATH), e))
+            errors.append(BootstrapError(project.root, source=str(TOML_SETTINGS_PATH), cause=e))
 
 
 def bootstrap() -> BootstrapResult:
@@ -328,7 +328,7 @@ def bootstrap() -> BootstrapResult:
                     except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
                         if not is_containable(e):
                             raise
-                        errors.append(BootstrapError(project.root, mod, e))
+                        errors.append(BootstrapError(project.root, source=mod, cause=e))
         # Every project has spoken: check each project instruction's merged
         # options. Not contained -- a cross-project options collision is a
         # declared conflict the user must resolve, not one project's breakage.

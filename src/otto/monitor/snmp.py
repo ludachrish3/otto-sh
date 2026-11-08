@@ -116,7 +116,7 @@ class SnmpMetric(OttoModel):
     by the ``meta_of`` OID, under this descriptor's ``label``. A ``meta_of``
     target absent this tick simply drops the meta; never an error."""
 
-    def to_point(self, raw: float) -> MetricDataPoint:
+    def to_point(self, *, raw: float) -> MetricDataPoint:
         """Apply ``scale`` to a raw numeric varbind, returning a chartable point."""
         return MetricDataPoint(value=round(raw * self.scale, 2))
 
@@ -162,7 +162,7 @@ def register_snmp_metric(metric: SnmpMetric, *, overwrite: bool = False) -> None
     :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true,
     which replaces it.
     """
-    SNMP_METRICS.register(metric.oid, metric, overwrite=overwrite)
+    SNMP_METRICS.register(name=metric.oid, entry=metric, overwrite=overwrite)
 
 
 def _register_builtin_metrics() -> None:

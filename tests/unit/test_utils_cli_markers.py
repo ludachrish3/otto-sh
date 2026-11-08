@@ -4,8 +4,7 @@ from otto.utils import Arg, Exclude, Opt, cli_exposed
 
 
 def test_markers_are_plain_data():
-    a = Arg(variadic=True, elem_type=str, help="cmds")
-    assert a.variadic is True
+    a = Arg(elem_type=str, help="cmds")
     assert a.elem_type is str
     assert a.help == "cmds"
     o = Opt(help="timeout")

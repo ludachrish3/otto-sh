@@ -86,7 +86,7 @@ def _the_project():
 
 def _warm(project: _Project, tmp_path: Path, sessions: list) -> None:
     """Run once so the table holds what pytest collected; then forget the run."""
-    assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
     project.next_run()
     sessions.clear()
 
@@ -95,7 +95,7 @@ def _warm(project: _Project, tmp_path: Path, sessions: list) -> None:
 
 
 def test_a_cold_run_collects_the_whole_tree_once(project, tmp_path, sessions):
-    result = run_tests(["TestA"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -114,7 +114,7 @@ def test_a_cold_run_seeds_the_table_from_its_own_session(project, tmp_path, monk
 
     monkeypatch.setattr(pytest, "main", counting_main)
 
-    result = run_tests(["TestA"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert len(main_calls) == 1, "one pytest session for the run and the seed"
@@ -131,7 +131,7 @@ def test_a_warm_run_collects_the_whole_tree_and_runs_only_the_name(project, tmp_
     """The table places TestA in test_a.py; pytest still decides, over every file (#592)."""
     _warm(project, tmp_path, sessions)
 
-    result = run_tests(["TestA"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -143,7 +143,7 @@ def test_a_new_test_in_an_edited_file_runs_in_the_one_session(project, tmp_path,
     _warm(project, tmp_path, sessions)
     project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b_new")))
 
-    result = run_tests(["test_b_new"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_b_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -154,7 +154,7 @@ def test_a_new_file_is_collected_in_the_first_session(project, tmp_path, session
     _warm(project, tmp_path, sessions)
     project.write("tests/sub/test_d.py", project.module("test_d", _test("test_d1")))
 
-    result = run_tests(["test_d1"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_d1"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -188,15 +188,15 @@ def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
         }
     )
     for out in ["seed", "warm"]:
-        assert run_tests(["test_alpha"], output_dir=tmp_path / out).exit_code == 0
+        assert run_tests(names=["test_alpha"], output_dir=tmp_path / out).exit_code == 0
         shell.next_run()
     monkeypatch.setenv("SAVE_DURING_STARTUP", "1")
-    assert run_tests(["test_alpha"], output_dir=tmp_path / "saved").exit_code == 0
+    assert run_tests(names=["test_alpha"], output_dir=tmp_path / "saved").exit_code == 0
     monkeypatch.delenv("SAVE_DURING_STARTUP")
     assert (shell.root / "tests" / "test_new.py").exists()
     shell.next_run()
 
-    assert run_tests(["test_alpha"], output_dir=tmp_path / "after").exit_code == 0
+    assert run_tests(names=["test_alpha"], output_dir=tmp_path / "after").exit_code == 0
 
     assert shell.ran_tests() == ["a::test_alpha", "new::test_alpha"]
 
@@ -228,11 +228,11 @@ def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
         }
     )
     for out in ["seed", "warm"]:
-        assert run_tests(["test_alpha"], output_dir=tmp_path / out).exit_code == 0
+        assert run_tests(names=["test_alpha"], output_dir=tmp_path / out).exit_code == 0
         shell.next_run()
     (shell.root / "tests" / "test_old.py").unlink()
     monkeypatch.setenv("SAVE_DURING_STARTUP", "1")
-    assert run_tests(["test_alpha"], output_dir=tmp_path / "saved").exit_code == 0
+    assert run_tests(names=["test_alpha"], output_dir=tmp_path / "saved").exit_code == 0
     monkeypatch.delenv("SAVE_DURING_STARTUP")
     shell.next_run()
 
@@ -244,7 +244,7 @@ def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
     assert classify(_the_project(), table).is_current
 
     sessions.clear()
-    assert run_tests(["test_alpha"], output_dir=tmp_path / "after").exit_code == 0
+    assert run_tests(names=["test_alpha"], output_dir=tmp_path / "after").exit_code == 0
 
     assert shell.ran_tests() == ["a::test_alpha", "old::test_alpha"]
 
@@ -264,11 +264,11 @@ def test_a_file_saved_in_a_listed_directory_during_the_session_is_not_vouched_fo
             f"    (pathlib.Path(__file__).parent / 'test_e.py').write_text({later!r})\n",
         ),
     )
-    assert run_tests(["test_d1"], output_dir=tmp_path / "saved").exit_code == 0
+    assert run_tests(names=["test_d1"], output_dir=tmp_path / "saved").exit_code == 0
     assert (sub / "test_e.py").exists()
     project.next_run()
 
-    assert run_tests(["test_d1"], output_dir=tmp_path / "after").exit_code == 0
+    assert run_tests(names=["test_d1"], output_dir=tmp_path / "after").exit_code == 0
 
     assert project.ran_tests() == ["d::test_d1", "e::test_d1"]
 
@@ -281,7 +281,7 @@ def test_an_edited_conftest_is_read_again_and_recorded(project, tmp_path, sessio
         "    config.addinivalue_line('markers', 'edited_mine: from tests/sub')\n",
     )
 
-    result = run_tests(["TestA"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -294,7 +294,7 @@ def test_a_changed_pytest_config_collects_the_whole_tree(project, tmp_path, sess
     _warm(project, tmp_path, sessions)
     project.write("pytest.ini", "[pytest]\n")
 
-    result = run_tests(["TestA"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -304,7 +304,7 @@ def test_a_run_records_what_it_collected(project, tmp_path, sessions):
     _warm(project, tmp_path, sessions)
     project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b2")))
 
-    run_tests(["TestA"], output_dir=tmp_path / "out")
+    run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     from otto.bootstrap import get_projects
 
@@ -326,7 +326,7 @@ def test_a_named_run_keeps_the_markers_every_conftest_registers(project, tmp_pat
     )
     _warm(project, tmp_path, sessions)
 
-    run_tests(["TestA"], output_dir=tmp_path / "out")
+    run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     from otto.bootstrap import get_projects
 
@@ -344,7 +344,7 @@ def test_an_unknown_name_is_refused_before_any_test(project, tmp_path, sessions)
     _warm(project, tmp_path, sessions)
 
     with pytest.raises(UnknownSelectionError, match=r"test_a3.*did you mean: test_a"):
-        run_tests(["test_a3"], output_dir=tmp_path / "out")
+        run_tests(names=["test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
     assert project.ran_tests() == []
@@ -354,7 +354,7 @@ def test_one_unknown_name_among_known_ones_runs_nothing(project, tmp_path, sessi
     _warm(project, tmp_path, sessions)
 
     with pytest.raises(UnknownSelectionError, match="test_a3"):
-        run_tests(["TestA", "test_a3"], output_dir=tmp_path / "out")
+        run_tests(names=["TestA", "test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
     assert project.ran_tests() == []
@@ -379,7 +379,7 @@ def test_the_add_a_test_loop_is_one_pytest_session(project, tmp_path, sessions, 
     project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b_new")))
     calls = _count_sessions(monkeypatch)
 
-    assert run_tests(["test_b_new"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["test_b_new"], output_dir=tmp_path / "out").exit_code == 0
 
     assert len(calls) == 1
     assert "--collect-only" not in calls[0]
@@ -390,7 +390,7 @@ def test_a_warm_run_is_one_pytest_session(project, tmp_path, sessions, monkeypat
     _warm(project, tmp_path, sessions)
     calls = _count_sessions(monkeypatch)
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert len(calls) == 1
     assert project.ran_tests() == ["test_a1", "test_a2"]
@@ -406,7 +406,7 @@ def test_the_session_runs_with_capture_off(project, tmp_path, monkeypatch):
     """
     calls = _count_sessions(monkeypatch)
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert "-s" in calls[0]
 
@@ -424,7 +424,7 @@ def test_a_typo_runs_nothing_and_says_nothing_else(project, tmp_path, sessions, 
     out = tmp_path / "out"
 
     with pytest.raises(UnknownSelectionError, match=r"'test_b3' \(did you mean: .*test_b2"):
-        run_tests(["test_b3"], output_dir=out)
+        run_tests(names=["test_b3"], output_dir=out)
 
     assert sessions == [None]
     assert project.ran_tests() == []
@@ -444,11 +444,11 @@ def test_a_typo_names_the_file_that_did_not_collect(project, tmp_path, sessions)
     broken = r"tests/sub/test_broken\.py did not collect: SyntaxError"
 
     with pytest.raises(UnknownSelectionError, match=broken):
-        run_tests(["test_c2"], output_dir=tmp_path / "first")
+        run_tests(names=["test_c2"], output_dir=tmp_path / "first")
     project.next_run()
 
     with pytest.raises(UnknownSelectionError, match=broken):
-        run_tests(["test_c2"], output_dir=tmp_path / "again")
+        run_tests(names=["test_c2"], output_dir=tmp_path / "again")
     assert sessions == [None, None]
     assert project.ran_tests() == []
 
@@ -458,7 +458,7 @@ def test_a_name_in_a_project_where_nothing_collects_names_the_broken_file(one_pr
     one_project(files={"tests/test_only.py": "def test_only(:\n"})
 
     with pytest.raises(UnknownSelectionError, match=r"tests/test_only\.py did not collect"):
-        run_tests(["test_only"], output_dir=tmp_path / "out")
+        run_tests(names=["test_only"], output_dir=tmp_path / "out")
 
 
 def test_a_deleted_holder_leaves_its_name_unknown(project, tmp_path, sessions):
@@ -466,7 +466,7 @@ def test_a_deleted_holder_leaves_its_name_unknown(project, tmp_path, sessions):
     (project.root / "tests" / "test_b.py").unlink()
 
     with pytest.raises(UnknownSelectionError, match="test_b1"):
-        run_tests(["test_b1"], output_dir=tmp_path / "out")
+        run_tests(names=["test_b1"], output_dir=tmp_path / "out")
 
     assert project.ran_tests() == []
 
@@ -483,7 +483,7 @@ def inherited(project, tmp_path, sessions) -> _Project:
     project.write("tests/test_derived.py", project.module("test_derived", _DERIVED))
     # Two runs: the first finds the helper as a dependency, the second stamps it.
     for warm in ("warm1", "warm2"):
-        assert run_tests(["test_gone"], output_dir=tmp_path / warm).exit_code == 0
+        assert run_tests(names=["test_gone"], output_dir=tmp_path / warm).exit_code == 0
         project.next_run()
     sessions.clear()
     return project
@@ -493,7 +493,7 @@ def test_a_name_a_helper_lost_is_unknown_after_the_one_session(inherited, tmp_pa
     inherited.write("tests/helpers/base.py", _BASE.replace("test_gone", "test_goner"))
 
     with pytest.raises(UnknownSelectionError, match=r"'test_gone' \(did you mean: test_goner"):
-        run_tests(["test_gone"], output_dir=tmp_path / "out")
+        run_tests(names=["test_gone"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
     assert inherited.ran_tests() == []
@@ -502,7 +502,7 @@ def test_a_name_a_helper_lost_is_unknown_after_the_one_session(inherited, tmp_pa
 def test_a_name_a_helper_gained_is_found_where_it_is_inherited(inherited, tmp_path, sessions):
     inherited.write("tests/helpers/base.py", _BASE + "\n    def test_added(self):\n        pass\n")
 
-    result = run_tests(["test_added"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_added"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
@@ -529,7 +529,9 @@ def test_a_name_the_marker_expression_excludes_matches_nothing(one_project, tmp_
 
     with pytest.raises(NoTestsMatchedError):
         run_tests(
-            ["test_slow"], run_options=RunOptions(markers="not slow"), output_dir=tmp_path / "o"
+            names=["test_slow"],
+            run_options=RunOptions(markers="not slow"),
+            output_dir=tmp_path / "o",
         )
 
     assert shell.ran_tests() == []
@@ -568,7 +570,7 @@ def test_a_broken_file_does_not_stop_the_named_tests_and_fails_every_run_as_in_p
     project.write("tests/sub/test_broken.py", "def test_broken(:\n")
 
     for out in ("first", "again"):
-        result = run_tests(["TestA"], output_dir=tmp_path / out)
+        result = run_tests(names=["TestA"], output_dir=tmp_path / out)
 
         assert result.exit_code == 1
         assert project.ran_tests() == ["test_a1", "test_a2"]
@@ -586,7 +588,7 @@ def test_a_name_in_one_project_runs_there_only(two_projects, tmp_path):
         b={"tests/test_b.py": "def test_in_b():\n    pass\n"},
     )
 
-    result = run_tests(["test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert [p.name for p in result.junit_paths] == ["junit_project_b.xml"]
@@ -601,7 +603,7 @@ def test_an_unknown_name_across_projects_runs_nothing(two_projects, tmp_path):
     )
 
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
-        run_tests(["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
 
     assert shell.ran_tests() == []
 
@@ -614,7 +616,7 @@ def test_names_split_across_projects_each_run_where_they_live(two_projects, tmp_
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
 
-    result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert shell_a.ran_tests() == ["test_in_a"]
@@ -645,7 +647,7 @@ def _two_warm(two_projects, tmp_path) -> list[_Project]:
         a={"tests/test_ra.py": shells[0].module("test_ra", _test("test_in_a"))},
         b={"tests/test_rb.py": shells[1].module("test_rb", _test("test_in_b"))},
     )
-    assert run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
     for shell in shells:
         shell.next_run()
     return shells
@@ -662,7 +664,7 @@ def test_an_unplaced_name_is_searched_first_where_a_test_was_just_written(
     )
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
-    result = run_tests(["test_new"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -685,7 +687,7 @@ def test_a_name_a_new_base_class_brings_is_found_by_the_search(two_projects, tmp
     )
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
-    result = run_tests(["test_new"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -712,7 +714,7 @@ def test_two_cold_projects_read_each_file_once_and_start_no_empty_session(
         b={"tests/test_rb.py": b.module("test_rb", _test("test_in_b"))},
     )
 
-    result = run_tests(["test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -731,7 +733,7 @@ def test_a_session_that_must_find_a_missing_name_runs_none_of_its_tests(
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
-        run_tests(["test_in_b", "test_nowhere"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_b", "test_nowhere"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_b", "run"), ("project_a", "run")]
     assert a.ran_tests() == b.ran_tests() == []
@@ -753,7 +755,7 @@ def test_a_typo_beside_a_new_dependency_runs_no_test(two_projects, tmp_path, kin
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
-        run_tests(["test_nowhere"], output_dir=tmp_path / "out")
+        run_tests(names=["test_nowhere"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
@@ -768,7 +770,7 @@ def test_an_unknown_name_with_one_uncertain_project_runs_nothing_in_any_project(
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
-        run_tests(["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_b", "run"), ("project_a", "run")]
     assert a.ran_tests() == []
@@ -782,7 +784,7 @@ def test_an_unknown_name_across_two_uncertain_projects_runs_nothing(two_projects
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
     with pytest.raises(UnknownSelectionError, match=r"test_nowhere"):
-        run_tests(["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
@@ -797,7 +799,7 @@ def test_a_cold_project_beside_a_warm_one_runs_the_name_in_both(two_projects, tm
     )
     b.write("pytest.ini", "[pytest]\n")
 
-    result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -814,7 +816,7 @@ def test_a_name_a_fresh_record_holds_also_runs_where_a_changed_file_now_holds_it
         "tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_in_a"))
     )
 
-    result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -854,7 +856,7 @@ def test_a_name_every_holder_only_claims_is_an_error_after_the_run(two_projects,
     _claim(tmp_path / "project_b", "tests/test_rb.py", "test_ghost")
 
     with pytest.raises(UnknownSelectionError, match="test_ghost"):
-        run_tests(["test_ghost"], output_dir=tmp_path / "out")
+        run_tests(names=["test_ghost"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_a", "run"), ("project_b", "run")]
 
@@ -869,7 +871,7 @@ def test_a_name_its_one_holder_only_claims_is_an_error_after_the_run(two_project
     _claim(tmp_path / "project_a", "tests/test_ra.py", "test_ghost")
 
     with pytest.raises(UnknownSelectionError, match="test_ghost"):
-        run_tests(["test_ghost", "test_in_b"], output_dir=tmp_path / "out")
+        run_tests(names=["test_ghost", "test_in_b"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == []
@@ -888,7 +890,7 @@ def test_a_search_that_cannot_finish_ends_the_run_with_its_exit_code_and_why(
     a.write("tests/test_ra.py", a.module("test_ra", _test("test_in_a") + "\n\n" + _test("test_a2")))
     b.write("tests/conftest.py", _STOPS_THE_SESSION)
 
-    result = run_tests(["test_nowhere"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_nowhere"], output_dir=tmp_path / "out")
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
     assert result.junit_paths == []
@@ -917,7 +919,7 @@ def test_a_typo_is_searched_for_by_run_sessions_never_a_collect_only_one(
     b.write("tests/conftest.py", _EXITS_WHEN_COLLECTING_ONLY)
 
     with pytest.raises(UnknownSelectionError, match="test_typo"):
-        run_tests(["test_in_a", "test_typo"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_a", "test_typo"], output_dir=tmp_path / "out")
 
     assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
@@ -931,7 +933,7 @@ def test_the_one_uncertain_project_that_cannot_finish_ends_the_run_before_any_te
     kinds.clear()
     a.write("tests/conftest.py", _STOPS_THE_SESSION)
 
-    result = run_tests(["test_new", "test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_new", "test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
     assert result.junit_paths == []
@@ -968,7 +970,7 @@ def test_a_changed_project_whose_conftest_raises_is_logged_by_name(
     kinds.clear()
     b.write("tests/conftest.py", "raise RuntimeError('boom conftest')\n")
 
-    result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
     assert kinds == [("project_a", "run"), ("project_b", "run")]
@@ -992,7 +994,7 @@ def test_a_run_that_learns_nothing_new_leaves_the_cache_file_alone(project, tmp_
     assert cache is not None
     before = cache.stat()
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert sessions == [None]
     after = cache.stat()
@@ -1013,7 +1015,7 @@ def test_a_run_finds_the_workspace_home_once(project, tmp_path, sessions, monkey
 
     monkeypatch.setattr(home, "workspace_home", counting)
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert len(calls) == 1
 
@@ -1028,7 +1030,7 @@ def test_a_broken_file_in_another_project_is_reported_once_and_fails_the_run(
         a={"tests/test_ra.py": shell_a.module("test_ra", _test("test_in_a"))},
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
-    assert run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
     shell_a.next_run()
     shell_b.next_run()
     sessions.clear()
@@ -1038,7 +1040,7 @@ def test_a_broken_file_in_another_project_is_reported_once_and_fails_the_run(
     )
     shell_b.write("tests/test_broken.py", "def test_broken(:\n")
 
-    result = run_tests(["test_new"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 1
     assert sessions == [None, None]
@@ -1074,7 +1076,7 @@ def test_a_name_a_base_class_gains_runs_in_every_file_holding_it(one_project, tm
     shell = _Project(tmp_path / "sut")
     files = _holders(shell)
     root = one_project(files=files)
-    assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
     sessions.clear()
     base = files["tests/test_base.py"]
@@ -1084,7 +1086,7 @@ def test_a_name_a_base_class_gains_runs_in_every_file_holding_it(one_project, tm
     )
     assert root == shell.root
 
-    result = run_tests(["test_y"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_y"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert shell.ran_tests() == ["TestBase::test_y", "TestBase::test_y", "TestD::test_y"]
@@ -1114,7 +1116,7 @@ def test_a_name_a_library_base_class_gains_runs_where_it_is_inherited(
     )
     monkeypatch.syspath_prepend(str(shell.root / "pylib"))
     _wire_projects(monkeypatch, [shell.root])
-    assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
     sessions.clear()
     (shell.root / "pylib" / "libbase.py").write_text(
@@ -1128,7 +1130,7 @@ def test_a_name_a_library_base_class_gains_runs_where_it_is_inherited(
         + "\n    def test_y(self):\n        _ran('TestUses::test_y')\n"
     )
 
-    result = run_tests(["test_y"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_y"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert shell.ran_tests() == ["TestUses::test_y"]
@@ -1148,15 +1150,15 @@ def _warm_then_cold(
     shell: _Project, tmp_path: Path, monkeypatch, sessions, edit
 ) -> list[list[str]]:
     """Warm the table, apply *edit*, run ``test_y``; then run it again on an empty table."""
-    assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
     sessions.clear()
     edit()
-    assert run_tests(["test_y"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["test_y"], output_dir=tmp_path / "out").exit_code == 0
     warm = shell.ran_tests()
     shell.next_run()
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "cold-home"))
-    assert run_tests(["test_y"], output_dir=tmp_path / "cold").exit_code == 0
+    assert run_tests(names=["test_y"], output_dir=tmp_path / "cold").exit_code == 0
     return [warm, shell.ran_tests()]
 
 
@@ -1320,7 +1322,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     assert table is not None
     assert list(table.deps) == [str(lib / "pycbase.pyc")]
     shell.next_run()
-    assert run_tests(["test_y"], output_dir=tmp_path / "third").exit_code == 0
+    assert run_tests(names=["test_y"], output_dir=tmp_path / "third").exit_code == 0
     table = tr.read_table(the_project)
     assert table is not None
     fresh = tr.classify(the_project, table).fresh
@@ -1351,7 +1353,7 @@ def test_a_global_whose_class_raises_never_stops_the_run(one_project, tmp_path):
         }
     )
 
-    result = run_tests(["test_x"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_x"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert shell.ran_tests() == ["test_x"]
@@ -1384,7 +1386,7 @@ def test_a_typo_never_cleans_the_remote_coverage(project, tmp_path, sessions, pr
     pre_clean.reset_mock()
 
     with pytest.raises(UnknownSelectionError):
-        run_tests(["TestA", "test_a3"], output_dir=tmp_path / "out")
+        run_tests(names=["TestA", "test_a3"], output_dir=tmp_path / "out")
 
     pre_clean.assert_not_awaited()
 
@@ -1401,7 +1403,7 @@ def test_a_typo_the_session_finds_never_touches_the_remote_coverage(
     run_module._post_run_coverage.reset_mock()
 
     with pytest.raises(UnknownSelectionError):
-        run_tests(["TestA", "test_a3"], output_dir=tmp_path / "out")
+        run_tests(names=["TestA", "test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
     assert project.ran_tests() == []
@@ -1422,7 +1424,9 @@ def test_a_name_the_marker_excludes_never_cleans_the_remote_coverage(
 
     with pytest.raises(NoTestsMatchedError):
         run_tests(
-            ["test_slow"], run_options=RunOptions(markers="not slow"), output_dir=tmp_path / "o"
+            names=["test_slow"],
+            run_options=RunOptions(markers="not slow"),
+            output_dir=tmp_path / "o",
         )
 
     pre_clean.assert_not_awaited()
@@ -1447,7 +1451,7 @@ def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
 
     pre_clean.side_effect = _clean_and_record
 
-    result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     pre_clean.assert_awaited_once()
@@ -1458,7 +1462,7 @@ def test_a_failing_pre_clean_stops_the_run_with_its_own_error(project, tmp_path,
     pre_clean.side_effect = ValueError("no route to the coverage host")
 
     with pytest.raises(ValueError, match="no route to the coverage host"):
-        run_tests(["TestA"], output_dir=tmp_path / "out")
+        run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert project.ran_tests() == []
 
@@ -1484,7 +1488,7 @@ def test_every_session_of_a_run_uses_the_one_seed(two_projects, tmp_path, monkey
     monkeypatch.setattr("pytest.main", main)
 
     with caplog.at_level(logging.INFO):
-        result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
+        result = run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert len(seen) >= 2, "the run sessions, and the search that stopped before its tests"
@@ -1502,7 +1506,7 @@ def test_a_typo_leaves_an_existing_results_file_alone(project, tmp_path, session
 
     with pytest.raises(UnknownSelectionError):
         run_tests(
-            ["test_b3"],
+            names=["test_b3"],
             run_options=RunOptions(results=str(results)),
             output_dir=tmp_path / "o",
         )
@@ -1515,7 +1519,7 @@ def test_a_typo_leaves_an_existing_results_file_alone(project, tmp_path, session
 def test_a_run_names_the_junit_file_where_it_ends_up(project, tmp_path, capfd):
     out = tmp_path / "out"
 
-    assert run_tests(["TestA"], output_dir=out).exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=out).exit_code == 0
 
     printed = capfd.readouterr().out
     assert f"generated xml file: {out / 'junit.xml'}" in printed
@@ -1554,7 +1558,7 @@ def test_pytest_prints_the_junit_banner_for_the_file_it_names(
     writer.fullwidth = 250
     writer.sep("-", f"generated xml file: {out / 'junit.xml'}")
 
-    assert run_tests(["TestA"], output_dir=out).exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=out).exit_code == 0
 
     assert banner.getvalue() in capfd.readouterr().out
     assert sorted(p.name for p in out.iterdir()) == ["junit.xml"]
@@ -1564,7 +1568,7 @@ def test_a_kept_run_leaves_only_its_final_junit_file(project, tmp_path):
     """A kept run ends with its JUnit file at the final name and no temporary file left."""
     out = tmp_path / "out"
 
-    result = run_tests(["TestA"], output_dir=out)
+    result = run_tests(names=["TestA"], output_dir=out)
 
     assert result.exit_code == 0
     assert result.junit_paths == [out / "junit.xml"]
@@ -1592,7 +1596,7 @@ def _refusing_after_a_warm_run(two_projects, tmp_path) -> Path:
         a={"tests/test_a.py": "def test_in_a():\n    pass\n"},
         b={"tests/test_b.py": "def test_in_b():\n    pass\n"},
     )
-    assert run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
     _Project(tmp_path / "project_a").next_run()
     run_module._post_run_coverage.reset_mock()
     test_b = tmp_path / "project_b" / "tests" / "test_b.py"
@@ -1610,7 +1614,7 @@ def test_a_refusal_in_a_later_project_still_collects_the_earlier_projects_covera
     out = tmp_path / "out"
 
     with pytest.raises(RegistrationRefused):
-        run_tests(["test_in_a"], output_dir=out)
+        run_tests(names=["test_in_a"], output_dir=out)
 
     run_module._post_run_coverage.assert_awaited_once()
     assert (out / "junit_project_a.xml").exists()
@@ -1631,7 +1635,7 @@ def test_a_refusal_a_search_finds_stops_the_run_before_any_test(
     )
 
     with pytest.raises(RegistrationRefused):
-        run_tests(["test_in_b"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_b"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
     assert shell.ran_tests() == []
@@ -1653,7 +1657,7 @@ def test_a_coverage_failure_after_a_refusal_never_hides_the_refusal(
     )
 
     with caplog.at_level("ERROR", logger="otto.suite.run"), pytest.raises(RegistrationRefused):
-        run_tests(["test_in_a"], output_dir=tmp_path / "out")
+        run_tests(names=["test_in_a"], output_dir=tmp_path / "out")
 
     run_module._post_run_coverage.assert_awaited_once()
     [record] = [r for r in caplog.records if "coverage collection" in r.getMessage()]
@@ -1674,7 +1678,7 @@ def test_a_coverage_failure_with_nothing_else_wrong_is_raised(
     )
 
     with pytest.raises(RuntimeError, match="no gcda"):
-        run_tests(["test_b1"], output_dir=tmp_path / "out")
+        run_tests(names=["test_b1"], output_dir=tmp_path / "out")
 
 
 # ── a search that stops: what it learned stays, what it wrote does not ───────
@@ -1694,7 +1698,7 @@ def test_a_broken_file_a_stopped_search_read_still_fails_the_run(
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
 
-    result = run_tests(["test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_b"], output_dir=tmp_path / "out")
 
     assert sessions == [None, None]
     assert shell_b.ran_tests() == ["test_in_b"]
@@ -1717,7 +1721,7 @@ def test_a_broken_file_a_search_read_is_logged_once_though_its_project_runs_agai
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
 
-    result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
 
     assert sessions == [None, None, None]
     assert shell_a.ran_tests() == ["test_in_a"]
@@ -1743,7 +1747,7 @@ def test_a_search_a_conftest_stops_while_collecting_keeps_the_earlier_results(
     results.write_text("<previous/>")
 
     result = run_tests(
-        ["test_new"], run_options=RunOptions(results=str(results)), output_dir=tmp_path / "o"
+        names=["test_new"], run_options=RunOptions(results=str(results)), output_dir=tmp_path / "o"
     )
 
     assert result.exit_code == pytest.ExitCode.INTERRUPTED
@@ -1778,7 +1782,8 @@ def test_split_names_on_cold_projects_collect_each_project_at_most_twice(
     _wire_projects(monkeypatch, roots)
 
     result = run_tests(
-        ["test_in_project_a", "test_in_project_b", "test_in_project_c"], output_dir=tmp_path / "out"
+        names=["test_in_project_a", "test_in_project_b", "test_in_project_c"],
+        output_dir=tmp_path / "out",
     )
 
     assert result.exit_code == 0

@@ -27,12 +27,14 @@ from tests._fixtures.project_scaffold import make_project
 
 
 def _scaffold(root: Path, *areas: str) -> ScaffoldReport:
-    return scaffold(InitConfig(root, "widget", "0.1.0"), list(areas))
+    return scaffold(InitConfig(root, "widget", "0.1.0"), areas=list(areas))
 
 
 def _scaffold_all(tmp_path: Path) -> None:
     """Scaffold every area an all-areas run offers, as ``otto init --all`` does."""
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), scaffold_candidates(tmp_path, all_areas=True))
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0"), areas=scaffold_candidates(tmp_path, all_areas=True)
+    )
 
 
 def _text(report: DoctorReport) -> str:
@@ -200,7 +202,7 @@ def _scaffold_all_inline(tmp_path: Path) -> None:
     """Scaffold every area an ``otto init --all --inline-hosts`` run offers."""
     scaffold(
         InitConfig(tmp_path, "widget", "0.1.0", inline_hosts=True),
-        scaffold_candidates(tmp_path, all_areas=True, inline_hosts=True),
+        areas=scaffold_candidates(tmp_path, all_areas=True, inline_hosts=True),
     )
 
 
@@ -247,7 +249,7 @@ def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
         settings.read_text().replace("version =", "verzion =")
     )
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "failed"
+    assert report.verdict(name="settings").state == "failed"
     assert "verzion" in _text(report)
 
 
@@ -368,7 +370,7 @@ def test_missing_libs_dir_reported(tmp_path: Path) -> None:
     """
     _scaffold_all(tmp_path)
     shutil.rmtree(tmp_path / "pylib")
-    verdict = check_project(tmp_path).verdict("instructions")
+    verdict = check_project(tmp_path).verdict(name="instructions")
     assert verdict.state == "failed"
     assert f"libs dir not found: {tmp_path / 'pylib'}" in verdict.problems
 
@@ -409,16 +411,16 @@ def _write_schemas(tmp_path: Path) -> Path:
 
 
 def _schema_problems(tmp_path: Path) -> str:
-    return "\n".join(check_project(tmp_path).verdict("schemas").problems)
+    return "\n".join(check_project(tmp_path).verdict(name="schemas").problems)
 
 
 def test_schemas_validate_green_after_scaffold_and_reformat(tmp_path: Path) -> None:
     out = _write_schemas(tmp_path)
-    assert check_project(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict(name="schemas").state == "ok"
     # reformat-only change stays green: comparison is structural, not bytes
     lab = out / "lab.schema.json"
     lab.write_text(json.dumps(json.loads(lab.read_text()), indent=4, sort_keys=True))
-    assert check_project(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict(name="schemas").state == "ok"
 
 
 def test_schemas_validate_flags_stale_missing_orphaned(tmp_path: Path) -> None:
@@ -428,7 +430,7 @@ def test_schemas_validate_flags_stale_missing_orphaned(tmp_path: Path) -> None:
     (out / "lab.schema.json").write_text(json.dumps(stale))
     (out / "settings.schema.json").unlink()
     (out / "ghost.schema.json").write_text("{}")
-    verdict = check_project(tmp_path).verdict("schemas")
+    verdict = check_project(tmp_path).verdict(name="schemas")
     assert verdict.state == "failed"
     problems = "\n".join(verdict.problems)
     assert "lab.schema.json" in problems
@@ -590,7 +592,7 @@ def test_broken_user_inventory_settings_is_a_problem_not_a_traceback(tmp_path, m
     user_settings.write_text("not valid toml [[[")  # scaffold-exempt: malformed TOML under test
     report = check_project(tmp_path)
     assert not report.ok
-    problems = "\n".join(report.verdict("lab").problems)
+    problems = "\n".join(report.verdict(name="lab").problems)
     assert "inventory:" in problems
     assert str(user_settings) in problems
 
@@ -846,7 +848,7 @@ def test_all_never_scaffolds_an_opt_in_area(tmp_path: Path, area: str) -> None:
     assert area not in scaffold_candidates(tmp_path, all_areas=True)
     _scaffold_all(tmp_path)
     assert not (tmp_path / "third_party").exists()
-    assert check_project(tmp_path).verdict(area).state == "absent"
+    assert check_project(tmp_path).verdict(name=area).state == "absent"
 
 
 def test_kmodcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
@@ -870,7 +872,9 @@ def test_kmodcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
 
 def test_kmodcov_dir_places_the_export(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0", kmodcov_dir="vendor/kmodcov"), ["kmodcov"])
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0", kmodcov_dir="vendor/kmodcov"), areas=["kmodcov"]
+    )
     assert (tmp_path / "vendor" / "kmodcov" / "kmodcov.h").is_file()
 
 
@@ -886,7 +890,7 @@ def test_a_differing_vendored_copy_is_a_warning_not_a_failure(tmp_path: Path) ->
     (tmp_path / "third_party" / "otto_kmodcov" / "kmodcov.c").write_text("// edited\n")
     report = check_project(tmp_path)
     assert report.ok, _text(report)
-    assert report.verdict("kmodcov").state == "ok"
+    assert report.verdict(name="kmodcov").state == "ok"
     (warning,) = [w for w in report.warnings if "kmodcov.c" in w]
     assert "otto cov kmodcov export" in warning
 
@@ -900,7 +904,7 @@ def test_a_declared_source_with_no_library_fails_the_kmodcov_area(tmp_path: Path
     )
     report = check_project(tmp_path)
     assert not report.ok
-    assert report.verdict("kmodcov").state == "failed"
+    assert report.verdict(name="kmodcov").state == "failed"
     assert "vendor/missing" in _text(report)
 
 
@@ -913,10 +917,10 @@ def test_a_json_source_without_paths_fails_the_lab_area(tmp_path: Path) -> None:
     _settings(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
     # Detected even though no lab file exists: a declaration that does not
     # prepare counts as present, so nothing is ever scaffolded beside it.
-    assert "lab" in detect_areas(tmp_path)
+    assert "lab" in detect_areas(root=tmp_path)
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "ok"
-    lab = report.verdict("lab")
+    assert report.verdict(name="settings").state == "ok"
+    lab = report.verdict(name="lab")
     assert lab.state == "failed"
     assert "parse failed" in lab.problems[0]
     assert "paths" in lab.problems[0]
@@ -929,8 +933,8 @@ def test_a_source_whose_backend_registers_in_an_init_module_is_checked_after_ini
     """``otto init`` runs no init module, so such a source is deferred, never failed."""
     _settings(tmp_path, '[[lab.sources]]\nbackend = "cmdb"\nserver = "db"\n')
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "ok"
-    assert "acme/cmdb#1 (backend 'cmdb'): checked after init" in report.verdict("lab").detail
+    assert report.verdict(name="settings").state == "ok"
+    assert "acme/cmdb#1 (backend 'cmdb'): checked after init" in report.verdict(name="lab").detail
 
 
 @pytest.mark.parametrize("line", ['libs = "pylib"\n', 'tests = "tests"\n'], ids=["libs", "tests"])
@@ -940,7 +944,7 @@ def test_a_non_list_libs_or_tests_fails_settings_and_never_raises(
     """A scalar where the settings want a list is the settings area's problem, not a KeyError."""
     _settings(tmp_path, line)
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "failed"
+    assert report.verdict(name="settings").state == "failed"
 
 
 def test_a_non_string_init_entry_fails_settings_once_and_blocks_instructions(
@@ -949,8 +953,8 @@ def test_a_non_string_init_entry_fails_settings_once_and_blocks_instructions(
     """``init = [1, 2]`` is one settings problem, not a second "init module 1 not found"."""
     _settings(tmp_path, "init = [1, 2]\n")
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "failed"
-    assert report.verdict("instructions") == AreaVerdict(
+    assert report.verdict(name="settings").state == "failed"
+    assert report.verdict(name="instructions") == AreaVerdict(
         "instructions", "blocked", detail="settings did not compile"
     )
 
@@ -959,8 +963,8 @@ def test_a_non_list_init_fails_settings_once_and_blocks_instructions(tmp_path: P
     """``init = "mod"`` is the settings area's problem; instructions does not repeat it."""
     _settings(tmp_path, 'init = "acme_instructions"\n')
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "failed"
-    assert report.verdict("instructions") == AreaVerdict(
+    assert report.verdict(name="settings").state == "failed"
+    assert report.verdict(name="instructions") == AreaVerdict(
         "instructions", "blocked", detail="settings did not compile"
     )
 
@@ -971,7 +975,7 @@ def test_an_unreadable_test_file_is_a_problem_never_raises(tmp_path: Path) -> No
     tests_dir = tmp_path / "tests"
     (tests_dir / "test_dangling.py").symlink_to(tmp_path / "nowhere.py")
     (tests_dir / "test_a_dir.py").mkdir()
-    problems = "\n".join(check_project(tmp_path).verdict("tests").problems)
+    problems = "\n".join(check_project(tmp_path).verdict(name="tests").problems)
     assert "test_dangling.py" in problems
     assert "test_a_dir.py" in problems
 
@@ -981,7 +985,7 @@ def test_a_lab_file_with_a_utf8_bom_fails_as_the_loader_refuses_it(tmp_path: Pat
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
     lab_file.write_bytes(b"\xef\xbb\xbf" + lab_file.read_bytes())
-    verdict = check_project(tmp_path).verdict("lab")
+    verdict = check_project(tmp_path).verdict(name="lab")
     assert verdict.state == "failed"
     assert str(lab_file) in "\n".join(verdict.problems)
 
@@ -992,7 +996,7 @@ def test_a_typod_os_profile_default_fails_settings_and_registers_nothing(tmp_pat
     before = sorted(OS_PROFILES.names())
     _settings(tmp_path, '[os_profiles.acme-os]\nbase = "unix"\nosTyp = "unix"\n')
     report = check_project(tmp_path)
-    assert "unknown default field" in "\n".join(report.verdict("settings").problems)
+    assert "unknown default field" in "\n".join(report.verdict(name="settings").problems)
     assert sorted(OS_PROFILES.names()) == before
 
 
@@ -1003,11 +1007,11 @@ def test_a_table_over_a_class_whose_module_is_missing_fails_settings(tmp_path: P
 
     register_host_class(
         "plugin-host",
-        Ref("plugin_hosts_missing:PluginHost"),
-        spec=Ref("plugin_hosts_missing:PluginSpec"),
+        Ref(target="plugin_hosts_missing:PluginHost"),
+        spec=Ref(target="plugin_hosts_missing:PluginSpec"),
     )
     _settings(tmp_path, '[os_profiles.alpha]\nbase = "plugin-host"\n')
-    settings = check_project(tmp_path).verdict("settings")
+    settings = check_project(tmp_path).verdict(name="settings")
     assert settings.state == "failed"
     problems = "\n".join(settings.problems)
     assert "[os_profiles.alpha] in project 'acme'" in problems
@@ -1021,11 +1025,11 @@ def test_unparsable_settings_fail_once_and_block_lab_and_instructions(tmp_path: 
         'name = "acme\n'
     )
     report = check_project(tmp_path)
-    settings = report.verdict("settings")
+    settings = report.verdict(name="settings")
     assert settings.state == "failed"
     assert len(settings.problems) == 1
-    assert report.verdict("lab").state == "blocked"
-    assert report.verdict("instructions").state == "blocked"
+    assert report.verdict(name="lab").state == "blocked"
+    assert report.verdict(name="instructions").state == "blocked"
     assert _text(report).count(str(tmp_path / ".otto" / "settings.toml")) == 1
 
 
@@ -1039,9 +1043,9 @@ def test_a_settings_file_that_is_not_utf8_fails_settings_and_never_raises(tmp_pa
     settings = tmp_path / ".otto" / "settings.toml"
     settings.write_bytes(b'name = "\xff"\n')  # scaffold-exempt: non-UTF-8 settings under test
     report = check_project(tmp_path)
-    assert report.verdict("settings").state == "failed"
-    assert report.verdict("lab").state == "blocked"
-    assert report.verdict("instructions").state == "blocked"
+    assert report.verdict(name="settings").state == "failed"
+    assert report.verdict(name="lab").state == "blocked"
+    assert report.verdict(name="instructions").state == "blocked"
 
 
 def test_undecodable_lab_and_test_files_are_problems_never_raises(tmp_path: Path) -> None:
@@ -1057,9 +1061,9 @@ def test_undecodable_lab_and_test_files_are_problems_never_raises(tmp_path: Path
     (tmp_path / "tests" / "test_bad_bytes.py").write_bytes(b'x = "\xff"\n')
     (tmp_path / "tests" / "test_nul.py").write_bytes(b"x = 1\x00\n")
     report = check_project(tmp_path)
-    assert report.verdict("lab").state == "failed"
-    assert str(lab_file) in "\n".join(report.verdict("lab").problems)
-    tests = "\n".join(report.verdict("tests").problems)
+    assert report.verdict(name="lab").state == "failed"
+    assert str(lab_file) in "\n".join(report.verdict(name="lab").problems)
+    tests = "\n".join(report.verdict(name="tests").problems)
     assert "test_bad_bytes.py" in tests
     assert "test_nul.py" in tests
 
@@ -1068,7 +1072,7 @@ def test_undecodable_lab_and_test_files_are_problems_never_raises(tmp_path: Path
 def test_no_declared_init_is_absent_and_ok(tmp_path: Path, init_line: str) -> None:
     _settings(tmp_path, init_line)
     report = check_project(tmp_path)
-    assert report.verdict("instructions") == AreaVerdict(
+    assert report.verdict(name="instructions") == AreaVerdict(
         "instructions", "absent", detail="no init modules declared"
     )
     assert report.ok
@@ -1090,7 +1094,7 @@ def test_init_modules_resolve_like_the_loader(
     for rel, text in files.items():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
-    assert check_project(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict(name="instructions").state == "ok"
 
 
 def test_an_init_module_on_sys_path_passes(tmp_path: Path, monkeypatch) -> None:
@@ -1099,13 +1103,13 @@ def test_an_init_module_on_sys_path_passes(tmp_path: Path, monkeypatch) -> None:
     (site / "doctor_path_only_xyz.py").write_text("")
     monkeypatch.syspath_prepend(str(site))
     _settings(tmp_path, 'libs = []\ninit = ["doctor_path_only_xyz"]\n')
-    assert check_project(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict(name="instructions").state == "ok"
 
 
 def test_a_declared_init_that_resolves_nowhere_fails(tmp_path: Path) -> None:
     _settings(tmp_path, 'libs = ["pylib"]\ninit = ["ghost_xyz"]\n')
     (tmp_path / "pylib").mkdir()
-    verdict = check_project(tmp_path).verdict("instructions")
+    verdict = check_project(tmp_path).verdict(name="instructions")
     assert verdict.state == "failed"
     assert "ghost_xyz" in verdict.problems[-1]
     assert str(tmp_path / "pylib") in verdict.problems[-1]
@@ -1148,9 +1152,9 @@ def test_a_path_under_an_unknown_users_home_fails_its_area_and_never_raises(
     """
     _settings(tmp_path, line)
     report = check_project(tmp_path)
-    assert report.verdict(area).state == "failed"
+    assert report.verdict(name=area).state == "failed"
     assert named in _text(report)
-    detect_areas(tmp_path)
+    detect_areas(root=tmp_path)
     scaffold_candidates(tmp_path, all_areas=True)
 
 
@@ -1164,8 +1168,8 @@ def test_a_kmodcov_source_under_an_unknown_users_home_fails_kmodcov_and_never_ra
         'match = { id = ".*" }\n',
     )
     report = check_project(tmp_path)
-    assert report.verdict("kmodcov").state == "failed"
-    assert "~nosuchuser_xyz/kmodcov" in "\n".join(report.verdict("kmodcov").problems)
+    assert report.verdict(name="kmodcov").state == "failed"
+    assert "~nosuchuser_xyz/kmodcov" in "\n".join(report.verdict(name="kmodcov").problems)
 
 
 def test_the_doctor_and_the_loader_report_the_same_contextual_error(tmp_path: Path) -> None:
@@ -1229,7 +1233,7 @@ def test_embedded_gcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> No
     vendored = tmp_path / "third_party" / "embedded-gcov-patch"
     patch_file = vendored / "embedded-gcov-zephyr-gcc12plus.patch"
     assert check_patch(vendored).state == "current"
-    assert check_project(tmp_path).verdict("embedded-gcov").state == "ok"
+    assert check_project(tmp_path).verdict(name="embedded-gcov").state == "ok"
     patch_file.write_text("stale\n")
     again = _scaffold(tmp_path, "embedded-gcov")
     assert check_patch(vendored).state == "current"
@@ -1250,7 +1254,7 @@ def test_a_differing_embedded_gcov_patch_is_a_warning_not_a_failure(tmp_path: Pa
     patch_file.write_text("edited\n")
     report = check_project(tmp_path)
     assert report.ok, _text(report)
-    assert report.verdict("embedded-gcov").state == "ok"
+    assert report.verdict(name="embedded-gcov").state == "ok"
     (warning,) = [w for w in report.warnings if "embedded-gcov-zephyr-gcc12plus.patch" in w]
     assert f"otto cov embedded-gcov export {patch_file.parent}" in warning
     assert warning.startswith(f"{patch_file.parent} differs from the installed otto's copy: ")
@@ -1265,12 +1269,13 @@ def test_a_current_embedded_gcov_patch_warns_of_nothing(tmp_path: Path) -> None:
 def test_a_patch_under_a_custom_directory_gets_no_drift_warning(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     scaffold(
-        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"), ["embedded-gcov"]
+        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"),
+        areas=["embedded-gcov"],
     )
     (tmp_path / "vendor" / "egcov" / "embedded-gcov-zephyr-gcc12plus.patch").write_text("edited\n")
     report = check_project(tmp_path)
     assert report.warnings == []
-    assert report.verdict("embedded-gcov").state == "absent"
+    assert report.verdict(name="embedded-gcov").state == "absent"
 
 
 def test_every_area_without_a_dedicated_branch_has_a_validator() -> None:
@@ -1291,8 +1296,8 @@ def test_a_failing_kmodcov_area_does_not_fail_the_embedded_gcov_verdict(tmp_path
         'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
     )
     report = check_project(tmp_path)
-    assert report.verdict("kmodcov").state == "failed"
-    assert report.verdict("embedded-gcov").state == "ok"
+    assert report.verdict(name="kmodcov").state == "failed"
+    assert report.verdict(name="embedded-gcov").state == "ok"
 
 
 @pytest.mark.parametrize("configured", [True, False])
@@ -1317,7 +1322,7 @@ def test_every_tests_dir_consumer_reads_the_same_dirs(tmp_path: Path, configured
 
     def reads(root: Path) -> tuple[bool, bool, bool]:
         return (
-            "tests" in detect_areas(root),
+            "tests" in detect_areas(root=root),
             template_tests_present(root),
             _validate_tests(root) == [],
         )

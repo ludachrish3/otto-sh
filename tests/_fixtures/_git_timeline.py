@@ -74,7 +74,7 @@ class GitTimeline(TmpGitRepo):
         return store
 
     def dispositions(self, store: CoverageStore, rel: str) -> dict[int, str]:
-        rec = store.get_or_create_file(self.root / rel)
+        rec = store.get_or_create_file(path=self.root / rel)
         out: dict[int, str] = {}
         for lineno, lr in sorted(rec.lines.items()):
             if lr.hits.is_hit():

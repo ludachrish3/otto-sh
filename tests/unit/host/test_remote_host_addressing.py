@@ -8,7 +8,7 @@ from otto.host.unix_host import UnixHost
 
 def _unix(**kw):
     return UnixHost(
-        ip="10.0.0.1", creds=[Cred(login="u", password="p")], element=Element("e"), **kw
+        ip="10.0.0.1", creds=[Cred(login="u", password="p")], element=Element(name="e"), **kw
     )
 
 
@@ -18,18 +18,18 @@ def test_unix_interfaces_default_empty():
 
 def test_address_for_returns_literal_unchanged():
     h = _unix()
-    assert h.address_for("10.0.0.1") == "10.0.0.1"
-    assert h.address_for("203.0.113.9") == "203.0.113.9"
+    assert h.address_for(name_or_literal="10.0.0.1") == "10.0.0.1"
+    assert h.address_for(name_or_literal="203.0.113.9") == "203.0.113.9"
 
 
 def test_address_for_resolves_named_interface():
     h = _unix(interfaces={"mgmt": Interface(ip="10.9.9.9"), "data": Interface(ip="192.168.5.5")})
-    assert h.address_for("mgmt") == "10.9.9.9"
-    assert h.address_for("data") == "192.168.5.5"
-    assert h.address_for("10.0.0.1") == "10.0.0.1"  # literal still passes through
+    assert h.address_for(name_or_literal="mgmt") == "10.9.9.9"
+    assert h.address_for(name_or_literal="data") == "192.168.5.5"
+    assert h.address_for(name_or_literal="10.0.0.1") == "10.0.0.1"  # literal still passes through
 
 
 def test_embedded_interfaces_field_and_address_for():
-    h = EmbeddedHost(ip="192.0.2.1", element=Element("dut"), command_frame=ZephyrFrame())
+    h = EmbeddedHost(ip="192.0.2.1", element=Element(name="dut"), command_frame=ZephyrFrame())
     assert h.interfaces == {}
-    assert h.address_for("192.0.2.1") == "192.0.2.1"
+    assert h.address_for(name_or_literal="192.0.2.1") == "192.0.2.1"

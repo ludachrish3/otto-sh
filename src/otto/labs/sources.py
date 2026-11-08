@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LabSourceEnv:
     """What otto hands a lab-source backend beside its parsed configuration.
 
@@ -157,7 +157,7 @@ def compile_lab_sources(
         PendingLabSource(
             backend=spec.backend,
             label=_label(spec, ordinal=i, project_name=project_name),
-            raw=FrozenMap.freeze_json(dict(spec.model_extra or {})),
+            raw=FrozenMap.freeze_json(value=dict(spec.model_extra or {})),
             origin=origin,
             project_root=root,
         )
@@ -209,9 +209,14 @@ def prepare_lab_sources(
             states.append(LabSourceState(source, None))
             continue
         prepared = LAB_REPOSITORIES.prepare(
-            source.backend,
-            source.raw.thaw_json(),
-            LabSourceEnv(source.project_root, source.label, source.origin, profiles),
+            name=source.backend,
+            raw=source.raw.thaw_json(),
+            env=LabSourceEnv(
+                project_root=source.project_root,
+                label=source.label,
+                origin=source.origin,
+                profiles=profiles,
+            ),
             source=source.origin,
         )
         states.append(LabSourceState(source, prepared))
@@ -251,7 +256,7 @@ def prepared_lab_sources(
     if profiles is None:
         from ..host.os_profile import ProfileContext
 
-        profiles = ProfileContext.from_projects([project])
+        profiles = ProfileContext.from_projects(projects=[project])
     revision = LAB_REPOSITORIES.revision
     declared = tuple(project.lab_sources)
     key = (project.root, profiles)
@@ -264,7 +269,7 @@ def prepared_lab_sources(
 
 
 def build_lab_sources(
-    projects: "Sequence[Project]", *, profiles: "ProfileContext | None" = None
+    *, projects: "Sequence[Project]", profiles: "ProfileContext | None" = None
 ) -> "LabRepository":
     """Construct the process's host source from every project's sources.
 
@@ -300,7 +305,7 @@ def build_lab_sources(
     from .registry import LAB_REPOSITORIES
 
     if profiles is None:
-        profiles = ProfileContext.from_projects(projects)
+        profiles = ProfileContext.from_projects(projects=projects)
     entries: "list[LabSource]" = []
     for project in projects:
         for state in prepared_lab_sources(project, profiles=profiles):
@@ -309,12 +314,17 @@ def build_lab_sources(
             if prepared is None:
                 # One code path for the message: the registry's own lookup error.
                 prepared = LAB_REPOSITORIES.prepare(
-                    source.backend,
-                    source.raw.thaw_json(),
-                    LabSourceEnv(source.project_root, source.label, source.origin, profiles),
+                    name=source.backend,
+                    raw=source.raw.thaw_json(),
+                    env=LabSourceEnv(
+                        project_root=source.project_root,
+                        label=source.label,
+                        origin=source.origin,
+                        profiles=profiles,
+                    ),
                     source=source.origin,
                 )
             entries.append(
-                LabSource(label=source.label, repository=LAB_REPOSITORIES.build(prepared))
+                LabSource(label=source.label, repository=LAB_REPOSITORIES.build(prepared=prepared))
             )
     return CompositeLabRepository(entries)

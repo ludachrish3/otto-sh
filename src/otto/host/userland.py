@@ -1119,7 +1119,7 @@ class Userland:
         """
         return self._get("shell_dialect")
 
-    def has_applet(self, applet: str) -> str:
+    def has_applet(self, *, applet: str) -> str:
         """:data:`APPLET_PRESENT` or :data:`APPLET_ABSENT` for one *applet*.
 
         The parameterized reader the fixed six do not need. Seven properties
@@ -1153,7 +1153,7 @@ class Userland:
         """
         return self._get(applet_capability(applet))
 
-    def is_settled(self, name: str) -> bool:
+    def is_settled(self, *, name: str) -> bool:
         """Whether *name*'s value was DECLARED or actually MEASURED, not assumed.
 
         The tri-state ``_probe`` keeps, made readable at the consumer. A
@@ -1241,7 +1241,7 @@ def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
     agreement by parsing the debug lines a resolution has just emitted, rather
     than by restating an expectation here -- so a drift in either reddens.
     """
-    values = {applet_capability(a): userland.has_applet(a) for a in PROBED_APPLETS}
+    values = {applet_capability(a): userland.has_applet(applet=a) for a in PROBED_APPLETS}
     # Whatever `_UNASKABLE_DEFAULTS` carries beyond the applets is the fixed
     # six, and each of those names is spelled exactly like the property that
     # reads it. Derived rather than listed, so a seventh capability with no
@@ -1250,7 +1250,7 @@ def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
     values |= {n: getattr(userland, n) for n in _UNASKABLE_DEFAULTS if n not in values}
     rows: list[tuple[str, str, str]] = []
     for name in sorted(values):
-        if not userland.is_settled(name):
+        if not userland.is_settled(name=name):
             source = "assumed"
         elif getattr(userland._options, name):  # noqa: SLF001 — same-module read of the declarations `_resolve_once` classifies from
             source = "declared"
@@ -1503,6 +1503,7 @@ class UserlandHost:
     @cli_exposed(output_dir=False)
     async def probe(
         self,
+        *,
         user: Annotated[
             "str | None",
             Opt(
@@ -1558,7 +1559,7 @@ class UserlandHost:
         lines, which the CLI prints as written so the pin stays pasteable.
         """
         if is_dry_run():
-            return Result(Status.Skipped, value=_dry_run_report())
+            return Result(status=Status.Skipped, value=_dry_run_report())
         from .capability_grid import SessionIdentity
         from .survey.engine import run_survey
         from .survey.report import survey_report
@@ -1567,7 +1568,7 @@ class UserlandHost:
         try:
             parse_scan_ports(scan_ports)
         except ValueError as exc:
-            return Result(Status.Error, msg=str(exc))
+            return Result(status=Status.Error, msg=str(exc))
         # `getattr` rather than `self.capabilities`: the mixin is public, and a
         # third-party host that composes it without a capability grid must get
         # the verb rather than an AttributeError. No grid means no family that
@@ -1578,7 +1579,7 @@ class UserlandHost:
         )
         if user is not None and refuses_user:
             msg = f"su/switch_user is not supported on '{type(self).__name__}'"
-            return Result(Status.Error, msg=msg)
+            return Result(status=Status.Error, msg=msg)
         userland = self._userland()
         if userland is None:
             lines: "list[str | Table | Text]" = list(_no_resolver_report(type(self).__name__))
@@ -1593,7 +1594,7 @@ class UserlandHost:
         as_host = cast("BaseHost", self)
         survey = await run_survey(as_host, user=user, scan_ports=scan_ports)
         value: "list[str | Table | Text]" = [*lines, "", *survey_report(as_host, survey)]
-        return Result(Status.Success, value=value)
+        return Result(status=Status.Success, value=value)
 
 
 # ===========================================================================
@@ -2594,7 +2595,7 @@ GAPS: list[Gap] = [
                     "also why the `file-ops-base64` defect shape -- a present file reported "
                     "missing -- does not occur here even without the guard: the failure "
                     "happens before any `src` is named, so the per-file "
-                    "`Result(Status.Error, msg=f'{src}: {outcome}')` arm never renders it "
+                    "`Result(status=Status.Error, msg=f'{src}: {outcome}')` arm never renders it "
                     "and no file is ever blamed for the subsystem"
                 ),
                 pinned_by=(

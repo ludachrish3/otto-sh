@@ -280,9 +280,9 @@ def real_main_mocks(tmp_path):
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
             return_value=Results.collect(
-                [
+                items=[
                     CommandResult(
-                        Status.Success,
+                        status=Status.Success,
                         value="abc123",
                         command="git log",
                         retcode=0,

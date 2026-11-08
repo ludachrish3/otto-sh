@@ -80,14 +80,14 @@ class TestCommandHooks:
         offset — see :mod:`otto.host.embedded_transfer` for the live-shell
         gotcha. The default hook must emit that form.
         """
-        cmd = FatRamFileSystem().write_command("/RAM:/x.bin", 32, "41 42 43")
+        cmd = FatRamFileSystem().write_command("/RAM:/x.bin", offset=32, hexbytes="41 42 43")
         assert cmd == "fs write /RAM:/x.bin -o 32 41 42 43"
 
     def test_rm_command(self):
         assert LittleFsFileSystem().rm_command("/lfs/x") == "fs rm /lfs/x"
 
     def test_trunc_command(self):
-        assert LittleFsFileSystem().trunc_command("/lfs/x", 0) == "fs trunc /lfs/x 0"
+        assert LittleFsFileSystem().trunc_command("/lfs/x", length=0) == "fs trunc /lfs/x 0"
 
     def test_ls_command(self):
         assert FatRamFileSystem().ls_command("/RAM:") == "fs ls /RAM:"
@@ -144,7 +144,7 @@ class TestRegistry:
             assert instance.mount == "/vfs"
             assert instance.supports_transfer is True
         finally:
-            FILESYSTEM_CLASSES.unregister("vendor-fs-roundtrip-test")
+            FILESYSTEM_CLASSES.unregister(name="vendor-fs-roundtrip-test")
 
     def test_register_filesystem_rejects_type_name_mismatch(self):
         """Mismatched key and ``cls.type_name`` is a likely bug; surface it
@@ -182,7 +182,7 @@ class TestCustomCommandSyntax:
         # Overridden:
         assert fs.read_command("/vfs/x") == "myfs read /vfs/x"
         # Inherited (stock):
-        assert fs.write_command("/vfs/x", 0, "41") == "fs write /vfs/x -o 0 41"
+        assert fs.write_command("/vfs/x", offset=0, hexbytes="41") == "fs write /vfs/x -o 0 41"
         assert fs.statvfs_command() == "fs statvfs /vfs"
 
 

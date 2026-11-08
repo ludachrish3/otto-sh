@@ -845,7 +845,7 @@ def test_lab_sources_parse_and_reach_project(tmp_path):
         name="srcrepo",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n',
     )
-    project = Project(sut)
+    project = Project(root=sut)
     (src,) = project.lab_sources
     assert src.label == "srcrepo/json#1"
     assert src.backend == "json"

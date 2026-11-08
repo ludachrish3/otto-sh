@@ -170,7 +170,7 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
         if interactive:
             answers = _ask(config, candidates, name_given=bool(name))
             config, candidates = answers.config, answers.areas
-        report = scaffold(config, candidates)
+        report = scaffold(config, areas=candidates)
         doctor = check_project(config.root)
     except InitInputError as e:
         raise usage_error_from(e, flags=_FLAGS) from e
@@ -230,7 +230,7 @@ def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _A
         config = dataclasses.replace(config, name=name, version=version)
     chosen: list[str] = []
     for area in candidates:
-        if area in scaffold_prerequisites(config.root, chosen):
+        if area in scaffold_prerequisites(root=config.root, areas=chosen):
             continue
         with direct_terminal():
             wanted = typer.confirm(f"Scaffold the {area} area?", default=True)

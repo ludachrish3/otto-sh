@@ -59,7 +59,7 @@ class TestRepair:
         # pre-clear read shows impairment; post-clear re-read shows it gone
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
         test2.qdisc_texts = [""]  # b-side has nothing to clear
-        report = await repair_link(lab, "edge")
+        report = await repair_link(lab, ident="edge")
         assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
         assert "kill 4242" in test1.sudo_commands
         assert not any("del" in c for c in test2.sudo_commands)
@@ -75,14 +75,14 @@ class TestRepair:
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
         test2.qdisc_texts = [""]
         with pytest.raises(RuntimeError, match=r"repair failed on test1/eth1\.100"):
-            await repair_link(lab, "edge")
+            await repair_link(lab, ident="edge")
 
     @pytest.mark.asyncio
     async def test_repair_all_collects_clear_that_does_not_take(self) -> None:
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
         test2.qdisc_texts = [""]
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
         assert sweep.repaired == []
         assert len(sweep.failures) == 1
         assert "repair failed" in sweep.failures[0]
@@ -94,7 +94,7 @@ class TestRepair:
         lab, test1, _, _ = _bed()
         lab.links.append(unnamed)
         test1.fail_on = "tc qdisc show"  # the impairable link's read fails
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
         assert sweep.repaired == []  # the impairable link failed, the bare one skipped
         assert len(sweep.failures) == 1
         assert LINK.id in sweep.failures[0]
@@ -117,7 +117,7 @@ class TestRepair:
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
         test2.qdisc_texts = [""]
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
         assert sweep.repaired == []
         assert sweep.failures == []
         assert not test1.sudo_commands
@@ -215,7 +215,7 @@ class TestReadStates:
         test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
         assert state.by_direction[FlowDirection.A_TO_B] == DirectionState(
-            whole=None, scoped={Selector(5201, "tcp"): ImpairmentParams(delay_ms=200.0)}
+            whole=None, scoped={Selector(port=5201, proto="tcp"): ImpairmentParams(delay_ms=200.0)}
         )
 
     @pytest.mark.asyncio
@@ -267,7 +267,7 @@ class TestReadStates:
             name="mgmt-edge",
         )
         lab, test1, *_ = _bed(link=mgmt)
-        assert impairment_refusal(mgmt) is None, "positive control: structurally fine"
+        assert impairment_refusal(link=mgmt) is None, "positive control: structurally fine"
 
         (state,) = await read_link_states(lab)
         assert not state.impairable
@@ -381,13 +381,13 @@ class TestScopedRepair:
     @pytest.mark.asyncio
     async def test_bare_repair_clears_scoped_tree_and_all_timers(self) -> None:
         v1 = encode_impair_sentinel(LINK.id, "eth1.100")
-        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=5201, proto="tcp"))
         lab, test1, test2, _ = _bed()
         test1.ps_text = f"  4242 05:00 {v1} -c sleep 600\n  4243 05:00 {v2} -c sleep 600\n"
         test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
         test1.filter_texts = [FILTER_SCOPED_ONE, ""]
         test2.qdisc_texts = [""]
-        report = await repair_link(lab, "edge")
+        report = await repair_link(lab, ident="edge")
         assert "kill 4242 4243" in test1.sudo_commands
         assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
         assert report.timers_cancelled == 2
@@ -398,7 +398,7 @@ class TestScopedRepair:
         test1.qdisc_texts = [QDISC_SCOPED_TWO, QDISC_SCOPED_ONE]
         test1.filter_texts = [FILTER_SCOPED_TWO, FILTER_SCOPED_ONE]
         test2.qdisc_texts = [""]
-        report = await repair_link(lab, "edge", selector=Selector(53, "udp"))
+        report = await repair_link(lab, ident="edge", selector=Selector(port=53, proto="udp"))
         assert test1.sudo_commands == [
             "tc filter del dev eth1.100 parent 1: pref 251 protocol ip u32",
             "tc filter del dev eth1.100 parent 1: pref 1251 protocol ip u32",
@@ -412,13 +412,13 @@ class TestScopedRepair:
         test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
         test1.filter_texts = [FILTER_SCOPED_ONE, ""]
         test2.qdisc_texts = [""]
-        await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+        await repair_link(lab, ident="edge", selector=Selector(port=5201, proto="tcp"))
         assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
 
     @pytest.mark.asyncio
     async def test_selector_repair_cancels_only_matching_v2_timer(self) -> None:
-        mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
+        mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=5201, proto="tcp"))
+        other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=53, proto="udp"))
         lab, test1, test2, _ = _bed()
         test1.ps_text = f"  4242 05:00 {mine} -c x\n  4243 05:00 {other} -c x\n"
         # post-clear re-read: only 53/udp (band 5) remains
@@ -437,7 +437,7 @@ class TestScopedRepair:
         test1.qdisc_texts = [QDISC_SCOPED_TWO, qdisc_53_only]
         test1.filter_texts = [FILTER_SCOPED_TWO, filter_53_only]
         test2.qdisc_texts = [""]
-        await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+        await repair_link(lab, ident="edge", selector=Selector(port=5201, proto="tcp"))
         assert "kill 4242" in test1.sudo_commands
         assert not any("4243" in c for c in test1.sudo_commands)
 
@@ -447,7 +447,7 @@ class TestScopedRepair:
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
         test2.qdisc_texts = [""]
         with pytest.raises(ValueError, match="repair it without --port"):
-            await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+            await repair_link(lab, ident="edge", selector=Selector(port=5201, proto="tcp"))
         assert not test1.sudo_commands
 
     @pytest.mark.asyncio
@@ -456,7 +456,7 @@ class TestScopedRepair:
         test1.qdisc_texts = [QDISC_SCOPED_ONE]
         test1.filter_texts = [FILTER_SCOPED_ONE]
         test2.qdisc_texts = [""]
-        report = await repair_link(lab, "edge", selector=Selector(9999, "tcp"))
+        report = await repair_link(lab, ident="edge", selector=Selector(port=9999, proto="tcp"))
         assert report.cleared == []
         assert not test1.sudo_commands
 
@@ -468,7 +468,7 @@ class TestScopedRepair:
         test1.filter_texts = [FILTER_SCOPED_ONE]
         test2.qdisc_texts = [""]
         with pytest.raises(RuntimeError, match=r"repair failed on test1/eth1\.100"):
-            await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+            await repair_link(lab, ident="edge", selector=Selector(port=5201, proto="tcp"))
 
     @pytest.mark.asyncio
     async def test_bare_repair_against_foreign_root_refuses(self) -> None:
@@ -478,7 +478,7 @@ class TestScopedRepair:
         # ValueError: the structural-refusal convention. `repair --all` skips
         # it (see TestRepairAll) — a foreign qdisc was never otto's to clear.
         with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
-            await repair_link(lab, "edge")
+            await repair_link(lab, ident="edge")
         assert not test1.sudo_commands
 
 
@@ -500,7 +500,7 @@ class TestDryRunRepairPlansWithoutContact:
     async def test_the_clears_are_conditional_and_nothing_is_reported_cleared(self) -> None:
         lab, test1, test2, _ = _bed()
         with active_context(dry_run=True):
-            report = await repair_link(lab, "edge")
+            report = await repair_link(lab, ident="edge")
 
         assert report.plan is not None
         assert report.cleared == []
@@ -533,7 +533,7 @@ class TestDryRunRepairPlansWithoutContact:
         test1.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
         test2.qdisc_texts = [""]
-        report = await repair_link(lab, "edge")
+        report = await repair_link(lab, ident="edge")
         assert [p.netdev for p in report.cleared] == ["eth1.100"]
         assert report.timers_cancelled == 1
         assert report.plan is None
@@ -547,7 +547,7 @@ class TestDryRunRepairPlansWithoutContact:
         """
         lab, *_ = _bed()
         with active_context(dry_run=True):
-            sweep = await repair_all(lab)
+            sweep = await repair_all(lab=lab)
 
         assert sweep.repaired == []
         assert sweep.failures == []
@@ -564,7 +564,7 @@ class TestDryRunRepairPlansWithoutContact:
         )
         lab, *_ = _bed(link=bare)
         with active_context(dry_run=True):
-            sweep = await repair_all(lab)
+            sweep = await repair_all(lab=lab)
 
         assert sweep.planned == []
         assert len(sweep.skipped) == 1
@@ -583,7 +583,7 @@ class TestDryRunRepairPlansWithoutContact:
             name="bare-edge",
         )
         lab, *_ = _bed(link=bare)
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
 
         assert sweep.dry_run is False
         assert len(sweep.skipped) == 1
@@ -707,19 +707,21 @@ class TestDryRunListReportsNotMeasured:
 class TestRangeRepair:
     @pytest.mark.asyncio
     async def test_repair_link_clears_an_exact_range_selector(self) -> None:
-        sel = Selector(5000, "tcp", end=5010, side="dst")
+        sel = Selector(port=5000, proto="tcp", end=5010, side="dst")
         tree = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=50.0))})
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc, ""], [tree.filters, ""]
-        report = await repair_link(lab, "edge", selector=sel)
+        report = await repair_link(lab, ident="edge", selector=sel)
         assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
         assert [p.host_id for p in report.cleared] == ["test1"]
 
     @pytest.mark.asyncio
     async def test_repair_inside_a_wider_range_carves_nothing(self) -> None:
-        tree = render_scoped_tree({Selector(5200, end=5220): (4, ImpairmentParams(delay_ms=50.0))})
+        tree = render_scoped_tree(
+            {Selector(port=5200, end=5220): (4, ImpairmentParams(delay_ms=50.0))}
+        )
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
-        report = await repair_link(lab, "edge", selector=Selector(5205))
+        report = await repair_link(lab, ident="edge", selector=Selector(port=5205))
         assert test1.sudo_commands == []
         assert report.cleared == []

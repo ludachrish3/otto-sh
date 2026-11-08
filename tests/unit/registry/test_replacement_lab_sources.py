@@ -26,7 +26,7 @@ def test_replaces_names_every_built_in_lab_source():
     builtins = {
         ("otto.labs.registry:LAB_REPOSITORIES", name)
         for name in LAB_REPOSITORIES.names()
-        if LAB_REPOSITORIES.origin(name).startswith("otto.")
+        if LAB_REPOSITORIES.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -39,7 +39,7 @@ def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
     )
     project = Project(root=tmp_path)
     spy = _Spy()
-    entry = LAB_REPOSITORIES.peek("json")
+    entry = LAB_REPOSITORIES.peek(name="json")
     seen = []
 
     def factory(c):
@@ -47,7 +47,7 @@ def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
         return spy
 
     register_lab_repository("json", config=entry.config, factory=factory, overwrite=True)
-    composite = build_lab_sources([project])
+    composite = build_lab_sources(projects=[project])
     assert isinstance(composite, CompositeLabRepository)
     assert [source.repository for source in composite.sources] == [spy]
     (configured,) = seen

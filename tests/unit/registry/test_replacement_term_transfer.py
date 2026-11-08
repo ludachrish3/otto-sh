@@ -74,7 +74,7 @@ def test_replaces_names_every_built_in_term_and_transfer():
             (TRANSFERS, xfer_mod.TRANSFER_BACKENDS),
         ]
         for name in table.names()
-        if table.origin(name).startswith("otto.")
+        if table.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -91,7 +91,7 @@ def test_the_cases_cover_every_family_each_built_in_serves():
 
 
 def _families(table, name: str) -> "frozenset[str]":
-    return table.peek(name).metadata.host_families
+    return table.peek(name=name).metadata.host_families
 
 
 def _unix_host_on(term: str) -> UnixHost:
@@ -102,7 +102,7 @@ def _unix_host_on(term: str) -> UnixHost:
     return UnixHost(
         ip="10.0.0.9",
         creds=[Cred(login="root", password="x")],
-        element=Element("ne"),
+        element=Element(name="ne"),
         term=term,
         valid_terms=[term],
         **extra,
@@ -222,7 +222,7 @@ def test_unix_host_builds_registered_transfer_backend():
     h = UnixHost(
         ip="10.0.0.9",
         creds=[Cred(login="root", password="x")],
-        element=Element("e"),
+        element=Element(name="e"),
         transfer="recording",
         valid_transfers=["recording"],
     )
@@ -233,7 +233,7 @@ def test_unix_host_builds_registered_transfer_backend():
 def test_eager_invalid_metadata_beside_an_unresolved_ref_is_refused_without_importing():
     with pytest.raises(ValueError, match="host_families"):
         register_term_backend(
-            "x", Ref("never_imported_mod:C"), host_families=frozenset(), authenticates=True
+            "x", Ref(target="never_imported_mod:C"), host_families=frozenset(), authenticates=True
         )
     assert "never_imported_mod" not in sys.modules
     assert "x" not in conn_mod.TERM_BACKENDS

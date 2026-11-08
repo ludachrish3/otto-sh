@@ -31,7 +31,7 @@ def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )

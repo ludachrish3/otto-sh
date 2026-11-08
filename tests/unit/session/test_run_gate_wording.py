@@ -7,5 +7,7 @@ from otto.session.errors import ProjectLoadError
 
 
 def test_the_run_gate_says_project():
-    err = ProjectLoadError([BootstrapError(Path("/w/p"), "x", ValueError("y"))], [])
+    err = ProjectLoadError(
+        [BootstrapError(Path("/w/p"), source="x", cause=ValueError("y"))], demoted=[]
+    )
     assert str(err).startswith("cannot run while a project fails to load:")

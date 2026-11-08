@@ -149,8 +149,8 @@ def register_inventory_backend(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite* is false.
     """
     INVENTORY_BACKENDS.register(
-        name,
-        configured_backend(
+        name=name,
+        entry=configured_backend(
             config=config,
             factory=factory,
             metadata=InventoryMetadata(snapshot_cache=snapshot_cache),
@@ -162,18 +162,18 @@ def register_inventory_backend(
 def _register_builtins() -> None:
     """Register the built-in inventory backends by reference."""
     INVENTORY_BACKENDS.register(
-        "json",
-        configured_backend(
-            config=Ref("otto.inventory.config:JsonInventoryConfig"),
-            factory=Ref("otto.inventory.json_backend:_json_inventory"),
+        name="json",
+        entry=configured_backend(
+            config=Ref(target="otto.inventory.config:JsonInventoryConfig"),
+            factory=Ref(target="otto.inventory.json_backend:_json_inventory"),
             metadata=InventoryMetadata(snapshot_cache=False),
         ),
     )
     INVENTORY_BACKENDS.register(
-        "netbox",
-        configured_backend(
-            config=Ref("otto.inventory.config:NetBoxInventoryConfig"),
-            factory=Ref("otto.inventory.netbox:_netbox_inventory"),
+        name="netbox",
+        entry=configured_backend(
+            config=Ref(target="otto.inventory.config:NetBoxInventoryConfig"),
+            factory=Ref(target="otto.inventory.netbox:_netbox_inventory"),
             metadata=InventoryMetadata(snapshot_cache=True),
         ),
     )

@@ -15,7 +15,7 @@ from otto.models.base import OttoModel
 
 def test_the_command_controller_is_built_from_its_config_model():
     ctl = power_control_from_spec(
-        {"type": "command", "on_cmd": "on {id}", "off_cmd": "off"}, host_id="h1"
+        value={"type": "command", "on_cmd": "on {id}", "off_cmd": "off"}, host_id="h1"
     )
     assert isinstance(ctl, _CommandPowerController)
     assert ctl.config == CommandPowerConfig(on_cmd="on {id}", off_cmd="off")
@@ -24,7 +24,7 @@ def test_the_command_controller_is_built_from_its_config_model():
 def test_an_unknown_key_is_a_parse_error_that_does_not_echo_its_value():
     with pytest.raises(PowerConstructionError, match="parse") as info:
         power_control_from_spec(
-            {"type": "command", "on_cmd": "x", "off_cmd": "y", "pasword": "s3cr3t-value"},
+            value={"type": "command", "on_cmd": "x", "off_cmd": "y", "pasword": "s3cr3t-value"},
             host_id="h1",
         )
     assert "s3cr3t-value" not in str(info.value)
@@ -42,7 +42,7 @@ def test_a_custom_controller_receives_the_host_id():
             seen.append(c.env) or _CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
         ),
     )
-    build_power_controller("pdu", {"outlet": 3}, host_id="rack-1")
+    build_power_controller(type_name="pdu", config={"outlet": 3}, host_id="rack-1")
     assert seen == [PowerEnv(host_id="rack-1")]
 
 
@@ -57,15 +57,15 @@ def test_a_factory_mutating_its_config_cannot_change_the_next_build():
         )
 
     register_power_controller("mut", config=Cfg, factory=factory)
-    prepared = POWER_CONTROLLERS.prepare("mut", {}, PowerEnv("h"))
-    assert POWER_CONTROLLERS.build(prepared).config.on_cmd == "1"
-    assert POWER_CONTROLLERS.build(prepared).config.on_cmd == "1"
+    prepared = POWER_CONTROLLERS.prepare(name="mut", raw={}, env=PowerEnv("h"))
+    assert POWER_CONTROLLERS.build(prepared=prepared).config.on_cmd == "1"
+    assert POWER_CONTROLLERS.build(prepared=prepared).config.on_cmd == "1"
 
 
 def test_none_and_an_instance_pass_through():
     ctl = _CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
-    assert power_control_from_spec(None, host_id="h") is None
-    assert power_control_from_spec(ctl, host_id="h") is ctl
+    assert power_control_from_spec(value=None, host_id="h") is None
+    assert power_control_from_spec(value=ctl, host_id="h") is ctl
 
 
 # -- the hosts pass their own id ------------------------------------------------
@@ -93,7 +93,7 @@ def test_a_unix_host_passes_its_id_to_power_construction():
     _spy_over_command(seen)
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("Box_1"),
+        element=Element(name="Box_1"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
         power_control=dict(_TABLE),
@@ -113,7 +113,7 @@ def test_a_zephyr_host_passes_its_id_to_power_construction():
     _spy_over_command(seen)
     host = ZephyrHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         power_control=dict(_TABLE),
     )
@@ -125,5 +125,5 @@ def test_a_table_without_a_type_names_the_host():
     with pytest.raises(
         PowerConstructionError, match=r"power_control of host 'rack-1' has no 'type' key"
     ) as info:
-        power_control_from_spec({"on_cmd": "on", "off_cmd": "off"}, host_id="rack-1")
+        power_control_from_spec(value={"on_cmd": "on", "off_cmd": "off"}, host_id="rack-1")
     assert "command" in str(info.value)

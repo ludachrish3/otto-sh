@@ -36,7 +36,7 @@ def default_mock_project():
 
     global mock_project  # noqa: PLW0603 — module-level singleton/cache
 
-    mock_project = MockProject(tests_root / "project1")
+    mock_project = MockProject(root=tests_root / "project1")
 
 
 def test_project_config_location(default_mock_project):
@@ -96,10 +96,10 @@ def test_bootstrap_registers_project1_instructions_and_options(monkeypatch):
         state = registry._snapshot()
         for name in registry.names():
             if (
-                registry.origin(name).startswith("project1_instructions")
+                registry.origin(name=name).startswith("project1_instructions")
                 or name in project1_options
             ):
-                registry.unregister(name)
+                registry.unregister(name=name)
         return state
 
     registries = [STANDALONE_INSTRUCTIONS, PROJECT_ACTIONS, OPTIONS]
@@ -117,7 +117,9 @@ def test_bootstrap_registers_project1_instructions_and_options(monkeypatch):
         assert pylib in sys.path
         assert set(INSTRUCTIONS.names()) > before_instructions
         assert sorted(set(OPTIONS.names()) - before_options) == project1_options
-        assert [OPTIONS.origin(name) for name in project1_options] == ["project1_instructions"] * 2
+        assert [OPTIONS.origin(name=name) for name in project1_options] == [
+            "project1_instructions"
+        ] * 2
     finally:
         bs._reset()
         # Restore the exact pre-test world: sys.path, this test's
@@ -291,7 +293,9 @@ class TestOsProfilesParsing:
         assert "zephyr-3_7" in project.os_profiles
         # Data, never registered: it resolves through the projects' context.
         assert "zephyr-3_7" not in OS_PROFILES
-        prof = build_os_profile("zephyr-3_7", data=ProfileContext.from_projects([project]))
+        prof = build_os_profile(
+            name="zephyr-3_7", data=ProfileContext.from_projects(projects=[project])
+        )
         assert prof.base == "embedded"
         assert prof.fields.defaults["os_version"] == "3.7"
         assert prof.fields.defaults["max_filename_len"] == 32
@@ -328,7 +332,7 @@ class TestOsProfilesParsing:
             ValueError,
             match=r"\[os_profiles\.broken\] in project .*base must name a registered host class",
         ):
-            check_data_profiles([project])
+            check_data_profiles(projects=[project])
 
     def test_unknown_default_field_raises(self, tmp_path):
         sut = _write_project(
@@ -343,7 +347,7 @@ class TestOsProfilesParsing:
 
         project = Project(root=sut)
         with pytest.raises(ValueError, match="unknown default field"):
-            check_data_profiles([project])
+            check_data_profiles(projects=[project])
 
 
 class TestOsProfilesIntegration:
@@ -361,7 +365,7 @@ class TestOsProfilesIntegration:
         from otto.host.os_profile import ProfileContext
 
         # Constructing the project parses settings, keeping the data profiles.
-        project = MockProject(tests_root / "project1")
+        project = MockProject(root=tests_root / "project1")
         assert {"zephyr-3.7", "zephyr-2.7", "zephyr-4.4"} <= set(project.os_profiles)
 
         # Importing the init modules registers the `zephyr-inline` frame the
@@ -380,8 +384,8 @@ class TestOsProfilesIntegration:
                     "os_type": "zephyr-2.7",
                     "filesystem": "fat-ram",
                 },
-                element=Element("zephyr27_demo"),
-                profiles=ProfileContext.from_projects([project]),
+                element=Element(name="zephyr27_demo"),
+                profiles=ProfileContext.from_projects(projects=[project]),
             )
         finally:
             if added:

@@ -15,7 +15,7 @@ FP_INDEX = {SHA_NEW: 0, SHA_MID: 1, SHA_OLD: 2}
 def _store(tmp_path: Path, lines: dict[int, list[str]]) -> CoverageStore:
     """A store with one file a.c; *lines* maps lineno -> tiers already hit."""
     store = CoverageStore(tier_order=["bench"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     for lineno, tiers in lines.items():
         lr = rec.get_or_create_line(lineno)
         for tier in tiers:
@@ -36,7 +36,7 @@ def _apply(store, tmp_path, entries, per_line_sha, ticket_commits=None):
 
 
 def _line(store, tmp_path, lineno):
-    return store.get_or_create_file(tmp_path / "a.c").lines[lineno]
+    return store.get_or_create_file(path=tmp_path / "a.c").lines[lineno]
 
 
 def test_commit_entry_asserts_its_unhit_lines(tmp_path):

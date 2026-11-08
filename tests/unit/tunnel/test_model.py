@@ -11,7 +11,7 @@ def _path(*hosts: str) -> tuple[TunnelHop, ...]:
 
 class TestMakeTunnelId:
     def test_format_is_tun_12hex_port(self) -> None:
-        tid = make_tunnel_id(_path("a", "b"), "udp", 5000)
+        tid = make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
         prefix, hexpart, port = tid.split("-")
         assert prefix == "tun"
         assert len(hexpart) == 12
@@ -19,37 +19,39 @@ class TestMakeTunnelId:
         assert port == "5000"
 
     def test_deterministic(self) -> None:
-        assert make_tunnel_id(_path("a", "b"), "udp", 5000) == make_tunnel_id(
-            _path("a", "b"), "udp", 5000
-        )
+        assert make_tunnel_id(
+            path=_path("a", "b"), protocol="udp", service_port=5000
+        ) == make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
 
     def test_path_order_sensitive(self) -> None:
-        assert make_tunnel_id(_path("a", "c", "b"), "udp", 5000) != make_tunnel_id(
-            _path("b", "c", "a"), "udp", 5000
-        )
+        assert make_tunnel_id(
+            path=_path("a", "c", "b"), protocol="udp", service_port=5000
+        ) != make_tunnel_id(path=_path("b", "c", "a"), protocol="udp", service_port=5000)
 
     def test_interface_and_protocol_in_hash(self) -> None:
         with_if = (TunnelHop("a", "eth1"), TunnelHop("b"))
-        assert make_tunnel_id(with_if, "udp", 5000) != make_tunnel_id(_path("a", "b"), "udp", 5000)
-        assert make_tunnel_id(_path("a", "b"), "tcp", 5000) != make_tunnel_id(
-            _path("a", "b"), "udp", 5000
+        assert make_tunnel_id(path=with_if, protocol="udp", service_port=5000) != make_tunnel_id(
+            path=_path("a", "b"), protocol="udp", service_port=5000
         )
+        assert make_tunnel_id(
+            path=_path("a", "b"), protocol="tcp", service_port=5000
+        ) != make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
 
     def test_protocol_case_insensitive(self) -> None:
-        assert make_tunnel_id(_path("a", "b"), "UDP", 5000) == make_tunnel_id(
-            _path("a", "b"), "udp", 5000
-        )
+        assert make_tunnel_id(
+            path=_path("a", "b"), protocol="UDP", service_port=5000
+        ) == make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
 
     def test_port_is_suffix_not_hashed(self) -> None:
-        t1 = make_tunnel_id(_path("a", "b"), "udp", 5000)
-        t2 = make_tunnel_id(_path("a", "b"), "udp", 6000)
+        t1 = make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
+        t2 = make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=6000)
         assert t1.rsplit("-", 1)[0] == t2.rsplit("-", 1)[0]
 
 
 class TestTunnel:
     def test_id_autocomputed(self) -> None:
         t = Tunnel(protocol="udp", service_port=5000, path=_path("a", "b"))
-        assert t.id == make_tunnel_id(_path("a", "b"), "udp", 5000)
+        assert t.id == make_tunnel_id(path=_path("a", "b"), protocol="udp", service_port=5000)
 
     def test_explicit_id_kept(self) -> None:
         t = Tunnel(protocol="udp", service_port=5000, path=_path("a", "b"), id="tun-abc-5000")

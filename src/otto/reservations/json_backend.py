@@ -113,6 +113,7 @@ class _JsonReservationBackend(ReservationBackendBase):
     def fetch_reservations(
         self,
         username: str,
+        *,
         start: "datetime | None" = None,
         end: "datetime | None" = None,
     ) -> "list[Reservation]":

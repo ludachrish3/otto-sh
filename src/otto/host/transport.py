@@ -85,14 +85,14 @@ class HopTransport(Protocol):
         """Return the underlying SSH connection to the hop host."""
         ...
 
-    async def forward_port(self, dest_host: str, dest_port: int) -> int:
+    async def forward_port(self, dest_host: str, *, dest_port: int) -> int:
         """Forward a local ephemeral port to *dest_host:dest_port* through the tunnel.
 
         Returns the local port number to connect to.
         """
         ...
 
-    def unforward_port(self, dest_host: str, dest_port: int) -> None:
+    def unforward_port(self, dest_host: str, *, dest_port: int) -> None:
         """Release the forward for *dest_host:dest_port*.  A no-op if absent."""
         ...
 
@@ -222,7 +222,7 @@ class _SshHopTransport:
             self._conn = conn
             return conn
 
-    async def forward_port(self, dest_host: str, dest_port: int) -> int:
+    async def forward_port(self, dest_host: str, *, dest_port: int) -> int:
         """Forward a local ephemeral port to *dest_host:dest_port* through the tunnel.
 
         Repeat calls for the same destination reuse one listener and return
@@ -284,7 +284,7 @@ class _SshHopTransport:
             self._port_forwards[key] = listener
             return listener.get_port()
 
-    def unforward_port(self, dest_host: str, dest_port: int) -> None:
+    def unforward_port(self, dest_host: str, *, dest_port: int) -> None:
         """Release the forward for *dest_host:dest_port*.  A no-op if absent.
 
         Caching alone bounds the leak only where the destination repeats, and

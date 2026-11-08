@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..config.scope import MonitorSettings
 
 
-def resolve_monitor_tls(projects: "Sequence[Project]") -> "MonitorSettings | None":
+def resolve_monitor_tls(*, projects: "Sequence[Project]") -> "MonitorSettings | None":
     """Resolve the ``[monitor]`` TLS declaration across ``projects``.
 
     Fail-loud rules: more than one project declaring *different* values is a

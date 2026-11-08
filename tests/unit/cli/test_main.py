@@ -39,7 +39,7 @@ runner = CliRunner()
 # _main_probe` drives ensure_cli_session (logging) + ensure_lab_context
 # (lab load + reservation state) + the per-command output dir + the gate.
 async def _main_probe() -> CommandResult:
-    return CommandResult(Status.Success, value="", command="probe", retcode=0)
+    return CommandResult(status=Status.Success, value="", command="probe", retcode=0)
 
 
 # gate=False: these tests exercise logging/lab/context, not the reservation
@@ -57,8 +57,10 @@ def _ingest_variant_entries() -> list[str]:
 
     kinds: Registry = Registry("toy kind", entry=KindEntry, register_hint="register_toy_kind()")
     kinds.register(
-        "toy",
-        KindEntry(lambda entry, host: SimpleNamespace(name=entry.name, owner=None, **entry.params)),
+        name="toy",
+        entry=KindEntry(
+            lambda entry, host: SimpleNamespace(name=entry.name, owner=None, **entry.params)
+        ),
     )
     builder = KindBuilder(kinds)
 
@@ -1160,7 +1162,11 @@ class TestProjectSwitchWiring:
             "otto.bootstrap.bootstrap",
             lambda: bootstrap_stub(
                 [broken],
-                errors=[BootstrapError(broken.root, "project_a_init", ImportError("paramiko"))],
+                errors=[
+                    BootstrapError(
+                        broken.root, source="project_a_init", cause=ImportError("paramiko")
+                    )
+                ],
             ),
         )
 

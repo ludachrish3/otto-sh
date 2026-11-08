@@ -107,7 +107,7 @@ def _host_dict(port: int, known_hosts: Path) -> dict[str, Any]:
 def _unix_host(element: str, port: int, known_hosts: Path, **fields: Any) -> UnixHost:
     return UnixHost(
         ip="127.0.0.1",
-        element=Element(element),
+        element=Element(name=element),
         creds=[Cred(login="admin", password=PASSWORD)],
         ssh_options=_options(port, known_hosts),
         log=LogMode.QUIET,
@@ -190,7 +190,7 @@ async def test_alias_is_host_id_under_shared_preferences_selector(tmp_path):
             create_host_from_dict(
                 {"ip": "127.0.0.1", "creds": [{"login": "admin", "password": PASSWORD}]},
                 preferences=preferences,
-                element=Element(element),
+                element=Element(name=element),
             )
             for element in ("router1", "router2")
         ]
@@ -600,7 +600,7 @@ async def test_opt_out_connects_silently(selector, caplog, tmp_path):
         host = create_host_from_dict(
             _host_dict(port, kh),
             preferences={selector: {"ssh_options": {"verify_host_key": False}}},
-            element=Element("router1"),
+            element=Element(name="router1"),
         )
         assert host.ssh_options.verify_host_key is False
         with caplog.at_level(logging.DEBUG):

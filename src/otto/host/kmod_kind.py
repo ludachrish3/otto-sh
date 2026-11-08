@@ -134,7 +134,7 @@ class KmodProduct(ShellProduct):
     @override
     async def stage(self, host: "Host") -> Result:
         """No-op success: ``load`` stages the ``.ko`` itself and removes it after ``insmod``."""
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -154,12 +154,12 @@ class KmodProduct(ShellProduct):
             gcov_dir_arg = shlex.quote(f"cov_dir={cov_dir_of(self)}")
             params = f"{params} {gcov_dir_arg}".strip()
         directory = await self.resolved_stage_dir(host)
-        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        made = await ensure_stage_dir(host=host, directory=directory, who=f"product {self.name!r}")
         if not made.is_ok:
             return made
         result = await host.load(  # ty: ignore[unresolved-attribute]
             self.artifact,
-            self.module_name,
+            name=self.module_name,
             params=params,
             dest_dir=directory,
         )
@@ -169,7 +169,8 @@ class KmodProduct(ShellProduct):
             # state — otherwise a `vermagic`/`Unknown symbol` line reads like
             # otto_kmodcov never loaded.
             return Result(
-                Status.Error, msg=f"{self.name}: {result.msg} ({await self._kmodcov_context(host)})"
+                status=Status.Error,
+                msg=f"{self.name}: {result.msg} ({await self._kmodcov_context(host)})",
             )
         return result
 
@@ -191,7 +192,7 @@ class KmodProduct(ShellProduct):
         tool = kmodcov_tool_for(host)
         if tool is None:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=f'{self.name}: coverage = "module" needs otto_kmodcov on host '
                 f"{getattr(host, 'id', '?')}, and no [[dev_tools]] entry of kind 'kmodcov' "
                 "matches that host",
@@ -202,13 +203,13 @@ class KmodProduct(ShellProduct):
         # hot path, and because it is what decides whether the INFO line
         # below is said at all.
         if await tool.is_installed(host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         logger.info(f"{getattr(host, 'id', '?')}: {self.name}: loading otto_kmodcov ({tool.name})")
         result = await tool.install(host)
         if result.status is Status.NotRun or result.is_ok:
             return result
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"{self.name}: loading otto_kmodcov ({tool.name}) failed: {result.msg}",
         )
 
@@ -255,7 +256,7 @@ class KmodProduct(ShellProduct):
             ),
             *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
         ]
-        where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+        where = planned_stage_dir(stage_dir=self.stage_dir, host=host, who=f"product {self.name!r}")
         if where.refusal is not None:
             return ProductPlan(uninstall=unload, unchecked=[where.refusal, *unload_gaps])
         plan = ProductPlan()
@@ -314,7 +315,7 @@ class KmodProduct(ShellProduct):
                         if zero.status is Status.NotRun:
                             return zero  # the session declined; nothing failed
                         return Result(
-                            Status.Error,
+                            status=Status.Error,
                             msg=f"{zero.msg} ({await self._kmodcov_context(host)})",
                         )
         else:
@@ -347,7 +348,7 @@ class KmodProduct(ShellProduct):
         side (:meth:`reset_coverage`'s kernel arm), so the wording covers both.
         """
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"cannot read or write {self.gcov_path} — does this kernel have "
             f"CONFIG_GCOV_KERNEL, and is the module loaded or its data kept "
             f"(gcov_persist=1)? ({result.msg})",
@@ -365,17 +366,17 @@ class KmodProduct(ShellProduct):
         """
         listing = await host.lsmod()
         if listing.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         if not listing.is_ok:
-            return Result(Status.Error, msg=f"lsmod failed: {listing.msg}")
-        return Result(Status.Success, value=self.module_name in listing.value)
+            return Result(status=Status.Error, msg=f"lsmod failed: {listing.msg}")
+        return Result(status=Status.Success, value=self.module_name in listing.value)
 
     async def _run_sudo(self, host: Any, script: str) -> Result:
         """Run *script* under sudo through the host's shell session; a plain Result.
 
         A result whose status is ``Status.NotRun`` is the session declining
         the command under ``otto --dry-run`` — it is returned as-is
-        (``Result(Status.NotRun)``), never mapped to ``Status.Error``, so both
+        (``Result(status=Status.NotRun)``), never mapped to ``Status.Error``, so both
         hooks propagate the decline and the remote fetcher
         (:mod:`otto.coverage.fetcher.remote`) treats it as a dry run rather
         than a failure.
@@ -384,11 +385,11 @@ class KmodProduct(ShellProduct):
 
         result = await run_sh_elevated(host, script)
         if result.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         if result.is_ok:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         output = result.only.value.strip() if hasattr(result, "only") else ""
-        return Result(Status.Error, msg=f"`{script}` failed: {output}")
+        return Result(status=Status.Error, msg=f"`{script}` failed: {output}")
 
     async def _prepare_module(self, host: Any) -> Result:
         loaded = await self._module_loaded(host)
@@ -397,7 +398,7 @@ class KmodProduct(ShellProduct):
                 return loaded
             if not loaded.value:
                 # Unloaded: otto_kmodcov dumped at KMODCOV_EXIT(); the files are already there.
-                return Result(Status.Success)
+                return Result(status=Status.Success)
         # lsmod declined (dry run) or the module is loaded: announce the
         # sysfs write either way — a decline here becomes the session's own
         # [DRY RUN] line, and the overall result mirrors it (Status.NotRun).
@@ -406,7 +407,7 @@ class KmodProduct(ShellProduct):
         if result.status is Status.NotRun or result.is_ok:
             return result
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"cannot write {dump} — {await self._kmodcov_context(host)}; was the "
             f"module built with its consumer snippet? Or see dmesg: a dump that cannot read "
             f"the .gcda fails and keeps the file ({result.msg})",

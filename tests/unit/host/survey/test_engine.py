@@ -33,7 +33,9 @@ def _unix(**extra):
     extra.setdefault("valid_transfers", ["scp", "sftp", "ftp", "nc", "shell"])
     extra.setdefault("transfer", extra["valid_transfers"][0])
     extra.setdefault("creds", list(_CREDS))
-    return UnixHost(element=Element("u1"), name="u1", ip="127.0.0.1", log=LogMode.QUIET, **extra)
+    return UnixHost(
+        element=Element(name="u1"), name="u1", ip="127.0.0.1", log=LogMode.QUIET, **extra
+    )
 
 
 class _Userland:
@@ -44,11 +46,11 @@ class _Userland:
     async def resolve(self):
         self.resolved = True
 
-    def is_settled(self, _name):
+    def is_settled(self, *, name):
         return self._settled
 
-    def has_applet(self, name):
-        return {"scp": self._scp, "nc": self._nc}[name]
+    def has_applet(self, *, applet):
+        return {"scp": self._scp, "nc": self._nc}[applet]
 
 
 def _row(survey, protocol, port):
@@ -168,7 +170,7 @@ async def test_a_term_with_dials_host_false_produces_no_candidate_dial_or_login(
         )
         s = await engine.run_survey(host)
     finally:
-        conn_mod.TERM_BACKENDS.unregister("quiet-console")
+        conn_mod.TERM_BACKENDS.unregister(name="quiet-console")
 
     assert "quiet-console" not in s.declared_ports
     assert not any(v.protocol == "quiet-console" for v in s.verdicts)
@@ -1008,7 +1010,7 @@ async def test_a_relayed_snmp_endpoint_gets_no_inventory_row_but_is_still_querie
 def _embedded(**extra):
     extra.setdefault("telnet_options", TelnetOptions(port=1))
     return EmbeddedHost(
-        element=Element("z1"),
+        element=Element(name="z1"),
         name="z1",
         ip="127.0.0.1",
         creds=[],
@@ -1220,8 +1222,13 @@ class TestShellLoginBudget:
         # The survey logs in over each declared term on a copy of the host,
         # so the budget is sized for the term it dials, not the host's own.
         host = _unix(term="ssh", telnet_options=TelnetOptions(port=1, echo_negotiation_timeout=9.0))
-        assert engine._shell_login_budget(host, "telnet") > host._session_mgr.open_budget("telnet")
-        assert host._session_mgr.open_budget("telnet") >= host._session_mgr.open_budget() + 2 * 9.0
+        assert engine._shell_login_budget(host, "telnet") > host._session_mgr.open_budget(
+            term="telnet"
+        )
+        assert (
+            host._session_mgr.open_budget(term="telnet")
+            >= host._session_mgr.open_budget() + 2 * 9.0
+        )
 
     def test_a_fast_host_keeps_the_floor(self):
         host = _unix(init_timeout=0.1, ssh_options=SshOptions(port=1))
@@ -1267,7 +1274,7 @@ async def test_every_shell_login_the_survey_makes_outlasts_a_failed_open(seams, 
     # Each login against its own term's open: telnet for the host's own
     # session, ssh for the declared and discovered ssh ports.
     assert budgets["own"] > mgr.open_budget(), budgets
-    assert all(budgets[k] > mgr.open_budget("ssh") for k in ("ssh:22", "ssh:2222")), budgets
+    assert all(budgets[k] > mgr.open_budget(term="ssh") for k in ("ssh:22", "ssh:2222")), budgets
 
 
 @pytest.mark.asyncio
@@ -1303,6 +1310,6 @@ async def test_an_ssh_host_sizes_its_telnet_logins_for_telnet(seams, monkeypatch
         init_timeout=30.0,
     )
     await engine.run_survey(host)
-    telnet_open = host._session_mgr.open_budget("telnet")
+    telnet_open = host._session_mgr.open_budget(term="telnet")
     assert set(budgets) >= {"telnet:23", "telnet:2323"}, budgets
     assert all(budgets[k] > telnet_open for k in ("telnet:23", "telnet:2323")), budgets

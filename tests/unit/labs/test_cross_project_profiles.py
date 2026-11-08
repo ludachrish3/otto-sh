@@ -48,12 +48,12 @@ def _projects(tmp_path: Path) -> "list[Project]":
 def test_a_host_on_another_projects_data_profile_is_in_every_reader(tmp_path):
     projects = _projects(tmp_path)
 
-    summaries = {s.id: s for s in host_summaries(build_lab_sources(projects))}
+    summaries = {s.id: s for s in host_summaries(repository=build_lab_sources(projects=projects))}
     assert summaries["b1"].os_type == "alpha"
 
     assert "b1" in cc.collect_host_ids(projects)
 
-    lab = build_lab(projects, ["e"])
+    lab = build_lab(projects, labs=["e"])
     assert lab.hosts["b1"].os_type == "alpha"
     assert lab.hosts["b1"].has_bash is False
 

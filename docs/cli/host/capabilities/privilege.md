@@ -95,7 +95,7 @@ it is worthless once the command ends.
 
 ## Scoped: `async with host.as_user(...)`
 
-    async with host.as_user("root"):
+    async with host.as_user(user="root"):
         await host.run("systemctl restart foo")   # runs as root
     # session returns to the original user here
 
@@ -112,7 +112,7 @@ read-only {attr}`~otto.host.host.BaseHost.current_user` property reports it
 for the host's default session — seeded from the login user and changed only
 by `switch_user` / `as_user`:
 
-    async with host.as_user("root"):
+    async with host.as_user(user="root"):
         assert host.current_user == "root"
     assert host.current_user != "root"   # back to the login user
 

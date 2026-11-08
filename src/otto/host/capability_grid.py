@@ -116,7 +116,7 @@ class SessionIdentity(str, Enum):
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class HostCapabilities:
     """What one host family promises across its four verbs.
 
@@ -244,7 +244,7 @@ def shipped_host_families() -> list[HostFamily]:
             selector=f"`os_type: {name}`",
         )
         for name in HOST_CLASSES.names()
-        if HOST_CLASSES.origin(name) == _BUILTIN_ORIGIN
+        if HOST_CLASSES.origin(name=name) == _BUILTIN_ORIGIN
     ]
     families.append(
         HostFamily(

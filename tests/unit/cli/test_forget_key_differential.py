@@ -57,7 +57,7 @@ def _host(options: SshOptions, name: str = "router1") -> UnixHost:
     """A real UnixHost; forget-key makes no connection, so none is faked."""
     return UnixHost(
         ip=_ADDRESS,
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
         ssh_options=options,

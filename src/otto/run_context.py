@@ -144,10 +144,10 @@ def variant() -> Variant:
     return current_policy().variant
 
 
-def set_variant(value: Variant) -> ContextBinding:
+def set_variant(*, value: Variant) -> ContextBinding:
     """Choose the run's variant before any context exists; return the binding to reset.
 
-    For a script's manual pattern: ``set_variant("field")``, then build and
+    For a script's manual pattern: ``set_variant(value="field")``, then build and
     :func:`set_context` an :class:`OttoContext`, which copies the variant.
 
     Raises:
@@ -170,7 +170,7 @@ def set_variant(value: Variant) -> ContextBinding:
     return install_policy(dataclasses.replace(current_policy(), variant=checked))
 
 
-def reset_variant(token: ContextBinding) -> None:
+def reset_variant(*, token: ContextBinding) -> None:
     """Undo the matching :func:`set_variant`, exactly once."""
     from .invocation import reset_binding
 
@@ -447,8 +447,8 @@ class OttoContext:
 
     def __init__(
         self,
-        lab: "Lab",
         *,
+        lab: "Lab",
         cov_decision: "bool | None" = None,
         include_projects: tuple[str, ...] = (),
         exclude_projects: tuple[str, ...] = (),
@@ -565,7 +565,7 @@ class OttoContext:
         """
         return self.policy.output_dir
 
-    def bind_verb_options(self, verb: str, kwargs: "dict[str, Any]") -> None:
+    def bind_verb_options(self, *, verb: str, kwargs: "dict[str, Any]") -> None:
         """Build every options class registered for *verb* from the parsed *kwargs*.
 
         Each registered class is constructed with
@@ -894,7 +894,9 @@ class OttoContext:
             exclude=list(self.exclude_projects),
         )
         if verdicts.fatal:
-            raise ProjectLoadError(verdicts.fatal, verdicts.demoted, required=verdicts.required)
+            raise ProjectLoadError(
+                verdicts.fatal, demoted=verdicts.demoted, required=verdicts.required
+            )
         scopes = resolve_scopes(
             result.projects,  # every parsed project: a dependency skip never hides a declaration
             self.lab.component_names,
@@ -933,7 +935,7 @@ class OttoContext:
         return scopes
 
     def admissible_ids(
-        self, owner: "str | None" = None, *, require_nonempty: bool = True
+        self, *, owner: "str | None" = None, require_nonempty: bool = True
     ) -> "set[str]":
         """Host ids this run's fleet walks may reach, re-derived live for *owner*.
 
@@ -994,8 +996,8 @@ class OttoContext:
 
     def all_hosts(
         self,
-        pattern: "re.Pattern[str] | None" = None,
         *,
+        pattern: "re.Pattern[str] | None" = None,
         include_containers: bool = False,
         include_local: bool = False,
         _scope_owner: "str | None" = None,
@@ -1075,7 +1077,7 @@ class OttoContext:
         # Computed here rather than in a wrapper: this is a generator, so the
         # body runs at first `next()` — which is when the walk actually happens
         # and therefore when the lab's host mapping is the one being walked.
-        selected = self.admissible_ids(_scope_owner)
+        selected = self.admissible_ids(owner=_scope_owner)
         if pattern is not None and selected:
             # `and selected`: with an EMPTY base set the pattern is not what
             # went wrong, and blaming it would send the reader to fix a regex
@@ -1088,7 +1090,7 @@ class OttoContext:
             base_size = len(selected)
             matched = {host_id for host_id in selected if pattern.fullmatch(host_id)}
             if not matched:
-                raise EmptySelectionError(pattern.pattern, base_size)
+                raise EmptySelectionError(pattern.pattern, base_size=base_size)
             # The other way a selection ends up empty, and the one the count
             # above cannot see: the pattern matched, and the membership flags
             # below then removed every match. Reading the survivors off
@@ -1105,7 +1107,7 @@ class OttoContext:
             if hidden_by:
                 raise EmptySelectionError(
                     pattern.pattern,
-                    base_size,
+                    base_size=base_size,
                     excluded_by=hidden_by,
                     matched_size=len(matched),
                 )
@@ -1184,10 +1186,10 @@ class OttoContext:
     async def run_on_all_hosts(
         self,
         cmds: "list[str] | str",
+        *,
         pattern: "re.Pattern[str] | None" = None,
         concurrent: bool = True,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
-        *,
         _scope_owner: "str | None" = None,
         include_containers: bool = False,
         **overrides: Unpack[HostOverrides],
@@ -1218,7 +1220,7 @@ class OttoContext:
             **overrides,
         )
 
-    def for_project(self, name: str) -> "ProjectContextView":
+    def for_project(self, *, name: str) -> "ProjectContextView":
         """Return this same context seen from *name*'s side (spec §7).
 
         A facade, not a copy — see :class:`ProjectContextView`. Cheap enough to
@@ -1362,7 +1364,9 @@ class ProjectContextView:
 
                 raise ProjectScopeError(
                     "",  # a caller mistake, so there is no settings.toml to send them to
-                    _OWNER_MISMATCH.format(project=self._project_name, passed=kwargs["owner"]),
+                    message=_OWNER_MISMATCH.format(
+                        project=self._project_name, passed=kwargs["owner"]
+                    ),
                 )
             kwargs["owner"] = self._project_name
         return await self._ctx.do_for_all_hosts(
@@ -1544,11 +1548,11 @@ async def open_context(
         else:
             # Each item splits on `+`, as each repeated `--lab` value does.
             labs = [name for item in lab for name in split_lab_names(item)]
-        for demoted in check_projects(result, labs, selection).demoted:
+        for demoted in check_projects(result=result, labs=labs, selection=selection).demoted:
             logger.warning("%s", demoted.message)
         # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
         # import it makes, ~77 modules) never runs for it.
-        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.projects, labs)
+        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.projects, labs=labs)
         # As the CLI does: the gate is built after the lab and before the
         # context, so an unbuildable backend refuses with nothing to undo.
         from pathlib import Path
@@ -1556,7 +1560,7 @@ async def open_context(
         from .reservations.factory import build_reservation_gate
 
         gate = build_reservation_gate(
-            result.projects,
+            projects=result.projects,
             holder=holder,
             skip_reservation_check=skip_reservation_check,
             cwd_fallback=Path.cwd(),
@@ -1572,7 +1576,7 @@ async def open_context(
         )
         binding = set_context(ctx)
         try:
-            for warning in check_dependencies(ctx):
+            for warning in check_dependencies(ctx=ctx):
                 logger.warning("%s", warning)
             # Last, as the CLI presents its gate after the dependency refusal;
             # dry_run is gated too, because the CLI gates before its dry-run seam.

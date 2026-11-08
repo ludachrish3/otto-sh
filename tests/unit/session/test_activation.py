@@ -42,20 +42,20 @@ def ctx_acme_host_starved() -> OttoContext:
 def test_first_party_is_never_refused(ctx_excluding_acme):
     from otto.session import check_instruction_active
 
-    check_instruction_active("blink", None, ctx_excluding_acme)
+    check_instruction_active(name="blink", owner=None, ctx=ctx_excluding_acme)
 
 
 def test_an_active_owner_passes(plain_ctx):
     from otto.session import check_instruction_active
 
-    check_instruction_active("blink", "acme", plain_ctx)
+    check_instruction_active(name="blink", owner="acme", ctx=plain_ctx)
 
 
 def test_an_excluded_owner_is_refused_with_the_switch(ctx_excluding_acme):
     from otto.session import InstructionInactiveError, check_instruction_active
 
     with pytest.raises(InstructionInactiveError) as exc:
-        check_instruction_active("blink", "Acme", ctx_excluding_acme)
+        check_instruction_active(name="blink", owner="Acme", ctx=ctx_excluding_acme)
     e = exc.value
     assert (e.reason, e.project, e.owner, e.instruction) == ("excluded", "acme", "Acme", "blink")
     assert "exclude_projects acme" in str(e)
@@ -65,7 +65,7 @@ def test_an_out_of_scope_owner_carries_the_patterns(ctx_acme_out_of_lab_scope):
     from otto.session import InstructionInactiveError, check_instruction_active
 
     with pytest.raises(InstructionInactiveError) as exc:
-        check_instruction_active("blink", "acme", ctx_acme_out_of_lab_scope)
+        check_instruction_active(name="blink", owner="acme", ctx=ctx_acme_out_of_lab_scope)
     e = exc.value
     assert e.reason == "out_of_lab_scope"
     assert e.loaded_labs == ["bench"]
@@ -76,7 +76,7 @@ def test_a_host_starved_owner_carries_the_host_patterns(ctx_acme_host_starved):
     from otto.session import InstructionInactiveError, check_instruction_active
 
     with pytest.raises(InstructionInactiveError) as exc:
-        check_instruction_active("blink", "acme", ctx_acme_host_starved)
+        check_instruction_active(name="blink", owner="acme", ctx=ctx_acme_host_starved)
     e = exc.value
     assert e.reason == "host_starved"
     assert e.host_patterns == [".*"]

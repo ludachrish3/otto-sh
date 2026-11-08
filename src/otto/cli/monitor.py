@@ -167,7 +167,7 @@ def monitor(
             # Session state only (the project's [logging.levels], the console's
             # _HostFilter): review reads a local file, so no lab is loaded.
             ensure_cli_session(ctx)
-            run_command(serve_review(source, projects=get_projects()))
+            run_command(serve_review(path=source, projects=get_projects()))
             return
 
         from ..monitor.live import run_live

@@ -123,11 +123,11 @@ def widget_lab(monkeypatch, one_project_lab):
             @instruction(options=WidgetInstall)
             async def install(self, opts: WidgetInstall):
                 seen.append(opts)
-                return Result(Status.Success)
+                return Result(status=Status.Success)
 
     one_project_lab("widget", Widget)
 
-    async def uninstalled(source):
+    async def uninstalled(*, opts):
         return ProjectStatus(
             overall=InstallState.UNINSTALLED,
             projects={"widget": InstallState.UNINSTALLED},
@@ -149,7 +149,7 @@ async def test_cli_and_marker_build_the_same_options(widget_lab) -> None:
     # converge reads the source back off the context.
     register_options(SuiteOpts, verbs=["test"])
     test_ctx = OttoContext(lab=Lab(name="test"))
-    test_ctx.bind_verb_options("test", {"lab_env": "prod"})
+    test_ctx.bind_verb_options(verb="test", kwargs={"lab_env": "prod"})
     await pytest_plugin._converge("installed", test_ctx.verb_option_source())
     assert len(widget_lab) == 2
     cli_opts, marker_opts = widget_lab

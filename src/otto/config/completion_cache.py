@@ -490,7 +490,7 @@ def _profiles(projects: "Sequence[Project]") -> "ProfileContext":
     """
     from ..host.os_profile import ProfileContext
 
-    return ProfileContext.from_projects(projects)
+    return ProfileContext.from_projects(projects=projects)
 
 
 def _has_unfingerprinted_source(projects: list["Project"]) -> bool:
@@ -683,7 +683,7 @@ def _inventory_fingerprint(projects: list["Project"]) -> "_InventoryDigest":
     from ..inventory.config import build_inventory
 
     try:
-        inventory = build_inventory(projects)
+        inventory = build_inventory(projects=projects)
         if inventory is None:
             return _InventoryDigest(text="none", cacheable=True)
         fp = inventory.fingerprint()
@@ -1488,7 +1488,7 @@ def collect_reservation_usernames(projects: list["Project"]) -> list[str]:
         if not settings:
             continue
         try:
-            backend = build_backend(settings, project.root)
+            backend = build_backend(settings=settings, project_root=project.root)
             if isinstance(backend, SupportsUsernameCompletion):
                 return sorted(backend.list_usernames())
         except Exception:  # noqa: BLE001 — completion fallback, best-effort username list; return empty on any error
@@ -1634,7 +1634,7 @@ def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolut
     from ..inventory.config import build_inventory
 
     try:
-        return InventoryResolution(inventory=build_inventory(list(projects)))
+        return InventoryResolution(inventory=build_inventory(projects=list(projects)))
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         logging.getLogger(__name__).warning(
             f"[completion] the host inventory could not be resolved, so no host "
@@ -1742,8 +1742,8 @@ def _enumerate_host_summaries(
     # on a worker), so every skip the backends record lands in this list.
     with collecting_drops() as drops:
         try:
-            repository = build_lab_sources([project], profiles=profiles)
-            summaries = host_summaries(repository, inventory=inventory)
+            repository = build_lab_sources(projects=[project], profiles=profiles)
+            summaries = host_summaries(repository=repository, inventory=inventory)
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
             if abandoned is None or not abandoned.is_set():
                 logging.getLogger(__name__).warning(
@@ -2134,7 +2134,7 @@ def _declared_links(projects: list["Project"]) -> list[tuple[str, list[str]]]:
                 if len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
                     continue
                 a, b = (LinkEndpoint(host=h) for h in raw)
-                link_id = make_static_link_id(a, b, None)
+                link_id = make_static_link_id(a=a, b=b, name=None)
             bucket = out.setdefault(link_id, [])
             bucket.extend(h for h in hosts if h not in bucket)
     return list(out.items())
@@ -2173,7 +2173,7 @@ def collect_lab_names(projects: list["Project"]) -> list[str]:
     profiles = _profiles(projects)
     for project in projects:
         try:
-            repository = build_lab_sources([project], profiles=profiles)
+            repository = build_lab_sources(projects=[project], profiles=profiles)
             names.update(repository.list_labs())
         except Exception as e:  # noqa: BLE001, PERF203 — per-project resilience: one bad backend must not deny the rest
             logging.getLogger(__name__).warning(
@@ -2247,7 +2247,7 @@ def collect_host_classes_by_id(projects: list["Project"]) -> dict[str, str]:
             if summary.os_type is None:
                 continue
             try:
-                profile = get_os_profile(summary.os_type, data=profiles)
+                profile = get_os_profile(name=summary.os_type, data=profiles)
             except ValueError:  # a project table that fails its check resolves no class
                 continue
             if profile is not None:
@@ -3021,7 +3021,7 @@ def describe_inventory(projects: list["Project"]) -> InventoryDescription:
     from ..inventory.config import build_inventory
 
     try:
-        inventory = build_inventory(list(projects))
+        inventory = build_inventory(projects=list(projects))
         if inventory is None:
             return InventoryDescription(text="none declared")
         label = getattr(inventory, "label", type(inventory).__name__)

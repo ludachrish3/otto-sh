@@ -57,7 +57,7 @@ class TestLCOVLoader:
         loader = LCOVLoader(store, SourceResolver(source_tree))
         loader.load(info_file, "system")
 
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.lines[1].hits.for_tier("system") == 5
         assert foo.lines[2].hits.for_tier("system") == 0
         assert foo.lines[3].hits.for_tier("system") == 10
@@ -67,7 +67,7 @@ class TestLCOVLoader:
         loader = LCOVLoader(store, SourceResolver(source_tree))
         loader.load(info_file, "system")
 
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         branches = foo.lines[3].branches
         assert len(branches) == 2
 
@@ -90,7 +90,7 @@ class TestLCOVLoader:
         loader.load(system_info, "system")
         loader.load(unit_info, "unit")
 
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.lines[1].hits.for_tier("system") == 3
         assert foo.lines[1].hits.for_tier("unit") == 7
         assert foo.lines[2].hits.for_tier("unit") == 1
@@ -106,7 +106,7 @@ class TestLCOVLoader:
         loader = LCOVLoader(store)
         loader.load(info, "smoke")
 
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.lines[1].hits.for_tier("smoke") == 2
         assert "smoke" in store.tier_order
 
@@ -158,7 +158,7 @@ class TestFunctionRecords:
         )
         store = CoverageStore()
         LCOVLoader(store).load(info, "system")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.functions["foo"].start_line == 1
         assert foo.functions["foo"].hits.for_tier("system") == 5
         assert foo.functions["bar"].hits.for_tier("system") == 0
@@ -173,7 +173,7 @@ class TestFunctionRecords:
         loader = LCOVLoader(store)
         loader.load(a, "system")
         loader.load(b, "unit")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.functions["foo"].hits.to_dict() == {"system": 2, "unit": 3}
 
     def test_orphan_fnda_is_kept_at_line_zero_with_a_warning(self, source_tree, tmp_path, caplog):
@@ -182,7 +182,7 @@ class TestFunctionRecords:
         store = CoverageStore()
         with caplog.at_level("WARNING", logger="otto.coverage.merge.lcov_loader"):
             LCOVLoader(store).load(info, "system")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.functions["ghost"].start_line == 0
         assert foo.functions["ghost"].hits.for_tier("system") == 4
         assert any("ghost" in r.message and "FN" in r.message for r in caplog.records)
@@ -211,7 +211,7 @@ class TestBlockIdParsing:
         )
         store = CoverageStore()
         LCOVLoader(store).load(info, "system")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         assert foo.lines[3].branches == []
 
     def test_load_keeps_an_untagged_branch(self, source_tree, tmp_path):
@@ -221,7 +221,7 @@ class TestBlockIdParsing:
         )
         store = CoverageStore()
         LCOVLoader(store).load(info, "system")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         branches = foo.lines[3].branches
         assert len(branches) == 2
         assert all(b.block == 0 for b in branches)
@@ -235,7 +235,7 @@ class TestBlockIdParsing:
         )
         store = CoverageStore()
         LCOVLoader(store).load(info, "system")
-        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        foo = store.get_or_create_file(path=source_tree / "src" / "foo.c")
         branches = foo.lines[3].branches
         assert len(branches) == 2
         assert all(b.block == 0 for b in branches)

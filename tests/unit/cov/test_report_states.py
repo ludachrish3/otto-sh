@@ -90,7 +90,7 @@ async def test_pending_dir_is_captured_with_recorded_tier_and_commit(tmp_path, m
     (cov / "h" / "app" / "x.gcda").write_bytes(b"adcg")
     calls = _spy_produce(monkeypatch)
 
-    await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+    await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     (call,) = calls
     assert call["cov_dir"] == cov
@@ -114,7 +114,7 @@ async def test_every_produce_call_shares_one_object_list_cache(tmp_path, monkeyp
         covs.append(cov)
     calls = _spy_produce(monkeypatch)
 
-    await run_coverage_report(covs, tmp_path / "report", _inputs(project))
+    await run_coverage_report(covs, output_dir=tmp_path / "report", inputs=_inputs(project))
 
     assert len(calls) == 2
     assert calls[0]["objects"] is not None
@@ -132,7 +132,7 @@ async def test_failed_dir_is_reported_once_not_retried(tmp_path, monkeypatch, ca
     calls = _spy_produce(monkeypatch)
 
     with caplog.at_level(logging.WARNING):
-        await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+        await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     assert calls == []
     named = [r for r in caplog.records if r.levelno == logging.WARNING and "h/app" in r.message]
@@ -169,7 +169,9 @@ async def test_report_time_failures_join_the_one_warning(tmp_path, monkeypatch, 
     monkeypatch.setattr("otto.coverage.capture.produce.produce_captures", fake)
 
     with caplog.at_level(logging.WARNING):
-        store = await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+        store = await run_coverage_report(
+            [cov], output_dir=tmp_path / "report", inputs=_inputs(project)
+        )
 
     assert store is not None
     warnings = [r.message for r in caplog.records if "failed to capture" in r.message]
@@ -190,7 +192,7 @@ async def test_report_refuses_dir_without_recorded_commit(tmp_path, monkeypatch)
     calls = _spy_produce(monkeypatch)
 
     with pytest.raises(CoverageInputError) as excinfo:
-        await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+        await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     message = str(excinfo.value)
     assert excinfo.value.field == "cov_dirs"
@@ -210,7 +212,7 @@ async def test_report_refuses_pending_dir_with_no_metadata(tmp_path, monkeypatch
     calls = _spy_produce(monkeypatch)
 
     with pytest.raises(CoverageInputError) as excinfo:
-        await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+        await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     assert str(cov) in str(excinfo.value)
     assert "otto cov get" in str(excinfo.value)
@@ -222,7 +224,7 @@ async def test_run_dirs_need_a_project_root(tmp_path):
     cov = tmp_path / "run" / "cov"
     cov.mkdir(parents=True)
     with pytest.raises(CoverageInputError) as excinfo:
-        await run_coverage_report([cov], tmp_path / "report", ReportInputs())
+        await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=ReportInputs())
     assert excinfo.value.field == "cov_dirs"
     assert "git root" in str(excinfo.value)
 
@@ -235,7 +237,7 @@ async def test_tracefile_only_report_needs_no_project_root(tmp_path):
     info.write_text(f"TN:\nSF:{src}\nDA:1,4\nend_of_record\n")
 
     store = await run_coverage_report(
-        [], tmp_path / "report", ReportInputs(), tier_specs=[("unit", info)]
+        [], output_dir=tmp_path / "report", inputs=ReportInputs(), tier_specs=[("unit", info)]
     )
 
     (frec,) = store.files()
@@ -256,7 +258,9 @@ async def test_every_run_has_host_and_product(tmp_path):
             files={"f.c": CaptureFileCov(lines={1: 2})},
         ).save(cov / host / product / "capture.json")
 
-    store = await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+    store = await run_coverage_report(
+        [cov], output_dir=tmp_path / "report", inputs=_inputs(project)
+    )
 
     assert {(r.host, r.product) for r in store.runs} == {("h1", "app"), ("h2", "tool")}
     assert all(r.host and r.product for r in store.runs)
@@ -266,7 +270,7 @@ async def test_every_run_has_host_and_product(tmp_path):
 async def test_bare_tier_system_is_refused(tmp_path):
     with pytest.raises(CoverageInputError) as excinfo:
         await run_coverage_report(
-            [], tmp_path / "report", ReportInputs(), tier_specs=[("system", None)]
+            [], output_dir=tmp_path / "report", inputs=ReportInputs(), tier_specs=[("system", None)]
         )
     assert excinfo.value.field == "tier_specs"
     assert "every --tier needs NAME=PATH" in str(excinfo.value)
@@ -297,8 +301,8 @@ async def test_unit_harvest_uses_capture_dir(tmp_path, monkeypatch):
 
     await run_coverage_report(
         [],
-        tmp_path / "report",
-        ReportInputs(
+        output_dir=tmp_path / "report",
+        inputs=ReportInputs(
             project_root=project,
             project_name="proj",
             tier_configs=load_tiers(cov_config, root=project),
@@ -388,7 +392,7 @@ async def test_run_dirs_with_tier_tracefiles_are_refused_by_what_tier_does(tmp_p
     for inputs in (ReportInputs(), _inputs(project)):
         with pytest.raises(CoverageInputError) as excinfo:
             await run_coverage_report(
-                [cov], tmp_path / "report", inputs, tier_specs=[("unit", info)]
+                [cov], output_dir=tmp_path / "report", inputs=inputs, tier_specs=[("unit", info)]
             )
         message = str(excinfo.value)
         assert excinfo.value.field == "tier_specs"
@@ -411,7 +415,7 @@ async def test_failed_products_warning_names_where_the_reasons_are(tmp_path, mon
     _spy_produce(monkeypatch)
 
     with caplog.at_level(logging.WARNING):
-        await run_coverage_report(covs, tmp_path / "report", _inputs(project))
+        await run_coverage_report(covs, output_dir=tmp_path / "report", inputs=_inputs(project))
 
     (warning,) = [r.message for r in caplog.records if "failed to capture" in r.message]
     for cov in covs:
@@ -426,7 +430,7 @@ async def test_an_empty_product_dir_has_nothing_to_capture(tmp_path, monkeypatch
     (cov / "h" / "app").mkdir(parents=True)
     calls = _spy_produce(monkeypatch)
 
-    await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+    await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     assert calls == []
 
@@ -455,7 +459,9 @@ async def test_report_time_capture_is_loaded_into_the_report(tmp_path, monkeypat
 
     monkeypatch.setattr("otto.coverage.capture.produce.produce_captures", fake)
 
-    store = await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+    store = await run_coverage_report(
+        [cov], output_dir=tmp_path / "report", inputs=_inputs(project)
+    )
 
     assert (cov / "h" / "app" / "capture.json").is_file()
     assert [(r.host, r.product) for r in store.runs] == [("h", "app")]
@@ -473,7 +479,7 @@ async def test_report_time_capture_at_another_commit_propagates(tmp_path):
     (cov / "h" / "app" / "x.gcda").write_bytes(b"adcg")
 
     with pytest.raises(CaptureCommitError) as excinfo:
-        await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+        await run_coverage_report([cov], output_dir=tmp_path / "report", inputs=_inputs(project))
 
     assert excinfo.value.taken_at == _COMMIT
 
@@ -493,7 +499,7 @@ async def test_input_refusals_leave_the_destination_untouched(tmp_path, monkeypa
     _spy_produce(monkeypatch)
 
     with pytest.raises(CoverageInputError):
-        await run_coverage_report([cov], report, _inputs(project), overwrite=True)
+        await run_coverage_report([cov], output_dir=report, inputs=_inputs(project), overwrite=True)
 
     assert (report / "sentinel").read_text() == "keep me"
 
@@ -525,7 +531,7 @@ async def test_a_moved_commit_refusal_leaves_the_destination_untouched(
     calls = _spy_produce(monkeypatch)
 
     with pytest.raises(CaptureCommitError) as excinfo:
-        await run_coverage_report([cov], report, _inputs(project), overwrite=True)
+        await run_coverage_report([cov], output_dir=report, inputs=_inputs(project), overwrite=True)
 
     assert excinfo.value.taken_at == _COMMIT
     assert (report / "sentinel").read_text() == "keep me"
@@ -660,7 +666,7 @@ class TestSourcesLine:
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             store = await run_coverage_report(
-                [first, second], tmp_path / "report", _inputs(project)
+                [first, second], output_dir=tmp_path / "report", inputs=_inputs(project)
             )
 
         assert _sources_lines(caplog) == ["Sources: system — 3 capture(s) from 2 run dir(s)"]
@@ -681,7 +687,9 @@ class TestSourcesLine:
         write_manual_capture(_capture(head, at="2026-02-01T00:00:00Z"), project)
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
-            store = await run_coverage_report([], tmp_path / "report", _inputs(project))
+            store = await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_inputs(project)
+            )
 
         assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
         assert [(r.source, r.run_dir, r.captured_at) for r in store.runs] == [
@@ -700,7 +708,9 @@ class TestSourcesLine:
         write_manual_capture(capture, project)
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
-            store = await run_coverage_report([cov], tmp_path / "report", _inputs(project))
+            store = await run_coverage_report(
+                [cov], output_dir=tmp_path / "report", inputs=_inputs(project)
+            )
 
         assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
         assert [r.source for r in store.runs] == ["manual"]
@@ -732,8 +742,8 @@ class TestSourcesLine:
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             store = await run_coverage_report(
                 [],
-                tmp_path / "report",
-                ReportInputs(
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(
                     project_root=project,
                     project_name="proj",
                     tier_configs=load_tiers(cov_config, root=project),
@@ -755,7 +765,10 @@ class TestSourcesLine:
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             await run_coverage_report(
-                [], tmp_path / "report", ReportInputs(), tier_specs=[("lab", info)]
+                [],
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(),
+                tier_specs=[("lab", info)],
             )
 
         assert _sources_lines(caplog) == ["Sources: lab — 1 tracefile(s)"]
@@ -770,8 +783,8 @@ class TestSourcesLine:
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             await run_coverage_report(
                 [],
-                tmp_path / "report",
-                _inputs(project),
+                output_dir=tmp_path / "report",
+                inputs=_inputs(project),
                 tier_specs=[("lab", tmp_path / "missing.info")],
             )
 
@@ -788,7 +801,7 @@ class TestSourcesLine:
         write_manual_capture(_capture(head, tier="bench", at="2026-02-01T00:00:00Z"), project)
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
-            await run_coverage_report([], tmp_path / "report", _inputs(project))
+            await run_coverage_report([], output_dir=tmp_path / "report", inputs=_inputs(project))
 
         assert _sources_lines(caplog) == [
             "Sources: manual — 1 manual capture(s); bench — 1 manual capture(s)"
@@ -798,7 +811,10 @@ class TestSourcesLine:
     async def test_nothing_folded_logs_none(self, tmp_path, caplog):
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             await run_coverage_report(
-                [], tmp_path / "report", ReportInputs(), tier_specs=[("lab", tmp_path / "x.info")]
+                [],
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(),
+                tier_specs=[("lab", tmp_path / "x.info")],
             )
 
         assert _sources_lines(caplog) == ["Sources: none"]
@@ -816,7 +832,7 @@ class TestSourcesLine:
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
             store = await run_coverage_report(
-                [first, second], tmp_path / "report", _inputs(project)
+                [first, second], output_dir=tmp_path / "report", inputs=_inputs(project)
             )
 
         assert _sources_lines(caplog) == ["Sources: system — 1 capture(s) from 1 run dir(s)"]
@@ -834,7 +850,9 @@ class TestSourcesLine:
         capture.save(manual_store_dir(project) / "zz-copy.json")
 
         with caplog.at_level(logging.INFO, logger="otto.coverage.reporter"):
-            store = await run_coverage_report([], tmp_path / "report", _inputs(project))
+            store = await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_inputs(project)
+            )
 
         assert _sources_lines(caplog) == ["Sources: system — 1 manual capture(s)"]
         assert [r.source for r in store.runs] == ["manual"]

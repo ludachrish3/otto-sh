@@ -74,8 +74,8 @@ def test_the_raw_case_holds_for_an_engine_registry(monkeypatch, tmp_path):
         table,
         make=lambda i: ("thing", LazyRec(i)),
         invalid=("thing", LazyRec(-1)),
-        lazy=("lazy-thing", LazyRec(Ref("conformance_lazy_mod:VALUE"))),
-        wrongly_typed_lazy=("wrong-thing", LazyRec(Ref("conformance_lazy_mod:TEXT"))),
+        lazy=("lazy-thing", LazyRec(Ref(target="conformance_lazy_mod:VALUE"))),
+        wrongly_typed_lazy=("wrong-thing", LazyRec(Ref(target="conformance_lazy_mod:TEXT"))),
     )
     assert table.names() == []
 
@@ -94,8 +94,8 @@ def test_the_raw_case_holds_with_a_lazy_record_under_the_case_name(monkeypatch, 
     conformance.assert_raw_registry(
         table,
         make=lambda i: ("thing", LazyRec(i)),
-        lazy=("thing", LazyRec(Ref("conformance_same_name_mod:VALUE"))),
-        wrongly_typed_lazy=("thing", LazyRec(Ref("conformance_same_name_mod:TEXT"))),
+        lazy=("thing", LazyRec(Ref(target="conformance_same_name_mod:VALUE"))),
+        wrongly_typed_lazy=("thing", LazyRec(Ref(target="conformance_same_name_mod:TEXT"))),
     )
     assert table.names() == []
 
@@ -105,7 +105,7 @@ def test_the_raw_case_holds_for_a_require_project_registry():
         "conformance per-project thing",
         entry=Rec,
         register_hint="register_thing()",
-        capabilities=[Justified(RequireProject(), reason="one per project")],
+        capabilities=[Justified(capability=RequireProject(), reason="one per project")],
     )
     conformance.assert_raw_registry(
         table, make=lambda i: ("thing", Rec(i)), require_project="conformance_project"
@@ -117,7 +117,7 @@ def test_the_wrapper_case_holds_for_a_marked_wrapper():
 
     @reg.registration_boundary
     def register_thing(*, overwrite: bool = False) -> None:
-        table.register("thing", Rec("THING"), overwrite=overwrite)
+        table.register(name="thing", entry=Rec("THING"), overwrite=overwrite)
 
     conformance.assert_wrapper_matches_raw(
         table, via_wrapper=register_thing, record_for=lambda: Rec("THING")
@@ -187,19 +187,19 @@ def test_the_view_case_holds_for_an_engine_view():
             raise ValueError(f"{name} is already a right entry")
 
     left = Registry("left", entry=Rec, register_hint="register_left()", validate=no_clash)
-    right.register("taken", Rec(0))
+    right.register(name="taken", entry=Rec(0))
 
     def derive():
         for source in (left, right):
             for name, entry in source.raw_items():
-                yield Derived(name, entry, source.origin(name), source.project(name))
+                yield Derived(name, entry, source.origin(name=name), source.project(name=name))
 
     view = RegistryView("both", register_hint="x", sources=[left, right], derive=derive)
     conformance.assert_view(
         view,
         sources=[left, right],
-        contribute=lambda name: left.register(name, Rec(1)),
-        clash=lambda: left.register("taken", Rec(2)),
+        contribute=lambda name: left.register(name=name, entry=Rec(1)),
+        clash=lambda: left.register(name="taken", entry=Rec(2)),
     )
     assert left.names() == [] and right.names() == ["taken"]  # noqa: PT018
 
@@ -246,7 +246,7 @@ for table in _otto_registries():
     ):
         key = f"{table.defined_in}:{bound[(table.defined_in, table.kind)]}"
         pairs += [
-            [key, name] for name in table.names() if table.origin(name).startswith("otto.")
+            [key, name] for name in table.names() if table.origin(name=name).startswith("otto.")
         ]
 print(json.dumps(sorted(pairs)))
 """

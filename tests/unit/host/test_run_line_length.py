@@ -109,8 +109,8 @@ def _manager(frame, *, term: str = "ssh", name: str = "bb1"):
 
 def _framing_overhead(frame) -> int:
     """Characters the frame's own sentinels add to the line the command is typed on."""
-    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
-    lines = frame.frame("CMD", markers).rstrip("\n").split("\n")
+    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
+    lines = frame.frame("CMD", m=markers).rstrip("\n").split("\n")
     return len(next(line for line in lines if "CMD" in line)) - len("CMD")
 
 
@@ -126,7 +126,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
     async def test_an_overlong_command_is_refused(self) -> None:
         mgr, sessions = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
-            await mgr.run_cmd("echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 2000)
         assert sessions == [], (
             "the refusal must happen before a session is built: `nothing was attempted` "
             "is the one thing this exception means that the other host errors do not"
@@ -140,7 +140,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         assert gap.status == MEASURED_BROKEN
         mgr, _ = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.run_cmd("echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 2000)
         message = str(excinfo.value)
         assert SURFACE in message
         assert gap.reason in message
@@ -152,7 +152,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         """An operator has to be able to act on this without reading the source."""
         mgr, _ = _manager(AshFrame(), name="edge-router-3")
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.run_cmd("echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 2000)
         message = str(excinfo.value)
         assert "edge-router-3" in message
         assert str(ASH_TYPED_LINE_MAX) in message
@@ -167,7 +167,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         """A console's exec types into this same session, so advising it would be false."""
         mgr, sessions = _manager(AshFrame(), term="console", name="bb1350")
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.exec("echo " + "x" * 2000)
+            await mgr.exec(cmd="echo " + "x" * 2000)
         message = str(excinfo.value)
         assert "Send it through `exec()`" not in message
         assert "split it" in message
@@ -195,7 +195,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         )
         monkeypatch.setattr(userland, "GAPS", [downgraded])
         mgr, sessions = _manager(AshFrame())
-        result = await mgr.run_cmd("echo " + "x" * 2000)
+        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
         assert result.is_ok
         assert sessions, "no session was built, so the command was never sent"
         assert sessions[0].ran, "the command should have been sent"
@@ -256,7 +256,7 @@ class TestTheBoundIsTheTypedLine:
         assert len(cmd) + _framing_overhead(AshFrame()) > ASH_TYPED_LINE_MAX
         mgr, sessions = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
-            await mgr.run_cmd(cmd)
+            await mgr.run_cmd(cmd=cmd)
         assert sessions == []
 
     @pytest.mark.asyncio
@@ -270,13 +270,13 @@ class TestTheBoundIsTheTypedLine:
         budget = ASH_TYPED_LINE_MAX - _framing_overhead(AshFrame())
 
         mgr, sessions = _manager(AshFrame())
-        result = await mgr.run_cmd("x" * budget)
+        result = await mgr.run_cmd(cmd="x" * budget)
         assert result.is_ok
         assert sessions[0].ran == ["x" * budget]
 
         mgr, sessions = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
-            await mgr.run_cmd("x" * (budget + 1))
+            await mgr.run_cmd(cmd="x" * (budget + 1))
         assert sessions == []
 
     @pytest.mark.asyncio
@@ -289,7 +289,7 @@ class TestTheBoundIsTheTypedLine:
         script = "\n".join(["x" * 400] * 10)
         assert len(script) > ASH_TYPED_LINE_MAX
         mgr, sessions = _manager(AshFrame())
-        result = await mgr.run_cmd(script)
+        result = await mgr.run_cmd(cmd=script)
         assert result.is_ok
         assert sessions[0].ran == [script]
 
@@ -298,7 +298,7 @@ class TestTheBoundIsTheTypedLine:
         script = "\n".join(["x" * 400, "y" * 2000, "x" * 400])
         mgr, _ = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
-            await mgr.run_cmd(script)
+            await mgr.run_cmd(cmd=script)
 
     def test_the_probe_markers_are_the_length_a_real_session_uses(self) -> None:
         """The guard sizes the framing without a session; that has to be honest.
@@ -321,7 +321,7 @@ class TestTheBoundIsTheTypedLine:
             "a real session no longer builds its id from _SESSION_ID_LEN, so the guard is "
             "sizing otto's framing against markers of a length nothing uses"
         )
-        lines = session._frame.frame("CMD", session._markers).rstrip("\n").split("\n")
+        lines = session._frame.frame("CMD", m=session._markers).rstrip("\n").split("\n")
         real = len(next(line for line in lines if "CMD" in line)) - len("CMD")
         assert real == _framing_overhead(AshFrame())
 
@@ -344,7 +344,7 @@ class TestTheRefusalIsScoped:
         ash's 1022.
         """
         mgr, sessions = _manager(frame)
-        result = await mgr.run_cmd("echo " + "x" * 2000)
+        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
         assert result.is_ok
         assert sessions[0].ran
 
@@ -369,7 +369,7 @@ class TestTheRefusalIsScoped:
             exec_factory=exec_factory,
         )
         line = "printf '%s' '" + "A" * 5500 + "' | base64 -d >> /tmp/x"
-        result = await mgr.exec(line)
+        result = await mgr.exec(cmd=line)
         assert result.is_ok
         assert seen == [line]
 
@@ -387,7 +387,7 @@ class TestTheRefusalIsScoped:
         """
         mgr, sessions = _manager(AshFrame(), term="telnet")
         line = "printf '%s' '" + "A" * 5500 + "' | base64 -d >> /tmp/x"
-        result = await mgr.exec(line)
+        result = await mgr.exec(cmd=line)
         assert result.is_ok
         assert sessions, "the pooled exec path built no session at all"
         assert sessions[0].ran == [line]
@@ -411,7 +411,7 @@ class TestTheRefusalIsScoped:
         ``OPEN`` to ``WIRED`` in the same change — not to delete the assertion.
         """
         mgr, sessions = _manager(AshFrame())
-        session = await mgr.open_session("monitor")
+        session = await mgr.open_session(name="monitor")
         line = "echo " + "x" * 2000
         results = await session.run(line)
         assert results.only.is_ok
@@ -522,10 +522,10 @@ class TestTheExecLineBudget:
         mgr, _ = _manager(frame, term="telnet")
         budget = mgr.exec_line_budget
         assert budget is not None
-        markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
+        markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
 
         def longest_typed_line(cmd: str) -> int:
-            return max(len(line) for line in frame.frame(cmd, markers).rstrip("\n").split("\n"))
+            return max(len(line) for line in frame.frame(cmd, m=markers).rstrip("\n").split("\n"))
 
         assert longest_typed_line("x" * budget) == PTY_TYPED_LINE_MAX
         assert longest_typed_line("x" * (budget + 1)) == PTY_TYPED_LINE_MAX + 1
@@ -599,7 +599,7 @@ class TestThroughAHostBuiltFromLabData:
                 "ip": "192.0.2.1",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("bb1"),
+            element=Element(name="bb1"),
         )
         assert isinstance(host.command_frame, AshFrame)
 
@@ -619,7 +619,7 @@ def test_the_framing_overhead_is_measured_for_a_frame_that_rewrites_the_command(
     from otto.host.session import framed_line_overhead
 
     class _ReprFrame(BashFrame):
-        def frame(self, cmd, m):
+        def frame(self, cmd, *, m):
             return f"print({cmd!r})\n"
 
     assert framed_line_overhead(_ReprFrame()) == len("print('')")

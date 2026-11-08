@@ -19,7 +19,7 @@ def _host(element: str, ip: str, lab_name: str | None = None) -> Any:
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name=lab_name,
-        element=Element(element),
+        element=Element(name=element),
     )
 
 

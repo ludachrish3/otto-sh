@@ -19,7 +19,7 @@ def make_lab(name: str) -> Lab:
 def make_remote_host(*, element: str, board: str | None, slot: int | None, ip: str) -> UnixHost:
     return UnixHost(
         ip=ip,
-        element=Element(element),
+        element=Element(name=element),
         creds=[Cred(login="u", password="p")],
         board=board,
         slot=slot,

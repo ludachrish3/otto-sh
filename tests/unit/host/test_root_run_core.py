@@ -56,7 +56,7 @@ class _Host:
             raise self.raises
         status = Status.Error if self.timed_out else Status.Failed
         result = CommandResult(command=cmd, value="", status=status, timed_out=self.timed_out)
-        return Results.collect([result])
+        return Results.collect(items=[result])
 
 
 @_ENTRIES

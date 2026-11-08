@@ -102,7 +102,7 @@ def test_transfer_override_rebuilds_to_custom_backend():
     h = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("e"),
+        element=Element(name="e"),
         valid_transfers=["scp", "xmodem"],
         transfer="scp",
     )
@@ -122,7 +122,7 @@ def test_transfer_override_switches_among_builtins():
     h = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("e"),
+        element=Element(name="e"),
         transfer="scp",
     )
     switched = dataclasses.replace(h, transfer="sftp")
@@ -134,7 +134,7 @@ def test_override_copy_has_its_own_connection():
     h = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("e"),
+        element=Element(name="e"),
         transfer="scp",
     )
     switched = dataclasses.replace(h, transfer="sftp")
@@ -145,7 +145,10 @@ def test_override_copy_has_its_own_connection():
 
 def test_term_override_switches_builtin():
     h = UnixHost(
-        ip="10.0.0.1", creds=[Cred(login="root", password="x")], element=Element("e"), term="ssh"
+        ip="10.0.0.1",
+        creds=[Cred(login="root", password="x")],
+        element=Element(name="e"),
+        term="ssh",
     )
     switched = dataclasses.replace(h, term="telnet")
     assert switched.term == "telnet"
@@ -157,7 +160,7 @@ def test_transfer_override_rejects_out_of_menu_backend():
     h = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("e"),
+        element=Element(name="e"),
         transfer="scp",
     )
     # console is not in the unix default menu -> validate_choice fails loud
@@ -169,4 +172,4 @@ def test_transfer_override_rejects_out_of_menu_backend():
 def test_term_builtins_are_restored_between_tests():
     """The tests above overwrite built-ins; the root conftest restores them."""
     for name in ["ssh", "telnet", "console"]:
-        assert conn_mod.TERM_BACKENDS.peek(name).cls is ConnectionManager
+        assert conn_mod.TERM_BACKENDS.peek(name=name).cls is ConnectionManager

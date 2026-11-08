@@ -77,13 +77,10 @@ class MyRtosHost(EmbeddedHost):
 register_host_class("my-rtos", MyRtosHost)
 ```
 
-`kw_only=True` is what keeps the constructor the shape every in-tree family
-has: `MyRtosHost(ip)` positionally, everything else by keyword.  Without it
-your three overrides join the positional signature behind `ip` —
+`kw_only=True` is what keeps the constructor the shape every otto host has:
+every field by keyword, `MyRtosHost(ip=..., element=...)`.  Without it your
+three overrides join a positional signature —
 `MyRtosHost(ip, os_type, os_name, command_frame)` — which no otto host has.
-If your class genuinely needs a positional parameter of its own, keep the
-class `kw_only=True` and mark that one field `field(kw_only=False)`, the way
-{class}`~otto.host.remote_host.RemoteHost` marks `ip`.
 
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
@@ -293,7 +290,9 @@ from otto.testing import assert_host_conforms, assert_host_registrable
 
 
 def test_my_rtos_host_conforms():
-    assert_host_conforms(MyRtosHost, instance=MyRtosHost(ip="192.0.2.1", element=Element("dev")))
+    assert_host_conforms(
+        MyRtosHost, instance=MyRtosHost(ip="192.0.2.1", element=Element(name="dev"))
+    )
 
 
 def test_my_rtos_host_registers():
@@ -312,7 +311,7 @@ from otto.host import Element, host_context
 def test_a_gadget_converts_its_buffer():
     hc = host_context(
         {"ip": "192.0.2.1", "os_type": "gadget", "buffer_bytes": 2},
-        element=Element("dev"),
+        element=Element(name="dev"),
     )
     host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     assert host.buffer_bytes == 2048

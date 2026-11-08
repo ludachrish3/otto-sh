@@ -36,7 +36,7 @@ TransferProgressFactory = Callable[[], TransferProgressHandler]
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ProgressGranularity:
     """What a backend promises the progress bar, per direction.
 
@@ -111,6 +111,7 @@ class TransferContext:
 
 
 def validate_filename_lengths(
+    *,
     files: list[Path],
     limit: int,
     host_name: str,
@@ -135,7 +136,7 @@ def validate_filename_lengths(
         name = path.name
         if len(name) > limit:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     f"filename {name!r} ({len(name)} chars) exceeds the "
                     f"{limit}-character basename limit for host "
@@ -146,7 +147,7 @@ def validate_filename_lengths(
                     f"on POSIX)."
                 ),
             )
-    return Result(Status.Success)
+    return Result(status=Status.Success)
 
 
 MAX_FILE_MODE = 0o7777
@@ -157,7 +158,7 @@ range ``chmod(1)`` accepts as an octal argument.
 """
 
 
-def parse_file_mode(value: int | str | None) -> Result:
+def parse_file_mode(*, value: int | str | None) -> Result:
     """Normalize a transfer permission *mode*, or explain why it is not one.
 
     Strings are **always** interpreted base-8, with or without a ``0o``/``0``
@@ -173,11 +174,11 @@ def parse_file_mode(value: int | str | None) -> Result:
     :meth:`BaseFileTransfer.put_files`.
     """
     if value is None:
-        return Result(Status.Success, value=None)
+        return Result(status=Status.Success, value=None)
     # bool subclasses int, so True would silently become 0o1 without this.
     if isinstance(value, bool):
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"invalid octal mode {value!r}: expected octal digits (e.g. 755, 0644, 0o4755)",
         )
     if isinstance(value, int):
@@ -187,20 +188,22 @@ def parse_file_mode(value: int | str | None) -> Result:
             mode = int(value, 8)
         except ValueError:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(f"invalid octal mode {value!r}: digits must be 0-7 (e.g. 755, 0644, 0o4755)"),
             )
     if mode < 0:
-        return Result(Status.Error, msg=f"invalid octal mode {value!r}: must not be negative")
+        return Result(
+            status=Status.Error, msg=f"invalid octal mode {value!r}: must not be negative"
+        )
     if mode > MAX_FILE_MODE:
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"mode 0o{mode:o} out of range (max 0o{MAX_FILE_MODE:o})",
         )
-    return Result(Status.Success, value=mode)
+    return Result(status=Status.Success, value=mode)
 
 
-def chmod_command(mode: int, paths: list[Path]) -> str:
+def chmod_command(*, mode: int, paths: list[Path]) -> str:
     """Build one batched ``chmod`` command covering every path in *paths*.
 
     A single invocation for the whole batch, so a multi-file transfer costs
@@ -273,7 +276,7 @@ transfer on another backend, an interactive session. The derivation lives in
 :ref:`the host-options guide <transfer-channel-budget>`."""
 
 
-def aggregate_transfer(per_file: dict[Path, Result]) -> Result:
+def aggregate_transfer(*, per_file: dict[Path, Result]) -> Result:
     """Fold a per-file mapping into the aggregate transfer Result.
 
     Aggregate status is the first non-ok entry's status (Skipped counts as
@@ -307,10 +310,12 @@ def refuse_directory_sources(src_files: list[Path]) -> Result | None:
     per_file: dict[Path, Result] = {}
     for f in src_files:
         if f in dirs:
-            per_file[f] = Result(Status.Error, msg=f"{f}: {DIRECTORY_SOURCE_HINT}")
+            per_file[f] = Result(status=Status.Error, msg=f"{f}: {DIRECTORY_SOURCE_HINT}")
         else:
-            per_file[f] = Result(Status.Skipped, msg="not attempted (directory source refused)")
-    return aggregate_transfer(per_file)
+            per_file[f] = Result(
+                status=Status.Skipped, msg="not attempted (directory source refused)"
+            )
+    return aggregate_transfer(per_file=per_file)
 
 
 class BaseFileTransfer(ABC):
@@ -406,8 +411,8 @@ class BaseFileTransfer(ABC):
     async def dispatch_per_file(
         self,
         src_files: list[Path],
-        transfer_one: Callable[[Path], Coroutine[Any, Any, Result]],
         *,
+        transfer_one: Callable[[Path], Coroutine[Any, Any, Result]],
         concurrent: bool,
     ) -> dict[Path, Result]:
         """Run *transfer_one* per source, keyed by source exactly as passed.
@@ -452,7 +457,7 @@ class BaseFileTransfer(ABC):
             try:
                 return await _bounded(src)
             except Exception as exc:  # noqa: BLE001 — any per-file failure is that file's entry
-                return Result(Status.Error, msg=f"{src}: {exc}")
+                return Result(status=Status.Error, msg=f"{src}: {exc}")
 
         if not concurrent:
             per_file: dict[Path, Result] = {}
@@ -491,7 +496,7 @@ class BaseFileTransfer(ABC):
             f"backend must override create(cls, ctx)."
         )
 
-    def __init__(self, name: str, max_filename_len: int = 255) -> None:
+    def __init__(self, *, name: str, max_filename_len: int = 255) -> None:
         self._name = name
         self._max_filename_len = max_filename_len
         # One budget per INSTANCE: the ceiling it stands for is per connection,
@@ -506,6 +511,7 @@ class BaseFileTransfer(ABC):
 
     async def put_files(
         self,
+        *,
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
@@ -536,10 +542,12 @@ class BaseFileTransfer(ABC):
         """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
-        mode_check = parse_file_mode(mode)
+        mode_check = parse_file_mode(value=mode)
         if not mode_check.is_ok:
             return aggregate_transfer(
-                {f: Result(mode_check.status, msg=mode_check.msg) for f in src_files}
+                per_file={
+                    f: Result(status=mode_check.status, msg=mode_check.msg) for f in src_files
+                }
             )
         resolved_mode: int | None = mode_check.value  # ty: ignore[unsound-assignment] — Result.value is Any by design (payload slot); retired by the Result[T] workstream
         if resolved_mode is not None and not self.supports_mode:
@@ -549,35 +557,44 @@ class BaseFileTransfer(ABC):
                 f"argument (--mode on the CLI) or transfer with a backend that "
                 f"supports it."
             )
-            return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in src_files})
+            return aggregate_transfer(
+                per_file={f: Result(status=Status.Error, msg=msg) for f in src_files}
+            )
 
         refused = refuse_directory_sources(src_files)
         if refused is not None:
             return refused
 
         name_check = validate_filename_lengths(
-            src_files,
-            self._max_filename_len,
-            self._name,
+            files=src_files,
+            limit=self._max_filename_len,
+            host_name=self._name,
         )
         if not name_check.is_ok:
             return aggregate_transfer(
-                {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
+                per_file={
+                    f: Result(status=name_check.status, msg=name_check.msg) for f in src_files
+                }
             )
         if not show_progress:
-            per_file = await self.run_put(src_files, dest_dir, None, concurrent=concurrent)
+            per_file = await self.run_put(
+                src_files, dest_dir, progress_factory=None, concurrent=concurrent
+            )
         else:
             async with _acquire_shared_progress() as progress:
                 per_file = await self.run_put(
                     src_files,
                     dest_dir,
-                    make_rich_progress_factory(progress, self._name),
+                    progress_factory=make_rich_progress_factory(
+                        progress=progress, host_name=self._name
+                    ),
                     concurrent=concurrent,
                 )
-        return aggregate_transfer(await self._finish_put(per_file, resolved_mode))
+        return aggregate_transfer(per_file=await self._finish_put(per_file, resolved_mode))
 
     async def get_files(
         self,
+        *,
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
@@ -599,29 +616,35 @@ class BaseFileTransfer(ABC):
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
         name_check = validate_filename_lengths(
-            src_files,
-            self._max_filename_len,
-            self._name,
+            files=src_files,
+            limit=self._max_filename_len,
+            host_name=self._name,
         )
         if not name_check.is_ok:
             return aggregate_transfer(
-                {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
+                per_file={
+                    f: Result(status=name_check.status, msg=name_check.msg) for f in src_files
+                }
             )
         if not show_progress:
             return aggregate_transfer(
-                await self.run_get(src_files, dest_dir, None, concurrent=concurrent)
+                per_file=await self.run_get(
+                    src_files, dest_dir, progress_factory=None, concurrent=concurrent
+                )
             )
         async with _acquire_shared_progress() as progress:
             return aggregate_transfer(
-                await self.run_get(
+                per_file=await self.run_get(
                     src_files,
                     dest_dir,
-                    make_rich_progress_factory(progress, self._name),
+                    progress_factory=make_rich_progress_factory(
+                        progress=progress, host_name=self._name
+                    ),
                     concurrent=concurrent,
                 )
             )
 
-    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], *, mode: int) -> Result:
         """Set *mode* on the already-transferred *dest_paths*.
 
         A hook: a backend that declares
@@ -658,12 +681,12 @@ class BaseFileTransfer(ABC):
         landed = {src: r for src, r in per_file.items() if r.status is Status.Success and r.value}
         if not landed:
             return per_file
-        mode_result = await self.apply_mode([r.value for r in landed.values()], mode)
+        mode_result = await self.apply_mode([r.value for r in landed.values()], mode=mode)
         if mode_result.is_ok:
             return per_file
         for src, r in landed.items():
             per_file[src] = Result(
-                Status.Error,
+                status=Status.Error,
                 value=r.value,
                 msg=f"{src}: transferred, but setting mode 0o{mode:o} failed: {mode_result.msg}",
             )
@@ -678,8 +701,8 @@ class BaseFileTransfer(ABC):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: "TransferProgressFactory | None",
         *,
+        progress_factory: "TransferProgressFactory | None",
         concurrent: bool,
     ) -> dict[Path, Result]:
         """Move *src_files* into *dest_dir*: this backend's half of a put.
@@ -709,8 +732,8 @@ class BaseFileTransfer(ABC):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: "TransferProgressFactory | None",
         *,
+        progress_factory: "TransferProgressFactory | None",
         concurrent: bool,
     ) -> dict[Path, Result]:
         """Move *src_files* from the host into *dest_dir*: this backend's half of a get.

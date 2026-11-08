@@ -84,7 +84,7 @@ def _ps_line(
     tunnel: Tunnel, direction: Direction, role: Role, hop_index: int, carrier: int, pid: int
 ) -> str:
     token = encode_sentinel(
-        tunnel, direction=direction, role=role, hop_index=hop_index, carrier_port=carrier
+        tunnel=tunnel, direction=direction, role=role, hop_index=hop_index, carrier_port=carrier
     )
     return f"  {pid} 00:10 {token} socat TCP4-LISTEN:{carrier},fork ..."
 
@@ -130,7 +130,7 @@ class TestRemoveTunnel:
             hosts[host_id] = FakeHost(host_id, ps_texts=[text, ""])
         lab = _lab(**hosts)
 
-        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
 
         assert isinstance(report, RemovedReport)
         assert report.removed_ids == [tunnel.id]
@@ -152,7 +152,7 @@ class TestRemoveTunnel:
         }
         lab = _lab(**hosts)
 
-        report = asyncio.run(remove_tunnel(lab, "tun-doesnotexist-1"))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id="tun-doesnotexist-1"))
 
         assert report == RemovedReport(removed_ids=[], killed={}, unreachable=[], survivors=[])
         for host in hosts.values():
@@ -182,7 +182,7 @@ class TestRemoveTunnel:
         }
         lab = _lab(**hosts)
 
-        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
 
         assert report.removed_ids == [tunnel.id]
         assert report.survivors == [("c", survivor_pid)]
@@ -198,7 +198,7 @@ class TestRemoveTunnel:
         b = FakeHost("b", ps_texts=[text_b, ""])
         lab = _lab(a=a, b=b)
 
-        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
 
         assert report.removed_ids == [tunnel.id]
         assert "a" not in report.killed
@@ -233,7 +233,7 @@ class TestRemoveTunnel:
         handler = _Capture()
         manage_logger.addHandler(handler)
         try:
-            asyncio.run(remove_tunnel(_lab(a=a, b=b), tunnel.id))
+            asyncio.run(remove_tunnel(_lab(a=a, b=b), tunnel_id=tunnel.id))
         finally:
             manage_logger.removeHandler(handler)
 
@@ -270,7 +270,7 @@ class TestRemoveTunnel:
         handler = _Capture()
         manage_logger.addHandler(handler)
         try:
-            report = asyncio.run(remove_tunnel(lab, tunnel.id))
+            report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
         finally:
             manage_logger.removeHandler(handler)
 
@@ -294,7 +294,7 @@ class TestRemoveTunnel:
         ghost = FakeHost("ghost", scan_fail=True)
         lab = _lab(a=a, b=b, ghost=ghost)
 
-        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
 
         assert report.removed_ids == [tunnel.id]
         assert report.killed == {"a": sorted(_pids_a), "b": sorted(pids_b)}
@@ -319,7 +319,7 @@ class TestRemoveAllTunnels:
         }
         lab = _lab(**hosts)
 
-        report = asyncio.run(remove_all_tunnels(lab))
+        report = asyncio.run(remove_all_tunnels(lab=lab))
 
         assert report.removed_ids == sorted([tunnel1.id, tunnel2.id])
         assert report.killed == {
@@ -355,7 +355,7 @@ class TestRemoveDryRunPreviewsTheSweep:
         lab, tunnel = self._bed()
 
         with active_context(dry_run=True):
-            report = asyncio.run(remove_tunnel(lab, tunnel.id))
+            report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
 
         assert [cmd for h in lab.hosts.values() for cmd in h.commands] == []
         assert report.plan is not None
@@ -377,7 +377,7 @@ class TestRemoveDryRunPreviewsTheSweep:
     def test_all_says_it_would_reap_every_tunnel_not_one(self) -> None:
         lab, tunnel = self._bed()
         with active_context(dry_run=True):
-            report = asyncio.run(remove_all_tunnels(lab))
+            report = asyncio.run(remove_all_tunnels(lab=lab))
         would = "\n".join(report.plan.would)
         assert "EVERY otto tunnel" in would
         assert tunnel.id not in would
@@ -385,7 +385,7 @@ class TestRemoveDryRunPreviewsTheSweep:
     def test_it_names_what_only_a_scan_could_decide(self) -> None:
         lab, tunnel = self._bed()
         with active_context(dry_run=True):
-            plan = asyncio.run(remove_tunnel(lab, tunnel.id)).plan
+            plan = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id)).plan
         joined = "\n".join(plan.unchecked)
         assert "which tunnels are live" in joined
         assert "SURVIVOR" in joined
@@ -395,7 +395,7 @@ class TestRemoveDryRunPreviewsTheSweep:
     def test_a_real_remove_on_the_same_bed_still_reaps_and_reports(self) -> None:
         """Positive control: the short-circuit did not swallow the product."""
         lab, tunnel = self._bed()
-        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
         assert report.plan is None
         assert report.removed_ids == [tunnel.id]
         assert sorted(report.killed) == ["a", "b", "c"]

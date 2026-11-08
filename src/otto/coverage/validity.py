@@ -122,7 +122,7 @@ def load_capture_into_store(
     """
     store.register_tier(capture.tier)
     for rel_str, fc in capture.files.items():
-        file_rec = store.get_or_create_file(project_root / Path(rel_str))
+        file_rec = store.get_or_create_file(path=project_root / Path(rel_str))
         _insert_lines(file_rec, capture.tier, fc.lines, fc.branches, run_id=run_id)
 
 
@@ -158,7 +158,7 @@ def load_dirty_capture_into_store(
             if new_line is not None:
                 mapped_branches.setdefault(new_line, []).extend(triples)
 
-        file_rec = store.get_or_create_file(project_root / relpath)
+        file_rec = store.get_or_create_file(path=project_root / relpath)
         _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches, run_id=run_id)
 
 
@@ -230,10 +230,10 @@ def apply_manual_capture(
         relpath = Path(rel_str)
         result = resolver.resolve(relpath, fc)
         if result.new_relpath is None:
-            file_rec = store.get_or_create_file(project_root / relpath)
+            file_rec = store.get_or_create_file(path=project_root / relpath)
             _apply_unverifiable_capture(file_rec, capture, rel_str, fc, run_id)
             continue
-        file_rec = store.get_or_create_file(project_root / result.new_relpath)
+        file_rec = store.get_or_create_file(path=project_root / result.new_relpath)
         remapper = LineRemapper(result.hunks)
 
         # Remap base_commit (OLD) coordinates → current-worktree (NEW)

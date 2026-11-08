@@ -131,7 +131,9 @@ def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(
         JsonInventory(tmp_path / "inventory.json", supplies=["ip"]),
         store=_JsonCredsStore(tmp_path / "creds.json"),
     )
-    resolved = resolve_host_entry(element.hosts[0], inventory, element.to_element()).host_data
+    resolved = resolve_host_entry(
+        element.hosts[0], inventory=inventory, element=element.to_element()
+    ).host_data
     spec = UnixHostSpec.model_validate(resolved)
     assert spec.ip == "192.0.2.1"
     assert EXAMPLE_HOST_ENTRY["inventory"] == EXAMPLE_INVENTORY_KEY

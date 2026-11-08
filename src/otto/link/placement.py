@@ -119,7 +119,7 @@ def ensure_not_hop_transit(
 
 
 def impairment_refusal(
-    link: Link, directions: Collection[FlowDirection] = BOTH_DIRECTIONS
+    *, link: Link, directions: Collection[FlowDirection] = BOTH_DIRECTIONS
 ) -> str | None:
     """Why *link* cannot be impaired in *directions*, or ``None`` if it can.
 

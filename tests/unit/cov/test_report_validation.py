@@ -13,7 +13,7 @@ from otto.coverage.reporter import run_coverage_report
 async def test_a_missing_run_directory_is_refused_by_field(tmp_path):
     missing = tmp_path / "nope" / "cov"
     with pytest.raises(CoverageInputError, match="output directory does not exist") as e:
-        await run_coverage_report([missing], tmp_path / "out", ReportInputs())
+        await run_coverage_report([missing], output_dir=tmp_path / "out", inputs=ReportInputs())
     assert e.value.field == "cov_dirs"
     assert str(tmp_path / "nope") in str(e.value)
 
@@ -29,7 +29,7 @@ async def test_a_run_dir_without_cov_is_not_refused(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.coverage.config.prepare_destination", lambda *a, **k: None)
     try:
         await run_coverage_report(
-            [run / "cov"], tmp_path / "out", ReportInputs(project_root=tmp_path)
+            [run / "cov"], output_dir=tmp_path / "out", inputs=ReportInputs(project_root=tmp_path)
         )
     except CoverageInputError:
         pytest.fail("a run directory without cov/ must not be refused")
@@ -47,5 +47,7 @@ async def test_a_run_dir_without_cov_is_not_refused(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_bad_tier_specs_are_refused_by_field(tmp_path, specs, match):
     with pytest.raises(CoverageInputError, match=match) as e:
-        await run_coverage_report([], tmp_path / "out", ReportInputs(), tier_specs=specs)
+        await run_coverage_report(
+            [], output_dir=tmp_path / "out", inputs=ReportInputs(), tier_specs=specs
+        )
     assert e.value.field == "tier_specs"

@@ -379,7 +379,7 @@ def _print_this_workspace() -> None:
     from ..config.cache_sections import describe_lab_sources
     from ..host.os_profile import ProfileContext
 
-    profiles = ProfileContext.from_projects(projects)
+    profiles = ProfileContext.from_projects(projects=projects)
     for project in projects:
         for label, files in describe_lab_sources(project, profiles=profiles):
             typer.echo(f"  lab files ({label}): {files}")

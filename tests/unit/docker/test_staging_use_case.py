@@ -28,11 +28,11 @@ from otto.utils import Status
 
 
 def _ok(out: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command="", retcode=0)
+    return CommandResult(status=Status.Success, value=out, command="", retcode=0)
 
 
 def _fail(out: str = "denied") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command="", retcode=1)
 
 
 ROOT = staging_root("vagrant")
@@ -42,7 +42,7 @@ ROOT = staging_root("vagrant")
 def _parent(tmp_path):
     parent = UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -55,7 +55,7 @@ def _parent(tmp_path):
         staged.extend((Path(p).name, str(dest), Path(p).read_text()) for p in paths)
         if mode is not None:
             modes.update({f"{dest}/{Path(p).name}": mode for p in paths})
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     parent.put = AsyncMock(side_effect=_put)  # type: ignore[method-assign]
     parent._staged = staged  # type: ignore[attr-defined]
@@ -431,7 +431,9 @@ async def test_a_timed_out_prepare_is_an_unreachable_host(tmp_path):
 
     parent = _parent(tmp_path)
     parent.exec = AsyncMock(
-        return_value=CommandResult(Status.Failed, value="", command="", retcode=-1, timed_out=True)
+        return_value=CommandResult(
+            status=Status.Failed, value="", command="", retcode=-1, timed_out=True
+        )
     )
     with pytest.raises(HostUnreachableError, match="failed to prepare the compose staging dir"):
         await stage_use_case(parent, "p", [], "")
@@ -456,7 +458,7 @@ async def test_a_failed_put_for_a_compose_file_is_a_command_failure(tmp_path):
     from otto.result import Result as ResultCls
 
     parent = _parent(tmp_path)
-    parent.put = AsyncMock(return_value=ResultCls(Status.Failed, msg="disk full"))
+    parent.put = AsyncMock(return_value=ResultCls(status=Status.Failed, msg="disk full"))
     with pytest.raises(HostCommandError, match="failed to stage"):
         await stage_use_case(
             parent, "p", [ComposeFileToStage("core", "services: {}\n", tmp_path)], ""

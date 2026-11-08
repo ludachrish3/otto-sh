@@ -43,7 +43,7 @@ class TestProtocols:
         with pytest.raises(ValueError, match="'sctp'"):
             requested_protocols("sctp")
         with pytest.raises(ValueError, match="'sctp'"):
-            await check_tunnel(the_bed, ABC, port=PORT, protocol="sctp")
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="sctp")
         assert all(h.commands == [] for h in the_bed.hosts.values())
 
     def test_row_order(self) -> None:
@@ -56,7 +56,7 @@ class TestProtocols:
     @pytest.mark.asyncio
     async def test_both_runs_tcp_then_udp_in_that_order(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert [c.protocol for c in report.columns] == ["tcp", "udp"]
         assert [a["protocol"] for a in the_bed.adds] == ["tcp", "udp"]
         assert the_bed.removes == [_throwaway_id("tcp"), _throwaway_id("udp")]
@@ -78,7 +78,7 @@ class TestProtocols:
     @pytest.mark.asyncio
     async def test_protocol_tcp_runs_one_column(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert [c.protocol for c in report.columns] == ["tcp"]
         assert report.protocols == ["tcp"]
         assert [a["protocol"] for a in the_bed.adds] == ["tcp"]
@@ -89,7 +89,7 @@ class TestProtocols:
     async def test_no_two_host_commands_ever_overlap(self, monkeypatch) -> None:
         """socat's UDP fork listeners cross-deliver two new flows' first datagrams (#471)."""
         the_bed = bed().install(monkeypatch)
-        await check_tunnel(the_bed, ABC, port=PORT)
+        await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert the_bed.peak == 1
 
 
@@ -102,7 +102,7 @@ def tcp_only_carrier() -> Iterator[str]:
     try:
         yield "tcp-only"
     finally:
-        CARRIERS.unregister("tcp-only")
+        CARRIERS.unregister(name="tcp-only")
 
 
 class TestRefusal:
@@ -124,7 +124,7 @@ class TestRefusal:
         self, monkeypatch, hosts, kw, tweak, says
     ) -> None:
         the_bed = bed(**tweak).install(monkeypatch)
-        report = await check_tunnel(the_bed, hosts, port=PORT, **kw)
+        report = await check_tunnel(lab=the_bed, hosts=hosts, port=PORT, **kw)
         assert report.refusal is not None
         assert says in report.refusal
         assert report.refusal_hint == REFUSAL_HINT
@@ -142,12 +142,14 @@ class TestRefusal:
         self, monkeypatch, tcp_only_carrier
     ) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, carrier=tcp_only_carrier)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, carrier=tcp_only_carrier)
         assert report.refusal is not None
         assert "does not support protocol 'udp'" in report.refusal
         assert all(h.commands == [] for h in the_bed.hosts.values())
         # The same carrier checks TCP fine.
-        tcp = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp", carrier=tcp_only_carrier)
+        tcp = await check_tunnel(
+            lab=the_bed, hosts=ABC, port=PORT, protocol="tcp", carrier=tcp_only_carrier
+        )
         assert tcp.refusal is None
         assert the_bed.adds[0]["carrier"] == "tcp-only"
 
@@ -157,7 +159,7 @@ class TestDryRun:
     async def test_dry_run_contacts_nothing_and_names_every_step(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         with active_context(dry_run=True):
-            report = await check_tunnel(the_bed, ABC, port=PORT)
+            report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert all(h.commands == [] for h in the_bed.hosts.values())
         assert the_bed.adds == []
         assert the_bed.removes == []
@@ -202,7 +204,7 @@ class TestDryRun:
     async def test_dry_run_names_the_dest(self, monkeypatch) -> None:
         the_bed = bed("a", "b", "d").install(monkeypatch)
         with active_context(dry_run=True):
-            report = await check_tunnel(the_bed, ABC[:2], port=PORT, dest=("d", None))
+            report = await check_tunnel(lab=the_bed, hosts=ABC[:2], port=PORT, dest=("d", None))
         assert any("--dest d" in line for line in report.dry_run_plan)
         assert any("takes 5 1 B trips from b" in line for line in report.dry_run_plan)
         assert any(
@@ -217,7 +219,7 @@ class TestFingerprint:
     @pytest.mark.asyncio
     async def test_a_hop_without_socat_is_missing_tool_not_fail(self, monkeypatch) -> None:
         the_bed = bed(b={"missing": ["socat"]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         for protocol in ["tcp", "udp"]:
             rows = _rows(report, protocol)
             assert rows["service port"].verdict is Verdict.PASS
@@ -238,7 +240,7 @@ class TestFingerprint:
     ) -> None:
         """socat and bash are what `tunnel add` itself checks, so the claim holds for them."""
         the_bed = bed(b={"missing": ["socat"]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         hints = {r.hint for name, r in _rows(report).items() if name != "service port"}
         assert hints == {
             (
@@ -251,7 +253,7 @@ class TestFingerprint:
     async def test_a_missing_probe_tool_does_not_blame_tunnel_add(self, monkeypatch) -> None:
         """cksum and friends are the check's own needs: `tunnel add` never looks for them."""
         the_bed = bed(b={"missing": ["cksum", "wc"]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         assert rows["build"].verdict is Verdict.UNMEASURED
         assert rows["build"].detail == "cksum, wc not found on b"
@@ -274,7 +276,7 @@ class TestFingerprint:
     @pytest.mark.asyncio
     async def test_each_hop_is_fingerprinted_and_labelled(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert [h.host_id for h in report.hops] == ["a", "b", "c"]
         assert [h.address for h in report.hops] == ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
         hop = report.hops[0]
@@ -290,7 +292,7 @@ class TestServicePort:
         the_bed = bed().install(monkeypatch)
         holder = f"LISTEN 0 128 0.0.0.0:{PORT} 0.0.0.0:*"
         the_bed.hosts["c"].held["tcp"] = [holder]
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         row = _rows(report, "tcp")["service port"]
         assert row.verdict is Verdict.FAIL
         assert row.measured == f"c: {holder}"
@@ -309,7 +311,7 @@ class TestServicePort:
     async def test_an_otto_tunnel_on_the_service_port_is_named(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         user = the_bed.plant_tunnel(["a", "c"], "tcp", PORT)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["service port"]
         assert row.verdict is Verdict.FAIL
         assert "an otto tunnel already binds it" in (row.detail or "")
@@ -329,7 +331,7 @@ class TestScratchPort:
 
         monkeypatch.setattr("otto.tunnel.check.probe_port_budget", full)
         with pytest.raises(NoFreePortError, match=f"no free port in \\[{SCRATCH}, 65535\\]"):
-            await check_tunnel(the_bed, ABC, port=PORT)
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert the_bed.adds == []
 
     @pytest.mark.asyncio
@@ -337,7 +339,9 @@ class TestScratchPort:
         self, monkeypatch
     ) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=SCRATCH)  # --port sits on the floor
+        report = await check_tunnel(
+            lab=the_bed, hosts=ABC, port=SCRATCH
+        )  # --port sits on the floor
         assert report.scratch_port == SCRATCH + 1
         assert [a["port"] for a in the_bed.adds] == [SCRATCH + 1, SCRATCH + 1]
         launches = [c for h in the_bed.hosts.values() for c in h.commands if "otto-check:v1:" in c]
@@ -364,7 +368,7 @@ class TestScratchPort:
         the_bed = bed().install(monkeypatch)
         far_port = SCRATCH + 2000
         monkeypatch.setattr("otto.tunnel.check._scratch_rng", _PickRNG(pick=far_port))
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert report.scratch_port == far_port
         assert [a["port"] for a in the_bed.adds] == [far_port, far_port]
 
@@ -374,7 +378,7 @@ class TestSegments:
     async def test_a_dead_segment_names_its_hop_pair_and_skips_the_rest(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         the_bed.dead.add(("b", "c"))
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         assert rows["segment a → b"].verdict is Verdict.PASS
         dead = rows["segment b → c"]
@@ -399,7 +403,7 @@ class TestSegments:
         the_bed.hosts["a"].answer(
             f"TCP4:10.0.0.2:{SCRATCH}", "\n".join([*said, "trips 5 matched 5"])
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         segment = rows["segment a → b"]
         assert segment.verdict is Verdict.PASS
@@ -414,7 +418,7 @@ class TestSegments:
         the_bed.hosts["a"].answer(
             f"TCP4:10.0.0.2:{SCRATCH}", trips_output(5, clock=True, fail_at=5)
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         segment = _rows(report)["segment a → b"]
         assert segment.verdict is Verdict.FAIL
         assert segment.detail == f"a → b: 4 of 5 trips echoed back from 10.0.0.2:{SCRATCH}"
@@ -423,14 +427,14 @@ class TestSegments:
     @pytest.mark.asyncio
     async def test_a_segment_without_a_clock_says_it_echoed(self, monkeypatch) -> None:
         the_bed = bed(a={"clock": False}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert _rows(report)["segment a → b"].measured == "5/5 echoed"
         assert _rows(report)["segment b → c"].measured == "5/5 echoed, median 1.0 ms round trip"
 
     @pytest.mark.asyncio
     async def test_the_segment_echo_listens_on_the_far_hop_s_own_address(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        await check_tunnel(the_bed, ABC, port=PORT, protocol="udp")
+        await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="udp")
         seg = [c for c in the_bed.hosts["c"].commands if ":segment:" in c]
         assert len(seg) == 1
         assert f"UDP4-RECVFROM:{SCRATCH},bind=10.0.0.3" in seg[0]
@@ -439,7 +443,7 @@ class TestSegments:
     @pytest.mark.asyncio
     async def test_an_echo_that_never_listens_fails_its_row(self, monkeypatch) -> None:
         the_bed = bed(c={"silent_echoes": True}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["segment b → c"]
         assert row.verdict is Verdict.FAIL
         assert row.detail == f"the segment echo on c never listened on 10.0.0.3:{SCRATCH}"
@@ -449,7 +453,7 @@ class TestSegments:
     async def test_an_echo_that_cannot_start_is_its_row_s_evidence(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         the_bed.hosts["b"].answer("otto-check:v1:", "systemd-run: no such unit", ok=False)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["segment a → b"]
         assert row.verdict is Verdict.FAIL
         assert row.detail == "could not start the segment echo on b"
@@ -462,7 +466,7 @@ class TestBuild:
         the_bed = bed().install(monkeypatch)
         error = RuntimeError("host 'b' is missing socat (required for tunnels)")
         the_bed.add_error = error
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         build = rows["build"]
         assert build.verdict is Verdict.FAIL
@@ -486,7 +490,7 @@ class TestBuild:
             return await real_add(lab, hosts, **kw)
 
         monkeypatch.setattr("otto.tunnel.check.add_tunnel", add)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         tid = _throwaway_id("tcp")
         [before] = seen
         assert [t for t in before["c"] if ":fwd-echo:" in t and tid in t]
@@ -509,7 +513,7 @@ class TestPayloads:
             "trip 1 ok 1.0 1.001\ntrip 2 ok 2.0 2.001\ntrip 3 ok 3.0 3.001\n"
             "trip 4 mismatch got=12\ntrips 5 matched 3",
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         for name in ["fwd 1 B", "fwd 1400 B", "rev 1 B"]:
             assert rows[name].verdict is Verdict.PASS, name
@@ -534,14 +538,14 @@ class TestPayloads:
         the_bed = bed().install(monkeypatch)
         the_bed.hosts["c"].raise_on = "cksum"
         with pytest.raises(CheckHostUnreachableError, match="'c'"):
-            await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
 
 class TestRtt:
     @pytest.mark.asyncio
     async def test_rtt_is_the_tunnel_median_next_to_the_segment_sum(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rtt = _rows(report)["rtt"]
         assert rtt.verdict is Verdict.PASS
         assert rtt.measured == "through tunnel 1.0 ms; segments sum 2.0 ms"
@@ -550,7 +554,7 @@ class TestRtt:
     async def test_no_clock_keeps_payload_verdicts(self, monkeypatch) -> None:
         old_bash = {"clock": False}
         the_bed = bed(a=old_bash, b=old_bash, c=old_bash).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         for protocol in ["tcp", "udp"]:
             rows = _rows(report, protocol)
             rtt = rows.pop("rtt")
@@ -566,7 +570,7 @@ class TestList:
     async def test_a_degraded_list_fails_list(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         the_bed.degraded = True
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["list"]
         assert row.verdict is Verdict.FAIL
         assert row.measured == "degraded (5/6)"
@@ -583,7 +587,7 @@ class TestRttWithoutAnEcho:
             "do p=$(tr -dc a-z0-9 </dev/urandom 2>/dev/null | head -c 1)",
             "trip 1 timeout\ntrips 5 matched 0",
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         rows = _rows(report)
         assert rows["fwd 1 B"].verdict is Verdict.FAIL
         assert rows["rtt"].verdict is Verdict.SKIPPED
@@ -595,7 +599,7 @@ class TestReadiness:
     async def test_a_listener_on_another_address_is_not_the_echo(self, monkeypatch) -> None:
         the_bed = bed(c={"silent_echoes": True}).install(monkeypatch)
         the_bed.hosts["c"].held["tcp"] = [f"LISTEN 0 5 10.9.9.9:{SCRATCH} 0.0.0.0:*"]
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["segment b → c"]
         assert row.detail == f"the segment echo on c never listened on 10.0.0.3:{SCRATCH}"
 
@@ -605,7 +609,7 @@ class TestReadiness:
     ) -> None:
         """A slow host (a systemd-run launch on a loaded VM) can take seconds to bind."""
         the_bed = bed(c={"bind_delay_s": 3.0}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert _rows(report)["segment b → c"].verdict is Verdict.PASS
         assert report.ok
 
@@ -614,7 +618,7 @@ class TestReadiness:
         self, monkeypatch
     ) -> None:
         the_bed = bed(c={"bind_delay_s": 60.0}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["segment b → c"]
         assert row.verdict is Verdict.FAIL
         assert row.detail == f"the segment echo on c never listened on 10.0.0.3:{SCRATCH}"

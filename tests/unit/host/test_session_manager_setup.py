@@ -104,7 +104,7 @@ class _Harness:
         )
 
     def unregister(self):
-        SESSION_SETUPS.unregister(self.name)
+        SESSION_SETUPS.unregister(name=self.name)
 
 
 async def _export(session, ctx):
@@ -152,7 +152,7 @@ async def test_two_dialects_bash_landing_zephyr_target():
         shell = h.shells[0]
         assert shell.commands[0] == ("bash", "which python3")
         assert isinstance(h.sessions[0]._frame, ZephyrFrame)
-        r = await h.mgr.run_cmd("kernel version")
+        r = await h.mgr.run_cmd(cmd="kernel version")
         assert r.value == "zephyr:kernel version"
         assert r.retcode == 0
         assert shell.commands[-1] == ("zephyr", "kernel version")
@@ -275,8 +275,8 @@ async def test_hook_runs_once_per_open_and_named_sessions_get_kind_named():
     h = _Harness(_export)
     try:
         await h.mgr._ensure_session()
-        await h.mgr.run_cmd("echo again")
-        await h.mgr.open_session("aux")
+        await h.mgr.run_cmd(cmd="echo again")
+        await h.mgr.open_session(name="aux")
         assert h.calls == [("default", "admin"), ("named", "admin")]
     finally:
         h.unregister()
@@ -290,7 +290,7 @@ async def test_a_named_session_whose_hook_fails_is_torn_down_and_left_unregister
     h = _Harness(hook)
     try:
         with pytest.raises(SessionSetupError, match="failed: boom"):
-            await h.mgr.open_session("aux")
+            await h.mgr.open_session(name="aux")
         assert h.sessions[0].closed
         assert "aux" not in h.mgr._named_sessions  # no half-built entry left behind
     finally:
@@ -302,7 +302,7 @@ async def test_exec_route_is_pooled_on_a_hook_host_and_the_hook_sees_exec_pool()
     h = _Harness(_export)
     try:
         assert h.mgr._exec_route() is _ExecRoute.POOLED_SHELL
-        r = await h.mgr.exec("id")
+        r = await h.mgr.exec(cmd="id")
         assert r.retcode == 0
         assert ("exec_pool", "admin") in h.calls
     finally:
@@ -390,7 +390,7 @@ async def test_a_dry_run_on_a_hooked_host_opens_nothing_and_never_calls_the_hook
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="admin", password="pw")],
                 log=LogMode.QUIET,
                 session_setup=SessionSetup(name="t5-dry"),
@@ -400,7 +400,7 @@ async def test_a_dry_run_on_a_hooked_host_opens_nothing_and_never_calls_the_hook
         assert events == []
         assert calls == []
     finally:
-        SESSION_SETUPS.unregister("t5-dry")
+        SESSION_SETUPS.unregister(name="t5-dry")
 
 
 @pytest.mark.asyncio
@@ -486,12 +486,12 @@ async def test_as_user_inside_a_hooked_session_does_not_re_run_the_hook():
     h = _Harness(_export, extra_creds=[root])
     try:
         await h.mgr._ensure_session()
-        aux = await h.mgr.open_session("aux")
+        aux = await h.mgr.open_session(name="aux")
         assert h.calls == [("default", "admin"), ("named", "admin")]
-        async with aux.as_user("root"):
+        async with aux.as_user(user="root"):
             assert aux.current_user == "root"
             assert (await aux.run("id -un")).only.retcode == 0
-            assert (await h.mgr.run_cmd("echo hi")).retcode == 0
+            assert (await h.mgr.run_cmd(cmd="echo hi")).retcode == 0
         assert aux.current_user == "admin"
         assert h.calls == [("default", "admin"), ("named", "admin")]  # never again
         assert [s.opens for s in h.sessions] == [1, 1]
@@ -509,7 +509,7 @@ async def test_a_hook_that_raises_on_the_exec_pool_surfaces_from_exec():
     h = _Harness(hook)
     try:
         with pytest.raises(SessionSetupError, match=r"session setup .* failed: boom"):
-            await h.mgr.exec("id")
+            await h.mgr.exec(cmd="id")
         assert [kind for kind, _user in h.calls] == ["exec_pool"]
     finally:
         h.unregister()
@@ -620,7 +620,7 @@ async def test_every_transport_arm_builds_the_session_with_the_landing_frame(
     if path == "default":
         await mgr._ensure_session()
     else:
-        await mgr.open_session("aux")
+        await mgr.open_session(name="aux")
 
     assert len(built) == 1
     # The landing frame when one is declared, the command frame otherwise --
@@ -650,4 +650,4 @@ def test_an_exec_factory_does_not_win_on_a_hooked_host():
         plain = SessionManager(connections=_conn(), name="h", host_id="h", exec_factory=factory)
         assert plain._exec_route() is _ExecRoute.FACTORY
     finally:
-        SESSION_SETUPS.unregister("t5-exec-route")
+        SESSION_SETUPS.unregister(name="t5-exec-route")

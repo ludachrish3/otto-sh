@@ -58,7 +58,7 @@ def try_it_commands(
     the patch check *embedded_gcov_dir*, relative to *cwd* when it lies beneath
     it, else absolute.
     """
-    areas = detect_areas(root)
+    areas = detect_areas(root=root)
     lab = declares_lab(root, EXAMPLE_LAB_NAME)
     commands: list[str] = []
     if lab:

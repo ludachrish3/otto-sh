@@ -218,7 +218,7 @@ async def _sudo(offered: Offered) -> None:
 
     host = _Host(
         ip="127.0.0.1",
-        element=Element("h1"),
+        element=Element(name="h1"),
         creds=[Cred(login="admin", password=PLANTED)],
         log=LogMode.QUIET,
     )

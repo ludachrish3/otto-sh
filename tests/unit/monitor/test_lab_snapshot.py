@@ -10,12 +10,12 @@ from otto.monitor.session import snapshot_lab
 def _host(**over):
     base = {
         "ip": "10.0.0.1",
-        "element": Element("gw"),
+        "element": Element(name="gw"),
         "creds": [Cred(login="admin", password="hunter2")],
     }
     base.update(over)
     if isinstance(base.get("element"), str):
-        base["element"] = Element(base["element"])
+        base["element"] = Element(name=base["element"])
     return UnixHost(**base)
 
 

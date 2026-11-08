@@ -135,7 +135,7 @@ def test_hostspec_site_and_rack_coerce_digit_strings(raw, expected):
             "rack": raw,
             "shelf": 2,
         },
-        element=Element("lab"),
+        element=Element(name="lab"),
     )
     assert hc.spec.site == expected
     assert hc.spec.rack == expected
@@ -158,12 +158,12 @@ def test_hostspec_shelf_rejects_negative():
 
 def _kwargs(entry, element=None):
     """The validated spec, and the constructor kwargs the stock builder makes of its record."""
-    hc = host_context(entry, element=element if element is not None else Element("lab"))
+    hc = host_context(entry, element=element if element is not None else Element(name="lab"))
     return hc.spec, hc.spec.build_kwargs(hc.spec.validate_in(hc.context))
 
 
 def test_build_kwargs_omits_unset_fields_and_supplies_the_element():
-    element = Element("lab")
+    element = Element(name="lab")
     _, kw = _kwargs({"ip": "10.0.0.1"}, element)
     assert kw["ip"] == "10.0.0.1"
     assert kw["element"] is element
@@ -195,7 +195,7 @@ def test_unix_spec_without_creds_builds_a_credless_host():
     The runtime already connects such a host loginless, so the spec must not
     refuse what the host can do.
     """
-    hc = host_context({"ip": "10.0.0.1"}, element=Element("lab"))
+    hc = host_context({"ip": "10.0.0.1"}, element=Element(name="lab"))
     assert hc.spec.creds == []
     host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     assert isinstance(host, UnixHost)
@@ -335,7 +335,7 @@ def test_unix_spec_builds_unix_host_with_defaults():
 
 
 def test_hostspec_log_default_is_normal_on_spec_and_runtime():
-    hc = host_context(_minimal_unix_kwargs(), element=Element("lab"))
+    hc = host_context(_minimal_unix_kwargs(), element=Element(name="lab"))
     assert hc.spec.log is LogMode.NORMAL
     assert hc.spec.to_host(ready=hc.spec.validate_in(hc.context)).log is LogMode.NORMAL
 
@@ -410,7 +410,7 @@ def test_embedded_spec_accepts_registered_filesystem():
             "command_frame": "zephyr",
             "filesystem": "none",
         },
-        element=Element("lab"),
+        element=Element(name="lab"),
     )
     assert hc.spec.filesystem == "none"
     # the validated name still resolves to its instance through build_filesystem
@@ -445,7 +445,7 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
     assert host.resources == frozenset({"slot-1"})
     assert isinstance(host.resources, frozenset)
 
-    bare = build_host(_minimal_unix_kwargs(), element=Element("x"))
+    bare = build_host(_minimal_unix_kwargs(), element=Element(name="x"))
     assert bare.resources == frozenset()
 
     with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
@@ -463,7 +463,7 @@ def test_every_registered_pair_passes_the_coverage_rule():
     from otto.host.os_profile import build_host_class, registered_host_specs
 
     for name, spec_cls in registered_host_specs().items():
-        check_coverage(name, build_host_class(name), spec_cls)
+        check_coverage(name, build_host_class(name=name), spec_cls)
 
 
 def test_spec_inventory_key_never_reaches_the_host():
@@ -474,7 +474,7 @@ def test_spec_inventory_key_never_reaches_the_host():
     # The pipeline refuses an unresolved inventory key, so the spec that carries one is
     # validated directly, in the context of the same entry without it.
     hc = host_context(
-        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("lab")
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element(name="lab")
     )
     spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], inventory="k")
     host = spec.to_host(ready=spec.validate_in(hc.context))
@@ -483,7 +483,7 @@ def test_spec_inventory_key_never_reaches_the_host():
 
 def test_hostspec_interfaces_default_empty_and_passes_to_host():
     hc = host_context(
-        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("lab")
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element(name="lab")
     )
     assert hc.spec.interfaces == {}
     assert hc.spec.to_host(ready=hc.spec.validate_in(hc.context)).interfaces == {}
@@ -498,7 +498,7 @@ def test_hostspec_interfaces_resolve_on_built_host():
         }
     )
     assert host.interfaces == {"mgmt": Interface(ip="10.9.9.9")}
-    assert host.address_for("mgmt") == "10.9.9.9"
+    assert host.address_for(name_or_literal="mgmt") == "10.9.9.9"
 
 
 def test_hostspec_interfaces_accepts_ipv6():
@@ -524,9 +524,9 @@ def test_unix_to_host_matches_factory():
         "metadata": {"owner": "infra"},
         "ssh_options": {"port": 2200},
     }
-    hc = host_context(dict(d), element=Element("test1"))
+    hc = host_context(dict(d), element=Element(name="test1"))
     spec_host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
-    factory_host = create_host_from_dict(d, element=Element("test1"))
+    factory_host = create_host_from_dict(d, element=Element(name="test1"))
     for attr in (
         "ip",
         "element",
@@ -553,9 +553,9 @@ def test_embedded_to_host_matches_factory():
         "command_frame": "zephyr",
         "telnet_options": {"port": 9023},
     }
-    hc = host_context(dict(d), element=Element("dut"))
+    hc = host_context(dict(d), element=Element(name="dut"))
     spec_host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
-    factory_host = create_host_from_dict(d, element=Element("dut"))
+    factory_host = create_host_from_dict(d, element=Element(name="dut"))
     assert type(spec_host) is type(factory_host)
     assert spec_host.telnet_options.port == factory_host.telnet_options.port == 9023
     assert type(spec_host.command_frame) is type(factory_host.command_frame)
@@ -603,7 +603,7 @@ def test_spec_unset_power_control_defaults_none():
     not a spec field, so the host keeps its own empty default.
     """
     host = build_host(
-        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("x")
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element(name="x")
     )
     assert host.power_control is None
     assert host.products == []
@@ -791,7 +791,7 @@ class TestImpairerValidation:
         }
         UnixHostSpec.model_validate(entry)  # structural: membership only
         with pytest.raises(HostValidationError, match="not valid on a unix host"):
-            validate_host_dict(entry, element=Element("e"))
+            validate_host_dict(host_data=entry, element=Element(name="e"))
 
     def test_empty_menu_rejected(self) -> None:
         with pytest.raises(ValueError, match="must be a non-empty"):
@@ -985,8 +985,12 @@ class TestCredSpec:
             match=r"no cred can log in over term 'ssh': every cred is scoped elsewhere "
             r"\(admin \[telnet\]\)",
         ):
-            create_host_from_dict(dict(entry), element=Element("lab"))  # the resolver picks ssh
-        validate_host_dict(dict(entry), element=Element("lab"))  # the telnet witness passes
+            create_host_from_dict(
+                dict(entry), element=Element(name="lab")
+            )  # the resolver picks ssh
+        validate_host_dict(
+            host_data=dict(entry), element=Element(name="lab")
+        )  # the telnet witness passes
 
     def test_a_chain_that_terminates_only_in_a_foreign_scope_is_rejected(self):
         """`root` is unscoped, so ssh and telnet pick it too — and there it has no direct end.
@@ -1044,7 +1048,7 @@ class TestInterfaceSpec:
             UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5", "mac": "x"}}))
 
     def test_runtime_host_gets_interface_objects(self):
-        host = build_host(self._host({"eth1": "10.0.0.5"}), element=Element("x"))
+        host = build_host(self._host({"eth1": "10.0.0.5"}), element=Element(name="x"))
         assert host.interfaces["eth1"] == Interface(ip="10.0.0.5")
 
     def test_subnet_optional_and_parsed(self):
@@ -1079,7 +1083,7 @@ class TestInterfaceSpec:
     def test_runtime_interface_carries_subnet(self):
         host = build_host(
             self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}}),
-            element=Element("x"),
+            element=Element(name="x"),
         )
         assert host.interfaces["eth1"] == Interface(ip="192.168.1.11", subnet="192.168.1.0/24")
 
@@ -1091,19 +1095,19 @@ class TestConsoleRules:
     def test_console_term_requires_a_server(self):
         entry = self._entry(valid_terms=["console"], console_options={"port": 4001})
         with pytest.raises(HostValidationError, match=r"console_options\.server"):
-            validate_host_dict(entry, element=Element("e"))
+            validate_host_dict(host_data=entry, element=Element(name="e"))
 
     def test_console_term_requires_a_port(self):
         entry = self._entry(valid_terms=["console"], console_options={"server": "test1"})
         with pytest.raises(HostValidationError, match=r"console_options\.port"):
-            validate_host_dict(entry, element=Element("e"))
+            validate_host_dict(host_data=entry, element=Element(name="e"))
 
     def test_console_options_are_inert_on_an_ssh_host(self):
         # Review Focus 5: pre-declared console data on a host that runs ssh
         # today must not be validated against anything.
         hc = host_context(
             self._entry(valid_terms=["ssh", "console"], console_options={"server": "nope"}),
-            element=Element("e"),
+            element=Element(name="e"),
         )
         assert hc.spec.console_options.server == "nope"
         host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
@@ -1115,7 +1119,7 @@ class TestConsoleRules:
             valid_terms=["console"],
             console_options={"server": "test1", "port": 4001, "dial": "direct"},
         )
-        host = build_host(entry, element=Element("e"))
+        host = build_host(entry, element=Element(name="e"))
         assert host.console_options.port == 4001
         assert host.console_options.dial == "direct"
 
@@ -1125,7 +1129,7 @@ class TestConsoleRules:
         # regardless of which term the host actually runs.
         hc = host_context(
             self._entry(valid_terms=["ssh"], console_options={"server": "nope", "port": 0}),
-            element=Element("e"),
+            element=Element(name="e"),
         )
         assert hc.spec.console_options.server == "nope"
         assert hc.spec.console_options.port == 0
@@ -1159,7 +1163,9 @@ class TestConsoleRefusesNc:
             HostValidationError,
             match=r"cons1.*nc.*second command channel.*single-client console",
         ):
-            validate_host_dict(self._entry(transfer="nc", **self._CONSOLE), element=Element("e"))
+            validate_host_dict(
+                host_data=self._entry(transfer="nc", **self._CONSOLE), element=Element(name="e")
+            )
 
     def test_a_menu_of_only_nc_on_a_console_is_a_config_error(self):
         with pytest.raises(
@@ -1167,12 +1173,13 @@ class TestConsoleRefusesNc:
             match=r"cons1.*nc.*second command channel.*single-client console",
         ):
             validate_host_dict(
-                self._entry(valid_transfers=["nc"], **self._CONSOLE), element=Element("e")
+                host_data=self._entry(valid_transfers=["nc"], **self._CONSOLE),
+                element=Element(name="e"),
             )
 
     def test_a_menu_with_nc_and_scp_on_a_console_resolves_scp(self):
         host = build_host(
-            self._entry(valid_transfers=["nc", "scp"], **self._CONSOLE), element=Element("e")
+            self._entry(valid_transfers=["nc", "scp"], **self._CONSOLE), element=Element(name="e")
         )
         assert host.transfer == "scp"
         assert host.valid_transfers == ["nc", "scp"]
@@ -1180,20 +1187,20 @@ class TestConsoleRefusesNc:
     def test_an_nc_preference_on_a_console_falls_through_to_scp(self):
         host = build_host(
             self._entry(**self._CONSOLE),
-            element=Element("e"),
+            element=Element(name="e"),
             selections={"transfer": ["nc", "scp"]},
         )
         assert host.transfer == "scp"
 
     def test_an_nc_preference_on_an_ssh_host_still_resolves_nc(self):
         host = build_host(
-            self._entry(), element=Element("e"), selections={"transfer": ["nc", "scp"]}
+            self._entry(), element=Element(name="e"), selections={"transfer": ["nc", "scp"]}
         )
         assert host.term == "ssh"
         assert host.transfer == "nc"
 
     def test_an_nc_pin_on_an_ssh_host_is_accepted(self):
-        host = build_host(self._entry(transfer="nc"), element=Element("e"))
+        host = build_host(self._entry(transfer="nc"), element=Element(name="e"))
         assert host.transfer == "nc"
 
     def test_a_console_chosen_by_preference_refuses_an_nc_pin(self):
@@ -1205,7 +1212,7 @@ class TestConsoleRefusesNc:
                 console_options={"server": "test1", "port": 4001},
                 transfer="nc",
             ),
-            element=Element("e"),
+            element=Element(name="e"),
             preferences={".*": {"term": ["console"]}},
         )
         with pytest.raises(HostValidationError, match=r"cons1.*second command channel"):
@@ -1218,7 +1225,7 @@ class TestConsoleRefusesNc:
                 console_options={"server": "test1", "port": 4001},
                 valid_transfers=["nc"],
             ),
-            element=Element("e"),
+            element=Element(name="e"),
             preferences={".*": {"term": ["console"]}},
         )
         with pytest.raises(HostValidationError, match=r"cons1.*second command channel"):
@@ -1232,11 +1239,11 @@ class TestInitTimeout:
         return {"ip": "10.0.0.9", "creds": [{"login": "u", "password": "p"}], **extra}
 
     def test_a_declared_value_reaches_the_host(self):
-        host = build_host(self._entry(init_timeout=25), element=Element("e"))
+        host = build_host(self._entry(init_timeout=25), element=Element(name="e"))
         assert host.init_timeout == 25.0
 
     def test_absent_leaves_the_session_default(self):
-        assert build_host(self._entry(), element=Element("e")).init_timeout is None
+        assert build_host(self._entry(), element=Element(name="e")).init_timeout is None
 
     @pytest.mark.parametrize(
         ("bad", "why"),
@@ -1251,4 +1258,4 @@ class TestInitTimeout:
     )
     def test_a_non_positive_or_non_numeric_value_is_refused(self, bad, why):
         with pytest.raises(ValidationError, match=rf"init_timeout\n\s+Input should be (a )?{why}"):
-            validate_host_dict(self._entry(init_timeout=bad), element=Element("e"))
+            validate_host_dict(host_data=self._entry(init_timeout=bad), element=Element(name="e"))

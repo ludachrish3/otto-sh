@@ -153,7 +153,7 @@ async def test_publish_after_close_leaves_ended_last():
     drain.queues.add(q)
     drain.close()
     for i in range(SUBSCRIBER_QUEUE_MAX + 1):
-        await collector.add_event(f"after-close-{i}")
+        await collector.add_event(label=f"after-close-{i}")
     assert q.get_nowait() is ENDED, "overflow did not replace the end marker with LAPSED"
     assert q.empty(), "nothing was appended behind the end marker"
     assert drain.queues == set()

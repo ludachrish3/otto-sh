@@ -11,4 +11,4 @@ def wrong_record() -> None:
     frames: Registry[ClassEntry[Frame]] = Registry(
         "frame", entry=ClassEntry, register_hint="register_frame()"
     )
-    frames.register("c", Frame)  # ty: ignore[invalid-argument-type]
+    frames.register(name="c", entry=Frame)  # ty: ignore[invalid-argument-type]

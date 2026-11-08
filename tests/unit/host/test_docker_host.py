@@ -59,12 +59,12 @@ def _mock_parent(parent_id: str = "test3", *, term: str = "ssh"):
         mock that answered with an empty mapping would make every file look
         unstaged."""
         return Result(
-            Status.Success,
-            value={p: Result(Status.Success, value=dest / p.name) for p in files},
+            status=Status.Success,
+            value={p: Result(status=Status.Success, value=dest / p.name) for p in files},
         )
 
     parent.put = AsyncMock(side_effect=_staged_ok)
-    parent.get = AsyncMock(return_value=Result(Status.Success, value={}))
+    parent.get = AsyncMock(return_value=Result(status=Status.Success, value={}))
     return parent
 
 
@@ -115,7 +115,7 @@ def _build_fake_ssh_remote_host():
     return UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("fake_ne"),
+        element=Element(name="fake_ne"),
         term="ssh",
     )
 
@@ -1756,8 +1756,8 @@ async def test_put_parent_put_failure_passthrough(tmp_path):
 
     parent.put.side_effect = None
     parent.put.return_value = Result(
-        Status.Error,
-        value={f: Result(Status.Error, msg="sftp connection lost")},
+        status=Status.Error,
+        value={f: Result(status=Status.Error, msg="sftp connection lost")},
         msg="sftp connection lost",
     )
 
@@ -1787,10 +1787,10 @@ async def test_put_partial_staging_failure_still_copies_the_staged_ok_file(tmp_p
 
     parent.put.side_effect = None
     parent.put.return_value = Result(
-        Status.Error,
+        status=Status.Error,
         value={
-            ok_file: Result(Status.Success, value=Path("/stage/ok.bin")),
-            bad_file: Result(Status.Error, msg="bad.bin: sftp write failed"),
+            ok_file: Result(status=Status.Success, value=Path("/stage/ok.bin")),
+            bad_file: Result(status=Status.Error, msg="bad.bin: sftp write failed"),
         },
         msg="bad.bin: sftp write failed",
     )
@@ -1827,10 +1827,10 @@ async def test_put_carries_a_staging_skipped_entry_without_a_docker_cp(tmp_path)
 
     parent.put.side_effect = None
     parent.put.return_value = Result(
-        Status.Error,
+        status=Status.Error,
         value={
-            a_dir: Result(Status.Error, msg=f"{a_dir}: is a directory"),
-            sibling: Result(Status.Skipped, msg="not attempted (directory source refused)"),
+            a_dir: Result(status=Status.Error, msg=f"{a_dir}: is a directory"),
+            sibling: Result(status=Status.Skipped, msg="not attempted (directory source refused)"),
         },
         msg=f"{a_dir}: is a directory",
     )
@@ -1968,8 +1968,8 @@ async def test_get_mid_batch_docker_cp_failure_still_fetches_the_files_that_stag
 
     def get_side_effect(files, dest, *args, **kwargs):
         return Result(
-            Status.Success,
-            value={p: Result(Status.Success, value=dest / p.name) for p in files},
+            status=Status.Success,
+            value={p: Result(status=Status.Success, value=dest / p.name) for p in files},
         )
 
     parent.get.side_effect = get_side_effect
@@ -2055,7 +2055,7 @@ async def test_login_rejects_non_ssh_parent():
     telnet_parent = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("fake_ne"),
+        element=Element(name="fake_ne"),
         term="telnet",
     )
     h = _make_container(parent=telnet_parent)
@@ -2105,7 +2105,7 @@ async def test_docker_login_carries_effective_user(declared, per_call, expected_
     h = _make_container(parent, user=declared)
 
     with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
-        await h.run_login(per_call)
+        await h.run_login(user=per_call)
 
     cmd = mock_login.call_args.kwargs["command"]
     quoted_cid = shlex.quote(h.container_id)
@@ -2205,9 +2205,9 @@ def test_parent_path_translates_through_a_bind():
         mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
     )
     assert ctr.parent_path("/var/lib/app/logs/x.txt") == Path("/srv/data/logs/x.txt")
-    assert ctr.container_path("/srv/data/logs/x.txt") == Path("/var/lib/app/logs/x.txt")
-    assert ctr.mount_for("/var/lib/app/logs/x.txt").kind == "bind"
-    assert ctr.mount_for("/etc/hosts") is None
+    assert ctr.container_path(parent_path="/srv/data/logs/x.txt") == Path("/var/lib/app/logs/x.txt")
+    assert ctr.mount_for(container_path="/var/lib/app/logs/x.txt").kind == "bind"
+    assert ctr.mount_for(container_path="/etc/hosts") is None
 
 
 def test_parent_path_names_the_checked_mounts_when_there_is_no_match():
@@ -2235,7 +2235,7 @@ def test_container_path_names_the_checked_parent_mounts_when_there_is_no_match()
         mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
     )
     with pytest.raises(MountNotFoundError, match="/srv/data"):
-        ctr.container_path("/opt/elsewhere")
+        ctr.container_path(parent_path="/opt/elsewhere")
 
 
 def test_parent_path_on_a_placeholder_says_the_container_is_not_up():
@@ -2302,7 +2302,8 @@ async def test_get_recursive_lists_inside_the_container_then_stages_per_level(tm
     # the landed destination visible in the nested result.
     parent.get = AsyncMock(
         side_effect=lambda files, dest, **kw: Result(
-            Status.Success, value={f: Result(Status.Success, value=dest / f.name) for f in files}
+            status=Status.Success,
+            value={f: Result(status=Status.Success, value=dest / f.name) for f in files},
         )
     )
     h = _make_container(parent)

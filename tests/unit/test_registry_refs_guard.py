@@ -179,7 +179,7 @@ def test_the_json_lab_source_names_its_config_model_and_factory_by_reference():
         "import json\n"
         "from otto.labs.registry import LAB_REPOSITORIES\n"
         "from otto.registry import Ref\n"
-        "e = LAB_REPOSITORIES.peek('json')\n"
+        "e = LAB_REPOSITORIES.peek(name='json')\n"
         "print(json.dumps([isinstance(e.config, Ref), isinstance(e.factory, Ref)]))\n"
     )
     assert listing == [True, True]
@@ -213,7 +213,7 @@ for r in _otto_registries():
             getattr(s.value, "__qualname__", repr(s.value)) for s in r.items() if by_otto(s.origin)
         ]
     else:
-        names = [n for n in r.names() if by_otto(r.origin(n))]
+        names = [n for n in r.names() if by_otto(r.origin(name=n))]
     if names:
         out[r.defined_in + ":" + ",".join(attrs)] = sorted(names)
 print(json.dumps(out))

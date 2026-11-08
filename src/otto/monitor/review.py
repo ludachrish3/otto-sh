@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..models.monitor import MonitorExport
 
 
-def load_review_document(path: Path) -> "MonitorExport":
+def load_review_document(*, path: Path) -> "MonitorExport":
     """Load a saved format:1 export for review mode.
 
     Args:
@@ -48,7 +48,7 @@ def load_review_document(path: Path) -> "MonitorExport":
     )
 
 
-async def serve_review(path: Path, *, projects: "Sequence[Project]") -> None:
+async def serve_review(*, path: Path, projects: "Sequence[Project]") -> None:
     """Serve a saved export for review until the server is stopped.
 
     A ``.db`` source is also the archive event edits persist to; a
@@ -68,8 +68,8 @@ async def serve_review(path: Path, *, projects: "Sequence[Project]") -> None:
     from .server import MonitorServer
     from .tls import resolve_monitor_tls
 
-    export = load_review_document(path)
-    tls = resolve_monitor_tls(projects)
+    export = load_review_document(path=path)
+    tls = resolve_monitor_tls(projects=projects)
     server = MonitorServer(
         collector=MetricCollector(targets=[]),
         mode="review",

@@ -144,12 +144,12 @@ async def _refusal_on_the_bed(foreign_ko) -> "tuple[bool, str, list[str]]":
             unload = await host.unload(name)
             assert unload.is_ok, f"{name}: {unload.msg}"
         try:
-            library = await host.load(BUILD / "lib" / "otto_kmodcov.ko", _LIBRARY)
+            library = await host.load(BUILD / "lib" / "otto_kmodcov.ko", name=_LIBRARY)
             assert library.is_ok, f"this column's library did not load: {library.msg}"
             marker = f"kmodcov-control {uuid.uuid4().hex}"
             stamped = await host.run(f"sh -c 'echo {marker} > /dev/kmsg'", sudo=True)
             assert stamped.is_ok, stamped.only.value
-            demo = await host.load(foreign_ko, _DEMO, params="cov_dir=/var/cov/otto_kmod_demo")
+            demo = await host.load(foreign_ko, name=_DEMO, params="cov_dir=/var/cov/otto_kmod_demo")
             # Slice on the host. The whole ring buffer is thousands of lines the
             # host layer logs at INFO, once per column; only the window this
             # column stamped is evidence. The marker is a literal plus a uuid
@@ -209,7 +209,7 @@ def coverage_run(built_with, tmp_path_factory):
         timeout=120,
         overlay=overlay,
     )
-    store = CoverageStore.load(report_dir / "store.json")
+    store = CoverageStore.load(path=report_dir / "store.json")
     return store, cov_dir, log_dir
 
 

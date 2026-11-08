@@ -29,7 +29,7 @@ async def test_both_kinds_read_residency_and_unload_through_the_one_pair(kind):
     entry = KINDS[kind](host)
     assert entry.module_name == "tracer"
     assert await entry.is_installed(host) is await module_resident(host, "tracer") is True
-    host.lsmod.return_value = Result(Status.Error, value=["tracer"], msg="boom")
+    host.lsmod.return_value = Result(status=Status.Error, value=["tracer"], msg="boom")
     assert await entry.is_installed(host) is await module_resident(host, "tracer") is False
     assert (await entry.uninstall(host)).is_ok
     host.unload.assert_awaited_once_with("tracer")

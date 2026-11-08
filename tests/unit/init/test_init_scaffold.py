@@ -27,7 +27,7 @@ from tests._fixtures.project_scaffold import make_project
 
 
 def _scaffold(root: Path, *areas: str, name: str = "widget") -> ScaffoldReport:
-    return scaffold(InitConfig(root, name, "0.1.0"), list(areas))
+    return scaffold(InitConfig(root, name, "0.1.0"), areas=list(areas))
 
 
 def _paths(report: ScaffoldReport, outcome: str = "created") -> list[Path]:
@@ -125,8 +125,8 @@ def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path
     assert "creds" not in host  # comes from creds.json
     inventory = _inventory_for(tmp_path)
     assert inventory is not None
-    resolved = resolve_host_entry(host, inventory, element.to_element()).host_data
-    validate_host_dict(resolved, element=element.to_element())
+    resolved = resolve_host_entry(host, inventory=inventory, element=element.to_element()).host_data
+    validate_host_dict(host_data=resolved, element=element.to_element())
     spec = UnixHostSpec.model_validate(resolved)
     assert spec.ip == "192.0.2.1"
     assert [(c.login, c.password) for c in spec.creds] == [("admin", SecretStr("CHANGE_ME"))]
@@ -143,7 +143,7 @@ def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path
 
 
 def _inline_scaffold(root: Path, *areas: str) -> ScaffoldReport:
-    return scaffold(InitConfig(root, "widget", "0.1.0", inline_hosts=True), list(areas))
+    return scaffold(InitConfig(root, "widget", "0.1.0", inline_hosts=True), areas=list(areas))
 
 
 def test_inline_hosts_over_kept_live_tables_keeps_them_and_says_how_to_finish(
@@ -249,7 +249,9 @@ def test_inline_and_referenced_scaffolds_describe_the_same_machine(tmp_path: Pat
     element = ElementSpec.model_validate(data["elements"][0])
     inventory = _inventory_for(referenced_root)
     assert inventory is not None
-    resolved = resolve_host_entry(element.hosts[0], inventory, element.to_element()).host_data
+    resolved = resolve_host_entry(
+        element.hosts[0], inventory=inventory, element=element.to_element()
+    ).host_data
     referenced = UnixHostSpec.model_validate(resolved)
 
     inline_data = json.loads((inline_root / "lab_data" / "lab.json").read_text())
@@ -267,7 +269,7 @@ def test_inline_and_referenced_scaffolds_describe_the_same_machine(tmp_path: Pat
 def test_inline_hosts_requests_the_lab_area_through_the_requested_rule(tmp_path: Path) -> None:
     assert scaffold_candidates(tmp_path, inline_hosts=True) == ["lab"]
     # Prerequisites stay scaffold's job.
-    assert scaffold_prerequisites(tmp_path, ["lab"]) == ["settings", "instructions"]
+    assert scaffold_prerequisites(root=tmp_path, areas=["lab"]) == ["settings", "instructions"]
     assert scaffold_candidates(tmp_path) == []  # the False default adds nothing
     assert scaffold_candidates(tmp_path, requested=["lab"], inline_hosts=True).count("lab") == 1
     # A present lab is skipped, as requested=["lab"] skips it: it is not refreshable.
@@ -343,9 +345,9 @@ def test_instructions_scaffold_imports(tmp_path: Path) -> None:
 @pytest.mark.parametrize("area", AREA_NAMES)
 def test_detect_flips_after_scaffold(tmp_path: Path, area: str) -> None:
     """Each area, scaffolded alone into an empty project, is detected afterwards."""
-    assert area not in detect_areas(tmp_path)
+    assert area not in detect_areas(root=tmp_path)
     _scaffold(tmp_path, area)
-    assert area in detect_areas(tmp_path)
+    assert area in detect_areas(root=tmp_path)
 
 
 def test_the_tests_scaffold_writes_no_options_module(tmp_path: Path) -> None:
@@ -401,7 +403,7 @@ def test_importing_the_init_module_registers_project_options_for_both_verbs(
 def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
     cfg = InitConfig(tmp_path, "my-project 2.0", "0.1.0")
     assert cfg.module_base == "my_project_2_0"
-    scaffold(cfg, ["settings", "instructions"])
+    scaffold(cfg, areas=["settings", "instructions"])
     import tomli
 
     data = tomli.loads((tmp_path / ".otto" / "settings.toml").read_text())
@@ -468,7 +470,7 @@ def test_snippets_file_is_not_a_validated_artifact(tmp_path: Path) -> None:
     """The doctor must not fail a project over an editor convenience file."""
     _scaffold(tmp_path, "schemas")
     (tmp_path / ".vscode" / "otto.code-snippets").write_text("{not json")
-    assert check_project(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict(name="schemas").state == "ok"
 
 
 def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -> None:
@@ -612,7 +614,7 @@ def test_kmodcov_scaffold_exports_the_library_and_appends_the_wiring_entry(
     assert (starter / "kmodcov_end.c").read_text().strip().endswith("KMODCOV_SENTINEL_END;")
     assert "include $(KMODCOV)/consumer.mk" in (starter / "Kbuild.example").read_text()
     assert "kernel-modules" in (starter / "README.md").read_text()
-    assert "kmodcov" in detect_areas(tmp_path)
+    assert "kmodcov" in detect_areas(root=tmp_path)
 
 
 def test_kmodcov_scaffold_refreshes_the_library_but_never_the_starter_or_a_second_entry(
@@ -637,8 +639,8 @@ def test_kmodcov_scaffold_refreshes_the_library_but_never_the_starter_or_a_secon
 
 def test_kmodcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> None:
     cfg = InitConfig(tmp_path, "widget", "0.1.0", kmodcov_dir="vendor/kmodcov")
-    scaffold(cfg, ["settings"])
-    scaffold(cfg, ["kmodcov"])
+    scaffold(cfg, areas=["settings"])
+    scaffold(cfg, areas=["kmodcov"])
     assert (tmp_path / "vendor" / "kmodcov" / "kmodcov.h").is_file()
     assert '#source = "vendor/kmodcov"' in (tmp_path / ".otto" / "settings.toml").read_text()
 
@@ -646,7 +648,7 @@ def test_kmodcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> No
 def test_kmodcov_detects_a_declared_entry_without_the_default_directory(tmp_path: Path) -> None:
     bare = tmp_path / "bare"
     make_project(bare, name="widget", version="0.1.0")
-    assert "kmodcov" not in detect_areas(bare)
+    assert "kmodcov" not in detect_areas(root=bare)
     declared = tmp_path / "declared"
     make_project(
         declared,
@@ -657,7 +659,7 @@ def test_kmodcov_detects_a_declared_entry_without_the_default_directory(tmp_path
             'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/kmodcov"\nmatch = { id = ".*" }\n'
         ),
     )
-    assert "kmodcov" in detect_areas(declared)
+    assert "kmodcov" in detect_areas(root=declared)
 
 
 def test_existing_tests_files_are_kept_byte_identical(tmp_path: Path) -> None:
@@ -761,7 +763,7 @@ def test_fresh_settings_scaffolded_with_kmodcov_carry_the_block_and_no_notice(
 def test_scaffolding_never_prints(tmp_path: Path, capsys) -> None:
     (tmp_path / ".vscode").mkdir()
     (tmp_path / ".vscode" / "settings.json").write_text("{}")
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), [*AREA_NAMES])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=[*AREA_NAMES])
     assert capsys.readouterr() == ("", "")
 
 
@@ -774,7 +776,9 @@ def test_all_writes_no_duplicate_beside_a_single_file_init_module(tmp_path: Path
         files={"pylib/foo.py": ""},
     )
     assert "instructions" not in scaffold_candidates(tmp_path, all_areas=True)
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), scaffold_candidates(tmp_path, all_areas=True))
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0"), areas=scaffold_candidates(tmp_path, all_areas=True)
+    )
     assert sorted(p.name for p in (tmp_path / "pylib").iterdir()) == ["foo.py"]
 
 
@@ -784,7 +788,7 @@ def test_all_does_not_offer_instructions_when_no_init_is_declared(
 ) -> None:
     make_project(tmp_path, name="widget", tests=["tests"], extra=init_line)
     assert "instructions" not in scaffold_candidates(tmp_path, all_areas=True)
-    assert check_project(tmp_path).verdict("instructions").state == "absent"
+    assert check_project(tmp_path).verdict(name="instructions").state == "absent"
 
 
 def test_a_fresh_project_offers_instructions(tmp_path: Path) -> None:
@@ -842,15 +846,15 @@ def test_a_declared_init_that_is_no_module_name_is_never_written_as_a_path(tmp_p
 
 def test_settings_is_a_prerequisite_of_every_area(tmp_path: Path) -> None:
     for area in ("schemas", "lab", "tests", "instructions", "kmodcov", "embedded-gcov"):
-        assert scaffold_prerequisites(tmp_path, [area])[0] == "settings", area
-    assert scaffold_prerequisites(tmp_path, []) == []
+        assert scaffold_prerequisites(root=tmp_path, areas=[area])[0] == "settings", area
+    assert scaffold_prerequisites(root=tmp_path, areas=[]) == []
 
 
 def test_writing_settings_pulls_in_the_init_module_it_declares(tmp_path: Path) -> None:
     """The template declares ``init = ["widget_instructions"]``: without it the project
     cannot load."""
-    assert scaffold_prerequisites(tmp_path, ["lab"]) == ["settings", "instructions"]
-    assert scaffold_prerequisites(tmp_path, ["settings"]) == ["instructions"]
+    assert scaffold_prerequisites(root=tmp_path, areas=["lab"]) == ["settings", "instructions"]
+    assert scaffold_prerequisites(root=tmp_path, areas=["settings"]) == ["instructions"]
     _scaffold(tmp_path, "lab")
     assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").is_file()
     assert check_project(tmp_path).ok
@@ -858,7 +862,7 @@ def test_writing_settings_pulls_in_the_init_module_it_declares(tmp_path: Path) -
 
 def test_existing_settings_pull_in_nothing_for_a_lab(tmp_path: Path) -> None:
     make_project(tmp_path, name="widget", tests=["tests"], extra="init = []")
-    assert scaffold_prerequisites(tmp_path, ["lab"]) == []
+    assert scaffold_prerequisites(root=tmp_path, areas=["lab"]) == []
 
 
 def test_the_project_marker_notice_names_a_settings_prerequisite_only(tmp_path: Path) -> None:
@@ -898,7 +902,7 @@ def test_an_orphan_schema_is_pruned_and_reported(tmp_path: Path) -> None:
     orphan.write_text("{}")
     report = _scaffold(tmp_path, "schemas")
     assert FileWrite(orphan, "pruned") in report.writes
-    assert check_project(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict(name="schemas").state == "ok"
 
 
 def test_the_existing_vscode_settings_notice(tmp_path: Path) -> None:
@@ -940,7 +944,7 @@ def test_the_undeclared_init_module_goes_under_the_declared_libs(tmp_path: Path)
     settings = tmp_path / ".otto" / "settings.toml"
     with settings.open("a") as f:  # scaffold-exempt: following the scaffold's notice
         f.write('init = ["widget_instructions"]\n')
-    assert check_project(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict(name="instructions").state == "ok"
 
 
 def test_with_no_libs_the_notice_also_names_the_libs_line(tmp_path: Path) -> None:
@@ -953,7 +957,7 @@ def test_with_no_libs_the_notice_also_names_the_libs_line(tmp_path: Path) -> Non
     settings = tmp_path / ".otto" / "settings.toml"
     with settings.open("a") as f:  # scaffold-exempt: following the scaffold's notice
         f.write('init = ["widget_instructions"]\nlibs = ["pylib"]\n')
-    assert check_project(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict(name="instructions").state == "ok"
 
 
 def test_the_example_tests_never_import_from_an_init_entry_that_is_no_module_name(
@@ -1021,7 +1025,7 @@ def test_embedded_gcov_scaffold_exports_the_patch_and_writes_the_starter(tmp_pat
     settings = (tmp_path / ".otto" / "settings.toml").read_text()
     assert "#[coverage.embedded]" in settings
     assert tmp_path / ".otto" / "settings.toml" in _paths(report, "appended")
-    assert "embedded-gcov" in detect_areas(tmp_path)
+    assert "embedded-gcov" in detect_areas(root=tmp_path)
 
 
 def test_embedded_gcov_scaffold_refreshes_the_patch_but_never_the_starter_or_a_second_block(
@@ -1047,8 +1051,8 @@ def test_embedded_gcov_scaffold_refreshes_the_patch_but_never_the_starter_or_a_s
 
 def test_embedded_gcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> None:
     cfg = InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov")
-    scaffold(cfg, ["settings"])
-    scaffold(cfg, ["embedded-gcov"])
+    scaffold(cfg, areas=["settings"])
+    scaffold(cfg, areas=["embedded-gcov"])
     assert (tmp_path / "vendor" / "egcov" / "embedded-gcov-zephyr-gcc12plus.patch").is_file()
     assert (tmp_path / "vendor" / "egcov-consumer" / "cov_entry.c").is_file()
     assert "vendor/egcov" in (tmp_path / ".otto" / "settings.toml").read_text()
@@ -1059,17 +1063,18 @@ def test_embedded_gcov_is_detected_only_by_the_patch_under_the_default_directory
 ) -> None:
     bare = tmp_path / "bare"
     make_project(bare, name="widget", version="0.1.0")
-    assert "embedded-gcov" not in detect_areas(bare)
+    assert "embedded-gcov" not in detect_areas(root=bare)
     custom = tmp_path / "custom"
     make_project(custom, name="widget", version="0.1.0")
     scaffold(
-        InitConfig(custom, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"), ["embedded-gcov"]
+        InitConfig(custom, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"),
+        areas=["embedded-gcov"],
     )
-    assert "embedded-gcov" not in detect_areas(custom)
+    assert "embedded-gcov" not in detect_areas(root=custom)
     default = tmp_path / "default"
     make_project(default, name="widget", version="0.1.0")
     _scaffold(default, "embedded-gcov")
-    assert "embedded-gcov" in detect_areas(default)
+    assert "embedded-gcov" in detect_areas(root=default)
 
 
 def test_kmodcov_is_detected_by_the_library_header_under_its_default_directory(
@@ -1081,7 +1086,7 @@ def test_kmodcov_is_detected_by_the_library_header_under_its_default_directory(
     library = tmp_path / DEFAULT_KMODCOV_DIR
     library.mkdir(parents=True)
     (library / "kmodcov.h").write_text("")
-    assert "kmodcov" in detect_areas(tmp_path)
+    assert "kmodcov" in detect_areas(root=tmp_path)
 
 
 def test_embedded_gcov_appends_the_documented_block_to_existing_settings_once(
@@ -1211,9 +1216,9 @@ def test_both_vendored_areas_run_through_one_core_with_the_same_input(
     """The same input drives both areas: outcomes, consumer-dir naming, append once, paste."""
     field, directory, marker = _VENDORED_AREAS[area]
     cfg = InitConfig(tmp_path, "widget", "0.1.0", **{field: directory})
-    scaffold(cfg, ["settings"])
+    scaffold(cfg, areas=["settings"])
     settings = tmp_path / ".otto" / "settings.toml"
-    first = scaffold(cfg, [area])
+    first = scaffold(cfg, areas=[area])
     created = [w for w in first.writes if w.path.parent == tmp_path / directory]
     assert created
     assert {w.outcome for w in created} == {"created"}
@@ -1221,7 +1226,7 @@ def test_both_vendored_areas_run_through_one_core_with_the_same_input(
     assert {w.outcome for w in first.writes if w.path.parent == consumer} == {"created"}
     assert settings in _paths(first, "appended")
     assert settings.read_text().count(marker) == 1
-    again = scaffold(cfg, [area])
+    again = scaffold(cfg, areas=[area])
     assert {w.outcome for w in again.writes if w.path.parent == tmp_path / directory} == {
         "refreshed"
     }

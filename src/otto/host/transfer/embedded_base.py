@@ -31,6 +31,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
 
     def __init__(
         self,
+        *,
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]] | None = None,
         filesystem: EmbeddedFileSystem | None = None,

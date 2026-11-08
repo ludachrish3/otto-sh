@@ -10,15 +10,15 @@ def test_the_default_variant_is_debug():
 
 
 def test_set_variant_is_read_back_and_reset_by_its_token():
-    token = context.set_variant("field")
+    token = context.set_variant(value="field")
     assert context.variant() == "field"
-    context.reset_variant(token)
+    context.reset_variant(token=token)
     assert context.variant() == "debug"
 
 
 def test_set_variant_refuses_anything_but_the_two_names():
     with pytest.raises(ValueError, match=r"variant must be 'debug' or 'field', got 'release'"):
-        context.set_variant("release")  # type: ignore[arg-type]
+        context.set_variant(value="release")  # type: ignore[arg-type]
 
 
 def test_variants_is_the_public_pair():

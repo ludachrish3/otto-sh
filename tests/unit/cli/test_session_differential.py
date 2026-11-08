@@ -198,7 +198,7 @@ def _project(
     sut = make_project(root / name, name=name, extra=settings, files=files)
     if hosts is not None:
         write_lab_json(sut / "lab" / "lab.json", hosts)
-    return Project(sut)
+    return Project(root=sut)
 
 
 # ── 1. Lab parity ────────────────────────────────────────────────────────────
@@ -522,7 +522,9 @@ def _broken(
         else "[project]\nlab_patterns = [" + ", ".join(f'"{p}"' for p in lab_patterns) + "]\n"
     )
     project = _project(root, name, extra=scope)
-    error = bs.BootstrapError(project.root, "broken_init", ImportError("No module named 'missing'"))
+    error = bs.BootstrapError(
+        project.root, source="broken_init", cause=ImportError("No module named 'missing'")
+    )
     return project, error
 
 
@@ -576,9 +578,9 @@ def _unparsable(root: Path) -> World:
     """
     sut = make_project(root / "garbled", name="Garbled", extra="this is = = not toml")
     try:
-        Project(sut)
+        Project(root=sut)
     except Exception as e:  # noqa: BLE001 — discovery contains ANY failure the same way
-        error = bs.BootstrapError(sut, str(TOML_SETTINGS_PATH), e)
+        error = bs.BootstrapError(sut, source=str(TOML_SETTINGS_PATH), cause=e)
     else:  # pragma: no cover — the layout is wrong, not the product
         pytest.fail("the garbled settings.toml parsed")
     return World(projects=[_healthy(root)], errors=[error])
@@ -745,7 +747,7 @@ async def _open_context(case: Case) -> LibraryVerdict:
         async with otto.open_context(
             lab=case.labs, include_projects=case.include, exclude_projects=case.exclude
         ) as ctx:
-            warnings = check_dependencies(ctx)
+            warnings = check_dependencies(ctx=ctx)
     except Exception as e:  # noqa: BLE001 — the verdict is asserted by the caller
         return LibraryVerdict(error=e, warnings=[])
     return LibraryVerdict(error=None, warnings=warnings)
@@ -977,8 +979,10 @@ def test_the_librarys_demotions_are_the_clis_warning_lines(case, tmp_path, monke
     world = case.world(tmp_path)
     _install(monkeypatch, world.projects, world.errors)
     result = bs.bootstrap()
-    selection = select_projects(result.projects, case.include, case.exclude)
-    demoted = check_projects(result, case.labs, selection).demoted
+    selection = select_projects(
+        projects=result.projects, include=case.include, exclude=case.exclude
+    )
+    demoted = check_projects(result=result, labs=case.labs, selection=selection).demoted
     assert [d.name for d in demoted] == case.demoted
     library = _library_demotions(demoted)
 

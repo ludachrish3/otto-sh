@@ -97,7 +97,7 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
 def _element_of(entry: dict[str, Any]) -> Element:
     """Build the runtime element an element dict of the dataset declares."""
     return Element(
-        entry["name"],
+        name=entry["name"],
         id=entry.get("id"),
         metadata=dict(entry.get("metadata", {})),
         resources=frozenset(entry.get("resources", ())),
@@ -148,6 +148,7 @@ class ExampleLabRepository:
     def load_lab(
         self,
         name: str,
+        *,
         preferences: dict[str, dict[str, Any]] | None = None,
         inventory: "Inventory | None" = None,
     ) -> Lab:
@@ -175,7 +176,7 @@ class ExampleLabRepository:
             # host_b.element`` hold for siblings.
             element = _element_of(entry)
             for host_data in entry["hosts"]:
-                resolved = resolve_host_entry(host_data, inventory, element)
+                resolved = resolve_host_entry(host_data, inventory=inventory, element=element)
                 host = create_host_from_dict(
                     resolved.host_data,
                     preferences=preferences,
@@ -198,7 +199,7 @@ class ExampleLabRepository:
         """Return a sorted list of all lab names in this backend's dataset."""
         return sorted(self._labs)
 
-    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
+    def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Enumerate hosts without building them — the optional fast path.
 
         Implementing :class:`~otto.labs.protocol.SupportsHostSummaries` is
@@ -230,8 +231,10 @@ class ExampleLabRepository:
                     continue
                 for host_data in hosts:
                     try:
-                        resolved = resolve_host_entry(host_data, inventory, element).host_data
-                        identity = host_identity(resolved, element, profiles=self._profiles)
+                        resolved = resolve_host_entry(
+                            host_data, inventory=inventory, element=element
+                        ).host_data
+                        identity = host_identity(resolved, element=element, profiles=self._profiles)
                     except (ValueError, TypeError, KeyError, InventoryError):
                         continue
                     existing = by_id.get(identity.id)

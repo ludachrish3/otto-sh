@@ -14,7 +14,7 @@ from tests.conftest import make_host
 class _RealBackend:
     """A backend that DOES track reservations — the other side of the predicate."""
 
-    def fetch_reservations(self, username: str, start=None, end=None) -> list[Reservation]:
+    def fetch_reservations(self, username: str, *, start=None, end=None) -> list[Reservation]:
         return [Reservation(user=username, resource="rack1")]
 
     def holders(self, resource: str) -> list[Reservation]:
@@ -56,7 +56,7 @@ def test_check_reservations_is_noop_with_null_backend():
         hosts={"test1": make_host("test1")},
     )
     # Should not raise — the null backend short-circuits the check.
-    check_reservations(lab, username="alice", backend=NullReservationBackend())
+    check_reservations(lab=lab, username="alice", backend=NullReservationBackend())
 
 
 def test_is_null_backend_tells_the_two_apart():
@@ -68,5 +68,5 @@ def test_is_null_backend_tells_the_two_apart():
     :func:`test_check_reservations_is_noop_with_null_backend` above both go red
     together if this function stops telling them apart.
     """
-    assert is_null_backend(NullReservationBackend()) is True
-    assert is_null_backend(_RealBackend()) is False
+    assert is_null_backend(backend=NullReservationBackend()) is True
+    assert is_null_backend(backend=_RealBackend()) is False

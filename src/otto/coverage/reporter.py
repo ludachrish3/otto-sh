@@ -450,7 +450,7 @@ class CoverageReporter:
             )
             renderer.render(store)
 
-            store.save(self.output_dir / "store.json")
+            store.save(path=self.output_dir / "store.json")
 
             logger.info("Done. Report: %s", self.output_dir / "index.html")
             return store
@@ -1131,9 +1131,9 @@ def _validate_report_inputs(
 
 async def run_coverage_report(
     cov_dirs: list[Path],
+    *,
     output_dir: Path,
     inputs: ReportInputs,
-    *,
     report_title: str = "Coverage Report",
     tier_specs: list[TierSpec] | None = None,
     prefix: Path | None = None,

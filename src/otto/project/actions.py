@@ -13,7 +13,7 @@ carries belong to the project whose action is running.
 
 NOT ONE ``owner=`` IS SPELLED BELOW, and that is the design (spec section 7).
 The scope rides the CONTEXT VIEW every action dispatches through:
-``self.ctx`` is ``ctx.for_project(project.name)``, which bounds each walk to that
+``self.ctx`` is ``ctx.for_project(name=project.name)``, which bounds each walk to that
 project's fleet of interest and supplies ``owner=`` to the host verb itself. An
 argument is forgettable exactly once per new call site -- and a forgotten one
 here is not a crash but a silently WIDER sweep, project A's uninstall taking project
@@ -121,13 +121,13 @@ owner=None, which the host layer reads as EVERY owner's products. Its cleanup()
 would uninstall its neighbours' products and remove their dev tools, on every
 host, reporting success.
 
-Build actions with otto.project.actions_for(project, ctx). It supplies
-ctx.for_project(project.name) -- the view that bounds the fleet and stamps the owner.\
+Build actions with otto.project.actions_for(project=project, ctx=ctx). It supplies
+ctx.for_project(name=project.name) -- the view that bounds the fleet and stamps the owner.\
 """
 """The refusal :meth:`ProjectActions.__init__` raises for an unscoped context.
 
 REFUSED RATHER THAN DOCUMENTED, and the asymmetry with the pre-view code is the
-reason. ``ProjectActions(project, ctx)`` was legal and owner-SAFE before the scope
+reason. ``ProjectActions(project=project, ctx=ctx)`` was legal and owner-SAFE before the scope
 moved onto the view: the bodies carried ``owner=project.name`` themselves, so a
 hand-built instance narrowed correctly even over a plain context. The same
 spelled code is now destructive, which makes this the one migration hazard that
@@ -172,7 +172,7 @@ def _first(*results: Result) -> Result:
     for result in results:
         if not result.is_ok:
             return result
-    return Result(Status.Success)
+    return Result(status=Status.Success)
 
 
 def _reported(*results: Result) -> Result:
@@ -211,7 +211,7 @@ def _reported(*results: Result) -> Result:
     for result in results:
         if result.status is not Status.Success:
             return result
-    return Result(Status.Success)
+    return Result(status=Status.Success)
 
 
 def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
@@ -234,7 +234,7 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
     stamped: list[Result] = []
     for host_id, outcome in results.items():
         if isinstance(outcome, BaseException):
-            stamped.append(Result(Status.Error, msg=f"host {host_id!r}: {outcome!r}"))
+            stamped.append(Result(status=Status.Error, msg=f"host {host_id!r}: {outcome!r}"))
             continue
         if not outcome.is_ok:
             reason = _failure_reason(outcome)
@@ -245,7 +245,7 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
         # A host verb may already open its message with the host's id; this
         # reducer names the host, so the id is not said twice.
         reason = reason.removeprefix(f"{host_id}: ")
-        stamped.append(Result(outcome.status, msg=f"host {host_id!r}: {reason}"))
+        stamped.append(Result(status=outcome.status, msg=f"host {host_id!r}: {reason}"))
     return _reported(*stamped)
 
 
@@ -363,7 +363,7 @@ async def _stopped(host: "Host") -> bool:
 def _passed_over(host: "Host", what: str) -> Result:
     """Say a stopped container was passed over, and answer Skipped."""
     logger.info("%s: the container is not running, so it has no %s", host.id, what)
-    return Result(Status.Skipped, msg=f"{host.id}: container not running")
+    return Result(status=Status.Skipped, msg=f"{host.id}: container not running")
 
 
 async def _dispatch_install(host: "Host", owner: "str | None" = None) -> Result:
@@ -474,7 +474,7 @@ class ProjectActions:
     host.install()`` for chosen hosts) -- nothing here is privileged.
     """
 
-    def __init__(self, project: "Project", ctx: "ProjectContextView") -> None:
+    def __init__(self, *, project: "Project", ctx: "ProjectContextView") -> None:
         """Bind *project* and its context view, refusing a context that is not a scope.
 
         Args:
@@ -497,7 +497,7 @@ class ProjectActions:
         self.ctx = ctx
         """This project's view of the live context -- its bounded fleet and its dispatch.
 
-        :func:`actions_for` supplies ``ctx.for_project(project.name)``, and THAT VIEW
+        :func:`actions_for` supplies ``ctx.for_project(name=project.name)``, and THAT VIEW
         is what carries the owner scope now that no body below spells
         ``owner=``.
         """
@@ -665,9 +665,9 @@ class ProjectActions:
         product = opts.product_logs
         require_product_logs = opts.require_product_logs
         if require_product_logs and not product:
-            return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
+            return Result(status=Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
         if not product:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         haul = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_get_product_logs))
         if not haul.is_ok or not require_product_logs:
             # The haul's own failure returns unchanged: it says WHY nothing
@@ -693,7 +693,7 @@ class ProjectActions:
                     else ""
                 )
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=f"require_product_logs: no product logs retrieved from {host.id}{why}",
                 )
         # The haul itself, not a fresh Success: a decline in it (a stopped
@@ -728,7 +728,7 @@ class ProjectActions:
         here.
         """
         if not opts.dev:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools))
 
     @instruction(
@@ -750,7 +750,7 @@ class ProjectActions:
         *toolchain* is the orchestrator's, as it is for :meth:`install_tools`.
         """
         if not opts.dev:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
 
     ####################
@@ -925,12 +925,12 @@ def register_project_actions(
     entry = ProjectActionsEntry(cls, bodies)
     # Outside an init import the key is the class name, which the refusal names.
     PROJECT_ACTIONS.register(
-        project if project is not None else cls.__name__, entry, overwrite=overwrite
+        name=project if project is not None else cls.__name__, entry=entry, overwrite=overwrite
     )
     return cls
 
 
-def actions_for(project: "Project", ctx: "OttoContext") -> ProjectActions:
+def actions_for(*, project: "Project", ctx: "OttoContext") -> ProjectActions:
     """Build *project*'s actions: its registered subclass, else otto's default.
 
     A project that registers nothing gets :class:`ProjectActions` itself, so the
@@ -942,6 +942,6 @@ def actions_for(project: "Project", ctx: "OttoContext") -> ProjectActions:
     drives, including every walk a SUBCLASS otto has never seen drives, is
     bound by construction rather than by an argument each of them remembers.
     """
-    entry = PROJECT_ACTIONS.find(project.name)
+    entry = PROJECT_ACTIONS.find(name=project.name)
     cls = ProjectActions if entry is None else cast("type[ProjectActions]", entry.cls)
-    return cls(project=project, ctx=ctx.for_project(project.name))
+    return cls(project=project, ctx=ctx.for_project(name=project.name))

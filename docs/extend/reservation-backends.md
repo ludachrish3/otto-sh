@@ -525,7 +525,7 @@ The example CLI below does it the way otto's own commands do, in five steps:
    prepares nor builds a backend, so a scheduler that hangs in its constructor
    cannot block the break-glass; its identity and backend rules are documented with
    `gate_from_settings` and `build_backend` there.
-3. **Call** one library entry point: `gate.evaluate(lab)` to gate a run, or
+3. **Call** one library entry point: `gate.evaluate(lab=lab)` to gate a run, or
    `gate.report(lab)` for a status report. Passing the `Lab` explicitly needs
    no otto context.
 4. **Render** the result yourself. `evaluate()` returns a
@@ -572,11 +572,11 @@ scheduler or CLI invocation:
 >>> def gate_for(user):
 ...     backend = ExampleReservationBackend(username=user)
 ...     return ReservationGate(backend=backend, identity=resolve_username(user))
->>> translate(lambda: check_report(gate_for("alice"), demo))
+>>> translate(lambda: check_report(gate_for("alice"), lab=demo))
 lab-a  lab demo  held
 OK
 0
->>> translate(lambda: check_report(gate_for("carol"), demo))
+>>> translate(lambda: check_report(gate_for("carol"), lab=demo))
 lab-a  lab demo  missing
 User 'carol' does not hold all resources required by lab 'demo'. Missing:
   lab-a  lab demo  (held by: alice)

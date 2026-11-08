@@ -213,10 +213,10 @@ def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
     say — with no assertion able to see it.
     """
 
-    async def _fake(source: Any = None) -> Any:
+    async def _fake(*, opts: Any = None) -> Any:
         from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-        calls.append((name, source))
+        calls.append((name, opts))
         OttoFixturesPlugin._converge_loop = asyncio.get_running_loop()
         if isinstance(outcome, BaseException):
             raise outcome
@@ -289,7 +289,7 @@ def _run_ensure(args: tuple | None, *, flags: dict[str, Any] | None = None) -> A
 
     ctx = OttoContext(lab=Lab(name="ensure"))
     if flags is not None:
-        ctx.bind_verb_options("test", flags)
+        ctx.bind_verb_options(verb="test", kwargs=flags)
     token = set_context(ctx)
     plugin = OttoFixturesPlugin(layout=_LAYOUT)
     try:
@@ -327,7 +327,7 @@ def _drive_and_catch(args: tuple | None) -> BaseException | None:
 def test_each_step_awaits_its_own_converge_function_once_with_the_verb_source(
     step: str, function: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     _run_ensure((step,))
     assert calls == _called(function)
 
@@ -347,7 +347,7 @@ def test_the_bound_test_verb_flags_become_the_converge_source(
         lab_env: str = "staging"
 
     register_options(LabEnv, verbs=["test"])
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     _run_ensure(("installed",), flags={"lab_env": "prod"})
     assert calls == _called("ensure_installed", flags={"lab_env": "prod"})
 
@@ -356,21 +356,21 @@ def test_nothing_bound_converges_from_defaults(monkeypatch: pytest.MonkeyPatch) 
     """A context no verb was dispatched on still converges: the source is empty flags, so every
     install body takes its defaults — not a crash.
     """
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     _run_ensure(("installed",))
     assert calls == _called("ensure_installed", flags={})
 
 
 def test_a_path_runs_its_steps_in_the_written_order(monkeypatch: pytest.MonkeyPatch) -> None:
     """Spec §4.1: ``ensure("clean", "installed")`` cleans, THEN installs — a fresh install."""
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     _run_ensure(("clean", "installed"))
     assert calls == _called("ensure_clean", "ensure_installed")
 
 
 @pytest.mark.parametrize("args", [None, ("none",)])
 def test_no_marker_and_none_converge_nothing(args, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     _run_ensure(args)
     assert calls == []
 
@@ -385,7 +385,7 @@ def test_a_failed_converge_errors_not_skips_and_names_the_step_and_host(
     isinstance — and the message carries THIS step's name, so a copy-paste that
     labels a clean failure "installed" is caught.
     """
-    _stub_ensures(monkeypatch, [], Result(Status.Failed, msg="host test1: unreachable"))
+    _stub_ensures(monkeypatch, [], Result(status=Status.Failed, msg="host test1: unreachable"))
     raised = _drive_and_catch((step,))
     assert isinstance(raised, EnsureStateError), (
         f"convergence failure must ERROR the test, never skip it; got {raised!r}"
@@ -396,7 +396,7 @@ def test_a_failed_converge_errors_not_skips_and_names_the_step_and_host(
 @pytest.mark.parametrize("step", ENSURE_STEPS)
 def test_a_skipped_no_op_converge_is_ok(step: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """``Status.Skipped`` ("already installed") has ``is_ok`` True — the common case."""
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Skipped, msg="already installed"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Skipped, msg="already installed"))
     assert _drive_and_catch((step,)) is None
     assert len(calls) == 1
 
@@ -405,7 +405,7 @@ def test_a_skipped_no_op_converge_is_ok(step: str, monkeypatch: pytest.MonkeyPat
 def test_a_dry_run_refusal_propagates_unchanged(step: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Under ``--dry-run`` converge paths RAISE ``CommandNotRunError``; it must not be
     relabelled as a failure to converge (kills a ``try/except Exception`` wrapper)."""
-    _stub_ensures(monkeypatch, [], CommandNotRunError("rpm -q otto-agent", "test1"))
+    _stub_ensures(monkeypatch, [], CommandNotRunError("rpm -q otto-agent", host="test1"))
     raised = _drive_and_catch((step,))
     assert isinstance(raised, CommandNotRunError), (
         f"a dry-run refusal must reach the test unchanged; got {raised!r}"
@@ -414,7 +414,9 @@ def test_a_dry_run_refusal_propagates_unchanged(step: str, monkeypatch: pytest.M
 
 def test_a_failed_first_step_stops_the_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """``("clean", "installed")`` with a failing clean never reaches installed."""
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Failed, msg="host test1: unreachable"))
+    calls = _stub_ensures(
+        monkeypatch, [], Result(status=Status.Failed, msg="host test1: unreachable")
+    )
     raised = _drive_and_catch(("clean", "installed"))
     assert isinstance(raised, EnsureStateError)
     assert calls == _called("ensure_clean")
@@ -461,7 +463,7 @@ def test_closest_marker_replaces_the_whole_path(
     """
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     pytester.makepyfile(test_inner=MARKER_SUITE_SRC)
     result = pytester.runpytest_inprocess(
         *INNER_ARGS, plugins=[OttoPlugin(), OttoFixturesPlugin(layout=_LAYOUT)]
@@ -485,7 +487,7 @@ def test_an_invalid_path_errors_the_run_at_collection(
     """Spec §4.2: the run stops before any test executes, naming node, verb, vocabulary."""
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    calls = _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     pytester.makepyfile(
         test_inner=f"""\
 import pytest
@@ -528,7 +530,7 @@ def test_the_marker_is_registered_for_strict_markers(
     """``--strict-markers`` accepts ``ensure`` — it is registered, not merely tolerated."""
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-    _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    _stub_ensures(monkeypatch, [], Result(status=Status.Success, msg="converged"))
     pytester.makepyfile(
         test_inner="""\
 import pytest

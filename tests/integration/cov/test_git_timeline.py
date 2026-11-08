@@ -163,7 +163,7 @@ class TestTime:
         d = tl.dispositions(tl.fold(max_age_days=30, today=past_limit), "a.c")
         assert d[3] == "hit"  # aging lines still carry hits...
         store = tl.fold(max_age_days=30, today=past_limit)
-        rec = store.get_or_create_file(tl.root / "a.c")
+        rec = store.get_or_create_file(path=tl.root / "a.c")
         assert rec.lines[3].state == "aging"  # ...but the state marks them
 
     def test_future_dated_capture_is_not_aging(self, tl):
@@ -172,7 +172,7 @@ class TestTime:
         tl.capture("run1", {"a.c": {3: 5}}, captured_at="2027-01-01T00:00:00Z")
         today = datetime(2026, 7, 1, tzinfo=timezone.utc)
         store = tl.fold(max_age_days=30, today=today)
-        assert store.get_or_create_file(tl.root / "a.c").lines[3].state is None
+        assert store.get_or_create_file(path=tl.root / "a.c").lines[3].state is None
 
 
 class TestMultiCapture:
@@ -182,7 +182,7 @@ class TestMultiCapture:
         tl.commit("edit 4")
         tl.capture("new", {"a.c": {3: 2, 4: 9}}, host="bench-2", captured_at="2026-07-02T00:00:00Z")
         store = tl.fold()
-        rec = store.get_or_create_file(tl.root / "a.c")
+        rec = store.get_or_create_file(path=tl.root / "a.c")
         assert rec.lines[3].hits.total() == 7  # 5 + 2, both credited once
         assert len(rec.lines[3].run_hits) == 2
 

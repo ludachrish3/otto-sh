@@ -117,7 +117,7 @@ def _install_recorder(ft: NcFileTransfer, method: str) -> _FanoutRecorder:
             # The prefetch's `stat -L -c '%s %F'` shape: a size AND a type it
             # will transfer. A bare size parses as unstatable and refuses all
             # twenty, which is the same measurement of zero.
-            return_value=CommandResult(Status.Success, value="1 regular file", retcode=0)
+            return_value=CommandResult(status=Status.Success, value="1 regular file", retcode=0)
         )
     if method == "_get_files_nc":
         ft._exec_cmd = recorder  # type: ignore[assignment]

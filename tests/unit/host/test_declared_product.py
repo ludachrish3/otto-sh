@@ -28,7 +28,7 @@ class _Host:
     cached_login_home = None
 
     async def run(self, cmds, **kwargs):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def _entry(**params):
@@ -94,13 +94,13 @@ def test_an_overridden_install_is_unchecked_never_the_declared_string():
 
 class OverridesAll(DeclaredProduct):
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def test_every_overridden_hook_gets_its_own_unchecked_line_in_phase_order():
@@ -172,7 +172,7 @@ def test_a_login_home_gap_stays_first_before_an_overridden_install_line():
 
 class OverridesStage(DeclaredProduct):
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 @pytest.mark.parametrize("host", [_LoginHomeHost(), _NoHomeHost()], ids=["gap", "refusal"])
@@ -287,7 +287,7 @@ def test_shell_and_docker_default_build_root_is_the_project_root():
 
 def _kmod_host():
     async def _verb(*args, **kwargs):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     return SimpleNamespace(id="h1", load=_verb, unload=_verb, lsmod=_verb)
 

@@ -41,7 +41,7 @@ def _make_host(host_id: str = "router1") -> UnixHost:
     pins ``host.id == host_id`` for tests that assert on it.
     """
     return UnixHost(
-        ip="10.0.0.1", element=Element(host_id), creds=[Cred(login="admin", password="secret")]
+        ip="10.0.0.1", element=Element(name=host_id), creds=[Cred(login="admin", password="secret")]
     )
 
 
@@ -189,7 +189,7 @@ def test_monitor_hosts_matching_nothing_stops_the_run_with_one_line(pytester):
     result = _inner_run(
         pytester,
         OttoPlugin(monitor=True, monitor_hosts="sensor"),
-        EmptySelectionError("sensor", 3),
+        EmptySelectionError("sensor", base_size=3),
     )
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -213,7 +213,9 @@ def test_monitor_hosts_hidden_by_a_flag_says_the_regex_is_correct(pytester):
     result = _inner_run(
         pytester,
         OttoPlugin(monitor=True, monitor_hosts="box.*"),
-        EmptySelectionError("box.*", 3, excluded_by=["include_containers"], matched_size=2),
+        EmptySelectionError(
+            "box.*", base_size=3, excluded_by=["include_containers"], matched_size=2
+        ),
     )
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -242,7 +244,7 @@ def test_selected_but_unmonitorable_hosts_blame_the_hosts_not_the_regex(pytester
     # with an ``snmp`` block) however the
     # test wanted, and prove nothing about a real console host.
     board = create_host_from_dict(
-        {"os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}, element=Element("board")
+        {"os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}, element=Element(name="board")
     )
     result = _inner_run(pytester, OttoPlugin(monitor=True, monitor_hosts="board.*"), [board])
 
@@ -282,7 +284,7 @@ async def test_session_monitor_a_pattern_matching_nothing_stops_the_run(tmp_path
     plugin = OttoPlugin(monitor=True, monitor_hosts="will-not-match")
 
     def _refuse(*_a, **_kw):
-        raise EmptySelectionError("will-not-match", 3)
+        raise EmptySelectionError("will-not-match", base_size=3)
         yield  # pragma: no cover — makes this a generator, like the real all_hosts
 
     with (
@@ -455,7 +457,7 @@ async def test_session_monitor_samples_an_snmp_only_host(tmp_path):
             "command_frame": "zephyr",
             "snmp": {"oids": ["1.3.6.1.2.1.1.3.0"]},
         },
-        element=Element("z1"),
+        element=Element(name="z1"),
     )
     plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=tmp_path / "m.json")
     with (

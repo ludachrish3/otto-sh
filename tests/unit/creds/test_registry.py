@@ -21,8 +21,10 @@ def _other(c):
 
 
 def test_json_is_pre_registered_and_builds_the_json_store(tmp_path):
-    prepared = CREDS_BACKENDS.prepare("json", {"path": "c.json"}, CredsEnv(tmp_path, "o.toml"))
-    store = CREDS_BACKENDS.build(prepared)
+    prepared = CREDS_BACKENDS.prepare(
+        name="json", raw={"path": "c.json"}, env=CredsEnv(tmp_path, "o.toml")
+    )
+    store = CREDS_BACKENDS.build(prepared=prepared)
     assert isinstance(store, _JsonCredsStore)
     assert store.path == (tmp_path / "c.json").resolve()
 
@@ -47,6 +49,6 @@ def test_unknown_name_lists_registered_and_points_at_the_registrar(tmp_path):
     with pytest.raises(
         CredsConstructionError, match="Unknown creds backend 'does-not-exist'"
     ) as exc:
-        CREDS_BACKENDS.prepare("does-not-exist", {}, CredsEnv(tmp_path, "o.toml"))
+        CREDS_BACKENDS.prepare(name="does-not-exist", raw={}, env=CredsEnv(tmp_path, "o.toml"))
     assert "Registered: json" in str(exc.value)
     assert "otto.creds.register_creds_backend()" in str(exc.value)

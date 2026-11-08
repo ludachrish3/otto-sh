@@ -304,7 +304,7 @@ def test_a_library_stability_run_with_redirected_junit_writes_its_report(tmp_pat
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     opts = RunOptions(iterations=1, results=str(tmp_path / "elsewhere" / "junit.xml"))
 
-    result = contextvars.Context().run(run_tests, [DOUBLE_TEST_NAME], run_options=opts)
+    result = contextvars.Context().run(run_tests, names=[DOUBLE_TEST_NAME], run_options=opts)
 
     assert result.stability_report == result.output_dir / "stability_report.txt"
     assert result.stability_report.is_file()

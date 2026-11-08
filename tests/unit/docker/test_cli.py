@@ -75,7 +75,7 @@ async def test_build_hands_the_library_exactly_its_flags():
             target="prod",
         )
     build_on.assert_awaited_once_with(
-        "test3",
+        parent="test3",
         project="r1",
         images=["api"],
         tags=["api:1"],
@@ -113,7 +113,7 @@ def test_build_takes_dockers_flags_in_dockers_spelling_through_the_dispatch():
         )
     assert result.exit_code == 0, result.output
     build_on.assert_awaited_once_with(
-        "test3",
+        parent="test3",
         project=None,
         images=None,
         tags=["api:1"],
@@ -165,7 +165,7 @@ async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
                     "api",
                     ["api:latest"],
                     "cbd8571d4b6e",
-                    CommandResult(Status.Success, value="Successfully built", retcode=0),
+                    CommandResult(status=Status.Success, value="Successfully built", retcode=0),
                 ),
             },
         ),
@@ -180,7 +180,10 @@ async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
                     [],
                     None,
                     CommandResult(
-                        Status.Failed, value="syntax error", command="docker build", retcode=1
+                        status=Status.Failed,
+                        value="syntax error",
+                        command="docker build",
+                        retcode=1,
                     ),
                 )
             },
@@ -226,7 +229,7 @@ def test_render_build_report_prints_literal_brackets_with_the_real_rprint(capsys
                     "api",
                     ["api:latest"],
                     "cbd8571d4b6e",
-                    CommandResult(Status.Success, value="Successfully built", retcode=0),
+                    CommandResult(status=Status.Success, value="Successfully built", retcode=0),
                 )
             },
         ),
@@ -335,7 +338,7 @@ async def test_compose_build_prints_displacements_then_images():
                     "db",
                     ["real-db:1"],
                     "cbd8571d4b6e",
-                    CommandResult(Status.Success, value="Successfully built", retcode=0),
+                    CommandResult(status=Status.Success, value="Successfully built", retcode=0),
                 )
             },
         ),
@@ -717,7 +720,9 @@ async def test_up_surfaces_the_librarys_parent_refusal_verbatim():
     sentence nobody emits any more (review M5).
     """
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
 
     with (
         active_context(lab),
@@ -741,7 +746,9 @@ async def test_up_renders_a_dry_run_decline_and_exits_zero():
     """
     from otto.result import CommandNotRunError
 
-    decline = CommandNotRunError("deploy(integration)", "test3", "Resolved plan: test3 <- a[core].")
+    decline = CommandNotRunError(
+        "deploy(integration)", host="test3", detail="Resolved plan: test3 <- a[core]."
+    )
     mock_rprint = MagicMock()
     with (
         active_context(dry_run=True),
@@ -773,7 +780,9 @@ async def test_a_decline_outside_a_dry_run_is_not_swallowed_into_exit_zero():
     """
     from otto.result import CommandNotRunError
 
-    decline = CommandNotRunError("deploy(integration)", "test3", "Resolved plan: test3 <- a[core].")
+    decline = CommandNotRunError(
+        "deploy(integration)", host="test3", detail="Resolved plan: test3 <- a[core]."
+    )
     with (
         active_context(dry_run=False),
         patch("otto.docker.deployment.deploy", AsyncMock(side_effect=decline)),
@@ -806,9 +815,11 @@ def test_a_stack_that_registered_nothing_says_so_rather_than_printing_nothing():
 
 @pytest.mark.asyncio
 async def test_down_renders_each_host_and_exits_1_when_one_failed():
-    up_ok = CommandResult(Status.Success, value="", command="docker compose -p p down", retcode=0)
+    up_ok = CommandResult(
+        status=Status.Success, value="", command="docker compose -p p down", retcode=0
+    )
     down_failed = CommandResult(
-        Status.Failed,
+        status=Status.Failed,
         value="error during connect",
         command="docker compose -p q down",
         retcode=1,
@@ -833,7 +844,9 @@ async def test_down_renders_each_host_and_exits_1_when_one_failed():
 @pytest.mark.asyncio
 async def test_down_partial_names_the_services():
     report = TeardownReport(
-        hosts={"test3": [CommandResult(Status.Success, value="", command="x", retcode=0)] * 2},
+        hosts={
+            "test3": [CommandResult(status=Status.Success, value="", command="x", retcode=0)] * 2
+        },
         use_case="integration",
     )
     out = MagicMock()
@@ -851,7 +864,9 @@ async def test_down_partial_names_the_services():
 async def test_down_renders_a_dry_run_decline_without_claiming_a_teardown():
     from otto.result import CommandNotRunError
 
-    decline = CommandNotRunError("teardown(integration)", "test3", "Resolved plan: test3 <- a.")
+    decline = CommandNotRunError(
+        "teardown(integration)", host="test3", detail="Resolved plan: test3 <- a."
+    )
     mock_rprint = MagicMock()
     with (
         active_context(dry_run=True),
@@ -896,7 +911,7 @@ def test_use_cases_lists_fragments_hosts_env_keys_and_displacements(capsys):
     )
     loser = _uc_project("project2", _uc(provides="edge", priority=5, pass_env=("TOKEN",)))
     lab = Lab(name="unix")
-    host = UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True)
+    host = UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
     lab.add_host(host)
 
     with (
@@ -955,7 +970,7 @@ def test_use_cases_prints_the_parent_rule_refusal_instead_of_a_host(capsys):
     project = _uc_project("project1", _uc())
     lab = Lab(name="unix")
     for name, ip in (("test1", "10.0.0.1"), ("test3", "10.0.0.3")):
-        lab.add_host(UnixHost(ip=ip, creds=[], element=Element(name), docker_capable=True))
+        lab.add_host(UnixHost(ip=ip, creds=[], element=Element(name=name), docker_capable=True))
 
     with (
         patch("otto.declared.get_projects", return_value=[project]),
@@ -972,12 +987,14 @@ def test_use_cases_shows_the_ranked_parent_and_no_role_column(capsys):
     """The host column is the parent the rule picks; the role column is gone."""
     project = _uc_project("project1", _uc())
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test1"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test1"), docker_capable=True)
+    )
     lab.add_host(
         UnixHost(
             ip="10.0.0.3",
             creds=[],
-            element=Element("test3"),
+            element=Element(name="test3"),
             docker_capable=True,
             docker_priority=10,
         )
@@ -1008,7 +1025,9 @@ def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):
     b = _uc_project("project2", _uc(provides="edge", priority=5))
     healthy = _uc_project("project3", _uc("soak"))
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
 
     with (
         patch("otto.declared.get_projects", return_value=[a, b, healthy]),
@@ -1029,7 +1048,9 @@ def test_use_cases_filters_to_the_named_use_case(capsys):
     """Spec §10: `otto docker use-cases [USE_CASE]`."""
     projects = [_uc_project("project1", _uc("integration")), _uc_project("project2", _uc("soak"))]
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
 
     with (
         patch("otto.declared.get_projects", return_value=projects),
@@ -1096,7 +1117,9 @@ def test_use_cases_prints_the_same_under_dry_run(argv):
     winner = _uc_project("project1", _uc(provides="edge", priority=10, env={"EDGE_ADDR": "x"}))
     loser = _uc_project("project2", _uc(provides="edge", priority=5))
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
     dialled = AsyncMock(side_effect=AssertionError("use-cases must not contact a host"))
 
     def run(*, dry_run: bool):

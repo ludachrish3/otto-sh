@@ -54,15 +54,17 @@ class _Host:
 
 def _unix_host(user: str) -> UnixHost:
     host = UnixHost(
-        ip="10.0.0.1", element=Element("box"), creds=[Cred(login=user)], log=LogMode.QUIET
+        ip="10.0.0.1", element=Element(name="box"), creds=[Cred(login=user)], log=LogMode.QUIET
     )
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = user
-    ok = Results.collect([CommandResult(command="", value="", status=Status.Success, retcode=0)])
+    ok = Results.collect(
+        items=[CommandResult(command="", value="", status=Status.Success, retcode=0)]
+    )
     host.run = AsyncMock(return_value=ok)
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
-    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["m"]))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
+    host._loaded_modules = AsyncMock(return_value=Result(status=Status.Success, value=["m"]))
     host.default_dest_dir = Path("/tmp")
     return host
 

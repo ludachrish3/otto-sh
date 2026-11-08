@@ -19,7 +19,7 @@ from tests._fixtures.paths import ensure_custom_hosts_on_path
 ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
-M = SessionMarkers.for_session("2700beef")
+M = SessionMarkers.for_session(session_id="2700beef")
 FRAME = ZephyrInlineRetcodeFrame()
 
 
@@ -42,7 +42,7 @@ def inline_response(output: str, retcode: int, prompt: str = "~$ ") -> str:
 class TestFraming:
     def test_frame_drops_retval_line(self):
         # Three CR-separated lines: BEGIN / cmd / END — no `retval`.
-        assert FRAME.frame("version", M) == f"{M.begin}\rversion\r{M.end_prefix}\r"
+        assert FRAME.frame("version", m=M) == f"{M.begin}\rversion\r{M.end_prefix}\r"
 
     def test_type_name(self):
         assert ZephyrInlineRetcodeFrame.type_name == "zephyr-inline"
@@ -59,20 +59,20 @@ class TestFraming:
 class TestRetcode:
     def test_success(self):
         buf = inline_response("Zephyr version 2.7.6", 0)
-        assert FRAME.extract_retcode(buf, M) == 0
+        assert FRAME.extract_retcode(buf, m=M) == 0
 
     def test_negative_errno(self):
         buf = inline_response("usage: ...", -22)
-        assert FRAME.extract_retcode(buf, M) == -22
+        assert FRAME.extract_retcode(buf, m=M) == -22
 
     def test_unknown_command_minus_eight(self):
         buf = inline_response("bogus: command not found", -8)
-        assert FRAME.extract_retcode(buf, M) == -8
+        assert FRAME.extract_retcode(buf, m=M) == -8
 
     def test_takes_commands_code_not_begin_markers(self):
         # BEGIN emits retCode = -8; the command's own code must win.
         buf = inline_response("ok", 3)
-        assert FRAME.extract_retcode(buf, M) == 3
+        assert FRAME.extract_retcode(buf, m=M) == 3
 
     def test_missing_retcode_is_minus_one(self):
         # An unpatched 2.7 build emits no retCode line at all.
@@ -81,35 +81,35 @@ class TestRetcode:
             f"\r\nsome output\r\n~$ "
             f"\r\n{M.end_prefix}: command not found\r\n~$ "
         )
-        assert FRAME.extract_retcode(buf, M) == -1
+        assert FRAME.extract_retcode(buf, m=M) == -1
 
 
 class TestOutput:
     def test_single_line(self):
         buf = inline_response("Zephyr version 2.7.6", 0)
-        assert FRAME.parse_output(buf, "version", M) == "Zephyr version 2.7.6"
+        assert FRAME.parse_output(buf, cmd="version", m=M) == "Zephyr version 2.7.6"
 
     def test_multiline(self):
         buf = inline_response("line one\nline two\nline three", 0)
-        assert FRAME.parse_output(buf, "x", M) == "line one\nline two\nline three"
+        assert FRAME.parse_output(buf, cmd="x", m=M) == "line one\nline two\nline three"
 
     def test_empty_output(self):
         buf = inline_response("", 0)
-        assert FRAME.parse_output(buf, "kernel reboot", M) == ""
+        assert FRAME.parse_output(buf, cmd="kernel reboot", m=M) == ""
 
     def test_integer_output_not_swallowed(self):
         # A bare integer in the output must survive — only `retCode = N` lines
         # are treated as codes.
         buf = inline_response("123456", 0)
-        assert FRAME.parse_output(buf, "kernel uptime", M) == "123456"
+        assert FRAME.parse_output(buf, cmd="kernel uptime", m=M) == "123456"
 
     def test_ansi_prompt_stripped(self):
         buf = inline_response("Zephyr version 2.7.6", 0, prompt="\x1b[1;32m~$ \x1b[m")
-        assert FRAME.parse_output(buf, "version", M) == "Zephyr version 2.7.6"
+        assert FRAME.parse_output(buf, cmd="version", m=M) == "Zephyr version 2.7.6"
 
     def test_no_marker_or_retcode_noise_leaks(self):
         buf = inline_response("clean line", 0)
-        out = FRAME.parse_output(buf, "x", M)
+        out = FRAME.parse_output(buf, cmd="x", m=M)
         assert "__OTTO_" not in out
         assert "retCode" not in out
         assert "\x1b[" not in out
@@ -122,5 +122,5 @@ class TestOutput:
         # the parsed output and the retcode.
         residue = "\r\n: command not found\r\nretCode = -8\r\n~$ "
         buf = residue + inline_response("Zephyr version 2.7.6", 0)
-        assert FRAME.parse_output(buf, "version", M) == "Zephyr version 2.7.6"
-        assert FRAME.extract_retcode(buf, M) == 0
+        assert FRAME.parse_output(buf, cmd="version", m=M) == "Zephyr version 2.7.6"
+        assert FRAME.extract_retcode(buf, m=M) == 0

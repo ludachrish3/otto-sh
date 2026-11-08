@@ -27,7 +27,7 @@ def _project(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[
     sut = make_project(root, name=name, extra=sources_toml)
     for rel, hosts in labfiles.items():
         write_lab_json(root / rel, hosts)
-    return Project(sut)
+    return Project(root=sut)
 
 
 # `OTTO_HOME` is relocated in the inventory tests below: `build_inventory` reads
@@ -64,7 +64,7 @@ def test_build_lab_resolves_referenced_entries(tmp_path, monkeypatch) -> None:
     project = _inventory_project(
         tmp_path / "r1", '[inventory]\nbackend = "json"\npath = "inv.json"\nsupplies = ["ip"]\n'
     )
-    lab = build_lab([project], ["merged"])
+    lab = build_lab([project], labs=["merged"])
     assert lab.hosts["dut"].ip == "10.0.0.7"
     assert lab.hosts["dut"].inventory_ref.key == "dut-1"
 
@@ -75,7 +75,7 @@ def test_a_broken_inventory_declaration_is_an_inventory_refusal(tmp_path, monkey
 
     project = _inventory_project(tmp_path / "r1", '[inventory]\nbackend = "no-such-backend"\n')
     with pytest.raises(LabBuildError) as exc:
-        build_lab([project], ["merged"])
+        build_lab([project], labs=["merged"])
     assert exc.value.kind == "inventory"
     assert "inventory unavailable" in str(exc.value)
 
@@ -84,7 +84,7 @@ def test_no_labs_is_refused_before_any_project_is_read():
     from otto.session import LabBuildError, build_lab
 
     with pytest.raises(LabBuildError) as exc:
-        build_lab(None, [])  # ty: ignore[invalid-argument-type] — must not be touched
+        build_lab(None, labs=[])  # ty: ignore[invalid-argument-type] — must not be touched
     assert (exc.value.kind, exc.value.field) == ("no_labs", "labs")
 
 
@@ -96,7 +96,7 @@ def test_an_unknown_lab_keeps_the_sources_own_text(tmp_path):
         tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
     )
     with pytest.raises(LabBuildError) as exc:
-        build_lab([project], ["nope"])
+        build_lab([project], labs=["nope"])
     assert (exc.value.kind, exc.value.field) == ("unknown_lab", "labs")
     assert isinstance(exc.value.__cause__, LabNotFoundError)
     assert str(exc.value) == str(exc.value.__cause__) == exc.value.detail
@@ -107,7 +107,7 @@ def test_an_unknown_backend_is_a_sources_refusal(tmp_path):
 
     project = _project(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
     with pytest.raises(LabBuildError) as exc:
-        build_lab([project], ["merged"])
+        build_lab([project], labs=["merged"])
     assert (exc.value.kind, exc.value.field) == ("sources", None)
     assert str(exc.value).startswith("host source unavailable: ")
 
@@ -117,7 +117,7 @@ def test_preferences_merge_lists_atomically_and_tables_per_key():
 
     a = fake_project(host_preferences={"*": {"transfer": ["scp"], "ssh": {"port": 22, "x": 1}}})
     b = fake_project(host_preferences={"*": {"transfer": ["nc"], "ssh": {"port": 2222}}})
-    assert merge_host_preferences([a, b]) == {
+    assert merge_host_preferences(projects=[a, b]) == {
         "*": {"transfer": ["nc"], "ssh": {"port": 2222, "x": 1}}
     }
 
@@ -127,7 +127,7 @@ def test_a_later_projects_source_overrides_an_earlier_ones_host(tmp_path):
 
     r1 = _project(tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]})
     r2 = _project(tmp_path / "r2", "r2", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.2")]})
-    lab = build_lab([r1, r2], ["merged"])
+    lab = build_lab([r1, r2], labs=["merged"])
     assert lab.hosts["alt1"].ip == "10.0.0.2"
 
 
@@ -142,7 +142,7 @@ def test_declared_containers_are_registered(tmp_path, monkeypatch):
     project = _project(
         tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
     )
-    lab = build_lab([project], ["merged"])
+    lab = build_lab([project], labs=["merged"])
     assert calls == [(lab, [project])]
 
 
@@ -153,5 +153,5 @@ def test_the_merged_host_preferences_reach_the_load(tmp_path):
     project = _project(
         tmp_path / "r1", "r1", _SOURCES + prefs, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
     )
-    lab = build_lab([project], ["merged"])
+    lab = build_lab([project], labs=["merged"])
     assert lab.hosts["alt1"].ssh_options.port == 2222

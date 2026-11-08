@@ -61,10 +61,10 @@ def test_a_loaded_host_parses_its_power_table_once(tmp_path, monkeypatch):
     calls: list[str] = []
     real = BackendRegistry.prepare
 
-    def spy(self, name, raw, env, *, source=None):
+    def spy(self, *, name, raw, env, source=None):
         if self is POWER_CONTROLLERS:
             calls.append(name)
-        return real(self, name, raw, env, source=source)
+        return real(self, name=name, raw=raw, env=env, source=source)
 
     monkeypatch.setattr(BackendRegistry, "prepare", spy)
     hosts = [

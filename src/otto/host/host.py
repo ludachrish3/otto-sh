@@ -262,7 +262,7 @@ def refuse_declined_fact(result: "Result", *, asked: str) -> None:
     """
     if result.status is not Status.NotRun:
         return
-    raise CommandNotRunError(asked, str(getattr(result, "host_name", "")))
+    raise CommandNotRunError(asked, host=str(getattr(result, "host_name", "")))
 
 
 def refuse_declined_match(
@@ -319,7 +319,7 @@ def refuse_declined_match(
     )
     raise CommandNotRunError(
         f"expect({pattern!r})",
-        host,
+        host=host,
         detail=(
             "A session preview is a PREFIX: everything announced above is what "
             "configuration alone can produce, and this wait is the point where the "
@@ -377,11 +377,11 @@ def refuse_declined_elevation(
         f"[DRY RUN] {asked} — no elevation attempted; the session's user is unchanged",
         LogMode.NORMAL,
     )
-    raise CommandNotRunError(asked, host)
+    raise CommandNotRunError(asked, host=host)
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class ShellCommand:
     """A command plus the per-command options that should be used to run it.
 
@@ -570,7 +570,7 @@ async def _run_cmds_with_budget(
         effective = remaining if sc.timeout is None else min(sc.timeout, remaining)
         entries.append(await run_one(sc, effective))
 
-    return Results.collect(entries)
+    return Results.collect(items=entries)
 
 
 def _log_tree_state(directory: "Path") -> "set[tuple[str, int, int, int]]":
@@ -711,11 +711,11 @@ class Host(Protocol):
     """Whether this host has a working ``bash`` to tag and exec through (see
     :attr:`BaseHost.has_bash`)."""
 
-    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, *, user: str | None = None, force: bool = False) -> None:
         """Open the shell :meth:`login` bridges (a hook: callers use :meth:`login`)."""
         ...
 
-    async def login(self, user: str | None = None, force: bool = False) -> None:
+    async def login(self, *, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal."""
         ...
 
@@ -736,7 +736,7 @@ class Host(Protocol):
         """
         ...
 
-    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
+    async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` the persistent session to *user* and keep it there.
 
         Families whose :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`
@@ -745,7 +745,7 @@ class Host(Protocol):
         ...
 
     def as_user(
-        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
+        self, *, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AbstractAsyncContextManager[Any]":
         """Run a block as *user*, restoring the prior identity on exit.
 
@@ -774,6 +774,7 @@ class Host(Protocol):
     async def run(
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        *,
         expects: Expect | list[Expect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
@@ -823,6 +824,7 @@ class Host(Protocol):
     async def exec(
         self,
         cmd: str | ShellCommand,
+        *,
         expects: Expect | list[Expect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
@@ -888,6 +890,7 @@ class Host(Protocol):
     async def send(
         self,
         text: str | SecretStr,
+        *,
         log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session without waiting for a response.
@@ -902,6 +905,7 @@ class Host(Protocol):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for *pattern* to appear in the host's session output.
@@ -928,6 +932,7 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        *,
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
@@ -981,6 +986,7 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        *,
         mode: int | str | None = None,
         user: str | None = None,
         show_progress: bool = True,
@@ -1054,6 +1060,7 @@ class Host(Protocol):
 
     async def reboot(
         self,
+        *,
         hard: bool = False,
         wait: bool = False,
         timeout: float = 600.0,
@@ -1081,18 +1088,18 @@ class Host(Protocol):
         """
         ...
 
-    async def is_reachable(self, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
         """Return ``True`` if the host responds to a connection probe within *timeout* seconds."""
         ...
 
-    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool:
+    async def wait_until_up(self, timeout: float, *, interval: float = 2.0) -> bool:
         """Poll until the host is reachable or *timeout* seconds elapse.
 
         Returns ``True`` if reachable before the deadline, ``False`` otherwise.
         """
         ...
 
-    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool:
+    async def wait_until_down(self, timeout: float, *, interval: float = 2.0) -> bool:
         """Poll until the host is unreachable or *timeout* seconds elapse.
 
         Returns ``True`` if unreachable before the deadline, ``False`` otherwise.
@@ -1103,7 +1110,7 @@ class Host(Protocol):
         """Close the host's persistent session and release any held resources."""
         ...
 
-    async def stage(self, owner: str | None = None) -> Result:
+    async def stage(self, *, owner: str | None = None) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
         *owner* narrows the walk to that project's products; ``None`` is every
@@ -1111,7 +1118,7 @@ class Host(Protocol):
         """
         ...
 
-    async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
+    async def install(self, *, stage_only: bool = False, owner: str | None = None) -> Result:
         """Stage and then install every product on this host that is not installed yet.
 
         Each product's ``is_installed`` is read first, before anything is
@@ -1128,6 +1135,7 @@ class Host(Protocol):
 
     async def uninstall(
         self,
+        *,
         get_product_logs: bool = True,
         get_debug_logs: bool = True,
         owner: str | None = None,
@@ -1139,15 +1147,17 @@ class Host(Protocol):
         """
         ...
 
-    async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
+    async def cleanup(
+        self, *, get_product_logs: bool = True, get_debug_logs: bool = True
+    ) -> Result:
         """Uninstall, remove coverage data, then dev tools and toolchain tools (best-effort)."""
         ...
 
-    async def is_installed(self, owner: str | None = None) -> bool:
+    async def is_installed(self, *, owner: str | None = None) -> bool:
         """Return ``True`` iff at least one product is declared and all are installed."""
         ...
 
-    async def is_uninstalled(self, owner: str | None = None) -> bool:
+    async def is_uninstalled(self, *, owner: str | None = None) -> bool:
         """Return ``True`` iff :meth:`is_installed` returns ``False``."""
         ...
 
@@ -1155,7 +1165,7 @@ class Host(Protocol):
         """Return ``True`` iff no product, coverage data, dev tool, or toolchain tool is present."""
         ...
 
-    def log_dest(self, dest: "Path | None" = None) -> Path:
+    def log_dest(self, *, dest: "Path | None" = None) -> Path:
         """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
 
         *base* is *dest*, else the run's output directory, else a library run
@@ -1165,6 +1175,7 @@ class Host(Protocol):
 
     async def get_logs(
         self,
+        *,
         product: bool = True,
         debug: bool = True,
         require_product_logs: bool = False,
@@ -1175,31 +1186,31 @@ class Host(Protocol):
         ...
 
     async def get_product_logs(
-        self, dest: "Path | None" = None, owner: str | None = None
+        self, *, dest: "Path | None" = None, owner: str | None = None
     ) -> Result:
         """Retrieve each product's logs and debug logs into its own directories."""
         ...
 
-    async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
+    async def get_debug_logs(self, *, dest: "Path | None" = None) -> Result:
         """Fetch ``debug_log_globs`` matches into ``…/logs/<host-id>/debug/``."""
         ...
 
-    async def install_dev_tools(self, owner: str | None = None) -> Result:
+    async def install_dev_tools(self, *, owner: str | None = None) -> Result:
         """Stage then install every dev tool (declaration order, first failure wins).
 
         *owner* narrows the walk to that project's tools; ``None`` is every tool.
         """
         ...
 
-    async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
+    async def uninstall_dev_tools(self, *, owner: str | None = None) -> Result:
         """Remove every dev tool (best-effort), narrowed to *owner*'s when given."""
         ...
 
-    async def remove_coverage_dirs(self, owner: str | None = None) -> Result:
+    async def remove_coverage_dirs(self, *, owner: str | None = None) -> Result:
         """Remove the ``.gcda`` counters and emptied dirs under each instrumented ``cov_dir``."""
         ...
 
-    async def coverage_dirs_clean(self, owner: str | None = None) -> bool:
+    async def coverage_dirs_clean(self, *, owner: str | None = None) -> bool:
         """Return ``True`` iff no ``.gcda`` counter or empty dir is left under any ``cov_dir``."""
         ...
 
@@ -1215,7 +1226,7 @@ class Host(Protocol):
         """Return ``True`` iff none of the toolchain's declared tools is present."""
         ...
 
-    async def install_tools(self, dev: bool = True, toolchain: bool = False) -> Result:
+    async def install_tools(self, *, dev: bool = True, toolchain: bool = False) -> Result:
         """Install tool kinds conditionally: dev tools on, toolchain artifacts off."""
         ...
 
@@ -1550,26 +1561,28 @@ class BaseHost(ABC):
         """
         from .transfer.base import parse_file_mode
 
-        mode_check = parse_file_mode(mode)
+        mode_check = parse_file_mode(value=mode)
         if not mode_check.is_ok:
             self._log_command(f"[DRY RUN] {action}: {mode_check.msg}")
             return Result(
-                Status.Error,
-                value={src: Result(Status.Error, msg=mode_check.msg) for src in files},
+                status=Status.Error,
+                value={src: Result(status=Status.Error, msg=mode_check.msg) for src in files},
                 msg=mode_check.msg,
             )
         suffix = f" (mode 0o{mode_check.value:o})" if mode_check.value is not None else ""
         file_names = ", ".join(str(f) for f in files)
         self._log_command(f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}")
         per_file = {
-            src: Result(Status.NotRun, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}")
+            src: Result(
+                status=Status.NotRun, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}"
+            )
             for src in files
         }
         # Built here rather than through `aggregate_transfer` so the aggregate
         # `msg` is the single banner an operator reads, not the per-file
         # diagnostics joined; the status it would compute is the same NotRun.
         return Result(
-            Status.NotRun,
+            status=Status.NotRun,
             value=per_file,
             msg=f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}",
         )
@@ -1607,7 +1620,7 @@ class BaseHost(ABC):
         """
         banner = f"[DRY RUN] {action}: {self.name} — {detail}"
         self._log_command(banner)
-        return Result(Status.NotRun, msg=banner)
+        return Result(status=Status.NotRun, msg=banner)
 
     def configured_login_user(self) -> str:
         """Return the login user the lab data configures, without contacting the host.
@@ -1709,7 +1722,7 @@ class BaseHost(ABC):
         """
         return
 
-    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
+    async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """Switch the persistent session to another user via ``su``.
 
         Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
@@ -1722,6 +1735,7 @@ class BaseHost(ABC):
     @asynccontextmanager
     async def as_user(
         self,
+        *,
         user: str = ROOT_LOGIN,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
         password: str | SecretStr | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
     ) -> "AsyncGenerator[BaseHost, None]":
@@ -1781,7 +1795,7 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, *, user: str | None = None, force: bool = False) -> None:
         """Open the interactive shell for :meth:`login`, bridged to the local terminal.
 
         A hook: a host family overrides it and nothing calls it but :meth:`login`,
@@ -1796,6 +1810,7 @@ class BaseHost(ABC):
     @cli_exposed
     async def login(
         self,
+        *,
         user: Annotated[
             str | None,
             Opt(
@@ -1861,7 +1876,7 @@ class BaseHost(ABC):
                 f"no connection made"
             )
             return
-        await self.run_login(user, force=force)
+        await self.run_login(user=user, force=force)
 
     async def run_logout(self) -> Result:
         """Reset the console to its login prompt for :meth:`logout`.
@@ -1907,12 +1922,13 @@ class BaseHost(ABC):
         if is_dry_run():
             banner = f"[DRY RUN] logout({self.name}) — no console reset performed"
             self._log_command(banner)
-            return Result(Status.NotRun, msg=banner)
+            return Result(status=Status.NotRun, msg=banner)
         return await self.run_logout()
 
     async def run(
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        *,
         expects: Expect | list[Expect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
@@ -2002,7 +2018,7 @@ class BaseHost(ABC):
                 # Argument validation above already ran, so the recursive call's
                 # own re-validation is harmless — nothing here should switch
                 # before an invalid argument has had the chance to raise.
-                async with self.as_user(user):
+                async with self.as_user(user=user):
                     return await self.run(
                         cmds, expects=expects, timeout=timeout, log=log, sudo=sudo
                     )
@@ -2032,7 +2048,7 @@ class BaseHost(ABC):
                 log=single.log if single.log is not None else LogMode.NORMAL,
                 user=user,
             )
-            return Results.collect([result])
+            return Results.collect(items=[result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         prepared = [self._apply_sudo(sc) if sudo else _prepared(sc) for sc in resolved]
@@ -2117,7 +2133,7 @@ class BaseHost(ABC):
         await self._prepare_live_session()
         with self._run_user_binding(user):
             return await self._live_session_mgr().run_cmd(
-                cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+                cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
             )
 
     def _refuse_run_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: the families that honour user= have nothing to refuse
@@ -2151,6 +2167,7 @@ class BaseHost(ABC):
                 help="One command, quoted as one arg; join steps with && on a POSIX shell.",
             ),
         ],
+        *,
         expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
         timeout: Annotated[
             float,
@@ -2351,7 +2368,7 @@ class BaseHost(ABC):
         if is_dry_run():
             return self._dry_run_session(name)
         await self._prepare_live_session()
-        return await self._live_session_mgr().open_session(name)
+        return await self._live_session_mgr().open_session(name=name)
 
     async def _prepare_live_session(self) -> None:
         """Make the device ready for the live session arm; nothing, for most families.
@@ -2394,7 +2411,7 @@ class BaseHost(ABC):
         try:
             target = user if user is not None else shell_cls.user
             if target is not None:
-                await session.switch_user(target)
+                await session.switch_user(user=target)
             async with shell_cls.attach(session, timeout=timeout) as shell:
                 yield shell
         finally:
@@ -2404,6 +2421,7 @@ class BaseHost(ABC):
     async def send(
         self,
         text: str | SecretStr,
+        *,
         log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session.
@@ -2434,6 +2452,7 @@ class BaseHost(ABC):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
+        *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for *pattern* in the session output.
@@ -2469,7 +2488,7 @@ class BaseHost(ABC):
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
         await self._prepare_live_session()
-        return await self._live_session_mgr().expect(pattern, timeout)
+        return await self._live_session_mgr().expect(pattern, timeout=timeout)
 
     ####################
     #  File transfer
@@ -2523,6 +2542,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        *,
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
@@ -2535,6 +2555,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        *,
         mode: int | str | None = None,
         user: str | None = None,
         show_progress: bool = True,
@@ -2577,7 +2598,7 @@ class BaseHost(ABC):
         if owner is not None and not owner.is_closed():
             from .loop_owner import HostLoopError  # the raise path only: off the startup graph
 
-            raise HostLoopError(self.id, owner, loop)
+            raise HostLoopError(self.id, owner=owner, caller=loop)
         if owner is not None:
             self._release_owner()  # a closed loop: nothing left to close, only to forget
         # The one rebuild decision: managers that served another loop, closed
@@ -2694,7 +2715,7 @@ class BaseHost(ABC):
             if owner is not loop:
                 from .loop_owner import HostLoopError  # the raise path only: off the startup graph
 
-                raise HostLoopError(self.id, owner, loop)
+                raise HostLoopError(self.id, owner=owner, caller=loop)
         try:
             await self._close()
         finally:
@@ -2727,7 +2748,7 @@ class BaseHost(ABC):
         return [p for p in self.products if p.owner == owner]
 
     @cli_exposed
-    async def stage(self, owner: str | None = None) -> Result:
+    async def stage(self, *, owner: str | None = None) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
         Iterates :attr:`products` in declaration order, returning the first
@@ -2752,7 +2773,7 @@ class BaseHost(ABC):
                 # Returned whole: a product's CommandResult carries the retcode
                 # and output that the CLI turns into an exit code.
                 return result
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _not_installed(self, owner: str | None) -> "list[Product]":
         """Return the *owner*-scoped products that are not installed, in declaration order.
@@ -2771,14 +2792,16 @@ class BaseHost(ABC):
         for product in self._owned_products(owner):
             if await product.is_installed(cast("Host", self)):
                 self._log_outcome(
-                    product.name, "installed", Result(Status.Skipped, msg="already installed")
+                    product.name,
+                    "installed",
+                    Result(status=Status.Skipped, msg="already installed"),
                 )
             else:
                 pending.append(product)
         return pending
 
     @cli_exposed
-    async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
+    async def install(self, *, stage_only: bool = False, owner: str | None = None) -> Result:
         """Stage, then install every product that is not installed yet.
 
         Reads every product's ``is_installed`` first, before anything is
@@ -2803,11 +2826,12 @@ class BaseHost(ABC):
             self._log_outcome(product.name, "installed", result)
             if not result.is_ok:
                 return result
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @cli_exposed
     async def uninstall(
         self,
+        *,
         get_product_logs: bool = True,
         get_debug_logs: bool = True,
         owner: str | None = None,
@@ -2842,10 +2866,10 @@ class BaseHost(ABC):
             note(result)
         if get_debug_logs:
             note(await self.get_debug_logs())
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     @cli_exposed(output_dir=False)
-    async def is_installed(self, owner: str | None = None) -> bool:
+    async def is_installed(self, *, owner: str | None = None) -> bool:
         """Return True iff there is at least one product and all are installed.
 
         An empty :attr:`products` list is **not installed** (avoids the
@@ -2862,12 +2886,14 @@ class BaseHost(ABC):
         return True
 
     @cli_exposed(output_dir=False, help_="Report the opposite of `is-installed`.")
-    async def is_uninstalled(self, owner: str | None = None) -> bool:
+    async def is_uninstalled(self, *, owner: str | None = None) -> bool:
         """Inverse of :meth:`is_installed`."""
         return not await self.is_installed(owner=owner)
 
     @cli_exposed
-    async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
+    async def cleanup(
+        self, *, get_product_logs: bool = True, get_debug_logs: bool = True
+    ) -> Result:
         """Uninstall, remove coverage data, then dev tools and toolchain tools (best-effort).
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
@@ -2901,7 +2927,7 @@ class BaseHost(ABC):
         note(await self._remove_coverage_dirs_warned())
         note(await self.uninstall_dev_tools())
         note(await self.remove_toolchain_tools())
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     async def _remove_coverage_dirs_warned(self) -> Result:
         """:meth:`remove_coverage_dirs`, then the shared discarded-counters decision.
@@ -2946,7 +2972,7 @@ class BaseHost(ABC):
     #  Logs
     ####################
 
-    def log_dest(self, dest: "Path | None" = None) -> Path:
+    def log_dest(self, *, dest: "Path | None" = None) -> Path:
         """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
 
         *base* is :func:`otto.output_dir.resolve_output_dir`'s answer: *dest*
@@ -2969,11 +2995,11 @@ class BaseHost(ABC):
         """
         from ..output_dir import materialize_output_dir
 
-        return materialize_output_dir(layout.run_dir_of(self.log_dest(dest)))
+        return materialize_output_dir(layout.run_dir_of(self.log_dest(dest=dest)))
 
     @cli_exposed
     async def get_product_logs(
-        self, dest: "Path | None" = None, owner: str | None = None
+        self, *, dest: "Path | None" = None, owner: str | None = None
     ) -> Result:
         """Retrieve each product's logs and debug logs into its own directories.
 
@@ -2993,15 +3019,15 @@ class BaseHost(ABC):
         for product in self._owned_products(owner):
             logs_dir = layout.product_logs_dir(base, self.id, product.name)
             logs_dir.mkdir(parents=True, exist_ok=True)
-            result = await product.get_logs(cast("Host", self), logs_dir)
+            result = await product.get_logs(cast("Host", self), dest=logs_dir)
             if not result.is_ok and first_failure is None:
                 first_failure = result
             debug_dir = layout.product_debug_dir(base, self.id, product.name)
             debug_dir.mkdir(parents=True, exist_ok=True)
-            result = await product.get_debug_logs(cast("Host", self), debug_dir)
+            result = await product.get_debug_logs(cast("Host", self), dest=debug_dir)
             if not result.is_ok and first_failure is None:
                 first_failure = result
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     @cli_exposed(
         help_=(
@@ -3009,7 +3035,7 @@ class BaseHost(ABC):
             "directory (or `--dest`)."
         )
     )
-    async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
+    async def get_debug_logs(self, *, dest: "Path | None" = None) -> Result:
         """Fetch :attr:`debug_log_globs` matches into ``…/logs/<host-id>/debug/``.
 
         An entry with no glob metacharacter is fetched as declared, so a host
@@ -3027,6 +3053,7 @@ class BaseHost(ABC):
     @cli_exposed
     async def get_logs(
         self,
+        *,
         product: bool = True,
         debug: bool = True,
         require_product_logs: bool = False,
@@ -3053,7 +3080,7 @@ class BaseHost(ABC):
         """
         if require_product_logs and not product:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     "require_product_logs cannot be satisfied when product logs are not "
                     "gathered: the product-log haul it requires is the step being skipped. "
@@ -3093,7 +3120,7 @@ class BaseHost(ABC):
             ):
                 note(
                     Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=f"require_product_logs: no product logs retrieved from {self.id}",
                     )
                 )
@@ -3102,7 +3129,7 @@ class BaseHost(ABC):
             # exactly what explains a product haul that failed, and losing it
             # over that failure is the trade this surface exists to refuse.
             note(await self.get_debug_logs(dest=dest))
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     ####################
     #  Tools
@@ -3122,7 +3149,7 @@ class BaseHost(ABC):
         return [t for t in self.dev_tools if t.owner == owner]
 
     @cli_exposed
-    async def install_dev_tools(self, owner: str | None = None) -> Result:
+    async def install_dev_tools(self, *, owner: str | None = None) -> Result:
         """Stage then install every dev tool (declaration order, first failure wins).
 
         Each tool is carried through both phases before the next one starts, so
@@ -3143,7 +3170,7 @@ class BaseHost(ABC):
             self._log_outcome(tool.name, "installed", result)
             if not result.is_ok:
                 return result
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @cli_exposed(
         help_=(
@@ -3151,7 +3178,7 @@ class BaseHost(ABC):
             "the tools PROJECT attached."
         )
     )
-    async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
+    async def uninstall_dev_tools(self, *, owner: str | None = None) -> Result:
         """Remove this host's dev tools (best-effort), scoped by *owner*.
 
         The removal twin of :meth:`install_dev_tools`, and a verb of its own
@@ -3174,7 +3201,7 @@ class BaseHost(ABC):
             self._log_outcome(tool.name, "uninstalled", result)
             if not result.is_ok and first_failure is None:
                 first_failure = result
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     @cli_exposed(
         help_=(
@@ -3182,7 +3209,7 @@ class BaseHost(ABC):
             "cov_dir, best-effort; `--owner PROJECT` limits it to PROJECT's products."
         )
     )
-    async def remove_coverage_dirs(self, owner: str | None = None) -> Result:
+    async def remove_coverage_dirs(self, *, owner: str | None = None) -> Result:
         """Remove what coverage placed under each instrumented product's ``cov_dir``.
 
         Only ``.gcda`` regular files and the directories they leave empty: a
@@ -3212,7 +3239,7 @@ class BaseHost(ABC):
             "product's cov_dir; `--owner PROJECT` limits it to PROJECT's products."
         ),
     )
-    async def coverage_dirs_clean(self, owner: str | None = None) -> bool:
+    async def coverage_dirs_clean(self, *, owner: str | None = None) -> bool:
         """Whether no ``.gcda`` counter and no empty directory is left under any ``cov_dir``.
 
         The matching question to :meth:`remove_coverage_dirs`, over the same
@@ -3269,7 +3296,7 @@ class BaseHost(ABC):
             # (chown included) until it is done.
             landed = path_operand(tool.dest / tool.source.name)
             installed = path_operand(tool.dest / tool.name)
-            async with self.as_user(ROOT_LOGIN):
+            async with self.as_user(user=ROOT_LOGIN):
                 if tool.name != tool.source.name:
                     moved = await self.exec(f"mv {landed} {installed}")
                     if not moved.is_ok:
@@ -3277,7 +3304,7 @@ class BaseHost(ABC):
                 chown = await self.exec(f"chown {shlex.quote(tool.user)} {installed}")
                 if not chown.is_ok:
                     return chown
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @cli_exposed
     async def remove_toolchain_tools(self) -> Result:
@@ -3306,7 +3333,7 @@ class BaseHost(ABC):
             result = await self.exec(toolchain_removal_command(tc_tool))
             if not result.is_ok and first_failure is None:
                 first_failure = result
-        return first_failure if first_failure is not None else Result(Status.Success)
+        return first_failure if first_failure is not None else Result(status=Status.Success)
 
     async def toolchain_tools_absent(self) -> bool:
         """Whether none of the toolchain's declared tools is present on this host.
@@ -3331,7 +3358,7 @@ class BaseHost(ABC):
         return True
 
     @cli_exposed
-    async def install_tools(self, dev: bool = True, toolchain: bool = False) -> Result:
+    async def install_tools(self, *, dev: bool = True, toolchain: bool = False) -> Result:
         """Install tool kinds conditionally, dev on and toolchain off by default.
 
         The asymmetric defaults are the point: dev tools are small and wanted
@@ -3344,7 +3371,7 @@ class BaseHost(ABC):
                 return result
         if toolchain:
             return await self.install_toolchain_tools()
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     ####################
     #  Power / reboot
@@ -3397,7 +3424,7 @@ class BaseHost(ABC):
 
         def _with_state(result: Result, commanded: PowerState) -> Result:
             value = commanded if result.is_ok else None
-            return Result(result.status, value=value, msg=result.msg)
+            return Result(status=result.status, value=value, msg=result.msg)
 
         # Both checks hoisted above the dry-run arm so there is ONE authority
         # for each error rather than a preview-side copy that can drift.
@@ -3440,6 +3467,7 @@ class BaseHost(ABC):
     @cli_exposed
     async def reboot(
         self,
+        *,
         hard: bool = False,
         wait: bool = False,
         timeout: float = 600.0,
@@ -3553,7 +3581,7 @@ class BaseHost(ABC):
                 down_bound, interval=poll_interval
             ):
                 return Result(
-                    Status.Failed,
+                    status=Status.Failed,
                     msg=(
                         f"{self.name!r} never went down within {down_bound}s of the "
                         f"reboot — the reboot likely did not take"
@@ -3562,12 +3590,12 @@ class BaseHost(ABC):
             remaining = max(0.0, deadline - loop.time())
             if not await self.wait_until_up(remaining, interval=poll_interval):
                 return Result(
-                    Status.Failed,
+                    status=Status.Failed,
                     msg=f"{self.name!r} did not become reachable within {timeout}s after reboot",
                 )
             if not await self._confirm_recovered(deadline, poll_interval):
                 return Result(
-                    Status.Failed,
+                    status=Status.Failed,
                     msg=(
                         f"{self.name!r} accepts connections but its shell never answered "
                         f"within {timeout}s of the reboot — likely still booting"
@@ -3590,7 +3618,7 @@ class BaseHost(ABC):
             f"shutdown is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    async def is_reachable(self, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
         """Whether this host answers a lightweight connection probe.
 
         Per-family override; default raises (no generic probe).
@@ -3599,7 +3627,7 @@ class BaseHost(ABC):
             f"is_reachable is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool:
+    async def wait_until_up(self, timeout: float, *, interval: float = 2.0) -> bool:
         """Poll :meth:`is_reachable` until reachable or *timeout*. Returns success."""
         # probe_first (the wait_for default, kept deliberately): an exhausted
         # budget still probes once, so reboot()'s up-wait cannot fail a host
@@ -3616,7 +3644,7 @@ class BaseHost(ABC):
             return False
         return True
 
-    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool:
+    async def wait_until_down(self, timeout: float, *, interval: float = 2.0) -> bool:
         """Poll :meth:`is_reachable` until *not* reachable or *timeout*."""
 
         async def unreachable() -> bool:
@@ -3792,7 +3820,7 @@ def _quieted(host: object, mode: LogMode) -> LogMode:
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment
 @final
-@dataclass
+@dataclass(kw_only=True)
 class SuppressCommandOutput:
     """Suppress command/output logging for one host or globally.
 

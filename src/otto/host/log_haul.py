@@ -44,7 +44,7 @@ async def haul_globs(host: Any, globs: Sequence[str], dest: Path, *, who: str) -
             glob = getattr(host, "glob", None)
             if glob is None:
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=(
                         f"{who}: debug_log_globs entry {entry!r} is a glob pattern, but "
                         f"{type(host).__name__} has no glob support — declare concrete "
@@ -56,7 +56,7 @@ async def haul_globs(host: Any, globs: Sequence[str], dest: Path, *, who: str) -
             paths.append(Path(entry))
             literals.append(Path(entry))
     if not paths:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     fetched = await host.get(paths, dest)
     exists = getattr(host, "exists", None)
     if fetched.is_ok or fetched.status is Status.NotRun or exists is None or not literals:
@@ -68,7 +68,7 @@ async def haul_globs(host: Any, globs: Sequence[str], dest: Path, *, who: str) -
         logger.info(f"{who}: {path} is not there; nothing to collect")
     remaining = [path for path in paths if path not in missing]
     if not remaining:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     return await host.get(remaining, dest)
 
 

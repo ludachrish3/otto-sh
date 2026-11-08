@@ -203,8 +203,8 @@ class CsvMetricParser(MetricParser):
     def __init__(
         self,
         command: str,
-        columns: Sequence[str],
         *,
+        columns: Sequence[str],
         chart: str,
         tab: str = "metrics",
         tab_label: str = "Metrics",
@@ -284,8 +284,8 @@ class RegexLogEventParser(MetricParser):
     def __init__(
         self,
         command: str,
-        pattern: "str | re.Pattern[str]",
         *,
+        pattern: "str | re.Pattern[str]",
         tab: str,
         tab_label: str,
         ts_group: str = "ts",

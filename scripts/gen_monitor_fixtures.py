@@ -118,7 +118,7 @@ def _link(
     ea = LinkEndpoint(host=a[0], interface=a[1], ip=a[2])
     eb = LinkEndpoint(host=b[0], interface=b[1], ip=b[2])
     return LinkSnapshot(
-        id=make_static_link_id(ea, eb, name),
+        id=make_static_link_id(a=ea, b=eb, name=name),
         endpoints=[
             LinkEndpointSnapshot(host=a[0], interface=a[1], ip=a[2]),
             LinkEndpointSnapshot(host=b[0], interface=b[1], ip=b[2]),

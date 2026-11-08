@@ -42,17 +42,17 @@ def _prepare(
         raise ValueError(f"Invalid [reservations] settings: {compact_validation_error(e)}") from e
     source = origin or str(project_root / ".otto" / "settings.toml")
     return RESERVATION_BACKENDS.prepare(
-        cfg.backend,
-        settings.get(cfg.backend) or {},
-        ReservationEnv(project_root, username, source, cfg.url),
+        name=cfg.backend,
+        raw=settings.get(cfg.backend) or {},
+        env=ReservationEnv(project_root, username, source, cfg.url),
         source=source,
     )
 
 
 def build_backend(
+    *,
     settings: "dict[str, Any]",
     project_root: Path,
-    *,
     username: "str | None" = None,
     origin: "str | None" = None,
 ) -> "ReservationBackend":
@@ -97,14 +97,14 @@ def build_backend(
     from .registry import RESERVATION_BACKENDS
 
     return RESERVATION_BACKENDS.build(
-        _prepare(settings, project_root, username=username, origin=origin)
+        prepared=_prepare(settings, project_root, username=username, origin=origin)
     )
 
 
 def gate_from_settings(
     settings: "dict[str, Any]",
-    project_root: Path,
     *,
+    project_root: Path,
     holder: "str | None",
     skip_reservation_check: bool,
 ) -> ReservationGate:
@@ -133,7 +133,7 @@ def gate_from_settings(
             prepared.append(
                 _prepare(settings, project_root, username=identity.username, origin=None)
             )
-        return RESERVATION_BACKENDS.build(prepared[0])
+        return RESERVATION_BACKENDS.build(prepared=prepared[0])
 
     backend = None if skip_reservation_check else _factory()
     return ReservationGate(
@@ -145,8 +145,8 @@ def gate_from_settings(
 
 
 def build_reservation_gate(
-    projects: "list[Project]",
     *,
+    projects: "list[Project]",
     holder: str | None,
     skip_reservation_check: bool,
     cwd_fallback: Path,
@@ -168,5 +168,8 @@ def build_reservation_gate(
             settings, project_root = project.reservation_settings, project.root
             break
     return gate_from_settings(
-        settings, project_root, holder=holder, skip_reservation_check=skip_reservation_check
+        settings,
+        project_root=project_root,
+        holder=holder,
+        skip_reservation_check=skip_reservation_check,
     )

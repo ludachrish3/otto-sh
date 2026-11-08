@@ -43,8 +43,8 @@ IMPAIRERS: "Registry[ClassEntry[LinkImpairer]]" = Registry(
     check_resolved=lambda name, entry: _check_impairer_class(name, resolved(entry.cls)),
 )
 """The impairer classes lab data can name, keyed by impairer name."""
-_STOCK_REFS = {"netem": Ref("otto.link.netem:NetEmImpairer")}
-IMPAIRERS.register("netem", ClassEntry(_STOCK_REFS["netem"]))
+_STOCK_REFS = {"netem": Ref(target="otto.link.netem:NetEmImpairer")}
+IMPAIRERS.register(name="netem", entry=ClassEntry(cls=_STOCK_REFS["netem"]))
 
 
 def _is_unresolved_stock(name: str) -> bool:
@@ -55,7 +55,7 @@ def _is_unresolved_stock(name: str) -> bool:
     unresolved either; its class is already imported, so reading it is free.
     """
     ref = _STOCK_REFS.get(name)
-    return ref is not None and name in IMPAIRERS and IMPAIRERS.peek(name).cls == ref
+    return ref is not None and name in IMPAIRERS and IMPAIRERS.peek(name=name).cls == ref
 
 
 @registration_boundary
@@ -76,9 +76,9 @@ def register_impairer(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite*
             is false.
     """
-    IMPAIRERS.register(name, ClassEntry(cls), overwrite=overwrite)
+    IMPAIRERS.register(name=name, entry=ClassEntry(cls=cls), overwrite=overwrite)
 
 
-def build_impairer(name: str) -> type[LinkImpairer]:
+def build_impairer(*, name: str) -> type[LinkImpairer]:
     """Return the impairer class registered under *name* (rich unknown-name error)."""
     return resolved(IMPAIRERS.get(name).cls)

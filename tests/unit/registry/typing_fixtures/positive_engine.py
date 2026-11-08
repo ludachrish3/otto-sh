@@ -53,15 +53,15 @@ def class_valued_registry() -> Frame:
         register_hint="register_frame()",
         check_resolved=lambda name, entry: None,
     )
-    frames.register("a", ClassEntry(Frame))
-    frames.register("b", ClassEntry(Ref("m:Frame")))
-    frames.register_many([("c", ClassEntry(Frame))], overwrite=True)
+    frames.register(name="a", entry=ClassEntry(cls=Frame))
+    frames.register(name="b", entry=ClassEntry(cls=Ref(target="m:Frame")))
+    frames.register_many([("c", ClassEntry(cls=Frame))], overwrite=True)
     return resolved(frames.get("a").cls)()
 
 
 def subscription() -> None:
     hooks: Subscription[Callable[[int], int]] = Subscription("hook", register_hint="x")
-    token = hooks.subscribe(abs)
+    token = hooks.subscribe(value=abs)
     token.cancel()
     for occurrence in hooks.items():
         occurrence.value(1)
@@ -75,5 +75,11 @@ def backend_registry() -> Store:
         describe_parse_error=str,
         result=lambda name, obj: None,
     )
-    stores.register("json", configured_backend(config=StoreConfig, factory=_store, metadata=None))
-    return stores.build(stores.prepare("json", {"path": "p"}, StoreEnv("r"), source="settings"))
+    stores.register(
+        name="json", entry=configured_backend(config=StoreConfig, factory=_store, metadata=None)
+    )
+    return stores.build(
+        prepared=stores.prepare(
+            name="json", raw={"path": "p"}, env=StoreEnv("r"), source="settings"
+        )
+    )

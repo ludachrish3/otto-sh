@@ -63,7 +63,7 @@ def test_gate_ignores_warnings(monkeypatch):
 
 def test_gate_still_blocks_on_errors(monkeypatch):
     _install_result(
-        monkeypatch, errors=[bs.DependencyError("x", "dependency 'y' is not satisfied")]
+        monkeypatch, errors=[bs.DependencyError("x", message="dependency 'y' is not satisfied")]
     )
     with pytest.raises(typer.Exit) as excinfo:
         fail_loud_on_bootstrap_errors()
@@ -71,7 +71,9 @@ def test_gate_still_blocks_on_errors(monkeypatch):
 
 
 def test_dependency_error_framing():
-    err = bs.DependencyError("/suts/a", "dependency 'b >= 2' is not satisfied: found b 1.0.0")
+    err = bs.DependencyError(
+        "/suts/a", message="dependency 'b >= 2' is not satisfied: found b 1.0.0"
+    )
     assert str(err) == "project root /suts/a: dependency 'b >= 2' is not satisfied: found b 1.0.0"
     assert err.source == "dependencies"
 
@@ -82,7 +84,7 @@ def test_emit_renders_errors_then_warnings(capsys):
     result = bs.BootstrapResult(
         env=None,
         projects=[],
-        errors=[bs.DependencyError("/suts/a", "dependency 'b' is not satisfied")],
+        errors=[bs.DependencyError("/suts/a", message="dependency 'b' is not satisfied")],
         warnings=[
             bs.BootstrapWarning(
                 root="/suts/c",
@@ -125,7 +127,11 @@ class TestDemotion:
         project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))  # must not raise
@@ -137,7 +143,11 @@ class TestDemotion:
         project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))  # must not raise
@@ -153,7 +163,11 @@ class TestDemotion:
         project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))
@@ -173,7 +187,11 @@ class TestDemotion:
         project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))
@@ -183,7 +201,11 @@ class TestDemotion:
         project = _broken_project("project2", lab_patterns=["unix"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -194,7 +216,11 @@ class TestDemotion:
         project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -206,7 +232,11 @@ class TestDemotion:
         # there is nothing to attribute activation to.
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(Path("/projects/ghost"), "settings.toml", ValueError("bad"))],
+            errors=[
+                bs.BootstrapError(
+                    Path("/projects/ghost"), source="settings.toml", cause=ValueError("bad")
+                )
+            ],
             projects=[],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -217,7 +247,9 @@ class TestDemotion:
         project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("x"))],
+            errors=[
+                bs.BootstrapError(project.root, source="project2_init", cause=ImportError("x"))
+            ],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -234,7 +266,11 @@ class TestDemotion:
         project = _broken_project("Proj_2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
+            errors=[
+                bs.BootstrapError(
+                    project.root, source="project2_init", cause=ImportError("paramiko")
+                )
+            ],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("proj-2",)))  # must not raise
@@ -247,8 +283,10 @@ class TestDemotion:
         _install_result(
             monkeypatch,
             errors=[
-                bs.BootstrapError(dead.root, "project2_init", ImportError("paramiko")),
-                bs.BootstrapError(alive.root, "project3_init", ImportError("asyncssh")),
+                bs.BootstrapError(dead.root, source="project2_init", cause=ImportError("paramiko")),
+                bs.BootstrapError(
+                    alive.root, source="project3_init", cause=ImportError("asyncssh")
+                ),
             ],
             projects=[dead, alive],
         )
@@ -278,7 +316,7 @@ def test_the_refusal_says_why_a_switched_off_project_still_counts(monkeypatch, c
     app, fw = _requiring("app", needs="fw"), _broken_project("fw")
     _install_result(
         monkeypatch,
-        errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],
+        errors=[bs.BootstrapError(fw.root, source="fw_init", cause=ImportError("paramiko"))],
         projects=[app, fw],
     )
     with pytest.raises(typer.Exit) as excinfo:
@@ -299,7 +337,7 @@ def test_the_refusal_names_every_requirer_of_an_out_of_scope_project(monkeypatch
     fw = _broken_project("fw", lab_patterns=["elsewhere"])
     _install_result(
         monkeypatch,
-        errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],
+        errors=[bs.BootstrapError(fw.root, source="fw_init", cause=ImportError("paramiko"))],
         projects=[app, cli, fw],
     )
     with pytest.raises(typer.Exit) as excinfo:

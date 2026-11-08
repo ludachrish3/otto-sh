@@ -28,7 +28,7 @@ class ResolvedEntry:
 
 
 def resolve_host_entry(
-    host_data: dict[str, Any], inventory: "Inventory | None", element: Element
+    host_data: dict[str, Any], *, inventory: "Inventory | None", element: Element
 ) -> ResolvedEntry:
     """Return *host_data* with its ``inventory`` reference resolved, or a copy unchanged.
 
@@ -110,8 +110,8 @@ def resolve_host_entry(
         if isinstance(inline_creds, list):
             # Spec 2026-09-06 §6.2: the lab file is the highest layer and leads.
             resolved["creds"] = merge_creds(
-                stated.get("creds", []),
-                inline_creds,
+                lower=stated.get("creds", []),
+                higher=inline_creds,
                 key=key,
                 lower_name="inventory record",
                 higher_name="lab file",

@@ -56,8 +56,8 @@ def test_credentials_empty_creds_loginless():
 def test_has_direct_cred_is_the_question_direct_cred_for_answers_by_raising():
     creds = [Cred(login="alice", password="pw"), Cred(login="root", proxy="su", via="alice")]
     mgr = _mgr(creds)
-    assert mgr.has_direct_cred("alice") is True
-    assert mgr.has_direct_cred("root") is False, "reachable only through a hop"
+    assert mgr.has_direct_cred(user="alice") is True
+    assert mgr.has_direct_cred(user="root") is False, "reachable only through a hop"
     with pytest.raises(LoginProxyError):
         mgr._direct_cred_for("root")
 
@@ -72,8 +72,8 @@ async def test_ssh_as_opens_and_caches_per_user(monkeypatch):
 
     mgr = _mgr(creds=[Cred(login="vagrant", password="v"), Cred(login="postgres", password="p")])
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_connect)
-    c1 = await mgr.ssh_as("postgres")
-    c2 = await mgr.ssh_as("postgres")
+    c1 = await mgr.ssh_as(user="postgres")
+    c2 = await mgr.ssh_as(user="postgres")
     assert c1 is c2  # cached
     assert calls == ["postgres"]  # authenticated AS postgres, once
     assert (await mgr.ssh()) is not c1  # primary connection is separate
@@ -87,14 +87,14 @@ async def test_ssh_as_refuses_proxied_user():
     ]
     mgr = _mgr(creds=creds)
     with pytest.raises(LoginProxyError, match="has no directly-loginable cred"):
-        await mgr.ssh_as("admin")
+        await mgr.ssh_as(user="admin")
 
 
 @pytest.mark.asyncio
 async def test_ssh_as_unknown_login_uses_resolve_chains_error():
     mgr = _mgr(creds=[Cred(login="vagrant", password="v")])
     with pytest.raises(LoginProxyError, match="unknown login"):
-        await mgr.ssh_as("ghost")
+        await mgr.ssh_as(user="ghost")
 
 
 @pytest.mark.asyncio
@@ -106,10 +106,10 @@ async def test_sftp_as_opens_over_ssh_as_and_caches_per_user(monkeypatch):
 
     mgr = _mgr(creds=[Cred(login="vagrant", password="v"), Cred(login="postgres", password="p")])
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_connect)
-    s1 = await mgr.sftp_as("postgres")
-    s2 = await mgr.sftp_as("postgres")
+    s1 = await mgr.sftp_as(user="postgres")
+    s2 = await mgr.sftp_as(user="postgres")
     assert s1 is s2
-    conn = await mgr.ssh_as("postgres")
+    conn = await mgr.ssh_as(user="postgres")
     conn.start_sftp_client.assert_called_once()
 
 
@@ -146,20 +146,20 @@ def test_transport_cred_for_ftp_is_the_scoped_cred_and_the_term_pick_is_untouche
     # The ftp-scoped entry leads, so it is ftp's default and nothing else's:
     # over the ssh term it does not apply and the proxied `mysql` is the pick.
     mgr = _mgr([FTP_USER, MYSQL, ADMIN])
-    assert mgr.transport_cred_for("ftp") == FTP_USER
-    assert mgr.login_target_for("ftp") == "ftpuser"
+    assert mgr.transport_cred_for(protocol="ftp") == FTP_USER
+    assert mgr.login_target_for(protocol="ftp") == "ftpuser"
     assert mgr.credentials == ("admin", SecretStr("hunter2"))
     assert mgr.login_target == "mysql"
 
 
 def test_transport_cred_for_a_protocol_with_no_scoped_cred_is_the_direct_end_of_the_term_pick():
     mgr = _mgr([MYSQL, ADMIN])
-    assert mgr.transport_cred_for("ftp") == ADMIN
+    assert mgr.transport_cred_for(protocol="ftp") == ADMIN
 
 
 def test_transport_cred_for_is_none_when_no_cred_applies():
-    assert _mgr([]).transport_cred_for("ftp") is None
-    assert _mgr([FTP_USER]).transport_cred_for("ssh") is None
+    assert _mgr([]).transport_cred_for(protocol="ftp") is None
+    assert _mgr([FTP_USER]).transport_cred_for(protocol="ssh") is None
 
 
 def test_a_term_every_cred_is_scoped_away_from_is_loginless():
@@ -176,7 +176,7 @@ def test_a_term_every_cred_is_scoped_away_from_is_loginless():
 
 def test_login_target_for_a_non_term_protocol_is_its_own_pick():
     mgr = _mgr([FTP_USER, ADMIN])
-    assert mgr.login_target_for("ftp") == "ftpuser"
+    assert mgr.login_target_for(protocol="ftp") == "ftpuser"
     assert mgr.login_target == "admin"
 
 
@@ -309,14 +309,14 @@ async def test_ssh_as_resolves_against_ssh(monkeypatch):
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_ssh_connect)
     ssh_admin = Cred(login="admin", password="ssh-pw", protocols=["ssh"])
     mgr = _mgr([ADMIN, ssh_admin])
-    await mgr.ssh_as("admin")
+    await mgr.ssh_as(user="admin")
     assert seen["auth"] == ("admin", SecretStr("ssh-pw"))
 
 
 def test_console_term_is_registered_for_both_families():
     from otto.host.connections import TERM_BACKENDS
 
-    metadata = TERM_BACKENDS.peek("console").metadata
+    metadata = TERM_BACKENDS.peek(name="console").metadata
     assert metadata.host_families == frozenset({"unix", "embedded"})
     assert metadata.authenticates is True
 
@@ -324,9 +324,9 @@ def test_console_term_is_registered_for_both_families():
 def test_dials_host_distinguishes_console_from_ssh_and_telnet():
     from otto.host.connections import TERM_BACKENDS, register_term_backend
 
-    assert TERM_BACKENDS.peek("ssh").metadata.dials_host is True
-    assert TERM_BACKENDS.peek("telnet").metadata.dials_host is True
-    assert TERM_BACKENDS.peek("console").metadata.dials_host is False
+    assert TERM_BACKENDS.peek(name="ssh").metadata.dials_host is True
+    assert TERM_BACKENDS.peek(name="telnet").metadata.dials_host is True
+    assert TERM_BACKENDS.peek(name="console").metadata.dials_host is False
     with pytest.raises(ValueError, match="dials_host must be a bool"):
         register_term_backend(
             "bad-dials",
@@ -615,7 +615,7 @@ class TestConnectAllowance:
 
     def test_a_named_term_overrides_the_active_one(self):
         assert (
-            self._cm("ssh").connect_allowance("telnet")
+            self._cm("ssh").connect_allowance(term="telnet")
             == _MAXWAIT + TelnetOptions().echo_negotiation_timeout
         )
 
@@ -656,14 +656,14 @@ class TestConnectAllowance:
 
     def test_only_a_console_that_logs_in_is_not_retried(self):
         assert self._cm("ssh").retries_failed_open() is True
-        assert self._cm("ssh").retries_failed_open("telnet") is True
+        assert self._cm("ssh").retries_failed_open(term="telnet") is True
         logs_in = self._cm("console", console_options=ConsoleOptions(server="s", port=1))
         assert logs_in.retries_failed_open() is False
         quiet_opts = ConsoleOptions(server="s", port=1, login=False)
         assert self._cm("console", console_options=quiet_opts).retries_failed_open() is True
 
     def test_an_unknown_term_counts_nothing(self):
-        assert self._cm("ssh").connect_allowance("xmodem") == 0.0
+        assert self._cm("ssh").connect_allowance(term="xmodem") == 0.0
 
 
 class TestReleaseAllowance:
@@ -725,4 +725,4 @@ class TestReleaseAllowance:
         named = active if term is None else term
         # ssh has no telnet-framed client and so never drains.
         drains = named != "ssh" and await self._real_close_drains(cm, named, monkeypatch)
-        assert cm.release_allowance(term) == (2.0 if drains else 0.0)
+        assert cm.release_allowance(term=term) == (2.0 if drains else 0.0)

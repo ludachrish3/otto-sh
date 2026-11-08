@@ -64,6 +64,7 @@ class ReservationBackend(Protocol):
     def fetch_reservations(
         self,
         username: str,
+        *,
         start: "datetime | None" = None,
         end: "datetime | None" = None,
     ) -> "list[Reservation]":
@@ -138,7 +139,7 @@ class SupportsUsernameCompletion(Protocol):
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Reservation:
     """One booking: *user* holds *resource* over ``[start, end]``.
 
@@ -165,7 +166,7 @@ class Reservation:
     start: "datetime | None" = None
     end: "datetime | None" = None
 
-    def expires_within(self, delta: "timedelta", *, now: "datetime | None" = None) -> bool:
+    def expires_within(self, *, delta: "timedelta", now: "datetime | None" = None) -> bool:
         """Whether this booking ends within *delta* from *now*.
 
         Always ``False`` for an open-ended booking (``end is None``). A booking

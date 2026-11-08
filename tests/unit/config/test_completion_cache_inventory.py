@@ -183,7 +183,7 @@ def _registered(name: str, cls: type):
     try:
         yield {"backend": name}
     finally:
-        INVENTORY_BACKENDS.unregister(name)
+        INVENTORY_BACKENDS.unregister(name=name)
 
 
 def test_an_uncacheable_backend_never_matches_its_own_entry(tmp_path, monkeypatch):
@@ -337,7 +337,9 @@ def test_a_host_referencing_another_projects_inventory_completes(tmp_path, monke
     summaries = {
         s.id: s
         for s in cc.project_host_summaries(
-            referencing, resolved, profiles=ProfileContext.from_projects([declaring, referencing])
+            referencing,
+            resolved,
+            profiles=ProfileContext.from_projects(projects=[declaring, referencing]),
         )
     }
     assert summaries["dut"].ip == "10.0.0.1"
@@ -381,10 +383,13 @@ def test_a_tab_over_a_profile_holding_a_secret_never_makes_the_key(tmp_path, mon
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     fields = ProfileFields(
-        FrozenMap.freeze_json({"creds": [{"login": "u", "password": SecretStr("pw")}]})
+        defaults=FrozenMap.freeze_json(
+            value={"creds": [{"login": "u", "password": SecretStr("pw")}]}
+        )
     )
     profiles = ProfileContext(
-        profiles=FrozenMap({"x": OsProfile("x", "unix", fields)}), owners=FrozenMap({"x": "sut"})
+        profiles=FrozenMap(mapping={"x": OsProfile("x", "unix", fields)}),
+        owners=FrozenMap(mapping={"x": "sut"}),
     )
     project = _project(tmp_path, {}, hosts=[_REFERENCED])
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})

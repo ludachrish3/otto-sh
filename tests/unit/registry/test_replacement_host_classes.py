@@ -30,7 +30,7 @@ def test_replaces_names_every_built_in_host_class():
     builtins = {
         ("otto.host.os_profile:HOST_CLASSES", name)
         for name in HOST_CLASSES.names()
-        if HOST_CLASSES.origin(name).startswith("otto.")
+        if HOST_CLASSES.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -42,6 +42,6 @@ def test_a_replaced_host_class_is_what_the_factory_builds(name):
     recording = type(f"Recording{base.__name__}", (base,), {})
     register_host_class(name, recording, spec=resolved(entry.spec), overwrite=True)
 
-    host = create_host_from_dict({**_DICTS[name], "os_type": name}, element=Element("ne"))
+    host = create_host_from_dict({**_DICTS[name], "os_type": name}, element=Element(name="ne"))
 
     assert type(host) is recording, f"the factory bypassed the registered {name!r} class"

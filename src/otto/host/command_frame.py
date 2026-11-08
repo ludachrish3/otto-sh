@@ -96,7 +96,7 @@ class SessionMarkers:
     """Post-timeout re-sync token — ``__OTTO_<id>_RECOVER__``."""
 
     @classmethod
-    def for_session(cls, session_id: str) -> "SessionMarkers":
+    def for_session(cls, *, session_id: str) -> "SessionMarkers":
         """Build the marker set for a session id.
 
         *session_id* must be shell word characters (``[0-9A-Za-z_]``): the
@@ -173,7 +173,7 @@ class CommandFrame(ABC):
     # --- render half: command -> bytes to write ---
 
     @abstractmethod
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         """Readiness-probe payload, echoing :attr:`SessionMarkers.ready`.
 
         The READY marker must begin a line of the shell's OUTPUT in every echo
@@ -193,7 +193,7 @@ class CommandFrame(ABC):
         ...
 
     @abstractmethod
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         """Full write payload that runs ``cmd`` bracketed by the sentinels."""
         ...
 
@@ -248,17 +248,17 @@ class CommandFrame(ABC):
         ...
 
     @abstractmethod
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
         """Return True if ``data`` is the chunk carrying the BEGIN sentinel."""
         ...
 
     @abstractmethod
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:
         """Extract the command's output from the accumulated ``buffer``."""
         ...
 
     @abstractmethod
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Recover the command's exit code; ``-1`` when none can be read."""
         ...
 
@@ -378,7 +378,7 @@ class BashFrame(CommandFrame):
     measures_terminal_mapping = True  # the handshake carries the calibration line
 
     @override
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         # Silence echo so the probe command text doesn't come back, then print
         # the READY marker on a line of its own. The bare `echo` is
         # load-bearing: the session matches READY line-anchored (a failed
@@ -414,7 +414,7 @@ class BashFrame(CommandFrame):
         )
 
     @override
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         # Bracket the command with echoes; the END sentinel embeds ``$?`` so the
         # exit code travels back inside the marker. The command sits in a
         # brace group closed on the NEXT line: a trailing `&` or `# comment`
@@ -560,7 +560,7 @@ class BashFrame(CommandFrame):
         return re.compile(re.escape(m.end_prefix) + r"(\d+)__")
 
     @override
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
         # bash emits the marker on a line of its own, so equality (or suffix,
         # for a marker printed after same-line text) is the right test — and it
         # avoids a false hit on an echoed wrapped command.
@@ -568,7 +568,7 @@ class BashFrame(CommandFrame):
         return stripped == m.begin or stripped.endswith(m.begin)
 
     @override
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:
         # The command's output, exactly: *buffer* already has the terminal's
         # own line-ending translation undone by the session (the onlcr fold),
         # so every byte left between the markers is the program's.
@@ -598,7 +598,7 @@ class BashFrame(CommandFrame):
         return output.removesuffix(line_ending)
 
     @override
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         match = self.end_pattern(m).search(buffer)
         if match and match.groups():
             return int(match.group(1))
@@ -711,14 +711,14 @@ class ZephyrFrame(CommandFrame):
     _console_safety.py``, which serializes this tree's access for that reason."""
 
     @override
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         # An unknown token: the shell's error handler echoes it back, which is
         # all the readiness probe needs. No `stty`, no `echo`. *prefix* is
         # always "" here: Zephyr has no history to suppress.
         return f"{prefix}{m.ready}\n"
 
     @override
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         # Four CR-separated lines (see class docstring). The order
         # BEGIN / cmd / retval / END is load-bearing.
         return f"{m.begin}\r{cmd}\rretval\r{m.end_prefix}\r"
@@ -735,27 +735,27 @@ class ZephyrFrame(CommandFrame):
         return re.compile(re.escape(m.end_prefix))
 
     @override
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
         # The Zephyr shell rejects the BEGIN token as `<token>: command not
         # found`, so the marker is a substring of the line, not the whole line.
         return m.begin in data
 
     @override
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Recover the exit code from ``retval``'s output.
 
         ``retval`` prints a bare signed integer on its own line just before the
         END marker. Take the last such line in the region preceding END.
         Returns ``-1`` if no integer is found.
         """
-        for line in reversed(self.region_before_end(buffer, m)):
+        for line in reversed(self.region_before_end(buffer, m=m)):
             stripped = line.strip()
             if re.fullmatch(r"-?\d+", stripped):
                 return int(stripped)
         return -1
 
     @override
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:
         """Extract the command's output from the framed response, positionally.
 
         Between the BEGIN error line and ``retval``'s integer line the shell
@@ -763,7 +763,7 @@ class ZephyrFrame(CommandFrame):
         of the two executed lines: the rejected BEGIN, then the command). Drop
         the bracketing prompt lines.
         """
-        lines = self.region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m=m)
 
         # The BEGIN block: BEGIN is an unknown command, so the shell emits
         # `<token>: command not found`. The last line carrying the token is it.
@@ -784,7 +784,7 @@ class ZephyrFrame(CommandFrame):
         output = block[1:-1] if len(block) >= 2 else []  # noqa: PLR2004 — block needs ≥2 lines for [1:-1] slice to yield non-empty output
         return "\n".join(output).strip()
 
-    def region_before_end(self, buffer: str, m: SessionMarkers) -> list[str]:
+    def region_before_end(self, buffer: str, *, m: SessionMarkers) -> list[str]:
         r"""Return the buffer's lines up to (not including) the END token.
 
         ANSI terminal sequences and the carriage returns from telnet ``\r\n``
@@ -820,7 +820,7 @@ class ZephyrSerialFrame(ZephyrFrame):
     type_name = "zephyr-serial"
 
     @override
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         return f"{prefix}shell echo off\r{m.ready}\n"
 
     @override
@@ -856,11 +856,11 @@ class RawFrame(CommandFrame):
     streams_output_live = False
 
     @override
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:  # no probe to render
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:  # no probe to render
         return ""
 
     @override
-    def frame(self, cmd: str, m: SessionMarkers) -> str:  # refuses, see class docstring
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:  # refuses, see class docstring
         raise RawLandingError(
             "a raw landing has no command dialect: use send()/expect() to reach the "
             "target shell, then enter_frame() before run()"
@@ -878,15 +878,15 @@ class RawFrame(CommandFrame):
         return re.compile(r"(?!x)x")
 
     @override
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:  # nothing frames
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:  # nothing frames
         return False
 
     @override
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:  # nothing frames
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:  # nothing frames
         return ""
 
     @override
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:  # nothing frames
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:  # nothing frames
         return -1
 
 
@@ -971,10 +971,10 @@ def register_command_frame(
         If *type_name* doesn't match ``cls.type_name`` (the registry key and
         the class constant should agree).
     """
-    FRAME_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
+    FRAME_CLASSES.register(name=type_name, entry=ClassEntry(cls=cls), overwrite=overwrite)
 
 
-def build_command_frame(type_name: str) -> CommandFrame:
+def build_command_frame(*, type_name: str) -> CommandFrame:
     """Construct the :class:`CommandFrame` registered under *type_name*.
 
     Raises
@@ -998,7 +998,7 @@ def _register_builtin_frames() -> None:
         ("zephyr-serial", "otto.host.command_frame:ZephyrSerialFrame"),
         ("raw", "otto.host.command_frame:RawFrame"),
     ]:
-        FRAME_CLASSES.register(name, ClassEntry(Ref(target)))
+        FRAME_CLASSES.register(name=name, entry=ClassEntry(cls=Ref(target=target)))
 
 
 _register_builtin_frames()

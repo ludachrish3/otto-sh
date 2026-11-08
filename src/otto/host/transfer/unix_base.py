@@ -43,6 +43,7 @@ class UnixFileTransfer(BaseFileTransfer):
 
     def __init__(
         self,
+        *,
         connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
@@ -57,17 +58,17 @@ class UnixFileTransfer(BaseFileTransfer):
         return
 
     @override
-    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], *, mode: int) -> Result:
         """Chmod the transferred files in one batched command over the host shell.
 
         Uses the same ``exec_cmd`` seam the backends already hold, so the cost
         is a single extra round trip regardless of file count.
         """
-        result = await self._exec_cmd(chmod_command(mode, dest_paths))
+        result = await self._exec_cmd(chmod_command(mode=mode, paths=dest_paths))
         if result.status.is_ok:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=result.value or f"chmod exited {result.retcode}",
         )
 

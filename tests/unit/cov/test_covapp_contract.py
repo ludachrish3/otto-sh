@@ -44,7 +44,7 @@ def _ticket_store(tmp_path: Path) -> CoverageStore:
     """Two lines owned by PROJ-1, one hit — enough to emit every ticket key."""
     store = CoverageStore(tier_order=["unit"])
     run_id = store.add_run(tier="unit", source="unit")
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     first = record.get_or_create_line(1)
     first.ticket = ["PROJ-1"]
     first.hits.add("unit", 1)
@@ -187,7 +187,7 @@ def _rich_store(tmp_path: Path) -> CoverageStore:
         OverrideRecord(id=0, tier="unit", key="ticket:PROJ-1", reason="why", as_of="2026-01-01")
     )
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url="u/1", commits=["abc"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     line = record.get_or_create_line(1)
     line.hits.add("unit", 1)
     line.run_hits[0] = 1

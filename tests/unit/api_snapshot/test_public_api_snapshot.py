@@ -429,3 +429,79 @@ def test_the_dump_is_the_same_under_another_hash_seed(tmp_path, capsys):
     check = ["--manifest", str(manifest), "--golden", str(golden), "--check"]
     assert mod.main([*check, "--hash-seed", "4294967295"]) == 0
     assert capsys.readouterr().out == "api snapshot: OK\n"
+
+
+def _exposed_verb_shapes():
+    """Every registered host class's ``@cli_exposed`` verb: (label, CLI arguments, entry).
+
+    The CLI arguments are what ``build_cli_binding`` makes positional; the entry is
+    the ``positional`` list of the committed golden's effective manifest entry for
+    the member (``None`` when the dump does not record the verb: a class outside
+    the declared namespaces, which the signature alone decides).
+    """
+    import inspect
+
+    import typer.models
+
+    from otto.cli.expose import collect_exposed_methods
+    from otto.cli.param_synth import build_cli_binding
+    from otto.host.os_profile import HOST_CLASSES
+    from otto.registry import resolved
+    from scripts import check_api_keywords
+
+    dump = api_records.parse_dump(mod.GOLDEN_PATH.read_text(encoding="utf-8"))
+    entries = check_api_keywords.effective_entries(dump, load_symbols(MANIFEST))
+    keys_of: dict[object, list[str]] = {}
+    for key, kind in dump.bindings.items():
+        if kind != "class":
+            continue
+        module, _, qualname = key.partition(":")
+        obj: object = importlib.import_module(module)
+        for part in qualname.split("."):
+            obj = getattr(obj, part)
+        keys_of.setdefault(obj, []).append(key)
+
+    def entry_for(cls: type, attr: str) -> "list[str] | None":
+        for klass in cls.__mro__:
+            for key in keys_of.get(klass, []):
+                member = f"{key}.{attr}"
+                if ("member", member) in dump.records:
+                    return list(entries[member][0].positional) if member in entries else []
+        return None
+
+    out = []
+    for _name, registered in HOST_CLASSES.items():  # noqa: PERF102 — Registry has no .values()
+        cls = resolved(registered.cls)
+        for cli_name, attr in collect_exposed_methods(cls).items():
+            fn = inspect.getattr_static(cls, attr, None) or getattr(cls, attr)
+            binding = build_cli_binding(getattr(fn, "__func__", fn))
+            arguments = [
+                p.name
+                for p in binding.params
+                if any(isinstance(m, typer.models.ArgumentInfo) for m in p.annotation.__metadata__)
+            ]
+            out.append((f"{cls.__qualname__} {cli_name}", arguments, entry_for(cls, attr)))
+    return out
+
+
+def test_every_exposed_verb_s_cli_arguments_equal_its_effective_positional_entry():
+    """The CLI reads the signature, the manifest decided the signature: one decision (spec §6.6).
+
+    Over the committed golden, every exposed verb's positional CLI arguments are
+    exactly its effective ``positional`` entry, in order. This pins
+    ``load --name``, ``write-file --data``, ``ls PATH`` and ``power STATE``.
+    """
+    shapes = _exposed_verb_shapes()
+    assert shapes, "no exposed verbs found"
+    drift = [
+        f"{label}: CLI arguments {arguments} != entry {entry}"
+        for label, arguments, entry in shapes
+        if entry is not None and arguments != entry
+    ]
+    assert not drift, "\n".join(drift)
+    pinned = {label.split(" ", 1)[1]: arguments for label, arguments, _ in shapes}
+    assert pinned["load"] == ["file"]
+    assert pinned["write-file"] == ["path"]
+    assert pinned["ls"] == ["path"]
+    assert pinned["power"] == ["state"]
+    assert pinned["put"] == ["src_files", "dest_dir"]

@@ -53,7 +53,9 @@ def test_fixture_ps_line_id_hashes_from_its_own_path() -> None:
     it. Change either half of the fixture without the other and this fails.
     """
     tunnel = parse_process_discovery(_STABILITY_PS_LINE)[0].parsed.tunnel
-    assert tunnel.id == make_tunnel_id(tuple(tunnel.path), tunnel.protocol, tunnel.service_port)
+    assert tunnel.id == make_tunnel_id(
+        path=tuple(tunnel.path), protocol=tunnel.protocol, service_port=tunnel.service_port
+    )
 
 
 def _found(ps_line: str = _STABILITY_PS_LINE) -> list[tuple[str, object]]:
@@ -178,4 +180,4 @@ def test_cli_project_ranks_test2_as_the_one_docker_parent(tmp_path: Path) -> Non
         lab.add_host(
             create_host_from_dict(entry_of(flat), lab_name="unix", element=element_of(flat))
         )
-    assert default_docker_parent(lab).id == "test2"
+    assert default_docker_parent(lab=lab).id == "test2"

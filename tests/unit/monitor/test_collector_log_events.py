@@ -69,7 +69,7 @@ class _EventParser(MetricParser):
 
 
 def _result(parser: MetricParser) -> CommandResult:
-    return CommandResult(Status.Success, value="raw", command=parser.command, retcode=0)
+    return CommandResult(status=Status.Success, value="raw", command=parser.command, retcode=0)
 
 
 async def _process(collector: MetricCollector, parser: MetricParser) -> None:
@@ -126,7 +126,7 @@ async def test_csv_parser_backfills_store_with_data_timestamps() -> None:
     await collector._process_host_results(
         "host1",
         TICK,
-        [CommandResult(Status.Success, value=out, command=parser.command, retcode=0)],
+        [CommandResult(status=Status.Success, value=out, command=parser.command, retcode=0)],
         {parser.command: parser},
         ctx=ParseContext(ts=TICK),
     )

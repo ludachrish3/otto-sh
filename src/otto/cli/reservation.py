@@ -76,7 +76,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
 
     try:
         gate = build_reservation_gate(
-            get_projects(),
+            projects=get_projects(),
             holder=opts.holder,
             skip_reservation_check=opts.skip_reservation_check,
             cwd_fallback=Path.cwd(),
@@ -164,7 +164,7 @@ def check(ctx: typer.Context) -> None:
     # declared fleet is 0 hosts in play (a verdict, not a refusal), and the
     # built-in ``local`` host is never in play.
     in_play = get_hosts_in_play()
-    report = res.report(lab, in_play)
+    report = res.report(lab, host_ids=in_play)
 
     if not report.rows:
         # No table: an empty bordered box says nothing. And no query was made.
@@ -194,7 +194,7 @@ def check(ctx: typer.Context) -> None:
         # After the table, before the verdict: a status report says everything
         # it knows. Not suppressed by -R, because this command's whole job is
         # reporting.
-        announce_expiring(report)
+        announce_expiring(report=report)
 
     if not report.covered:
         fail(MissingReservationError.from_report(report))

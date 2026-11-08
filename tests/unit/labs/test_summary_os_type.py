@@ -55,7 +55,7 @@ def test_composite_copies_os_type_across_sources(tmp_path):
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
-    composite = build_lab_sources([project])
+    composite = build_lab_sources(projects=[project])
     got = {s.id: s.os_type for s in composite.list_host_summaries()}
     assert got == {"z1": "zephyr"}
 
@@ -99,12 +99,14 @@ def test_load_lab_fallback_records_the_built_hosts_os_type():
         def load_lab(self, name, preferences=None, inventory=None):
             lab = Lab(name=name)
             lab.add_host(
-                create_host_from_dict({"ip": "1.1.1.1", "creds": _CREDS}, element=Element("u1"))
+                create_host_from_dict(
+                    {"ip": "1.1.1.1", "creds": _CREDS}, element=Element(name="u1")
+                )
             )
             return lab
 
         def list_labs(self):
             return ["only"]
 
-    summaries = {s.id: s for s in host_summaries(_MinimalRepository())}
+    summaries = {s.id: s for s in host_summaries(repository=_MinimalRepository())}
     assert summaries["u1"].os_type == "unix"

@@ -175,12 +175,12 @@ def decide_coverage(
             if not report.rows:
                 raise CoverageNotInstrumentedError(
                     f"{command}: no products on any coverage host — coverage cannot be collected.",
-                    report,
+                    report=report,
                 )
             raise CoverageNotInstrumentedError(
                 f"{command}: no instrumented product — coverage cannot be collected.\n"
                 f"{report.describe()}",
-                report,
+                report=report,
             )
     else:
         # auto

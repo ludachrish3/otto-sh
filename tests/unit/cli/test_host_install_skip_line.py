@@ -28,15 +28,15 @@ class _Product(Product):
 
     async def stage(self, host):
         self.calls.append("stage")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
         self.calls.append("install")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
         self.calls.append("uninstall")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return self.installed

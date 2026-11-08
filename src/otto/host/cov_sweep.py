@@ -452,7 +452,7 @@ async def remove_coverage(host: "Host", products: "Sequence[Product]") -> Result
     :attr:`~otto.utils.Status.NotRun`: no probe, no "kept" line.
     """
     if not products:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     plain = [p for p in products if not type(p).cov_dir_root_owned]
     root_owned = [p for p in products if type(p).cov_dir_root_owned]
     logger.debug(
@@ -464,7 +464,7 @@ async def remove_coverage(host: "Host", products: "Sequence[Product]") -> Result
             continue
         errors = await _remove_batch(host, group, members)
         if errors is None:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         removal.update(errors)
     answers = await _probe(host, products)
     problems: list[str] = []
@@ -484,9 +484,9 @@ async def remove_coverage(host: "Host", products: "Sequence[Product]") -> Result
                 "cov_dir %s kept: holds non-coverage files, or the session cannot remove it", d
             )
     if not problems:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     return Result(
-        Status.Error, msg=f"{host.id}: cleanup left coverage data: " + "; ".join(problems)
+        status=Status.Error, msg=f"{host.id}: cleanup left coverage data: " + "; ".join(problems)
     )
 
 

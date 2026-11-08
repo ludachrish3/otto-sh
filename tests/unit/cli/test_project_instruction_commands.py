@@ -147,11 +147,17 @@ class _Recorder:
     """
 
     def __init__(self, result=None):
-        self.result = Result(Status.Success) if result is None else result
+        self.result = Result(status=Status.Success) if result is None else result
         self.calls: list = []
 
     async def __call__(self, *args, **kwargs):
-        self.calls.append(args[0] if args and not kwargs else kwargs)
+        self.calls.append(
+            kwargs["opts"]
+            if set(kwargs) == {"opts"}
+            else args[0]
+            if args and not kwargs
+            else kwargs
+        )
         return self.result
 
     def built(self, opts_cls: type) -> list:
@@ -170,7 +176,7 @@ def test_the_seven_are_derived(registered):
         # No owning project whoever declared a body: the dispatch gate refuses an
         # instruction whose OWNER is inactive, and a project instruction has a
         # body per project rather than one owner.
-        assert INSTRUCTIONS.project(name) is None
+        assert INSTRUCTIONS.project(name=name) is None
     assert frozenset(SEVEN) == FIRST_PARTY_INSTRUCTIONS
 
 
@@ -466,7 +472,7 @@ async def test_the_orchestrators_result_is_returned_unchanged(monkeypatch, regis
     dispatcher that repacked (or worse, tested ``is Status.Success``) would
     turn "already installed" into a failure.
     """
-    skipped = Result(Status.Skipped, msg="already installed")
+    skipped = Result(status=Status.Skipped, msg="already installed")
     monkeypatch.setattr(orchestrator, "install", _Recorder(skipped))
 
     returned = await _run("install", ensure=True)
@@ -478,7 +484,7 @@ def test_a_skipped_result_renders_as_success():
     """The exit-code half of the rule above, at the seam that decides it."""
     from otto.cli.invoke import render_leaf_value
 
-    render_leaf_value(Result(Status.Skipped, msg="already installed"))  # must not raise
+    render_leaf_value(Result(status=Status.Skipped, msg="already installed"))  # must not raise
 
 
 # ── status: the table and the three exit codes ───────────────────────────────
@@ -1300,10 +1306,10 @@ class TestMergedFlags:
                 @instruction(options=_DeployOptions)
                 async def deploy(self, opts: _DeployOptions) -> Result:
                     """Deploy this project's firmware."""
-                    return Result(Status.Success, value=opts.target)
+                    return Result(status=Status.Success, value=opts.target)
 
         entry = INSTRUCTIONS.get("deploy")
-        assert INSTRUCTIONS.project("deploy") is None
+        assert INSTRUCTIONS.project(name="deploy") is None
         assert entry.module == Widget.__module__
         assert "--target" in runner.invoke(run_app, ["deploy", "--help"]).output
 
@@ -1354,11 +1360,11 @@ class TestMergedFlags:
                 @instruction(options=_DeployOptions, help="Deploy the lab's firmware.")
                 async def deploy(self, opts: _DeployOptions) -> Result:
                     """Deploy this project's firmware."""
-                    return Result(Status.Success, value=opts.target)
+                    return Result(status=Status.Success, value=opts.target)
 
         entry = InstructionEntry(name="deploy", module=Widget.__module__, handler=_noop)
         with pytest.raises(ProjectInstructionError, match="rename one of them"):
-            STANDALONE_INSTRUCTIONS.register("deploy", entry)
+            STANDALONE_INSTRUCTIONS.register(name="deploy", entry=entry)
         assert INSTRUCTIONS.get("deploy").project is not None
 
     def test_checking_twice_is_harmless(self, registered) -> None:
@@ -1378,9 +1384,9 @@ class TestMergedFlags:
         """
         entry = InstructionEntry(name="install", module="project.init", handler=_noop)
         with registering_project("project"), pytest.raises(ValueError, match="ProjectActions"):
-            STANDALONE_INSTRUCTIONS.register("install", entry)
+            STANDALONE_INSTRUCTIONS.register(name="install", entry=entry)
         with pytest.raises(ProjectInstructionError, match="rename one of them"):
-            STANDALONE_INSTRUCTIONS.register("install", entry)
+            STANDALONE_INSTRUCTIONS.register(name="install", entry=entry)
         assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
 
 
@@ -1549,7 +1555,7 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
             @instruction(options=InstallOptions)
             async def install(self, opts: InstallOptions) -> Result:
                 seen.append(try_get_context())
-                return Result(Status.Success)
+                return Result(status=Status.Success)
 
     projects = [fake_project(n, project_scope=None, root=f"/tmp/{n}") for n in names]
     patch_bootstrap(monkeypatch, projects)
@@ -1612,7 +1618,7 @@ class TestTheOptionsWalkAnnouncesNothing:
         _wire_widget_lab(monkeypatch, seen)
         ctx = OttoContext(lab=Lab(name="test"), exclude_projects=("dormant",))
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
-            result = await run_instruction(ctx, "install")
+            result = await run_instruction(ctx, name="install")
 
         assert result.is_ok
         assert len(seen) == 1, "the widget body did not run exactly once"
@@ -1633,7 +1639,7 @@ async def test_run_instruction_runs_a_first_party_body_through_the_real_orchestr
     _wire_widget_lab(monkeypatch, seen, names=("widget",))
     ctx = OttoContext(lab=Lab(name="test"))
 
-    result = await run_instruction(ctx, "install")
+    result = await run_instruction(ctx, name="install")
 
     assert result.is_ok
     assert seen == [ctx]

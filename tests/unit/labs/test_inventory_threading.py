@@ -179,7 +179,10 @@ def test_composite_forwards_inventory(repository, inventory):
     composite = CompositeLabRepository([LabSource(label="json", repository=repository)])
     assert composite.load_lab("l", inventory=inventory).hosts["dut"].ip == "10.0.0.1"
     assert {s.id for s in composite.list_host_summaries(inventory=inventory)} == {"dut", "plain"}
-    assert {s.id for s in host_summaries(composite, inventory=inventory)} == {"dut", "plain"}
+    assert {s.id for s in host_summaries(repository=composite, inventory=inventory)} == {
+        "dut",
+        "plain",
+    }
 
 
 def test_config_load_lab_accepts_and_forwards_inventory(repository, inventory):
@@ -214,8 +217,13 @@ def test_the_summaries_fallback_route_forwards_the_inventory_too(repository, inv
         def list_labs(self):
             return repository.list_labs()
 
-    assert {s.id for s in host_summaries(LoadOnly(), inventory=inventory)} == {"dut", "plain"}
-    assert host_summaries(LoadOnly()) == []  # no inventory: the whole lab fails, best-effort
+    assert {s.id for s in host_summaries(repository=LoadOnly(), inventory=inventory)} == {
+        "dut",
+        "plain",
+    }
+    assert (
+        host_summaries(repository=LoadOnly()) == []
+    )  # no inventory: the whole lab fails, best-effort
 
 
 def test_the_examples_backend_resolves_and_skips_like_the_json_one(inventory):

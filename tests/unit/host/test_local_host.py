@@ -694,18 +694,20 @@ async def test_put_and_get_pass_concurrent_to_the_backend(monkeypatch, tmp_path:
     src.write_text("a")
     seen: dict[str, object] = {}
 
-    async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+    async def put_files(*, src_files, dest_dir, show_progress, mode, concurrent):
+        files = src_files
         seen["put"] = concurrent
         return Result(
-            Status.Success,
-            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            status=Status.Success,
+            value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
         )
 
-    async def get_files(files, dest_dir, show_progress, *, concurrent):
+    async def get_files(*, src_files, dest_dir, show_progress, concurrent):
+        files = src_files
         seen["get"] = concurrent
         return Result(
-            Status.Success,
-            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            status=Status.Success,
+            value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
         )
 
     monkeypatch.setattr(host._file_transfer, "put_files", put_files)

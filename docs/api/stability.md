@@ -90,10 +90,13 @@ added or the parameters are reordered; a positional one would not.
   dataclass has an empty `__match_args__`, so `case Cls(a, b)` raises
   `TypeError` when it is matched. Use keyword patterns:
   `case Cls(name=name, value=value)`.
-- **otto's errors pickle.** An error rebuilds from its `args` when it is
-  unpickled, so every error otto raises either keeps the parameters it does
-  not carry in `args` defaulted, or defines `__reduce__`. An error can cross
-  a process boundary and come back as the same class.
+- **otto's errors pickle.** Every error otto defines unpickles as the same
+  class with the same message and attributes, whatever its constructor takes:
+  {class}`~otto.errors.OttoError` restores `args` and the attributes without
+  calling `__init__`. An error can cross a process boundary and come back
+  intact; an error class of your own that subclasses it gets the same, as
+  long as its attributes pickle. As with any pickled exception, `__cause__`,
+  `__context__` and the traceback are not carried.
 - **Some classes withdraw a right.** A class marked *not constructed by
   callers* is one otto builds and hands to you: its constructor makes no
   compatibility promise. A class marked *not for subclassing* makes no
@@ -111,6 +114,20 @@ added or the parameters are reordered; a positional one would not.
 Switching a callable to keyword-only was a marked breaking change, made
 once, before 1.0. How the rule is enforced is in
 [the quality-gates table](../architecture/quality-gates.md#what-binds-each-gate).
+
+**Upgrading.** A call that passed a non-subject argument by position now
+raises `TypeError`; name the argument instead:
+
+| Before | After |
+|---|---|
+| `expect(cond, "why")` | `expect(cond, msg="why")` |
+| `UnixHost("10.0.0.1", creds)` | `UnixHost(ip="10.0.0.1", creds=creds)` |
+
+The positional subjects that remain are the exceptions listed
+under {ref}`api-calling-conventions`. The CLI follows the signatures, so two host
+verbs changed shape: `otto host <id> write-file PATH --data TEXT`, and an
+embedded host's `load FILE --name NAME` (see
+{doc}`the exposed-verb table <../extend/cli-exposed-verbs>`).
 
 ## Removal and deprecation
 

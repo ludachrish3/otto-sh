@@ -390,7 +390,11 @@ class Bed:
         self.tunnels[tunnel.id] = tunnel
         for index, direction in [(0, Direction.FWD), (len(host_ids) - 1, Direction.REV)]:
             token = encode_sentinel(
-                tunnel, direction=direction, role=Role.INGRESS, hop_index=index, carrier_port=62000
+                tunnel=tunnel,
+                direction=direction,
+                role=Role.INGRESS,
+                hop_index=index,
+                carrier_port=62000,
             )
             host = self.hosts[host_ids[index]]
             host.plant(token, protocol=protocol, ip=host.ip, port=port)

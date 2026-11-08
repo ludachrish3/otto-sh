@@ -118,10 +118,10 @@ def test_a_pooled_shell_keeps_nothing_from_a_command_run_under_the_launcher(tmp_
     launcher = tmp_path / "otto-env.sh"
     launcher.write_text(deploy_mod._launcher_text({"OTTO_LEAK_PROBE": "set"}))
     under_launcher = compose_command("p", launcher=launcher).replace(" docker compose -p p", " env")
-    markers = SessionMarkers.for_session("cafef00d")
+    markers = SessionMarkers.for_session(session_id="cafef00d")
     frame = BashFrame()
-    session_input = frame.frame(under_launcher, markers) + frame.frame(
-        'echo "probe=${OTTO_LEAK_PROBE-unset}"', markers
+    session_input = frame.frame(under_launcher, m=markers) + frame.frame(
+        'echo "probe=${OTTO_LEAK_PROBE-unset}"', m=markers
     )
 
     ran = subprocess.run(

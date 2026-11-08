@@ -37,7 +37,9 @@ class _ScriptedTool(DevTool):
     def _record(self, phase):
         self.events.append(f"{self.name}:{phase}")
         ok = self.fail_on != phase
-        return Result(Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed")
+        return Result(
+            status=Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed"
+        )
 
     async def stage(self, host):
         del host
@@ -61,7 +63,7 @@ def _recording_coro(calls, label):
 
     async def _run(*_args, **_kwargs):
         calls.append(label)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     return _run
 
@@ -264,7 +266,7 @@ async def test_recording_host_as_user_refuses_under_dry_run(recording_host):
     elevation too.
     """
     with active_context(dry_run=True), pytest.raises(CommandNotRunError):
-        async with recording_host.as_user("root"):
+        async with recording_host.as_user(user="root"):
             pytest.fail("the dry-run elevation must refuse before the body runs")
 
 
@@ -308,7 +310,7 @@ async def test_install_toolchain_tools_stops_when_the_transfer_fails(recording_h
 
     async def _failing_put(src_files, dest_dir, mode=None):
         host.put_calls.append((src_files, dest_dir, mode))
-        return Result(Status.Failed, msg="no such file")
+        return Result(status=Status.Failed, msg="no such file")
 
     host.put = _failing_put
     result = await host.install_toolchain_tools()
@@ -397,7 +399,7 @@ async def test_install_tools_failed_dev_install_never_starts_the_toolchain(recor
 
     async def _failing_dev():
         calls.append("dev")
-        return Result(Status.Failed, msg="dev tool exploded")
+        return Result(status=Status.Failed, msg="dev tool exploded")
 
     recording_host.install_dev_tools = _failing_dev
     recording_host.install_toolchain_tools = _recording_coro(calls, "toolchain")

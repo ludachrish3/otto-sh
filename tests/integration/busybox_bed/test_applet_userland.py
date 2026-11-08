@@ -314,13 +314,13 @@ async def test_a_pinless_live_recon_matches_the_recorded_expectations(guest):
         userland = pinless._userland()
         await userland.resolve()
         expected = _EXPECTED_APPLETS[version]
-        unsettled = [a for a in expected if not userland.is_settled(applet_capability(a))]
+        unsettled = [a for a in expected if not userland.is_settled(name=applet_capability(a))]
         assert not unsettled, (
             f"{ne} (BusyBox {version}) left {unsettled} unsettled, so the applet "
             f"batch never landed and every answer below is the cannot-ask default "
             f"rather than a measurement"
         )
-        measured = {a: userland.has_applet(a) == APPLET_PRESENT for a in expected}
+        measured = {a: userland.has_applet(applet=a) == APPLET_PRESENT for a in expected}
         assert measured == expected, (
             f"{ne} (BusyBox {version}): the pin-less recon drifted from the recorded "
             f"matrix. Measured {measured}, recorded {expected}"

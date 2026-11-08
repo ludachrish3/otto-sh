@@ -43,7 +43,7 @@ def test_z_last():
 def test_no_random_runs_in_collection_order(one_project, tmp_path):
     project = one_project(files={"tests/test_order.py": _ORDERED})
     result = run_tests(
-        ["TestB", "TestA", "test_z_last"],
+        names=["TestB", "TestA", "test_z_last"],
         run_options=RunOptions(random_order=False),
         output_dir=tmp_path / "out",
     )
@@ -59,7 +59,7 @@ def test_a_class_name_selects_its_tests(one_project, tmp_path):
             )
         }
     )
-    result = run_tests(["TestC"], output_dir=tmp_path / "out")
+    result = run_tests(names=["TestC"], output_dir=tmp_path / "out")
     assert result.exit_code == 0
     assert _passed_count(result) == 2
 
@@ -67,7 +67,7 @@ def test_a_class_name_selects_its_tests(one_project, tmp_path):
 def test_unknown_names_suggest(one_project, tmp_path):
     one_project(files={"tests/test_c.py": "def test_reboot(): pass\n"})
     with pytest.raises(UnknownSelectionError, match=r"test_rebot.*did you mean: test_reboot"):
-        run_tests(["test_rebot"], output_dir=tmp_path / "out")
+        run_tests(names=["test_rebot"], output_dir=tmp_path / "out")
 
 
 def test_names_or_markers_are_required(tmp_path):
@@ -98,7 +98,7 @@ def test_options_reach_ctx_options_and_unregistered_instances_refuse(one_project
         }
     )
     result = run_tests(
-        ["test_o"], options=[FirmwareOpts(firmware="2.1")], output_dir=tmp_path / "out"
+        names=["test_o"], options=[FirmwareOpts(firmware="2.1")], output_dir=tmp_path / "out"
     )
     assert result.exit_code == 0
 
@@ -107,7 +107,7 @@ def test_options_reach_ctx_options_and_unregistered_instances_refuse(one_project
         x: int = 0
 
     with pytest.raises(OptionsRegistrationError, match="Stray is not registered"):
-        run_tests(["test_o"], options=[Stray()], output_dir=tmp_path / "out2")
+        run_tests(names=["test_o"], options=[Stray()], output_dir=tmp_path / "out2")
 
 
 @pytest.mark.parametrize(
@@ -134,7 +134,9 @@ def test_a_broken_nested_file_does_not_block_the_selected_test(
             "tests/sub/test_broken.py": "def test_broken(:\n",
         }
     )
-    result = run_tests(names, run_options=RunOptions(markers=markers), output_dir=tmp_path / "out")
+    result = run_tests(
+        names=names, run_options=RunOptions(markers=markers), output_dir=tmp_path / "out"
+    )
     assert result.exit_code == 1
     assert _passed_count(result) == 1
     assert "test_broken.py" in caplog.text
@@ -154,7 +156,7 @@ def test_registering_from_a_test_file_or_conftest_is_refused(one_project, tmp_pa
         files["tests/test_reg.py"] = body + "def test_reg(): pass\n"
     one_project(files=files)
     with pytest.raises(RegistrationRefused, match="init module"):
-        run_tests(["test_reg"], output_dir=tmp_path / "out")
+        run_tests(names=["test_reg"], output_dir=tmp_path / "out")
 
 
 def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(one_project, tmp_path):
@@ -193,8 +195,8 @@ def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(one_projec
         with pytest.MonkeyPatch.context() as modules:
             modules.setattr(host_pkg, "binary_loader", original)
             modules.delitem(sys.modules, "otto.host.binary_loader")
-            assert run_tests(["test_first"], output_dir=tmp_path / "out").exit_code == 0
-            origin = sys.modules["otto.host.binary_loader"].LOADER_CLASSES.origin("llext-hex")
+            assert run_tests(names=["test_first"], output_dir=tmp_path / "out").exit_code == 0
+            origin = sys.modules["otto.host.binary_loader"].LOADER_CLASSES.origin(name="llext-hex")
             first_importer = sys.modules["otto.host.binary_loader"] is not original
     finally:
         gc.collect()
@@ -210,6 +212,6 @@ def test_two_projects_get_a_project_layer(two_projects, tmp_path):
         b={"tests/test_b.py": "def test_same(test_dir):\n    (test_dir / 'f').write_text('b')\n"},
     )
     out = tmp_path / "out"
-    assert run_tests(["test_same"], output_dir=out).exit_code == 0
+    assert run_tests(names=["test_same"], output_dir=out).exit_code == 0
     assert (out / "project_a/test_a/test_same/f").read_text() == "a"
     assert (out / "project_b/test_b/test_same/f").read_text() == "b"

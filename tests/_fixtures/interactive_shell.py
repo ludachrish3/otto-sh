@@ -303,12 +303,12 @@ def cut_case(
     return out
 
 
-TAIL_MARKERS = SessionMarkers.for_session("cafef00d")
+TAIL_MARKERS = SessionMarkers.for_session(session_id="cafef00d")
 """The markers of a line that is cut (and of a line typed whole once)."""
-RESEND_MARKERS = SessionMarkers.for_session("beadfeed")
+RESEND_MARKERS = SessionMarkers.for_session(session_id="beadfeed")
 """The whole resend's markers, distinct from :data:`TAIL_MARKERS`, so an answer names its line."""
 HAZARD_MARKERS: dict[str, SessionMarkers] = {
-    name: SessionMarkers.for_session(session_id)
+    name: SessionMarkers.for_session(session_id=session_id)
     for name, session_id in (("ed", "cafef0ed"), ("fc", "cafef0fc"), ("b", "cafef00b"))
 }
 """Cut-line markers whose id ends in a :data:`READS_THE_TERMINAL` name, keyed by that name.
@@ -329,7 +329,7 @@ They are the first line a fresh shell runs. The recovery probe is written
 into a shell that is already set up, so it never carries it."""
 
 _RENDER = {
-    "handshake": lambda m, prefix: BashFrame().handshake(m, prefix),
+    "handshake": lambda m, prefix: BashFrame().handshake(m, prefix=prefix),
     "resync": _identity_probe,
     "recovery": lambda m, _prefix: BashFrame().recover(m),
 }

@@ -23,17 +23,20 @@ from otto.host.options import (
 
 def test_local_port_forward_validates_and_is_frozen():
     # positional construction still works (back-compat)
-    fwd = LocalPortForward("localhost", 8080, "web", 80)
+    fwd = LocalPortForward(listen_host="localhost", listen_port=8080, dest_host="web", dest_port=80)
     assert fwd.listen_port == 8080
 
     # frozen: a frozen pydantic dataclass raises FrozenInstanceError on assignment
     with pytest.raises(dataclasses.FrozenInstanceError):
         fwd.listen_port = 9090  # type: ignore[misc]
 
-    # validates: a non-numeric port is rejected. Built positionally, so pydantic
-    # reports the location as the argument index — "1" is listen_port.
-    with pytest.raises(ValidationError, match=r"(?m)^1\n\s+Input should be a valid integer"):
-        LocalPortForward("localhost", "not-a-port", "web", 80)
+    # validates: a non-numeric port is rejected; pydantic names the field.
+    with pytest.raises(
+        ValidationError, match=r"(?m)^listen_port\n\s+Input should be a valid integer"
+    ):
+        LocalPortForward(
+            listen_host="localhost", listen_port="not-a-port", dest_host="web", dest_port=80
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +191,11 @@ class TestSshPostConnect:
                 self.socks.append((lh, lp))
 
         opts = SshOptions(
-            local_forwards=[LocalPortForward("localhost", 8080, "web", 80)],
+            local_forwards=[
+                LocalPortForward(
+                    listen_host="localhost", listen_port=8080, dest_host="web", dest_port=80
+                )
+            ],
             remote_forwards=[RemotePortForward("", 9000, "localhost", 22)],
             socks_forwards=[SocksForward("localhost", 1080)],
         )
@@ -317,7 +324,7 @@ class TestCreateHostFromDict:
         return data
 
     def test_minimal_dict_uses_default_options(self):
-        host = create_host_from_dict(self._minimal(), element=Element("lab"))
+        host = create_host_from_dict(self._minimal(), element=Element(name="lab"))
         assert host.ssh_options == SshOptions()
         assert host.telnet_options == TelnetOptions()
         assert host.ftp_options == FtpOptions()
@@ -348,7 +355,7 @@ class TestCreateHostFromDict:
                     "timeout_style": "dash-t",
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert isinstance(host.userland_options, UserlandOptions)
         assert host.userland_options.elevation == "su"
@@ -366,7 +373,7 @@ class TestCreateHostFromDict:
                     "extra": {"config": ["/tmp/ssh_config"]},
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.ssh_options.port == 2222
         assert host.ssh_options.connect_timeout == 5.0
@@ -397,10 +404,12 @@ class TestCreateHostFromDict:
                     ],
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.ssh_options.local_forwards == [
-            LocalPortForward("localhost", 8080, "web.internal", 80),
+            LocalPortForward(
+                listen_host="localhost", listen_port=8080, dest_host="web.internal", dest_port=80
+            ),
         ]
         assert host.ssh_options.remote_forwards == [
             RemotePortForward("", 9000, "localhost", 22),
@@ -416,7 +425,7 @@ class TestCreateHostFromDict:
                     "login_prompt": ">",
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.telnet_options.port == 2323
         assert host.telnet_options.cols == 200
@@ -430,7 +439,7 @@ class TestCreateHostFromDict:
                     "passive_commands": ["pasv"],
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.ftp_options.port == 2121
         assert host.ftp_options.passive_commands == ("pasv",)
@@ -444,7 +453,7 @@ class TestCreateHostFromDict:
                     "port_strategy": "ss",
                 }
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.nc_options.exec_name == "ncat"
         assert host.nc_options.port == 9500
@@ -456,7 +465,7 @@ class TestCreateHostFromDict:
                 scp_options={"block_size": 65536, "preserve": True},
                 sftp_options={"env": {"FOO": "bar"}},
             ),
-            element=Element("lab"),
+            element=Element(name="lab"),
         )
         assert host.scp_options.block_size == 65536
         assert host.scp_options.preserve is True
@@ -478,5 +487,5 @@ class TestCreateHostFromDict:
                         "post_connect": "not_a_callable",
                     }
                 ),
-                element=Element("lab"),
+                element=Element(name="lab"),
             )

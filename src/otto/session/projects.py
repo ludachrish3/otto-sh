@@ -268,7 +268,7 @@ def _normalised(names: list[str]) -> list[str]:
     return out
 
 
-def check_project_overlap(include: list[str], exclude: list[str]) -> None:
+def check_project_overlap(*, include: list[str], exclude: list[str]) -> None:
     """Refuse a project named in both ``include_projects`` and ``exclude_projects``.
 
     Separate from :func:`select_projects` because it needs no discovered project:
@@ -286,7 +286,7 @@ def check_project_overlap(include: list[str], exclude: list[str]) -> None:
 
 
 def select_projects(
-    projects: "list[Project]", include: list[str], exclude: list[str]
+    *, projects: "list[Project]", include: list[str], exclude: list[str]
 ) -> ProjectSelection:
     """Normalise and validate the project switches against the discovered projects.
 
@@ -312,7 +312,7 @@ def select_projects_with_refused(
 
     from ..models.dependencies import normalize_name
 
-    check_project_overlap(include, exclude)
+    check_project_overlap(include=include, exclude=exclude)
     inc, exc = _normalised(include), _normalised(exclude)
     if not (inc or exc):
         return ProjectSelection()
@@ -335,7 +335,7 @@ def select_projects_with_refused(
 
 
 def check_projects(
-    result: "BootstrapResult", labs: list[str], selection: ProjectSelection
+    *, result: "BootstrapResult", labs: list[str], selection: ProjectSelection
 ) -> ProjectCheck:
     """Run the bootstrap gate, decided before the lab exists.
 
@@ -359,5 +359,5 @@ def check_projects(
         result, labs, include=selection.include, exclude=selection.exclude
     )
     if verdicts.fatal:
-        raise ProjectLoadError(verdicts.fatal, verdicts.demoted, required=verdicts.required)
+        raise ProjectLoadError(verdicts.fatal, demoted=verdicts.demoted, required=verdicts.required)
     return ProjectCheck(demoted=verdicts.demoted)

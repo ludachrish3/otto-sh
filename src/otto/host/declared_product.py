@@ -50,7 +50,7 @@ _PLANNED_HOOKS = ("stage", "install", "uninstall")
 """The hooks a plan describes, in phase order; an override of any is reported unchecked."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeclaredProduct(ShellProduct, DevTool):
     """A ``kind = "shell"`` entry's runtime form, and the base for ``class =`` entries.
 
@@ -66,13 +66,13 @@ class DeclaredProduct(ShellProduct, DevTool):
     @override
     async def install(self, host: "Host") -> Result:
         if self.install_cmd is None:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         return await host.run(self.install_cmd)
 
     @override
     async def uninstall(self, host: "Host") -> Result:
         if self.uninstall_cmd is None:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         return await host.run(self.uninstall_cmd)
 
     @override
@@ -98,12 +98,14 @@ class DeclaredProduct(ShellProduct, DevTool):
         unchecked: list[str] = []
         staging: list[str] = []
         if self._overridden("stage") is None:
-            where = planned_stage_dir(self.stage_dir, host, who=f"{noun} {self.name!r}")
+            where = planned_stage_dir(
+                stage_dir=self.stage_dir, host=host, who=f"{noun} {self.name!r}"
+            )
             if where.refusal is not None:
                 return ProductPlan(unchecked=[where.refusal])
             if where.unchecked is not None:
                 unchecked.append(where.unchecked)
-            staging = stage_lines(host, self.artifact, where.directory)
+            staging = stage_lines(host=host, local=self.artifact, directory=where.directory)
         declared = {
             "stage": staging,
             "install": [] if self.install_cmd is None else [self.install_cmd],

@@ -115,7 +115,7 @@ def test_parsed_list_of_parsed_field_is_allowed():
 # parse_one — single search + pydantic conversion
 # --------------------------------------------------------------------------- #
 def test_parse_one_converts_types():
-    result = parse_one(Kv, "a=5")
+    result = parse_one(Kv, text="a=5")
     assert isinstance(result, Kv)
     assert result.key == "a"
     assert result.n == 5  # str "5" -> int 5 via pydantic
@@ -124,7 +124,7 @@ def test_parse_one_converts_types():
 
 def test_parse_one_mismatch_raises():
     with pytest.raises(ParseMismatch) as excinfo:
-        parse_one(Kv, "nothing to match here")
+        parse_one(Kv, text="nothing to match here")
     # The offending pattern is surfaced (repr'd) in the message for debugging.
     assert repr(Kv.pattern.pattern) in str(excinfo.value)
 
@@ -135,13 +135,13 @@ def test_matched_but_validation_fails_is_parse_mismatch_not_validation_error():
     # as ParseMismatch (which cmd catches), NOT as a raw pydantic
     # ValidationError leaking through parse_one/apply_parse.
     with pytest.raises(ParseMismatch) as excinfo:
-        parse_one(IntN, "n=abc")
+        parse_one(IntN, text="n=abc")
     assert not isinstance(excinfo.value, ValidationError)
     # The model name is named so the author can find the offending model.
     assert "IntN" in str(excinfo.value)
     # Same path through apply_parse's single-model dispatch.
     with pytest.raises(ParseMismatch):
-        apply_parse(IntN, "n=abc")
+        apply_parse(IntN, text="n=abc")
 
 
 # --------------------------------------------------------------------------- #
@@ -167,9 +167,9 @@ def test_optional_group_maps_to_none():
         opt: str | None = None
 
     # "x" matches but the optional group never participates -> None.
-    assert parse_one(Opt, "x").opt is None
+    assert parse_one(Opt, text="x").opt is None
     # When it does participate the group text flows through pydantic.
-    assert parse_one(Opt, "x42").opt == "42"
+    assert parse_one(Opt, text="x42").opt == "42"
 
 
 # --------------------------------------------------------------------------- #
@@ -220,7 +220,7 @@ SELECT_OUTPUT = (
 
 
 def test_nested_select_example():
-    value = apply_parse(Select, SELECT_OUTPUT)
+    value = apply_parse(Select, text=SELECT_OUTPUT)
 
     assert isinstance(value, Select)
     # trailing stats line parsed by QueryStats' own pattern over its region
@@ -237,18 +237,18 @@ def test_nested_select_example():
 # apply_parse dispatch — list form and callable escape hatch
 # --------------------------------------------------------------------------- #
 def test_apply_parse_list_form():
-    rows = apply_parse(list[Kv], "a=1 b=2")
+    rows = apply_parse(list[Kv], text="a=1 b=2")
     assert [(r.key, r.n) for r in rows] == [("a", 1), ("b", 2)]
 
 
 def test_apply_parse_single_model_form():
-    value = apply_parse(Kv, "a=7")
+    value = apply_parse(Kv, text="a=7")
     assert isinstance(value, Kv)
     assert value.n == 7
 
 
 def test_apply_parse_callable_form():
-    assert apply_parse(str.upper, "x") == "X"
+    assert apply_parse(str.upper, text="x") == "X"
 
 
 def test_apply_parse_callable_exception_is_wrapped():
@@ -256,7 +256,7 @@ def test_apply_parse_callable_exception_is_wrapped():
         raise RuntimeError("callable blew up")
 
     with pytest.raises(ParseMismatch, match="callable blew up"):
-        apply_parse(boom, "anything")
+        apply_parse(boom, text="anything")
 
 
 def test_apply_parse_callable_exception_names_its_type():
@@ -266,20 +266,20 @@ def test_apply_parse_callable_exception_names_its_type():
         raise KeyError("x")
 
     with pytest.raises(ParseMismatch, match="KeyError") as excinfo:
-        apply_parse(boom, "anything")
+        apply_parse(boom, text="anything")
     assert "KeyError" in str(excinfo.value)
 
 
 def test_apply_parse_list_of_non_parsed_is_type_error():
     # list[...] is reserved for list[Parsed]; a scalar element is a misuse.
     with pytest.raises(TypeError, match="Parsed subclass"):
-        apply_parse(list[str], "a=1")
+        apply_parse(list[str], text="a=1")
 
 
 def test_apply_parse_unsupported_spec_is_type_error():
     # Not a Parsed subclass, not list[Parsed], not callable -> rejected.
     with pytest.raises(TypeError, match="unsupported parse spec"):
-        apply_parse(42, "anything")
+        apply_parse(42, text="anything")
 
 
 # =========================================================================== #
@@ -368,7 +368,7 @@ class FakeHostSession:
         return item
 
     async def run(self, cmds, *args, **kwargs):
-        return await self._session.run_cmd(str(cmds))
+        return await self._session.run_cmd(cmd=str(cmds))
 
 
 class DemoShell(AppShell):
@@ -450,7 +450,7 @@ async def test_run_blocked_while_attached_names_shell_class():
     async with DemoShell.attach(session):
         # Raw run_cmd on the locked ShellSession is rejected, naming the shell.
         with pytest.raises(AppShellActiveError, match="DemoShell"):
-            await inner.run_cmd("ls -la")
+            await inner.run_cmd(cmd="ls -la")
         # And through the HostSession.run delegation too.
         with pytest.raises(AppShellActiveError, match="DemoShell"):
             await session.run("whoami")
@@ -464,7 +464,7 @@ async def test_run_cmd_guard_is_passthrough_when_unlocked():
     # With no shell attached the guard must not fire — execution falls through
     # to _ensure_ready (here a sentinel) instead of raising AppShellActiveError.
     with pytest.raises(_ReachedEnsureReadyError):
-        await inner.run_cmd("ls")
+        await inner.run_cmd(cmd="ls")
 
 
 @pytest.mark.asyncio
@@ -816,10 +816,10 @@ async def test_per_session_override_is_not_clobbered_by_the_default():
     session = MagicMock()
     session.send = AsyncMock()
     session.expect = AsyncMock(return_value=">>> ")
-    sh = _Shell(session, timeout=120.0)
+    sh = _Shell(session=session, timeout=120.0)
     await sh.cmd("1+1")
     # cmd() passed no timeout, so it must use the session's 120.0 — not the class default.
-    assert session.expect.await_args.args[1] == 120.0
+    assert session.expect.await_args.kwargs["timeout"] == 120.0
 
 
 # =========================================================================== #

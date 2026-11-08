@@ -89,14 +89,14 @@ class Resolve(_Marker):
 
     __slots__ = ("fn",)
 
-    def __init__(self, fn: "Callable[[HostBuild], object]") -> None:
+    def __init__(self, *, fn: "Callable[[HostBuild], object]") -> None:
         if not callable(fn):
             raise TypeError(f"Resolve needs a callable, got {fn!r}")
         self.fn = fn
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class RuntimeOnly:
     """Marks a host-class field no spec field supplies, in ``field(metadata={"otto": ...})``.
 

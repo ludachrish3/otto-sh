@@ -288,7 +288,7 @@ def _triple_of(path: "Path", st: "os.stat_result | Unreadable | None") -> list[A
 def _build_inventory(projects: "list[Project]") -> Any:
     from ..inventory.config import build_inventory
 
-    return build_inventory(projects)
+    return build_inventory(projects=projects)
 
 
 def inventory_block(projects: "list[Project]") -> dict[str, Any]:

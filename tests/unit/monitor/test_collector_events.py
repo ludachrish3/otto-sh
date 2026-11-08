@@ -32,7 +32,7 @@ async def test_update_event_moves_start_timestamp(tmp_path) -> None:
         ev = await collector.add_event(label="pin")
         moved = ev.timestamp - timedelta(minutes=3)
         updated = await collector.update_event(
-            ev.id, label="pin", color=ev.color, dash=ev.dash, timestamp=moved
+            event_id=ev.id, label="pin", color=ev.color, dash=ev.dash, timestamp=moved
         )
         assert updated is not None
         assert updated.timestamp == moved
@@ -91,7 +91,7 @@ async def test_a_mutation_and_its_stamp_are_one_step_against_a_snapshot(op: str)
         case "update":
             task = asyncio.create_task(
                 collector.update_event(
-                    event.id,
+                    event_id=event.id,
                     label="after",
                     color=event.color,
                     dash=event.dash,
@@ -99,13 +99,13 @@ async def test_a_mutation_and_its_stamp_are_one_step_against_a_snapshot(op: str)
                 )
             )
         case _:
-            task = asyncio.create_task(collector.delete_event(event.id))
+            task = asyncio.create_task(collector.delete_event(event_id=event.id))
     await asyncio.sleep(0)  # the mutation now waits on its DB write
     snap_stamp, snap_state = snapshot()
     held.release.set()
     await task
     frag = MonitorSessionFragment.model_validate(q.get_nowait())
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
 
     assert snap_state == before, "a snapshot taken mid-write must not see the mutation"
     assert frag.observed_at is not None
@@ -184,9 +184,9 @@ async def test_update_event_rejects_a_named_color_before_mutating() -> None:
     q = collector.subscribe()
     with pytest.raises(ValueError, match=r"color must be #rrggbb, got 'red'"):
         await collector.update_event(
-            ev.id, label="x", color="red", dash=ev.dash, timestamp=ev.timestamp
+            event_id=ev.id, label="x", color="red", dash=ev.dash, timestamp=ev.timestamp
         )
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
     [stored] = collector.get_events()
     assert stored.label == "before"
     assert stored.color == "#888888"
@@ -202,9 +202,9 @@ async def test_update_event_rejects_an_unknown_dash_before_mutating() -> None:
     q = collector.subscribe()
     with pytest.raises(ValueError, match=r"dash must be one of .*, got 'wavy'"):
         await collector.update_event(
-            ev.id, label="x", color=ev.color, dash="wavy", timestamp=ev.timestamp
+            event_id=ev.id, label="x", color=ev.color, dash="wavy", timestamp=ev.timestamp
         )
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
     [stored] = collector.get_events()
     assert (stored.label, stored.dash) == ("before", ev.dash)
     assert q.empty()  # nothing published
@@ -217,7 +217,7 @@ async def test_update_event_normalises_color() -> None:
     collector = MetricCollector(hosts=[])
     ev = await collector.add_event(label="x")
     updated = await collector.update_event(
-        ev.id, label="x", color="#ABC", dash="solid", timestamp=ev.timestamp
+        event_id=ev.id, label="x", color="#ABC", dash="solid", timestamp=ev.timestamp
     )
     assert updated is not None
     assert updated.color == "#aabbcc"
@@ -234,11 +234,11 @@ async def test_delete_event_returns_the_removed_event() -> None:
 
     collector = MetricCollector(hosts=[])
     ev = await collector.add_event(label="gone", color="#ABC")
-    removed = await collector.delete_event(ev.id)
+    removed = await collector.delete_event(event_id=ev.id)
     assert removed is not None
     assert (removed.id, removed.label, removed.color) == (ev.id, "gone", "#aabbcc")
     assert collector.get_events() == []
-    assert await collector.delete_event(ev.id) is None
+    assert await collector.delete_event(event_id=ev.id) is None
 
 
 @pytest.mark.asyncio
@@ -251,7 +251,7 @@ async def test_revert_update_writes_back_only_when_expected() -> None:
     ev = await collector.add_event(label="before", color="#111111", dash="dot")
     original = _record(ev)
     edited = await collector.update_event(
-        ev.id,
+        event_id=ev.id,
         label="after",
         color="#222222",
         dash="dash",
@@ -262,20 +262,22 @@ async def test_revert_update_writes_back_only_when_expected() -> None:
     expect = _record(edited)
 
     q = collector.subscribe()
-    reverted = await collector.revert_event(ev.id, expect, original)
+    reverted = await collector.revert_event(event_id=ev.id, expect=expect, write=original)
     assert reverted is not None
     assert same_event(_record(reverted), original)
     frag = MonitorSessionFragment.model_validate(q.get_nowait())
     assert [e.id for e in frag.events or []] == [ev.id]
 
     with pytest.raises(EventChanged) as caught:
-        await collector.revert_event(ev.id, expect, original)  # expect is stale now
+        await collector.revert_event(
+            event_id=ev.id, expect=expect, write=original
+        )  # expect is stale now
     assert caught.value.current is not None
     assert same_event(caught.value.current, original)
     [stored] = collector.get_events()
     assert same_event(_record(stored), original)
     assert q.empty()  # the refused revert published nothing
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
 
 
 @pytest.mark.asyncio
@@ -286,12 +288,12 @@ async def test_revert_delete_leg_and_a_missing_event() -> None:
     collector = MetricCollector(hosts=[])
     ev = await collector.add_event(label="x")
     record = _record(ev)
-    removed = await collector.revert_event(ev.id, record, None)
+    removed = await collector.revert_event(event_id=ev.id, expect=record, write=None)
     assert removed is not None
     assert removed.id == ev.id
     assert collector.get_events() == []
     with pytest.raises(EventChanged) as caught:
-        await collector.revert_event(ev.id, record, None)
+        await collector.revert_event(event_id=ev.id, expect=record, write=None)
     assert caught.value.current is None
 
 
@@ -303,11 +305,11 @@ async def test_revert_restore_keeps_id_and_source() -> None:
     collector = MetricCollector(hosts=[])
     await collector.add_event(label="first")
     ev = await collector.add_event(label="lifecycle", source="auto", color="#333333")
-    removed = await collector.delete_event(ev.id)
+    removed = await collector.delete_event(event_id=ev.id)
     assert removed is not None
 
     q = collector.subscribe()
-    restored = await collector.revert_event(ev.id, None, _record(removed))
+    restored = await collector.revert_event(event_id=ev.id, expect=None, write=_record(removed))
     assert restored is not None
     assert (restored.id, restored.source, restored.label, restored.color) == (
         ev.id,
@@ -318,7 +320,7 @@ async def test_revert_restore_keeps_id_and_source() -> None:
     assert collector._store.find_event(ev.id) is not None
     frag = MonitorSessionFragment.model_validate(q.get_nowait())
     assert [(e.id, e.source) for e in frag.events or []] == [(ev.id, "auto")]
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
 
 
 @pytest.mark.asyncio
@@ -330,15 +332,15 @@ async def test_restore_refuses_present_or_unallocated_id() -> None:
     ev = await collector.add_event(label="here")
     q = collector.subscribe()
     with pytest.raises(EventChanged) as present:
-        await collector.restore_event(ev.id, _record(ev))
+        await collector.restore_event(event_id=ev.id, write=_record(ev))
     assert present.value.current is not None
     assert present.value.current.label == "here"
     with pytest.raises(EventChanged) as unallocated:
-        await collector.restore_event(ev.id + 100, _record(ev))
+        await collector.restore_event(event_id=ev.id + 100, write=_record(ev))
     assert unallocated.value.current is None
     assert q.empty()
     assert [e.id for e in collector.get_events()] == [ev.id]
-    collector.unsubscribe(q)
+    collector.unsubscribe(q=q)
 
 
 @pytest.mark.asyncio
@@ -377,16 +379,18 @@ async def test_restore_on_reused_db_keeps_rowid(tmp_path) -> None:
     try:
         ev = await collector.add_event(label="live")
         assert ev.id == 57
-        removed = await collector.delete_event(ev.id)
+        removed = await collector.delete_event(event_id=ev.id)
         assert removed is not None
-        restored = await collector.revert_event(ev.id, None, _record(removed))
+        restored = await collector.revert_event(event_id=ev.id, expect=None, write=_record(removed))
         assert restored is not None
         assert restored.id == 57
         # The earlier session's 56 lies inside this collector's handed-out
         # range (1..57) but belongs to another session: refused as changed,
         # never an IntegrityError.
         with pytest.raises(event_ops.EventChanged) as caught:
-            await collector.revert_event(56, None, EventRecord(id=56, timestamp=t0, label="mine"))
+            await collector.revert_event(
+                event_id=56, expect=None, write=EventRecord(id=56, timestamp=t0, label="mine")
+            )
         assert caught.value.current is None
     finally:
         await collector.close_db()

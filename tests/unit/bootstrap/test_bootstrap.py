@@ -585,7 +585,7 @@ def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypa
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="bench",
-        element=Element("probe-box"),
+        element=Element(name="probe-box"),
     )
     PRODUCTS = [(p.name, p.owner) for p in _host.products]
     DEV_TOOLS = [(t.name, t.owner) for t in _host.dev_tools]
@@ -1061,7 +1061,11 @@ def test_a_run_not_using_the_bad_table_project_proceeds_with_a_warning(tmp_path,
     # Kept ordered, as a project whose init failed is: D2 and the dependency
     # order still see it.
     assert [project.name for project in result.ordered_projects] == ["proj-a", "proj-b"]
-    check = check_projects(result, ["lab-b"], select_projects(result.projects, [], []))
+    check = check_projects(
+        result=result,
+        labs=["lab-b"],
+        selection=select_projects(projects=result.projects, include=[], exclude=[]),
+    )
     (demoted,) = check.demoted
     assert demoted.name == "proj-a"
     assert demoted.reason == "out_of_scope"
@@ -1073,7 +1077,11 @@ def test_a_run_using_the_bad_table_project_fails_loudly(tmp_path, monkeypatch):
 
     result = _scoped_pair(tmp_path, monkeypatch)
     with pytest.raises(ProjectLoadError) as exc:
-        check_projects(result, ["lab-a"], select_projects(result.projects, [], []))
+        check_projects(
+            result=result,
+            labs=["lab-a"],
+            selection=select_projects(projects=result.projects, include=[], exclude=[]),
+        )
     assert "[os_profiles.broken] in project 'proj-a'" in str(exc.value)
 
 
@@ -1099,8 +1107,8 @@ _MISSING_MODULE_CLASS = """\
 
     register_host_class(
         "plugin-host",
-        Ref("plugin_hosts_missing:PluginHost"),
-        spec=Ref("plugin_hosts_missing:PluginSpec"),
+        Ref(target="plugin_hosts_missing:PluginHost"),
+        spec=Ref(target="plugin_hosts_missing:PluginSpec"),
     )
 """
 
@@ -1138,9 +1146,9 @@ def test_a_ref_class_s_bad_own_profile_names_its_registering_module(tmp_path, mo
 
         register_host_class(
             "typo-host",
-            Ref("otto.host.unix_host:UnixHost"),
-            spec=Ref("otto.host.specs:UnixHostSpec"),
-            profile=ProfileFields(FrozenMap({"not_a_field": 1})),
+            Ref(target="otto.host.unix_host:UnixHost"),
+            spec=Ref(target="otto.host.specs:UnixHostSpec"),
+            profile=ProfileFields(defaults=FrozenMap(mapping={"not_a_field": 1})),
         )
         """,
     )

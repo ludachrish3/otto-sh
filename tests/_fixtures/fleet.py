@@ -51,7 +51,7 @@ def _host(element, lab_name, octet):
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name=lab_name,
-        element=Element(element),
+        element=Element(name=element),
     )
 
 

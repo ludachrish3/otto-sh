@@ -121,7 +121,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
     @pytest.mark.asyncio
     async def test_sections_heading_names_every_hop_and_address(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         section = _section(report)
         assert section.heading == "a 10.0.0.1 → b 10.0.0.2 → c 10.0.0.3  :8080 (scratch 61000)"
         assert section.columns == ["tcp", "udp"]
@@ -135,7 +135,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
         """K1: the range line is indented ``len(host_id) + 2`` and uses link's value labels
         (``aarch64 within``/``gnu within``, not ``isa within``/``userland within``)."""
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         section = _section(report)
         assert section.subheadings[0] == f"a  {_HOP_FACTS_TAIL}"
         assert section.subheadings[1] == f"   {_PROVEN_RANGE_LINE}"
@@ -147,7 +147,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
     @pytest.mark.asyncio
     async def test_proven_line_is_a_subheading(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         section = _section(report)
         assert section.subheadings[-1] == f"proven: {report.proven}"
         assert report.proven == "hop chain: payload-verified (tcp, udp)"
@@ -156,7 +156,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
     async def test_a_missing_scratch_port_drops_the_scratch_clause(self, monkeypatch) -> None:
         # The missing-tools path never builds a tunnel, so scratch_port stays None.
         the_bed = bed(a={"missing": ["socat"]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert report.scratch_port is None
         section = _section(report)
         assert section.heading == "a 10.0.0.1 → b 10.0.0.2 → c 10.0.0.3  :8080"
@@ -166,7 +166,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
         self, monkeypatch
     ) -> None:
         the_bed = bed("a", "b", "d").install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         section = _section(report)
         assert section.heading == "a 10.0.0.1 → b 10.0.0.2 → dest d 10.0.0.3  :8080 (scratch 61000)"
         # Each of a, b and the dest: a facts line + its own indented proven-range line,
@@ -189,7 +189,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
         the_bed = bed("a", "b", "d", d={"missing": ["socat"], "serves": [PORT]}).install(
             monkeypatch
         )
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert report.dest_proof == "split"
         assert report.destination is not None
         assert report.destination.fingerprint is not None
@@ -201,7 +201,7 @@ class TestTunnelSectionsHeadingAndSubheadings:
     @pytest.mark.asyncio
     async def test_a_has_bash_false_dest_says_not_fingerprinted(self, monkeypatch) -> None:
         the_bed = bed("a", "b", "d", d={"has_bash": False, "serves": [PORT]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert report.dest_proof == "split"
         assert report.destination is not None
         assert report.destination.fingerprint is None
@@ -220,7 +220,7 @@ class TestTunnelSectionsTable:
         self, monkeypatch
     ) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         section = _section(report)
         labels = [row.label for row in section.rows]
         assert "fwd bulk" in labels
@@ -280,7 +280,7 @@ class TestTunnelSectionsTable:
     @pytest.mark.asyncio
     async def test_row_order_is_the_union_of_the_columns_first_seen(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         section = _section(report)
         assert [row.label for row in section.rows] == [
             "service port",
@@ -306,7 +306,7 @@ class TestTunnelSectionsSayTheDetailACellCarries:
         self, monkeypatch
     ) -> None:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         line = next(line for line in _render(report).splitlines() if line.startswith(LAST_SEGMENT))
         assert line.split(maxsplit=4)[-1].strip() == f"pass  connected — {HANDSHAKE_ONLY}"
 
@@ -314,7 +314,7 @@ class TestTunnelSectionsSayTheDetailACellCarries:
     async def test_a_service_port_held_by_an_otto_tunnel_names_it(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         user = the_bed.plant_tunnel(["a", "c"], "tcp", PORT)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         text = " ".join(line.strip() for line in _render(report).splitlines())
         assert (
             f"want free — an otto tunnel already binds it: {user.id} on a, {user.id} on c" in text
@@ -326,7 +326,7 @@ class TestTunnelSectionsMarkupAndJSON:
     @pytest.mark.asyncio
     async def test_a_version_string_with_markup_syntax_renders_literally(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         hop0 = report.hops[0]
         assert hop0.fingerprint is not None
         rogue = dataclasses.replace(
@@ -341,7 +341,7 @@ class TestTunnelSectionsMarkupAndJSON:
     @pytest.mark.asyncio
     async def test_report_json_kind_tunnel(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         text = report_to_json(report, kind="tunnel")
         doc = json.loads(text)
         assert doc["kind"] == "tunnel"
@@ -353,7 +353,7 @@ class TestTunnelSectionsMarkupAndJSON:
     @pytest.mark.asyncio
     async def test_report_json_kind_tunnel_names_a_split_dest(self, monkeypatch) -> None:
         the_bed = bed("a", "b", "d", d={"has_bash": False, "serves": [PORT]}).install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         text = report_to_json(report, kind="tunnel")
         doc = json.loads(text)
         assert doc["result"]["dest_proof"] == "split"
@@ -363,7 +363,7 @@ class TestTunnelSectionsMarkupAndJSON:
     @pytest.mark.asyncio
     async def test_golden_two_protocol_three_hop_render(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         text = _render(report)
         lines = [line.rstrip() for line in text.splitlines()]
         assert lines == GOLDEN_ABC_BOTH
@@ -387,7 +387,7 @@ class TestTunnelSectionsMarkupAndJSON:
         """
         the_bed = bed().install(monkeypatch)
         the_bed.dead.add(("b", "c"))
-        report = await check_tunnel(the_bed, ABC, port=PORT)
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         text = _render(report)
         lines = [line.rstrip() for line in text.splitlines()]
 

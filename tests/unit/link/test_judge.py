@@ -333,15 +333,15 @@ class TestReadback:
         # 0.7ms delay reads back as 699us after 64ns netem tick
         # quantization. Plain dataclass `==` would call this a mismatch
         # (0.7 != 0.699); judge_readback must use `equivalent()` instead.
-        sel = Selector(5000)
-        expected = ScopedState.from_selectors({sel: (4, ImpairmentParams(delay_ms=0.7))})
-        got = ScopedState.from_selectors({sel: (4, ImpairmentParams(delay_ms=0.699))})
+        sel = Selector(port=5000)
+        expected = ScopedState.from_selectors(selectors={sel: (4, ImpairmentParams(delay_ms=0.7))})
+        got = ScopedState.from_selectors(selectors={sel: (4, ImpairmentParams(delay_ms=0.699))})
         assert expected != got  # proves plain == would wrongly fail this
         assert judge_readback(expected, got).verdict is Verdict.PASS
 
     def test_mismatched_trees_fail(self) -> None:
-        sel = Selector(5000)
-        expected = ScopedState.from_selectors({sel: (4, ImpairmentParams(delay_ms=50.0))})
+        sel = Selector(port=5000)
+        expected = ScopedState.from_selectors(selectors={sel: (4, ImpairmentParams(delay_ms=50.0))})
         got = ScopedState.clean()
         result = judge_readback(expected, got)
         assert result.verdict is Verdict.FAIL
@@ -355,12 +355,12 @@ class TestReadback:
 
 class TestDescribe:
     def test_every_shape_reads_as_prose(self) -> None:
-        sel = Selector(5200, "tcp", end=5210, side="dst")
+        sel = Selector(port=5200, proto="tcp", end=5210, side="dst")
         params = ImpairmentParams(delay_ms=100.0)
         assert describe(ScopedState.clean()) == "clean"
         assert describe(ScopedState.foreign()) == "foreign"
-        assert describe(ScopedState.whole_link(params)) == "whole [delay 100ms]"
-        scoped = ScopedState.from_selectors({sel: (4, params)})
+        assert describe(ScopedState.whole_link(params=params)) == "whole [delay 100ms]"
+        scoped = ScopedState.from_selectors(selectors={sel: (4, params)})
         assert describe(scoped) == "5200:5210/tcp dst [delay 100ms]"
 
 
@@ -369,7 +369,7 @@ class TestExpire:
         assert judge_expire(ScopedState.clean(), waited_s=6, expire_s=3).verdict is Verdict.PASS
 
     def test_tree_still_present_fails(self) -> None:
-        after = ScopedState.whole_link(ImpairmentParams(delay_ms=50.0))
+        after = ScopedState.whole_link(params=ImpairmentParams(delay_ms=50.0))
         result = judge_expire(after, waited_s=9, expire_s=4)
         assert result.verdict is Verdict.FAIL
         assert result.detail == "tree still present 9s after a 4s expire"

@@ -113,7 +113,8 @@ for module in ("otto.config", "otto.config.user_settings", "otto.models.settings
 # absent path, never the default: the default reads the real ~/.otto.
 from pathlib import Path
 
-assert otto.inventory.build_inventory([], user_settings_path=Path("/nonexistent/x.toml")) is None
+nowhere = Path("/nonexistent/x.toml")
+assert otto.inventory.build_inventory(projects=[], user_settings_path=nowhere) is None
 assert "otto.config.user_settings" in sys.modules, "calling build_inventory must import it"
 print("LAZY IMPORT OK")
 """

@@ -22,24 +22,24 @@ def test_is_frozen():
 
 def test_expires_within_true_inside_window():
     r = Reservation(user="alice", resource="rack3", end=AWARE + timedelta(minutes=4, seconds=59))
-    assert r.expires_within(timedelta(minutes=5), now=AWARE) is True
+    assert r.expires_within(delta=timedelta(minutes=5), now=AWARE) is True
 
 
 def test_expires_within_false_outside_window():
     r = Reservation(user="alice", resource="rack3", end=AWARE + timedelta(minutes=5, seconds=1))
-    assert r.expires_within(timedelta(minutes=5), now=AWARE) is False
+    assert r.expires_within(delta=timedelta(minutes=5), now=AWARE) is False
 
 
 def test_expires_within_false_when_open_ended():
     """end=None means never expires — it must never warn."""
     r = Reservation(user="alice", resource="rack3", end=None)
-    assert r.expires_within(timedelta(minutes=5), now=AWARE) is False
+    assert r.expires_within(delta=timedelta(minutes=5), now=AWARE) is False
 
 
 def test_expires_within_true_when_already_past():
     """A row otto is still holding whose end has passed is maximally urgent."""
     r = Reservation(user="alice", resource="rack3", end=AWARE - timedelta(seconds=1))
-    assert r.expires_within(timedelta(minutes=5), now=AWARE) is True
+    assert r.expires_within(delta=timedelta(minutes=5), now=AWARE) is True
 
 
 def test_expires_within_defaults_now_to_utc_now():
@@ -48,7 +48,7 @@ def test_expires_within_defaults_now_to_utc_now():
         resource="rack3",
         end=datetime.now(timezone.utc) + timedelta(minutes=1),
     )
-    assert r.expires_within(timedelta(minutes=5)) is True
+    assert r.expires_within(delta=timedelta(minutes=5)) is True
 
 
 def test_is_active_wholly_unbounded_is_always_active():

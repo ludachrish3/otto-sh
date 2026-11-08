@@ -34,18 +34,22 @@ def _result(*, errors=(), projects=()):
 
 
 def _broken(project):
-    return bs.BootstrapError(project.root, f"{project.name}_init", ImportError("paramiko"))
+    return bs.BootstrapError(
+        project.root, source=f"{project.name}_init", cause=ImportError("paramiko")
+    )
 
 
 class TestSelectProjects:
     def test_names_are_normalised_deduplicated_and_kept_in_order(self):
         projects = [_project("My_Project"), _project("other")]
-        sel = select_projects(projects, ["My_Project", "my-project"], ["Other"])
+        sel = select_projects(
+            projects=projects, include=["My_Project", "my-project"], exclude=["Other"]
+        )
         assert sel == ProjectSelection(include=["my-project"], exclude=["other"])
 
     def test_an_unknown_name_is_refused_with_a_suggestion(self):
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_project("firmware")], ["firmwre"], [])
+            select_projects(projects=[_project("firmware")], include=["firmwre"], exclude=[])
         err = exc.value
         assert (err.kind, err.field, err.names, err.suggestion) == (
             "unknown",
@@ -57,14 +61,14 @@ class TestSelectProjects:
 
     def test_an_unknown_exclude_names_its_own_field_and_may_have_no_suggestion(self):
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_project("firmware")], [], ["zzz"])
+            select_projects(projects=[_project("firmware")], include=[], exclude=["zzz"])
         assert (exc.value.field, exc.value.suggestion) == ("exclude_projects", None)
         assert str(exc.value) == "no project 'zzz'"
 
     def test_overlap_is_refused_before_any_name_is_looked_up(self):
         # `ghost` is unknown too; overlap must win, as the CLI's order has it.
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([], ["ghost", "b"], ["B", "ghost"])
+            select_projects(projects=[], include=["ghost", "b"], exclude=["B", "ghost"])
         assert (exc.value.kind, exc.value.names) == ("overlap", ["b", "ghost"])
         assert str(exc.value) == (
             "project(s) b, ghost appear in both include_projects and exclude_projects — pick one"
@@ -74,34 +78,37 @@ class TestSelectProjects:
         # Raw, ``MY_PR0JECT`` is too far from ``my-project`` for any suggestion;
         # normalised to ``my-pr0ject`` it is one character off.
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_project("my-project")], ["MY_PR0JECT"], [])
+            select_projects(projects=[_project("my-project")], include=["MY_PR0JECT"], exclude=[])
         assert (exc.value.names, exc.value.suggestion) == (["my-pr0ject"], "my-project")
 
     def test_no_switches_selects_nothing_and_needs_no_projects(self):
-        assert select_projects([], [], []) == ProjectSelection()
+        assert select_projects(projects=[], include=[], exclude=[]) == ProjectSelection()
 
 
 def test_check_project_overlap_passes_disjoint_lists():
-    check_project_overlap(["a"], ["b"])  # must not raise
+    check_project_overlap(include=["a"], exclude=["b"])  # must not raise
 
 
 def test_check_project_overlap_refuses_a_name_in_both_lists_once_normalised():
     with pytest.raises(ProjectSelectionError) as exc:
-        check_project_overlap(["Beta", "a", "c.d"], ["C_D", "beta"])
+        check_project_overlap(include=["Beta", "a", "c.d"], exclude=["C_D", "beta"])
     err = exc.value
     assert (err.kind, err.field, err.names) == ("overlap", "include_projects", ["beta", "c-d"])
 
 
 class TestCheckProjects:
     def test_no_errors_demote_nothing(self):
-        assert check_projects(_result(), ["unix"], ProjectSelection()).demoted == []
+        assert (
+            check_projects(result=_result(), labs=["unix"], selection=ProjectSelection()).demoted
+            == []
+        )
 
     def test_an_excluded_projects_error_is_demoted(self):
         project = _project("Project2")
         check = check_projects(
-            _result(errors=[_broken(project)], projects=[project]),
-            [],
-            ProjectSelection(exclude=["project2"]),
+            result=_result(errors=[_broken(project)], projects=[project]),
+            labs=[],
+            selection=ProjectSelection(exclude=["project2"]),
         )
         [d] = check.demoted
         assert (d.name, d.normalized_name, d.reason) == ("Project2", "project2", "excluded")
@@ -113,7 +120,9 @@ class TestCheckProjects:
     def test_an_out_of_scope_projects_error_is_demoted_with_the_labs(self):
         project = _project("project2", lab_patterns=["unix_alt"])
         check = check_projects(
-            _result(errors=[_broken(project)], projects=[project]), ["unix"], ProjectSelection()
+            result=_result(errors=[_broken(project)], projects=[project]),
+            labs=["unix"],
+            selection=ProjectSelection(),
         )
         [d] = check.demoted
         assert (d.reason, d.labs) == ("out_of_scope", ["unix"])
@@ -123,31 +132,41 @@ class TestCheckProjects:
         project = _project("project2")
         err = _broken(project)
         with pytest.raises(ProjectLoadError) as exc:
-            check_projects(_result(errors=[err], projects=[project]), ["unix"], ProjectSelection())
+            check_projects(
+                result=_result(errors=[err], projects=[project]),
+                labs=["unix"],
+                selection=ProjectSelection(),
+            )
         assert exc.value.errors == [err]
 
     def test_include_forces_an_out_of_scope_error_fatal(self):
         project = _project("project2", lab_patterns=["unix_alt"])
         with pytest.raises(ProjectLoadError):
             check_projects(
-                _result(errors=[_broken(project)], projects=[project]),
-                ["unix"],
-                ProjectSelection(include=["project2"]),
+                result=_result(errors=[_broken(project)], projects=[project]),
+                labs=["unix"],
+                selection=ProjectSelection(include=["project2"]),
             )
 
     def test_an_error_with_no_project_is_always_fatal(self):
-        err = bs.BootstrapError(Path("/projects/unparsable"), "settings.toml", ValueError("bad"))
+        err = bs.BootstrapError(
+            Path("/projects/unparsable"), source="settings.toml", cause=ValueError("bad")
+        )
         with pytest.raises(ProjectLoadError):
-            check_projects(_result(errors=[err]), [], ProjectSelection(exclude=["unparsable"]))
+            check_projects(
+                result=_result(errors=[err]),
+                labs=[],
+                selection=ProjectSelection(exclude=["unparsable"]),
+            )
 
     def test_a_fatal_error_keeps_the_demotions_beside_it(self):
         active, excluded = _project("a"), _project("b")
         fatal, demoted = _broken(active), _broken(excluded)
         with pytest.raises(ProjectLoadError) as exc:
             check_projects(
-                _result(errors=[fatal, demoted], projects=[active, excluded]),
-                [],
-                ProjectSelection(exclude=["b"]),
+                result=_result(errors=[fatal, demoted], projects=[active, excluded]),
+                labs=[],
+                selection=ProjectSelection(exclude=["b"]),
             )
         # The demoted error sits beside the fatal one, never among it.
         assert exc.value.errors == [fatal]
@@ -158,7 +177,9 @@ class TestCheckProjects:
         project = _project("project2", lab_patterns=["unix_alt"])
         with pytest.raises(ProjectLoadError):
             check_projects(
-                _result(errors=[_broken(project)], projects=[project]), [], ProjectSelection()
+                result=_result(errors=[_broken(project)], projects=[project]),
+                labs=[],
+                selection=ProjectSelection(),
             )
 
 
@@ -176,6 +197,6 @@ def test_refused_names_reads_only_the_duplicate_errors(tmp_path):
     errors = [
         DuplicateProjectError(a, "twin", [a, b]),
         DuplicateProjectError(b, "twin", [a, b]),
-        BootstrapError(tmp_path / "c", "settings.toml", ValueError("x")),
+        BootstrapError(tmp_path / "c", source="settings.toml", cause=ValueError("x")),
     ]
     assert refused_names(errors) == ["twin"]

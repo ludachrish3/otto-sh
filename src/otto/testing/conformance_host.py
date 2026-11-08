@@ -139,14 +139,14 @@ def _check_signature(
         expected = _keyword_names(expected_on)
         actual = _keyword_names(actual_on)
     except (TypeError, ValueError) as e:
-        c.expect(False, f"{label}: signature is unreadable ({type(e).__name__}: {e})")
+        c.expect(False, msg=f"{label}: signature is unreadable ({type(e).__name__}: {e})")
         return
     if "**" in actual:
         return
     missing = [name for name in expected if name not in actual]
     c.expect(
         not missing,
-        f"{label}: does not accept {', '.join(missing)} by keyword; "
+        msg=f"{label}: does not accept {', '.join(missing)} by keyword; "
         f"production passes {', '.join(expected)}",
     )
 
@@ -293,23 +293,23 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     c = ExpectCollector()
     c.expect(
         isinstance(cls, type) and issubclass(cls, BaseHost),
-        f"Host: {cls!r} must be a subclass of otto.host.host.BaseHost",
+        msg=f"Host: {cls!r} must be a subclass of otto.host.host.BaseHost",
     )
     capabilities = getattr(cls, "capabilities", None)
     declared = isinstance(capabilities, HostCapabilities)
     c.expect(
         declared,
-        f"Host: {getattr(cls, '__name__', cls)!r} must declare a HostCapabilities in "
+        msg=f"Host: {getattr(cls, '__name__', cls)!r} must declare a HostCapabilities in "
         f"`capabilities` saying what its verbs promise, got {capabilities!r}",
     )
     for verb in _HOST_VERBS:
         actual = getattr(cls, verb, None)
         if actual is None:
-            c.expect(False, f"Host.{verb}: missing")
+            c.expect(False, msg=f"Host.{verb}: missing")
             continue
         c.expect(
             inspect.iscoroutinefunction(actual),
-            f"Host.{verb}: must be an async def — production awaits it",
+            msg=f"Host.{verb}: must be an async def — production awaits it",
         )
         _check_signature(c, f"Host.{verb}", getattr(Host, verb), actual)
     _expect_identity_members(c, cls)
@@ -351,18 +351,18 @@ def assert_host_registrable(cls: type, *, spec: "type[HostSpec] | None" = None) 
     try:
         _validate_host_class(label, cls)
     except ValueError as e:
-        c.expect(False, f"Host registration: {e}")
+        c.expect(False, msg=f"Host registration: {e}")
     if isinstance(cls, type):
         try:
             resolved_spec = _resolve_host_spec(label, cls, spec)
         except ValueError as e:
-            c.expect(False, f"Host registration: {e}")
+            c.expect(False, msg=f"Host registration: {e}")
         else:
             if isinstance(resolved_spec, type) and dataclasses.is_dataclass(cls):
                 try:
                     check_coverage(label, cls, resolved_spec)
                 except ValueError as e:
-                    c.expect(False, f"Host registration: {e}")
+                    c.expect(False, msg=f"Host registration: {e}")
     c.raise_if_failures()
 
 
@@ -382,23 +382,23 @@ def _expect_identity_members(c: ExpectCollector, cls: type) -> None:
     """
     switch = getattr(cls, "switch_user", None)
     if switch is None:
-        c.expect(False, "Host.switch_user: missing")
+        c.expect(False, msg="Host.switch_user: missing")
     else:
         c.expect(
             inspect.iscoroutinefunction(switch),
-            "Host.switch_user: must be an async def — production awaits it",
+            msg="Host.switch_user: must be an async def — production awaits it",
         )
         _check_signature(c, "Host.switch_user", Host.switch_user, switch)
     for name in _CONTEXT_MEMBERS:
         actual = getattr(cls, name, None)
         if actual is None:
-            c.expect(False, f"Host.{name}: missing")
+            c.expect(False, msg=f"Host.{name}: missing")
             continue
         c.expect(
             callable(actual)
             and not inspect.iscoroutinefunction(actual)
             and not inspect.isasyncgenfunction(actual),
-            f"Host.{name}: must return an async context manager (an "
+            msg=f"Host.{name}: must return an async context manager (an "
             f"@asynccontextmanager method, say) — production enters it with "
             f"`async with`, which a coroutine or a bare async generator cannot serve",
         )
@@ -406,7 +406,7 @@ def _expect_identity_members(c: ExpectCollector, cls: type) -> None:
     current_user = inspect.getattr_static(cls, "current_user", None)
     c.expect(
         isinstance(current_user, property),
-        f"Host.current_user: must be a property — production reads "
+        msg=f"Host.current_user: must be a property — production reads "
         f"`host.current_user` as an attribute, got {current_user!r}",
     )
 
@@ -428,7 +428,7 @@ def _expect_declaration_holds(
         if support is UserSupport.refused:
             c.expect(
                 isinstance(raised, NotImplementedError),
-                f"Host.{verb}: declared {field_name}={support.value!r}, so "
+                msg=f"Host.{verb}: declared {field_name}={support.value!r}, so "
                 f"{verb}(user=...) must raise NotImplementedError under a dry run "
                 f"too — the refusal has to sit above the dry-run arm; got "
                 f"{_outcome(raised)}",
@@ -436,13 +436,13 @@ def _expect_declaration_holds(
         elif isinstance(raised, NotImplementedError):
             c.expect(
                 False,
-                f"Host.{verb}: declared {field_name}={support.value!r}, but "
+                msg=f"Host.{verb}: declared {field_name}={support.value!r}, but "
                 f"{verb}(user=...) raised NotImplementedError: {raised}",
             )
         else:
             c.expect(
                 raised is None,
-                f"Host.{verb}: declared {field_name}={support.value!r}, but a dry-run "
+                msg=f"Host.{verb}: declared {field_name}={support.value!r}, but a dry-run "
                 f"{verb}(user=...) raised {_outcome(raised)}",
             )
     identity = capabilities.session_identity
@@ -456,14 +456,14 @@ def _expect_declaration_holds(
         if identity is SessionIdentity.none:
             c.expect(
                 isinstance(raised, NotImplementedError),
-                f"Host.{verb}: declared session_identity={identity.value!r}, so "
+                msg=f"Host.{verb}: declared session_identity={identity.value!r}, so "
                 f"{verb}(...) must raise NotImplementedError under a dry run too; "
                 f"got {_outcome(raised)}",
             )
         elif isinstance(raised, NotImplementedError):
             c.expect(
                 False,
-                f"Host.{verb}: declared session_identity={identity.value!r}, but "
+                msg=f"Host.{verb}: declared session_identity={identity.value!r}, but "
                 f"{verb}(...) raised NotImplementedError: {raised}",
             )
         else:
@@ -475,7 +475,7 @@ def _expect_declaration_holds(
             # drifting from the protocol, and is reported by name.
             c.expect(
                 raised is None or isinstance(raised, CommandNotRunError),
-                f"Host.{verb}: declared session_identity={identity.value!r}, so a dry-run "
+                msg=f"Host.{verb}: declared session_identity={identity.value!r}, so a dry-run "
                 f"{verb}(...) must either complete or decline the dry run; got "
                 f"{_outcome(raised)}",
             )
@@ -525,26 +525,26 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
     c = ExpectCollector()
     c.expect(
         isinstance(cls, type) and issubclass(cls, BaseFileTransfer),
-        f"BaseFileTransfer: {cls!r} must be a subclass of otto.host.transfer.BaseFileTransfer",
+        msg=f"BaseFileTransfer: {cls!r} must be a subclass of otto.host.transfer.BaseFileTransfer",
     )
     families = getattr(cls, "host_families", None)
     c.expect(
         isinstance(families, frozenset)
         and bool(families)
         and all(isinstance(f, str) for f in families),
-        f"BaseFileTransfer: host_families must be a non-empty frozenset[str] naming the "
+        msg=f"BaseFileTransfer: host_families must be a non-empty frozenset[str] naming the "
         f"host families this backend serves, got {families!r}",
     )
     granularity = getattr(cls, "progress_granularity", None)
     c.expect(
         isinstance(granularity, ProgressGranularity),
-        f"BaseFileTransfer: progress_granularity must be a ProgressGranularity saying what "
+        msg=f"BaseFileTransfer: progress_granularity must be a ProgressGranularity saying what "
         f"this backend promises the progress bar, got {granularity!r}",
     )
     authenticates = getattr(cls, "authenticates", None)
     c.expect(
         isinstance(authenticates, bool),
-        f"BaseFileTransfer: authenticates must be a bool saying whether this backend "
+        msg=f"BaseFileTransfer: authenticates must be a bool saying whether this backend "
         f"performs its own login, got {authenticates!r}",
     )
     if getattr(cls, "supports_mode", False):
@@ -554,39 +554,42 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
         overridden = apply_mode is not vars(BaseFileTransfer)["apply_mode"]
         c.expect(
             overridden,
-            "BaseFileTransfer.apply_mode: supports_mode is True, so apply_mode must be "
+            msg="BaseFileTransfer.apply_mode: supports_mode is True, so apply_mode must be "
             "overridden — the base implementation raises NotImplementedError, so every "
             "put given a mode would fail after its bytes landed",
         )
         if overridden:
             c.expect(
                 inspect.iscoroutinefunction(apply_mode),
-                "BaseFileTransfer.apply_mode: must be an async def — the base class awaits it",
+                msg="BaseFileTransfer.apply_mode: must be an async def — the base class awaits it",
             )
     for meth in ("put_files", "get_files", "run_put", "run_get"):
         actual = getattr(cls, meth, None)
         if actual is None:
-            c.expect(False, f"BaseFileTransfer.{meth}: missing")
+            c.expect(False, msg=f"BaseFileTransfer.{meth}: missing")
             continue
         c.expect(
             inspect.iscoroutinefunction(actual),
-            f"BaseFileTransfer.{meth}: must be an async def — the base class awaits it",
+            msg=f"BaseFileTransfer.{meth}: must be an async def — the base class awaits it",
         )
         _check_signature(c, f"BaseFileTransfer.{meth}", getattr(BaseFileTransfer, meth), actual)
     create = getattr(cls, "create", None)
     c.expect(
         inspect.ismethod(create),
-        f"BaseFileTransfer.create: must be a classmethod taking a TransferContext, got {create!r}",
+        msg=(
+            "BaseFileTransfer.create: must be a classmethod taking a TransferContext, "
+            f"got {create!r}"
+        ),
     )
     c.expect(
         inspect.ismethod(create) and create.__func__ is not BaseFileTransfer.create.__func__,
-        "BaseFileTransfer.create: must be overridden — the base implementation raises "
+        msg="BaseFileTransfer.create: must be overridden — the base implementation raises "
         "NotImplementedError, so a host could never build this backend",
     )
     left_abstract = sorted(getattr(cls, "__abstractmethods__", ()))
     c.expect(
         not left_abstract,
-        f"BaseFileTransfer: leaves {', '.join(left_abstract)} abstract, so it cannot be "
+        msg=f"BaseFileTransfer: leaves {', '.join(left_abstract)} abstract, so it cannot be "
         f"instantiated",
     )
     c.raise_if_failures()

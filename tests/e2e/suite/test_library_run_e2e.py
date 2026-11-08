@@ -40,7 +40,7 @@ bootstrap()
 from project_e2e_instructions.options import E2EFixtureOptions
 
 r = run_tests(
-    ["TestE2EFixture"],
+    names=["TestE2EFixture"],
     options=[E2EFixtureOptions(label="library")],
     output_dir=output_dir,
 )

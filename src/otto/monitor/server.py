@@ -459,7 +459,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     yield {"data": json.dumps(payload)}
             finally:
                 streams.queues.discard(q)
-                collector.unsubscribe(q)
+                collector.unsubscribe(q=q)
 
         return EventSourceResponse(generator())
 
@@ -584,7 +584,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             return dataclasses.replace(current, **event_ops.editable_fields(fields))
 
         try:
-            updated = await collector.mutate_event(event_id, resolve)
+            updated = await collector.mutate_event(event_id=event_id, resolve=resolve)
         except EventValidationError as err:
             return JSONResponse({"error": str(err)}, status_code=422)
         except _AlreadyEndedError:
@@ -696,7 +696,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 return JSONResponse({"error": "Event not found"}, status_code=404)
             _drop_document_event(session_id, event_id)
             return JSONResponse(deleted.model_dump(mode="json", exclude_none=True))
-        removed = await collector.delete_event(event_id)
+        removed = await collector.delete_event(event_id=event_id)
         if removed is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
         return _event_response(removed.to_dict())
@@ -727,7 +727,9 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     body.write,
                 )
             else:
-                event = await collector.revert_event(event_id, body.expect, body.write)
+                event = await collector.revert_event(
+                    event_id=event_id, expect=body.expect, write=body.write
+                )
                 record = EventRecord.model_validate(event.to_dict())
         except event_ops.EventChanged as err:
             current = (
@@ -859,7 +861,7 @@ class _StreamDrain:
             return
         self.closed = True
         for q in self.queues:
-            self._collector.unsubscribe(q)
+            self._collector.unsubscribe(q=q)
             end_queue(q, ENDED)
         self.queues.clear()
 

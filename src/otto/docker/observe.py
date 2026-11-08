@@ -53,7 +53,7 @@ def _no_capable_host(lab: "Lab") -> DockerVerbError:
     return DockerVerbError(f"no host in lab {lab.name!r} is marked docker_capable", field="parent")
 
 
-def default_docker_parent(lab: "Lab") -> UnixHost:
+def default_docker_parent(*, lab: "Lab") -> UnixHost:
     """Return the parent a docker verb uses when none is named: the one rule.
 
     Exactly one docker-capable unix host in *lab* is it. Several: the one with
@@ -79,10 +79,10 @@ def default_docker_parent(lab: "Lab") -> UnixHost:
     )
 
 
-def docker_parent(lab: "Lab", parent: "str | None") -> UnixHost:
+def docker_parent(*, lab: "Lab", parent: "str | None") -> UnixHost:
     """Return the docker-capable unix host *parent* names in *lab*, or the default (one rule)."""
     if parent is None:
-        return default_docker_parent(lab)
+        return default_docker_parent(lab=lab)
     candidate = lab.hosts.get(parent)
     if not is_docker_capable(candidate):
         raise DockerVerbError(
@@ -93,7 +93,7 @@ def docker_parent(lab: "Lab", parent: "str | None") -> UnixHost:
     return candidate
 
 
-def docker_parents(lab: "Lab", parent: "str | None") -> "list[UnixHost]":
+def docker_parents(*, lab: "Lab", parent: "str | None") -> "list[UnixHost]":
     """Every docker-capable unix host of *lab* in lab order, or the one *parent* names.
 
     The ``--parent`` rule of the fan-out verbs, in one place: ``None`` is the
@@ -101,7 +101,7 @@ def docker_parents(lab: "Lab", parent: "str | None") -> "list[UnixHost]":
     lab with no docker-capable host is refused, not answered with silence.
     """
     if parent is not None:
-        return [docker_parent(lab, parent)]
+        return [docker_parent(lab=lab, parent=parent)]
     parents = [host for _, host in _capable(lab)]
     if not parents:
         raise _no_capable_host(lab)
@@ -161,7 +161,7 @@ async def _exec_targets(targets: "list[LogsTarget]", *, asked: str) -> ObserveRe
             result = await target.parent.exec(target.command, log=LogMode.QUIET)
         except (OSError, ConnectionError, HostUnreachableError) as e:
             result = CommandResult(
-                Status.Failed,
+                status=Status.Failed,
                 value=f"otto: host {target.parent.id!r} unreachable: {e!r}",
                 command=target.command,
                 retcode=-1,
@@ -196,12 +196,14 @@ async def run_on(parents: "list[UnixHost]", command: str, *, asked: str) -> Obse
     return await _exec_targets([LogsTarget(parent, command) for parent in parents], asked=asked)
 
 
-async def list_containers(parent: "str | None" = None, *, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
+async def list_containers(*, parent: "str | None" = None, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
     """``docker ps [-a]`` on every docker-capable host, or the one *parent* names."""
     from ..invocation import require_run
 
     command = "docker ps -a" if all else "docker ps"
-    return await run_on(docker_parents(require_run().lab, parent), command, asked="list_containers")
+    return await run_on(
+        docker_parents(lab=require_run().lab, parent=parent), command, asked="list_containers"
+    )
 
 
 def decline_dry_run(asked: str, parents: "list[UnixHost]", command: str, untouched: str) -> None:
@@ -220,12 +222,14 @@ def decline_dry_run(asked: str, parents: "list[UnixHost]", command: str, untouch
         return
     ids = ", ".join(p.id for p in parents)
     per_host = "\n".join(f"on {p.id}: {command}" for p in parents)
-    raise CommandNotRunError(f"{asked}({ids})", ids, f"Would run:\n{per_host}\n{untouched}")
+    raise CommandNotRunError(
+        f"{asked}({ids})", host=ids, detail=f"Would run:\n{per_host}\n{untouched}"
+    )
 
 
 async def list_images(
-    parent: "str | None" = None,
     *,
+    parent: "str | None" = None,
     all: bool = False,  # noqa: A002 -- docker's flag name
 ) -> ObserveReport:
     """``docker image ls [-a]`` on every docker-capable host, or the one *parent* names.
@@ -238,7 +242,7 @@ async def list_images(
     """
     from ..invocation import require_run
 
-    parents = docker_parents(require_run().lab, parent)
+    parents = docker_parents(lab=require_run().lab, parent=parent)
     command = "docker image ls -a" if all else "docker image ls"
     decline_dry_run("list_images", parents, command, "No daemon was asked.")
     return await run_on(parents, command, asked="list_images")
@@ -313,7 +317,7 @@ async def _probe(host_id: str, command: str) -> "str | None":
     """
     from ..invocation import require_run
 
-    parent = docker_parent(require_run().lab, host_id)
+    parent = docker_parent(lab=require_run().lab, parent=host_id)
     result = await parent.exec(command, log=LogMode.QUIET)
     return result.value if result.status.is_ok and isinstance(result.value, str) else None
 
@@ -384,7 +388,9 @@ def _compose_sites(
     from . import deployment
 
     if fleet and parent is None:
-        asked: "list[str | None]" = [host.id for host in docker_parents(require_run().lab, None)]
+        asked: "list[str | None]" = [
+            host.id for host in docker_parents(lab=require_run().lab, parent=None)
+        ]
     else:
         asked = [parent]
     sites: "list[_ComposeSite]" = []
@@ -403,8 +409,8 @@ def _compose_sites(
 
 
 async def compose_ps(
-    use_case: str,
     *,
+    use_case: str,
     all: bool = False,  # noqa: A002 -- docker's flag name
     parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
@@ -419,9 +425,9 @@ async def compose_ps(
 
 
 def resolve_compose_logs(
+    *,
     use_case: str,
     services: "Sequence[str]" = (),
-    *,
     parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     tail: "str | None" = None,
@@ -448,9 +454,9 @@ def resolve_compose_logs(
 
 
 async def compose_logs(
+    *,
     use_case: str,
     services: "Sequence[str]" = (),
-    *,
     parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     tail: "str | None" = None,
@@ -463,8 +469,8 @@ async def compose_logs(
     ``compose logs`` with no names), unlike ``deploy``'s ``services=[]``.
     """
     targets = resolve_compose_logs(
-        use_case,
-        services,
+        use_case=use_case,
+        services=services,
         parent=parent,
         provide=provide,
         tail=tail,
@@ -475,8 +481,8 @@ async def compose_logs(
 
 
 async def resolve_logs(
-    container: str,
     *,
+    container: str,
     parent: "str | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
@@ -493,7 +499,7 @@ async def resolve_logs(
     """
     from ..invocation import require_run
 
-    parent_host = docker_parent(require_run().lab, parent)
+    parent_host = docker_parent(lab=require_run().lab, parent=parent)
     if follow:
         _require_ssh_parent(parent_host)
     flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
@@ -505,8 +511,8 @@ async def resolve_logs(
 
 
 async def container_logs(
-    container: str,
     *,
+    container: str,
     parent: "str | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
@@ -514,7 +520,7 @@ async def container_logs(
 ) -> ObserveReport:
     """One container's logs, docker's text whole."""
     target = await resolve_logs(
-        container, parent=parent, tail=tail, since=since, timestamps=timestamps
+        container=container, parent=parent, tail=tail, since=since, timestamps=timestamps
     )
     return await _exec_targets([target], asked="container_logs")
 
@@ -528,7 +534,7 @@ def _require_ssh_parent(parent: UnixHost) -> None:
         )
 
 
-async def follow_logs(targets: "list[LogsTarget]") -> int | None:
+async def follow_logs(*, targets: "list[LogsTarget]") -> int | None:
     """Follow one resolved logs command live, on the user's terminal.
 
     The host layer has no streaming exec, so a follow rides the PTY bridge
@@ -569,6 +575,8 @@ async def follow_logs(targets: "list[LogsTarget]") -> int | None:
             field="follow",
         )
     if is_dry_run():
-        raise CommandNotRunError(f"follow_logs({target.parent.id})", target.parent.id, command)
+        raise CommandNotRunError(
+            f"follow_logs({target.parent.id})", host=target.parent.id, detail=command
+        )
     conn = await target.parent._live_connections().ssh()  # noqa: SLF001 -- intra-package access, as DockerContainerHost.run_login does
     return await run_ssh_login(conn=conn, host_name=target.parent.name, command=command)

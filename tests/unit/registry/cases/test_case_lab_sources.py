@@ -56,7 +56,9 @@ def _make_spy_entry():
 def test_lab_sources_backend_case(tmp_path):
     conformance.assert_backend_registry(
         LAB_REPOSITORIES,
-        env=LabSourceEnv(tmp_path, "r/x", "test", ProfileContext.empty()),
+        env=LabSourceEnv(
+            project_root=tmp_path, label="r/x", origin="test", profiles=ProfileContext.empty()
+        ),
         make_spy_entry=_make_spy_entry,
         good_raw={},
         bad_raw={"secret": "s3cr3t-value"},
@@ -93,26 +95,36 @@ def test_a_built_object_that_is_not_a_source_fails_the_result_stage(tmp_path):
     """The seam's result check: a source must have callable load_lab and list_labs."""
     register_lab_repository("case-wrong", config=_CaseConfig, factory=lambda c: object())
     prepared = LAB_REPOSITORIES.prepare(
-        "case-wrong", {}, LabSourceEnv(tmp_path, "r/x", "test", ProfileContext.empty())
+        name="case-wrong",
+        raw={},
+        env=LabSourceEnv(
+            project_root=tmp_path, label="r/x", origin="test", profiles=ProfileContext.empty()
+        ),
     )
     with pytest.raises(LabSourceConstructionError, match="result failed") as err:
-        LAB_REPOSITORIES.build(prepared)
+        LAB_REPOSITORIES.build(prepared=prepared)
     assert isinstance(err.value, LabRepositoryError)
     assert isinstance(err.value, ValueError)
 
 
 def test_a_json_parse_failure_never_echoes_the_rejected_value(tmp_path):
-    env = LabSourceEnv(tmp_path, "r/x", "test", ProfileContext.empty())
+    env = LabSourceEnv(
+        project_root=tmp_path, label="r/x", origin="test", profiles=ProfileContext.empty()
+    )
     with pytest.raises(LabSourceConstructionError, match="parse failed") as err:
-        LAB_REPOSITORIES.prepare("json", {"paths": ["d"], "token": "hunter2-secret"}, env)
+        LAB_REPOSITORIES.prepare(
+            name="json", raw={"paths": ["d"], "token": "hunter2-secret"}, env=env
+        )
     assert "hunter2-secret" not in str(err.value)
 
 
 def test_a_json_path_that_cannot_anchor_never_echoes_it(tmp_path):
     """The built-in model's own validator names the rule, never the value it refused."""
-    env = LabSourceEnv(tmp_path, "r/x", "test", ProfileContext.empty())
+    env = LabSourceEnv(
+        project_root=tmp_path, label="r/x", origin="test", profiles=ProfileContext.empty()
+    )
     raw = {"paths": ["~nosuchuser_xyz/hunter2-secret"]}
     with pytest.raises(LabSourceConstructionError, match="parse failed: paths: ") as err:
-        LAB_REPOSITORIES.prepare("json", raw, env)
+        LAB_REPOSITORIES.prepare(name="json", raw=raw, env=env)
     assert "hunter2-secret" not in str(err.value)
     assert "nosuchuser_xyz" not in str(err.value)

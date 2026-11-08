@@ -290,7 +290,7 @@ def find_init_module(name: str, libs: list[Path]) -> "ModuleSpec | None":
 
 
 @final
-@dataclass
+@dataclass(kw_only=True)
 class Project:
     """Runtime representation of a single project, loaded from its project root.
 
@@ -432,7 +432,7 @@ class Project:
             lab_name_text = Text("no [[lab.sources]] declared", style="dim")
         else:
             try:
-                repository = build_lab_sources([self])
+                repository = build_lab_sources(projects=[self])
                 lab_names = repository.list_labs()
             except (ValueError, LabRepositoryError) as e:
                 # Panel rendering must never crash on a misconfigured/unreachable
@@ -511,7 +511,7 @@ class Project:
             expand=True,
         )
 
-    def get_markers_panel(self, markers: list[str]) -> "Panel":
+    def get_markers_panel(self, *, markers: list[str]) -> "Panel":
         """Rich panel listing *markers*, the markers pytest knows in this project's tests."""
         from rich.text import Text
 
@@ -723,7 +723,7 @@ def discover() -> DiscoveryResult:
             except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
                 if not is_containable(e):
                     raise
-                errors.append(BootstrapError(root, str(TOML_SETTINGS_PATH), e))
+                errors.append(BootstrapError(root, source=str(TOML_SETTINGS_PATH), cause=e))
         duplicates = _duplicate_root_errors(projects)
         if duplicates:
             refused = {str(e.root) for e in duplicates}

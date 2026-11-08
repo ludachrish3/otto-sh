@@ -243,7 +243,7 @@ def test_payload_survives_errexit_and_nounset(name: str, argv: list[str]):
 def test_payload_composes_onto_a_handshake_without_splitting_the_line():
     """The frame composes suppression into its handshake as exactly one command line."""
     m = TAIL_MARKERS
-    composed = BashFrame().handshake(m, PAYLOAD)
+    composed = BashFrame().handshake(m, prefix=PAYLOAD)
     assert PAYLOAD in composed
     assert composed.count("\n") == 1
     assert composed.endswith("\n")
@@ -258,7 +258,7 @@ def test_the_split_ready_marker_prints_whole_on_a_line_of_its_own(name: str, arg
     output has the marker as the last line.
     """
     m = TAIL_MARKERS
-    handshake = BashFrame().handshake(m, PAYLOAD)
+    handshake = BashFrame().handshake(m, prefix=PAYLOAD)
     assert m.ready not in handshake
     proc = _run(argv, handshake)
     assert proc.stdout.endswith(f"\n{m.ready}\n"), f"{name}: stdout {proc.stdout!r}"
@@ -450,7 +450,7 @@ def test_every_installed_shell_of_interest_is_actually_in_the_matrix():
 # ---------------------------------------------------------------------------
 
 LINE = BashFrame().handshake(
-    TAIL_MARKERS, PAYLOAD
+    TAIL_MARKERS, prefix=PAYLOAD
 )  # the session's real first line, history suppressed
 RESYNC = _identity_probe(TAIL_MARKERS, PAYLOAD)  # the su/sudo/exit resync line
 RECOVERY = BashFrame().recover(TAIL_MARKERS)  # the post-timeout recovery probe

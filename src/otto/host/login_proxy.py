@@ -58,7 +58,7 @@ class ProxyIO(Protocol):
         ...
 
     async def expect(
-        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+        self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
         """Expect a pattern and return the matched output."""
         ...
@@ -136,7 +136,7 @@ def register_login_proxy(
     why not declaring one is the safe default, and why a proxy that answers
     its own prompt must leave this unset.
     """
-    LOGIN_PROXIES.register(name, LoginProxy(fn, undo, prompt), overwrite=overwrite)
+    LOGIN_PROXIES.register(name=name, entry=LoginProxy(fn, undo, prompt), overwrite=overwrite)
 
 
 # How `su` spells the prompt it asks for credentials at. Not locale-
@@ -352,7 +352,7 @@ def default_login(creds: list[Cred], protocol: str) -> str:
 # DEBT(no-tuple-return): target credential plus hop chain.
 # ast-grep-ignore: no-tuple-return
 def resolve_chain(
-    creds: list[Cred], target_login: str, protocol: str | None = None
+    creds: list[Cred], *, target_login: str, protocol: str | None = None
 ) -> tuple[Cred, list[Cred]]:
     """Resolve the direct-auth cred and the hop list for *target_login*.
 
@@ -563,7 +563,7 @@ async def _resync_shell(
             if prompt_re
             else pattern
         )
-        matched = await io.expect(wanted, timeout)
+        matched = await io.expect(wanted, timeout=timeout)
         hit = pattern.search(matched)
         if hit is None:
             # Identify the prompt POSITIVELY. "Did not match the probe" is not
@@ -600,7 +600,7 @@ async def _resync_shell(
     if prompt_re is not None:
         settle = 0.0
         with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            seen = await io.expect(prompt_re, _PROMPT_WATCH)
+            seen = await io.expect(prompt_re, timeout=_PROMPT_WATCH)
             if prompt_re.search(seen):
                 await answer()
                 await asyncio.sleep(_RESYNC_SETTLE)
@@ -610,7 +610,7 @@ async def _resync_shell(
         expect,
         lambda m: _identity_probe(m, history_prefix),
         _identity_pattern,
-        lambda: SessionMarkers.for_session(uuid.uuid4().hex[:12]),
+        lambda: SessionMarkers.for_session(session_id=uuid.uuid4().hex[:12]),
         settle=settle,
         probe_timeout=_RESYNC_PROBE_TIMEOUT,
         deadline=_RESYNC_DEADLINE,

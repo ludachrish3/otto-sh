@@ -109,7 +109,7 @@ def coverage_run(tmp_path_factory):
         }
     (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    store = CoverageStore.load(report_dir / "store.json")
+    store = CoverageStore.load(path=report_dir / "store.json")
     return store, layout.cov_dir(log_dir), log_dir, listings
 
 
@@ -376,7 +376,7 @@ def stopped_report(tmp_path_factory) -> dict:
             clear_unit_counters()
     store_json = report_dir / "store.json"
     return {
-        "store": CoverageStore.load(store_json) if store_json.is_file() else None,
+        "store": CoverageStore.load(path=store_json) if store_json.is_file() else None,
         "log_dir": log_dir,
         "record": json.loads(record_path.read_text()) if record_path.is_file() else None,
         "steps": steps,

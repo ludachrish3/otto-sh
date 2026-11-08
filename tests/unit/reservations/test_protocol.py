@@ -16,7 +16,7 @@ from otto.reservations import (
 class _TwoMethodBackend:
     """The whole required contract: fetch_reservations + backend_name."""
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return [Reservation(user=username, resource="rack3")]
 
     def backend_name(self):

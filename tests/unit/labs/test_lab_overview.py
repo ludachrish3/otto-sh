@@ -24,10 +24,10 @@ from otto.utils import Status
 
 class _Agent(ShellProduct):
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return False
@@ -36,7 +36,7 @@ class _Agent(ShellProduct):
 def _unix(element: str, ip: str, **kw) -> UnixHost:
     return UnixHost(
         ip=ip,
-        element=Element(element),
+        element=Element(name=element),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
         **kw,

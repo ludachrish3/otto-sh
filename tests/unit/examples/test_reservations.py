@@ -79,12 +79,12 @@ def test_registrable_by_name_and_built_from_its_sub_table(tmp_path):
         "example-reservations-test", config=ExampleReservationConfig, factory=example_reservations
     )
     backend = build_backend(
-        {
+        settings={
             "backend": "example-reservations-test",
             "url": "https://sched",
             "example-reservations-test": {"reservations": {"carol": ["rig"]}},
         },
-        tmp_path,
+        project_root=tmp_path,
         username="carol",
     )
     assert isinstance(backend, ExampleReservationBackend)

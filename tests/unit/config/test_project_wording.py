@@ -10,6 +10,6 @@ from otto.config.scope import BootstrapError, DependencyError
 
 
 def test_a_load_failure_names_the_project_root():
-    err = BootstrapError(Path("/w/p"), ".otto/settings.toml", ValueError("x"))
+    err = BootstrapError(Path("/w/p"), source=".otto/settings.toml", cause=ValueError("x"))
     assert str(err).startswith("project root /w/p: failed to load .otto/settings.toml")
-    assert str(DependencyError(Path("/w/p"), "boom")) == "project root /w/p: boom"
+    assert str(DependencyError(Path("/w/p"), message="boom")) == "project root /w/p: boom"

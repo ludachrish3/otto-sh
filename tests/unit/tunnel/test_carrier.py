@@ -19,13 +19,13 @@ from otto.tunnel.socat import (
 
 class TestRegistry:
     def test_socat_is_registered_first_party(self):
-        assert build_carrier("socat") is SocatCarrier
+        assert build_carrier(name="socat") is SocatCarrier
 
     def test_unknown_name_is_a_rich_error(self):
         with pytest.raises(ValueError, match="Unknown carrier 'wireguard'"):
-            build_carrier("wireguard")
+            build_carrier(name="wireguard")
         with pytest.raises(ValueError, match="register_carrier"):
-            build_carrier("wireguard")
+            build_carrier(name="wireguard")
 
     def test_register_rejects_empty_supported_protocols(self):
         class NoProtocols(TunnelCarrier):
@@ -42,49 +42,53 @@ class TestRegistry:
             tools_description = "fake"
 
             def ingress_args(
-                self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+                self, protocol, *, service_port, bind_ip, next_ip, carrier_port, idle_timeout=None
             ):
                 return ["fake", "ingress"]
 
-            def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None):
+            def relay_args(self, protocol, *, carrier_port, next_ip, idle_timeout=None):
                 return ["fake", "relay"]
 
             def egress_args(
-                self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None
+                self, protocol, *, service_port, deliver_ip, carrier_port, idle_timeout=None
             ):
                 return ["fake", "egress"]
 
         register_carrier("fake", FakeCarrier)
         try:
-            assert build_carrier("fake") is FakeCarrier
+            assert build_carrier(name="fake") is FakeCarrier
             assert "fake" in CARRIERS
         finally:
-            CARRIERS.unregister("fake")
+            CARRIERS.unregister(name="fake")
 
 
 class TestSocatCarrier:
     def test_delegates_to_the_proven_builders(self):
         c = SocatCarrier()
-        assert c.ingress_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 50000) == ingress_socat_args(
-            "tcp", 8080, "10.0.0.1", "10.0.0.2", 50000
+        assert c.ingress_args(
+            "tcp", service_port=8080, bind_ip="10.0.0.1", next_ip="10.0.0.2", carrier_port=50000
+        ) == ingress_socat_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 50000)
+        assert c.relay_args("udp", carrier_port=50000, next_ip="10.0.0.3") == relay_socat_args(
+            "udp", 50000, "10.0.0.3"
         )
-        assert c.relay_args("udp", 50000, "10.0.0.3") == relay_socat_args("udp", 50000, "10.0.0.3")
-        assert c.egress_args("udp", 53, "127.0.0.1", 50001) == egress_socat_args(
-            "udp", 53, "127.0.0.1", 50001
-        )
-        assert c.ingress_args("tcp", 1, "a", "b", 2, idle_timeout=9) == ingress_socat_args(
-            "tcp", 1, "a", "b", 2, idle_timeout=9
-        )
-        assert c.relay_args("tcp", 2, "b", idle_timeout=9) == relay_socat_args(
+        assert c.egress_args(
+            "udp", service_port=53, deliver_ip="127.0.0.1", carrier_port=50001
+        ) == egress_socat_args("udp", 53, "127.0.0.1", 50001)
+        assert c.ingress_args(
+            "tcp", service_port=1, bind_ip="a", next_ip="b", carrier_port=2, idle_timeout=9
+        ) == ingress_socat_args("tcp", 1, "a", "b", 2, idle_timeout=9)
+        assert c.relay_args("tcp", carrier_port=2, next_ip="b", idle_timeout=9) == relay_socat_args(
             "tcp", 2, "b", idle_timeout=9
         )
-        assert c.egress_args("tcp", 1, "b", 2, idle_timeout=9) == egress_socat_args(
-            "tcp", 1, "b", 2, idle_timeout=9
-        )
+        assert c.egress_args(
+            "tcp", service_port=1, deliver_ip="b", carrier_port=2, idle_timeout=9
+        ) == egress_socat_args("tcp", 1, "b", 2, idle_timeout=9)
 
     def test_ingress_argv_golden(self):
         # Pin the exact argv shipped by #2b — the carrier must not change it.
-        assert SocatCarrier().ingress_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 50000) == [
+        assert SocatCarrier().ingress_args(
+            "tcp", service_port=8080, bind_ip="10.0.0.1", next_ip="10.0.0.2", carrier_port=50000
+        ) == [
             "socat",
             "TCP4-LISTEN:8080,bind=10.0.0.1,fork,reuseaddr",
             "TCP4:10.0.0.2:50000",
@@ -104,4 +108,4 @@ class TestSocatCarrier:
     def test_default_carrier_resolves_to_socat(self):
         # The one source of truth the CLI option and add_tunnel default share.
         assert DEFAULT_CARRIER == "socat"
-        assert build_carrier(DEFAULT_CARRIER) is SocatCarrier
+        assert build_carrier(name=DEFAULT_CARRIER) is SocatCarrier

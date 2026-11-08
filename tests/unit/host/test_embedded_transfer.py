@@ -170,12 +170,12 @@ class TestRoundTrip:
         src = tmp_path / "hello.txt"
         src.write_bytes(b"hello zephyr\n")
 
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
 
         dest_dir = tmp_path / "pulled"
         dest_dir.mkdir()
-        status, err = _sm(await xfer.get_files([RAM / "hello.txt"], dest_dir))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "hello.txt"], dest_dir=dest_dir))
         assert status == Status.Success, err
         assert (dest_dir / "hello.txt").read_bytes() == b"hello zephyr\n"
 
@@ -188,14 +188,14 @@ class TestRoundTrip:
         src = tmp_path / "blob.bin"
         src.write_bytes(payload)
 
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
         assert bytes(fake.store["/RAM:/blob.bin"]) == payload
 
         writes = [c for c in fake.calls if c.startswith("fs write")]
         assert len(writes) == -(-len(payload) // _WRITE_CHUNK)  # ceil division
 
-        status, err = _sm(await xfer.get_files([RAM / "blob.bin"], tmp_path))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "blob.bin"], dest_dir=tmp_path))
         assert status == Status.Success, err
         assert (tmp_path / "blob.bin").read_bytes() == payload
 
@@ -208,8 +208,8 @@ class TestRoundTrip:
         src = tmp_path / "full.bin"
         src.write_bytes(payload)
 
-        await xfer.put_files([src], RAM)
-        await xfer.get_files([RAM / "full.bin"], tmp_path)
+        await xfer.put_files(src_files=[src], dest_dir=RAM)
+        await xfer.get_files(src_files=[RAM / "full.bin"], dest_dir=tmp_path)
         assert (tmp_path / "full.bin").read_bytes() == payload
 
     @pytest.mark.asyncio
@@ -219,11 +219,11 @@ class TestRoundTrip:
         src = tmp_path / "empty.txt"
         src.write_bytes(b"")
 
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
         assert "/RAM:/empty.txt" in fake.store
 
-        status, err = _sm(await xfer.get_files([RAM / "empty.txt"], tmp_path))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "empty.txt"], dest_dir=tmp_path))
         assert status == Status.Success, err
         assert (tmp_path / "empty.txt").read_bytes() == b""
 
@@ -252,7 +252,7 @@ class TestMountBehavior:
         src = tmp_path / "f.bin"
         src.write_bytes(b"hi")
 
-        await transfer.put_files([src], RAM)
+        await transfer.put_files(src_files=[src], dest_dir=RAM)
 
         assert not [c for c in fake.calls if " mount " in c or c.endswith(" mount")], (
             f"a mount command was issued against a mounted FS: {fake.calls}"
@@ -266,7 +266,7 @@ class TestMountBehavior:
         src = tmp_path / "f.bin"
         src.write_bytes(b"hi")
 
-        await transfer.put_files([src], RAM)
+        await transfer.put_files(src_files=[src], dest_dir=RAM)
 
         mounts = [c for c in fake.calls if c.startswith("fs mount")]
         assert mounts == ["fs mount fat /RAM:"]
@@ -279,8 +279,8 @@ class TestMountBehavior:
         src = tmp_path / "f.bin"
         src.write_bytes(b"hi")
 
-        await transfer.put_files([src], RAM)
-        await transfer.put_files([src], RAM)
+        await transfer.put_files(src_files=[src], dest_dir=RAM)
+        await transfer.put_files(src_files=[src], dest_dir=RAM)
 
         assert len([c for c in fake.calls if "statvfs" in c]) == 1
 
@@ -296,7 +296,7 @@ class TestMountBehavior:
         src = tmp_path / "f.bin"
         src.write_bytes(b"hi")
 
-        await transfer.put_files([src], RAM)
+        await transfer.put_files(src_files=[src], dest_dir=RAM)
 
         # No statvfs to probe with: the pre-fix behavior (mount, accept the
         # expected already-mounted failure) is the only option left.
@@ -313,7 +313,7 @@ class TestPut:
         src = tmp_path / "f.bin"
         src.write_bytes(b"data")
 
-        await xfer.put_files([src], RAM)
+        await xfer.put_files(src_files=[src], dest_dir=RAM)
         rm_idx = fake.calls.index("fs rm /RAM:/f.bin")
         first_write = next(i for i, c in enumerate(fake.calls) if c.startswith("fs write"))
         assert rm_idx < first_write
@@ -325,10 +325,10 @@ class TestPut:
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"X" * 80)
-        await xfer.put_files([src], RAM)
+        await xfer.put_files(src_files=[src], dest_dir=RAM)
 
         src.write_bytes(b"short")
-        await xfer.put_files([src], RAM)
+        await xfer.put_files(src_files=[src], dest_dir=RAM)
         assert bytes(fake.store["/RAM:/f.bin"]) == b"short"
 
     @pytest.mark.asyncio
@@ -341,7 +341,7 @@ class TestPut:
         a.write_bytes(b"aaa")
         b.write_bytes(b"bbb")
 
-        await xfer.put_files([a, b], RAM)
+        await xfer.put_files(src_files=[a, b], dest_dir=RAM)
         last_a = max(i for i, c in enumerate(fake.calls) if "/RAM:/a.bin" in c)
         first_b = min(i for i, c in enumerate(fake.calls) if "/RAM:/b.bin" in c)
         assert last_a < first_b
@@ -398,7 +398,7 @@ class TestPutProgress:
         src.write_bytes(b"x" * 100)
 
         calls: list = []
-        status, err = _pf(await xfer.run_put([src], RAM, _spy_factory(calls)), src)
+        status, err = _pf(await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls)), src)
         assert status == Status.Success, err
         assert len(calls) == 4
         # Bytes-done monotonically increases up to bytes-total.
@@ -422,7 +422,7 @@ class TestPutProgress:
         src.write_bytes(b"y" * 50)
 
         calls: list = []
-        await xfer.run_put([src], RAM, _spy_factory(calls))
+        await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls))
         assert calls[-1][2] == calls[-1][3] == 50
         assert_progress_invariants(
             _events(calls),
@@ -441,7 +441,7 @@ class TestPutProgress:
         src.write_bytes(b"")
 
         calls: list = []
-        status, err = _pf(await xfer.run_put([src], RAM, _spy_factory(calls)), src)
+        status, err = _pf(await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls)), src)
         assert status == Status.Success, err
         assert calls == [(str(src), "/RAM:/empty.bin", 0, 0)]
 
@@ -455,7 +455,7 @@ class TestPutProgress:
         src = tmp_path / "f.bin"
         src.write_bytes(b"data")
 
-        status, err = _sm(await xfer.put_files([src], RAM, show_progress=False))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM, show_progress=False))
         assert status == Status.Success, err
         # The factory was never built, so we can't directly capture "no events";
         # the success of put with no handler param is the contract.
@@ -474,10 +474,10 @@ class TestGetProgress:
         calls: list = []
         status, err = _sm(
             aggregate_transfer(
-                await xfer.run_get(
+                per_file=await xfer.run_get(
                     [RAM / "a.bin", RAM / "b.bin"],
                     tmp_path,
-                    _spy_factory(calls),
+                    progress_factory=_spy_factory(calls),
                 )
             )
         )
@@ -511,7 +511,7 @@ class TestGet:
         distinct from the FS-misconfigured short-circuit."""
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)
-        status, err = _sm(await xfer.get_files([RAM / "nope.txt"], tmp_path))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "nope.txt"], dest_dir=tmp_path))
         assert status == Status.Error
         assert err != _NO_FILESYSTEM_MSG
         assert "fs read" in err
@@ -531,7 +531,7 @@ class TestGet:
         missing = RAM / "a.bin"
         present = RAM / "b.bin"
 
-        result = await xfer.get_files([missing, present], tmp_path)
+        result = await xfer.get_files(src_files=[missing, present], dest_dir=tmp_path)
 
         assert not result.value[missing].is_ok
         assert result.value[present].is_ok, result.value[present].msg
@@ -556,7 +556,7 @@ class TestGet:
             exec_cmd=gappy_exec,
             filesystem=FatRamFileSystem(),
         )
-        status, err = _sm(await xfer.get_files([RAM / "x.bin"], tmp_path))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "x.bin"], dest_dir=tmp_path))
         assert status == Status.Error
         assert "gap or overlap" in err
 
@@ -575,7 +575,7 @@ class TestNoFileSystem:
     async def test_get_reports_no_filesystem_error(self, tmp_path):
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake, filesystem=NoFileSystem())
-        status, err = _sm(await xfer.get_files([RAM / "f"], tmp_path))
+        status, err = _sm(await xfer.get_files(src_files=[RAM / "f"], dest_dir=tmp_path))
         assert status == Status.Error
         assert err == _NO_FILESYSTEM_MSG
         # The short-circuit fires before any shell call.
@@ -587,7 +587,7 @@ class TestNoFileSystem:
         xfer = _console_transfer(fake, filesystem=NoFileSystem())
         src = tmp_path / "f"
         src.write_bytes(b"data")
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Error
         assert err == _NO_FILESYSTEM_MSG
         assert fake.calls == []
@@ -646,7 +646,7 @@ class TestLabelErrno:
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 64)
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Error
         assert "-ENOEXEC" in err
         assert "Exec format error" in err
@@ -699,7 +699,7 @@ class TestCleanupOnFailure:
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 128)
 
-        status, _err = _sm(await xfer.put_files([src], RAM))
+        status, _err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Error
         # The PRE-write rm at the top of _console_put_one is the first
         # rm; the cleanup rm after the failure is the second. Two `fs rm`
@@ -730,7 +730,7 @@ class TestCleanupOnFailure:
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 64)
 
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         # The original -ENOSPC error wins; the cleanup exception is logged
         # and swallowed.
         assert status == Status.Error
@@ -744,7 +744,7 @@ class TestCleanupOnFailure:
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 50)
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
         rm_calls = [c for c in fake.calls if c.startswith("fs rm")]
         assert len(rm_calls) == 1, f"happy path should issue only the pre-write rm; got: {rm_calls}"
@@ -762,7 +762,7 @@ class TestValidateFilenameLengths:
 
     def test_under_limit_returns_success(self):
         result = validate_filename_lengths(
-            [Path("/a/short.bin")],
+            files=[Path("/a/short.bin")],
             limit=255,
             host_name="h",
         )
@@ -772,7 +772,7 @@ class TestValidateFilenameLengths:
     def test_at_limit_is_accepted(self):
         name = "x" * 255  # exactly at the limit
         result = validate_filename_lengths(
-            [Path("/a") / name],
+            files=[Path("/a") / name],
             limit=255,
             host_name="h",
         )
@@ -781,7 +781,7 @@ class TestValidateFilenameLengths:
     def test_over_limit_reports_offending_name_and_host(self):
         name = "x" * 256
         result = validate_filename_lengths(
-            [Path("/a") / name],
+            files=[Path("/a") / name],
             limit=255,
             host_name="myhost",
         )
@@ -797,7 +797,7 @@ class TestValidateFilenameLengths:
         ok = Path("/a/ok.bin")
         bad = Path("/a") / ("x" * 100)
         result = validate_filename_lengths(
-            [ok, bad],
+            files=[ok, bad],
             limit=50,
             host_name="h",
         )
@@ -830,7 +830,7 @@ class TestMaxFilenameLen:
         # 14 chars > 12: should be rejected before any fs command runs.
         src = tmp_path / "concurrent.bin"
         src.write_bytes(b"x")
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Error
         assert "concurrent.bin" in err
         assert "12-character" in err
@@ -847,7 +847,9 @@ class TestMaxFilenameLen:
             filesystem=FatRamFileSystem(),
             max_filename_len=12,
         )
-        status, err = _sm(await xfer.get_files([RAM / "concurrent.bin"], tmp_path))
+        status, err = _sm(
+            await xfer.get_files(src_files=[RAM / "concurrent.bin"], dest_dir=tmp_path)
+        )
         assert status == Status.Error
         assert "concurrent.bin" in err
 
@@ -864,7 +866,7 @@ class TestMaxFilenameLen:
         )
         src = tmp_path / "contract.bin"  # 12 chars exactly
         src.write_bytes(b"ok")
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
 
     @pytest.mark.asyncio
@@ -876,7 +878,7 @@ class TestMaxFilenameLen:
         xfer = _console_transfer(fake)  # default max_filename_len=255
         src = tmp_path / "some_quite_long_filename.bin"
         src.write_bytes(b"ok")
-        status, err = _sm(await xfer.put_files([src], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
 
     @pytest.mark.asyncio
@@ -890,7 +892,7 @@ class TestMaxFilenameLen:
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)  # default max_filename_len=255
         runaway = Path("/nowhere") / ("x" * 260 + ".bin")
-        status, err = _sm(await xfer.put_files([runaway], RAM))
+        status, err = _sm(await xfer.put_files(src_files=[runaway], dest_dir=RAM))
         assert status == Status.Error
         assert "255-character" in err
 
@@ -905,7 +907,7 @@ class TestTftp:
     async def test_get_raises_not_implemented(self, tmp_path):
         xfer = _TftpFileTransfer(name="zephyr37_fat")
         with pytest.raises(NotImplementedError):
-            await xfer.get_files([RAM / "f"], tmp_path)
+            await xfer.get_files(src_files=[RAM / "f"], dest_dir=tmp_path)
 
     @pytest.mark.asyncio
     async def test_put_raises_not_implemented(self, tmp_path):
@@ -913,7 +915,7 @@ class TestTftp:
         src = tmp_path / "f"
         src.write_bytes(b"data")
         with pytest.raises(NotImplementedError):
-            await xfer.put_files([src], RAM)
+            await xfer.put_files(src_files=[src], dest_dir=RAM)
 
 
 # ---------------------------------------------------------------------------

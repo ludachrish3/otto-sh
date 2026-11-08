@@ -38,7 +38,7 @@ def test_factory_stamps_element_resources_before_providers_run():
 
     register_product_provider(provider)
     host = create_host_from_dict(
-        dict(_ENTRY), element=Element("chassis", id=1, resources=frozenset({"chassis-1"}))
+        dict(_ENTRY), element=Element(name="chassis", id=1, resources=frozenset({"chassis-1"}))
     )
     assert host.element.resources == frozenset({"chassis-1"})
     assert isinstance(host.element.resources, frozenset)
@@ -48,7 +48,7 @@ def test_factory_stamps_element_resources_before_providers_run():
 def test_defaults_are_empty_and_separate_from_the_hosts_own():
     """Three levels, three sets: the host's own slot is not the element's."""
     host = create_host_from_dict(
-        {**_ENTRY, "resources": ["slot-1"]}, element=Element("chassis", id=1)
+        {**_ENTRY, "resources": ["slot-1"]}, element=Element(name="chassis", id=1)
     )
     assert host.element.resources == frozenset()
     assert host.resources == frozenset({"slot-1"})
@@ -60,7 +60,7 @@ def test_element_resources_is_the_elements_field_not_an_entry_one():
     the key, not a loose ``element_resources``."""
     with pytest.raises(ValueError, match=r"element_resources\s+Extra inputs are not permitted"):
         create_host_from_dict(
-            {**_ENTRY, "element_resources": ["x"]}, element=Element("chassis", id=1)
+            {**_ENTRY, "element_resources": ["x"]}, element=Element(name="chassis", id=1)
         )
 
 

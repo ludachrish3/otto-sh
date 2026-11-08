@@ -93,7 +93,7 @@ def test_every_link_endpoint_names_a_composed_id(path):
 def test_the_container_shape_is_what_docker_host_builds():
     parent = UnixHost(
         ip="10.10.200.11",
-        element=Element("test1"),
+        element=Element(name="test1"),
         creds=[Cred(login="u", password="p")],
         board="bb",
         slot=0,

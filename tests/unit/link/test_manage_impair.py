@@ -89,7 +89,7 @@ class FakeHost:
         self.commands.append(cmd)
         if sudo:
             self.sudo_commands.append(cmd)
-        return Results.collect([self._result(cmd)])
+        return Results.collect(items=[self._result(cmd)])
 
 
 @dataclass
@@ -120,13 +120,13 @@ def _bed(link: Link = LINK, **host_kw) -> tuple[FakeLab, FakeHost, FakeHost, Fak
 class TestFindLink:
     def test_by_id_and_by_name(self) -> None:
         lab, *_ = _bed()
-        assert find_link(lab, LINK.id) is lab.links[0]
-        assert find_link(lab, "edge") is lab.links[0]
+        assert find_link(lab=lab, ident=LINK.id) is lab.links[0]
+        assert find_link(lab=lab, ident="edge") is lab.links[0]
 
     def test_unknown_lists_known_ids(self) -> None:
         lab, *_ = _bed()
         with pytest.raises(ValueError, match=f"known: {LINK.id}"):
-            find_link(lab, "nope")
+            find_link(lab=lab, ident="nope")
 
 
 class TestEndpointImpair:
@@ -135,7 +135,7 @@ class TestEndpointImpair:
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
         test2.qdisc_texts = ["", DELAY_50_TEXT]
-        report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+        report = await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
         assert [a.placement.host_id for a in report.applied] == ["test1", "test2"]
         assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in test1.sudo_commands
         assert "tc qdisc replace dev eth1.200 root netem delay 50ms" in test2.sudo_commands
@@ -144,7 +144,9 @@ class TestEndpointImpair:
     async def test_from_narrows_to_one_direction(self) -> None:
         lab, test1, test2, _ = _bed()
         test2.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
-        report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test2")
+        report = await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test2"
+        )
         assert [a.placement.direction for a in report.applied] == [FlowDirection.B_TO_A]
         assert not test1.sudo_commands
 
@@ -152,7 +154,9 @@ class TestEndpointImpair:
     async def test_from_non_endpoint_rejected(self) -> None:
         lab, *_ = _bed()
         with pytest.raises(ValueError, match="--from 'test3' is not an endpoint"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="test3")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=1.0), from_host="test3"
+            )
 
     @pytest.mark.asyncio
     async def test_merge_reads_current_and_replaces(self) -> None:
@@ -161,7 +165,10 @@ class TestEndpointImpair:
         merged = "qdisc netem 8001: root refcnt 2 limit 1000 delay 10ms loss 2%\n"
         test1.qdisc_texts = [applied, merged]  # pre-read, then post-apply verify
         await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=10.0, loss_pct=2.0), from_host="test1"
+            lab,
+            ident="edge",
+            params=ImpairmentParams(delay_ms=10.0, loss_pct=2.0),
+            from_host="test1",
         )
         assert "tc qdisc replace dev eth1.100 root netem delay 10ms loss 2%" in test1.sudo_commands
 
@@ -169,7 +176,9 @@ class TestEndpointImpair:
     async def test_merged_to_empty_clears_instead(self) -> None:
         lab, test1, _, _ = _bed()
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=0.0), from_host="test1")
+        await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=0.0), from_host="test1"
+        )
         assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
         assert not any("replace" in c for c in test1.sudo_commands)
 
@@ -178,7 +187,9 @@ class TestEndpointImpair:
         lab, test1, _, _ = _bed()
         test1.qdisc_texts = ["", ""]  # post-apply read shows nothing applied
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+            )
 
     @pytest.mark.asyncio
     async def test_verify_passes_when_tc_canonicalizes_rate(self) -> None:
@@ -187,7 +198,9 @@ class TestEndpointImpair:
         lab, test1, _, _ = _bed()
         canonical = "qdisc netem 8001: root refcnt 2 limit 1000 rate 1500Kbit\n"
         test1.qdisc_texts = ["", canonical]  # pre-read clean, post-apply canonical form
-        await impair_link(lab, "edge", ImpairmentParams(rate="1.5mbit"), from_host="test1")
+        await impair_link(
+            lab, ident="edge", params=ImpairmentParams(rate="1.5mbit"), from_host="test1"
+        )
         assert "tc qdisc replace dev eth1.100 root netem rate 1.5mbit" in test1.sudo_commands
 
 
@@ -197,7 +210,7 @@ class TestInpath:
         lab, test1, test2, test3 = _bed(link=INPATH)
         # one host, two netdevs, one shared read queue: pre-read/verify per direction
         test3.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
-        report = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
+        report = await impair_link(lab, ident="dataplane", params=ImpairmentParams(delay_ms=50.0))
         assert {a.placement.host_id for a in report.applied} == {"test3"}
         assert {a.placement.netdev for a in report.applied} == {"eth1.100", "eth1.200"}
         assert not test1.sudo_commands
@@ -216,7 +229,7 @@ class TestRefusalsAndSafety:
         )
         lab, test1, test2, _ = _bed(link=local_link)
         with pytest.raises(ValueError, match="local host as an endpoint"):
-            await impair_link(lab, "to-local", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="to-local", params=ImpairmentParams(delay_ms=1.0))
         assert not test1.commands
         assert not test2.commands
 
@@ -231,7 +244,7 @@ class TestRefusalsAndSafety:
         local = FakeHost(id=BUILTIN_LOCAL_HOST_ID, ip="127.0.0.1", addr_text=TEST3_ADDR)
         lab.hosts[BUILTIN_LOCAL_HOST_ID] = local
         with pytest.raises(ValueError, match="local host as its in-path middlebox"):
-            await impair_link(lab, "local-mid", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="local-mid", params=ImpairmentParams(delay_ms=1.0))
         assert not local.commands
         assert not test1.commands
         assert not test2.commands
@@ -245,7 +258,7 @@ class TestRefusalsAndSafety:
         )
         lab, test1, _, _ = _bed(link=mgmt_link)
         with pytest.raises(ValueError, match="management interface"):
-            await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="mgmt-edge", params=ImpairmentParams(delay_ms=1.0))
         assert not test1.sudo_commands
 
     @pytest.mark.asyncio
@@ -258,7 +271,7 @@ class TestRefusalsAndSafety:
         beet.hop = "test3"  # direct hop through the middlebox
         lab.hosts["beet-seed"] = beet
         with pytest.raises(ValueError, match="hop transit"):
-            await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="dataplane", params=ImpairmentParams(delay_ms=1.0))
         assert not test3.sudo_commands
 
     @pytest.mark.asyncio
@@ -272,7 +285,7 @@ class TestRefusalsAndSafety:
         lab.hosts["onion-seed"] = onion
         lab.hosts["beet-seed"] = beet
         with pytest.raises(ValueError, match="beet-seed"):
-            await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="dataplane", params=ImpairmentParams(delay_ms=1.0))
         assert not test3.sudo_commands
 
     @pytest.mark.asyncio
@@ -284,7 +297,7 @@ class TestRefusalsAndSafety:
         ]
         test2.fail_on = "tc qdisc replace"  # second placement fails
         with pytest.raises(RuntimeError):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+            await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
         # test1 restored to its PRIOR params, not cleared
         assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
@@ -299,7 +312,9 @@ class TestRefusalsAndSafety:
             "",  # post-apply verify: nothing there -> mismatch
         ]
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+            )
         # restored to prior (delay 20ms), not left half-applied at delay 50ms
         assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
@@ -312,7 +327,7 @@ class TestRefusalsAndSafety:
 
         test1.exec = _boom  # type: ignore[method-assign]
         with pytest.raises(RuntimeError, match="test1"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0))
+            await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=1.0))
 
     @pytest.mark.asyncio
     async def test_cancellation_mid_impair_still_rolls_back(self) -> None:
@@ -343,7 +358,9 @@ class TestRefusalsAndSafety:
 
         _park(test2)
 
-        task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
+        task = asyncio.ensure_future(
+            impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
+        )
         await second_placement_reached.wait()  # test1's placement is fully applied by now
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -395,7 +412,9 @@ class TestRefusalsAndSafety:
 
         test1.run = gated_run  # type: ignore[method-assign]
 
-        task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
+        task = asyncio.ensure_future(
+            impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
+        )
         await second_placement_reached.wait()  # test1's placement is fully applied by now
         task.cancel()  # 1st cancel: tears the parked test2 placement, triggers rollback
         await rollback_restoring.wait()
@@ -412,7 +431,7 @@ class TestExpireTimers:
         lab, test1, _, _ = _bed()
         test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
         await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
         )
         # skip the qdisc-mutation command; find the timer launch
         launch = next(c for c in test1.sudo_commands if "otto-impair:" in c)
@@ -432,7 +451,9 @@ class TestExpireTimers:
         token = encode_impair_sentinel(LINK.id, "eth1.100")
         test1.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
         test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+        )
         assert "kill 4242" in test1.sudo_commands
 
 
@@ -447,7 +468,7 @@ class TestRegistryRoundtrip:
         class _Recorder(LinkImpairer):
             host_families: ClassVar[frozenset[str]] = frozenset({"unix"})
 
-            def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+            def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
                 return f"FAKE-APPLY {netdev} {params.describe()}"
 
             def read_command(self, netdev: str) -> str:
@@ -472,7 +493,9 @@ class TestRegistryRoundtrip:
 
         test1._result = _fake_result  # type: ignore[method-assign]
         test1.qdisc_texts = ["", "APPLIED"]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+        )
         assert "FAKE-APPLY eth1.100 delay 50ms" in test1.sudo_commands
         assert not any(c.startswith("tc ") for c in test1.sudo_commands)  # netem never ran
 
@@ -481,7 +504,9 @@ class TestRegistryRoundtrip:
         lab, test1, _, _ = _bed()
         test1.impairer = ""  # e.g. an embedded host: no impairer attribute/value
         with pytest.raises(ValueError, match="no impairer support"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="test1")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=1.0), from_host="test1"
+            )
 
 
 QDISC_SCOPED_ONE = (
@@ -506,7 +531,9 @@ class TestExclusivityAndForeign:
         test1.qdisc_texts = [QDISC_SCOPED_ONE]
         test1.filter_texts = [FILTER_SCOPED_ONE]
         with pytest.raises(ValueError, match="has port-scoped impairments — repair them first"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+            )
         assert not test1.sudo_commands  # refused BEFORE any mutation
 
     @pytest.mark.asyncio
@@ -516,7 +543,9 @@ class TestExclusivityAndForeign:
         # ValueError, like every other structural refusal in this module —
         # otto is declining, nothing failed. See repair_all's skip.
         with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+            )
         assert not test1.sudo_commands
 
     @pytest.mark.asyncio
@@ -527,7 +556,7 @@ class TestExclusivityAndForeign:
         test2.qdisc_texts = [QDISC_SCOPED_ONE]
         test2.filter_texts = [FILTER_SCOPED_ONE]
         with pytest.raises(ValueError, match="port-scoped impairments"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+            await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
         assert test1.sudo_commands[-1] == "tc qdisc del dev eth1.100 root"
         assert not test2.sudo_commands
 
@@ -556,12 +585,12 @@ class TestScopedImpair:
         test1.filter_texts = ["", FILTER_SCOPED_ONE]
         report = await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(delay_ms=200.0),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=200.0),
             from_host="test1",
-            selector=Selector(5201, "tcp"),
+            selector=Selector(port=5201, proto="tcp"),
         )
-        assert report.applied[0].selector == Selector(5201, "tcp")
+        assert report.applied[0].selector == Selector(port=5201, proto="tcp")
         assert test1.sudo_commands == [
             (
                 "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
@@ -585,10 +614,10 @@ class TestScopedImpair:
         test1.filter_texts = [FILTER_SCOPED_ONE, FILTER_SCOPED_TWO]
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(loss_pct=5.0),
+            ident="edge",
+            params=ImpairmentParams(loss_pct=5.0),
             from_host="test1",
-            selector=Selector(53, "udp"),
+            selector=Selector(port=53, proto="udp"),
         )
         assert not any("prio bands" in c for c in test1.sudo_commands)
         assert "tc qdisc replace dev eth1.100 parent 1:5 handle 50: netem loss 5%" in (
@@ -603,10 +632,10 @@ class TestScopedImpair:
         test1.filter_texts = [FILTER_SCOPED_ONE]
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(loss_pct=2.0),
+            ident="edge",
+            params=ImpairmentParams(loss_pct=2.0),
             from_host="test1",
-            selector=Selector(5201, "tcp"),
+            selector=Selector(port=5201, proto="tcp"),
         )
         assert test1.sudo_commands == [
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms loss 2%"
@@ -620,10 +649,10 @@ class TestScopedImpair:
         test1.filter_texts = [FILTER_SCOPED_ONE, ""]
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(delay_ms=0.0),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=0.0),
             from_host="test1",
-            selector=Selector(5201, "tcp"),
+            selector=Selector(port=5201, proto="tcp"),
         )
         assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
 
@@ -634,10 +663,10 @@ class TestScopedImpair:
         with pytest.raises(ValueError, match="has a whole-link impairment — repair it first"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=1.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=1.0),
                 from_host="test1",
-                selector=Selector(5201),
+                selector=Selector(port=5201),
             )
         assert not test1.sudo_commands
 
@@ -663,10 +692,10 @@ class TestScopedImpair:
         with pytest.raises(ValueError, match="8 port-scoped impairments"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=1.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=1.0),
                 from_host="test1",
-                selector=Selector(9999, "tcp"),
+                selector=Selector(port=9999, proto="tcp"),
             )
         # The cap error fires inside the mutation attempt, AFTER the rollback
         # entry is registered (same posture as a validate() failure today), so
@@ -682,10 +711,10 @@ class TestScopedImpair:
         with pytest.raises(ValueError, match="'plainrec' does not support port-scoped"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=1.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=1.0),
                 from_host="test1",
-                selector=Selector(80),
+                selector=Selector(port=80),
             )
 
     @pytest.mark.asyncio
@@ -698,10 +727,10 @@ class TestScopedImpair:
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(loss_pct=5.0),
+                ident="edge",
+                params=ImpairmentParams(loss_pct=5.0),
                 from_host="test1",
-                selector=Selector(53, "udp"),
+                selector=Selector(port=53, proto="udp"),
             )
         restore = test1.sudo_commands[-4:]
         assert restore == [
@@ -730,7 +759,7 @@ def _make_plain_recorder():
     class _Plain(LinkImpairer):
         host_families: ClassVar[frozenset[str]] = frozenset({"unix"})
 
-        def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+        def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
             return f"PLAIN-APPLY {netdev}"
 
         def read_command(self, netdev: str) -> str:
@@ -753,10 +782,10 @@ class TestScopedTimers:
         test1.filter_texts = ["", FILTER_SCOPED_ONE]
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(delay_ms=200.0),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=200.0),
             from_host="test1",
-            selector=Selector(5201, "tcp"),
+            selector=Selector(port=5201, proto="tcp"),
             expire=30,
         )
         launch = next(c for c in test1.sudo_commands if "otto-impair:" in c)
@@ -776,8 +805,8 @@ class TestScopedTimers:
 
     @pytest.mark.asyncio
     async def test_scoped_impair_cancels_only_its_selectors_v2_timer(self) -> None:
-        v2_mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        v2_other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
+        v2_mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=5201, proto="tcp"))
+        v2_other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=53, proto="udp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = (
             f"  4242 05:00 {v2_mine} -c sleep 600\n  4243 05:00 {v2_other} -c sleep 600\n"
@@ -787,10 +816,10 @@ class TestScopedTimers:
         test1.filter_texts = [FILTER_SCOPED_ONE]
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(loss_pct=2.0),
+            ident="edge",
+            params=ImpairmentParams(loss_pct=2.0),
             from_host="test1",
-            selector=Selector(5201, "tcp"),
+            selector=Selector(port=5201, proto="tcp"),
         )
         assert "kill 4242" in test1.sudo_commands
         assert not any("4243" in c for c in test1.sudo_commands)
@@ -799,12 +828,14 @@ class TestScopedTimers:
     async def test_whole_link_impair_does_not_cancel_v2_timers(self) -> None:
         # a v2 timer for another link's netdev-sharing selector must survive a
         # bare impair (which only owns v1 whole-link timers)
-        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=5201, proto="tcp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = f"  4242 05:00 {v2} -c sleep 600\n"
         test1.qdisc_texts = ["", DELAY_50_TEXT]
         test1.filter_texts = [""]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+        )
         assert not any(c.startswith("kill") for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
@@ -816,7 +847,7 @@ class TestScopedTimers:
         # live sibling selector's expire timer too — leaving that sibling's
         # restored impairment with a dead timer, persisting forever instead
         # of expiring).
-        v2_sibling = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
+        v2_sibling = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(port=53, proto="udp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = f"  4243 05:00 {v2_sibling} -c sleep 600\n"
         test1.qdisc_texts = [QDISC_SCOPED_TWO, ""]  # prior: both selectors; verify: nothing there
@@ -824,10 +855,10 @@ class TestScopedTimers:
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(loss_pct=2.0),
+                ident="edge",
+                params=ImpairmentParams(loss_pct=2.0),
                 from_host="test1",
-                selector=Selector(5201, "tcp"),
+                selector=Selector(port=5201, proto="tcp"),
             )
         # rollback ran: the full two-selector mapping was rebuilt
         assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
@@ -887,7 +918,7 @@ class TestTimeoutStillNamesTheHost:
                 self, cmd: str, sudo: bool = False, timeout: float | None = None, log=None
             ) -> Results:
                 return Results.collect(
-                    [
+                    items=[
                         CommandResult(
                             status=Status.Error,
                             value=f"Command timed out after {timeout}s",
@@ -946,7 +977,11 @@ class TestExpireOnAHostWithoutBash:
         test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
             await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
+                lab,
+                ident="edge",
+                params=ImpairmentParams(delay_ms=50.0),
+                from_host="test1",
+                expire=30,
             )
         message = str(excinfo.value)
         assert "daemon-launch" in message
@@ -984,10 +1019,10 @@ class TestExpireOnAHostWithoutBash:
         with pytest.raises(UnsupportedOnUserlandError, match="daemon-launch"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=200.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=200.0),
                 from_host="test1",
-                selector=Selector(5201, "tcp"),
+                selector=Selector(port=5201, proto="tcp"),
                 expire=30,
             )
         assert [c for c in test1.sudo_commands if c.startswith("tc filter add")], (
@@ -1006,7 +1041,9 @@ class TestExpireOnAHostWithoutBash:
         """
         lab, test1, _, _ = _bed(has_bash=False)
         test1.qdisc_texts = ["", DELAY_50_TEXT]
-        report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        report = await impair_link(
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+        )
         assert [a.placement.host_id for a in report.applied] == ["test1"]
         assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in test1.sudo_commands
 
@@ -1024,7 +1061,7 @@ class TestExpireOnAHostWithoutBash:
         token = encode_impair_sentinel(LINK.id, "eth1.100")
         test1.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
         test1.qdisc_texts = [DELAY_50_TEXT, ""]
-        await repair_link(lab, "edge")
+        await repair_link(lab, ident="edge")
         assert "kill 4242" in test1.sudo_commands
 
     @pytest.mark.asyncio
@@ -1045,7 +1082,7 @@ class TestExpireOnAHostWithoutBash:
         lab, test1, _, _ = _bed(fail_on="exec -a")
         test1.qdisc_texts = ["", DELAY_50_TEXT]
         report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
+            lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
         )
         assert [a.placement.host_id for a in report.applied] == ["test1"]
         assert [c for c in test1.sudo_commands if "exec -a" in c], "the launch was not attempted"
@@ -1088,7 +1125,7 @@ class TestDryRunImpairPlansWithoutContact:
     async def test_endpoint_mode_names_host_netdev_and_the_exact_command(self) -> None:
         lab, test1, test2, _ = _bed()
         with active_context(dry_run=True):
-            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+            report = await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
 
         assert report.plan is not None
         assert report.applied == [], (
@@ -1115,7 +1152,7 @@ class TestDryRunImpairPlansWithoutContact:
         lab, test1, _, _ = _bed(link=MGMT_LINK)
 
         with pytest.raises(ValueError, match="self-lockout") as excinfo:
-            await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
+            await impair_link(lab, ident="mgmt-edge", params=ImpairmentParams(delay_ms=50.0))
         assert "management interface" in str(excinfo.value), (
             "the control: without a bed whose REAL answer is a refusal, the dry-run half "
             "below would be asserting about a link that was never at risk"
@@ -1123,7 +1160,9 @@ class TestDryRunImpairPlansWithoutContact:
 
         test1.commands.clear()
         with active_context(dry_run=True):
-            report = await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
+            report = await impair_link(
+                lab, ident="mgmt-edge", params=ImpairmentParams(delay_ms=50.0)
+            )
 
         assert report.plan is not None
         unchecked = " ".join(report.plan.unchecked)
@@ -1149,7 +1188,7 @@ class TestDryRunImpairPlansWithoutContact:
         """
         lab, _, _, test3 = _bed(link=INPATH)
         test3.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
-        real = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
+        real = await impair_link(lab, ident="dataplane", params=ImpairmentParams(delay_ms=50.0))
         assert {a.placement.netdev for a in real.applied} == {"eth1.100", "eth1.200"}, (
             "the control: test3 really does face both endpoints, so 'no interface on that "
             "subnet' was never a true statement about this bed"
@@ -1157,7 +1196,9 @@ class TestDryRunImpairPlansWithoutContact:
 
         test3.commands.clear()
         with active_context(dry_run=True):
-            report = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
+            report = await impair_link(
+                lab, ident="dataplane", params=ImpairmentParams(delay_ms=50.0)
+            )
 
         assert report.plan is not None
         assert report.plan.would == [], "an in-path placement cannot be named without a device"
@@ -1176,7 +1217,7 @@ class TestDryRunImpairPlansWithoutContact:
         """
         lab, *_ = _bed()
         with active_context(dry_run=True):
-            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=0.0))
+            report = await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=0.0))
 
         assert report.plan is not None
         assert report.plan.would == [
@@ -1197,7 +1238,7 @@ class TestDryRunImpairPlansWithoutContact:
         lab, *_ = _bed()
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(jitter_ms=5.0), from_host="test1"
+                lab, ident="edge", params=ImpairmentParams(jitter_ms=5.0), from_host="test1"
             )
 
         assert report.plan is not None
@@ -1219,10 +1260,10 @@ class TestDryRunImpairPlansWithoutContact:
         with active_context(dry_run=True):
             report = await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=50.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=50.0),
                 from_host="test1",
-                selector=Selector(5201, "tcp"),
+                selector=Selector(port=5201, proto="tcp"),
             )
 
         assert report.plan is not None
@@ -1243,7 +1284,7 @@ class TestDryRunImpairPlansWithoutContact:
         )
         lab, *_rest = _bed(link=local_link)
         with active_context(dry_run=True), pytest.raises(ValueError, match="local host"):
-            await impair_link(lab, "loopback-edge", ImpairmentParams(delay_ms=50.0))
+            await impair_link(lab, ident="loopback-edge", params=ImpairmentParams(delay_ms=50.0))
 
     @pytest.mark.asyncio
     async def test_a_dry_run_never_reaches_the_read_backstop(self) -> None:
@@ -1256,7 +1297,7 @@ class TestDryRunImpairPlansWithoutContact:
         """
         lab, *_ = _bed()
         with active_context(dry_run=True):
-            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+            report = await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
         assert report.plan is not None
 
         # The control: the backstop IS armed, on the same lab and the same context.
@@ -1289,7 +1330,11 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
             pytest.raises(UnsupportedOnUserlandError, match="daemon-launch") as excinfo,
         ):
             await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
+                lab,
+                ident="edge",
+                params=ImpairmentParams(delay_ms=50.0),
+                from_host="test1",
+                expire=30,
             )
         assert "--expire" in str(excinfo.value), (
             "the refusal has to name the option the operator can drop"
@@ -1306,7 +1351,7 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
         lab, *_rest = _bed(has_bash=False)
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1"
+                lab, ident="edge", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
         assert report.plan is not None
         assert report.plan.would == [
@@ -1318,7 +1363,11 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
         lab, *_ = _bed()
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
+                lab,
+                ident="edge",
+                params=ImpairmentParams(delay_ms=50.0),
+                from_host="test1",
+                expire=30,
             )
         assert report.plan is not None
         assert report.plan.would[-1] == (
@@ -1336,17 +1385,17 @@ class TestSelectorCollisions:
     @pytest.mark.asyncio
     async def test_same_scope_overlap_is_refused_before_any_mutation(self) -> None:
         tree = render_scoped_tree(
-            {Selector(5200, "tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
+            {Selector(port=5200, proto="tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
         )
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
         with pytest.raises(ValueError, match="collides with") as exc:
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=5.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=5.0),
                 from_host="test1",
-                selector=Selector(5205, "tcp"),
+                selector=Selector(port=5205, proto="tcp"),
             )
         msg = str(exc.value)
         assert "5205/tcp collides with 5200:5220/tcp on edge a->b (test1/eth1.100)" in msg
@@ -1358,16 +1407,18 @@ class TestSelectorCollisions:
 
     @pytest.mark.asyncio
     async def test_incomparable_scopes_are_refused(self) -> None:
-        tree = render_scoped_tree({Selector(5005, "tcp"): (4, ImpairmentParams(delay_ms=200.0))})
+        tree = render_scoped_tree(
+            {Selector(port=5005, proto="tcp"): (4, ImpairmentParams(delay_ms=200.0))}
+        )
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
         with pytest.raises(ValueError, match="neither scope is narrower, overlapping ports 5005"):
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=5.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=5.0),
                 from_host="test1",
-                selector=Selector(5005, side="dst"),
+                selector=Selector(port=5005, side="dst"),
             )
         assert not test1.sudo_commands
 
@@ -1378,16 +1429,18 @@ class TestSelectorCollisions:
         neither scope is narrower — the refusal must name the remedy the
         feature actually offers: narrowing the new selector so it nests.
         """
-        tree = render_scoped_tree({Selector(5005, "tcp"): (4, ImpairmentParams(delay_ms=200.0))})
+        tree = render_scoped_tree(
+            {Selector(port=5005, proto="tcp"): (4, ImpairmentParams(delay_ms=200.0))}
+        )
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
         with pytest.raises(ValueError, match="neither scope is narrower") as exc:
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=5.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=5.0),
                 from_host="test1",
-                selector=Selector(5005, side="dst"),
+                selector=Selector(port=5005, side="dst"),
             )
         msg = str(exc.value)
         assert "narrow it (--proto/--side on the CLI, proto/side on the API) so it nests" in msg
@@ -1396,17 +1449,17 @@ class TestSelectorCollisions:
     @pytest.mark.asyncio
     async def test_fully_narrowed_refusal_does_not_offer_narrowing(self) -> None:
         """A selector with both proto and side set has no narrower scope."""
-        existing = Selector(5200, "tcp", end=5220, side="dst")
+        existing = Selector(port=5200, proto="tcp", end=5220, side="dst")
         tree = render_scoped_tree({existing: (4, ImpairmentParams(delay_ms=200.0))})
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
         with pytest.raises(ValueError, match="same scope, overlapping ports 5205") as exc:
             await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=5.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=5.0),
                 from_host="test1",
-                selector=Selector(5205, "tcp", side="dst"),
+                selector=Selector(port=5205, proto="tcp", side="dst"),
             )
         msg = str(exc.value)
         assert "otto link repair edge --port 5200:5220 --proto tcp --side dst), or choose" in msg
@@ -1415,8 +1468,8 @@ class TestSelectorCollisions:
 
     @pytest.mark.asyncio
     async def test_a_strictly_narrower_selector_composes(self) -> None:
-        wide = {Selector(5200, end=5220): (4, ImpairmentParams(delay_ms=10.0))}
-        narrow = Selector(5200, "tcp", end=5210)
+        wide = {Selector(port=5200, end=5220): (4, ImpairmentParams(delay_ms=10.0))}
+        narrow = Selector(port=5200, proto="tcp", end=5210)
         both = {**wide, narrow: (5, ImpairmentParams(delay_ms=200.0))}
         before, after = render_scoped_tree(wide), render_scoped_tree(both)
         lab, test1, _, _ = _bed()
@@ -1425,12 +1478,16 @@ class TestSelectorCollisions:
             [before.filters, after.filters],
         )
         report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=200.0), from_host="test1", selector=narrow
+            lab,
+            ident="edge",
+            params=ImpairmentParams(delay_ms=200.0),
+            from_host="test1",
+            selector=narrow,
         )
         assert report.applied[0].selector == narrow
         assert test1.sudo_commands == [
             "tc qdisc replace dev eth1.100 parent 1:5 handle 50: netem delay 200ms",
-            *NetEmImpairer().scoped_filter_commands("eth1.100", 5, narrow),
+            *NetEmImpairer().scoped_filter_commands(netdev="eth1.100", band=5, selector=narrow),
         ]
         assert test1.sudo_commands[1] == (
             "tc filter add dev eth1.100 parent 1: pref 250 protocol ip u32 "
@@ -1439,7 +1496,7 @@ class TestSelectorCollisions:
 
     @pytest.mark.asyncio
     async def test_reimpairing_the_same_range_merges_even_when_spelled_n_colon_n(self) -> None:
-        sel = Selector(5200, "tcp", end=5220)
+        sel = Selector(port=5200, proto="tcp", end=5220)
         before = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=200.0))})
         after = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=200.0, loss_pct=2.0))})
         lab, test1, _, _ = _bed()
@@ -1449,15 +1506,15 @@ class TestSelectorCollisions:
         )
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(loss_pct=2.0),
+            ident="edge",
+            params=ImpairmentParams(loss_pct=2.0),
             from_host="test1",
-            selector=Selector.parse("5200:5220", "tcp"),
+            selector=Selector.parse(port_text="5200:5220", proto="tcp"),
         )
         assert test1.sudo_commands == [
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms loss 2%"
         ]
-        single = Selector(7000, "udp")
+        single = Selector(port=7000, proto="udp")
         s_before = render_scoped_tree({single: (4, ImpairmentParams(delay_ms=1.0))})
         s_after = render_scoped_tree({single: (4, ImpairmentParams(delay_ms=2.0))})
         lab, test1, _, _ = _bed()
@@ -1467,10 +1524,10 @@ class TestSelectorCollisions:
         )
         await impair_link(
             lab,
-            "edge",
-            ImpairmentParams(delay_ms=2.0),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=2.0),
             from_host="test1",
-            selector=Selector.parse("7000:7000", "udp"),
+            selector=Selector.parse(port_text="7000:7000", proto="udp"),
         )
         assert test1.sudo_commands == [
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 2ms"
@@ -1478,10 +1535,10 @@ class TestSelectorCollisions:
 
     @pytest.mark.asyncio
     async def test_collision_on_the_second_placement_rolls_the_first_back(self) -> None:
-        new = Selector(5205, "tcp")
+        new = Selector(port=5205, proto="tcp")
         applied_on_test1 = render_scoped_tree({new: (4, ImpairmentParams(delay_ms=5.0))})
         clash = render_scoped_tree(
-            {Selector(5200, "tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
+            {Selector(port=5200, proto="tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
         )
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = (
@@ -1490,7 +1547,9 @@ class TestSelectorCollisions:
         )
         test2.qdisc_texts, test2.filter_texts = [clash.qdisc], [clash.filters]
         with pytest.raises(ValueError, match="collides with 5200:5220/tcp on edge b->a"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=5.0), selector=new)
+            await impair_link(
+                lab, ident="edge", params=ImpairmentParams(delay_ms=5.0), selector=new
+            )
         assert test1.sudo_commands[-1] == "tc qdisc del dev eth1.100 root"
         assert not test2.sudo_commands
 
@@ -1500,10 +1559,10 @@ class TestSelectorCollisions:
         with active_context(dry_run=True):
             report = await impair_link(
                 lab,
-                "edge",
-                ImpairmentParams(delay_ms=5.0),
+                ident="edge",
+                params=ImpairmentParams(delay_ms=5.0),
                 from_host="test1",
-                selector=Selector(5200, "tcp", end=5220),
+                selector=Selector(port=5200, proto="tcp", end=5220),
             )
         assert report.plan is not None
         assert any("collides" in u for u in report.plan.unchecked)
@@ -1513,12 +1572,16 @@ class TestSelectorCollisions:
 class TestPythonApiParity:
     @pytest.mark.asyncio
     async def test_impair_link_applies_a_range_side_selector(self) -> None:
-        sel = Selector(5000, "tcp", end=5010, side="dst")
+        sel = Selector(port=5000, proto="tcp", end=5010, side="dst")
         tree = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=50.0))})
         lab, test1, _, _ = _bed()
         test1.qdisc_texts, test1.filter_texts = ["", tree.qdisc], ["", tree.filters]
         report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", selector=sel
+            lab,
+            ident="edge",
+            params=ImpairmentParams(delay_ms=50.0),
+            from_host="test1",
+            selector=sel,
         )
         assert report.applied[0].selector == sel
         assert test1.sudo_commands == [

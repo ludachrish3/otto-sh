@@ -43,7 +43,7 @@ class _PeakTrackingHost:
         self.calls: list[tuple[Path, bool]] = []
 
     async def _mkdir_all(self, paths, *, user=None):
-        return Result(Status.Success, value={})
+        return Result(status=Status.Success, value={})
 
     async def put(self, files, dest_dir, *, mode, user, show_progress, concurrent):
         self.calls.append((dest_dir, concurrent))
@@ -52,8 +52,8 @@ class _PeakTrackingHost:
         await asyncio.sleep(0.01)
         self._in_flight -= 1
         return Result(
-            Status.Success,
-            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            status=Status.Success,
+            value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
         )
 
 
@@ -110,7 +110,7 @@ class _CancelObservingHost:
         self.finished: list[str] = []
 
     async def _mkdir_all(self, paths, *, user=None):
-        return Result(Status.Success, value={})
+        return Result(status=Status.Success, value={})
 
     async def put(self, files, dest_dir, *, mode, user, show_progress, concurrent):
         name = dest_dir.name
@@ -124,8 +124,8 @@ class _CancelObservingHost:
             await asyncio.sleep(100)
             self.finished.append(name)
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
         except asyncio.CancelledError:
             self.cancelled.append(name)
@@ -159,18 +159,18 @@ async def test_sequential_raise_never_starts_the_remaining_level(tmp_path: Path)
 
     class _RaisingHost:
         async def _mkdir_all(self, paths, *, user=None):
-            return Result(Status.Success, value={})
+            return Result(status=Status.Success, value={})
 
         async def put(self, files, dest_dir, *, mode, user, show_progress, concurrent):
             name = dest_dir.name
             if name == "L3":
                 started["L3"] = True
-                return Result(Status.Success, value={})
+                return Result(status=Status.Success, value={})
             if name == "L2":
                 raise RuntimeError("boom")
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
     host = _RaisingHost()
@@ -243,7 +243,7 @@ async def test_a_failed_mkdir_fails_the_tree_before_any_byte_moves(tmp_path: Pat
     dest = tmp_path / "dest"
     dest.mkdir()
     host = LocalHost()
-    host._mkdir_all = AsyncMock(return_value=Result(Status.Error, msg="disk on fire"))
+    host._mkdir_all = AsyncMock(return_value=Result(status=Status.Error, msg="disk on fire"))
     host.put = AsyncMock(side_effect=AssertionError("no put after a failed mkdir"))
 
     result = await _put(host, [tree], dest)
@@ -268,8 +268,11 @@ async def test_a_per_file_failure_is_that_files_entry_and_later_levels_still_run
         calls.append(kw)
         if any(f.name == "a.txt" for f in files):
             return Result(
-                Status.Error,
-                value={f: Result(Status.Error, msg="boom", value=dest_dir / f.name) for f in files},
+                status=Status.Error,
+                value={
+                    f: Result(status=Status.Error, msg="boom", value=dest_dir / f.name)
+                    for f in files
+                },
                 msg="boom",
             )
         return await real_put(files, dest_dir, **kw)

@@ -8,4 +8,4 @@ from otto.utils import Status
 @instruction()
 async def noop() -> CommandResult:
     """No-op instruction for e2e discovery tests."""
-    return CommandResult(Status.Success, value="", command="noop", retcode=0)
+    return CommandResult(status=Status.Success, value="", command="noop", retcode=0)

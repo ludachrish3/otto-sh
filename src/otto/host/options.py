@@ -15,7 +15,7 @@ Example::
     host = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="admin", password="secret")],
-        element=Element("lab"),
+        element=Element(name="lab"),
         ssh_options=SshOptions(port=2222, connect_timeout=5),
         telnet_options=TelnetOptions(auto_window_resize=True),
     )
@@ -61,7 +61,7 @@ _FORWARD_CONFIG = ConfigDict(extra="forbid")
 
 
 @final
-@pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
+@pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG, kw_only=True)
 class LocalPortForward:
     """An SSH local port forward: listen locally, send to host:port via the remote."""
 
@@ -170,7 +170,7 @@ def _refuse_shadowing(opts: "DataclassInstance") -> None:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class SshOptions:
     """Connection options for asyncssh-backed SSH sessions.
 
@@ -383,7 +383,7 @@ class SshOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class TelnetOptions:
     """Connection options for telnetlib3-backed telnet sessions.
 
@@ -584,7 +584,7 @@ class ConsoleOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class SftpOptions:
     """Connection options for asyncssh-backed SFTP clients.
 
@@ -640,7 +640,7 @@ class SftpOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class ScpOptions:
     """Connection options for ``asyncssh.scp`` file transfers.
 
@@ -698,7 +698,7 @@ class ScpOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class FtpOptions:
     """Connection options for aioftp-backed FTP clients.
 
@@ -777,7 +777,7 @@ class FtpOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class NcOptions:
     """Connection options for netcat-based file transfers.
 
@@ -893,7 +893,7 @@ class TftpOptions:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class SnmpOptions:
     """Per-host SNMP polling config — the acquisition half of SNMP monitoring.
 

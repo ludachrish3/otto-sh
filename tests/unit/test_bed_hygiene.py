@@ -215,7 +215,7 @@ async def test_snapshot_host_keeps_a_stray_empty_line_visible():
 @pytest.mark.asyncio
 async def test_snapshot_host_reads_every_listed_netdev_as_a_qdisc_and_filter_pair():
     """A bare `tc qdisc show` names the netdevs; each is then read with the impairer's pair."""
-    qdisc_cmd, filter_cmd = NetEmImpairer().scoped_read_commands("eth1.100")
+    qdisc_cmd, filter_cmd = NetEmImpairer().scoped_read_commands(netdev="eth1.100")
     host = _ScriptedHost(
         canned_outputs={
             _NETDEV_PROBE: (

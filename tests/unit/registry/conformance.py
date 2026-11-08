@@ -87,15 +87,15 @@ def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require
     with project:
         name, first = make(1)
         assert name not in table, f"{name!r} is already registered; pick a name the case owns"
-        from_module(USER, table.register, name, first)
+        from_module(USER, table.register, name=name, entry=first)
         names = table.names()
-        assert table.peek(name) == first
+        assert table.peek(name=name) == first
 
         # A duplicate raises and changes nothing.
         revision = table.revision
         with pytest.raises(DuplicateRegistration):
-            from_module("other_user.init", table.register, name, make(2)[1])
-        assert (table.names(), table.peek(name), table.origin(name), table.revision) == (
+            from_module("other_user.init", table.register, name=name, entry=make(2)[1])
+        assert (table.names(), table.peek(name=name), table.origin(name=name), table.revision) == (
             names,
             first,
             USER,
@@ -105,10 +105,10 @@ def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require
         # overwrite=True replaces completely, in place, with new attribution.
         generation = table._generation(name)
         replacement = make(3)[1]
-        from_module("other_user.init", table.register, name, replacement, overwrite=True)
+        from_module("other_user.init", table.register, name=name, entry=replacement, overwrite=True)
         assert table.names() == names
-        assert table.peek(name) == replacement
-        assert table.origin(name) == "other_user.init"
+        assert table.peek(name=name) == replacement
+        assert table.origin(name=name) == "other_user.init"
         assert table.revision == revision + 1
         assert table._generation(name) != generation
 
@@ -116,15 +116,21 @@ def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require
         if invalid is not None:
             bad_name, bad_record = invalid
             with pytest.raises((ValueError, TypeError)):  # the seam's own validate error
-                from_module(USER, table.register, bad_name, bad_record, overwrite=True)
-            assert table.peek(name) == replacement
+                from_module(USER, table.register, name=bad_name, entry=bad_record, overwrite=True)
+            assert table.peek(name=name) == replacement
             assert table.names() == names
 
         # Incomplete registrations (the record check runs before any name check).
         record_type = type(first)
-        for bad in (record_type, {"x": 1}, Ref("json:dumps"), object(), with_a_list(make(6)[1])):
+        for bad in (
+            record_type,
+            {"x": 1},
+            Ref(target="json:dumps"),
+            object(),
+            with_a_list(make(6)[1]),
+        ):
             with pytest.raises(IncompleteRegistration):
-                from_module(USER, table.register, "__c_bad", bad)
+                from_module(USER, table.register, name="__c_bad", entry=bad)
             assert "__c_bad" not in table
 
         # Batches are atomic: a failing last item, or a repeated key, commits nothing.
@@ -140,27 +146,27 @@ def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require
             from_module(
                 USER, table.register_many, [(name, make(7)[1]), (name, make(8)[1])], overwrite=True
             )
-        assert table.peek(name) == replacement and table.revision == revision  # noqa: PT018
+        assert table.peek(name=name) == replacement and table.revision == revision  # noqa: PT018
 
         # A check may not write any table.
         with reg._checking(), pytest.raises(RegistrationRefused):
-            from_module(USER, table.register, name, make(9)[1], overwrite=True)
-        assert table.peek(name) == replacement
+            from_module(USER, table.register, name=name, entry=make(9)[1], overwrite=True)
+        assert table.peek(name=name) == replacement
 
         if lazy is not None:
             lazy_name, record = lazy
             module = _ref_module(record)
             assert module not in sys.modules, f"{module} is imported before the case runs"
             if lazy_name in table:
-                table.unregister(lazy_name)
-            from_module(USER, table.register, lazy_name, record)
+                table.unregister(name=lazy_name)
+            from_module(USER, table.register, name=lazy_name, entry=record)
             table.names()
             assert lazy_name in table
-            table.origin(lazy_name)
-            table.peek(lazy_name)
+            table.origin(name=lazy_name)
+            table.peek(name=lazy_name)
             table._snapshot()
             with pytest.raises(DuplicateRegistration):
-                from_module(USER, table.register, lazy_name, record)
+                from_module(USER, table.register, name=lazy_name, entry=record)
             assert module not in sys.modules, "a listing, collision or snapshot imported a Ref"
             revision, generation = table.revision, table._generation(lazy_name)
             table.get(lazy_name)
@@ -169,24 +175,26 @@ def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require
         if wrongly_typed_lazy is not None:
             wrong_name, record = wrongly_typed_lazy
             if wrong_name in table:
-                table.unregister(wrong_name)
-            from_module(USER, table.register, wrong_name, record)
+                table.unregister(name=wrong_name)
+            from_module(USER, table.register, name=wrong_name, entry=record)
             for _ in range(2):  # it raises again: nothing was cached, the retry re-checks
                 with pytest.raises(Exception):  # noqa: B017, PT011 — the seam's check_resolved error
                     table.get(wrong_name)
-                assert any(isinstance(v, Ref) for v in _values(table.peek(wrong_name)))
+                assert any(isinstance(v, Ref) for v in _values(table.peek(name=wrong_name)))
 
     # Under test loading the refusal fires before validate and changes nothing.
     revision = table.revision
     held = table.names()
     with reg.loading_test_files(), pytest.raises(RegistrationRefused):
-        from_module("test_conformance_probe", table.register, name, make(10)[1], overwrite=True)
+        from_module(
+            "test_conformance_probe", table.register, name=name, entry=make(10)[1], overwrite=True
+        )
     assert table.names() == held and table.revision == revision  # noqa: PT018
 
     # Teardown unregister and restore succeed outside any init import.
     victim = held[-1]
     state = table._snapshot()
-    table.unregister(victim)
+    table.unregister(name=victim)
     table._restore(state)
     assert victim in table
 
@@ -228,19 +236,19 @@ def assert_wrapper_matches_raw(
         added = [n for n in table.names() if n not in before]
         assert len(added) == 1, f"the wrapper registered {added}, not one new name"
         name = added[0]
-        assert table.peek(name) == record_for()
-        assert table.origin(name) == user
+        assert table.peek(name=name) == record_for()
+        assert table.origin(name=name) == user
         with pytest.raises(DuplicateRegistration):
             from_module(user, via_wrapper, overwrite=False)
         with pytest.raises(DuplicateRegistration):
-            from_module(user, table.register, name, record_for())
-        table.unregister(name)
-        from_module(user, table.register, name, record_for())
-        assert table.peek(name) == record_for()
-        assert table.origin(name) == user
+            from_module(user, table.register, name=name, entry=record_for())
+        table.unregister(name=name)
+        from_module(user, table.register, name=name, entry=record_for())
+        assert table.peek(name=name) == record_for()
+        assert table.origin(name=name) == user
         revision = table.revision
         from_module("other_user.init", via_wrapper, overwrite=True)
-        assert table.origin(name) == "other_user.init"
+        assert table.origin(name=name) == "other_user.init"
         assert table.revision == revision + 1
 
 
@@ -264,22 +272,22 @@ def assert_backend_registry(
         for name in ("json", "none", "__b_other"):
             entry, spy = make_spy_entry()
             parses = 0 if entry.config is None else 1
-            from_module(USER, table.register, name, entry, overwrite=True)
-            prepared = table.prepare(name, good_raw, env)
+            from_module(USER, table.register, name=name, entry=entry, overwrite=True)
+            prepared = table.prepare(name=name, raw=good_raw, env=env)
             assert (spy.parses, spy.builds) == (parses, 0), name
-            table.build(prepared)
-            table.build(prepared)
+            table.build(prepared=prepared)
+            table.build(prepared=prepared)
             assert (spy.parses, spy.builds) == (parses, 2), name
 
             with pytest.raises(Exception) as err:  # noqa: PT011 — the seam's construction error
-                table.prepare(name, bad_raw, env)
+                table.prepare(name=name, raw=bad_raw, env=env)
             for value in bad_raw.values():
                 assert str(value) not in str(err.value), (name, value)
 
-            from_module(USER, table.register, name, make_spy_entry()[0], overwrite=True)
+            from_module(USER, table.register, name=name, entry=make_spy_entry()[0], overwrite=True)
             builds = spy.builds
             with pytest.raises(Exception, match="stale preparation"):
-                table.build(prepared)
+                table.build(prepared=prepared)
             assert spy.builds == builds
 
 
@@ -287,10 +295,10 @@ def assert_subscription(sub: Any, *, value_a: Any, value_b: Any) -> None:
     """The subscription case: order, repeats, cancel-once, attribution, refusal."""
     with _Restored(sub):
         start = len(sub.items())
-        token = from_module(USER, sub.subscribe, value_a)
+        token = from_module(USER, sub.subscribe, value=value_a)
         with reg.registering_project("conformance_project"):
-            from_module(USER, sub.subscribe, value_b)
-        from_module(USER, sub.subscribe, value_a)
+            from_module(USER, sub.subscribe, value=value_b)
+        from_module(USER, sub.subscribe, value=value_a)
         added = sub.items()[start:]
         assert [s.value for s in added] == [value_a, value_b, value_a]
         assert [(s.origin, s.project) for s in added] == [
@@ -302,7 +310,7 @@ def assert_subscription(sub: Any, *, value_a: Any, value_b: Any) -> None:
         token.cancel()
         assert [s.value for s in sub.items()[start:]] == [value_b, value_a]
         with reg.loading_test_files(), pytest.raises(RegistrationRefused):
-            from_module("test_conformance_probe", sub.subscribe, value_a)
+            from_module("test_conformance_probe", sub.subscribe, value=value_a)
         assert len(sub.items()) == start + 2
 
 

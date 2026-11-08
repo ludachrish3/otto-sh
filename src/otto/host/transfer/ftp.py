@@ -110,8 +110,8 @@ class _FtpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._get_files_ftp(
@@ -123,8 +123,8 @@ class _FtpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._put_files_ftp(
@@ -224,9 +224,9 @@ class _FtpFileTransfer(UnixFileTransfer):
                                 f.write(block)
                                 bytes_done += len(block)
                                 handler(str(src), str(dst), bytes_done, total)
-            return Result(Status.Success, value=dst)
+            return Result(status=Status.Success, value=dst)
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     async def _put_files_ftp(
         self,
@@ -296,6 +296,6 @@ class _FtpFileTransfer(UnixFileTransfer):
                                 await stream.write(block)
                                 bytes_done += len(block)
                                 handler(str(src), str(dst), bytes_done, total)
-            return Result(Status.Success, value=dst)
+            return Result(status=Status.Success, value=dst)
 
-        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)

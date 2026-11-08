@@ -352,7 +352,7 @@ def build_fixture_report(base_dir: Path) -> Path:
         {"system": 4, "unit": 12}
     )
     main_rec.get_or_create_function("main", start_line=10, end_line=13).hits.add("system", 4)
-    store.merge_file(main_rec)
+    store.merge_file(record=main_rec)
 
     # -- utils.c -----------------------------------------------------------
     utils_rec = FileRecord(path=src_dir / "utils.c")
@@ -380,7 +380,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     # PROJ-415 (the `untested()` body) owns only this uncovered line — a
     # ticket at 0%.
     utils_rec.lines[10].ticket = ["PROJ-415"]
-    store.merge_file(utils_rec)
+    store.merge_file(record=utils_rec)
 
     # -- lib/ring.c ------------------------------------------------------
     # A second source directory, driven by the agent product: its system
@@ -428,7 +428,7 @@ def build_fixture_report(base_dir: Path) -> Path:
         ring_rec.lines[lineno].ticket = ["PROJ-512"]
     for lineno in (16, 17, 18, 20, 21, 24, 25, 26, 27):
         ring_rec.lines[lineno].ticket = ["PROJ-311"]
-    store.merge_file(ring_rec)
+    store.merge_file(record=ring_rec)
     store.tickets["PROJ-204"] = TicketRecord(
         id="PROJ-204", url="https://example.test/issues/204", commits=[_BASE_COMMIT_NIGHTLY]
     )
@@ -463,5 +463,5 @@ def build_fixture_report(base_dir: Path) -> Path:
 
     report_dir = base_dir / "report"
     SpaRenderer(report_dir, report_title="otto example product", prefix=base_dir).render(store)
-    store.save(report_dir / "store.json")
+    store.save(path=report_dir / "store.json")
     return report_dir

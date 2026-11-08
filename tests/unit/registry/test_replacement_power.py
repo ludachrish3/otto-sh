@@ -23,7 +23,7 @@ def test_replaces_names_every_built_in_power_controller():
     builtins = {
         ("otto.host.power:POWER_CONTROLLERS", name)
         for name in POWER_CONTROLLERS.names()
-        if POWER_CONTROLLERS.origin(name).startswith("otto.")
+        if POWER_CONTROLLERS.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -39,6 +39,6 @@ def test_a_replaced_command_controller_is_what_the_host_holds():
             "os_type": "unix",
             "power_control": {"type": "command", "on_cmd": "on", "off_cmd": "off"},
         },
-        element=Element("ne"),
+        element=Element(name="ne"),
     )
     assert type(host.power_control) is _Spy

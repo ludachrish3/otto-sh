@@ -280,7 +280,7 @@ class TestSelectorEnums:
             props = build_schemas()["unix-host"]["properties"]
             assert "xmodem" in props["valid_transfers"]["anyOf"][1]["items"]["enum"]
         finally:
-            xfer_mod.TRANSFER_BACKENDS.unregister("xmodem")
+            xfer_mod.TRANSFER_BACKENDS.unregister(name="xmodem")
 
     def test_menu_property_accepts_scalar_and_list(self):
         import jsonschema

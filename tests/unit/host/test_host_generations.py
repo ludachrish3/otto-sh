@@ -47,7 +47,7 @@ def _unix():
 
 
 def _zephyr():
-    return ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    return ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
 
 
 def _local():

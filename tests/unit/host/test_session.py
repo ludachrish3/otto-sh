@@ -194,7 +194,7 @@ class TestRunCmd:
                 f"{session._begin_marker}\nhello world\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("echo hello world")
+        result = await session.run_cmd(cmd="echo hello world")
         await feed_task
 
         assert result.command == "echo hello world"
@@ -209,7 +209,7 @@ class TestRunCmd:
                 f"{session._begin_marker}\ncommand not found\n{session._end_marker_prefix}127__\n"
             )
         )
-        result = await session.run_cmd("badcmd")
+        result = await session.run_cmd(cmd="badcmd")
         await feed_task
 
         assert result.status == Status.Failed
@@ -221,7 +221,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
         )
-        result = await session.run_cmd("cd /tmp")
+        result = await session.run_cmd(cmd="cd /tmp")
         await feed_task
 
         assert result.value == ""
@@ -234,7 +234,7 @@ class TestRunCmd:
                 f"{session._begin_marker}\nline1\nline2\nline3\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("seq 1 3")
+        result = await session.run_cmd(cmd="seq 1 3")
         await feed_task
 
         assert result.value == "line1\nline2\nline3"
@@ -247,7 +247,7 @@ class TestRunCmd:
                 f"$ {session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("echo hello")
+        result = await session.run_cmd(cmd="echo hello")
         await feed_task
 
         assert result.value == "hello"
@@ -257,7 +257,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
         )
-        await session.run_cmd("ls")
+        await session.run_cmd(cmd="ls")
         await feed_task
 
         # Verify the command was sentinel-wrapped
@@ -287,7 +287,7 @@ class TestExpects:
             )
         )
         result = await session.run_cmd(
-            "sudo apt install nginx",
+            cmd="sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
         )
         await feed_task
@@ -305,7 +305,7 @@ class TestExpects:
             )
         )
         result = await session.run_cmd(
-            "sudo apt install nginx",
+            cmd="sudo apt install nginx",
             expects=[
                 (r"Password:", "secret\n"),
                 (r"\[Y/n\]", "Y\n"),
@@ -327,7 +327,7 @@ class TestExpects:
             )
         )
         result = await session.run_cmd(
-            "echo ok",
+            cmd="echo ok",
             expects=[(r"Password:", "secret\n")],
         )
         await feed_task
@@ -346,7 +346,7 @@ class TestExpects:
             )
         )
         result = await session.run_cmd(
-            "sudo ls",
+            cmd="sudo ls",
             expects=[(re.compile(r"password for \w+:"), "pw\n")],
         )
         await feed_task
@@ -376,7 +376,7 @@ class TestTimeout:
 
         recovery_task = asyncio.create_task(feed_recovery())
 
-        result = await session.run_cmd("sleep 999", timeout=0.1)
+        result = await session.run_cmd(cmd="sleep 999", timeout=0.1)
         await simulate_task
         await recovery_task
 
@@ -396,7 +396,7 @@ class TestTimeout:
 
         recovery_task = asyncio.create_task(feed_recovery())
 
-        await session.run_cmd("sleep 999", timeout=0.1)
+        await session.run_cmd(cmd="sleep 999", timeout=0.1)
         await simulate_task
         await recovery_task
 
@@ -424,7 +424,7 @@ class TestTimeout:
         """
         calls = 0
 
-        async def reads(_pattern: re.Pattern[str]) -> str:
+        async def reads(*, pattern: re.Pattern[str]) -> str:
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -434,7 +434,7 @@ class TestTimeout:
 
         monkeypatch.setattr(session, "read_transport_until", reads)
 
-        result = await session.run_cmd("sleep 999", timeout=0.05)
+        result = await session.run_cmd(cmd="sleep 999", timeout=0.05)
 
         assert calls >= 2, "recovery never probed -- test no longer exercises the recovery path"
         assert result.status == Status.Error
@@ -473,7 +473,7 @@ class TestTimeout:
             )
         )
 
-        result = await session.run_cmd("sleep 999", timeout=0.1)
+        result = await session.run_cmd(cmd="sleep 999", timeout=0.1)
         await simulate_task
 
         assert result.status == Status.Error
@@ -533,7 +533,7 @@ class TestTimeout:
         # along (the default binds at def time — opus W16 review, minor 5),
         # so recovery has always run at the real 5s deadline here. The
         # parrot is write-ordered above, so no window arithmetic matters.
-        result = await session.run_cmd("mysql", timeout=0.1)
+        result = await session.run_cmd(cmd="mysql", timeout=0.1)
         await feed_task
         await repl_task
 
@@ -560,7 +560,7 @@ class TestTimeout:
         import otto.host.session as session_mod
 
         monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.1)
-        result = await session.run_cmd("sleep 999", timeout=0.1)
+        result = await session.run_cmd(cmd="sleep 999", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error
@@ -586,7 +586,7 @@ class TestTimeout:
         monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.05)
         feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
         start = time.monotonic()
-        result = await session.run_cmd("sleep 999", timeout=0.1)
+        result = await session.run_cmd(cmd="sleep 999", timeout=0.1)
         elapsed = time.monotonic() - start
         await feed_task
 
@@ -647,7 +647,7 @@ class TestZephyrRecovery:
 
         recovery_task = asyncio.create_task(feed_recovery())
 
-        result = await session.run_cmd("some-cmd", timeout=0.1)
+        result = await session.run_cmd(cmd="some-cmd", timeout=0.1)
         await feed_task
         await recovery_task
 
@@ -668,7 +668,7 @@ class TestZephyrRecovery:
         import otto.host.session as session_mod
 
         monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.2)
-        result = await session.run_cmd("some-cmd", timeout=0.1)
+        result = await session.run_cmd(cmd="some-cmd", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error
@@ -853,7 +853,7 @@ class TestSessionDeath:
         # EOF is the event, so it rides ``then`` — same write-ordering, no
         # content chunk.
         feed_task = asyncio.create_task(session.feed_after_write(then=session.feed_eof))
-        result = await session.run_cmd("echo hello")
+        result = await session.run_cmd(cmd="echo hello")
         await feed_task
 
         assert result.status == Status.Error
@@ -867,7 +867,7 @@ class TestSessionDeath:
         gets the same treatment — mark the session dead and hand back a
         truthful CommandResult the CLI already knows how to render."""
         feed_task = asyncio.create_task(session.feed_after_write(then=session.feed_connection_lost))
-        result = await session.run_cmd("echo hello")
+        result = await session.run_cmd(cmd="echo hello")
         await feed_task
 
         assert result.status == Status.Error
@@ -893,7 +893,7 @@ class TestSessionDeath:
         (tests/unit/host/test_session_concurrency.py), so it is cited here
         rather than duplicated."""
         session.feed_write_broken_pipe()
-        result = await session.run_cmd("echo hello")
+        result = await session.run_cmd(cmd="echo hello")
 
         assert result.status == Status.Error
         assert result.retcode == -1
@@ -927,44 +927,44 @@ class TestLocalSession:
 
     @pytest.mark.asyncio
     async def test_run_echo_command(self, local_session: LocalSession):
-        result = await local_session.run_cmd("echo hello_otto")
+        result = await local_session.run_cmd(cmd="echo hello_otto")
         assert result.status == Status.Success
         assert "hello_otto" in result.value
         assert result.retcode == 0
 
     @pytest.mark.asyncio
     async def test_nonzero_exit_code(self, local_session: LocalSession):
-        result = await local_session.run_cmd("false")
+        result = await local_session.run_cmd(cmd="false")
         assert result.status == Status.Failed
         assert result.retcode == 1
 
     @pytest.mark.asyncio
     async def test_state_persists_between_commands(self, local_session: LocalSession):
-        await local_session.run_cmd("cd /tmp")
-        result = await local_session.run_cmd("pwd")
+        await local_session.run_cmd(cmd="cd /tmp")
+        result = await local_session.run_cmd(cmd="pwd")
         assert result.status == Status.Success
         assert result.value == "/tmp"
 
     @pytest.mark.asyncio
     async def test_env_var_persists(self, local_session: LocalSession):
-        await local_session.run_cmd("export OTTO_SESSION_TEST=abc123")
-        result = await local_session.run_cmd("echo $OTTO_SESSION_TEST")
+        await local_session.run_cmd(cmd="export OTTO_SESSION_TEST=abc123")
+        result = await local_session.run_cmd(cmd="echo $OTTO_SESSION_TEST")
         assert "abc123" in result.value
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, local_session: LocalSession):
-        result = await local_session.run_cmd("echo line1; echo line2; echo line3")
+        result = await local_session.run_cmd(cmd="echo line1; echo line2; echo line3")
         assert result.status == Status.Success
         assert result.value == "line1\nline2\nline3"
 
     @pytest.mark.asyncio
     async def test_timeout_recovery(self, local_session: LocalSession):
-        result = await local_session.run_cmd("sleep 999", timeout=0.1)
+        result = await local_session.run_cmd(cmd="sleep 999", timeout=0.1)
         assert result.status == Status.Error
         assert "timed out" in result.value
 
         # Session should recover
-        result = await local_session.run_cmd("echo recovered")
+        result = await local_session.run_cmd(cmd="echo recovered")
         assert result.status == Status.Success
         assert "recovered" in result.value
 
@@ -1007,7 +1007,7 @@ class TestLocalSession:
 
     @pytest.mark.asyncio
     async def test_close_terminates_process(self, local_session: LocalSession):
-        await local_session.run_cmd("echo init")
+        await local_session.run_cmd(cmd="echo init")
         assert local_session.alive
         await local_session.close()
         assert not local_session.alive
@@ -1017,7 +1017,7 @@ class TestLocalSession:
         """_on_output callback is invoked with each line as it arrives."""
         logged: list[str] = []
         local_session._on_output = logged.append
-        result = await local_session.run_cmd("echo line1; echo line2; echo line3")
+        result = await local_session.run_cmd(cmd="echo line1; echo line2; echo line3")
         assert result.status == Status.Success
         assert logged == ["line1", "line2", "line3"]
 
@@ -1061,7 +1061,7 @@ class TestCommandLogging:
                 f"{session._begin_marker}\nalpha\nbravo\ncharlie\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("seq 3")
+        result = await session.run_cmd(cmd="seq 3")
         await feed_task
 
         assert result.status == Status.Success
@@ -1078,7 +1078,7 @@ class TestCommandLogging:
                 f"{session._begin_marker}\ncontent\n{session._end_marker_prefix}0__\n"
             )
         )
-        await session.run_cmd("echo content")
+        await session.run_cmd(cmd="echo content")
         await feed_task
 
         assert logged == ["content"]
@@ -1094,7 +1094,7 @@ class TestCommandLogging:
         feed_task = asyncio.create_task(
             session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
         )
-        result = await session.run_cmd("cd /tmp")
+        result = await session.run_cmd(cmd="cd /tmp")
         await feed_task
 
         assert result.status == Status.Success
@@ -1113,7 +1113,7 @@ class TestCommandLogging:
             )
         )
         result = await session.run_cmd(
-            "sudo apt install nginx",
+            cmd="sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
         )
         await feed_task
@@ -1142,7 +1142,7 @@ class TestCommandLogging:
         import otto.host.session as session_mod
 
         monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.05)
-        result = await session.run_cmd("long_running_cmd", timeout=0.1)
+        result = await session.run_cmd(cmd="long_running_cmd", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error
@@ -1159,7 +1159,7 @@ class TestCommandLogging:
                 f"{session._begin_marker}\none\ntwo\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("test")
+        result = await session.run_cmd(cmd="test")
         await feed_task
 
         assert result.value == "one\ntwo"
@@ -1173,7 +1173,7 @@ class TestCommandLogging:
                 f"{session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("echo hello")
+        result = await session.run_cmd(cmd="echo hello")
         await feed_task
 
         assert result.status == Status.Success
@@ -1194,7 +1194,7 @@ class TestCommandLogging:
                 f"{session._end_marker_prefix}0__\n"
             )
         )
-        result = await session.run_cmd("ls")
+        result = await session.run_cmd(cmd="ls")
         await feed_task
 
         assert result.value == "file.txt"
@@ -1395,7 +1395,7 @@ async def test_host_session_switch_user_without_resolver_raises():
     shell = MockSession()
     hs = HostSession("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
     with pytest.raises(NotImplementedError):
-        await hs.switch_user("root")
+        await hs.switch_user(user="root")
 
 
 def _realistic_shell_expect(shell, **model_kw) -> None:
@@ -1438,7 +1438,7 @@ async def test_host_session_switch_user_elevates_and_stamps():
         creds=[Cred(login="root", password="rootpw")],
         host_id="n",
     )
-    await hs.switch_user("root")
+    await hs.switch_user(user="root")
     assert shell.current_user == "root"
     sent = [c.args[0] for c in shell.send.await_args_list]
     assert "su - root\n" in sent
@@ -1463,7 +1463,7 @@ async def test_host_session_as_user_restores_previous():
         creds=[Cred(login="root", password="rootpw")],
         host_id="n",
     )
-    async with hs.as_user("root"):
+    async with hs.as_user(user="root"):
         assert shell.current_user == "root"
     assert shell.current_user == "alice"
 
@@ -1505,7 +1505,7 @@ async def test_host_session_as_user_undo_survives_cancellation():
     release = asyncio.Event()
 
     async def body() -> None:
-        async with hs.as_user("root"):
+        async with hs.as_user(user="root"):
             inside.set()
             await release.wait()
 
@@ -1572,7 +1572,7 @@ async def test_open_session_seeds_named_session_current_user_from_login():
         return s
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory)
-    task = asyncio.create_task(mgr.open_session("mon"))
+    task = asyncio.create_task(mgr.open_session(name="mon"))
     hs = await task
     await asyncio.gather(*feeders)
     assert hs.current_user == "alice"
@@ -1598,7 +1598,7 @@ async def test_named_session_elevation_does_not_touch_default():
         creds=[Cred(login="root", password="rootpw")],
         host_id="mon",
     )
-    await hs.switch_user("root")
+    await hs.switch_user(user="root")
     assert named_shell.current_user == "root"  # named session elevated
     assert default_shell.current_user == "alice"  # the other session untouched
 
@@ -1621,9 +1621,9 @@ async def test_host_session_as_user_nested_restores_each_level():
         creds=[Cred(login="bob", password="pw"), Cred(login="root", password="pw")],
         host_id="mon",
     )
-    async with hs.as_user("bob"):
+    async with hs.as_user(user="bob"):
         assert shell.current_user == "bob"
-        async with hs.as_user("root"):
+        async with hs.as_user(user="root"):
             assert shell.current_user == "root"
         assert shell.current_user == "bob"  # inner block restored to bob
     assert shell.current_user == "alice"  # outer block restored to alice
@@ -1683,7 +1683,7 @@ async def test_host_session_as_user_undo_via_ordering_observable():
         host_id="mon",
     )
 
-    async with hs.as_user("mysql"):
+    async with hs.as_user(user="mysql"):
         assert captured == []  # nothing undone until the block exits
 
     assert captured == [
@@ -1975,7 +1975,7 @@ class TestLoginProxyAtSessionEstablishment:
             return s
 
         mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
-        hs = await mgr.open_session("mon")
+        hs = await mgr.open_session(name="mon")
 
         assert hs.current_user == "mysql"
         assert "su - mysql\n" in built[0].writes
@@ -2000,7 +2000,7 @@ class TestLoginProxyAtSessionEstablishment:
         mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
 
         with pytest.raises(LoginProxyError):
-            await mgr.open_session("mon")
+            await mgr.open_session(name="mon")
 
         assert "mon" not in mgr._named_sessions
         assert built[0].closed
@@ -2104,7 +2104,7 @@ class TestExecProxyRouting:
             host_id="h",
         )
 
-        result = await mgr.exec("id")
+        result = await mgr.exec(cmd="id")
 
         assert factory_calls == ["id"]
         assert result.value == "factory"
@@ -2128,7 +2128,7 @@ class TestExecProxyRouting:
             host_id="h",
         )
 
-        result = await mgr.exec("id")
+        result = await mgr.exec(cmd="id")
 
         assert factory_calls == []  # the raw exec factory must NOT run
         assert result.value == "OUT"
@@ -2158,7 +2158,7 @@ class TestExecProxyRouting:
             host_id="h",
         )
 
-        result = await mgr.exec("id")
+        result = await mgr.exec(cmd="id")
 
         conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
@@ -2236,7 +2236,7 @@ class TestExecLogsCommandExactlyOnce:
             ssh=AsyncMock(return_value=ssh_conn),
         )
 
-        result = await self._mgr(conn, logged).exec("id")
+        result = await self._mgr(conn, logged).exec(cmd="id")
 
         assert result.value == "out"
         assert logged == [("id", LogMode.NORMAL)]
@@ -2251,7 +2251,7 @@ class TestExecLogsCommandExactlyOnce:
             term="telnet",
         )
 
-        await self._mgr(conn, logged).exec("id")
+        await self._mgr(conn, logged).exec(cmd="id")
 
         assert logged == [("id", LogMode.NORMAL)]
 
@@ -2264,7 +2264,7 @@ class TestExecLogsCommandExactlyOnce:
             create_process=AsyncMock(return_value=_FakeSshProcess(["uid=70\n"]))
         )
 
-        result = await mgr.exec_on(other_conn, "id")
+        result = await mgr.exec_on(conn=other_conn, cmd="id")
 
         assert result.value == "uid=70"
         assert logged == [("id", LogMode.NORMAL)]
@@ -2275,7 +2275,7 @@ class TestExecLogsCommandExactlyOnce:
         mgr = self._mgr(SimpleNamespace(), logged)
         other_conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess([])))
 
-        await mgr.exec_on(other_conn, "id", log=LogMode.NEVER)
+        await mgr.exec_on(conn=other_conn, cmd="id", log=LogMode.NEVER)
 
         assert logged == []
 
@@ -2324,7 +2324,7 @@ class TestExecOnDropsTheEofPartial:
         )
         conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw)))
 
-        result = await mgr.exec_on(conn, "cmd")
+        result = await mgr.exec_on(conn=conn, cmd="cmd")
 
         assert result.value == value
         # A real blank line the command printed is logged (and kept); the EOF
@@ -2373,7 +2373,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
         )
         conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw_lines)))
 
-        result = await mgr.exec_on(conn, "cmd")
+        result = await mgr.exec_on(conn=conn, cmd="cmd")
 
         assert result.value == value
 
@@ -2418,7 +2418,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
         )
         conn = SimpleNamespace(create_process=_decoding_create_process(b"\xff\n"))
 
-        result = await mgr.exec_on(conn, "printf '\\377\\n'")
+        result = await mgr.exec_on(conn=conn, cmd="printf '\\377\\n'")
 
         assert result.value == "\N{REPLACEMENT CHARACTER}"
 
@@ -2532,7 +2532,7 @@ async def test_named_sessions_are_refused_on_a_console_term(fake_console_connect
         log_output=lambda *_: None,
     )
     with pytest.raises(ConsoleError, match=r"single-client.*named sessions") as exc_info:
-        await mgr.open_session("aux")
+        await mgr.open_session(name="aux")
     assert str(exc_info.value).startswith("test2: ")
     assert fake_console_connections.console_dials == 0, "refused by name, never dialled"
 
@@ -2556,7 +2556,7 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
 
     mgr._session = SimpleNamespace(alive=True, current_user="test", run_cmd=run_cmd)
 
-    result = await mgr.exec("id -un")
+    result = await mgr.exec(cmd="id -un")
 
     assert (result.value, result.retcode, ran) == ("test", 0, ["id -un"])
     assert mgr._exec_pool == []
@@ -2638,8 +2638,8 @@ async def test_telnet_read_returns_the_whole_match_when_it_ends_inside_a_charact
     text holds the whole match — the next read does not start on its tail."""
     session = _telnet_session(_ByteStreamTelnetReader([b"Code: \xc3", b"\xa9", b"\n$ "]))
 
-    assert await session.read_transport_until(re.compile("Code: .")) == f"Code: {_E_ACUTE}"
-    assert await session.read_transport_until(re.compile("\n")) == "\n"
+    assert await session.read_transport_until(pattern=re.compile("Code: .")) == f"Code: {_E_ACUTE}"
+    assert await session.read_transport_until(pattern=re.compile("\n")) == "\n"
 
 
 def _telnet_session(reader: object, writer: object = None) -> TelnetSession:
@@ -2682,7 +2682,7 @@ async def test_telnet_expect_ending_on_an_invalid_sequence_leaves_the_next_byte_
 async def test_telnet_read_ending_inside_a_character_at_end_of_stream_shows_a_replacement():
     session = _telnet_session(_ByteStreamTelnetReader([b"Code: \xe2\x82"]))
 
-    assert await session.read_transport_until(re.compile("Code: .")) == "Code: \ufffd"
+    assert await session.read_transport_until(pattern=re.compile("Code: .")) == "Code: \ufffd"
 
 
 class _UnreadConsole:
@@ -2898,8 +2898,8 @@ class TestOpenBudget:
         conn.release_allowance.return_value = 2.0
         mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
         assert mgr.open_budget() == 2 * (3.0 + 4.0 + 2.0) + 1.0
-        conn.connect_allowance.assert_called_once_with(None)
-        conn.release_allowance.assert_called_once_with(None)
+        conn.connect_allowance.assert_called_once_with(term=None)
+        conn.release_allowance.assert_called_once_with(term=None)
 
     def test_a_term_that_is_not_retried_counts_one_attempt_and_no_pause(self):
         conn = MagicMock()
@@ -2907,16 +2907,16 @@ class TestOpenBudget:
         conn.release_allowance.return_value = 0.0
         conn.retries_failed_open.return_value = False
         mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
-        assert mgr.open_budget("console") == 3.0 + 4.0
-        conn.retries_failed_open.assert_called_once_with("console")
+        assert mgr.open_budget(term="console") == 3.0 + 4.0
+        conn.retries_failed_open.assert_called_once_with(term="console")
 
     def test_a_named_term_is_asked_for_its_own_connect_and_release_waits(self):
         conn = MagicMock()
         conn.connect_allowance.return_value = 0.0
         conn.release_allowance.return_value = 0.0
-        SessionManager(connections=conn, name="h").open_budget("telnet")
-        conn.connect_allowance.assert_called_once_with("telnet")
-        conn.release_allowance.assert_called_once_with("telnet")
+        SessionManager(connections=conn, name="h").open_budget(term="telnet")
+        conn.connect_allowance.assert_called_once_with(term="telnet")
+        conn.release_allowance.assert_called_once_with(term="telnet")
 
     def test_no_override_uses_the_class_default(self, monkeypatch):
         # The class attribute is what a session without an override waits,
@@ -2953,8 +2953,8 @@ class TestOpenBudget:
         mgr = SessionManager(connections=conns, name="h", init_timeout=4.0, retry_backoff=1.0)
         frame = mgr._session_frame
         assert frame is None or not frame.single_client_console
-        assert mgr.open_budget("console") == (
-            conns.connect_allowance("console") + 4.0 + CONSOLE_QUIESCE_BUDGET
+        assert mgr.open_budget(term="console") == (
+            conns.connect_allowance(term="console") + 4.0 + CONSOLE_QUIESCE_BUDGET
         )
 
 
@@ -3198,7 +3198,7 @@ async def test_read_transport_until_gates_both_reads():
     client.reader = reader
     session = TelnetSession(reader, writer, client=client)
 
-    assert await session.read_transport_until(re.compile("Code: .")) == f"Code: {_E_ACUTE}"
+    assert await session.read_transport_until(pattern=re.compile("Code: .")) == f"Code: {_E_ACUTE}"
     assert reader.in_flight_seen == [1, 1]
     assert client._read_gate.in_flight == 0
 
@@ -3219,7 +3219,7 @@ async def test_admitted_read_finishes_on_captured_reader():
     client = stream_client(reader, writer)
     session = TelnetSession(reader, writer, client=client)
     gate = client._read_gate
-    read = asyncio.ensure_future(session.read_transport_until(re.compile("\n")))
+    read = asyncio.ensure_future(session.read_transport_until(pattern=re.compile("\n")))
     await wait_for_async(
         lambda: gate.in_flight == 1, 1.0, interval=0.01, on_timeout="the read never entered"
     )

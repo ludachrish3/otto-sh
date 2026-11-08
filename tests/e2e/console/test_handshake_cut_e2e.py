@@ -54,16 +54,18 @@ async def test_a_probe_line_that_lost_its_head_is_resent_whole(monkeypatch):
                 k = data.rindex("dev/null printf")
                 cut["full"], cut["tail"] = data, data[k:]
                 writes.append(cut["tail"])
-                await original(cut["tail"])
+                await original(data=cut["tail"])
                 # Proof the shell executed the tail, read before confirm_live
                 # starts its own expect: READY can only follow this line.
-                cut["tail_ran"] = await asyncio.wait_for(session.read_transport_until(_TAIL_RAN), 5)
+                cut["tail_ran"] = await asyncio.wait_for(
+                    session.read_transport_until(pattern=_TAIL_RAN), 5
+                )
                 return
             writes.append(data)
-            await original(data)
+            await original(data=data)
 
         monkeypatch.setattr(session, "write_transport", cut_head)
-        await session.enter_frame(BashFrame())
+        await session.enter_frame(frame=BashFrame())
 
         assert "No such file or directory" in cut["tail_ran"]
         # The mapping first: on a line whose tail answered, there is no

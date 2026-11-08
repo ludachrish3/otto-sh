@@ -161,19 +161,20 @@ def _make_mock_host(name: str, delay: float = 0.0, fail: bool = False) -> MagicM
                 await asyncio.sleep(timeout)
                 results = [
                     CommandResult(
-                        Status.Error,
+                        status=Status.Error,
                         value=f"Command timed out after {timeout}s",
                         command=cmd,
                         retcode=-1,
                     )
                     for cmd in cmds
                 ]
-                return Results.collect(results)
+                return Results.collect(items=results)
             await asyncio.sleep(delay)
         results = [
-            CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
+            CommandResult(status=Status.Success, value="42\n", command=cmd, retcode=0)
+            for cmd in cmds
         ]
-        return Results.collect(results)
+        return Results.collect(items=results)
 
     host.run = AsyncMock(side_effect=_run_cmds)
     return host
@@ -502,12 +503,12 @@ async def test_shell_collection_is_silenced_per_call_not_on_the_host():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="a", password="b")],
         log=LogMode.NORMAL,
     )
     host.run = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    collector = build_monitor_collector([host])
+    collector = build_monitor_collector(hosts=[host])
     await collector._collect_one(collector._targets[0], 1.0)
     assert host.run.await_args.kwargs["log"] is LogMode.NEVER
     assert host.log is LogMode.NORMAL
@@ -538,19 +539,19 @@ def _make_monitor_host(name: str = "router1") -> MagicMock:
 
     responses: dict[str, CommandResult] = {
         "grep -c ^processor /proc/cpuinfo": CommandResult(
-            Status.Success,
+            status=Status.Success,
             value=_CPUINFO_OUTPUT,
             command="grep -c ^processor /proc/cpuinfo",
             retcode=0,
         ),
         "free -b": CommandResult(
-            Status.Success,
+            status=Status.Success,
             value=_FREE_OUTPUT,
             command="free -b",
             retcode=0,
         ),
         "cat /proc/loadavg": CommandResult(
-            Status.Success,
+            status=Status.Success,
             value=_LOADAVG_OUTPUT,
             command="cat /proc/loadavg",
             retcode=0,
@@ -567,8 +568,10 @@ def _make_monitor_host(name: str = "router1") -> MagicMock:
             if cmd in responses:
                 results.append(responses[cmd])
             else:
-                results.append(CommandResult(Status.Failed, value="", command=cmd, retcode=1))
-        return Results.collect(results)
+                results.append(
+                    CommandResult(status=Status.Failed, value="", command=cmd, retcode=1)
+                )
+        return Results.collect(items=results)
 
     host.run = AsyncMock(side_effect=fake_run_cmds)
     return host
@@ -666,9 +669,11 @@ class TestCollectorLiveRun:
         # Override host.run to always return failures with empty output
         host.run = AsyncMock(
             return_value=Results.collect(
-                [
-                    CommandResult(Status.Failed, value="", command="free -b", retcode=1),
-                    CommandResult(Status.Failed, value="", command="cat /proc/loadavg", retcode=1),
+                items=[
+                    CommandResult(status=Status.Failed, value="", command="free -b", retcode=1),
+                    CommandResult(
+                        status=Status.Failed, value="", command="cat /proc/loadavg", retcode=1
+                    ),
                 ]
             )
         )

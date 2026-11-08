@@ -201,7 +201,7 @@ def coverage_run(tmp_path_factory):
 
     store_path = report_dir / "store.json"
     assert store_path.is_file(), f"CoverageReporter did not write {store_path}"
-    store = CoverageStore.load(store_path)
+    store = CoverageStore.load(path=store_path)
 
     # `otto cov report` takes the standard per-invocation output dir like
     # every other writing verb now, even though its real artifacts go to
@@ -278,7 +278,7 @@ class TestSpaReportStructure:
         # analog of the old "tier-system" CSS pill in the summary table).
         assert "system" in payload["tier_order"], "System tier missing from tier_order"
         # Store should agree the system coverage is non-zero.
-        assert store.overall_pct("system") > 0
+        assert store.overall_pct(tier="system") > 0
 
     def test_file_chunk_source_has_all_lines(self, coverage_run):
         store, report_dir, *_ = coverage_run
@@ -503,8 +503,8 @@ class TestCoverageIntegrity:
     def test_store_json_roundtrip(self, coverage_run, tmp_path):
         store, *_ = coverage_run
         json_path = tmp_path / "store.json"
-        store.save(json_path)
-        loaded = CoverageStore.load(json_path)
+        store.save(path=json_path)
+        loaded = CoverageStore.load(path=json_path)
         assert loaded.file_count() == store.file_count()
         assert loaded.overall_pct() == pytest.approx(store.overall_pct())
         orig = _find_file_record(store, "math_ops.c")
@@ -529,12 +529,12 @@ class TestCoverageIntegrity:
 
     def test_overall_pct_within_bounds(self, coverage_run):
         store, *_ = coverage_run
-        pct = store.overall_pct("system")
+        pct = store.overall_pct(tier="system")
         assert 0 < pct <= 100
 
     def test_overall_branch_pct_within_bounds(self, coverage_run):
         store, *_ = coverage_run
-        pct = store.overall_branch_pct("system", conservative=True)
+        pct = store.overall_branch_pct(tier="system", conservative=True)
         assert 0 < pct <= 100
 
     def test_spa_bundle_assets_copied(self, coverage_run):

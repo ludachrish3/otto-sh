@@ -98,7 +98,7 @@ def test_register_refuses_a_user_module_while_test_files_load():
     """Mutation: remove REFUSE_DURING_TEST_LOAD from _STEPS[_Op.REGISTER]."""
     r = _reg()
     with reg.loading_test_files(), pytest.raises(RegistrationRefused, match="init module"):
-        _from_module("test_widgets", r.register, "w", Rec(1))
+        _from_module("test_widgets", r.register, name="w", entry=Rec(1))
     assert "w" not in r
     assert r.revision == 0
 
@@ -111,19 +111,19 @@ def test_the_refusal_runs_before_validate():
 
     r = _reg(validate=validate)
     with reg.loading_test_files(), pytest.raises(RegistrationRefused):
-        _from_module("test_widgets", r.register, "w", Rec(1))
+        _from_module("test_widgets", r.register, name="w", entry=Rec(1))
 
 
 def test_unregister_and_restore_and_cancel_skip_the_refusal():
     """Mutations: add REFUSE_DURING_TEST_LOAD to UNREGISTER, RESTORE or CANCEL (one at a time)."""
     r = _reg()
-    _from_module("project_init", r.register, "w", Rec(1))
+    _from_module("project_init", r.register, name="w", entry=Rec(1))
     state = r._snapshot()
-    _from_module("project_init", r.register, "x", Rec(2))
+    _from_module("project_init", r.register, name="x", entry=Rec(2))
     sub = reg.Subscription("hook", register_hint="x")
-    token = _from_module("project_init", sub.subscribe, len)
+    token = _from_module("project_init", sub.subscribe, value=len)
     with reg.loading_test_files():
-        _from_module("test_widgets", r.unregister, "x")
+        _from_module("test_widgets", r.unregister, name="x")
         r._restore(state)
         _from_module("test_widgets", token.cancel)
     assert r.names() == ["w"]
@@ -134,10 +134,12 @@ def test_publish_skips_the_refusal(monkeypatch, tmp_path):
     """A Ref's first get inside a pytest session publishes. Mutation: add REFUSE to PUBLISH."""
     _module(monkeypatch, "late_value_mod", "VALUE = 7\n", tmp_path)
     r = _lazy()
-    _from_module("project_init", r.register, "w", LazyRec(Ref("late_value_mod:VALUE")))
+    _from_module(
+        "project_init", r.register, name="w", entry=LazyRec(Ref(target="late_value_mod:VALUE"))
+    )
     with reg.loading_test_files():
         assert r.get("w").value == 7
-    assert r.peek("w").value == 7  # published
+    assert r.peek(name="w").value == 7  # published
 
 
 # --- step 3: nested-write guard -------------------------------------------
@@ -153,14 +155,14 @@ def test_a_check_cannot_write_any_table(op):
     (an unknown name inside a check then raises ValueError, not the refusal).
     """
     other = _reg()
-    other.register("pre", Rec(0))
+    other.register(name="pre", entry=Rec(0))
     sub = reg.Subscription("hook", register_hint="x")
-    token = sub.subscribe(len)
+    token = sub.subscribe(value=len)
     writes = {
-        "register": lambda: other.register("w2", Rec(2)),
-        "unregister": lambda: other.unregister("pre"),
-        "unregister_unknown": lambda: other.unregister("nope"),
-        "subscribe": lambda: sub.subscribe(abs),
+        "register": lambda: other.register(name="w2", entry=Rec(2)),
+        "unregister": lambda: other.unregister(name="pre"),
+        "unregister_unknown": lambda: other.unregister(name="nope"),
+        "subscribe": lambda: sub.subscribe(value=abs),
         "cancel": token.cancel,
     }
 
@@ -169,7 +171,7 @@ def test_a_check_cannot_write_any_table(op):
 
     r = _reg(validate=validate)
     with pytest.raises(RegistrationRefused, match="while a registry check runs"):
-        r.register("w", Rec(1))
+        r.register(name="w", entry=Rec(1))
     assert "w" not in r and "pre" in other and len(sub.items()) == 1  # noqa: PT018
 
 
@@ -180,10 +182,10 @@ def test_a_check_may_read_and_publish(monkeypatch, tmp_path):
     """
     _module(monkeypatch, "pub_mod", "VALUE = 3\n", tmp_path)
     source = _lazy()
-    source.register("s", LazyRec(Ref("pub_mod:VALUE")))
+    source.register(name="s", entry=LazyRec(Ref(target="pub_mod:VALUE")))
     r = _reg(validate=lambda name, entry, proposed: source.get("s"))
-    r.register("w", Rec(1))
-    assert source.peek("s").value == 3
+    r.register(name="w", entry=Rec(1))
+    assert source.peek(name="s").value == 3
 
 
 def test_a_ref_first_imported_inside_a_check_keeps_its_modules_registrations(monkeypatch, tmp_path):
@@ -199,17 +201,17 @@ def test_a_ref_first_imported_inside_a_check_keeps_its_modules_registrations(mon
         monkeypatch,
         "registers_on_import",
         "import _nested_home\n"
-        "_nested_home.TARGET.register('side', _nested_home.Rec(9))\n"
+        "_nested_home.TARGET.register(name='side', entry=_nested_home.Rec(9))\n"
         "VALUE = 5\n",
         tmp_path,
     )
     source = _lazy()
-    source.register("s", LazyRec(Ref("registers_on_import:VALUE")))
+    source.register(name="s", entry=LazyRec(Ref(target="registers_on_import:VALUE")))
     r = _reg(validate=lambda name, entry, proposed: source.get("s"))
-    r.register("w", Rec(1))
+    r.register(name="w", entry=Rec(1))
     assert "w" in r
-    assert source.peek("s").value == 5  # published
-    assert target.origin("side") == "registers_on_import"
+    assert source.peek(name="s").value == 5  # published
+    assert target.origin(name="side") == "registers_on_import"
 
 
 def test_a_lazy_packages_attribute_read_inside_a_check_keeps_its_registrations(
@@ -229,16 +231,16 @@ def test_a_lazy_packages_attribute_read_inside_a_check_keeps_its_registrations(
         "lazy_package",
         "def __getattr__(name):\n"
         "    import _lazy_home\n"
-        "    _lazy_home.TARGET.register('side', _lazy_home.Rec(9))\n"
+        "    _lazy_home.TARGET.register(name='side', entry=_lazy_home.Rec(9))\n"
         "    return 7\n",
         tmp_path,
     )
     source = _lazy()
-    source.register("s", LazyRec(Ref("lazy_package:VALUE")))
+    source.register(name="s", entry=LazyRec(Ref(target="lazy_package:VALUE")))
     r = _reg(validate=lambda name, entry, proposed: source.get("s"))
-    r.register("w", Rec(1))
+    r.register(name="w", entry=Rec(1))
     assert "w" in r
-    assert source.peek("s").value == 7
+    assert source.peek(name="s").value == 7
     assert "side" in target
 
 
@@ -250,15 +252,15 @@ def test_the_check_itself_still_cannot_write_after_a_ref_import(monkeypatch, tmp
     _module(monkeypatch, "plain_on_import", "VALUE = 6\n", tmp_path)
     other = _reg()
     source = _lazy()
-    source.register("s", LazyRec(Ref("plain_on_import:VALUE")))
+    source.register(name="s", entry=LazyRec(Ref(target="plain_on_import:VALUE")))
 
     def validate(name, entry, proposed):
         source.get("s")  # a first import, under the lift
-        other.register("w2", Rec(2))  # the check's own write
+        other.register(name="w2", entry=Rec(2))  # the check's own write
 
     r = _reg(validate=validate)
     with pytest.raises(RegistrationRefused, match="while a registry check runs"):
-        r.register("w", Rec(1))
+        r.register(name="w", entry=Rec(1))
     assert "w" not in r and "w2" not in other  # noqa: PT018
 
 
@@ -269,21 +271,21 @@ def test_a_check_run_by_the_imported_module_is_still_guarded(monkeypatch, tmp_pa
     check is refused even though the import runs under the lift.
     """
     victim = _reg()
-    writing = _reg(validate=lambda name, entry, proposed: victim.register("x", Rec(0)))
+    writing = _reg(validate=lambda name, entry, proposed: victim.register(name="x", entry=Rec(0)))
     _home(monkeypatch, "_writing_home", TARGET=writing, Rec=Rec)
     _module(
         monkeypatch,
         "runs_a_writing_check",
         "import _writing_home\n"
-        "_writing_home.TARGET.register('side', _writing_home.Rec(9))\n"
+        "_writing_home.TARGET.register(name='side', entry=_writing_home.Rec(9))\n"
         "VALUE = 5\n",
         tmp_path,
     )
     source = _lazy()
-    source.register("s", LazyRec(Ref("runs_a_writing_check:VALUE")))
+    source.register(name="s", entry=LazyRec(Ref(target="runs_a_writing_check:VALUE")))
     r = _reg(validate=lambda name, entry, proposed: source.get("s"))
     with pytest.raises(RegistrationRefused, match="while a registry check runs"):
-        r.register("w", Rec(1))
+        r.register(name="w", entry=Rec(1))
     assert "x" not in victim and "side" not in writing and "w" not in r  # noqa: PT018
 
 
@@ -292,25 +294,25 @@ def test_a_check_run_by_the_imported_module_is_still_guarded(monkeypatch, tmp_pa
 
 def test_require_project_refuses_register_outside_an_init_import():
     """Mutation: remove CAPABILITIES from REGISTER."""
-    r = _reg(capabilities=[Justified(RequireProject(), reason="r")])
+    r = _reg(capabilities=[Justified(capability=RequireProject(), reason="r")])
     with pytest.raises(RegistrationRefused, match="project init module"):
-        r.register("w", Rec(1))
+        r.register(name="w", entry=Rec(1))
     assert "w" not in r
     assert r.revision == 0
     with reg.registering_project("a"):
-        r.register("w", Rec(1))
-    assert r.project("w") == "a"
+        r.register(name="w", entry=Rec(1))
+    assert r.project(name="w") == "a"
 
 
 def test_require_project_never_blocks_unregister_restore_or_publish(monkeypatch, tmp_path):
     """Mutations: add CAPABILITIES to UNREGISTER / RESTORE / PUBLISH (one at a time)."""
     _module(monkeypatch, "require_project_mod", "VALUE = 4\n", tmp_path)
-    r = _lazy(capabilities=[Justified(RequireProject(), reason="r")])
+    r = _lazy(capabilities=[Justified(capability=RequireProject(), reason="r")])
     with reg.registering_project("a"):
-        r.register("w", LazyRec(Ref("require_project_mod:VALUE")))
+        r.register(name="w", entry=LazyRec(Ref(target="require_project_mod:VALUE")))
         state = r._snapshot()
-        r.register("x", LazyRec(2))
-    r.unregister("x")
+        r.register(name="x", entry=LazyRec(2))
+    r.unregister(name="x")
     r._restore(state)
     assert r.get("w").value == 4
     assert r.names() == ["w"]
@@ -323,20 +325,20 @@ def test_publish_freezes_only_resolved_fields(monkeypatch, tmp_path):
     """Mutation: remove RECORD from PUBLISH."""
     _module(monkeypatch, "list_mod", "LIST = [1]\n", tmp_path)
     r = _lazy()
-    r.register("w", LazyRec(Ref("list_mod:LIST")))
+    r.register(name="w", entry=LazyRec(Ref(target="list_mod:LIST")))
     with pytest.raises(IncompleteRegistration, match="list"):
         r.get("w")
-    assert isinstance(r.peek("w").value, Ref)
+    assert isinstance(r.peek(name="w").value, Ref)
 
 
 def test_restore_does_not_check_records():
     """Mutation: add RECORD to RESTORE."""
     r = _reg()
-    r.register("w", Rec(1))
+    r.register(name="w", entry=Rec(1))
     state = r._snapshot()
-    object.__setattr__(r.peek("w"), "value", [1])  # a state the test changed
+    object.__setattr__(r.peek(name="w"), "value", [1])  # a state the test changed
     r._restore(state)
-    assert r.peek("w").value == [1]
+    assert r.peek(name="w").value == [1]
 
 
 # --- step 6: collisions ----------------------------------------------------
@@ -345,13 +347,13 @@ def test_restore_does_not_check_records():
 def test_collisions_raise_naming_both_origins():
     """Mutation: remove COLLISIONS from REGISTER."""
     r = _reg()
-    _from_module("project_a.init", r.register, "w", Rec(1))
+    _from_module("project_a.init", r.register, name="w", entry=Rec(1))
     with pytest.raises(DuplicateRegistration) as err:
-        _from_module("project_b.init", r.register, "w", Rec(2))
+        _from_module("project_b.init", r.register, name="w", entry=Rec(2))
     text = str(err.value)
     assert "project_a.init" in text and "project_b.init" in text  # noqa: PT018
     assert "Pass overwrite=True" in text
-    assert r.get("w") == Rec(1) and r.origin("w") == "project_a.init" and r.revision == 1  # noqa: PT018
+    assert r.get("w") == Rec(1) and r.origin(name="w") == "project_a.init" and r.revision == 1  # noqa: PT018
 
 
 def test_overwrite_never_covers_a_repeat_within_one_batch():
@@ -366,8 +368,8 @@ def test_overwrite_never_covers_a_repeat_within_one_batch():
 def test_subscribe_allows_repeats():
     """Mutation: add COLLISIONS to SUBSCRIBE."""
     sub = reg.Subscription("hook", register_hint="x")
-    sub.subscribe(len)
-    sub.subscribe(len)
+    sub.subscribe(value=len)
+    sub.subscribe(value=len)
     assert [s.value for s in sub.items()] == [len, len]
 
 
@@ -378,7 +380,7 @@ def test_validate_receives_the_proposed_table_with_the_batch_applied():
     """Mutation: build Proposed from the stored entries only."""
     seen = []
     r = _reg(validate=lambda name, entry, proposed: seen.append(dict(proposed)))
-    r.register("a", Rec(1))
+    r.register(name="a", entry=Rec(1))
     seen.clear()
     r.register_many([("a", Rec(9)), ("b", Rec(2))], overwrite=True)
     assert seen == [{"a": Rec(9), "b": Rec(2)}] * 2
@@ -394,11 +396,11 @@ def test_validate_does_not_run_on_unregister_restore_or_publish(monkeypatch, tmp
             raise AssertionError("validate ran")
 
     r = _lazy(validate=validate)
-    r.register("w", LazyRec(Ref("no_validate_mod:VALUE")))
-    r.register("x", LazyRec(1))
+    r.register(name="w", entry=LazyRec(Ref(target="no_validate_mod:VALUE")))
+    r.register(name="x", entry=LazyRec(1))
     state = r._snapshot()
     armed.append(True)
-    r.unregister("x")
+    r.unregister(name="x")
     r._restore(state)
     assert r.get("w").value == 6
 
@@ -408,7 +410,7 @@ def test_check_resolved_runs_at_the_first_get_only(monkeypatch, tmp_path):
     _module(monkeypatch, "checked_mod", "VALUE = 8\n", tmp_path)
     calls = []
     r = _lazy(check_resolved=lambda name, entry: calls.append(entry))
-    r.register("w", LazyRec(Ref("checked_mod:VALUE")))
+    r.register(name="w", entry=LazyRec(Ref(target="checked_mod:VALUE")))
     assert calls == []
     r.get("w")
     r.get("w")
@@ -431,8 +433,8 @@ def test_check_resolved_runs_once_for_a_record_whose_refs_are_all_nested():
     """
     calls = []
     r = _nested(check_resolved=lambda name, entry: calls.append(entry))
-    record = NestedRec((Ref("never_imported_mod:X"),))
-    r.register("w", record)
+    record = NestedRec((Ref(target="never_imported_mod:X"),))
+    r.register(name="w", entry=record)
     assert calls == []
     assert r.get("w") is record
     assert r.get("w") is record
@@ -454,7 +456,7 @@ def test_a_failed_check_of_a_nested_only_record_caches_nothing():
             raise ValueError("not yet")
 
     r = _nested(check_resolved=check)
-    r.register("w", NestedRec((Ref("never_imported_mod:X"),)))
+    r.register(name="w", entry=NestedRec((Ref(target="never_imported_mod:X"),)))
     with pytest.raises(ValueError, match="not yet"):
         r.get("w")
     r.get("w")
@@ -469,7 +471,7 @@ def test_a_restore_keeps_an_unchecked_nested_only_record_owing_its_check():
     """
     calls = []
     r = _nested(check_resolved=lambda name, entry: calls.append(entry))
-    r.register("w", NestedRec((Ref("never_imported_mod:X"),)))
+    r.register(name="w", entry=NestedRec((Ref(target="never_imported_mod:X"),)))
     state = r._snapshot()
     r._restore(state)
     r.get("w")
@@ -504,12 +506,12 @@ def test_overwrite_replaces_completely_in_place():
     """Mutation: drop BUMP_GENERATION from REGISTER."""
     r = _reg()
     for name in ("a", "b", "c"):
-        _from_module("x", r.register, name, Rec(name))
+        _from_module("x", r.register, name=name, entry=Rec(name))
     generation = r._generation("b")
     revision = r.revision
-    _from_module("y", r.register, "b", Rec("B"), overwrite=True)
+    _from_module("y", r.register, name="b", entry=Rec("B"), overwrite=True)
     assert r.names() == ["a", "b", "c"]
-    assert r.get("b") == Rec("B") and r.origin("b") == "y"  # noqa: PT018
+    assert r.get("b") == Rec("B") and r.origin(name="b") == "y"  # noqa: PT018
     assert r.revision == revision + 1
     assert r._generation("b") != generation
 
@@ -517,15 +519,15 @@ def test_overwrite_replaces_completely_in_place():
 def test_unregister_bumps_revision():
     """Mutation: drop BUMP_REVISION from UNREGISTER."""
     r = _reg()
-    r.register("w", Rec(1))
-    r.unregister("w")
+    r.register(name="w", entry=Rec(1))
+    r.unregister(name="w")
     assert r.revision == 2
 
 
 def test_restore_bumps_revision_and_generation():
     """Mutations: drop BUMP_REVISION or BUMP_GENERATION from RESTORE."""
     r = _reg()
-    r.register("w", Rec(1))
+    r.register(name="w", entry=Rec(1))
     state = r._snapshot()
     g0 = r._generation("w")
     revision = r.revision
@@ -538,7 +540,7 @@ def test_publish_bumps_neither_revision_nor_generation(monkeypatch, tmp_path):
     """Mutations: add BUMP_REVISION, or BUMP_GENERATION alone, to PUBLISH."""
     _module(monkeypatch, "quiet_mod", "VALUE = 2\n", tmp_path)
     r = _lazy()
-    r.register("w", LazyRec(Ref("quiet_mod:VALUE")))
+    r.register(name="w", entry=LazyRec(Ref(target="quiet_mod:VALUE")))
     rev, gen = r.revision, r._generation("w")
     assert r.get("w").value == 2
     assert (r.revision, r._generation("w")) == (rev, gen)
@@ -547,7 +549,7 @@ def test_publish_bumps_neither_revision_nor_generation(monkeypatch, tmp_path):
 def test_subscribe_and_cancel_carry_no_generation():
     """Mutation: add BUMP_GENERATION to SUBSCRIBE or CANCEL: the write raises RuntimeError."""
     sub = reg.Subscription("hook", register_hint="x")
-    token = sub.subscribe(len)
+    token = sub.subscribe(value=len)
     assert sub.revision == 1
     token.cancel()
     assert sub.revision == 2
@@ -561,13 +563,15 @@ def test_publish_is_dropped_when_the_entry_changed_during_resolution(monkeypatch
         monkeypatch,
         "replacing_mod",
         "import _replacing_home\n"
-        "_replacing_home.TARGET.register('w', _replacing_home.LazyRec(1), overwrite=True)\n"
+        "_replacing_home.TARGET.register(\n"
+        "    name='w', entry=_replacing_home.LazyRec(1), overwrite=True\n"
+        ")\n"
         "VALUE = 'old'\n",
         tmp_path,
     )
-    r.register("w", LazyRec(Ref("replacing_mod:VALUE")))
+    r.register(name="w", entry=LazyRec(Ref(target="replacing_mod:VALUE")))
     assert r.get("w") == LazyRec("old")
-    assert r.peek("w") == LazyRec(1)  # the newer entry kept
+    assert r.peek(name="w") == LazyRec(1)  # the newer entry kept
 
 
 def test_a_failed_resolution_after_a_replacement_keeps_the_replacement(monkeypatch, tmp_path):
@@ -578,22 +582,22 @@ def test_a_failed_resolution_after_a_replacement_keeps_the_replacement(monkeypat
         monkeypatch,
         "failing_mod",
         "import _failing_home\n"
-        "_failing_home.TARGET.register('w', _failing_home.LazyRec(1), overwrite=True)\n"
+        "_failing_home.TARGET.register(name='w', entry=_failing_home.LazyRec(1), overwrite=True)\n"
         "raise ImportError('broken after replacing')\n",
         tmp_path,
     )
-    r.register("w", LazyRec(Ref("failing_mod:VALUE")))
+    r.register(name="w", entry=LazyRec(Ref(target="failing_mod:VALUE")))
     with pytest.raises(ImportError, match="broken after replacing"):
         r.get("w")
-    assert r.peek("w") == LazyRec(1)
+    assert r.peek(name="w") == LazyRec(1)
     assert r.get("w") == LazyRec(1)
 
 
 def test_cancel_twice_removes_one_occurrence_and_bumps_once():
     """Mutation: make the second cancel bump, or remove the presence check."""
     sub = reg.Subscription("hook", register_hint="x")
-    first = sub.subscribe(len)
-    sub.subscribe(len)
+    first = sub.subscribe(value=len)
+    sub.subscribe(value=len)
     revision = sub.revision
     first.cancel()
     first.cancel()
@@ -612,11 +616,11 @@ def test_a_failed_register_changes_nothing():
             raise ValueError("bad b")
 
     r = _reg(validate=validate)
-    _from_module("first", r.register, "pre", Rec(0))
-    before = (r.names(), [r.origin(n) for n in r.names()], r.revision)
+    _from_module("first", r.register, name="pre", entry=Rec(0))
+    before = (r.names(), [r.origin(name=n) for n in r.names()], r.revision)
     with pytest.raises(ValueError, match="bad b"):
         r.register_many([("a", Rec(1)), ("b", Rec(2)), ("c", Rec(3))])
-    assert (r.names(), [r.origin(n) for n in r.names()], r.revision) == before
+    assert (r.names(), [r.origin(name=n) for n in r.names()], r.revision) == before
 
 
 def test_an_invalid_eager_overwrite_keeps_the_old_entry():
@@ -627,9 +631,9 @@ def test_an_invalid_eager_overwrite_keeps_the_old_entry():
             raise ValueError("rejected")
 
     r = _reg(validate=validate)
-    r.register("w", Rec(1))
+    r.register(name="w", entry=Rec(1))
     with pytest.raises(ValueError, match="rejected"):
-        r.register("w", Rec("bad"), overwrite=True)
+        r.register(name="w", entry=Rec("bad"), overwrite=True)
     assert r.get("w") == Rec(1)
 
 
@@ -637,10 +641,10 @@ def test_a_ref_record_commits_with_its_ref_and_a_failed_get_caches_nothing(monke
     """Mutation: cache the failed resolution."""
     monkeypatch.delitem(sys.modules, "missing_mod", raising=False)
     r = _lazy()
-    r.register("w", LazyRec(Ref("missing_mod:X")))
+    r.register(name="w", entry=LazyRec(Ref(target="missing_mod:X")))
     with pytest.raises(ModuleNotFoundError):
         r.get("w")
-    assert isinstance(r.peek("w").value, Ref)
+    assert isinstance(r.peek(name="w").value, Ref)
     _module(monkeypatch, "missing_mod", "X = 'now here'\n", tmp_path)
     assert r.get("w").value == "now here"
 
@@ -652,15 +656,15 @@ def test_listing_membership_origin_peek_raw_items_and_snapshot_never_import(monk
     """Mutation: make peek call get."""
     monkeypatch.delitem(sys.modules, "never_imported_mod", raising=False)
     r = _lazy()
-    r.register("w", LazyRec(Ref("never_imported_mod:X")))
+    r.register(name="w", entry=LazyRec(Ref(target="never_imported_mod:X")))
     assert r.names() == ["w"]
     assert "w" in r and len(r) == 1  # noqa: PT018
-    assert r.origin("w") == __name__ and r.project("w") is None  # noqa: PT018
-    assert isinstance(r.peek("w").value, Ref)
+    assert r.origin(name="w") == __name__ and r.project(name="w") is None  # noqa: PT018
+    assert isinstance(r.peek(name="w").value, Ref)
     assert [name for name, _ in r.raw_items()] == ["w"]
     r._snapshot()
     with pytest.raises(DuplicateRegistration):
-        r.register("w", LazyRec(1))
+        r.register(name="w", entry=LazyRec(1))
     assert "never_imported_mod" not in sys.modules
 
 
@@ -672,11 +676,11 @@ def test_a_refs_import_credits_its_own_module(monkeypatch, tmp_path):
         monkeypatch,
         "crediting_mod",
         "import _crediting_home\n"
-        "_crediting_home.OTHER.register('side', _crediting_home.Rec(1))\n"
+        "_crediting_home.OTHER.register(name='side', entry=_crediting_home.Rec(1))\n"
         "VALUE = 1\n",
         tmp_path,
     )
     r = _lazy()
-    r.register("w", LazyRec(Ref("crediting_mod:VALUE")))
+    r.register(name="w", entry=LazyRec(Ref(target="crediting_mod:VALUE")))
     _from_module("the_reader", r.get, "w")
-    assert other.origin("side") == "crediting_mod"
+    assert other.origin(name="side") == "crediting_mod"

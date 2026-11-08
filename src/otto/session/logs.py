@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from ..config.project import Project
 
 
-def merge_logging_levels(projects: "list[Project]") -> dict[str, str]:
+def merge_logging_levels(*, projects: "list[Project]") -> dict[str, str]:
     """Union every project's ``[logging.levels]``; a disagreement is an error.
 
     The same logger set to the same level by two projects is fine (a shared
@@ -62,7 +62,9 @@ def install_logging(
     from ..host.host import _HostFilter
     from ..logger import management
 
-    levels = merge_logging_levels(get_projects())
+    levels = merge_logging_levels(projects=get_projects())
     levels.update(overrides or {})
-    management.install(log_level, output_dir=output_dir, show_time=show_time, overrides=levels)
+    management.install(
+        log_level=log_level, output_dir=output_dir, show_time=show_time, overrides=levels
+    )
     management.attach_console_suppress_filter(_HostFilter())

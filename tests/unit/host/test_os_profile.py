@@ -32,25 +32,25 @@ class TestBuiltins:
         party's profile gets.
         """
         for name in ["unix", "embedded", "zephyr", "busybox"]:
-            profile = build_os_profile(name)
+            profile = build_os_profile(name=name)
             check_os_profile(
-                profile.name,
-                profile.base,
-                profile.fields.defaults.thaw_json(),
+                name=profile.name,
+                base=profile.base,
+                defaults=profile.fields.defaults.thaw_json(),
                 login_prompt=profile.fields.login_prompt,
                 password_prompt=profile.fields.password_prompt,
             )
 
     def test_unix_and_embedded_have_no_defaults(self):
-        assert build_os_profile("unix") == OsProfile(
+        assert build_os_profile(name="unix") == OsProfile(
             "unix",
             "unix",
             ProfileFields(login_prompt=r"login: ?$", password_prompt=r"[Pp]assword: ?$"),
         )
-        assert build_os_profile("embedded") == OsProfile("embedded", "embedded")
+        assert build_os_profile(name="embedded") == OsProfile("embedded", "embedded")
 
     def test_zephyr_profile_points_to_zephyr_class(self):
-        z = build_os_profile("zephyr")
+        z = build_os_profile(name="zephyr")
         assert z.base == "zephyr"
         assert dict(z.fields.defaults) == {}
 
@@ -58,21 +58,23 @@ class TestBuiltins:
 class TestRegistry:
     def test_unknown_profile_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown os_type") as exc:
-            build_os_profile("does-not-exist")
+            build_os_profile(name="does-not-exist")
         # the registered names are listed so a typo is diagnosable
         assert "unix" in str(exc.value)
 
     def test_get_returns_none_for_unknown(self):
-        assert get_os_profile("does-not-exist") is None
+        assert get_os_profile(name="does-not-exist") is None
 
     def test_register_then_build_round_trips(self):
         register_os_profile("riot", base="embedded", defaults={"os_name": "RIOT"})
-        prof = build_os_profile("riot")
-        assert prof == OsProfile("riot", "embedded", ProfileFields(FrozenMap({"os_name": "RIOT"})))
+        prof = build_os_profile(name="riot")
+        assert prof == OsProfile(
+            "riot", "embedded", ProfileFields(defaults=FrozenMap(mapping={"os_name": "RIOT"}))
+        )
 
     def test_register_defaults_are_optional(self):
         register_os_profile("bare", base="unix")
-        assert dict(build_os_profile("bare").fields.defaults) == {}
+        assert dict(build_os_profile(name="bare").fields.defaults) == {}
 
     def test_register_rejects_bad_base(self):
         with pytest.raises(ValueError, match="base"):
@@ -94,7 +96,7 @@ class TestRegistry:
         with pytest.raises(DuplicateRegistration):
             register_os_profile("dup", base="embedded", defaults={"os_name": "Second"})
         register_os_profile("dup", base="embedded", defaults={"os_name": "Second"}, overwrite=True)
-        prof = build_os_profile("dup")
+        prof = build_os_profile(name="dup")
         assert prof.base == "embedded"
         assert dict(prof.fields.defaults) == {"os_name": "Second"}
 
@@ -109,18 +111,18 @@ class TestRegistry:
 class TestConsolePrompts:
     def test_unix_and_busybox_carry_the_getty_prompts(self):
         for name in ("unix", "busybox"):
-            prof = build_os_profile(name)
+            prof = build_os_profile(name=name)
             assert prof.fields.login_prompt == r"login: ?$", name
             assert prof.fields.password_prompt == r"[Pp]assword: ?$", name
 
     def test_embedded_and_zephyr_carry_none(self):
         for name in ("embedded", "zephyr"):
-            fields = build_os_profile(name).fields
+            fields = build_os_profile(name=name).fields
             assert fields.login_prompt is None and fields.password_prompt is None, name  # noqa: PT018
 
     def test_register_accepts_prompt_keywords_and_compiles_them(self):
         register_os_profile("vendor", base="unix", login_prompt=r"Username: ?$")
-        assert build_os_profile("vendor").fields.login_prompt == r"Username: ?$"
+        assert build_os_profile(name="vendor").fields.login_prompt == r"Username: ?$"
         with pytest.raises(ValueError, match="login_prompt"):
             register_os_profile("bad", base="unix", login_prompt="(")
 
@@ -128,11 +130,13 @@ class TestConsolePrompts:
         from otto.host.options import ConsoleOptions
         from otto.host.os_profile import resolve_console_prompts
 
-        unix = build_os_profile("unix").fields
+        unix = build_os_profile(name="unix").fields
         resolved = resolve_console_prompts(ConsoleOptions(password_prompt="pw: $"), unix)
         assert resolved.login_prompt == r"login: ?$"
         assert resolved.password_prompt == "pw: $"
-        untouched = resolve_console_prompts(ConsoleOptions(), build_os_profile("zephyr").fields)
+        untouched = resolve_console_prompts(
+            ConsoleOptions(), build_os_profile(name="zephyr").fields
+        )
         assert untouched.login_prompt is None
 
     def test_resolve_with_no_profile_fields_leaves_the_options_alone(self):
@@ -144,24 +148,24 @@ class TestConsolePrompts:
 
 class TestHostClassRegistry:
     def test_builtin_host_classes_registered(self):
-        assert build_host_class("unix") is UnixHost
-        assert build_host_class("embedded") is EmbeddedHost
-        assert build_host_class("zephyr") is ZephyrHost
+        assert build_host_class(name="unix") is UnixHost
+        assert build_host_class(name="embedded") is EmbeddedHost
+        assert build_host_class(name="zephyr") is ZephyrHost
 
     def test_register_host_class_round_trips_and_its_name_resolves_as_a_profile(self):
         class FooHost(EmbeddedHost):
             pass
 
         register_host_class("foo", FooHost)
-        assert build_host_class("foo") is FooHost
+        assert build_host_class(name="foo") is FooHost
         # the class's own name resolves as a profile, with nothing registered
         assert "foo" not in OS_PROFILES
-        prof = build_os_profile("foo")
+        prof = build_os_profile(name="foo")
         assert prof.base == "foo"
         assert dict(prof.fields.defaults) == {}
 
     def test_get_host_class_missing_returns_none(self):
-        assert get_host_class("does-not-exist") is None
+        assert get_host_class(name="does-not-exist") is None
 
     def test_register_host_class_rejects_non_remotehost(self):
         with pytest.raises(ValueError, match="RemoteHost"):
@@ -175,11 +179,11 @@ class TestHostClassRegistry:
         # max_filename_len is an EmbeddedHost field; a profile over 'embedded'
         # must accept it (MRO-union slots), not reject it as unknown.
         register_os_profile("emb-variant", base="embedded", defaults={"max_filename_len": 32})
-        assert build_os_profile("emb-variant").fields.defaults["max_filename_len"] == 32
+        assert build_os_profile(name="emb-variant").fields.defaults["max_filename_len"] == 32
 
     def test_build_host_class_unknown_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown host class") as exc:
-            build_host_class("does-not-exist")
+            build_host_class(name="does-not-exist")
         assert "unix" in str(exc.value)
 
 
@@ -262,7 +266,7 @@ def test_custom_subclass_with_data_bundle_composes():
             "ip": "192.0.2.9",
             "os_type": "myrtos-v2",
         },
-        element=Element("widget"),
+        element=Element(name="widget"),
     )
     assert isinstance(host, MyRtosHost)
     assert host.os_type == "myrtos-v2"  # selector recorded
@@ -283,7 +287,7 @@ class TestBusyBoxProfile:
         """No new host class — the spec's central decision, asserted."""
         from otto.host.os_profile import build_os_profile
 
-        profile = build_os_profile("busybox")
+        profile = build_os_profile(name="busybox")
 
         assert profile.base == "unix", (
             "busybox must build UnixHost; a separate class would fork every "
@@ -300,7 +304,7 @@ class TestBusyBoxProfile:
         """
         from otto.host.os_profile import build_os_profile
 
-        assert build_os_profile("busybox").fields.defaults["has_bash"] is False
+        assert build_os_profile(name="busybox").fields.defaults["has_bash"] is False
 
     def test_busybox_selects_the_ash_frame_by_its_registered_name(self):
         """Profiles hold RAW lab-data values — a string, coerced by the factory.
@@ -311,7 +315,7 @@ class TestBusyBoxProfile:
         """
         from otto.host.os_profile import build_os_profile
 
-        assert build_os_profile("busybox").fields.defaults["command_frame"] == "ash"
+        assert build_os_profile(name="busybox").fields.defaults["command_frame"] == "ash"
 
     def test_the_frame_the_profile_names_is_actually_registered(self):
         """A profile naming an unregistered frame fails at host BUILD time, on a
@@ -319,7 +323,7 @@ class TestBusyBoxProfile:
         from otto.host.command_frame import FRAME_CLASSES
         from otto.host.os_profile import build_os_profile
 
-        named = build_os_profile("busybox").fields.defaults["command_frame"]
+        named = build_os_profile(name="busybox").fields.defaults["command_frame"]
         assert named in FRAME_CLASSES, (
             f"the busybox profile names frame {named!r}, which is not registered"
         )
@@ -343,7 +347,7 @@ class TestBusyBoxProfile:
         from otto.host.os_profile import build_os_profile
         from otto.host.transfer import TRANSFER_BACKENDS
 
-        defaults = build_os_profile("busybox").fields.defaults
+        defaults = build_os_profile(name="busybox").fields.defaults
         assert defaults["transfer"] == "shell"
         assert "shell" in defaults["valid_transfers"]
         assert "shell" in TRANSFER_BACKENDS, (
@@ -409,7 +413,7 @@ class TestBusyBoxProfile:
                 "ip": "10.0.0.1",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("bb1"),
+            element=Element(name="bb1"),
         )
 
         assert host.has_bash is True, (
@@ -433,7 +437,7 @@ class TestBusyBoxProfile:
                 "ip": "10.0.0.1",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("bb1"),
+            element=Element(name="bb1"),
         )
 
         assert isinstance(host, UnixHost)
@@ -512,7 +516,7 @@ def test_a_profile_can_default_the_readiness_deadline():
     register_os_profile("t-slow-login", base="unix", defaults={"init_timeout": 25})
     host = create_host_from_dict(
         {"os_type": "t-slow-login", "ip": "10.0.0.1", "creds": [{"login": "v", "password": "v"}]},
-        element=Element("slow1"),
+        element=Element(name="slow1"),
     )
     assert host.init_timeout == 25
-    assert host._session_mgr.open_budget("ssh") == 2 * 25 + 2.0
+    assert host._session_mgr.open_budget(term="ssh") == 2 * 25 + 2.0

@@ -24,5 +24,5 @@ def custom_hosts_on_path():
 
 
 def test_custom_hosts_registers_zephyr_inline(custom_hosts_on_path):
-    frame = build_command_frame("zephyr-inline")
+    frame = build_command_frame(type_name="zephyr-inline")
     assert type(frame).__name__ == "ZephyrInlineRetcodeFrame"

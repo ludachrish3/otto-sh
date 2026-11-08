@@ -18,9 +18,9 @@ from otto.result import Result, Status
 
 SEEN = {{}}
 
-async def fake_ensure_installed(source):
+async def fake_ensure_installed(*, opts):
     SEEN["ensure"] = id(asyncio.get_running_loop())
-    return Result(Status.Success, msg="installed")
+    return Result(status=Status.Success, msg="installed")
 
 project.ensure_installed = fake_ensure_installed
 {mark}

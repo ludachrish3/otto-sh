@@ -627,7 +627,7 @@ def test_a_monkeypatch_on_the_defining_module_leaves_nothing_behind():
     patcher = pytest.MonkeyPatch()
     patcher.setattr("otto.session.lab.build_lab", lambda projects, labs: None)
     try:
-        assert otto.session.build_lab(None, None) is None  # the package resolves the patch
+        assert otto.session.build_lab(None, labs=None) is None  # the package resolves the patch
     finally:
         patcher.undo()
     assert leaked_lazy_exports() == []

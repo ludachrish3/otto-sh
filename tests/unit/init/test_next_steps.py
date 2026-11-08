@@ -10,7 +10,9 @@ from otto.init.scaffolder import scaffold
 
 
 def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Path) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["settings", "lab", "tests", "instructions"])
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0"), areas=["settings", "lab", "tests", "instructions"]
+    )
     assert try_it_commands(
         tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
     ) == [
@@ -28,7 +30,7 @@ def test_inline_hosts_offers_the_same_commands_as_the_three_file_lab(
 ) -> None:
     scaffold(
         InitConfig(tmp_path, "widget", "0.1.0", inline_hosts=inline_hosts),
-        ["settings", "lab", "tests", "instructions"],
+        areas=["settings", "lab", "tests", "instructions"],
     )
     assert try_it_commands(
         tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
@@ -42,7 +44,7 @@ def test_inline_hosts_offers_the_same_commands_as_the_three_file_lab(
 
 
 def test_a_kmodcov_only_project_gets_only_the_library_check(tmp_path: Path) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["kmodcov"])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=["kmodcov"])
     assert try_it_commands(
         tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
     ) == ["otto cov kmodcov check third_party/otto_kmodcov"]
@@ -51,7 +53,7 @@ def test_a_kmodcov_only_project_gets_only_the_library_check(tmp_path: Path) -> N
 def test_the_library_path_is_absolute_when_the_cwd_is_elsewhere(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
-    scaffold(InitConfig(root, "widget", "0.1.0"), ["kmodcov"])
+    scaffold(InitConfig(root, "widget", "0.1.0"), areas=["kmodcov"])
     elsewhere = tmp_path / "other"
     elsewhere.mkdir()
     assert try_it_commands(
@@ -69,14 +71,14 @@ def test_an_empty_root_has_nothing_to_try(tmp_path: Path) -> None:
 
 
 def test_an_embedded_gcov_only_project_gets_only_the_patch_check(tmp_path: Path) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["embedded-gcov"])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=["embedded-gcov"])
     assert try_it_commands(
         tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
     ) == ["otto cov embedded-gcov check third_party/embedded-gcov-patch"]
 
 
 def test_both_checks_are_offered_when_both_areas_are_present(tmp_path: Path) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["kmodcov", "embedded-gcov"])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=["kmodcov", "embedded-gcov"])
     assert try_it_commands(
         tmp_path, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch", cwd=tmp_path
     ) == [
@@ -88,7 +90,7 @@ def test_both_checks_are_offered_when_both_areas_are_present(tmp_path: Path) -> 
 def test_the_patch_path_is_absolute_when_the_cwd_is_elsewhere(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
-    scaffold(InitConfig(root, "widget", "0.1.0"), ["embedded-gcov"])
+    scaffold(InitConfig(root, "widget", "0.1.0"), areas=["embedded-gcov"])
     elsewhere = tmp_path / "other"
     elsewhere.mkdir()
     assert try_it_commands(
@@ -98,7 +100,8 @@ def test_the_patch_path_is_absolute_when_the_cwd_is_elsewhere(tmp_path: Path) ->
 
 def test_a_custom_embedded_gcov_dir_is_the_one_checked(tmp_path: Path) -> None:
     scaffold(
-        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"), ["embedded-gcov"]
+        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"),
+        areas=["embedded-gcov"],
     )
     assert try_it_commands(tmp_path, "third_party/otto_kmodcov", "vendor/egcov", cwd=tmp_path) == [
         "otto cov embedded-gcov check vendor/egcov"
@@ -116,7 +119,7 @@ def _tries(root: Path) -> list[str]:
 
 
 def test_a_project_with_its_own_tests_is_not_told_to_run_template_names(tmp_path: Path) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["settings", "lab"])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=["settings", "lab"])
     (tmp_path / "tests").mkdir(exist_ok=True)
     (tmp_path / "tests" / "test_math.py").write_text("class TestMathops: ...\n")
     cmds = _tries(tmp_path)
@@ -144,7 +147,9 @@ def _unreadable(path: Path) -> None:
 def test_an_example_file_without_the_exact_template_names_is_not_suggested(
     tmp_path: Path, body: str | None
 ) -> None:
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["settings", "lab", "tests", "instructions"])
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0"), areas=["settings", "lab", "tests", "instructions"]
+    )
     example = tmp_path / "tests" / "test_example.py"
     if body is None:
         _unreadable(example)

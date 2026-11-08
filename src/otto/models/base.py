@@ -77,7 +77,7 @@ def compact_validation_error(error: "ValidationError") -> str:
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Cred:
     """One credential entry: a login plus how to become it."""
 
@@ -299,7 +299,7 @@ class JsonFileSource:
         self.path = Path(path)
         self.label = f"json:{self.path}"
 
-    def read_document(self, refuse: "type[Exception]") -> Any:
+    def read_document(self, *, refuse: "type[Exception]") -> Any:
         """Parse the file, raising *refuse* as ``<path>: <reason>`` when it cannot be read.
 
         Its secrets are wrapped as it is parsed (:func:`wrap_secret_values`).

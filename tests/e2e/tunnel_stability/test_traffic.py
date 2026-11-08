@@ -61,7 +61,7 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
 
     # Long-lived tunnel + long-lived listener on its far end.
     survivor = await add_tunnel(
-        tunnel_lab, [(INGRESS, None), (EXIT, None)], port=PORT_SURVIVOR, protocol="udp"
+        tunnel_lab, hosts=[(INGRESS, None), (EXIT, None)], port=PORT_SURVIVOR, protocol="udp"
     )
     reap_tunnels.append(survivor.tunnel.id)
     listen_budget = soak_timeout(per_cycle=90.0, base=120.0)
@@ -179,6 +179,6 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
     finally:
         await remove_remote_file(test2, outfile)
 
-    report = await remove_tunnel(tunnel_lab, survivor.tunnel.id)
+    report = await remove_tunnel(tunnel_lab, tunnel_id=survivor.tunnel.id)
     assert report.survivors == []
     reap_tunnels.remove(survivor.tunnel.id)

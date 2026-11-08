@@ -100,7 +100,7 @@ async def test_logout_on_close_restores_the_login_prompt(host1):
 
 
 async def test_wrong_password_fails_loud():
-    h = make_console_host("test2", creds=[Cred(_OTHER.login, "wrong")])
+    h = make_console_host("test2", creds=[Cred(login=_OTHER.login, password="wrong")])
     try:
         with pytest.raises(ConsoleError, match=f"login refused for '{_OTHER.login}'"):
             await h.run("true")

@@ -727,7 +727,7 @@ class TestUnixHostLoginDispatch:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -751,7 +751,7 @@ class TestUnixHostLoginDispatch:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -793,7 +793,7 @@ class TestUnixHostLoginUser:
         # resolves through admin via a single su hop.
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[
                 Cred(login="admin", password="hunter2"),
                 Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
@@ -828,7 +828,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),
@@ -853,7 +853,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[
                 Cred(login="admin", password="hunter2"),
                 Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
@@ -886,7 +886,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("router"),
+            element=Element(name="router"),
             creds=[
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),
@@ -1076,7 +1076,7 @@ class TestBridgeReadsKeepASplitCharacterWhole:
         )
 
         assert (
-            await session.read_transport_until(re.compile(r"\$ "))
+            await session.read_transport_until(pattern=re.compile(r"\$ "))
             == "\N{LATIN SMALL LETTER E WITH ACUTE}$ "
         )
 
@@ -1325,7 +1325,7 @@ class TestReplaySuHopOverBridge:
             with pytest.raises(LoginProxyError, match=r"h1.*mysql.*slow-test-proxy"):
                 await run_proxy(io, hop, via=Cred(login="admin"), host_id="h1")
         finally:
-            LOGIN_PROXIES.unregister("slow-test-proxy")
+            LOGIN_PROXIES.unregister(name="slow-test-proxy")
 
 
 # ---------------------------------------------------------------------------
@@ -1476,7 +1476,7 @@ class TestReplayProxyHops:
                 host_id="h1",
             )
         finally:
-            LOGIN_PROXIES.unregister("track-via-test")
+            LOGIN_PROXIES.unregister(name="track-via-test")
         assert seen_vias == ["admin", "mysql"]
 
 

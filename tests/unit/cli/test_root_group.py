@@ -314,7 +314,7 @@ def test_get_command_prefers_real_registry_over_cache(monkeypatch):
         # live CommandSpec ("Real one."), never the stale cached help text.
         assert cmd.help != "Stale cached."
     finally:
-        CLI_COMMANDS.unregister("dupe-tool")
+        CLI_COMMANDS.unregister(name="dupe-tool")
 
 
 def test_list_commands_dedupes_registry_over_cache(monkeypatch):
@@ -333,7 +333,7 @@ def test_list_commands_dedupes_registry_over_cache(monkeypatch):
         names = group.list_commands(None)
         assert names.count("both-tool") == 1
     finally:
-        CLI_COMMANDS.unregister("both-tool")
+        CLI_COMMANDS.unregister(name="both-tool")
 
 
 def test_cached_stub_group_serves_children(monkeypatch):
@@ -497,4 +497,4 @@ def test_option_value_equal_to_help_flag_is_not_sniffed(monkeypatch):
         assert seen == {"msg": "--help"}
         assert "Usage" not in result.output
     finally:
-        CLI_COMMANDS.unregister("scratch-help-value-echo")
+        CLI_COMMANDS.unregister(name="scratch-help-value-echo")

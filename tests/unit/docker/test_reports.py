@@ -17,15 +17,15 @@ from otto.utils import Status
 
 
 def _ok(value="") -> CommandResult:
-    return CommandResult(Status.Success, value=value, command="docker x", retcode=0)
+    return CommandResult(status=Status.Success, value=value, command="docker x", retcode=0)
 
 
 def _skipped(value="") -> CommandResult:
-    return CommandResult(Status.Skipped, value=value, command="", retcode=0)
+    return CommandResult(status=Status.Skipped, value=value, command="", retcode=0)
 
 
 def _fail(value="boom", command="docker x") -> CommandResult:
-    return CommandResult(Status.Failed, value=value, command=command, retcode=1)
+    return CommandResult(status=Status.Failed, value=value, command=command, retcode=1)
 
 
 def test_host_report_ok_when_every_result_is_ok():

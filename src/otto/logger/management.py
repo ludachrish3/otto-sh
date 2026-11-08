@@ -322,8 +322,8 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
 
 
 def install(
-    log_level: str = "INFO",
     *,
+    log_level: str = "INFO",
     output_dir: "Path | None" = None,
     show_time: bool = False,
     overrides: "Mapping[str, str] | None" = None,

@@ -116,13 +116,13 @@ class TestGetLabPanel:
 class TestGetMarkersPanel:
     def test_populated_panel_shows_markers(self, tmp_path):
         project = Project(root=_make_project_root(tmp_path))
-        text = _render(project.get_markers_panel(["slow", "smoke"]))
+        text = _render(project.get_markers_panel(markers=["slow", "smoke"]))
         assert "slow" in text
         assert "smoke" in text
 
     def test_empty_panel_shows_placeholder(self, tmp_path):
         project = Project(root=_make_project_root(tmp_path))
-        text = _render(project.get_markers_panel([]))
+        text = _render(project.get_markers_panel(markers=[]))
         assert "no markers found" in text
 
 

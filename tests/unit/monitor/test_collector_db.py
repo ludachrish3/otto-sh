@@ -344,7 +344,7 @@ class TestEventPersistence:
         collector = await _empty_collector_with_db(db_path)
         event = await collector.add_event(label="old label", color="#888888", dash="dash")
         await collector.update_event(
-            event.id,
+            event_id=event.id,
             label="new label",
             color="#ff0000",
             dash="solid",
@@ -364,7 +364,7 @@ class TestEventPersistence:
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
         event = await collector.add_event(label="to delete")
-        await collector.delete_event(event.id)
+        await collector.delete_event(event_id=event.id)
         await collector.close_db()
         with closing(sqlite3.connect(db_path)) as conn, conn:
             count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
@@ -438,12 +438,12 @@ class TestRunRequiresOpenedDb:
     async def test_run_refuses_unopened_db(self, tmp_path):
         collector = self._collector_with_target(str(tmp_path / "m.db"))
         with pytest.raises(RuntimeError, match="spawn_collection"):
-            await collector.run(timedelta(seconds=60))
+            await collector.run(interval=timedelta(seconds=60))
 
     @pytest.mark.asyncio
     async def test_spawn_collection_opens_before_the_task_exists(self, tmp_path):
         collector = self._collector_with_target(str(tmp_path / "m.db"))
-        task = await collector.spawn_collection(timedelta(seconds=60))
+        task = await collector.spawn_collection(interval=timedelta(seconds=60))
         try:
             # The seam's whole contract: by the time the task object exists,
             # the archive is open (no in-task open left to race cancellation).
@@ -458,7 +458,7 @@ class TestRunRequiresOpenedDb:
     async def test_run_without_db_skips_the_precondition(self):
         # A db-less collector (live view only) must not trip the guard.
         collector = self._collector_with_target(None)
-        task = asyncio.create_task(collector.run(timedelta(seconds=60)))
+        task = asyncio.create_task(collector.run(interval=timedelta(seconds=60)))
         await asyncio.sleep(0)  # let run() pass its precondition checks
         assert not task.done(), f"run() died early: {task.exception() if task.done() else None}"
         task.cancel()

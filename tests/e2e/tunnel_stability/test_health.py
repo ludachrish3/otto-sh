@@ -56,7 +56,7 @@ def build_phantom_host() -> UnixHost:
     creds = [Cred(**c) for c in host_data("test1")["creds"]]
     return UnixHost(
         ip=PHANTOM_IP,
-        element=Element("phantom"),
+        element=Element(name="phantom"),
         creds=creds,
         term="ssh",
         transfer="scp",
@@ -91,7 +91,9 @@ async def test_phantom_host_health_cycle(tunnel_lab, reap_tunnels) -> None:
 
     real_chain = [(INGRESS, None), (EXIT, None)]
     for cycle in range(SOAK_CYCLES):
-        added = await add_tunnel(tunnel_lab, real_chain, port=PORT_PHANTOM_REAL, protocol="udp")
+        added = await add_tunnel(
+            tunnel_lab, hosts=real_chain, port=PORT_PHANTOM_REAL, protocol="udp"
+        )
         reap_tunnels.append(added.tunnel.id)
 
         # (a) add through the phantom: loud, named, fully rolled back. The
@@ -102,7 +104,7 @@ async def test_phantom_host_health_cycle(tunnel_lab, reap_tunnels) -> None:
         with pytest.raises(Exception, match=rf"{PHANTOM_ID}|{PHANTOM_IP}"):
             await add_tunnel(
                 tunnel_lab,
-                [(INGRESS, None), (PHANTOM_ID, None)],
+                hosts=[(INGRESS, None), (PHANTOM_ID, None)],
                 port=PORT_PHANTOM_CHAIN,
                 protocol="udp",
             )
@@ -124,7 +126,7 @@ async def test_phantom_host_health_cycle(tunnel_lab, reap_tunnels) -> None:
         assert found.status == "ok", f"cycle {cycle}: real tunnel not ok: {found.status!r}"
 
         # (c) remove: phantom reported, real tunnel reaped clean.
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert PHANTOM_ID in report.unreachable, (
             f"cycle {cycle}: remove unreachable {report.unreachable!r}"
         )
@@ -176,7 +178,7 @@ async def test_sigstop_wedge_uncertain_then_recovers(
     test2_ip = host_data("test2")["ip"]
     control = tunnel_lab.hosts[EXIT]  # established connection; survives the STOP
     added = await add_tunnel(
-        tunnel_lab, [(INGRESS, None), (EXIT, None)], port=PORT_SIGSTOP, protocol="udp"
+        tunnel_lab, hosts=[(INGRESS, None), (EXIT, None)], port=PORT_SIGSTOP, protocol="udp"
     )
     reap_tunnels.append(added.tunnel.id)
     cli_sut = _cli_sut_pinned_to_ssh(tmp_path)
@@ -227,7 +229,7 @@ async def test_sigstop_wedge_uncertain_then_recovers(
             # completes WITHOUT raising, reaps the reachable (INGRESS) side,
             # and NAMES the wedged host — an incomplete reap is reported,
             # never silent.
-            report = await remove_tunnel(wedged_lab, added.tunnel.id)
+            report = await remove_tunnel(wedged_lab, tunnel_id=added.tunnel.id)
             assert EXIT in report.unreachable, (
                 f"partial remove did not name {EXIT!r}: unreachable={report.unreachable!r}"
             )
@@ -264,7 +266,7 @@ async def test_sigstop_wedge_uncertain_then_recovers(
             )
 
             # Completing remove: the survivors are finally gone.
-            report = await remove_tunnel(recovered_lab, added.tunnel.id)
+            report = await remove_tunnel(recovered_lab, tunnel_id=added.tunnel.id)
             assert report.survivors == [], (
                 f"survivors after completing remove: {report.survivors!r}"
             )

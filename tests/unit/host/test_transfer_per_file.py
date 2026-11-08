@@ -9,10 +9,10 @@ from otto.utils import Status
 
 def test_all_ok_aggregate():
     per_file = {
-        Path("a"): Result(Status.Success, value=Path("/dst/a")),
-        Path("b"): Result(Status.Success, value=Path("/dst/b")),
+        Path("a"): Result(status=Status.Success, value=Path("/dst/a")),
+        Path("b"): Result(status=Status.Success, value=Path("/dst/b")),
     }
-    agg = aggregate_transfer(per_file)
+    agg = aggregate_transfer(per_file=per_file)
     assert agg.is_ok
     assert agg.value is per_file
     assert agg.msg == ""
@@ -20,16 +20,18 @@ def test_all_ok_aggregate():
 
 def test_failure_aggregate_is_first_non_ok_with_msg():
     per_file = {
-        Path("a"): Result(Status.Success, value=Path("/dst/a")),
-        Path("b"): Result(Status.Error, msg="b: connection reset"),
-        Path("c"): Result(Status.Skipped, msg="not attempted"),
+        Path("a"): Result(status=Status.Success, value=Path("/dst/a")),
+        Path("b"): Result(status=Status.Error, msg="b: connection reset"),
+        Path("c"): Result(status=Status.Skipped, msg="not attempted"),
     }
-    agg = aggregate_transfer(per_file)
+    agg = aggregate_transfer(per_file=per_file)
     assert agg.status is Status.Error
     assert "b: connection reset" in agg.msg
     assert agg.value[Path("c")].status is Status.Skipped
 
 
 def test_a_skipped_refusal_entry_alone_never_fails_aggregate():
-    per_file = {Path("a"): Result(Status.Skipped, msg="not attempted (directory source refused)")}
-    assert aggregate_transfer(per_file).is_ok
+    per_file = {
+        Path("a"): Result(status=Status.Skipped, msg="not attempted (directory source refused)")
+    }
+    assert aggregate_transfer(per_file=per_file).is_ok

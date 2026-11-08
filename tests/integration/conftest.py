@@ -179,7 +179,7 @@ async def _reap_orphan_docker_stacks() -> None:
     """
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
-        element=Element(DOCKER_HOST),
+        element=Element(name=DOCKER_HOST),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",

@@ -53,7 +53,7 @@ import is the init module's.
 >>> r: Registry[ClassEntry[Demo]] = Registry(
 ...     "demo backend", entry=ClassEntry, register_hint="register_demo()"
 ... )
->>> r.register("json", ClassEntry(Demo))
+>>> r.register(name="json", entry=ClassEntry(cls=Demo))
 >>> r.get("json").cls is Demo
 True
 >>> r.names()
@@ -139,7 +139,7 @@ F = TypeVar("F", bound=Callable[..., object])
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Ref:
     """A ``"package.module:attribute"`` reference to an object, imported on first lookup."""
 
@@ -538,7 +538,7 @@ class FrozenMap(Mapping[K, V]):
 
     __slots__ = ("_data",)
 
-    def __init__(self, mapping: "Mapping[K, V] | None" = None) -> None:
+    def __init__(self, *, mapping: "Mapping[K, V] | None" = None) -> None:
         self._data: dict[K, V] = dict(mapping) if mapping is not None else {}
 
     @override
@@ -568,9 +568,9 @@ class FrozenMap(Mapping[K, V]):
         return f"FrozenMap({self._data!r})"
 
     @classmethod
-    def freeze_json(cls, value: "Mapping[str, object]") -> "FrozenMap[str, object]":
+    def freeze_json(cls, *, value: "Mapping[str, object]") -> "FrozenMap[str, object]":
         """Freeze JSON-shaped *value*: every list becomes a tuple, every mapping a ``FrozenMap``."""
-        return FrozenMap({key: _freeze_json(item) for key, item in value.items()})
+        return FrozenMap(mapping={key: _freeze_json(item) for key, item in value.items()})
 
     def thaw_json(self) -> dict[str, object]:
         """Invert :meth:`freeze_json`: tuples become lists, and frozen maps dicts."""
@@ -579,7 +579,7 @@ class FrozenMap(Mapping[K, V]):
 
 def _freeze_json(value: object) -> object:
     if isinstance(value, Mapping):
-        return FrozenMap({key: _freeze_json(item) for key, item in value.items()})
+        return FrozenMap(mapping={key: _freeze_json(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
     return value
@@ -695,7 +695,7 @@ class RequireProject(Capability):
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Justified(Generic[CapT]):
     """A capability a registry declares, with the reason it deviates from the default."""
 
@@ -716,7 +716,7 @@ class Justified(Generic[CapT]):
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ClassEntry(Generic[T]):
     """The record of a class-valued registry: the class, or a :class:`Ref` naming it."""
 
@@ -936,7 +936,7 @@ class Registry(Generic[E]):
 
     # -- writes -------------------------------------------------------------
 
-    def register(self, name: str, entry: E, *, overwrite: bool = False) -> None:
+    def register(self, *, name: str, entry: E, overwrite: bool = False) -> None:
         """Register *entry* under *name*; a taken name raises unless *overwrite*.
 
         Raises:
@@ -1073,7 +1073,7 @@ class Registry(Generic[E]):
             )
         return holds_ref
 
-    def unregister(self, name: str) -> None:
+    def unregister(self, *, name: str) -> None:
         """Remove the entry registered under *name*, without resolving a :class:`Ref`.
 
         Raises:
@@ -1207,13 +1207,13 @@ class Registry(Generic[E]):
         """
         return self._resolve(name, None)
 
-    def find(self, name: str) -> "E | None":
+    def find(self, *, name: str) -> "E | None":
         """Like :meth:`get`, but ``None`` for an absent name (a failing ``Ref`` still raises)."""
         if name not in self._entries:
             return None
         return self.get(name)
 
-    def peek(self, name: str) -> E:
+    def peek(self, *, name: str) -> E:
         """Return the record stored for *name*, never resolving a :class:`Ref`.
 
         That is the record as registered until a read resolves its ``Ref``
@@ -1244,7 +1244,7 @@ class Registry(Generic[E]):
         """Return registered names in registration order."""
         return list(self._entries)
 
-    def origin(self, name: str) -> str:
+    def origin(self, *, name: str) -> str:
         """Return the module that registered *name*, without resolving a :class:`Ref`.
 
         Raises:
@@ -1253,7 +1253,7 @@ class Registry(Generic[E]):
         self._ensure_known(name)
         return self._entries[name].origin
 
-    def project(self, name: str) -> str | None:
+    def project(self, *, name: str) -> str | None:
         """Return the project whose init import registered *name*, or ``None`` outside one.
 
         Raises:
@@ -1398,7 +1398,7 @@ class Subscription(Generic[T]):
         """A counter bumped by every subscribe, effective cancel and test restore."""
         return self._revision
 
-    def subscribe(self, value: T) -> Token:
+    def subscribe(self, *, value: T) -> Token:
         """Append *value*, recording its origin and project; return the token that cancels it.
 
         Raises:
@@ -1598,7 +1598,7 @@ class RegistryView(Generic[E]):
         """
         return self._row(name).entry
 
-    def find(self, name: str) -> "E | None":
+    def find(self, *, name: str) -> "E | None":
         """Like :meth:`get`, but ``None`` for an absent name."""
         row = self._current().get(name)
         return None if row is None else row.entry
@@ -1607,11 +1607,11 @@ class RegistryView(Generic[E]):
         """``(name, entry)`` pairs in derivation order."""
         return [(name, row.entry) for name, row in self._current().items()]
 
-    def origin(self, name: str) -> str:
+    def origin(self, *, name: str) -> str:
         """Return the module credited with *name*'s row."""
         return self._row(name).origin
 
-    def project(self, name: str) -> str | None:
+    def project(self, *, name: str) -> str | None:
         """Return the project credited with *name*'s row, or ``None``."""
         return self._row(name).project
 
@@ -1628,7 +1628,7 @@ class RegistryView(Generic[E]):
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Configured(Generic[C, Env]):
     """What a configured backend's factory receives: its parsed config and the seam's env."""
 
@@ -1800,10 +1800,10 @@ class BackendRegistry(Generic[Env, T, M]):
         return self._table.capabilities
 
     def register(
-        self, name: str, entry: "BackendEntry[Env, T, M]", *, overwrite: bool = False
+        self, *, name: str, entry: "BackendEntry[Env, T, M]", overwrite: bool = False
     ) -> None:
         """Register a backend entry; see :meth:`Registry.register`."""
-        self._table.register(name, entry, overwrite=overwrite)
+        self._table.register(name=name, entry=entry, overwrite=overwrite)
 
     def register_many(
         self, entries: "Iterable[tuple[str, BackendEntry[Env, T, M]]]", *, overwrite: bool = False
@@ -1811,24 +1811,24 @@ class BackendRegistry(Generic[Env, T, M]):
         """Register several backend entries atomically; see :meth:`Registry.register_many`."""
         self._table.register_many(entries, overwrite=overwrite)
 
-    def unregister(self, name: str) -> None:
+    def unregister(self, *, name: str) -> None:
         """Remove a backend; see :meth:`Registry.unregister`."""
-        self._table.unregister(name)
+        self._table.unregister(name=name)
 
     def get(self, name: str) -> "BackendEntry[Env, T, M]":
         """Return the resolved entry; see :meth:`Registry.get`."""
         return self._table.get(name)
 
-    def find(self, name: str) -> "BackendEntry[Env, T, M] | None":
+    def find(self, *, name: str) -> "BackendEntry[Env, T, M] | None":
         """Return the resolved entry or ``None``; see :meth:`Registry.find`."""
-        return self._table.find(name)
+        return self._table.find(name=name)
 
-    def peek(self, name: str) -> "BackendEntry[Env, T, M]":
+    def peek(self, *, name: str) -> "BackendEntry[Env, T, M]":
         """Return the entry stored for *name*, never resolving it (see :meth:`Registry.peek`).
 
         Static metadata reads use this.
         """
-        return self._table.peek(name)
+        return self._table.peek(name=name)
 
     def raw_items(self) -> "list[tuple[str, BackendEntry[Env, T, M]]]":
         """Return the stored entries, never resolving them (see :meth:`Registry.peek`)."""
@@ -1842,13 +1842,13 @@ class BackendRegistry(Generic[Env, T, M]):
         """Return registered backend names in registration order."""
         return self._table.names()
 
-    def origin(self, name: str) -> str:
+    def origin(self, *, name: str) -> str:
         """Return the module that registered *name*."""
-        return self._table.origin(name)
+        return self._table.origin(name=name)
 
-    def project(self, name: str) -> str | None:
+    def project(self, *, name: str) -> str | None:
         """Return the project whose init import registered *name*, or ``None``."""
-        return self._table.project(name)
+        return self._table.project(name=name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether *name* is registered."""
@@ -1890,7 +1890,7 @@ class BackendRegistry(Generic[Env, T, M]):
         return f"{type(exc).__name__}: {exc}"
 
     def prepare(
-        self, name: str, raw: "Mapping[str, object]", env: Env, *, source: str | None = None
+        self, *, name: str, raw: "Mapping[str, object]", env: Env, source: str | None = None
     ) -> "Prepared[Env, T, M]":
         """Parse *raw* once with backend *name*'s config model; never call its factory.
 
@@ -1908,7 +1908,7 @@ class BackendRegistry(Generic[Env, T, M]):
             raise self._error(
                 f"{self.kind} {name!r} (not registered{where}): lookup failed: {exc}"
             ) from exc
-        origin = self._table.origin(name)
+        origin = self._table.origin(name=name)
         generation = self._table._generation(name)  # noqa: SLF001 — the owned inner table
         try:
             entry = self._table._resolve(name, {"config"})  # noqa: SLF001 — the owned inner table
@@ -1928,7 +1928,7 @@ class BackendRegistry(Generic[Env, T, M]):
         model = cast("Any", entry.config)
         try:
             parsed = model.model_validate(raw, context={"env": env})
-            normalized = FrozenMap.freeze_json(parsed.model_dump(mode="json"))
+            normalized = FrozenMap.freeze_json(value=parsed.model_dump(mode="json"))
             facts_of = getattr(parsed, "prepared_facts", None)
             facts = facts_of() if callable(facts_of) else None
         except Exception as exc:
@@ -1939,7 +1939,7 @@ class BackendRegistry(Generic[Env, T, M]):
             self, name, generation, env, source, parsed, normalized, entry.metadata, facts
         )
 
-    def build(self, prepared: "Prepared[Env, T, M]") -> T:
+    def build(self, *, prepared: "Prepared[Env, T, M]") -> T:
         """Build the backend *prepared* names: parse nothing, call the factory once.
 
         The factory receives a per-call deep copy of the parsed configuration,
@@ -1952,7 +1952,7 @@ class BackendRegistry(Generic[Env, T, M]):
         """
         name = prepared.backend
         source = prepared.source
-        origin = self._table.origin(name) if name in self._table else "<not registered>"
+        origin = self._table.origin(name=name) if name in self._table else "<not registered>"
         if prepared.registry is not self:
             raise self._fail(
                 name,
@@ -1988,7 +1988,7 @@ class BackendRegistry(Generic[Env, T, M]):
         try:
             if entry.factory is not None:
                 factory = cast("Callable[[Configured[Any, Env]], T]", entry.factory)
-                built = factory(Configured(config, prepared.env))
+                built = factory(Configured(config=config, env=prepared.env))
             else:
                 built = cast("T", cast("Any", entry.cls).create(prepared.env))
         except Exception as exc:

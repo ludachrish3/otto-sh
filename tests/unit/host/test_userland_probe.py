@@ -125,9 +125,9 @@ class _Device:
         if self._raises is not None:
             raise self._raises
         if self._batch is not None and cmd == self._batch:
-            return CommandResult(Status.Success, value=self._batch_out or "", retcode=0)
+            return CommandResult(status=Status.Success, value=self._batch_out or "", retcode=0)
         status = Status.Success if self._retcode == 0 else Status.Error
-        return CommandResult(status, value="", retcode=self._retcode)
+        return CommandResult(status=status, value="", retcode=self._retcode)
 
 
 class _ScriptedHost(UserlandHost):
@@ -598,7 +598,7 @@ async def test_user_on_a_family_without_a_session_identity_is_refused_by_the_sta
 
     host = EmbeddedHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         command_frame=ZephyrFrame(),
     )
@@ -633,7 +633,7 @@ async def test_a_bad_scan_ports_outranks_the_user_refusal(monkeypatch):
     monkeypatch.setattr("otto.host.survey.engine.run_survey", counting_run_survey)
     host = EmbeddedHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         command_frame=ZephyrFrame(),
     )

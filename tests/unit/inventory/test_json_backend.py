@@ -36,9 +36,9 @@ def _file(tmp_path, doc=_DOC):
 
 def test_json_is_the_registered_builtin(tmp_path):
     prepared = INVENTORY_BACKENDS.prepare(
-        "json", {"path": "inv.json"}, InventoryEnv(tmp_path, "o.toml")
+        name="json", raw={"path": "inv.json"}, env=InventoryEnv(tmp_path, "o.toml")
     )
-    inventory = INVENTORY_BACKENDS.build(prepared)
+    inventory = INVENTORY_BACKENDS.build(prepared=prepared)
     assert isinstance(inventory, JsonInventory)
     assert inventory.path == (tmp_path / "inv.json").resolve()
 
@@ -129,7 +129,7 @@ def test_parse_inventory_document_guards_a_non_string_key():
     record processing.
     """
     records = parse_inventory_document(
-        {0: {"ip": "10.0.0.1"}}, source="snapshot", supplies=FILLABLE_INVENTORY_FIELDS
+        data={0: {"ip": "10.0.0.1"}}, source="snapshot", supplies=FILLABLE_INVENTORY_FIELDS
     )
     assert records[0].ip == "10.0.0.1"
 

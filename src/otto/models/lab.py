@@ -147,7 +147,7 @@ class ElementSpec(OttoModel):
         from ..host.element import Element  # lazy: models must not import host at module level
 
         return Element(
-            self.name,
+            name=self.name,
             id=self.id,
             metadata=dict(self.metadata),
             resources=frozenset(self.resources),

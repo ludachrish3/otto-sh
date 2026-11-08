@@ -58,4 +58,4 @@ def test_the_decorator_credits_the_decorating_module():
     @cli_command(name="credited", lab_free=True)
     def credited() -> None: ...
 
-    assert CLI_COMMANDS.origin("credited") == __name__
+    assert CLI_COMMANDS.origin(name="credited") == __name__

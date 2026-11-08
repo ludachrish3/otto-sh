@@ -191,9 +191,9 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             from .command_frame import build_command_frame
 
             if isinstance(self.command_frame, str):
-                self.command_frame = build_command_frame(self.command_frame)
+                self.command_frame = build_command_frame(type_name=self.command_frame)
             if isinstance(self.landing_frame, str):
-                self.landing_frame = build_command_frame(self.landing_frame)
+                self.landing_frame = build_command_frame(type_name=self.landing_frame)
 
         if self.session_setup is not None:
             from .session_setup import session_setup_from_spec  # off the startup graph on purpose
@@ -207,7 +207,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
             self.loader = build_binary_loader(self.loader)
 
-        self.power_control = power_control_from_spec(self.power_control, host_id=self.id)
+        self.power_control = power_control_from_spec(value=self.power_control, host_id=self.id)
 
         # A bare 'embedded' host carries no shell-framing dialect. Fail loud
         # rather than silently inheriting one, so a misconfigured non-Zephyr
@@ -269,8 +269,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         # shell has no login step, and its one console serves one client.
         telnet_options = replace(self.telnet_options, login=False, single_client_console=True)
         self._connections = build_term_backend(
-            self.term,
-            TermContext(
+            name=self.term,
+            ctx=TermContext(
                 ip=self.ip,
                 creds=self.creds,
                 term=self.term,
@@ -304,8 +304,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         self._file_transfer = cast(
             "EmbeddedFileTransfer",
             build_transfer_backend(
-                self.transfer,
-                TransferContext(
+                name=self.transfer,
+                ctx=TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
                     exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
@@ -335,7 +335,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ####################
 
     @override
-    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, *, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
@@ -365,7 +365,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         """
         self._refuse_console_verb("logout")
         return Result(
-            Status.Success,
+            status=Status.Success,
             value=f"{self.name}: this console has no login step; nothing to reset",
         )
 
@@ -393,7 +393,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         for signature parity — this family always runs on the shared shell.
         """
         return await self._live_session_mgr().run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+            cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
         )
 
     @override
@@ -432,9 +432,10 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         self,
         src_files: Annotated[
             list[Path] | Path,
-            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+            Arg(elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        *,
         user: Annotated[
             str | None,
             Opt(
@@ -472,7 +473,10 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
             return await self._live_file_transfer().get_files(
-                src_files, dest_dir, show_progress, concurrent=concurrent
+                src_files=src_files,
+                dest_dir=dest_dir,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
 
     @override
@@ -480,9 +484,10 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     async def put(
         self,
         src_files: Annotated[
-            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+            list[Path] | Path, Arg(elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        *,
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
@@ -537,7 +542,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
             return await self._live_file_transfer().put_files(
-                src_files, dest_dir, show_progress, mode, concurrent=concurrent
+                src_files=src_files,
+                dest_dir=dest_dir,
+                show_progress=show_progress,
+                mode=mode,
+                concurrent=concurrent,
             )
 
     ####################
@@ -563,7 +572,12 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         output_dir=False,
         help_="List entry names in path on the device (`fs ls`); `--all` has no effect.",
     )
-    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
+    async def ls(
+        self,
+        path: "Annotated[str | Path, Arg()]" = ".",
+        *,
+        all: bool = False,  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
+    ) -> list[str]:
         """List entry names in *path* via the device ``fs ls`` former.
 
         Raises:
@@ -584,6 +598,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     async def rm(
         self,
         path: "str | Path",
+        *,
         recursive: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
         force: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
     ) -> Result:
@@ -591,7 +606,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         result = await self._run_one(
             self.filesystem.rm_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     def _no_fileop(self, name: str) -> NoReturn:
         raise NotImplementedError(
@@ -599,7 +614,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             f"device shell has no equivalent. Use get()/put() for reads/writes."
         ) from None
 
-    async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
+    async def mkdir(self, path: "str | Path", *, parents: bool = True) -> Result:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
         """Not supported — embedded targets have no shell ``mkdir`` equivalent."""
         self._no_fileop("mkdir")
 
@@ -607,6 +622,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         self,
         src: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
         dst: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
+        *,
         recursive: bool = False,  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
     ) -> Result:
         """Not supported — embedded targets have no shell ``cp`` equivalent."""
@@ -623,6 +639,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     async def write_file(
         self,
         path: "str | Path",  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
+        *,
         data: str,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
         append: bool = False,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
     ) -> Result:
@@ -641,7 +658,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     async def load(
         self,
         file: Annotated[Path, Arg(help="Binary to load into the device runtime.")],
-        name: Annotated[str, Arg(help="Name to register the loaded binary under.")],
+        *,
+        name: Annotated[str, Opt(help="Name to register the loaded binary under.")],
         show_progress: Annotated[bool, Exclude] = False,
         timeout: Annotated[float, Exclude] = 120.0,
     ) -> Result:
@@ -669,23 +687,25 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         cmd = loader.load_command(name, payload)
         if show_progress:
             async with _acquire_shared_progress() as progress:
-                handler = make_rich_progress_handler(progress, self.name)
+                handler = make_rich_progress_handler(progress=progress, host_name=self.name)
 
                 def _wp(done: int, total: int) -> None:
                     handler(str(file), f"{self.name}:{name}", done, total)
 
                 result = await self._live_session_mgr().run_cmd(
-                    cmd,
+                    cmd=cmd,
                     timeout=timeout,
                     log=LogMode.NEVER,
                     write_progress=_wp,
                 )
         else:
-            result = await self._live_session_mgr().run_cmd(cmd, timeout=timeout, log=LogMode.NEVER)
+            result = await self._live_session_mgr().run_cmd(
+                cmd=cmd, timeout=timeout, log=LogMode.NEVER
+            )
         ok, reason = loader.check_loaded(result.value)
         if ok:
-            return Result(Status.Success)
-        return Result(Status.Error, msg=f"load {name} from {file} failed: {reason}")
+            return Result(status=Status.Success)
+        return Result(status=Status.Error, msg=f"load {name} from {file} failed: {reason}")
 
     @cli_exposed(
         success="Binary unloaded.",
@@ -695,6 +715,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     async def unload(
         self,
         name: Annotated[str, Arg(help="Name of the binary to unload.")],
+        *,
         timeout: Annotated[float, Exclude] = 20.0,
     ) -> Result:
         """Unload *name* from the device runtime, draining to full eviction.
@@ -713,12 +734,12 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         cmd = loader.unload_command(name)
         last = ""
         for _ in range(loader.max_unload_rounds):
-            result = await self._live_session_mgr().run_cmd(cmd, timeout=timeout)
+            result = await self._live_session_mgr().run_cmd(cmd=cmd, timeout=timeout)
             last = result.value
             if loader.is_fully_unloaded(result.value):
-                return Result(Status.Success)
+                return Result(status=Status.Success)
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=(
                 f"{name} still resident after {loader.max_unload_rounds} "
                 f"unload rounds: {last.strip()}"
@@ -760,4 +781,4 @@ class ZephyrHost(EmbeddedHost):
         # under a dry run needs its own arm. Same note as
         # `UnixHost._soft_reboot`.
         await self.run("kernel reboot cold", timeout=10.0)
-        return Result(Status.Success)
+        return Result(status=Status.Success)

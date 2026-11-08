@@ -839,7 +839,7 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
 
 **How it correlates at load.** For the `test2` host entry — `{"inventory":
 "test2", "os_type": "unix", …}` — the loader builds `test2`'s `Element` and
-calls `resolve_host_entry(host_data, inventory, element)`: it looks up
+calls `resolve_host_entry(host_data, inventory=inventory, element=element)`: it looks up
 `test2`, finds no inventory-owned field stated inline — had the entry also
 said `"ip": …`, that is the error at the top of this page — copies `ip`,
 `interfaces`, `is_virtual`, `site`, `rack` and `shelf` onto the entry, and the

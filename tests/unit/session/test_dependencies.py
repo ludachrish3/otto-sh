@@ -60,14 +60,14 @@ def test_nothing_unmet_returns_the_preflight_warnings(monkeypatch):
     from otto.session import check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[], warnings=["could not check beta"])
-    assert check_dependencies(_ctx()) == ["could not check beta"]
+    assert check_dependencies(ctx=_ctx()) == ["could not check beta"]
 
 
 def test_the_preflight_checks_the_contexts_ordered_projects(monkeypatch):
     from otto.session import check_dependencies
 
     seen = _preflight(monkeypatch, unsatisfied=[], warnings=[])
-    check_dependencies(_ctx())
+    check_dependencies(ctx=_ctx())
     assert seen == [_PROJECTS]
 
 
@@ -76,7 +76,7 @@ def test_an_active_projects_unmet_requirement_refuses(monkeypatch):
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=["could not check beta"])
     with pytest.raises(DependencyRefusedError) as exc:
-        check_dependencies(_ctx())
+        check_dependencies(ctx=_ctx())
     assert exc.value.unsatisfied == [_BAD]
     assert exc.value.warnings == ["could not check beta"]
 
@@ -85,7 +85,7 @@ def test_an_excluded_projects_unmet_requirement_warns(monkeypatch):
     from otto.session import check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=["could not check beta"])
-    warnings = check_dependencies(_ctx(exclude=("acme",)))
+    warnings = check_dependencies(ctx=_ctx(exclude=("acme",)))
     assert warnings == ["could not check beta", _WARNING]
 
 
@@ -94,7 +94,7 @@ def test_a_host_starved_project_is_inactive_here_so_it_warns(monkeypatch):
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=[])
     ctx = _ctx(scopes={"acme": verdict("acme", universe=())})
-    assert check_dependencies(ctx) == [_WARNING]
+    assert check_dependencies(ctx=ctx) == [_WARNING]
 
 
 def test_a_lab_excluded_project_warns(monkeypatch):
@@ -102,7 +102,7 @@ def test_a_lab_excluded_project_warns(monkeypatch):
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=[])
     ctx = _ctx(scopes={"acme": verdict("acme", excluded=True)})
-    assert check_dependencies(ctx) == [_WARNING]
+    assert check_dependencies(ctx=ctx) == [_WARNING]
 
 
 def test_an_inactive_project_does_not_suppress_an_active_one(monkeypatch):
@@ -111,6 +111,6 @@ def test_an_inactive_project_does_not_suppress_an_active_one(monkeypatch):
     other = Unsatisfied(project="beta", requirement="y>=2", found="none")
     _preflight(monkeypatch, unsatisfied=[_BAD, other], warnings=[])
     with pytest.raises(DependencyRefusedError) as exc:
-        check_dependencies(_ctx(exclude=("acme",)))
+        check_dependencies(ctx=_ctx(exclude=("acme",)))
     assert exc.value.unsatisfied == [other]
     assert exc.value.warnings == [_WARNING]

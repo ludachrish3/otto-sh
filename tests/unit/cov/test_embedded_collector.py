@@ -39,7 +39,9 @@ def _mock_embedded_host(host_id: str, console_output: str, *, products=None) -> 
     host.id = host_id
     host.loader = LlextHexLoader()
     host.exec = AsyncMock(
-        return_value=CommandResult(Status.Success, value=console_output, command="dump", retcode=0),
+        return_value=CommandResult(
+            status=Status.Success, value=console_output, command="dump", retcode=0
+        ),
     )
     host.products = [_llext_product()] if products is None else products
     return host
@@ -328,7 +330,9 @@ async def test_a_failed_dump_is_that_products_failure(tmp_path, fake_config_modu
     """A dump command that fails is recorded against its product, not only logged."""
     host = _mock_embedded_host("board", "")
     host.exec = AsyncMock(
-        return_value=CommandResult(Status.Failed, value="no such fn", command="dump", retcode=1)
+        return_value=CommandResult(
+            status=Status.Failed, value="no such fn", command="dump", retcode=1
+        )
     )
     fake_config_module(host)
     failures: dict = {}
@@ -344,7 +348,7 @@ async def test_a_raising_dump_fails_its_product_and_the_next_is_still_dumped(
     tmp_path, fake_config_module
 ):
     console = (FIXTURES / "cov_dump_console.txt").read_text()
-    ok = CommandResult(Status.Success, value=console, command="dump", retcode=0)
+    ok = CommandResult(status=Status.Success, value=console, command="dump", retcode=0)
     host = _mock_embedded_host(
         "board", "", products=[_llext_product("first"), _llext_product("second")]
     )

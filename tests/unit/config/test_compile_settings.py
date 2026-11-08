@@ -34,7 +34,7 @@ def test_a_typo_in_an_os_profile_default_is_checked_after_init(tmp_path: Path) -
     with pytest.raises(
         ValueError, match=r"\[os_profiles\.acme-os\] in project .*unknown default field"
     ):
-        check_data_profiles([Project(root=tmp_path)])
+        check_data_profiles(projects=[Project(root=tmp_path)])
 
 
 def test_validating_registers_no_os_profile(tmp_path: Path) -> None:

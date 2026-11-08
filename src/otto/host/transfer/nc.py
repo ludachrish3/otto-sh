@@ -428,7 +428,7 @@ def _nc_get_stat_verdict(src: Path, stat_result: CommandResult) -> Result:
 
     def _could_not_stat(detail: str) -> Result:
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=(
                 f"nc get of {src}: could not stat the remote file "
                 f"({_NC_GET_STAT_FORMAT} answered {detail}); a size is "
@@ -447,13 +447,13 @@ def _nc_get_stat_verdict(src: Path, stat_result: CommandResult) -> Result:
         return _could_not_stat(repr(answer))
     if file_type not in _NC_GETTABLE_FILE_TYPES:
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=(
                 f"nc get of {src}: not a regular file ({file_type}); the nc "
                 f"backend transfers regular files only -- use the shell backend"
             ),
         )
-    return Result(Status.Success, value=int(size))
+    return Result(status=Status.Success, value=int(size))
 
 
 @final
@@ -757,8 +757,8 @@ class NcFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._get_files_nc(
@@ -770,8 +770,8 @@ class NcFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._put_files_nc(
@@ -1148,19 +1148,19 @@ class NcFileTransfer(UnixFileTransfer):
         actual_output = verify.value.strip()
         if actual_output == "MISSING":
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=f"nc transfer to {dst}: destination file missing after listen_task exit",
             )
         try:
             actual = int(actual_output)
         except ValueError:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=f"nc transfer to {dst}: stat returned unparseable output {actual_output!r}",
             )
         if actual != expected:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=f"nc transfer to {dst}: expected {expected} bytes, got {actual}",
             )
         return None
@@ -1248,7 +1248,7 @@ class NcFileTransfer(UnixFileTransfer):
             await self._drain_stall_bounded(writer)
         except (asyncio.TimeoutError, TimeoutError):
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     f"nc put to {dst}: no send progress for {_NC_STALL_TIMEOUT}s "
                     f"with {bytes_done} bytes written — abandoning this attempt"
@@ -1360,7 +1360,7 @@ class NcFileTransfer(UnixFileTransfer):
                     if bytes_done < total:
                         done.set_result(
                             Result(
-                                Status.Error,
+                                status=Status.Error,
                                 msg=(
                                     f"nc get of {src}: short read -- remote reports {total} "
                                     f"bytes, connection closed after {bytes_done}"
@@ -1368,7 +1368,7 @@ class NcFileTransfer(UnixFileTransfer):
                             )
                         )
                         return
-                    done.set_result(Result(Status.Success, value=dst))
+                    done.set_result(Result(status=Status.Success, value=dst))
                 except (asyncio.TimeoutError, TimeoutError):
                     # EXPLICITLY, and above the generic arm below: `str()` of a
                     # TimeoutError is the empty string, so the generic arm
@@ -1379,7 +1379,7 @@ class NcFileTransfer(UnixFileTransfer):
                         writer.close()
                     done.set_result(
                         Result(
-                            Status.Error,
+                            status=Status.Error,
                             msg=(
                                 f"nc get of {src}: no data for {_NC_STALL_TIMEOUT}s "
                                 f"with {bytes_done} bytes received"
@@ -1401,7 +1401,7 @@ class NcFileTransfer(UnixFileTransfer):
                     # close exists to prevent.
                     with suppress(Exception):
                         writer.close()
-                    done.set_result(Result(Status.Error, msg=str(e)))
+                    done.set_result(Result(status=Status.Error, msg=str(e)))
 
             # Port 0 lets the OS assign a free port — no collisions when
             # multiple hosts transfer concurrently.  asyncio.start_server
@@ -1430,7 +1430,7 @@ class NcFileTransfer(UnixFileTransfer):
                         return
                     exc = task.exception()
                     if exc is not None:
-                        done.set_result(Result(Status.Error, msg=str(exc)))
+                        done.set_result(Result(status=Status.Error, msg=str(exc)))
 
                 send_task.add_done_callback(_on_send_fail)
                 result = await done
@@ -1440,7 +1440,7 @@ class NcFileTransfer(UnixFileTransfer):
                 server.close()
                 await server.wait_closed()
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     async def _get_files_nc_tunneled(
         self,
@@ -1555,18 +1555,20 @@ class NcFileTransfer(UnixFileTransfer):
                 try:
                     await self._wait_for_remote_listener(port)
                 except ConnectionError as not_ours:
-                    return Result(Status.Error, msg=f"nc get of {src}: {not_ours}")
+                    return Result(status=Status.Error, msg=f"nc get of {src}: {not_ours}")
                 if listen_task.done():
-                    return Result(Status.Error, msg=_listener_fed_by_another("get of", src, port))
+                    return Result(
+                        status=Status.Error, msg=_listener_fed_by_another("get of", src, port)
+                    )
 
                 try:
                     local_port = await asyncio.wait_for(
-                        self._connections.forward_port(port),
+                        self._connections.forward_port(dest_port=port),
                         timeout=_NC_FORWARD_SETUP_TIMEOUT,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"nc get of {src}: SSH port-forward setup for remote "
                             f"port {port} stalled beyond {_NC_FORWARD_SETUP_TIMEOUT}s"
@@ -1581,7 +1583,7 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 except ConnectionError:
                     return Result(
-                        Status.Error, msg=f"nc listener on localhost:{local_port} not ready"
+                        status=Status.Error, msg=f"nc listener on localhost:{local_port} not ready"
                     )
 
                 bytes_done = 0
@@ -1610,7 +1612,7 @@ class NcFileTransfer(UnixFileTransfer):
                                 handler(str(src), str(dst), bytes_done, total)
                 except (asyncio.TimeoutError, TimeoutError):
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"nc get of {src}: no data for {_NC_STALL_TIMEOUT}s "
                             f"with {bytes_done} bytes received — abandoning this "
@@ -1641,7 +1643,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # Success over a partial file.
                 if bytes_done < total:
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"nc get of {src}: short read -- remote reports {total} "
                             f"bytes, connection closed after {bytes_done}"
@@ -1661,14 +1663,14 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"nc listener on port {port} did not exit within "
                             f"{self._nc_options.listener_timeout}s of transfer end "
                             f"(orphaned listener — likely a remote port collision)"
                         ),
                     )
-                return Result(Status.Success, value=dst)
+                return Result(status=Status.Success, value=dst)
             except asyncio.CancelledError:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the ConnectionError / timeout / success
@@ -1722,7 +1724,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # transfer concurrently on distinct ports, so without this each
                 # one strands a listening socket until the host closes. After
                 # the reap, which needs the forward to reach the listener.
-                self._connections.unforward_port(port)
+                self._connections.unforward_port(dest_port=port)
                 self._release_port(port)
 
         async def _get_one(src: Path) -> Result:
@@ -1737,7 +1739,7 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     async def _reap_nc_listener(self, port: int) -> None:
         """Best-effort: make a lingering remote ``nc -l`` exit immediately.
@@ -1772,7 +1774,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # a listener behind a wedged hop is unreachable by definition,
                 # and the remote-side hard cap is what ends it.
                 target_port = await asyncio.wait_for(
-                    self._connections.forward_port(port),
+                    self._connections.forward_port(dest_port=port),
                     timeout=_NC_FORWARD_SETUP_TIMEOUT,
                 )
             except Exception:  # noqa: BLE001 — port-forward setup failed or stalled; nothing to reap, silently return
@@ -1901,18 +1903,20 @@ class NcFileTransfer(UnixFileTransfer):
                 try:
                     await self._wait_for_remote_listener(port)
                 except ConnectionError as not_ours:
-                    return Result(Status.Error, msg=f"nc put to {dst}: {not_ours}")
+                    return Result(status=Status.Error, msg=f"nc put to {dst}: {not_ours}")
                 if listen_task.done():
-                    return Result(Status.Error, msg=_listener_fed_by_another("put to", dst, port))
+                    return Result(
+                        status=Status.Error, msg=_listener_fed_by_another("put to", dst, port)
+                    )
                 if self._connections.has_tunnel:
                     try:
                         local_port = await asyncio.wait_for(
-                            self._connections.forward_port(port),
+                            self._connections.forward_port(dest_port=port),
                             timeout=_NC_FORWARD_SETUP_TIMEOUT,
                         )
                     except (asyncio.TimeoutError, TimeoutError):
                         return Result(
-                            Status.Error,
+                            status=Status.Error,
                             msg=(
                                 f"nc put to {dst}: SSH port-forward setup for remote "
                                 f"port {port} stalled beyond {_NC_FORWARD_SETUP_TIMEOUT}s"
@@ -1939,7 +1943,8 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 except ConnectionError:
                     return Result(
-                        Status.Error, msg=f"nc listener on {connect_host}:{connect_port} not ready"
+                        status=Status.Error,
+                        msg=f"nc listener on {connect_host}:{connect_port} not ready",
                     )
 
                 total = src.stat().st_size
@@ -1964,7 +1969,7 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"nc listener on port {port} did not exit within "
                             f"{self._nc_options.listener_timeout}s of transfer end "
@@ -2017,7 +2022,7 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 raise
             else:
-                return Result(Status.Success, value=dst)
+                return Result(status=Status.Success, value=dst)
             finally:
                 # Reap here, not per-branch. The ten error branches that used to
                 # be patched individually were found by grepping
@@ -2038,7 +2043,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # transfer concurrently on distinct ports, so without this each
                 # one strands a listening socket until the host closes. After
                 # the reap, which needs the forward to reach the listener.
-                self._connections.unforward_port(port)
+                self._connections.unforward_port(dest_port=port)
                 self._release_port(port)
 
         async def _put_one(src: Path) -> Result:
@@ -2053,7 +2058,9 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        per_file = await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        per_file = await self.dispatch_per_file(
+            src_files, transfer_one=_put_one, concurrent=concurrent
+        )
         if all(r.is_ok for r in per_file.values()):
             _logger.debug("Finished nc transfers")
         return per_file

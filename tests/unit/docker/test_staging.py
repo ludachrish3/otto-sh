@@ -39,7 +39,7 @@ from otto.utils import Status
 def _parent() -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -49,7 +49,7 @@ def test_every_staging_path_is_under_the_logins_private_root(tmp_path):
     """One root, named for the parent's login, under every builder: nothing at /tmp/otto-docker."""
     alice = UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="alice", password="pw")],
         docker_capable=True,
     )
@@ -80,8 +80,8 @@ def test_every_staging_path_is_under_the_logins_private_root(tmp_path):
 @pytest.mark.asyncio
 async def test_stage_compose_files_stages_under_the_private_root(tmp_path):
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
 
     (staged,) = await stage_compose_files(parent, "proj", _compose(tmp_path))
 
@@ -89,11 +89,11 @@ async def test_stage_compose_files_stages_under_the_private_root(tmp_path):
 
 
 def _fail(out: str = "denied") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command="", retcode=1)
 
 
 def _timed_out() -> CommandResult:
-    return CommandResult(Status.Failed, value="", command="", retcode=-1, timed_out=True)
+    return CommandResult(status=Status.Failed, value="", command="", retcode=-1, timed_out=True)
 
 
 def _compose(tmp_path: Path) -> list[DockerCompose]:
@@ -123,8 +123,8 @@ async def test_a_timed_out_prepare_is_an_unreachable_host(tmp_path):
 async def test_a_failed_put_is_a_command_failure(tmp_path):
     """`put` returns a bare Result — there is no timed_out here to split on."""
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Error, msg="no space left"))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Error, msg="no space left"))  # type: ignore[method-assign]
     with pytest.raises(HostCommandError, match="failed to stage compose file"):
         await stage_compose_files(parent, "proj", _compose(tmp_path))
 
@@ -133,8 +133,8 @@ async def test_a_failed_put_is_a_command_failure(tmp_path):
 async def test_stage_compose_files_warns_about_a_relative_bind_source(tmp_path, caplog):
     """The call site actually reads the authored file and warns -- not just the helper."""
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
     path = tmp_path / "compose.yml"
     path.write_text("services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n")
     composes = [DockerCompose(path=path, services=["api"])]
@@ -155,8 +155,8 @@ async def test_stage_compose_files_warns_with_index_0s_directory_for_the_second_
     source must still name `compose/0/`, not `compose/1/`, or it points a
     reader at a directory docker will never bind."""
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
     first = tmp_path / "first.yml"
     first.write_text("services:\n  api:\n    image: x\n")
     second = tmp_path / "second.yml"
@@ -178,8 +178,8 @@ async def test_stage_compose_files_warn_false_emits_nothing(tmp_path, caplog):
     teardown, by which point staging's own `rm -rf` has already wiped the
     directory the advisory would name -- `warn=False` must suppress it."""
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
     path = tmp_path / "compose.yml"
     path.write_text("services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n")
     composes = [DockerCompose(path=path, services=["api"])]
@@ -197,8 +197,8 @@ async def test_stage_compose_files_warn_false_emits_nothing(tmp_path, caplog):
 async def test_stage_compose_files_reads_nothing_useful_on_an_unreadable_file(tmp_path, caplog):
     """The OSError guard swallows a read failure -- `put` below is still the refusal."""
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Error, msg="no such file"))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Error, msg="no such file"))  # type: ignore[method-assign]
     path = tmp_path / "missing.yml"  # never written -- read_text() raises OSError
     composes = [DockerCompose(path=path, services=["api"])]
 
@@ -220,8 +220,8 @@ async def test_stage_compose_files_reads_nothing_useful_on_non_utf8_bytes(tmp_pa
     text), and no warning is produced.
     """
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
     path = tmp_path / "latin1.yml"
     path.write_bytes(b"services:\n  api: {}\n  # caf\xe9\n")  # \xe9 alone is not valid UTF-8
 
@@ -241,8 +241,8 @@ async def test_stage_compose_files_proceeds_on_unparseable_compose_content(tmp_p
     This drives genuinely unparseable text through the real call site.
     """
     parent = _parent()
-    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+    parent.exec = AsyncMock(return_value=CommandResult(status=Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success))  # type: ignore[method-assign]
     path = tmp_path / "bad.yml"
     path.write_text("\tnot: [valid")
     composes = [DockerCompose(path=path, services=["api"])]

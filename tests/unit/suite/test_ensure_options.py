@@ -50,13 +50,13 @@ def test_a_test_flag_steers_the_install_and_a_run_only_flag_takes_its_default(
     # An enclosing `otto run ... --variant lab` bound its own flags first; the
     # test run then binds what `otto test --lab-env prod` parsed. The run-only
     # `variant` must NOT reach the install body from the earlier binding.
-    get_context().bind_verb_options("run", {"variant": "lab"})
-    get_context().bind_verb_options("test", {"lab_env": "prod"})
+    get_context().bind_verb_options(verb="run", kwargs={"variant": "lab"})
+    get_context().bind_verb_options(verb="test", kwargs={"lab_env": "prod"})
     built: list[WidgetInstall] = []
 
-    async def fake_ensure_installed(source):
-        built.append(source.build(WidgetInstall))
-        return Result(Status.Success)
+    async def fake_ensure_installed(*, opts):
+        built.append(opts.build(WidgetInstall))
+        return Result(status=Status.Success)
 
     monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
@@ -69,9 +69,9 @@ def test_nothing_bound_converges_from_defaults(pytester, otto_plugins, monkeypat
     """A context that never dispatched a verb still converges: every body takes its defaults."""
     built: list[WidgetInstall] = []
 
-    async def fake_ensure_installed(source):
-        built.append(source.build(WidgetInstall))
-        return Result(Status.Success)
+    async def fake_ensure_installed(*, opts):
+        built.append(opts.build(WidgetInstall))
+        return Result(status=Status.Success)
 
     monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
@@ -97,13 +97,13 @@ def test_the_getting_started_variant_reaches_the_ensured_install(
     # class, so it is stood in for by the identity.
     monkeypatch.setattr(actions_module, "register_project_actions", lambda cls: cls)
     actions = importlib.import_module("gs_example.actions")
-    get_context().bind_verb_options("test", {"variant": "lab"})
+    get_context().bind_verb_options(verb="test", kwargs={"variant": "lab"})
     assert get_context().options(actions.BedVariant).variant == "lab"
     built = []
 
-    async def fake_ensure_installed(source):
-        built.append(source.build(actions.BedInstall))
-        return Result(Status.Success)
+    async def fake_ensure_installed(*, opts):
+        built.append(opts.build(actions.BedInstall))
+        return Result(status=Status.Success)
 
     monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)

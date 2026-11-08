@@ -184,7 +184,7 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
 3. {func}`~otto.session.check_projects` refuses if an active project failed to
    load, or a project an active project requires did, and returns the load
    errors of the other inactive projects, which `open_context` logs.
-4. For the field variant, call `otto.context.set_variant("field")` before
+4. For the field variant, call `otto.context.set_variant(value="field")` before
    building any context, and keep the binding it returns. The lab build picks each product's
    {ref}`variant <product-variants>` entry, and providers read the variant
    while the work runs, so set it before step 5 and reset it after step 10.
@@ -215,7 +215,7 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
    cleanup boundary holds the loop and closes those hosts itself
    ({doc}`../setup/host-scopes` has the rest). Then
    `reset_context(binding)` restores the prior state, and
-   `otto.context.reset_variant(variant_binding)` restores the prior variant
+   `otto.context.reset_variant(token=variant_binding)` restores the prior variant
    if you set one.
 
 The smallest version keeps steps 1, 5, 7 and 10:
@@ -227,7 +227,7 @@ from otto.bootstrap import bootstrap
 from otto.context import OttoContext, RunPolicy, reset_context, set_context
 from otto.session import build_lab
 
-lab = build_lab(bootstrap().projects, ["mylab"])
+lab = build_lab(bootstrap().projects, labs=["mylab"])
 ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=False))
 token = set_context(ctx)
 try:
@@ -332,12 +332,12 @@ network, so this runs as-is:
 >>> from otto.context import OttoContext, set_context, reset_context
 >>> from otto.lab import all_hosts, get_host
 >>> hosts = [create_host_from_dict(spec, element=element) for spec, element in [
-...     ({"ip": "10.0.0.11", "creds": [{"login": "admin", "password": "x"}]}, Element("test1")),
-...     ({"ip": "10.0.0.12", "creds": [{"login": "admin", "password": "x"}]}, Element("test2")),
+...     ({"ip": "10.0.0.11", "creds": [{"login": "admin", "password": "x"}]}, Element(name="test1")),
+...     ({"ip": "10.0.0.12", "creds": [{"login": "admin", "password": "x"}]}, Element(name="test2")),
 ... ]]
 >>> lab = Lab(name="unix", hosts={h.id: h for h in hosts})
 >>> token = set_context(OttoContext(lab=lab))
->>> [h.element.name for h in all_hosts(re.compile("test2"))]
+>>> [h.element.name for h in all_hosts(pattern=re.compile("test2"))]
 ['test2']
 >>> get_host("test1").element.name
 'test1'
@@ -404,7 +404,7 @@ from acme_instructions import DeviceTestOptions  # registered for "test"
 bootstrap()  # or: async with otto.open_context(lab="mylab") as ctx: ...
 
 result = otto.run_tests(
-    ["TestDevice", "test_login"],
+    names=["TestDevice", "test_login"],
     run_options=otto.RunOptions(markers="not integration", cov=True),
     options=[DeviceTestOptions(firmware="2.1")],
 )
@@ -543,7 +543,7 @@ result = await asyncio.to_thread(otto.run_tests, ["TestDevice"])
 from otto.suite import NoTestsMatchedError, UnknownSelectionError, run_tests
 
 try:
-    result = run_tests(["test_login"])
+    result = run_tests(names=["test_login"])
 except UnknownSelectionError as e:  # a typo: the message carries did-you-mean
     raise SystemExit(f"otto: {e}")
 except NoTestsMatchedError:  # nothing to run at all
@@ -597,7 +597,7 @@ async def main():
         # report_dir raises DestinationError.
         inputs = resolve_report_inputs(get_projects())
         store = await run_coverage_report(
-            [cov_dir], Path("./coverage-run/report"), inputs, overwrite=True
+            [cov_dir], output_dir=Path("./coverage-run/report"), inputs=inputs, overwrite=True
         )
         if store is not None:
             print(f"{store.overall_pct():.1f}% overall ({store.file_count()} files)")

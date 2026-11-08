@@ -101,13 +101,13 @@ whole-link impairment (`tc` cannot know what a port belongs to).
 ```python
 from otto.link import ImpairmentParams, impair_link, read_link_states, repair_link
 
-report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+report = await impair_link(lab, ident="edge", params=ImpairmentParams(delay_ms=50.0))
 for applied in report.applied:
     print(applied.placement.host_id, applied.placement.netdev, applied.params.describe())
 
 states = await read_link_states(lab)  # every link's current impairment, list's feed
 
-await repair_link(lab, "edge")
+await repair_link(lab, ident="edge")
 ```
 
 `selector` is the same optional keyword on both mutators — pass a `Selector`
@@ -120,17 +120,22 @@ and `side` extend a selector to a port range and/or one port side (`dst` or
 from otto.link import Selector, impair_link, repair_link
 
 report = await impair_link(
-    lab, "edge", ImpairmentParams(delay_ms=200.0), selector=Selector(5201, "tcp")
+    lab,
+    ident="edge",
+    params=ImpairmentParams(delay_ms=200.0),
+    selector=Selector(port=5201, proto="tcp"),
 )
-await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+await repair_link(lab, ident="edge", selector=Selector(port=5201, proto="tcp"))
 
 report = await impair_link(
     lab,
-    "edge",
-    ImpairmentParams(delay_ms=50.0),
-    selector=Selector(5000, "tcp", end=5010, side="dst"),
+    ident="edge",
+    params=ImpairmentParams(delay_ms=50.0),
+    selector=Selector(port=5000, proto="tcp", end=5010, side="dst"),
 )
-await repair_link(lab, "edge", selector=Selector(5000, "tcp", end=5010, side="dst"))
+await repair_link(
+    lab, ident="edge", selector=Selector(port=5000, proto="tcp", end=5010, side="dst")
+)
 ```
 
 An overlapping selector that doesn't nest raises `ValueError` with exactly
@@ -250,7 +255,9 @@ from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 @instruction()
 async def add_multi_hop_tunnel():
     lab = get_lab()
-    added = await add_tunnel(lab, [("test1", None), ("test3", None), ("test2", None)], port=6001)
+    added = await add_tunnel(
+        lab, hosts=[("test1", None), ("test3", None), ("test2", None)], port=6001
+    )
     live = await discover_tunnels(lab)  # every tunnel found right now
-    report = await remove_tunnel(lab, added.tunnel.id)
+    report = await remove_tunnel(lab, tunnel_id=added.tunnel.id)
 ```

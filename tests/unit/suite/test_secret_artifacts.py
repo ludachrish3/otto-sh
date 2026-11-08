@@ -56,7 +56,7 @@ def _dut(ctx, accepts_var, outputs=None):
     # traceback renders: *accepts_var* names the variable holding it.
     host = _Dut(
         ip="127.0.0.1",
-        element=Element("dut"),
+        element=Element(name="dut"),
         creds=ctx.lab.hosts["host1"].creds,
         log=LogMode.NORMAL,
     )
@@ -70,7 +70,10 @@ async def test_elevated_run_then_a_failing_expect(ctx, expect):
     result = (await host.run("id -u", sudo=True)).only
     cred = host.creds[0]
     password = cred.password
-    expect(result.retcode == 7 and ctx is None and cred is None and password is None, "elevated")
+    expect(
+        result.retcode == 7 and ctx is None and cred is None and password is None,
+        msg="elevated",
+    )
 
 
 async def test_a_refused_elevation(ctx):

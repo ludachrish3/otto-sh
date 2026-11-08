@@ -31,7 +31,7 @@ async def test_write_unchunked_by_default() -> None:
     """Default (write_chunk_size=0) sends the whole payload in one write."""
     w = _FakeWriter()
     sess = TelnetSession(reader=None, writer=w, client=stream_client(None, w))
-    await sess.write_transport("x" * 200)
+    await sess.write_transport(data="x" * 200)
     assert w.writes == [b"x" * 200]
 
 
@@ -46,7 +46,7 @@ async def test_write_splits_into_chunks() -> None:
         write_chunk_size=64,
         write_chunk_delay=0.0,
     )
-    await sess.write_transport("x" * 200)
+    await sess.write_transport(data="x" * 200)
     assert [len(c) for c in w.writes] == [64, 64, 64, 8]
     assert b"".join(w.writes) == b"x" * 200
 
@@ -62,7 +62,7 @@ async def test_write_smaller_than_chunk_is_single_write() -> None:
         write_chunk_size=64,
         write_chunk_delay=0.0,
     )
-    await sess.write_transport("abc")
+    await sess.write_transport(data="abc")
     assert w.writes == [b"abc"]
 
 
@@ -79,5 +79,5 @@ async def test_chunking_preserves_crlf_to_cr_substitution() -> None:
         write_chunk_size=4,
         write_chunk_delay=0.0,
     )
-    await sess.write_transport("ab\r\ncd\nef")
+    await sess.write_transport(data="ab\r\ncd\nef")
     assert b"".join(w.writes) == b"ab\rcd\ref"

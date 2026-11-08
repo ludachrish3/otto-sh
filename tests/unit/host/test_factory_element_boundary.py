@@ -17,7 +17,7 @@ def test_element_is_required_by_keyword():
 
 
 def test_built_host_shares_the_passed_instance():
-    element = Element("Chassis", id=9, metadata={"row": 3}, resources=frozenset({"chassis-9"}))
+    element = Element(name="Chassis", id=9, metadata={"row": 3}, resources=frozenset({"chassis-9"}))
     host = create_host_from_dict(dict(ENTRY), element=element)
     assert host.element is element
     assert host.id == "chassis-cpu-2"
@@ -25,9 +25,9 @@ def test_built_host_shares_the_passed_instance():
 
 
 def test_host_identity_matches_the_built_id():
-    element = Element("Chassis")
+    element = Element(name="Chassis")
     assert (
-        host_identity(dict(ENTRY), element).id
+        host_identity(dict(ENTRY), element=element).id
         == create_host_from_dict(dict(ENTRY), element=element).id
     )
 
@@ -43,7 +43,7 @@ def test_host_spec_refuses_element_keys(key):
 
 def test_validate_host_dict_requires_the_element():
     with pytest.raises(TypeError, match="element"):
-        validate_host_dict(dict(ENTRY))  # ty: ignore[missing-argument]
+        validate_host_dict(host_data=dict(ENTRY))  # ty: ignore[missing-argument]
 
 
 def test_flatten_is_gone():
@@ -56,7 +56,7 @@ def test_resolve_host_entry_cross_checks_the_element_id():
     from tests.unit.inventory.test_resolve import FakeInventory  # the suite's existing double
 
     inv = FakeInventory({"k": {"ip": "10.0.0.9", "element_id": 2}}, supplies={"ip", "element_id"})
-    ok = resolve_host_entry({"inventory": "k"}, inv, Element("dut", id=2))
+    ok = resolve_host_entry({"inventory": "k"}, inventory=inv, element=Element(name="dut", id=2))
     assert ok.host_data["ip"] == "10.0.0.9"
     with pytest.raises(Exception, match="element_id disagrees"):
-        resolve_host_entry({"inventory": "k"}, inv, Element("dut", id=1))
+        resolve_host_entry({"inventory": "k"}, inventory=inv, element=Element(name="dut", id=1))

@@ -65,7 +65,7 @@ def test_credspec_dump_never_shows_password():
 def test_host_repr_never_shows_password():
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password=PLANTED)],
         log=LogMode.QUIET,
     )

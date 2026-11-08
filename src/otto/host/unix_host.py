@@ -228,9 +228,9 @@ def shutdown_command(userland: "Userland", *, host: str = "") -> str:
             have neither spelling and the ``shutdown-command`` record is
             ``measured-broken``. Nothing was attempted.
     """
-    if userland.has_applet("shutdown") == APPLET_PRESENT:
+    if userland.has_applet(applet="shutdown") == APPLET_PRESENT:
         return GNU_SHUTDOWN
-    if userland.has_applet("poweroff") == APPLET_PRESENT:
+    if userland.has_applet(applet="poweroff") == APPLET_PRESENT:
         return BUSYBOX_POWEROFF
     if _measured_absent(userland, "shutdown") and _measured_absent(userland, "poweroff"):
         refuse_if_gapped("shutdown-command", host=host, attempted=GNU_SHUTDOWN)
@@ -248,8 +248,8 @@ def _measured_absent(userland: "Userland", applet: str) -> bool:
     rather than becoming a condition that quietly never fires.
     """
     return (
-        userland.is_settled(applet_capability(applet))
-        and userland.has_applet(applet) == APPLET_ABSENT
+        userland.is_settled(name=applet_capability(applet))
+        and userland.has_applet(applet=applet) == APPLET_ABSENT
     )
 
 
@@ -282,7 +282,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    creds: list[Cred] = field(default_factory=list, kw_only=False)
+    creds: list[Cred] = field(default_factory=list)
 
     os_name: str | None = "Linux"
 
@@ -446,7 +446,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             )
         return self._userland_cache
 
-    def cred(self, login: str) -> Cred:
+    def cred(self, *, login: str) -> Cred:
         """Return *login*'s cred as the active term sees it; loud lookup listing known logins."""
         found = cred_for(self.creds, login, self.term)
         if found is None:
@@ -479,16 +479,16 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # Lab JSON declares the frame dialect by name; coerce a string to the
         # registered instance. None is left as-is (SessionManager applies bash).
         if isinstance(self.command_frame, str):
-            self.command_frame = build_command_frame(self.command_frame)
+            self.command_frame = build_command_frame(type_name=self.command_frame)
 
         if isinstance(self.landing_frame, str):
-            self.landing_frame = build_command_frame(self.landing_frame)
+            self.landing_frame = build_command_frame(type_name=self.landing_frame)
         if self.session_setup is not None:
             from .session_setup import session_setup_from_spec  # off the startup graph on purpose
 
             self.session_setup = session_setup_from_spec(self.session_setup)
 
-        self.power_control = power_control_from_spec(self.power_control, host_id=self.id)
+        self.power_control = power_control_from_spec(value=self.power_control, host_id=self.id)
 
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
@@ -584,7 +584,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             console_endpoint=self.console_endpoint if self.term == "console" else None,
             host_id=self.id,
         )
-        return build_term_backend(self.term, term_ctx)
+        return build_term_backend(name=self.term, ctx=term_ctx)
 
     def _build_file_transfer(self, user: "str | None" = None) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the registry seam.
@@ -622,8 +622,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return cast(
             "UnixFileTransfer",
             build_transfer_backend(
-                self.transfer,
-                TransferContext(
+                name=self.transfer,
+                ctx=TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
                     connections=connections,
@@ -740,7 +740,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, *, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -795,7 +795,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # once a connection is open (see SessionManager._readiness_deadline).
         bridge = self._bridge_setup()
         target = user if user is not None else conns.login_target
-        direct, hops = resolve_chain(self.creds, target, self.term)
+        direct, hops = resolve_chain(self.creds, target_login=target, protocol=self.term)
 
         if self.term == "ssh":
             via_login, _ = conns.credentials
@@ -916,7 +916,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         hops: list[Cred] = []
         target_login = user if user is not None else conns.login_target
         if target_login:
-            direct, hops = resolve_chain(self.creds, target_login, self.term)
+            direct, hops = resolve_chain(self.creds, target_login=target_login, protocol=self.term)
             if direct.login != login_user:
                 raise LoginProxyError(
                     f"{self.name}: login is authenticated as {login_user!r}, but "
@@ -963,7 +963,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         opts = self._live_connections().console_options
         if not opts.login:
             return Result(
-                Status.Success,
+                status=Status.Success,
                 value=f"{self.name}: this console has no login step; nothing to reset",
             )
         await self.close()
@@ -975,7 +975,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         finally:
             with teardown_step(self.name, "console client close"):
                 await client.close()
-        return Result(Status.Success, value=self._reset_outcome(found))
+        return Result(status=Status.Success, value=self._reset_outcome(found))
 
     @override
     async def _exec_one(
@@ -1062,14 +1062,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             user is not None
             and self.term == "ssh"
             and not needs_shell
-            and self._live_connections().has_direct_cred(user)
+            and self._live_connections().has_direct_cred(user=user)
         ):
-            conn = await self._live_connections().ssh_as(user)
+            conn = await self._live_connections().ssh_as(user=user)
             return await self._live_session_mgr().exec_on(
-                conn, cmd, timeout=timeout, log=self._effective_log(log)
+                conn=conn, cmd=cmd, timeout=timeout, log=self._effective_log(log)
             )
         return await self._live_session_mgr().exec(
-            cmd,
+            cmd=cmd,
             timeout=timeout,
             log=self._effective_log(log),
             expects=expects,
@@ -1152,11 +1152,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         async with self._console_line():
             if user is None or user == mgr.current_user:
                 return await mgr.exec(
-                    cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                    cmd=cmd, timeout=timeout, log=self._effective_log(log), expects=expects
                 )
-            async with self.as_user(user):
+            async with self.as_user(user=user):
                 return await mgr.exec(
-                    cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                    cmd=cmd, timeout=timeout, log=self._effective_log(log), expects=expects
                 )
 
     ####################
@@ -1170,13 +1170,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         src_files: Annotated[
             list[Path] | Path,
             Arg(
-                variadic=True,
                 elem_type=Path,
                 help="Remote file(s) to download.",
                 remote_path="any",
             ),
         ],
         dest_dir: Path,
+        *,
         user: Annotated[
             str | None,
             Opt(
@@ -1218,7 +1218,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
             return await self._transfer_for(user).get_files(
-                src_files, dest_dir, show_progress, concurrent=concurrent
+                src_files=src_files,
+                dest_dir=dest_dir,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
 
     # TODO: Look into a way to batch a single list of files that goes to different hosts
@@ -1230,9 +1233,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def put(
         self,
         src_files: Annotated[
-            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+            list[Path] | Path, Arg(elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Annotated[Path, Arg(remote_path="dir")],
+        *,
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
@@ -1287,7 +1291,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
             return await self._transfer_for(user).put_files(
-                src_files, dest_dir, show_progress, mode, concurrent=concurrent
+                src_files=src_files,
+                dest_dir=dest_dir,
+                show_progress=show_progress,
+                mode=mode,
+                concurrent=concurrent,
             )
 
     ####################
@@ -1345,7 +1353,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``log=LogMode.QUIET`` keeps the (potentially long) module dump out of
         the console (still recorded in verbose.log).
 
-        The dry-run arm used to answer ``Result(Status.Skipped, value=[])``,
+        The dry-run arm used to answer ``Result(status=Status.Skipped, value=[])``,
         and that empty list was fabricated device data of the worst kind: a
         caller asking "is module X loaded?" was told **no** by a machine
         nobody contacted, and ``Skipped.is_ok`` is True so nothing downstream
@@ -1359,10 +1367,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         result = await self.exec("cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
             return Result(
-                Status.Error, value=[], msg=f"reading /proc/modules failed: {result.value.strip()}"
+                status=Status.Error,
+                value=[],
+                msg=f"reading /proc/modules failed: {result.value.strip()}",
             )
         mods = [line.split()[0] for line in result.value.splitlines() if line.strip()]
-        return Result(Status.Success, value=mods)
+        return Result(status=Status.Success, value=mods)
 
     async def login_home(self) -> Path:
         """Return the login user's home directory, discovered once and cached.
@@ -1413,6 +1423,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def load(
         self,
         file: Annotated[Path, Arg(help="Kernel module .ko to insert.")],
+        *,
         name: Annotated[str | None, Opt(help="Module name; defaults to the file stem.")] = None,
         params: Annotated[
             str, Opt(help="insmod parameters (`key=value` tokens), appended verbatim.")
@@ -1452,15 +1463,17 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         dest = dest_dir / file.name
         put_result = await self.put(file, dest_dir, show_progress=show_progress)
         if not put_result.is_ok:
-            return Result(put_result.status, msg=f"staging {file} failed: {put_result.msg}")
+            return Result(status=put_result.status, msg=f"staging {file} failed: {put_result.msg}")
         need_sudo = not self._acts_as_root()
         params = params.strip()
         extra = f" {params}" if params else ""
         result = await self.run(f"insmod {self._q(dest)}{extra}", sudo=need_sudo)
         await self.rm(dest, force=True)  # best-effort cleanup
         if result.status.is_ok:
-            return Result(Status.Success)
-        return Result(Status.Error, msg=f"insmod {resolved} failed: {result.only.value.strip()}")
+            return Result(status=Status.Success)
+        return Result(
+            status=Status.Error, msg=f"insmod {resolved} failed: {result.only.value.strip()}"
+        )
 
     @cli_exposed(
         success="Module unloaded.",
@@ -1486,12 +1499,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # fabricated empty list made a dry-run unload short-circuit to Success
         # without ever naming an `rmmod`.
         if not is_dry_run() and resolved not in (await self._loaded_modules()).value:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         need_sudo = not self._acts_as_root()
         result = await self.run(f"rmmod {self._q(resolved)}", sudo=need_sudo)
         if result.status.is_ok:
-            return Result(Status.Success)
-        return Result(Status.Error, msg=f"rmmod {resolved} failed: {result.only.value.strip()}")
+            return Result(status=Status.Success)
+        return Result(
+            status=Status.Error, msg=f"rmmod {resolved} failed: {result.only.value.strip()}"
+        )
 
     ####################
     #  Power / reboot
@@ -1534,7 +1549,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             raise
         except Exception as e:  # noqa: BLE001 — expected issue-race disconnect; the down-wait disambiguates
             logger.debug(f"{self.name}: connection dropped while issuing reboot ({e})")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     async def _confirm_recovered(self, deadline: float, poll_interval: float, /) -> bool:
@@ -1589,7 +1604,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``is_ok`` False. The status check below reads ``Status.Failed`` alone,
         so a declined round trip — ``Results.collect`` folds the single
         ``NotRunResult`` to ``NotRun`` — fell straight through to
-        ``Result(Status.Success)``: a FABRICATED POWER-OFF, and the worst place
+        ``Result(status=Status.Success)``: a FABRICATED POWER-OFF, and the worst place
         in the file for one, because ``shutdown`` has no wait behind it the way
         ``reboot(wait=True)`` does and nothing downstream would ever notice.
 
@@ -1638,7 +1653,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             raise
         except Exception as e:  # noqa: BLE001 — expected issue-race disconnect; see below
             logger.debug(f"{self.name}: connection dropped while issuing {command} ({e})")
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         # THE RESULT IS READ, WHICH `_soft_reboot` DOES NOT DO, and the
         # asymmetry is deliberate rather than shutdown being stricter than
         # reboot. Both tolerate the same race: issuing a power-off command
@@ -1659,10 +1674,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # and no second check at all. Nothing downstream would ever notice.
         if result.status is Status.Failed:
             return Result(
-                Status.Failed,
+                status=Status.Failed,
                 msg=(
                     f"{self.name}: {command!r} exited non-zero and the host is "
                     f"still running: {result.only.value.strip()}"
                 ),
             )
-        return Result(Status.Success)
+        return Result(status=Status.Success)

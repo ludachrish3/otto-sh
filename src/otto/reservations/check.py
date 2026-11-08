@@ -84,7 +84,7 @@ def _announce_expiry(resource: str, end: datetime, reference: datetime) -> None:
     )
 
 
-def announce_expiring(report: "ReservationReport", *, now: "datetime | None" = None) -> None:
+def announce_expiring(*, report: "ReservationReport", now: "datetime | None" = None) -> None:
     """Log the expiry nudge for each of *report*'s expiring bookings, once per process.
 
     Never queries a backend: *report* already holds the rows. Callers choose
@@ -144,7 +144,7 @@ def _hosts_in_play(run: "ActiveRun") -> set[str]:
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ReservationGate:
     """Per-invocation reservation gate: framework-free, callable from any Python caller.
 
@@ -179,7 +179,7 @@ class ReservationGate:
         run = require_run()
         return run.lab, (_hosts_in_play(run) if host_ids is None else host_ids)
 
-    def report(self, lab: "Lab", host_ids: "Iterable[str] | None" = None) -> "ReservationReport":
+    def report(self, lab: "Lab", *, host_ids: "Iterable[str] | None" = None) -> "ReservationReport":
         """Report what this gate's user needs from *lab* and holds.
 
         A status report ignores ``-R``: the backend is built now if the gate
@@ -199,10 +199,12 @@ class ReservationGate:
         backend = self._backend_for_report()
         if backend is None:
             raise RuntimeError("the gate has no backend and no backend_factory")
-        return build_report(lab, self.identity.username, backend, host_ids=host_ids)
+        return build_report(
+            lab=lab, username=self.identity.username, backend=backend, host_ids=host_ids
+        )
 
     def evaluate(
-        self, lab: "Lab | None" = None, host_ids: "Iterable[str] | None" = None
+        self, *, lab: "Lab | None" = None, host_ids: "Iterable[str] | None" = None
     ) -> ReservationGateResult:
         """Run the reservation check (or the skip path) and report the outcome.
 
@@ -238,7 +240,7 @@ class ReservationGate:
         if self.skip_check:
             lab, host_ids = self._lab_and_hosts(lab, host_ids)
             username = self.identity.username if self.identity is not None else "<unknown>"
-            needed = required_resources(lab, host_ids=host_ids)
+            needed = required_resources(lab=lab, host_ids=host_ids)
             warning = (
                 f"\N{WARNING SIGN}  Reservation check SKIPPED for user {username!r} "
                 f"on lab {lab.name!r}. Required resources: {sorted(needed)!r}"
@@ -257,14 +259,16 @@ class ReservationGate:
         lab, host_ids = self._lab_and_hosts(lab, host_ids)
         if self.identity is None:
             raise RuntimeError("identity must be resolved before evaluate() runs")
-        report = build_report(lab, self.identity.username, self.backend, host_ids=host_ids)
+        report = build_report(
+            lab=lab, username=self.identity.username, backend=self.backend, host_ids=host_ids
+        )
         if not report.covered:
             raise MissingReservationError.from_report(report)
         # After the verdict, so a refusal is never trailed by a nudge.
-        announce_expiring(report)
+        announce_expiring(report=report)
         return ReservationGateResult(checked=True, skipped=False, warning=None, report=report)
 
-    def check_hosts(self, lab: "Lab", hosts: "Iterable[object]") -> "ReservationReport | None":
+    def check_hosts(self, *, lab: "Lab", hosts: "Iterable[object]") -> "ReservationReport | None":
         """Require the OWN slots of the named hosts the fleet left out.
 
         Returns ``None`` when there is nothing to check. Needs an installed
@@ -325,14 +329,14 @@ class ReservationGate:
         if not any(_declares(host) for host in outside):
             return None
         report = build_report(
-            lab,
-            self.identity.username,
-            self.backend,
+            lab=lab,
+            username=self.identity.username,
+            backend=self.backend,
             host_ids={getattr(host, "id", "") for host in outside},
         )
         if not report.covered:
             raise MissingReservationError.from_report(report)
-        announce_expiring(report)
+        announce_expiring(report=report)
         return report
 
     def identity_report(self) -> "ReservationIdentity":
@@ -377,7 +381,7 @@ class ReservationConstructionError(ReservationBackendError, ValueError):
     """
 
 
-def active_reservations(backend: "ReservationBackend") -> "list[Reservation]":
+def active_reservations(*, backend: "ReservationBackend") -> "list[Reservation]":
     """Return *backend*'s cached active rows.
 
     The ``ReservationBackend`` Protocol deliberately declares only methods:
@@ -445,7 +449,7 @@ class ResourceOrigin:
 
 
 def required_resource_origins(
-    lab: "Lab", *, host_ids: "Iterable[str] | None" = None
+    *, lab: "Lab", host_ids: "Iterable[str] | None" = None
 ) -> list[ResourceOrigin]:
     """Every (resource, level, owner) the run needs, sorted by resource → level → owner.
 
@@ -479,13 +483,13 @@ def required_resource_origins(
     return sorted(origins, key=lambda o: (o.resource, _LEVEL_ORDER[o.level], o.owner))
 
 
-def required_resources(lab: "Lab", *, host_ids: "Iterable[str] | None" = None) -> set[str]:
+def required_resources(*, lab: "Lab", host_ids: "Iterable[str] | None" = None) -> set[str]:
     """Every resource identifier the run needs — derived from :func:`required_resource_origins`.
 
     ``host_ids`` selects the hosts in play (``None`` means every host in the
     lab); see :func:`required_resource_origins` for the exact rule.
     """
-    return {o.resource for o in required_resource_origins(lab, host_ids=host_ids)}
+    return {o.resource for o in required_resource_origins(lab=lab, host_ids=host_ids)}
 
 
 def _describe_holders(holders: "list[Reservation]") -> str:
@@ -535,10 +539,10 @@ def refusal_message(report: "ReservationReport") -> str:
 
 
 def check_reservations(
+    *,
     lab: "Lab",
     username: str,
     backend: "ReservationBackend",
-    *,
     host_ids: "Iterable[str] | None" = None,
 ) -> "ReservationReport":
     """Raise :class:`MissingReservationError` if ``username`` does not cover ``lab``.
@@ -572,7 +576,7 @@ def check_reservations(
     """
     from .report import build_report
 
-    report = build_report(lab, username, backend, host_ids=host_ids)
+    report = build_report(lab=lab, username=username, backend=backend, host_ids=host_ids)
     if not report.covered:
         raise MissingReservationError.from_report(report)
     return report

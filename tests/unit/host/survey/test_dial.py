@@ -200,8 +200,8 @@ class _Userland:
         self.timeout_style = timeout_style
         self._nc = nc
 
-    def has_applet(self, name):
-        assert name == "nc"
+    def has_applet(self, *, applet):
+        assert applet == "nc"
         return "present" if self._nc else "absent"
 
 

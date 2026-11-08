@@ -516,7 +516,7 @@ class TestCovReportSuccess:
         finally:
             reset_context(token)
         assert result.exit_code == 0, result.output
-        assert mock.call_args.args[1] == layout.cov_report_dir(run_dir)
+        assert mock.call_args.kwargs["output_dir"] == layout.cov_report_dir(run_dir)
         assert mock.call_args.kwargs["overwrite"] is False
 
     def test_overwrite_dir_flag_is_passed_through_to_run_coverage_report(
@@ -578,8 +578,8 @@ class TestCovReportSuccess:
             ],
         )
         assert result.exit_code == 0
-        args = mock.call_args.args
-        assert args[1] == Path("/tmp/my_report").resolve()
+        kwargs = mock.call_args.kwargs
+        assert kwargs["output_dir"] == Path("/tmp/my_report").resolve()
 
     def test_report_custom_options(self, cov_tree, mock_run_report):
         mock, _ = mock_run_report
@@ -844,7 +844,7 @@ class TestCovReportCollectionModel:
             )
 
         assert result.exit_code == 0
-        inputs = mock_run_report.call_args.args[2]
+        inputs = mock_run_report.call_args.kwargs["inputs"]
         assert inputs.project_root == project_root
         assert inputs.tier_configs == tiers
         assert mock_run_report.call_args.kwargs["tier_specs"] is None
@@ -872,7 +872,7 @@ class TestCovReportCollectionModel:
             )
 
         assert result.exit_code == 0
-        assert mock_run_report.call_args.args[2].ticket_spec is spec
+        assert mock_run_report.call_args.kwargs["inputs"].ticket_spec is spec
 
     def test_explicit_tier_flags_never_thread_ticket_spec(self, tmp_path, mock_run_report):
         """--tier bypasses settings resolution entirely, so ticket_spec stays None
@@ -900,7 +900,7 @@ class TestCovReportCollectionModel:
             )
 
         assert result.exit_code == 0
-        assert mock_run_report.call_args.args[2].ticket_spec is None
+        assert mock_run_report.call_args.kwargs["inputs"].ticket_spec is None
 
     def test_exclusion_rules_threaded_from_settings(self, tmp_path, mock_run_report):
         """[coverage.exclusions].rules reach run_coverage_report as compiled rules."""
@@ -925,7 +925,7 @@ class TestCovReportCollectionModel:
             )
 
         assert result.exit_code == 0
-        threaded = mock_run_report.call_args.args[2].exclusion_rules
+        threaded = mock_run_report.call_args.kwargs["inputs"].exclusion_rules
         assert [r.name for r in threaded] == ["MYPROJ_NO_COV"]
 
     def test_explicit_tier_flags_bypass_settings(self, tmp_path, mock_run_report):
@@ -953,7 +953,7 @@ class TestCovReportCollectionModel:
             )
 
         assert result.exit_code == 0
-        inputs = mock_run_report.call_args.args[2]
+        inputs = mock_run_report.call_args.kwargs["inputs"]
         assert inputs.project_root is None
         assert inputs.tier_configs is None
         assert mock_run_report.call_args.kwargs["tier_specs"] == [
@@ -972,8 +972,9 @@ class TestCovReportCollectionModel:
 
         assert result.exit_code == 0
         args = mock_run_report.call_args.args
+        kwargs = mock_run_report.call_args.kwargs
         assert args[0] == []  # no cov dirs
-        assert args[2].project_root == project_root
+        assert kwargs["inputs"].project_root == project_root
 
 
 # ── report command — collection-model failure modes & empty-report contract ──
@@ -1133,7 +1134,7 @@ class TestCovGetLeaf:
             )
         assert result.exit_code == 0, result.output
         get_mock.assert_awaited_once_with(
-            Path("/o"),
+            output_dir=Path("/o"),
             tier="manual",
             ticket="T-1",
             note="n",
@@ -1148,7 +1149,7 @@ class TestCovGetLeaf:
             result = runner.invoke(cov_app, ["get"])
         assert result.exit_code == 0, result.output
         get_mock.assert_awaited_once_with(
-            None,
+            output_dir=None,
             tier=None,
             ticket=None,
             note=None,
@@ -1218,7 +1219,7 @@ class TestCovGetLeaf:
     @pytest.mark.parametrize(
         ("error", "logged"),
         [
-            (EmptySelectionError("sensor", 3), "fullmatches none of the 3 host(s)"),
+            (EmptySelectionError("sensor", base_size=3), "fullmatches none of the 3 host(s)"),
             (NotAGitRepoError("not a git repository: /sut"), "not a git repository: /sut"),
             (
                 NoCoverageDataError("no .gcda counters retrieved from any product (b1:app)"),
@@ -1297,7 +1298,7 @@ class TestCovGetLeaf:
         assert "/o/cov/[t1]/app/capture.json" in _flat(result.output)
 
     def test_a_successful_clean_prints_each_reset_and_exits_0(self):
-        cleaned = CleanReport(hosts={"t1": {"app": Result(Status.Success)}})
+        cleaned = CleanReport(hosts={"t1": {"app": Result(status=Status.Success)}})
         report = _get_report(captures=[Path("c")], clean=cleaned)
         with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
             result = runner.invoke(cov_app, ["get", "--clean"])
@@ -1305,7 +1306,7 @@ class TestCovGetLeaf:
         assert "t1/app: counters cleared" in _flat(result.output)
 
     def test_a_failed_clean_prints_each_reset_and_exits_1(self):
-        bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+        bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
         report = _get_report(captures=[Path("c")], clean=bad)
         with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
             result = runner.invoke(cov_app, ["get", "--clean"])
@@ -1326,7 +1327,7 @@ class TestCovGetLeaf:
                 ProductCapture(ProductKey("t1", "lib"), None, "lcov --capture failed: boom"),
             ]
         )
-        bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+        bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
         err = CoverageCaptureError(outcome, clean=bad)
         with (
             patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)),
@@ -1346,7 +1347,7 @@ class TestCovGetLeaf:
         from otto.coverage.tree import ProductKey
 
         outcome = ProduceResult([ProductCapture(ProductKey("t1", "lib"), None, "boom")])
-        cleaned = CleanReport(hosts={"t1": {"app": Result(Status.Success)}})
+        cleaned = CleanReport(hosts={"t1": {"app": Result(status=Status.Success)}})
         err = CoverageCaptureError(outcome, clean=cleaned)
         with (
             patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)),
@@ -1376,7 +1377,9 @@ class TestCovGetContainerOnlyPattern:
         parent.term = "ssh"
         # The `docker ps` probe answers with no id: the stack is not up.
         parent.exec = AsyncMock(
-            return_value=CommandResult(Status.Success, value="", command="docker ps", retcode=0)
+            return_value=CommandResult(
+                status=Status.Success, value="", command="docker ps", retcode=0
+            )
         )
         container = DockerContainerHost(
             parent=parent,
@@ -1387,7 +1390,7 @@ class TestCovGetContainerOnlyPattern:
         )
         product = _product_double("app")
         product.cov_dir = "/var/cov/app"
-        product.prepare_coverage = AsyncMock(return_value=Result(Status.Success))
+        product.prepare_coverage = AsyncMock(return_value=Result(status=Status.Success))
         container.products = [product]
         lab = Lab(name="container_lab")
         lab.hosts[container.id] = container
@@ -1460,7 +1463,9 @@ class TestCovEmptySelectionCliWording:
         assert "=True" not in logged
 
     def test_get_with_a_selection_hidden_by_a_flag_logs_the_cli_wording(self):
-        error = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        error = EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
         with (
             patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=error)),
             patch.object(cov_module.logger, "error") as mock_err,
@@ -1554,8 +1559,8 @@ class TestCovCleanLeaf:
     def test_every_reset_gets_a_line_and_a_failure_exits_1(self):
         report = CleanReport(
             hosts={
-                "t1": {"app": Result(Status.Success)},
-                "zephyr": {"ext": Result(Status.Error, msg="reset_fn 'cov_reset' failed")},
+                "t1": {"app": Result(status=Status.Success)},
+                "zephyr": {"ext": Result(status=Status.Error, msg="reset_fn 'cov_reset' failed")},
             }
         )
         with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
@@ -1567,7 +1572,9 @@ class TestCovCleanLeaf:
 
     def test_every_success_exits_0(self):
         report = CleanReport(
-            hosts={"t1": {"app": Result(Status.Success), "lib": Result(Status.Success)}}
+            hosts={
+                "t1": {"app": Result(status=Status.Success), "lib": Result(status=Status.Success)}
+            }
         )
         with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
             result = runner.invoke(cov_app, ["clean"])
@@ -1577,7 +1584,7 @@ class TestCovCleanLeaf:
         assert "t1/lib: counters cleared" in out
 
     def test_a_dry_run_prints_not_run_and_exits_0(self):
-        report = CleanReport(hosts={"t1": {"app": Result(Status.NotRun)}})
+        report = CleanReport(hosts={"t1": {"app": Result(status=Status.NotRun)}})
         with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 0, result.output
@@ -1591,7 +1598,9 @@ class TestCovCleanLeaf:
         assert "t1: no instrumented products" in _flat(result.output)
 
     def test_a_failure_reason_with_brackets_prints_literally(self):
-        report = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="perm [denied]")}})
+        report = CleanReport(
+            hosts={"t1": {"app": Result(status=Status.Error, msg="perm [denied]")}}
+        )
         with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 1

@@ -36,14 +36,14 @@ _ATTRS = [
 def inventory():
     root = lab_data_dir() / "tech1-inventory"
     settings_file = root / "user-settings.toml"
-    user = load_user_settings(settings_file)
+    user = load_user_settings(path=settings_file)
     assert user is not None
     assert user.inventory is not None
     # [] project declarations: nothing overrides the user file, so both
     # [inventory] and [creds] resolve from it, exactly as build_inventory
     # resolves a real process with no project of its own declaring either.
     return build_inventory_from_declarations(
-        [], user_settings=user, user_settings_file=settings_file
+        declarations=[], user_settings=user, user_settings_file=settings_file
     )
 
 
@@ -65,7 +65,10 @@ def test_resolved_entries_equal_the_inline_entries(inventory):
     referenced = _entries("tech1-inventory")
     for name in _UNIX:
         entry, element = referenced[name]
-        assert resolve_host_entry(entry, inventory, element).host_data == inline[name][0], name
+        assert (
+            resolve_host_entry(entry, inventory=inventory, element=element).host_data
+            == inline[name][0]
+        ), name
 
 
 def test_built_hosts_agree(inventory):

@@ -10,7 +10,7 @@ from otto.host.unix_host import UnixHost
 
 
 def test_unix_host_carries_the_element_object():
-    element = Element("Lab X Server", id=3, metadata={"k": "v"}, resources=frozenset({"r"}))
+    element = Element(name="Lab X Server", id=3, metadata={"k": "v"}, resources=frozenset({"r"}))
     host = UnixHost(ip="10.0.0.1", creds=[], element=element)
     assert host.element is element
     assert host.element.name == "Lab X Server"
@@ -21,7 +21,7 @@ def test_unix_host_carries_the_element_object():
 
 @pytest.mark.parametrize("removed", ["element_id", "element_metadata", "element_resources"])
 def test_flat_element_fields_are_gone(removed):
-    host = UnixHost(ip="10.0.0.1", creds=[], element=Element("server"))
+    host = UnixHost(ip="10.0.0.1", creds=[], element=Element(name="server"))
     assert not hasattr(host, removed)
 
 
@@ -36,7 +36,7 @@ def test_the_factory_carries_the_element_through_untouched():
     Sharing is the point (spec 2026-09-05 §3): two hosts of one element get one
     instance, so an identity check, not an equality one.
     """
-    element = Element("dut", id=5, metadata={"rack": 2}, resources=frozenset({"dut-5"}))
+    element = Element(name="dut", id=5, metadata={"rack": 2}, resources=frozenset({"dut-5"}))
     entry = {"ip": "10.0.0.1", "creds": [{"login": "vagrant", "password": "vagrant"}]}
     first = create_host_from_dict(dict(entry), element=element)
     second = create_host_from_dict({**entry, "board": "b"}, element=element)
@@ -55,6 +55,8 @@ def test_containers_and_local_belong_to_no_element():
 
 
 def test_display_name_and_id_still_read_the_element_name():
-    host = UnixHost(ip="10.0.0.1", creds=[], element=Element("Lab X Server"), board="Blade", slot=2)
+    host = UnixHost(
+        ip="10.0.0.1", creds=[], element=Element(name="Lab X Server"), board="Blade", slot=2
+    )
     assert host.name == "Lab X Server Blade 2"
     assert host.id == "lab-x-server-blade-2"

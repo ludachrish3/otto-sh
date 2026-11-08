@@ -55,11 +55,11 @@ def test_json_requires_path_and_refuses_unknown_keys(tmp_path):
         match=r"'json' \(registered by .*; configured in origin\.toml\): parse failed: path",
     ):
         compile_inventory(
-            InventoryConfigSpec(backend="json"), anchor_dir=tmp_path, origin="origin.toml"
+            cfg=InventoryConfigSpec(backend="json"), anchor_dir=tmp_path, origin="origin.toml"
         )
     with pytest.raises(InventoryConstructionError, match=r"parse failed: url: Extra inputs"):
         compile_inventory(
-            InventoryConfigSpec(backend="json", path="i.json", url="x"),
+            cfg=InventoryConfigSpec(backend="json", path="i.json", url="x"),
             anchor_dir=tmp_path,
             origin="origin.toml",
         )
@@ -70,12 +70,12 @@ def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
         InventoryConstructionError, match=r"configured in o\): parse failed: supplies"
     ):
         compile_inventory(
-            InventoryConfigSpec(backend="json", path="i.json", supplies="ip"),
+            cfg=InventoryConfigSpec(backend="json", path="i.json", supplies="ip"),
             anchor_dir=tmp_path,
             origin="o",
         )
     out = compile_inventory(
-        InventoryConfigSpec(backend="json", path="i.json", supplies=["ip"]),
+        cfg=InventoryConfigSpec(backend="json", path="i.json", supplies=["ip"]),
         anchor_dir=tmp_path,
         origin="o",
     )
@@ -85,7 +85,7 @@ def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
 def test_relative_paths_anchor_to_the_declaring_dir_and_tilde_expands(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     cfg = InventoryConfigSpec(backend="json", path="lab/i.json")
-    out = compile_inventory(cfg, anchor_dir=tmp_path / "project", origin="o")
+    out = compile_inventory(cfg=cfg, anchor_dir=tmp_path / "project", origin="o")
     assert out.prepared.config == JsonInventoryConfig(path=tmp_path / "project" / "lab" / "i.json")
     assert out.creds is None
     assert out.cache_ttl.total_seconds() == 24 * 3600
@@ -93,7 +93,7 @@ def test_relative_paths_anchor_to_the_declaring_dir_and_tilde_expands(tmp_path, 
 
 def test_netbox_keys_are_parsed_by_its_own_model(tmp_path):
     cfg = InventoryConfigSpec(backend="netbox", url="https://nb", filter={"site": "a"})
-    out = compile_inventory(cfg, anchor_dir=tmp_path, origin="o")
+    out = compile_inventory(cfg=cfg, anchor_dir=tmp_path, origin="o")
     assert out.prepared.config == NetBoxInventoryConfig(url="https://nb", filter={"site": "a"})
 
 
@@ -137,11 +137,11 @@ def test_a_third_party_backend_gets_its_config_and_env(tmp_path):
 
     register_inventory_backend("fake-test", config=_FakeConfig, factory=_FakeBackend)
     compiled = compile_inventory(
-        InventoryConfigSpec(backend="fake-test", url="https://nb", token_env="NB_TOKEN"),
+        cfg=InventoryConfigSpec(backend="fake-test", url="https://nb", token_env="NB_TOKEN"),
         anchor_dir=tmp_path,
         origin="o",
     )
-    inv = construct_inventory(compiled)
+    inv = construct_inventory(compiled=compiled)
     assert isinstance(inv, _FakeBackend)
     assert inv.env == InventoryEnv(tmp_path, "o")
     assert inv.url == "https://nb"
@@ -155,7 +155,7 @@ def test_a_third_party_backend_gets_its_config_and_env(tmp_path):
         r"parse failed: .*urll",
     ):
         compile_inventory(
-            InventoryConfigSpec(backend="fake-test", urll="https://nb"),
+            cfg=InventoryConfigSpec(backend="fake-test", urll="https://nb"),
             anchor_dir=tmp_path,
             origin="r1/settings.toml",
         )
@@ -211,7 +211,7 @@ def registered_backend():
 
 def _third_party(tmp_path, ttl):
     return compile_inventory(
-        InventoryConfigSpec(backend="cmdb", cache_ttl=ttl),
+        cfg=InventoryConfigSpec(backend="cmdb", cache_ttl=ttl),
         anchor_dir=tmp_path,
         origin="o",
     )
@@ -235,7 +235,7 @@ def test_a_backend_that_supplies_creds_is_never_snapshot_cached(
         r"set cache_ttl = \"0\" for this backend, or have the backend leave creds "
         r"to a \[creds\] store",
     ):
-        construct_inventory(_third_party(tmp_path, "24h"))
+        construct_inventory(compiled=_third_party(tmp_path, "24h"))
 
 
 def test_the_same_backend_constructs_with_caching_turned_off(
@@ -244,7 +244,7 @@ def test_the_same_backend_constructs_with_caching_turned_off(
     """The remedy the message names has to work, or the refusal is a dead end."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     registered_backend("cmdb", _SuppliesCreds)
-    inv = construct_inventory(_third_party(tmp_path, "0"))
+    inv = construct_inventory(compiled=_third_party(tmp_path, "0"))
     assert isinstance(inv, _SuppliesCreds)  # not wrapped: nothing to lose across a snapshot
 
 
@@ -265,7 +265,7 @@ def test_a_creds_store_over_a_cached_backend_is_not_the_refused_case(
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="o",
                 anchor_dir=tmp_path,
@@ -282,24 +282,24 @@ def test_a_creds_store_over_a_cached_backend_is_not_the_refused_case(
 
 def test_same_as_ignores_origin_but_not_the_anchored_kwargs_or_the_ttl(tmp_path):
     cfg = InventoryConfigSpec(backend="json", path="i.json")
-    a = compile_inventory(cfg, anchor_dir=tmp_path, origin="r1")
-    b = compile_inventory(cfg, anchor_dir=tmp_path, origin="r2")
-    c = compile_inventory(cfg, anchor_dir=tmp_path / "elsewhere", origin="r3")
-    assert a.same_as(b)
-    assert not a.same_as(c)
+    a = compile_inventory(cfg=cfg, anchor_dir=tmp_path, origin="r1")
+    b = compile_inventory(cfg=cfg, anchor_dir=tmp_path, origin="r2")
+    c = compile_inventory(cfg=cfg, anchor_dir=tmp_path / "elsewhere", origin="r3")
+    assert a.same_as(other=b)
+    assert not a.same_as(other=c)
     # R13: cache_ttl is behaviour, not decoration — "0" means never cache.
     never = compile_inventory(
-        InventoryConfigSpec(backend="json", path="i.json", cache_ttl="0"),
+        cfg=InventoryConfigSpec(backend="json", path="i.json", cache_ttl="0"),
         anchor_dir=tmp_path,
         origin="r4",
     )
     weekly = compile_inventory(
-        InventoryConfigSpec(backend="json", path="i.json", cache_ttl="7d"),
+        cfg=InventoryConfigSpec(backend="json", path="i.json", cache_ttl="7d"),
         anchor_dir=tmp_path,
         origin="r5",
     )
-    assert not never.same_as(weekly)
-    assert not a.same_as(never)  # the "24h" default differs from "0" too
+    assert not never.same_as(other=weekly)
+    assert not a.same_as(other=never)  # the "24h" default differs from "0" too
 
 
 def test_two_projects_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
@@ -319,7 +319,7 @@ def test_two_projects_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
         match=r"two active projects declare different \[inventory\] tables: "
         r"r1/settings\.toml and r2/settings\.toml",
     ):
-        build_inventory_from_declarations(declarations, user_settings=None)
+        build_inventory_from_declarations(declarations=declarations, user_settings=None)
     # Anti-vacuity: identical TTLs are not a conflict.
     agreeing = [
         InventoryDeclaration(
@@ -328,7 +328,7 @@ def test_two_projects_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
         for d in declarations
     ]
     assert isinstance(
-        build_inventory_from_declarations(agreeing, user_settings=None), JsonInventory
+        build_inventory_from_declarations(declarations=agreeing, user_settings=None), JsonInventory
     )
 
 
@@ -338,7 +338,7 @@ def test_construct_wraps_a_creds_store_and_json_is_lazy(tmp_path):
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     table = {"backend": "json", "path": str(inv_path), "supplies": ["ip"]}
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="o",
                 anchor_dir=tmp_path,
@@ -358,7 +358,7 @@ def test_no_creds_table_means_no_overlay(tmp_path):
     """§3 statement 2: without ``[creds]`` the backend's own records carry the creds."""
     inv_path = _inventory_file(tmp_path)
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="o", anchor_dir=tmp_path, table={"backend": "json", "path": str(inv_path)}
             )
@@ -379,7 +379,7 @@ def test_a_missing_store_file_is_not_touched_until_lookup(tmp_path):
     inv_path = _inventory_file(tmp_path)
     absent = tmp_path / "absent+creds(1).json"
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="o",
                 anchor_dir=tmp_path,
@@ -400,11 +400,11 @@ def test_construct_resolves_the_json_path_for_the_fingerprint(tmp_path):
     """§9.1: the fingerprint is the RESOLVED path, and resolving is config's job."""
     inv_path = _inventory_file(tmp_path)
     compiled = compile_inventory(
-        InventoryConfigSpec(backend="json", path="./nested/../inventory.json"),
+        cfg=InventoryConfigSpec(backend="json", path="./nested/../inventory.json"),
         anchor_dir=tmp_path,
         origin="o",
     )
-    inv = construct_inventory(compiled)
+    inv = construct_inventory(compiled=compiled)
     assert inv.path == inv_path.resolve()
     fingerprint = inv.fingerprint()
     assert fingerprint is not None
@@ -417,7 +417,7 @@ def test_project_override_wins_over_the_user_file(tmp_path):
     project = _project(tmp_path, "r1", {"backend": "json", "path": str(project_inv)})
     user = UserSettingsModel(inventory=InventoryConfigSpec(backend="json", path=str(user_inv)))
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="r1", anchor_dir=project.root, table=project.inventory_settings
             )
@@ -431,11 +431,14 @@ def test_project_override_wins_over_the_user_file(tmp_path):
 def test_user_file_when_no_project_declares_and_none_when_nobody_does(tmp_path):
     user_inv = _inventory_file(tmp_path, "user.json")
     user = UserSettingsModel(inventory=InventoryConfigSpec(backend="json", path=str(user_inv)))
-    inv = build_inventory_from_declarations([], user_settings=user)
+    inv = build_inventory_from_declarations(declarations=[], user_settings=user)
     assert isinstance(inv, JsonInventory)
     assert inv.path == user_inv.resolve()
-    assert build_inventory_from_declarations([], user_settings=UserSettingsModel()) is None
-    assert build_inventory_from_declarations([], user_settings=None) is None
+    assert (
+        build_inventory_from_declarations(declarations=[], user_settings=UserSettingsModel())
+        is None
+    )
+    assert build_inventory_from_declarations(declarations=[], user_settings=None) is None
 
 
 def test_two_projects_must_agree(tmp_path):
@@ -453,7 +456,9 @@ def test_two_projects_must_agree(tmp_path):
             table={"backend": "json", "path": str(a)},
         ),
     ]
-    assert isinstance(build_inventory_from_declarations(same, user_settings=None), JsonInventory)
+    assert isinstance(
+        build_inventory_from_declarations(declarations=same, user_settings=None), JsonInventory
+    )
     different = [
         same[0],
         InventoryDeclaration(
@@ -467,7 +472,7 @@ def test_two_projects_must_agree(tmp_path):
         match=r"two active projects declare different \[inventory\] tables: "
         r"r1/settings\.toml and r2/settings\.toml",
     ):
-        build_inventory_from_declarations(different, user_settings=None)
+        build_inventory_from_declarations(declarations=different, user_settings=None)
 
 
 def test_unknown_backend_and_bad_table_are_inventory_errors(tmp_path):
@@ -475,12 +480,16 @@ def test_unknown_backend_and_bad_table_are_inventory_errors(tmp_path):
         InventoryError, match=r"'nope' \(not registered; configured in o\): lookup failed"
     ):
         build_inventory_from_declarations(
-            [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"backend": "nope"})],
+            declarations=[
+                InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"backend": "nope"})
+            ],
             user_settings=None,
         )
     with pytest.raises(InventoryError, match=r"o: \[inventory\] [\s\S]*backend\n\s+Field required"):
         build_inventory_from_declarations(
-            [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"path": "x"})],
+            declarations=[
+                InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"path": "x"})
+            ],
             user_settings=None,
         )
 
@@ -493,7 +502,7 @@ def test_creds_file_in_the_inventory_table_points_at_the_creds_table(tmp_path):
         r'path>" beside \[inventory\]',
     ):
         build_inventory_from_declarations(
-            [
+            declarations=[
                 InventoryDeclaration(
                     origin="o",
                     anchor_dir=tmp_path,
@@ -512,7 +521,7 @@ def test_creds_without_an_inventory_is_an_error_naming_the_declaring_file(tmp_pa
         r"declared in either settings file; declare one, or remove \[creds\]",
     ):
         build_inventory_from_declarations(
-            [
+            declarations=[
                 InventoryDeclaration(
                     origin="r1/settings.toml",
                     anchor_dir=tmp_path,
@@ -530,7 +539,7 @@ def test_an_unknown_creds_backend_is_an_inventory_error(tmp_path):
         InventoryError, match=r"creds backend 'nope' \(not registered; configured in o\)"
     ):
         build_inventory_from_declarations(
-            [
+            declarations=[
                 InventoryDeclaration(
                     origin="o",
                     anchor_dir=tmp_path,
@@ -546,7 +555,7 @@ def test_a_creds_table_missing_backend_is_an_inventory_error(tmp_path):
     inv_path = _inventory_file(tmp_path)
     with pytest.raises(InventoryError, match=r"o: \[creds\] "):
         build_inventory_from_declarations(
-            [
+            declarations=[
                 InventoryDeclaration(
                     origin="o",
                     anchor_dir=tmp_path,
@@ -565,7 +574,7 @@ def test_creds_resolve_independently_of_the_inventory(tmp_path):
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     user = UserSettingsModel(creds=CredsConfigSpec(backend="json", path=str(creds)))
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="r1",
                 anchor_dir=tmp_path,
@@ -579,7 +588,7 @@ def test_creds_resolve_independently_of_the_inventory(tmp_path):
     assert inv.lookup("k").creds[0].login == "u"
     # ...and the other way round: the project declares only [creds], the user file the inventory.
     both = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="r1",
                 anchor_dir=tmp_path,
@@ -607,7 +616,7 @@ def test_creds_resolve_independently_across_two_projects(tmp_path):
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     inv = build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="r1",
                 anchor_dir=tmp_path,
@@ -634,7 +643,7 @@ def test_two_projects_must_agree_on_creds(tmp_path):
         r"r2/settings\.toml",
     ):
         build_inventory_from_declarations(
-            [
+            declarations=[
                 InventoryDeclaration(
                     origin="r1/settings.toml",
                     anchor_dir=tmp_path,
@@ -658,7 +667,7 @@ def test_build_inventory_reads_a_project_that_declares_only_creds(tmp_path):
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     user_file = _user_file(tmp_path, f'[inventory]\nbackend = "json"\npath = "{inv_path}"\n')
     projects = [_project(tmp_path, "r1", {}, creds={"backend": "json", "path": str(creds)})]
-    inv = build_inventory(projects, user_settings_path=user_file)
+    inv = build_inventory(projects=projects, user_settings_path=user_file)
     assert isinstance(inv, CredsOverlay)
     assert inv.store.label == f"json:{creds.resolve()}"
 
@@ -667,10 +676,10 @@ def test_build_inventory_reads_projects_and_the_user_file(tmp_path):
     inv_path = _inventory_file(tmp_path)
     user_file = _user_file(tmp_path, f'[inventory]\nbackend = "json"\npath = "{inv_path}"\n')
     projects = [_project(tmp_path, "r1", {})]
-    inv = build_inventory(projects, user_settings_path=user_file)
+    inv = build_inventory(projects=projects, user_settings_path=user_file)
     assert isinstance(inv, JsonInventory)
     assert inv.path == inv_path.resolve()
-    assert build_inventory(projects, user_settings_path=tmp_path / "absent.toml") is None
+    assert build_inventory(projects=projects, user_settings_path=tmp_path / "absent.toml") is None
 
 
 def test_build_inventory_prefers_a_declaring_project_and_anchors_to_its_root(tmp_path):
@@ -678,7 +687,7 @@ def test_build_inventory_prefers_a_declaring_project_and_anchors_to_its_root(tmp
     projects = [_project(tmp_path, "r1", {"backend": "json", "path": "project.json"})]
     # The project's own root is the anchor, so a relative path resolves there.
     (projects[0].root / "project.json").write_text(json.dumps({"k": {"ip": "10.0.0.2"}}))
-    inv = build_inventory(projects, user_settings_path=tmp_path / "absent.toml")
+    inv = build_inventory(projects=projects, user_settings_path=tmp_path / "absent.toml")
     assert isinstance(inv, JsonInventory)
     assert inv.path == (projects[0].root / "project.json").resolve()
     assert inv.lookup("k").ip == "10.0.0.2"
@@ -706,7 +715,7 @@ def test_build_inventory_names_each_projects_settings_file_as_its_origin(tmp_pat
         match=r"two active projects declare different \[inventory\] tables: "
         rf"{expected[0]} and {expected[1]}; a process has exactly one inventory",
     ):
-        build_inventory(projects, user_settings_path=tmp_path / "absent.toml")
+        build_inventory(projects=projects, user_settings_path=tmp_path / "absent.toml")
     # Anti-vacuity: the path the pattern demands is the one that exists on disk
     # for a real project, not just a string this test made up.
     assert str(TOML_SETTINGS_PATH) == ".otto/settings.toml"
@@ -715,7 +724,7 @@ def test_build_inventory_names_each_projects_settings_file_as_its_origin(tmp_pat
 def test_build_inventory_turns_a_broken_user_file_into_an_inventory_error(tmp_path):
     user_file = _user_file(tmp_path, "[inventory\n")
     with pytest.raises(InventoryError, match=r"settings\.toml: "):
-        build_inventory([], user_settings_path=user_file)
+        build_inventory(projects=[], user_settings_path=user_file)
 
 
 def test_build_inventory_names_the_user_file_as_the_origin(tmp_path):
@@ -723,7 +732,7 @@ def test_build_inventory_names_the_user_file_as_the_origin(tmp_path):
     with pytest.raises(
         InventoryError, match=rf"'nope' \(not registered; configured in {user_file}\)"
     ):
-        build_inventory([], user_settings_path=user_file)
+        build_inventory(projects=[], user_settings_path=user_file)
 
 
 def test_build_inventory_over_a_real_project_reads_the_inventory_table(tmp_path):
@@ -743,7 +752,7 @@ def test_build_inventory_over_a_real_project_reads_the_inventory_table(tmp_path)
     (sut / "lab" / "i.json").write_text(json.dumps({"k": {"ip": "10.0.0.9"}}))
     project = Project(root=sut)
     assert project.inventory_settings == {"backend": "json", "path": "lab/i.json"}
-    inv = build_inventory([project], user_settings_path=tmp_path / "absent.toml")
+    inv = build_inventory(projects=[project], user_settings_path=tmp_path / "absent.toml")
     assert isinstance(inv, JsonInventory)
     assert inv.path == (sut / "lab" / "i.json").resolve()
     assert inv.lookup("k").ip == "10.0.0.9"
@@ -755,7 +764,7 @@ def test_a_project_without_an_inventory_table_declares_nothing(tmp_path):
 
     project = Project(root=make_project(tmp_path / "p", name="p"))
     assert project.inventory_settings == {}
-    assert build_inventory([project], user_settings_path=tmp_path / "absent.toml") is None
+    assert build_inventory(projects=[project], user_settings_path=tmp_path / "absent.toml") is None
 
 
 def test_a_user_file_relative_path_anchors_to_the_user_file_directory(tmp_path):
@@ -763,7 +772,7 @@ def test_a_user_file_relative_path_anchors_to_the_user_file_directory(tmp_path):
     user_dir.mkdir()
     inv_path = _inventory_file(user_dir)
     user_file = _user_file(user_dir, '[inventory]\nbackend = "json"\npath = "inventory.json"\n')
-    inv = build_inventory([], user_settings_path=user_file)
+    inv = build_inventory(projects=[], user_settings_path=user_file)
     assert isinstance(inv, JsonInventory)
     assert inv.path == inv_path.resolve()
 
@@ -786,7 +795,9 @@ def test_a_creds_construction_failure_stays_a_construction_error(tmp_path):
         ]
 
     with pytest.raises(InventoryConstructionError) as at_compile:
-        build_inventory_from_declarations(_declare({"backend": "nope"}), user_settings=None)
+        build_inventory_from_declarations(
+            declarations=_declare({"backend": "nope"}), user_settings=None
+        )
     assert isinstance(at_compile.value, ValueError)
     assert isinstance(at_compile.value.__cause__, CredsConstructionError)
 
@@ -798,5 +809,7 @@ def test_a_creds_construction_failure_stays_a_construction_error(tmp_path):
 
     register_creds_backend("boom-store", config=_NoKeys, factory=_boom)
     with pytest.raises(InventoryConstructionError, match="vault down") as at_build:
-        build_inventory_from_declarations(_declare({"backend": "boom-store"}), user_settings=None)
+        build_inventory_from_declarations(
+            declarations=_declare({"backend": "boom-store"}), user_settings=None
+        )
     assert isinstance(at_build.value.__cause__, CredsConstructionError)

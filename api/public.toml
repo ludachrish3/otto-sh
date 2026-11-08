@@ -535,6 +535,14 @@ positional = ["text"]
 positional = ["name"]
 why = "implementer-facing"
 
+[symbols."otto.examples.lab_repository:example_lab_source"]
+positional = ["c"]
+why = "a registry factory: the registry calls it with the Configured positionally"
+
+[symbols."otto.examples.login_proxy:enter_container"]
+positional = ["io", "ctx"]
+why = "a login-proxy function: otto calls it as fn(io, ctx) (LoginProxyFn)"
+
 [symbols."otto.examples.monitor:UptimeParser.parse"]
 positional = ["output"]
 why = "implementer-facing"
@@ -559,11 +567,23 @@ why = "implementer-facing"
 positional = ["resource"]
 why = "implementer-facing"
 
+[symbols."otto.examples.reservations:example_reservations"]
+positional = ["c"]
+why = "a registry factory: the registry calls it with the Configured positionally"
+
 [symbols."otto.examples.reservations_cli:check_report"]
 positional = ["gate"]
 
 [symbols."otto.examples.reservations_cli:translate"]
 positional = ["action"]
+
+[symbols."otto.examples.session_setup:enter_python"]
+positional = ["session", "ctx"]
+why = "a session-setup function: otto calls it as fn(session, ctx) (SessionSetupFn)"
+
+[symbols."otto.examples.session_setup:export_app_env"]
+positional = ["session", "ctx"]
+why = "a session-setup function: otto calls it as fn(session, ctx) (SessionSetupFn)"
 
 [symbols."otto.host.app_shell:AppShell.attach"]
 positional = ["session"]
@@ -727,6 +747,11 @@ why = "registrar: the name, then what it registers"
 positional = ["host"]
 why = "implementer-facing"
 
+[symbols."otto.host.dev_tool:DevTool.plan"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host.dev_tool:DevTool.is_installed"]
 positional = ["host"]
 why = "implementer-facing"
@@ -828,7 +853,36 @@ subclass = false
 construct = false
 subclass = false
 
+[symbols."otto.host.product:Product.get_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.get_debug_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.instrumented"]
+implementer = true
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.prepare_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.reset_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host.product:Product.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.plan"]
+implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
@@ -851,7 +905,36 @@ why = "implementer-facing"
 construct = false
 subclass = false
 
+[symbols."otto.host.product:ShellProduct.get_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.get_debug_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.instrumented"]
+implementer = true
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.prepare_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.reset_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host.product:ShellProduct.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.plan"]
+implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
@@ -1236,7 +1319,31 @@ implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
+[symbols."otto.host:DeclaredProduct.get_debug_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.instrumented"]
+implementer = true
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.prepare_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.reset_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host:DeclaredProduct.install"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.plan"]
 implementer = true
 positional = ["host"]
 why = "implementer-facing"
@@ -1260,6 +1367,11 @@ positional = ["host"]
 why = "implementer-facing"
 
 [symbols."otto.host:DevTool.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DevTool.plan"]
+implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
@@ -1485,6 +1597,10 @@ why = "transfer: sources then destination, the cp convention the docs teach"
 [symbols."otto.host:Host.open_session"]
 positional = ["name"]
 why = "implementer-facing"
+
+[symbols."otto.host:Host.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
 
 [symbols."otto.host:Host.put"]
 positional = ["src_files", "dest_dir"]
@@ -1712,7 +1828,36 @@ why = "implementer-facing"
 construct = false
 subclass = false
 
+[symbols."otto.host:Product.get_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.get_debug_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.instrumented"]
+implementer = true
+why = "implementer-facing"
+
+[symbols."otto.host:Product.prepare_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.reset_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host:Product.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.plan"]
+implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
@@ -1846,7 +1991,36 @@ subclass = false
 [symbols."otto.host:ShellCommand"]
 subclass = false
 
+[symbols."otto.host:ShellProduct.get_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.get_debug_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.instrumented"]
+implementer = true
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.prepare_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.reset_coverage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
 [symbols."otto.host:ShellProduct.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.plan"]
+implementer = true
 positional = ["host"]
 why = "implementer-facing"
 
@@ -2246,6 +2420,10 @@ subclass = false
 subclass = false
 positional = ["path"]
 
+[symbols."otto.inventory:JsonInventory.lookup"]
+positional = ["key"]
+why = "implementer-facing"
+
 [symbols."otto.inventory:JsonInventoryConfig"]
 construct = false
 subclass = false
@@ -2269,6 +2447,10 @@ subclass = false
 [symbols."otto.inventory:SnapshotCache"]
 construct = false
 subclass = false
+
+[symbols."otto.inventory:SnapshotCache.lookup"]
+positional = ["key"]
+why = "implementer-facing"
 
 [symbols."otto.inventory:check_supplies"]
 positional = ["supplies"]
@@ -2824,6 +3006,10 @@ why = "deferred dataclass; real fields unrecorded, see #950"
 positional = ["args"]
 why = "deferred dataclass; real fields unrecorded, see #950"
 
+[symbols."otto.project:combine_install_states"]
+positional = ["results"]
+why = "a combine_results callback: instruction() calls it with the results positionally"
+
 [symbols."otto.project:register_project_actions"]
 positional = ["cls"]
 
@@ -3054,6 +3240,18 @@ positional = ["label"]
 construct = false
 subclass = false
 
+[symbols."otto.suite:OttoFixturesPlugin.pytest_collection_modifyitems"]
+positional = ["items"]
+why = "third-party: pluggy (matches hookimpl arguments by positional name)"
+
+[symbols."otto.suite:OttoFixturesPlugin.pytest_configure"]
+positional = ["config"]
+why = "third-party: pluggy (matches hookimpl arguments by positional name)"
+
+[symbols."otto.suite:OttoFixturesPlugin.pytest_pyfunc_call"]
+positional = ["pyfuncitem"]
+why = "third-party: pluggy (matches hookimpl arguments by positional name)"
+
 [symbols."otto.suite:RunOptions"]
 subclass = false
 
@@ -3175,6 +3373,10 @@ subclass = false
 [symbols."otto.utils:Opt"]
 subclass = false
 
+[symbols."otto.utils:cli_exposed"]
+positional = ["fn"]
+why = "a decorator: `@cli_exposed` applies it to the method positionally"
+
 [symbols."otto:AppShell.attach"]
 positional = ["session"]
 
@@ -3271,7 +3473,7 @@ subclass = false
 
 [symbols."otto:app"]
 positional = ["args"]
-why = "deferred dataclass; real fields unrecorded, see #950"
+why = "a Typer instance: app(*args, **kwargs) forwards to Typer's own __call__"
 
 [symbols."otto:get_host"]
 positional = ["host_id"]

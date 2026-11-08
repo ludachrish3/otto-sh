@@ -110,6 +110,7 @@ class ExampleReservationBackend(ReservationBackendBase):
     def fetch_reservations(
         self,
         username: str,
+        *,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[Reservation]:

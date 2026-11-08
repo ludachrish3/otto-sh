@@ -39,7 +39,7 @@ registration again afterwards; an init module never does:
 >>> register_options(DeviceTestOptions, verbs=["test"])
 >>> verbs_for(DeviceTestOptions)
 ['test']
->>> OPTIONS.unregister(options_key(DeviceTestOptions))
+>>> OPTIONS.unregister(name=options_key(DeviceTestOptions))
 """
 
 from typing import Annotated

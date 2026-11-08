@@ -198,7 +198,7 @@ class RecordingHost(BaseHost):
         """
         self._scripted_exec.append(
             CommandResult(
-                Status.Success if ok else Status.Failed,
+                status=Status.Success if ok else Status.Failed,
                 value=output,
                 retcode=0 if ok else 1,
             )
@@ -207,7 +207,7 @@ class RecordingHost(BaseHost):
     def _next_exec_result(self, cmd: str) -> CommandResult:
         if self._scripted_exec:
             return replace(self._scripted_exec.pop(0), command=cmd)
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     async def _exec_one(
         self,
@@ -243,7 +243,7 @@ class RecordingHost(BaseHost):
         files = src_files if isinstance(src_files, list) else [src_files]
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir, mode)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def get(self, src_files: list[Path] | Path, dest_dir: Path) -> Result:
         self.get_calls.append((src_files, dest_dir))
@@ -251,7 +251,7 @@ class RecordingHost(BaseHost):
         files = src_files if isinstance(src_files, list) else [src_files]
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @asynccontextmanager
     async def as_user(  # ty: ignore[invalid-overload] — the double supplies the elevation BaseHost's default refuses
@@ -329,7 +329,7 @@ class PlanRecorder(UnixHost):
     def __init__(self, login: str = "admin") -> None:
         super().__init__(
             ip="10.0.0.1",
-            element=Element("h1"),
+            element=Element(name="h1"),
             creds=[Cred(login=login, password="x")],
             log=LogMode.QUIET,
             term="ssh",
@@ -371,7 +371,7 @@ class PlanRecorder(UnixHost):
         del mode, show_progress, user, recursive, concurrent
         files = src_files if isinstance(src_files, list) else [src_files]
         self.lines.extend(f"PUT {src} -> {dest_dir}" for src in files)
-        return Result(Status.Success, value={})
+        return Result(status=Status.Success, value={})
 
     async def run(
         self, cmds, expects=None, timeout=None, log=LogMode.NORMAL, *, sudo=False, user=None
@@ -382,8 +382,8 @@ class PlanRecorder(UnixHost):
         for item in items:
             cmd = item if isinstance(item, str) else item.cmd
             self.lines.append(f"sudo {cmd}" if sudo else cmd)
-            results.append(CommandResult(Status.Success, value="", command=cmd, retcode=0))
-        return Results.collect(results)
+            results.append(CommandResult(status=Status.Success, value="", command=cmd, retcode=0))
+        return Results.collect(items=results)
 
     def _refuse_exec_sudo(self) -> None:
         raise TypeError("the plan vocabulary has no exec(sudo=True); use run(sudo=True)")
@@ -395,7 +395,7 @@ class PlanRecorder(UnixHost):
         self.lines.append(cmd)
         queued = self._scripts.get(cmd)
         output = queued.pop(0) if queued else ""
-        return CommandResult(Status.Success, value=output, command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value=output, command=cmd, retcode=0)
 
 
 @pytest.fixture
@@ -437,12 +437,12 @@ class EmbeddedPlanRecorder(RecordingHost):
     ) -> Result:
         del show_progress, timeout
         self.lines.append(f"LOAD {file} as {name}")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def unload(self, name: str, timeout: float = 20.0) -> Result:
         del timeout
         self.lines.append(self.loader.unload_command(name))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _exec_one(
         self,

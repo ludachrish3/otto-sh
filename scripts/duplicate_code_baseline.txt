@@ -17,3 +17,9 @@ otto.context otto.run_context
 # What remains between these two is one formatted _put_tree(...) call and the
 # dry-run line beneath it, the same call site spelled twice, not a decision.
 otto.host.local_host otto.host.unix_host
+# otto.link.manage.DryRunPlan and otto.tunnel.manage.DryRunPlan are a
+# DELIBERATE TWIN (the tunnel docstring says why: the two packages must not
+# import each other, and a shared base would need a third module that exists
+# only to be inherited from). Both halves are the product in both; keep the
+# vocabulary identical on purpose.
+otto.link.manage otto.tunnel.manage

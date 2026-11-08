@@ -92,10 +92,15 @@ def test_an_elements_own_data_reaches_every_host_it_groups():
 
 def test_the_factory_builds_from_a_sources_parsed_options(tmp_path):
     """What a ``[[lab.sources]]`` entry's options become: the config model's fields."""
-    env = LabSourceEnv(tmp_path, "r/example", "settings.toml", ProfileContext.empty())
+    env = LabSourceEnv(
+        project_root=tmp_path,
+        label="r/example",
+        origin="settings.toml",
+        profiles=ProfileContext.empty(),
+    )
     raw = {"labs": {"only": [{"name": "node", "hosts": [{"ip": "10.9.9.9"}]}]}, "resources": {}}
     config = ExampleLabSourceConfig.model_validate(raw, context={"env": env})
-    repository = example_lab_source(Configured(config, env))
+    repository = example_lab_source(Configured(config=config, env=env))
     assert repository.list_labs() == ["only"]
     assert repository.load_lab("only").resources == set()
 
@@ -114,13 +119,18 @@ def test_registrable_by_name(tmp_path):
         "example-host-source-test", config=ExampleLabSourceConfig, factory=example_lab_source
     )
     try:
-        env = LabSourceEnv(tmp_path, "r/example", "settings.toml", ProfileContext.empty())
-        prepared = LAB_REPOSITORIES.prepare("example-host-source-test", {}, env)
-        built = LAB_REPOSITORIES.build(prepared)
+        env = LabSourceEnv(
+            project_root=tmp_path,
+            label="r/example",
+            origin="settings.toml",
+            profiles=ProfileContext.empty(),
+        )
+        prepared = LAB_REPOSITORIES.prepare(name="example-host-source-test", raw={}, env=env)
+        built = LAB_REPOSITORIES.build(prepared=prepared)
         assert isinstance(built, ExampleLabRepository)
         assert built.list_labs() == ["east", "west"]
     finally:
-        LAB_REPOSITORIES.unregister("example-host-source-test")
+        LAB_REPOSITORIES.unregister(name="example-host-source-test")
 
 
 def test_list_host_summaries_applies_the_factory_default_when_none_is_declared():

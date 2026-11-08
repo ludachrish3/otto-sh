@@ -45,7 +45,7 @@ pytestmark = [
 async def parent(test3_lease):
     h = UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -72,14 +72,14 @@ async def lab_with_parent(parent):
 @pytest_asyncio.fixture
 async def built_image(parent, project1):
     """Ensure the project1 image is built once for tests in this file."""
-    results = await build_images(project1, parent)
+    results = await build_images(project=project1, parent=parent)
     assert results["project1-api"].is_ok, results
     return results
 
 
 @pytest.mark.asyncio
 async def test_compose_up_registers_container_host(parent, lab_with_parent, project1, built_image):
-    hosts = await compose_up(project1, lab_with_parent, parent=parent.id)
+    hosts = await compose_up(project=project1, lab=lab_with_parent, parent=parent.id)
     try:
         assert "api" in hosts
         api = hosts["api"]
@@ -88,14 +88,14 @@ async def test_compose_up_registers_container_host(parent, lab_with_parent, proj
         # The container id must be a real docker id, not the placeholder marker.
         assert len(api.container_id) >= 12
     finally:
-        await compose_down(project1, lab_with_parent, parent=parent.id)
+        await compose_down(project=project1, lab=lab_with_parent, parent=parent.id)
 
 
 @pytest.mark.asyncio
 async def test_compose_down_unregisters(parent, lab_with_parent, project1, built_image):
-    hosts = await compose_up(project1, lab_with_parent, parent=parent.id)
+    hosts = await compose_up(project=project1, lab=lab_with_parent, parent=parent.id)
     api_id = hosts["api"].id
-    await compose_down(project1, lab_with_parent, parent=parent.id)
+    await compose_down(project=project1, lab=lab_with_parent, parent=parent.id)
     assert api_id not in lab_with_parent.hosts
 
 
@@ -104,7 +104,7 @@ async def test_composed_context_manager_owns_lifecycle(
     parent, lab_with_parent, project1, built_image
 ):
     seen_id = None
-    async with composed(project1, lab_with_parent, parent=parent.id, own=True) as hosts:
+    async with composed(project=project1, lab=lab_with_parent, parent=parent.id, own=True) as hosts:
         seen_id = hosts["api"].id
         assert seen_id in lab_with_parent.hosts
     # After exit, the host must be gone (own=True forces teardown).
@@ -114,14 +114,14 @@ async def test_composed_context_manager_owns_lifecycle(
 @pytest.mark.asyncio
 async def test_compose_up_idempotent(parent, lab_with_parent, project1, built_image):
     """Running compose_up twice in a row reuses the same stack."""
-    first = await compose_up(project1, lab_with_parent, parent=parent.id)
+    first = await compose_up(project=project1, lab=lab_with_parent, parent=parent.id)
     try:
         cid_first = first["api"].container_id
-        second = await compose_up(project1, lab_with_parent, parent=parent.id)
+        second = await compose_up(project=project1, lab=lab_with_parent, parent=parent.id)
         cid_second = second["api"].container_id
         assert cid_first == cid_second, "second compose_up must reuse the running container"
     finally:
-        await compose_down(project1, lab_with_parent, parent=parent.id)
+        await compose_down(project=project1, lab=lab_with_parent, parent=parent.id)
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_bind_mount_reachable_through_parent(
     # carrying the `-e2e-` infix `_ORPHAN_PROJECT_FRAGMENTS` matches, so an
     # interrupted run's NETWORK is reapable too -- `<project>_default` keeps
     # the infix only if the project name itself has it.
-    project = get_user_compose_project("mount-e2e-probe")
+    project = get_user_compose_project(project_name="mount-e2e-probe")
     host_dir = Path(f"/tmp/{project}")  # same string: one name to reason about
 
     compose_yaml = tmp_path / "mounts.yml"
@@ -182,11 +182,15 @@ async def test_bind_mount_reachable_through_parent(
         assert mkdir.status.is_ok, mkdir.value
 
         hosts = await compose_up(
-            project1, lab_with_parent, parent=parent.id, project_name=project, build=False
+            project=project1,
+            lab=lab_with_parent,
+            parent=parent.id,
+            project_name=project,
+            build=False,
         )
         ctr = hosts["mountcheck"]
 
-        found = ctr.mount_for("/var/lib/app")
+        found = ctr.mount_for(container_path="/var/lib/app")
         assert found is not None, ctr.mounts
         assert found.container_path == Path("/var/lib/app")
         assert found.parent_path == host_dir
@@ -205,5 +209,7 @@ async def test_bind_mount_reachable_through_parent(
             f"expected 'hi' through the parent-side mount, got {landed!r}"
         )
     finally:
-        await compose_down(project1, lab_with_parent, parent=parent.id, project_name=project)
+        await compose_down(
+            project=project1, lab=lab_with_parent, parent=parent.id, project_name=project
+        )
         await parent.exec(f"rm -rf {shlex.quote(str(host_dir))}")

@@ -11,7 +11,7 @@ backend you register from your own project. This page is that contract.
 A host source implements the [`LabRepository`](../api/labs.rst) protocol —
 two read-only methods:
 
-`load_lab(name, preferences=None, inventory=None) -> Lab`
+`load_lab(name, *, preferences=None, inventory=None) -> Lab`
 : Build and return the named lab. `inventory` is the process inventory that
   referenced host entries resolve against; when it is `None`, a referenced
   entry is an error. Raises
@@ -59,7 +59,7 @@ just make it a decision rather than an omission.
 
 ### One optional capability
 
-`list_host_summaries(inventory=None) -> list[HostSummary]`
+`list_host_summaries(*, inventory=None) -> list[HostSummary]`
 : Enumerate hosts *without building them*, for tab completion and tunnel
   path-narrowing. `inventory` carries the same meaning as `load_lab`'s (see
   the {doc}`migration note <inventory-backends>`); otto always passes it by
@@ -74,7 +74,7 @@ just make it a decision rather than an omission.
 
   - **Every id you return must be one `load_lab()` produces**, or completion
     offers names that cannot dispatch. Derive ids with
-    `host_identity(record, element, profiles=...)` (the same `element` and
+    `host_identity(record, element=element, profiles=...)` (the same `element` and
     `profiles` you pass to `create_host_from_dict`) rather than formatting
     your records by hand: it
     applies the same profile merge and validation the host factory applies,
@@ -121,7 +121,7 @@ dependency-free reference implementation —
 you can copy from `src/otto/examples/lab_repository.py` as a starting point. It
 holds a mapping of lab name to element dicts — each grouping its own host
 dicts — builds one `Element` per group, resolves each host dict's inventory
-reference with `resolve_host_entry(record, inventory, element)` (a
+reference with `resolve_host_entry(record, inventory=inventory, element=element)` (a
 pass-through when the record carries no `inventory` key), and builds real
 hosts with [`create_host_from_dict`](../api/host/index.rst) (`element=`
 that same `Element`, `inventory_ref=` the resolution's `ref`, `profiles=` the
@@ -206,7 +206,7 @@ What otto does with it, and when:
   is still being imported is refused, because registration is not complete
   then; so is building one, and so is {func}`otto.session.build_lab`.
 - **When a lab is loaded**, otto calls the factory once per source with
-  `Configured(config, env)` and checks that what it returns has callable
+  `Configured(config=..., env=...)` and checks that what it returns has callable
   `load_lab` and `list_labs`. What a config model must be is stated once,
   under {ref}`configured-backends`.
 
@@ -333,7 +333,7 @@ def test_cmdb_conforms(tmp_path):
         project_root=tmp_path, label="test/cmdb", origin="test", profiles=ProfileContext.empty()
     )
     config = CmdbConfig.model_validate({"url": "https://cmdb.example.com"}, context={"env": env})
-    assert_lab_repository_conforms(cmdb_source(Configured(config, env)))
+    assert_lab_repository_conforms(cmdb_source(Configured(config=config, env=env)))
 ```
 
 The source is built as otto builds it: the options parsed with the

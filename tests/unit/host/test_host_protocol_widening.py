@@ -39,7 +39,7 @@ def test_basehost_as_user_default_is_an_async_context_manager_that_refuses():
             raise AssertionError
 
     inst = Bare.__new__(Bare)  # no __init__: only the method shape is under test
-    cm = inst.as_user("root")
+    cm = inst.as_user(user="root")
     assert hasattr(cm, "__aenter__"), "as_user() must return an async context manager"
 
     async def enter():

@@ -284,7 +284,7 @@ def _cleanup_host_plan(
     return host_plan
 
 
-def plan_lab_tail(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[TailStep]:
+def plan_lab_tail(*, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[TailStep]:
     """Return the lab-wide steps *name* takes once after every project, in run order.
 
     Only ``cleanup`` has them: each fleet host's debug-log sweep (with
@@ -324,7 +324,9 @@ def plan_lab_tail(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> li
     return steps
 
 
-def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[ProjectPlan]:
+def plan_instruction(
+    *, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]"
+) -> list[ProjectPlan]:
     """Collect every project's plan for *name*, an instruction with a preview.
 
     *name* is one of :data:`~otto.instruction_catalog.PREVIEWABLE_INSTRUCTIONS`.

@@ -246,8 +246,8 @@ class MonitorSession:
     @classmethod
     def build(  # noqa: PLR0913 — one keyword per session input
         cls,
-        hosts: "Sequence[RemoteHost] | None" = None,
         *,
+        hosts: "Sequence[RemoteHost] | None" = None,
         targets: "list[MonitorTarget] | None" = None,
         parsers: "list[MetricParser] | None" = None,
         interval: "timedelta | float",
@@ -292,16 +292,16 @@ class MonitorSession:
             raise MonitorInputError("pass exactly one of hosts or targets", field="hosts")
         seconds = interval.total_seconds() if isinstance(interval, timedelta) else float(interval)
         try:
-            validate_interval(seconds)
+            validate_interval(seconds=seconds)
         except ValueError as exc:
             raise MonitorInputError(str(exc), field="interval") from exc
         if hosts is not None:
             field, snapshot_hosts = "hosts", list(hosts)
-            verdicts = {h.id: unmonitorable_reason(h) for h in snapshot_hosts}
+            verdicts = {h.id: unmonitorable_reason(host=h) for h in snapshot_hosts}
         else:
             field, snapshot_hosts = "targets", [t.host for t in targets or []]
             verdicts = {
-                t.host.id: unmonitorable_reason(t.host, has_snmp=t.snmp is not None)
+                t.host.id: unmonitorable_reason(host=t.host, has_snmp=t.snmp is not None)
                 for t in targets or []
             }
         if not snapshot_hosts:
@@ -316,7 +316,7 @@ class MonitorSession:
             if targets is not None:
                 return MetricCollector(targets=targets, db=db, tunnel_source=tunnel_source)
             return build_monitor_collector(
-                snapshot_hosts, parsers=parsers, db=db, tunnel_source=tunnel_source
+                hosts=snapshot_hosts, parsers=parsers, db=db, tunnel_source=tunnel_source
             )
 
         frame = new_frame(label=label, note=note)
@@ -359,7 +359,7 @@ class MonitorSession:
         """
         if not self._opened:
             raise RuntimeError("MonitorSession.spawn() before open(): open the archive first")
-        task = asyncio.create_task(self.collector.run(self.interval))
+        task = asyncio.create_task(self.collector.run(interval=self.interval))
         task.add_done_callback(report_stopped_collection)
         return task
 

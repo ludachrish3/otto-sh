@@ -73,7 +73,9 @@ def bind_handler_kwargs(
     option_fields = own_fields | {
         f.name for cls in registered for f in dataclasses.fields(cast("DataclassInstance", cls))
     }
-    ctx.bind_verb_options("run", {k: v for k, v in kwargs.items() if k in option_fields})
+    ctx.bind_verb_options(
+        verb="run", kwargs={k: v for k, v in kwargs.items() if k in option_fields}
+    )
     if own_cls is not None and any(own_cls is cls for cls in registered):
         own_instance = ctx.options(own_cls)
     elif own_cls is not None and own_instance is None:
@@ -94,7 +96,9 @@ def bind_handler_kwargs(
     return bound
 
 
-async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | None = None) -> Any:
+async def run_instruction(
+    ctx: "OttoContext", *, name: str, opts: list[object] | None = None
+) -> Any:
     """Run instruction *name* on *ctx* as ``otto run <name>`` would, and return its value.
 
     *opts* are options instances: the instruction's own class and any class
@@ -134,7 +138,7 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
     # Before any option is flattened or validated: an inactive project's
     # instruction is refused for the reason it is inactive, not for a value
     # its options would also have rejected — the order `otto run` keeps.
-    check_instruction_active(name, INSTRUCTIONS.project(name), ctx)
+    check_instruction_active(name=name, owner=INSTRUCTIONS.project(name=name), ctx=ctx)
     instances = list(opts or [])
     extras: list[type] = []
     if entry.project is not None:
@@ -151,7 +155,7 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
             if entry.project is not None:
                 from .project import orchestrator
 
-                ctx.bind_verb_options("run", flat)
+                ctx.bind_verb_options(verb="run", kwargs=flat)
                 # Validation only; the run's own walk announces the skips.
                 orchestrator.project_instruction_body_options(name, ctx, flat, announce=False)
                 return await orchestrator.run_project_instruction(name, flat)

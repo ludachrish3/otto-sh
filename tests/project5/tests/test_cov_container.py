@@ -58,7 +58,7 @@ class TestCovContainer:
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _containers(cls):
-        cls._host = next(iter(all_hosts(_HOST)))
+        cls._host = next(iter(all_hosts(pattern=_HOST)))
         failed = {
             h: r
             for h, r in (await do_for_all_hosts(_install, pattern=_HOST)).items()

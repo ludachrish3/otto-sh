@@ -78,7 +78,7 @@ def elevates(host: Any) -> bool:
 
 
 def _elevate(command: str, elevated: bool) -> str:
-    return sudo_line(command) if elevated else command
+    return sudo_line(command=command) if elevated else command
 
 
 def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> list[str]:
@@ -94,8 +94,8 @@ def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> li
     staged = path_operand(PurePosixPath(where) / artifact.name)
     extra = f" {params.strip()}" if params.strip() else ""
     return [
-        mkdir_line(where),
-        put_line(artifact, where),
+        mkdir_line(directory=where),
+        put_line(local=artifact, remote_dir=where),
         _elevate(f"insmod {staged}{extra}", elevated),
         f"rm -f {staged}",
     ]
@@ -179,7 +179,7 @@ class KmodTool(DevTool):
     @override
     async def stage(self, host: "Host") -> Result:
         """No-op success: ``load`` stages the ``.ko`` itself and removes it after ``insmod``."""
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -192,14 +192,14 @@ class KmodTool(DevTool):
         reads as false and the load's own decline is what gets announced.
         """
         if await self.is_installed(host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         directory = await self.resolved_stage_dir(host)
-        made = await ensure_stage_dir(host, directory, who=f"dev tool {self.name!r}")
+        made = await ensure_stage_dir(host=host, directory=directory, who=f"dev tool {self.name!r}")
         if not made.is_ok:
             return made
         return await host.load(  # ty: ignore[unresolved-attribute]
             self.artifact,
-            self.module_name,
+            name=self.module_name,
             params=self.params,
             dest_dir=directory,
         )
@@ -234,7 +234,9 @@ class KmodTool(DevTool):
             ]
         )
         unload = [unload_line(self.module_name, elevated=elevated)]
-        where = planned_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
+        where = planned_stage_dir(
+            stage_dir=self.stage_dir, host=host, who=f"dev tool {self.name!r}"
+        )
         if where.refusal is not None:
             # The refusal is the install's: rmmod needs no stage dir, so the
             # unload uninstall really runs is still planned.
@@ -317,7 +319,7 @@ class KmodcovTool(KmodTool):
         """
         problem = interface_problem(self)
         if problem is not None:
-            return Result(Status.Error, msg=problem)
+            return Result(status=Status.Error, msg=problem)
         return await super().install(host)
 
     @override

@@ -62,7 +62,7 @@ def _isolate_transfer_registry():
         yield
     finally:
         for name in set(xfer_mod.TRANSFER_BACKENDS.names()) - before:
-            xfer_mod.TRANSFER_BACKENDS.unregister(name)
+            xfer_mod.TRANSFER_BACKENDS.unregister(name=name)
 
 
 class TestBuiltins:
@@ -90,7 +90,7 @@ class TestBuiltins:
 class TestRegistry:
     def test_unknown_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown transfer backend"):
-            build_transfer_backend("nope", _ctx())
+            build_transfer_backend(name="nope", ctx=_ctx())
 
     def test_register_rejects_empty_host_families(self):
         class NoFamilies(BaseFileTransfer):
@@ -303,8 +303,8 @@ async def test_sftp_hands_its_declared_stride_to_asyncssh(tmp_path: Path, monkey
     backend = SftpFileTransfer.create(_ctx())
     src = tmp_path / "f.bin"
     src.write_bytes(b"z" * 10)
-    await backend.run_put([src], Path("/remote"), None)
-    await backend.run_get([Path("/remote/f.bin")], tmp_path, None)
+    await backend.run_put([src], Path("/remote"), progress_factory=None)
+    await backend.run_get([Path("/remote/f.bin")], tmp_path, progress_factory=None)
     g = SftpFileTransfer.progress_granularity
     assert conn.put.await_args.kwargs["block_size"] == g.put == 16384
     assert conn.get.await_args.kwargs["block_size"] == g.get == 16384
@@ -384,7 +384,7 @@ def test_the_ftp_stride_is_aioftps_own_block_size():
 
 
 def test_build_transfer_backend_returns_a_built_backend():
-    built = build_transfer_backend("nc", _ctx())
+    built = build_transfer_backend(name="nc", ctx=_ctx())
     assert isinstance(built, NcFileTransfer)
 
 
@@ -393,7 +393,7 @@ def test_transfer_metadata_is_read_without_importing():
     script = (
         "import sys\n"
         "from otto.host.transfer.registry import TRANSFER_BACKENDS\n"
-        "metadata = TRANSFER_BACKENDS.peek('tftp').metadata\n"
+        "metadata = TRANSFER_BACKENDS.peek(name='tftp').metadata\n"
         "assert metadata.host_families == frozenset({'embedded'}), metadata\n"
         "print('otto.host.transfer.tftp' in sys.modules)\n"
     )
@@ -411,15 +411,17 @@ def test_a_built_in_whose_class_disagrees_with_its_stated_metadata_is_refused_at
     from otto.host.transfer.nc import NcFileTransfer as Nc
 
     if built_first:
-        build_transfer_backend("nc", _ctx())
+        build_transfer_backend(name="nc", ctx=_ctx())
     # A fresh registration BY REFERENCE, as otto registers the built-in: after
     # a build, peek() returns the resolved record, whose class needs no check.
-    stated = TRANSFER_BACKENDS.peek("nc").metadata
+    stated = TRANSFER_BACKENDS.peek(name="nc").metadata
     TRANSFER_BACKENDS.register(
-        "nc",
-        class_backend(cls=Ref("otto.host.transfer.nc:NcFileTransfer"), metadata=stated),
+        name="nc",
+        entry=class_backend(
+            cls=Ref(target="otto.host.transfer.nc:NcFileTransfer"), metadata=stated
+        ),
         overwrite=True,
     )
     monkeypatch.setattr(Nc, "authenticates", True)
     with pytest.raises(TransferConstructionError, match="authenticates"):
-        build_transfer_backend("nc", _ctx())
+        build_transfer_backend(name="nc", ctx=_ctx())

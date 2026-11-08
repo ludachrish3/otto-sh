@@ -266,7 +266,7 @@ class TestNothingThatWorksIsTouched:
         behind the whole file changes and it should red here rather than in a
         lab six months later.
         """
-        profile = get_os_profile("busybox")
+        profile = get_os_profile(name="busybox")
         assert profile is not None
         assert "sftp" in profile.fields.defaults["valid_transfers"], (
             "the `busybox` profile no longer offers `sftp`. This file's premise is that "
@@ -343,7 +343,7 @@ class TestPutArrivesAtTheGuard:
         src.write_bytes(b"x")
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend.run_put([src], Path("/tmp"), None)
+            await backend.run_put([src], Path("/tmp"), progress_factory=None)
         assert gap.docs_anchor in str(caught.value)
 
     @pytest.mark.asyncio
@@ -363,7 +363,7 @@ class TestPutArrivesAtTheGuard:
         src.write_bytes(b"x")
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend.run_put([src], Path("/tmp"), None)
+            await backend.run_put([src], Path("/tmp"), progress_factory=None)
         assert src.name not in str(caught.value), (
             f"the attributed failure names {src.name}, so the missing subsystem is being "
             f"reported as a problem with a file that is present and readable — the "
@@ -383,7 +383,7 @@ class TestPutArrivesAtTheGuard:
         conns = _FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT))
         backend = _backend(conns)
         with pytest.raises(UnsupportedOnUserlandError):
-            await backend.run_put(srcs, Path("/tmp"), None)
+            await backend.run_put(srcs, Path("/tmp"), progress_factory=None)
         assert conns.calls == 1, (
             f"the subsystem was opened {conns.calls} times for a 3-file PUT. The open sits "
             f"above the per-file gather so the operator gets one message, not one per file "
@@ -402,7 +402,7 @@ class TestGetArrivesAtTheGuard:
         assert gap is not None
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend.run_get([Path("/tmp/remote.bin")], tmp_path, None)
+            await backend.run_get([Path("/tmp/remote.bin")], tmp_path, progress_factory=None)
         assert gap.docs_anchor in str(caught.value)
 
     @pytest.mark.asyncio
@@ -417,7 +417,7 @@ class TestGetArrivesAtTheGuard:
         client = MagicMock(name="SFTPClient")
         client.get = AsyncMock()
         backend = _backend(_FakeConnections(client))
-        per_file = await backend.run_get([Path("/tmp/remote.bin")], tmp_path, None)
+        per_file = await backend.run_get([Path("/tmp/remote.bin")], tmp_path, progress_factory=None)
         assert per_file[Path("/tmp/remote.bin")].status is Status.Success
         client.get.assert_awaited_once()
         assert isinstance(per_file[Path("/tmp/remote.bin")], Result)

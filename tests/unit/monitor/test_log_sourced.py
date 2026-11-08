@@ -145,7 +145,7 @@ SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: 
 def _syslog() -> RegexLogEventParser:
     return RegexLogEventParser(
         "tail -n 200 /var/log/syslog",
-        SYSLOG_PATTERN,
+        pattern=SYSLOG_PATTERN,
         tab="syslog",
         tab_label="Syslog",
     )
@@ -190,7 +190,7 @@ class TestRegexLogEventParser:
     def test_strptime_ts_format(self) -> None:
         p = RegexLogEventParser(
             "tail -n 200 /var/log/messages",
-            r"^(?P<ts>\w+ +\d+ [\d:]+) (?P<message>.*)$",
+            pattern=r"^(?P<ts>\w+ +\d+ [\d:]+) (?P<message>.*)$",
             tab="messages",
             tab_label="Messages",
             ts_format="%b %d %H:%M:%S",
@@ -230,11 +230,11 @@ class TestRegexLogEventParser:
 
     def test_ts_group_must_exist(self) -> None:
         with pytest.raises(ValueError, match="no named group 'ts'"):
-            RegexLogEventParser("tail x", r"(?P<message>.*)", tab="t", tab_label="T")
+            RegexLogEventParser("tail x", pattern=r"(?P<message>.*)", tab="t", tab_label="T")
 
     def test_needs_a_column_besides_the_timestamp(self) -> None:
         with pytest.raises(ValueError, match="at least one named group besides"):
-            RegexLogEventParser("tail x", r"(?P<ts>\S+)", tab="t", tab_label="T")
+            RegexLogEventParser("tail x", pattern=r"(?P<ts>\S+)", tab="t", tab_label="T")
 
 
 def _csv() -> CsvMetricParser:

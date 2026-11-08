@@ -417,7 +417,7 @@ def _zephyr(port: int, name: str = "zephyr37_fat") -> ZephyrHost:
     """A Zephyr host on a loopback peer; the family forces single-client and no login."""
     return ZephyrHost(
         ip="127.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         log=LogMode.QUIET,
         telnet_options=TelnetOptions(
             port=port,

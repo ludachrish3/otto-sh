@@ -7,6 +7,7 @@ assigned ``__signature__`` reconstruct the bound-method call. Typer owns parsing
 help, validation, completion, and exit codes.
 """
 
+import copy
 import inspect
 import types
 import typing
@@ -187,8 +188,29 @@ def _normalize_scalar(base: Any, marker_type: type | None) -> Any:
     return base
 
 
+def _list_element(base: Any) -> Any:
+    """Return ``X`` when *base* is ``list[X]`` or a union containing ``list[X]``, else ``None``."""
+    if get_origin(base) is list:
+        return (get_args(base) or (str,))[0]
+    _native_union = getattr(types, "UnionType", None)
+    if get_origin(base) is Union or (_native_union is not None and isinstance(base, _native_union)):
+        for member in get_args(base):
+            if get_origin(member) is list:
+                return (get_args(member) or (str,))[0]
+    return None
+
+
 def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
     """Introspect *func*'s signature and produce a :class:`CliBinding`.
+
+    The parameter KIND decides argument versus option (spec §6.6): a
+    positional parameter is a positional argument, in signature order,
+    required or defaulted alike (a list-typed one, or a union containing
+    ``list[X]``, is the one ``nargs=-1`` variadic); a keyword-only parameter
+    is a ``--option``, required when it has no default. ``Arg`` and ``Opt``
+    carry presentation only (metavar, help, flag spelling, completer,
+    ``elem_type``, ``min``), and an ``Exclude``-marked parameter stays off the
+    CLI with its default passed through. ``**kwargs`` is not exposed.
 
     Args:
         func: An unbound method or function whose first parameter is ``self``.
@@ -198,63 +220,83 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
         and converters for list/dict options.
 
     Raises:
-        ValueError: If more than one parameter is marked ``Arg(variadic=True)``,
-            or if a ``list``/``dict`` parameter carries ``Opt(remote_path=...)``
-            — that branch renders one comma/``key=value`` string, which a path
-            completer cannot meaningfully complete.
+        ValueError: For a positional-only parameter (the command dispatches by
+            keyword), a ``*args``, more than one positional list parameter, a
+            marker that contradicts the signature (``Arg`` on a keyword-only
+            parameter, ``Opt`` on a positional one), or a ``list``/``dict``
+            option carrying ``remote_path``/``host_user`` (that option renders
+            one comma/``key=value`` string a per-element completer cannot
+            complete).
     """
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
     binding = CliBinding()
-    variadic_count = 0
+    verb = repr(getattr(func, "__name__", func))
+    variadic: str | None = None
 
     for name, sp in sig.parameters.items():
-        if name == "self":
+        if name == "self" or sp.kind is inspect.Parameter.VAR_KEYWORD:
             continue
+        if sp.kind is inspect.Parameter.VAR_POSITIONAL:
+            raise ValueError(
+                f"{verb}: *{name} — *args on an exposed verb is refused; "
+                f"spell a variadic as a positional list parameter"
+            )
+        if sp.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise ValueError(
+                f"{verb}: {name!r} — positional-only parameters cannot be dispatched by keyword"
+            )
         hint = hints.get(name, sp.annotation)
         base, meta = _split_annotation(hint)
         arg = next((m for m in meta if isinstance(m, Arg)), None)
         opt = next((m for m in meta if isinstance(m, Opt)), None)
-        is_excluded = any(isinstance(m, Exclude.__class__) for m in meta)
         default = sp.default
 
-        if is_excluded:
+        if any(isinstance(m, Exclude.__class__) for m in meta):
             binding.excluded[name] = default
             continue
 
-        # --- variadic positional list (union-typed lists need the marker) ---
-        if arg is not None and arg.variadic:
-            variadic_count += 1
-            if variadic_count > 1:
-                raise ValueError(
-                    f"{getattr(func, '__name__', func)!r}: at most one parameter "
-                    f"may be Arg(variadic=True)"
-                )
-            elem = arg.elem_type or str
+        positional = sp.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        if arg is not None and not positional:
+            raise ValueError(
+                f"{verb}: {name!r} — the Arg marker contradicts the signature: the "
+                f"parameter is keyword-only, so it is a --option; use Opt(...) for its presentation"
+            )
+        if opt is not None and positional:
+            raise ValueError(
+                f"{verb}: {name!r} — the Opt marker contradicts the signature: the "
+                f"parameter is positional, so it is an argument; use Arg(...) for its presentation"
+            )
+
+        if positional:
+            elem = _list_element(base)
+            if elem is not None:
+                if variadic is not None:
+                    raise ValueError(
+                        f"{verb}: at most one positional list-typed parameter "
+                        f"({variadic!r} and {name!r}) — a verb has one variadic argument"
+                    )
+                variadic = name
+                cli_type: Any = list[(arg.elem_type if arg and arg.elem_type else elem)]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
+            else:
+                cli_type = _normalize_scalar(base, arg.elem_type if arg else None)
             ann = Annotated[
-                list[elem],  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
+                cli_type,
                 typer.Argument(
-                    metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
+                    metavar=arg.name if arg else None,
+                    help=arg.help if arg else None,
+                    autocompletion=_completer_for(arg),
                 ),
             ]
             binding.params.append(
                 inspect.Parameter(
-                    name,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    default=(
-                        sp.default
-                        if sp.default is not inspect.Parameter.empty
-                        else inspect.Parameter.empty
-                    ),
-                    annotation=ann,
+                    name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default, annotation=ann
                 )
             )
             continue
 
         origin = get_origin(base)
-
-        # --- list/dict OPTION (comma / key=value), forward-looking ---
-        if origin in (list, dict) and arg is None:
+        if origin in (list, dict):
             # This branch renders one comma/key=value STRING, so a per-element
             # completer (a path, a host login) would complete the whole field,
             # not the element under the cursor. Fail loud rather than accept a
@@ -262,75 +304,54 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             for marker_field in ("remote_path", "host_user"):
                 if getattr(opt, marker_field, None) is not None:
                     raise ValueError(
-                        f"{getattr(func, '__name__', func)!r}: {name!r} — {marker_field} is not "
+                        f"{verb}: {name!r} — {marker_field} is not "
                         f"supported on a comma-list/key=value option"
                         + (
-                            "; use Arg(variadic=True, remote_path=...) for a completable path list"
+                            "; make it a positional list parameter with Arg(remote_path=...) "
+                            "for a completable path list"
                             if marker_field == "remote_path"
                             else ""
                         )
                     )
             elem = (get_args(base) or (str,))[-1]
-            if origin is list:
-                binding.converters[name] = lambda raw, e=elem: parse_comma_list(raw, e)
-                help_txt = opt.help if opt else None
-            else:
-                binding.converters[name] = lambda raw, e=elem: parse_kv_dict(raw, e)
-                help_txt = opt.help if opt else None
+            parse = parse_comma_list if origin is list else parse_kv_dict
+            # Omitted (``None`` from Typer) is the parameter's own default (§6.6),
+            # copied so a verb that mutates it never changes the next call's.
+            declared = None if default is inspect.Parameter.empty else default
+            binding.converters[name] = lambda raw, e=elem, p=parse, d=declared: (
+                copy.deepcopy(d) if raw is None else p(raw, e)
+            )
             opt_decls = _opt_decls(opt, name) if opt is not None else []
             # `typer.Option`'s signature is `Option(default=..., *param_decls, ...)`; a
             # name override must land in the vararg slot, so the leading `...` is
-            # required — it's ignored in favor of the Python parameter's own default,
-            # same as the no-decl `typer.Option(help=...)` calls elsewhere in this module.
-            ann = Annotated[str | None, typer.Option(..., *opt_decls, help=help_txt)]
+            # required — it's ignored in favor of the Python parameter's own default.
+            ann = Annotated[
+                str | None, typer.Option(..., *opt_decls, help=opt.help if opt else None)
+            ]
             binding.params.append(
                 inspect.Parameter(
                     name,
                     inspect.Parameter.KEYWORD_ONLY,
-                    default=None,
+                    default=None if default is not inspect.Parameter.empty else default,
                     annotation=ann,
                 )
             )
             continue
 
-        # --- scalar: normalize union, then arg/opt/inference ---
-        norm = _normalize_scalar(base, (arg.elem_type if arg else (opt.elem_type if opt else None)))
-        if arg is not None:  # explicit positional (e.g. defaulted scalar we keep positional)
-            ann = Annotated[
-                norm,  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
-                typer.Argument(
-                    metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
-                ),
-            ]
-            kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
-        elif opt is not None:  # explicit option
-            opt_decls = _opt_decls(opt, name, norm)
-            # See the list/dict OPTION branch above for why `...` must precede
-            # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
-            ann = Annotated[
-                norm,  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
-                typer.Option(
-                    ...,
-                    *opt_decls,
-                    help=opt.help,
-                    min=opt.min,
-                    autocompletion=_completer_for(opt),
-                ),
-            ]
-            kind = inspect.Parameter.KEYWORD_ONLY
-        else:  # attach explicit Typer annotation so KEYWORD_ONLY wrappers still render correctly
-            if default is inspect.Parameter.empty:
-                ann = Annotated[norm, typer.Argument()]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
-            else:
-                ann = Annotated[norm, typer.Option()]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
-            kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
+        norm = _normalize_scalar(base, opt.elem_type if opt else None)
+        # See the list/dict branch above for why `...` must precede `*opt_decls`.
+        ann = Annotated[
+            norm,  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
+            typer.Option(
+                ...,
+                *(_opt_decls(opt, name, norm) if opt is not None else []),
+                help=opt.help if opt else None,
+                min=opt.min if opt else None,
+                autocompletion=_completer_for(opt),
+            ),
+        ]
         binding.params.append(
-            inspect.Parameter(
-                name,
-                kind,
-                default=default,
-                annotation=ann,
-            )
+            inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=default, annotation=ann)
         )
 
     return binding

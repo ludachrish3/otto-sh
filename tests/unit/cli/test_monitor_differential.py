@@ -86,8 +86,8 @@ def test_review_hands_serve_review_the_source_and_the_projects(tmp_path, monkeyp
         result = _invoke([str(src)])
     assert result.exit_code == 0, result.output
     fake.assert_awaited_once()
-    assert fake.await_args.args == (src,)
-    assert fake.await_args.kwargs == {"projects": projects}
+    assert fake.await_args.args == ()
+    assert fake.await_args.kwargs == {"path": src, "projects": projects}
 
 
 # The REAL library refuses these before touching any lab: the row proves the
@@ -120,8 +120,8 @@ def test_a_bad_review_source_is_a_usage_error_naming_source(tmp_path, monkeypatc
 
 
 FAIL_ROWS = [
-    EmptySelectionError("x", 3),
-    ProjectScopeError("/project", "the [project] scope admits no host here"),
+    EmptySelectionError("x", base_size=3),
+    ProjectScopeError("/project", message="the [project] scope admits no host here"),
     NoMonitorableHostsError(["z1"]),
     MonitorTlsError("[monitor] TLS settings disagree", setting=None, projects=["a", "b"]),
 ]

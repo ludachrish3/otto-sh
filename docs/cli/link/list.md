@@ -34,7 +34,7 @@ dataplane  test1@eth1.100 <-> test2@eth1.200  via test3  a->b: -  b->a: -
   [Safety](safety.md#safety-rules).
 
   The structural half is also available on its own, as
-  `otto.link.placement.impairment_refusal(link)` — no lab, no `await`, no live
+  `otto.link.placement.impairment_refusal(link=link)` — no lab, no `await`, no live
   address fetch; `find_link` resolving a link does not mean `impair` can act on
   it. It takes the directions you mean, and they matter: a link between one
   interfaced host and one bare host is refused both ways but accepted for

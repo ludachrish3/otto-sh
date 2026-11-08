@@ -282,7 +282,7 @@ def _bodies_of(cls: type, project: str | None) -> "tuple[ProjectInstructionBody,
                 options_cls=mark.options_cls,
                 project=project,
                 help=mark.help,
-                shape=FrozenMap(mark.shape),
+                shape=FrozenMap(mapping=mark.shape),
             )
         )
     return tuple(bodies)
@@ -382,7 +382,7 @@ def _check_tables(
         owner = (
             get_registering_project()
             if registering_standalone
-            else STANDALONE_INSTRUCTIONS.project(name)
+            else STANDALONE_INSTRUCTIONS.project(name=name)
         )
         declared = (
             "one of otto's first-party instructions"
@@ -535,7 +535,10 @@ PROJECT_ACTIONS: Registry[ProjectActionsEntry] = Registry(
     register_hint="otto.register_project_actions()",
     validate=_check_project_actions,
     capabilities=[
-        Justified(RequireProject(), reason="one actions class per project; the project is the key"),
+        Justified(
+            capability=RequireProject(),
+            reason="one actions class per project; the project is the key",
+        ),
     ],
 )
 """Each project's :class:`~otto.instruction_catalog.ProjectActionsEntry`, keyed by project name."""
@@ -586,7 +589,7 @@ def declare_first_party_actions(cls: type) -> None:
         return
     with _registering_for_otto():
         FIRST_PARTY_ACTIONS.register(
-            FIRST_PARTY_KEY, ProjectActionsEntry(cls, _bodies_of(cls, None))
+            name=FIRST_PARTY_KEY, entry=ProjectActionsEntry(cls, _bodies_of(cls, None))
         )
 
 
@@ -621,15 +624,15 @@ def _derive_instructions() -> "Iterator[Derived[InstructionEntry]]":
         yield Derived(
             name,
             InstructionEntry(name=name, module=project.spec.module, project=project),
-            origin=PROJECT_INSTRUCTIONS.origin(name),
+            origin=PROJECT_INSTRUCTIONS.origin(name=name),
             project=None,
         )
     for name, entry in STANDALONE_INSTRUCTIONS.raw_items():
         yield Derived(
             name,
             entry,
-            origin=STANDALONE_INSTRUCTIONS.origin(name),
-            project=STANDALONE_INSTRUCTIONS.project(name),
+            origin=STANDALONE_INSTRUCTIONS.origin(name=name),
+            project=STANDALONE_INSTRUCTIONS.project(name=name),
         )
 
 
@@ -854,8 +857,8 @@ def instruction(
         # validate), so a direct register() meets the same refusal.
         options_parameter(func, options)
         STANDALONE_INSTRUCTIONS.register(
-            cmd_name,
-            InstructionEntry(
+            name=cmd_name,
+            entry=InstructionEntry(
                 name=cmd_name,
                 module=getattr(func, "__module__", "<unknown>"),
                 handler=func,

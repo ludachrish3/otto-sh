@@ -114,7 +114,7 @@ def test_run_tests_without_output_dir_writes_under_the_default_xdir(tmp_path, mo
     _use_project(monkeypatch, _stub_project(tmp_path / "proj"))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
 
-    result = contextvars.Context().run(run_tests, [_ALPHA])
+    result = contextvars.Context().run(run_tests, names=[_ALPHA])
 
     assert result.output_dir.parent == layout.command_output_dir(default_xdir(), "test")
     assert layout.RUN_DIR_NAME_RE.match(result.output_dir.name)
@@ -148,7 +148,7 @@ def test_run_tests_targets_the_test_directories_and_passes_no_keyword(tmp_path, 
     captured = _capture_pytest_main(monkeypatch)
     plugin_kwargs = _capture_otto_plugin(monkeypatch)
 
-    run_tests([_ALPHA], output_dir=tmp_path)
+    run_tests(names=[_ALPHA], output_dir=tmp_path)
     args = captured["args"]
     assert [a for a in args if a.startswith(str(tmp_path))] == [str(tmp_path / "tests")]
     assert "-k" not in args
@@ -159,7 +159,7 @@ def test_run_tests_auto_junit_path_under_output_dir(tmp_path, monkeypatch):
     _use_project(monkeypatch, _stub_project(tmp_path))
     captured = _capture_pytest_main(monkeypatch)
 
-    run_tests([_ALPHA], output_dir=tmp_path)
+    run_tests(names=[_ALPHA], output_dir=tmp_path)
     junit_arg = next((a for a in captured["args"] if "--junitxml" in a), None)
     assert junit_arg is not None
     assert str(tmp_path) in junit_arg
@@ -169,7 +169,9 @@ def test_run_tests_passes_markers(tmp_path, monkeypatch):
     _use_project(monkeypatch, _stub_project(tmp_path))
     captured = _capture_pytest_main(monkeypatch)
 
-    run_tests([_ALPHA], run_options=RunOptions(markers="not integration"), output_dir=tmp_path)
+    run_tests(
+        names=[_ALPHA], run_options=RunOptions(markers="not integration"), output_dir=tmp_path
+    )
     args = captured["args"]
     assert "-m" in args
     assert args[args.index("-m") + 1] == "not integration"
@@ -197,7 +199,7 @@ def test_run_tests_monitor_flags_reach_plugin(tmp_path, monkeypatch):
     captured = _capture_otto_plugin(monkeypatch)
 
     run_tests(
-        [_ALPHA],
+        names=[_ALPHA],
         run_options=RunOptions(monitor=True, monitor_interval=2.0, monitor_hosts="router"),
         output_dir=tmp_path,
     )
@@ -214,7 +216,9 @@ def test_run_tests_monitor_output_override(tmp_path, monkeypatch):
 
     out = tmp_path / "somewhere.db"
     run_tests(
-        [_ALPHA], run_options=RunOptions(monitor=True, monitor_output=out), output_dir=tmp_path
+        names=[_ALPHA],
+        run_options=RunOptions(monitor=True, monitor_output=out),
+        output_dir=tmp_path,
     )
     assert captured["monitor_output"] == out
 
@@ -231,7 +235,7 @@ def test_run_tests_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected)
     _use_project(monkeypatch, _stub_project(tmp_path))
     _capture_pytest_main(monkeypatch, rc=rc)
 
-    result = run_tests([_ALPHA], output_dir=tmp_path)
+    result = run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert result.exit_code == expected
     assert not result.passed
 
@@ -242,7 +246,7 @@ def test_run_tests_a_session_with_nothing_to_run_is_no_match(tmp_path, monkeypat
     _capture_pytest_main(monkeypatch, rc=pytest.ExitCode.NO_TESTS_COLLECTED)
 
     with pytest.raises(NoTestsMatchedError):
-        run_tests([_ALPHA], output_dir=tmp_path)
+        run_tests(names=[_ALPHA], output_dir=tmp_path)
 
 
 # ── resolve_coverage: the tri-state --cov/--no-cov decision ──────────────────
@@ -355,7 +359,7 @@ def test_run_tests_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeyp
     _stub_instrumented_lab(monkeypatch, instrumented=False)
 
     with pytest.raises(CoverageNotInstrumentedError):
-        run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
+        run_tests(names=[_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
     # Refused before any host was touched.
     pre_clean.assert_not_awaited()
 
@@ -442,7 +446,7 @@ def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
         CoverageConfigError,
         match=r"^otto test --cov: coverage was requested, but no project declares",
     ):
-        run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
+        run_tests(names=[_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
     pre_clean.assert_not_awaited()
 
 
@@ -463,7 +467,7 @@ def test_resolve_coverage_auto_with_no_coverage_table_does_not_raise(monkeypatch
 def _raise_empty_selection(_projects):
     from otto.config.scope import EmptySelectionError
 
-    raise EmptySelectionError("sensor", 3)
+    raise EmptySelectionError("sensor", base_size=3)
 
 
 def test_resolve_coverage_auto_survives_an_empty_hosts_selection(monkeypatch, caplog):
@@ -491,7 +495,9 @@ def test_resolve_coverage_auto_warning_names_no_membership_keyword(monkeypatch, 
     from otto.suite.run import RunOptions, resolve_coverage
 
     def _raise_hidden(_projects):
-        raise EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        raise EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_hidden)
     monkeypatch.setattr(
@@ -608,7 +614,9 @@ def test_resolve_coverage_forced_on_names_no_membership_keyword(monkeypatch):
     from otto.suite.run import RunOptions, resolve_coverage
 
     def _raise_hidden(_projects):
-        raise EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        raise EmptySelectionError(
+            "local", base_size=4, excluded_by=["include_local"], matched_size=1
+        )
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_hidden)
     monkeypatch.setattr(
@@ -642,7 +650,7 @@ def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir, collect=No
     mock_run_report = AsyncMock(return_value=mock_store)
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
-    run_tests([_ALPHA], run_options=run_options, output_dir=log_dir)
+    run_tests(names=[_ALPHA], run_options=run_options, output_dir=log_dir)
     return mock_run_report
 
 
@@ -669,8 +677,9 @@ def test_run_tests_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     )
     mock.assert_called_once()
     args = mock.call_args.args
+    kwargs = mock.call_args.kwargs
     assert args[0] == [layout.cov_dir(log_dir)]
-    assert args[1] == layout.cov_report_dir(log_dir)
+    assert kwargs["output_dir"] == layout.cov_report_dir(log_dir)
     # Directory creation is run_coverage_report's own prepare_destination
     # call; it is mocked out here, so it is proven directly in
     # tests/unit/cov/test_report_inputs.py::test_run_coverage_report_creates_a_missing_output_dir
@@ -695,8 +704,8 @@ def test_run_tests_explicit_report_dir_and_report_title(tmp_path, monkeypatch):
         log_dir=log_dir,
     )
     mock.assert_called_once()
-    args = mock.call_args.args
-    assert args[1] == report_dir
+    kwargs = mock.call_args.kwargs
+    assert kwargs["output_dir"] == report_dir
     assert mock.call_args.kwargs["report_title"] == "My App"
 
 
@@ -741,7 +750,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
 
     with caplog.at_level("WARNING"):
         result = run_tests(
-            [_ALPHA],
+            names=[_ALPHA],
             run_options=RunOptions(cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
@@ -849,13 +858,13 @@ def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
     run_tests(
-        [_ALPHA],
+        names=[_ALPHA],
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         output_dir=log_dir,
     )
 
     mock_run_report.assert_called_once()
-    ticket_spec = mock_run_report.call_args.args[2].ticket_spec
+    ticket_spec = mock_run_report.call_args.kwargs["inputs"].ticket_spec
     assert ticket_spec is not None
     assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
 
@@ -872,7 +881,7 @@ def test_run_tests_no_coverage_section_leaves_ticket_spec_none(tmp_path, monkeyp
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         log_dir=log_dir,
     )
-    assert mock.call_args.args[2].ticket_spec is None
+    assert mock.call_args.kwargs["inputs"].ticket_spec is None
 
 
 def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatch):
@@ -1039,13 +1048,13 @@ def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
     run_tests(
-        [_ALPHA],
+        names=[_ALPHA],
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         output_dir=log_dir,
     )
 
     mock_run_report.assert_called_once()
-    overrides = mock_run_report.call_args.args[2].overrides
+    overrides = mock_run_report.call_args.kwargs["inputs"].overrides
     assert overrides is not None
     assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
 
@@ -1085,7 +1094,7 @@ def test_run_tests_malformed_overrides_file_warns_and_run_still_succeeds(
 
     with caplog.at_level("WARNING"):
         result = run_tests(
-            [_ALPHA],
+            names=[_ALPHA],
             run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
@@ -1108,7 +1117,7 @@ def test_run_tests_raises_value_error_when_nothing_matches(monkeypatch):
     patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(ValueError, match="No tests matched"):
-        run_tests(["test_nonexistent_zzz"])
+        run_tests(names=["test_nonexistent_zzz"])
 
 
 def test_run_tests_no_match_raises_no_tests_matched_error(monkeypatch):
@@ -1122,7 +1131,7 @@ def test_run_tests_no_match_raises_no_tests_matched_error(monkeypatch):
     patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(NoTestsMatchedError, match="No tests matched"):
-        run_tests(["test_nonexistent_zzz"])
+        run_tests(names=["test_nonexistent_zzz"])
 
 
 def test_run_tests_empty_options_raises(monkeypatch):
@@ -1162,7 +1171,7 @@ def test_run_tests_typo_raises_unknown_selection_error(one_project, tmp_path):
     one_project(files={"tests/test_t.py": "def test_alpha():\n    pass\n"})
 
     with pytest.raises(UnknownSelectionError, match="did you mean: test_alpha") as excinfo:
-        run_tests(["test_alpah"], output_dir=tmp_path / "out")
+        run_tests(names=["test_alpah"], output_dir=tmp_path / "out")
     assert excinfo.value.param_hint == "NAMES"
 
 
@@ -1171,7 +1180,7 @@ def test_run_tests_returns_result_single_project(tmp_path, monkeypatch):
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
 
-    result = run_tests([_ALPHA], output_dir=tmp_path)
+    result = run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert isinstance(result, SuiteRunResult)
     assert result.exit_code == 0
     assert result.junit_paths == [tmp_path / "junit.xml"]
@@ -1240,7 +1249,7 @@ def test_run_tests_single_project_layout_keeps_the_plain_output_dir(tmp_path, mo
     _use_project(monkeypatch, _stub_project(tmp_path))
     layouts = _captured_layouts(monkeypatch)
 
-    result = run_tests([_ALPHA], output_dir=tmp_path)
+    result = run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert result.exit_code == 0
     assert [layout.root for layout in layouts] == [tmp_path]
 
@@ -1262,7 +1271,7 @@ def test_run_tests_a_project_with_no_test_directory_is_not_searched(tmp_path, mo
     patch_bootstrap(monkeypatch, [searched, bare])
     layouts = _captured_layouts(monkeypatch)
 
-    result = run_tests([_ALPHA], output_dir=tmp_path)
+    result = run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert result.junit_paths == [tmp_path / "junit.xml"]
     assert [layout.root for layout in layouts] == [tmp_path]
 
@@ -1293,7 +1302,7 @@ def test_run_tests_installs_minimal_context_when_none_active(one_project, tmp_pa
     out = tmp_path / "out"
     out.mkdir()
     with cleared_run_state():  # hermetic: guarantee the no-context precondition
-        result = run_tests(["test_marker"], output_dir=out)
+        result = run_tests(names=["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         assert (out / "junit.xml").exists()
         # The per-test dir was created under output_dir via the run's
@@ -1315,7 +1324,7 @@ def test_run_tests_sets_and_restores_output_dir_on_active_context(one_project, t
     assert ctx.output_dir is None
     token = set_context(ctx)
     try:
-        result = run_tests(["test_marker"], output_dir=out)
+        result = run_tests(names=["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         assert list(out.rglob("marker.txt")), f"no per-test marker under {out}"
         # The session-scoped assignment is rolled back afterwards.
@@ -1338,7 +1347,7 @@ def test_run_tests_leaves_active_context_output_dir_untouched(one_project, tmp_p
     ctx = OttoContext(lab=Lab(name="test"), policy=RunPolicy(output_dir=ctx_dir))
     token = set_context(ctx)
     try:
-        result = run_tests(["test_marker"], output_dir=out)
+        result = run_tests(names=["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         # junit and the artifact layout honor the explicit output_dir; the
         # context's own output_dir is left exactly as the caller set it.
@@ -1365,7 +1374,7 @@ def test_run_tests_installs_and_restores_minimal_context(tmp_path, monkeypatch):
     monkeypatch.setattr("pytest.main", fake_main)
 
     with cleared_run_state():  # hermetic: guarantee the no-context precondition
-        result = run_tests([_ALPHA], output_dir=tmp_path)
+        result = run_tests(names=[_ALPHA], output_dir=tmp_path)
         assert result.passed, f"exit_code={result.exit_code}"
         # A context WAS installed for the duration of the session...
         assert captured["lab_name"] == LIBRARY_LAB_NAME
@@ -1412,15 +1421,17 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
     monkeypatch.setattr("pytest.main", fake_main)
 
     ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([project]))
-    ctx.bind_verb_options("run", {"lab_env": "prod"})
+    ctx.bind_verb_options(verb="run", kwargs={"lab_env": "prod"})
     before = ctx.options(RunOpts)
     token = set_context(ctx)
     try:
         if session_raises:
             with pytest.raises(RuntimeError, match="session blew up"):
-                run_tests(["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path)
+                run_tests(
+                    names=["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path
+                )
         else:
-            run_tests(["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path)
+            run_tests(names=["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path)
     finally:
         reset_context(token)
     # The run itself saw the test verb's options...
@@ -1451,7 +1462,7 @@ def test_run_tests_restores_no_context_state_on_exception(tmp_path, monkeypatch)
     _raising_session(monkeypatch)
     with cleared_run_state():  # hermetic: guarantee the no-context precondition
         with pytest.raises(RuntimeError, match="boom"):
-            run_tests([_ALPHA], output_dir=tmp_path)
+            run_tests(names=[_ALPHA], output_dir=tmp_path)
         assert installed_run_state() == [None, None, None]
 
 
@@ -1468,7 +1479,7 @@ def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch)
     token = set_context(ctx)
     try:
         with pytest.raises(RuntimeError, match="boom"):
-            run_tests([_ALPHA], output_dir=tmp_path)
+            run_tests(names=[_ALPHA], output_dir=tmp_path)
         assert ctx.output_dir is None
     finally:
         reset_context(token)
@@ -1495,7 +1506,9 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     _stub_instrumented_lab(monkeypatch)
 
     with pytest.raises(DestinationError, match="cov_dir target"):
-        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_dir=cov_dir), output_dir=log_dir)
+        run_tests(
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_dir=cov_dir), output_dir=log_dir
+        )
     # Failed before the pre-run remote clean ever ran, and the stale contents
     # were never touched.
     clean_mock.assert_not_awaited()
@@ -1527,7 +1540,9 @@ def test_run_tests_refuses_a_bad_report_dir_before_the_instrumentation_scan(tmp_
     scan = MagicMock(side_effect=AssertionError("the scan must not run"))
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", scan)
     with pytest.raises(DestinationError, match="cov_report_dir target"):
-        run_tests(["test_x"], run_options=RunOptions(cov_report_dir=report_dir), output_dir=log_dir)
+        run_tests(
+            names=["test_x"], run_options=RunOptions(cov_report_dir=report_dir), output_dir=log_dir
+        )
     scan.assert_not_called()
 
 
@@ -1547,7 +1562,7 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
     result = run_tests(
-        [_ALPHA],
+        names=[_ALPHA],
         run_options=RunOptions(cov=True, cov_dir=cov_dir, cov_clean=False, overwrite_cov_dir=True),
         output_dir=log_dir,
     )
@@ -1582,7 +1597,7 @@ def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_
         match=r"^otto test --cov-dir: coverage was requested, but no project declares",
     ):
         run_tests(
-            [_ALPHA],
+            names=[_ALPHA],
             run_options=RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True),
             output_dir=log_dir,
         )
@@ -1633,12 +1648,12 @@ def test_a_failed_pre_clean_stops_the_run_before_any_test(
     monkeypatch.setattr(
         "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
-    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock(return_value=bad))
 
     with pytest.raises(CoverageCleanError, match="t1/app: denied"):
         run_tests(
-            [_ALPHA],
+            names=[_ALPHA],
             run_options=RunOptions(cov=True, cov_clean=True),
             output_dir=tmp_path / "out",
         )
@@ -1666,7 +1681,7 @@ def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypat
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     _stub_instrumented_lab(monkeypatch)
-    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
     collected_result = CollectResult(
         cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=bad
     )
@@ -1675,7 +1690,9 @@ def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypat
     )
 
     with pytest.raises(CoverageCleanError, match="t1/app: denied"):
-        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir)
+        run_tests(
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+        )
 
 
 def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path, monkeypatch):
@@ -1697,7 +1714,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
     _use_project(monkeypatch, _stub_project(tmp_path, root=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     _stub_instrumented_lab(monkeypatch)
-    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
     collected_result = CollectResult(
         cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=bad
     )
@@ -1712,7 +1729,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
 
     with pytest.raises(CoverageCleanError, match="t1/app: denied"):
         run_tests(
-            [_ALPHA],
+            names=[_ALPHA],
             run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
@@ -1733,7 +1750,7 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     _stub_instrumented_lab(monkeypatch)
-    ok = Result(Status.Success)
+    ok = Result(status=Status.Success)
     good = CleanReport(hosts={"t1": {"app": ok, "lib": ok}, "t2": {"app": ok}})
     collected_result = CollectResult(
         cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=good
@@ -1744,7 +1761,7 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
 
     with caplog.at_level("INFO", logger="otto.suite.run"):
         result = run_tests(
-            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
         )
     assert result.passed
     summaries = [r.getMessage() for r in caplog.records if "counters cleared" in r.getMessage()]
@@ -1778,14 +1795,16 @@ def test_capture_failure_and_clean_failure_both_surface(tmp_path, monkeypatch, c
             ProductCapture(ProductKey("t1", "lib"), None, "lcov --capture failed: boom"),
         ]
     )
-    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    bad = CleanReport(hosts={"t1": {"app": Result(status=Status.Error, msg="denied")}})
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage",
         AsyncMock(side_effect=CoverageCaptureError(outcome, clean=bad)),
     )
 
     with caplog.at_level("WARNING"), pytest.raises(CoverageCleanError, match="t1/app: denied"):
-        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir)
+        run_tests(
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+        )
     warned = [r.getMessage() for r in caplog.records if "Coverage not collected" in r.getMessage()]
     assert warned == [
         "Coverage not collected: t1/lib: failed to capture: lcov --capture failed: boom"
@@ -1811,7 +1830,7 @@ def test_a_collection_failure_after_a_passing_run_still_only_warns(tmp_path, mon
 
     with caplog.at_level("WARNING"):
         result = run_tests(
-            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
         )
     assert result.passed
     assert any("no .gcda" in r.getMessage() for r in caplog.records)
@@ -1828,12 +1847,12 @@ def test_a_post_run_empty_selection_warning_names_no_membership_keyword(
     _use_project(monkeypatch, _stub_project(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     _stub_instrumented_lab(monkeypatch)
-    error = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+    error = EmptySelectionError("local", base_size=4, excluded_by=["include_local"], matched_size=1)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=error))
 
     with caplog.at_level("WARNING"):
         result = run_tests(
-            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+            names=[_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
         )
     assert result.passed
     warned = [
@@ -1869,7 +1888,7 @@ def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_pa
         OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([project]))
     )
     try:
-        run_tests([_ALPHA], output_dir=tmp_path)
+        run_tests(names=[_ALPHA], output_dir=tmp_path)
     finally:
         reset_context(token)
 
@@ -1994,7 +2013,7 @@ def _run_loop_probe(one_project, tmp_path: Path, src: str):
     out.mkdir()
     loops = tmp_path / "loops.txt"
     one_project(files={"tests/test_loop_probe.py": src.format(loops=str(loops))})
-    return run_tests(["TestLoopProbe"], output_dir=out), loops, out
+    return run_tests(names=["TestLoopProbe"], output_dir=out), loops, out
 
 
 def test_run_tests_shares_one_loop_across_class_fixture_tests_and_function_fixture(
@@ -2087,7 +2106,7 @@ def test_run_tests_exposes_resolved_cov_on_context(tmp_path, monkeypatch, decisi
     _use_project(monkeypatch, _stub_project(tmp_path))
     seen = _record_ctx_cov_during_session(monkeypatch, decision=decision)
 
-    run_tests([_ALPHA], output_dir=tmp_path)
+    run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert seen == [decision]
     assert try_get_context() is None  # hermetic default: the library context is gone
 
@@ -2108,7 +2127,7 @@ def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch
     )
     token = set_context(ctx)
     try:
-        run_tests([_ALPHA], output_dir=tmp_path)
+        run_tests(names=[_ALPHA], output_dir=tmp_path)
     finally:
         reset_context(token)
     assert seen == [True]

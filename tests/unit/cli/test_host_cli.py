@@ -36,4 +36,4 @@ def test_transfer_completer_surfaces_custom_unix_backend():
     try:
         assert "xmodem" in _transfer_completer(_ctx(), "")
     finally:
-        xfer_mod.TRANSFER_BACKENDS.unregister("xmodem")
+        xfer_mod.TRANSFER_BACKENDS.unregister(name="xmodem")

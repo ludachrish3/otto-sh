@@ -104,7 +104,7 @@ def test_cancel_inside_as_user_restores_login_user(chaos_bed, chaos_rng):
             switched = asyncio.Event()
 
             async def body() -> None:
-                async with host.as_user("test"):
+                async with host.as_user(user="test"):
                     who = (await host.run("whoami", timeout=30)).only
                     assert who.value == "test", f"{who.value!r}"
                     switched.set()
@@ -160,7 +160,7 @@ def test_cancel_inside_named_session_as_user_restores_login_user(chaos_bed, chao
                 switched = asyncio.Event()
 
                 async def body() -> None:
-                    async with session.as_user("test"):
+                    async with session.as_user(user="test"):
                         who = (await session.run("whoami", timeout=30)).only
                         assert who.value == "test", f"{who.value!r}"
                         switched.set()

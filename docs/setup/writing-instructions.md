@@ -306,7 +306,7 @@ class WidgetActions(ProjectActions):
             result = await host.put(Path("licenses/widget.lic"), Path("/etc/widget"))
             if not result.is_ok:
                 return result
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 ```
 
 `install` is a **project instruction**, so the override is a decorated method
@@ -330,9 +330,9 @@ Two things that example relies on:
   `self.ctx.do_for_all_hosts(verb, with_owner=False)`.
 
 ```{important}
-**Let `actions_for` build it.** `otto.project.actions_for(project, ctx)` is what
-hands the instance `ctx.for_project(project.name)` — the view that both bounds the
-fleet and supplies the `owner=`. Constructing `ProjectActions(project, ctx)` by
+**Let `actions_for` build it.** `otto.project.actions_for(project=project, ctx=ctx)` is what
+hands the instance `ctx.for_project(name=project.name)` — the view that both bounds the
+fleet and supplies the `owner=`. Constructing `ProjectActions(project=project, ctx=ctx)` by
 hand with a plain `OttoContext` raises `TypeError`.
 ```
 
@@ -458,7 +458,7 @@ class WidgetActions(ProjectActions):
     async def deploy(self, opts: DeployOpts) -> Result:
         """Deploy widget's build."""
         ...  # your work, opts.build in hand
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 ```
 
 What the decorator on a method does differently:
@@ -617,7 +617,7 @@ from otto.instructions import run_instruction
 
 async def main():
     async with otto.open_context(lab="bench") as ctx:
-        await run_instruction(ctx, "deploy", [_DeployOpts(debug=True)])
+        await run_instruction(ctx, name="deploy", opts=[_DeployOpts(debug=True)])
 
 
 asyncio.run(main())

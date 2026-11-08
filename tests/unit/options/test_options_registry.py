@@ -209,7 +209,7 @@ def test_the_decorator_registers_only_when_given_verbs():
         x: int = 0
 
     assert verbs_for(Sugared) == ["test"]
-    assert OPTIONS.origin(options_key(Sugared)) == __name__
+    assert OPTIONS.origin(name=options_key(Sugared)) == __name__
     assert verbs_for(Plain) is None
     assert Sugared(firmware="2.1").firmware == "2.1"
 

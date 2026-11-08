@@ -73,7 +73,7 @@ def test_fallback_summaries_over_a_loaded_lab_carry_the_rank(json_repository):
         def load_lab(self, name, preferences=None, inventory=None):
             return json_repository.load_lab(name, inventory=inventory)
 
-    assert _priorities(host_summaries(_NoFastPath())) == _EXPECTED
+    assert _priorities(host_summaries(repository=_NoFastPath())) == _EXPECTED
 
 
 def test_example_backend_summaries_carry_the_rank():
@@ -83,5 +83,5 @@ def test_example_backend_summaries_carry_the_rank():
 
 
 def test_host_identity_carries_the_rank():
-    assert host_identity(_bare(_HOSTS[0]), Element("ranked")).docker_priority == 10
-    assert host_identity(_bare(_HOSTS[1]), Element("plain")).docker_priority == 0
+    assert host_identity(_bare(_HOSTS[0]), element=Element(name="ranked")).docker_priority == 10
+    assert host_identity(_bare(_HOSTS[1]), element=Element(name="plain")).docker_priority == 0

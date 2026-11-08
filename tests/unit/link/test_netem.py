@@ -32,7 +32,7 @@ class TestCommands:
 
     def test_apply_command_exact(self) -> None:
         cmd = NetEmImpairer().apply_command(
-            "eth1.100", ImpairmentParams(delay_ms=50.0, loss_pct=2.0)
+            "eth1.100", params=ImpairmentParams(delay_ms=50.0, loss_pct=2.0)
         )
         assert cmd == "tc qdisc replace dev eth1.100 root netem delay 50ms loss 2%"
 
@@ -90,23 +90,25 @@ class TestScopedCommands:
         assert NetEmImpairer.supports_selectors is True
 
     def test_root_command_golden(self) -> None:
-        assert self.imp.scoped_root_command("eth1.100") == (
+        assert self.imp.scoped_root_command(netdev="eth1.100") == (
             "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
             "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
         )
 
     def test_band_command_golden_hex_handles(self) -> None:
         params = ImpairmentParams(delay_ms=200.0)
-        assert self.imp.scoped_band_command("eth1.100", 4, params) == (
+        assert self.imp.scoped_band_command(netdev="eth1.100", band=4, params=params) == (
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms"
         )
         # bands >= 10: classid minor and handle are HEX
-        assert self.imp.scoped_band_command("eth1.100", 11, params) == (
+        assert self.imp.scoped_band_command(netdev="eth1.100", band=11, params=params) == (
             "tc qdisc replace dev eth1.100 parent 1:b handle b0: netem delay 200ms"
         )
 
     def test_filter_commands_both_protos_both_sides_emits_four_tier_two(self) -> None:
-        cmds = self.imp.scoped_filter_commands("eth1.100", 4, Selector(5201))
+        cmds = self.imp.scoped_filter_commands(
+            netdev="eth1.100", band=4, selector=Selector(port=5201)
+        )
         assert cmds == [
             (
                 "tc filter add dev eth1.100 parent 1: pref 440 protocol ip u32 "
@@ -127,14 +129,18 @@ class TestScopedCommands:
         ]
 
     def test_filter_commands_single_proto_is_tier_one(self) -> None:
-        tcp = self.imp.scoped_filter_commands("eth1.100", 5, Selector(5201, "tcp"))
+        tcp = self.imp.scoped_filter_commands(
+            netdev="eth1.100", band=5, selector=Selector(port=5201, proto="tcp")
+        )
         assert [c.split(" pref ")[1].split(" ")[0] for c in tcp] == ["250", "1250"]
-        udp = self.imp.scoped_filter_commands("eth1.100", 5, Selector(53, "udp"))
+        udp = self.imp.scoped_filter_commands(
+            netdev="eth1.100", band=5, selector=Selector(port=53, proto="udp")
+        )
         assert [c.split(" pref ")[1].split(" ")[0] for c in udp] == ["251", "1251"]
 
     def test_range_side_entries_share_one_pref(self) -> None:
-        sel = Selector(5000, "tcp", end=5010, side="dst")
-        assert self.imp.scoped_filter_commands("eth1.100", 4, sel) == [
+        sel = Selector(port=5000, proto="tcp", end=5010, side="dst")
+        assert self.imp.scoped_filter_commands(netdev="eth1.100", band=4, selector=sel) == [
             (
                 "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
                 "match ip protocol 6 0xff match ip dport 5000 0xfff8 flowid 1:4"
@@ -148,8 +154,8 @@ class TestScopedCommands:
                 "match ip protocol 6 0xff match ip dport 5010 0xffff flowid 1:4"
             ),
         ]
-        src = Selector(40000, "udp", end=40003, side="src")
-        assert self.imp.scoped_filter_commands("eth1.100", 5, src) == [
+        src = Selector(port=40000, proto="udp", end=40003, side="src")
+        assert self.imp.scoped_filter_commands(netdev="eth1.100", band=5, selector=src) == [
             (
                 "tc filter add dev eth1.100 parent 1: pref 1051 protocol ip u32 "
                 "match ip protocol 17 0xff match ip sport 40000 0xfffc flowid 1:5"
@@ -162,10 +168,12 @@ class TestScopedCommands:
         def adds(band: int, sel: Selector) -> list[str]:
             return [
                 c.replace("dev eth1.100", 'dev "$D"')
-                for c in self.imp.scoped_filter_commands("eth1.100", band, sel)
+                for c in self.imp.scoped_filter_commands(netdev="eth1.100", band=band, selector=sel)
             ]
 
-        assert adds(4, Selector(5201, "tcp")) + adds(5, Selector(53, "udp")) == [
+        assert adds(4, Selector(port=5201, proto="tcp")) + adds(
+            5, Selector(port=53, proto="udp")
+        ) == [
             (
                 'tc filter add dev "$D" parent 1: pref 240 protocol ip u32 '
                 "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
@@ -183,7 +191,7 @@ class TestScopedCommands:
                 "match ip protocol 17 0xff match ip sport 53 0xffff flowid 1:5"
             ),
         ]
-        assert adds(11, Selector(53)) == [
+        assert adds(11, Selector(port=53)) == [
             (
                 'tc filter add dev "$D" parent 1: pref 510 protocol ip u32 '
                 "match ip protocol 6 0xff match ip dport 53 0xffff flowid 1:b"
@@ -203,19 +211,21 @@ class TestScopedCommands:
         ]
 
     def test_clear_selector_commands_one_delete_per_slot(self) -> None:
-        assert self.imp.scoped_clear_selector_commands("eth1.100", 4, Selector(5201, "tcp")) == [
+        assert self.imp.scoped_clear_selector_commands(
+            netdev="eth1.100", band=4, selector=Selector(port=5201, proto="tcp")
+        ) == [
             "tc filter del dev eth1.100 parent 1: pref 240 protocol ip u32",
             "tc filter del dev eth1.100 parent 1: pref 1240 protocol ip u32",
             "tc qdisc del dev eth1.100 parent 1:4 handle 40:",
         ]
-        rng = Selector(5000, "tcp", end=5010, side="dst")
-        assert self.imp.scoped_clear_selector_commands("eth1.100", 4, rng) == [
+        rng = Selector(port=5000, proto="tcp", end=5010, side="dst")
+        assert self.imp.scoped_clear_selector_commands(netdev="eth1.100", band=4, selector=rng) == [
             "tc filter del dev eth1.100 parent 1: pref 40 protocol ip u32",
             "tc qdisc del dev eth1.100 parent 1:4 handle 40:",
         ]
 
     def test_read_commands_golden(self) -> None:
-        assert self.imp.scoped_read_commands("eth1.100") == [
+        assert self.imp.scoped_read_commands(netdev="eth1.100") == [
             "tc qdisc show dev eth1.100",
             "tc filter show dev eth1.100 parent 1: 2>/dev/null || true",
         ]
@@ -522,7 +532,7 @@ FILTER_LIVE_B_CLEARED_OLD = (
 # check's read-back row (sandbox veth, 100ms delay) -- first the whole-link tree,
 # then the port-scoped one for dst 5200-5210/tcp; tc -V: tc utility, iproute2-ss170501
 CHECK_READBACK_PARAMS = ImpairmentParams(delay_ms=100.0)
-CHECK_RANGE_SELECTOR = Selector(5200, "tcp", end=5210, side="dst")
+CHECK_RANGE_SELECTOR = Selector(port=5200, proto="tcp", end=5210, side="dst")
 QDISC_CHECK_WHOLE_OLD = "qdisc netem 80a9: root refcnt 3 limit 1000 delay 100.0ms\n"
 QDISC_CHECK_SCOPED_OLD = (
     "qdisc prio 1: root refcnt 3 bands 11 priomap  1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
@@ -546,18 +556,18 @@ FILTER_CHECK_SCOPED_OLD = (
 )
 
 LIVE_A = {
-    Selector(5201, "tcp"): (4, ImpairmentParams(delay_ms=200.0)),
-    Selector(53, "udp"): (5, ImpairmentParams(loss_pct=5.0)),
+    Selector(port=5201, proto="tcp"): (4, ImpairmentParams(delay_ms=200.0)),
+    Selector(port=53, proto="udp"): (5, ImpairmentParams(loss_pct=5.0)),
 }
-LIVE_A_CLEARED = {Selector(5201, "tcp"): (4, ImpairmentParams(delay_ms=200.0))}
+LIVE_A_CLEARED = {Selector(port=5201, proto="tcp"): (4, ImpairmentParams(delay_ms=200.0))}
 LIVE_B = {
-    Selector(5000, "tcp", end=5010, side="dst"): (4, ImpairmentParams(delay_ms=200.0)),
-    Selector(40000, "udp", end=40003, side="src"): (5, ImpairmentParams(loss_pct=5.0)),
-    Selector(53): (11, ImpairmentParams(delay_ms=10.0)),
+    Selector(port=5000, proto="tcp", end=5010, side="dst"): (4, ImpairmentParams(delay_ms=200.0)),
+    Selector(port=40000, proto="udp", end=40003, side="src"): (5, ImpairmentParams(loss_pct=5.0)),
+    Selector(port=53): (11, ImpairmentParams(delay_ms=10.0)),
 }
 LIVE_B_CLEARED = {
-    Selector(40000, "udp", end=40003, side="src"): (5, ImpairmentParams(loss_pct=5.0)),
-    Selector(53): (11, ImpairmentParams(delay_ms=10.0)),
+    Selector(port=40000, proto="udp", end=40003, side="src"): (5, ImpairmentParams(loss_pct=5.0)),
+    Selector(port=53): (11, ImpairmentParams(delay_ms=10.0)),
 }
 
 LEAF4_ROOT = (
@@ -590,11 +600,13 @@ class TestParseScoped:
             "qdisc fq_codel 0: root refcnt 2 limit 10240p flows 1024\n",
             "qdisc mq 0: root\n",
         ):
-            assert self.imp.parse_scoped(qdisc, "").kind == "clean", qdisc
+            assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output="").kind == "clean", (
+                qdisc
+            )
 
     def test_whole_link_delegates_to_v1_parser(self) -> None:
         out = "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms  5ms loss 2%\n"
-        state = self.imp.parse_scoped(out, "")
+        state = self.imp.parse_scoped(qdisc_output=out, filter_output="")
         assert state.kind == "whole"
         assert state.whole == ImpairmentParams(delay_ms=50.0, jitter_ms=5.0, loss_pct=2.0)
 
@@ -624,18 +636,20 @@ class TestParseScoped:
     def test_live_captures_parse_to_their_selectors(
         self, qdisc: str, filters: str, expected: dict
     ) -> None:
-        state = self.imp.parse_scoped(qdisc, filters)
+        state = self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filters)
         assert state.kind == "scoped"
         assert state.selectors == expected
 
     @pytest.mark.parametrize(
         ("qdisc", "filters", "expected"),
         [
-            (QDISC_CHECK_WHOLE_OLD, "", ScopedState.whole_link(CHECK_READBACK_PARAMS)),
+            (QDISC_CHECK_WHOLE_OLD, "", ScopedState.whole_link(params=CHECK_READBACK_PARAMS)),
             (
                 QDISC_CHECK_SCOPED_OLD,
                 FILTER_CHECK_SCOPED_OLD,
-                ScopedState.from_selectors({CHECK_RANGE_SELECTOR: (4, CHECK_READBACK_PARAMS)}),
+                ScopedState.from_selectors(
+                    selectors={CHECK_RANGE_SELECTOR: (4, CHECK_READBACK_PARAMS)}
+                ),
             ),
         ],
         ids=["whole-link", "port-scoped"],
@@ -644,7 +658,7 @@ class TestParseScoped:
         self, qdisc: str, filters: str, expected: ScopedState
     ) -> None:
         """``otto link check``'s read-back row, both trees, as old userland prints them."""
-        assert self.imp.parse_scoped(qdisc, filters) == expected
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filters) == expected
 
     def test_scoped_proto_none_selector_four_slots(self) -> None:
         qdisc = (
@@ -663,13 +677,13 @@ class TestParseScoped:
                 f"  match {proto_hex}0000/00ff0000 at 8\n"
                 f"  {port_match}\n"
             )
-        state = self.imp.parse_scoped(qdisc, "".join(blocks))
+        state = self.imp.parse_scoped(qdisc_output=qdisc, filter_output="".join(blocks))
         assert state.kind == "scoped"
-        assert state.selectors == {Selector(5201): (4, ImpairmentParams(delay_ms=200.0))}
+        assert state.selectors == {Selector(port=5201): (4, ImpairmentParams(delay_ms=200.0))}
 
     def test_empty_tree_is_clean_not_scoped(self) -> None:
         qdisc = "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
-        assert self.imp.parse_scoped(qdisc, "").kind == "clean"
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output="").kind == "clean"
 
     def test_old_userland_double_space_priomap_still_recognized(self) -> None:
         # captured live on test3's oldos container, iproute2-ss170501
@@ -678,7 +692,7 @@ class TestParseScoped:
         # this is a non-issue, but it's a genuine byte-level old-format
         # quirk worth pinning against regression.
         qdisc = "qdisc prio 1: root refcnt 2 bands 11 priomap  1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
-        assert self.imp.parse_scoped(qdisc, "").kind == "clean"
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output="").kind == "clean"
 
     def test_hex_band_ten_and_eleven(self) -> None:
         qdisc = (
@@ -693,9 +707,11 @@ class TestParseScoped:
             "  match 00060000/00ff0000 at 8\n"
             "  match 00500000/ffff0000 at 20\n"
         )
-        state = self.imp.parse_scoped(qdisc, filt)
+        state = self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filt)
         assert state.kind == "scoped"
-        assert state.selectors == {Selector(80, "tcp"): (10, ImpairmentParams(delay_ms=1.0))}
+        assert state.selectors == {
+            Selector(port=80, proto="tcp"): (10, ImpairmentParams(delay_ms=1.0))
+        }
 
     def test_foreign_variants(self) -> None:
         ours_root = "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
@@ -783,7 +799,9 @@ class TestParseScoped:
             (LEAF4_ROOT, _blk(40, 4, "0006", "00000000/0000ffff")),
         ]
         for qdisc, filt in cases:
-            assert self.imp.parse_scoped(qdisc, filt).kind == "foreign", (qdisc, filt)
+            assert (
+                self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filt).kind == "foreign"
+            ), (qdisc, filt)
 
     def test_truncated_root_line_ending_in_bands_is_foreign(self) -> None:
         # a truncated read (host hiccup mid-command, escaping `read_link_state`'s
@@ -791,24 +809,24 @@ class TestParseScoped:
         # in `_is_our_prio_root` — just fail our-shape recognition like any
         # other malformed root.
         qdisc = "qdisc prio 1: root refcnt 2 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1 bands\n"
-        assert self.imp.parse_scoped(qdisc, "").kind == "foreign"
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output="").kind == "foreign"
 
     def test_truncated_band_leaf_ending_in_parent_is_foreign(self) -> None:
         # same truncation story for `_parse_band_leaves`'s "parent" lookup.
         ours_root = "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
         qdisc = ours_root + "qdisc netem 40: parent\n"
-        assert self.imp.parse_scoped(qdisc, "").kind == "foreign"
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output="").kind == "foreign"
 
     def test_truncated_filter_header_ending_in_flowid_is_foreign(self) -> None:
         # same truncation story for `_parse_filter_blocks`'s "flowid" lookup.
         ours_root = "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
         qdisc = ours_root + "qdisc netem 40: parent 1:4 limit 1000 delay 5ms\n"
         filt = "filter parent 1: protocol ip pref 40 u32 fh 800::800 flowid\n"
-        assert self.imp.parse_scoped(qdisc, filt).kind == "foreign"
+        assert self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filt).kind == "foreign"
 
     def test_builder_parse_roundtrip(self) -> None:
         """What the builders emit, rendered as canned tc output, parses back equal."""
-        sel = Selector(5201, "tcp")
+        sel = Selector(port=5201, proto="tcp")
         params = ImpairmentParams(delay_ms=200.0)
         qdisc = (
             "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
@@ -822,7 +840,7 @@ class TestParseScoped:
             "  match 00060000/00ff0000 at 8\n"
             "  match 14510000/ffff0000 at 20\n"
         )
-        state = self.imp.parse_scoped(qdisc, filt)
+        state = self.imp.parse_scoped(qdisc_output=qdisc, filter_output=filt)
         assert state.kind == "scoped"
         assert state.selectors == {sel: (4, params)}
 
@@ -902,16 +920,21 @@ def test_port_prefixes_cover_exactly_disjointly_and_minimally(lo: int, width: in
 
 
 ROUNDTRIP_CASES = [
-    {Selector(5201, "tcp"): (4, ImpairmentParams(delay_ms=200.0))},
-    {Selector(5201): (4, ImpairmentParams(delay_ms=200.0))},
-    {Selector(1, end=65535): (4, ImpairmentParams(loss_pct=5.0))},
-    {Selector(65530, "udp", end=65535, side="src"): (11, ImpairmentParams(loss_pct=1.0))},
+    {Selector(port=5201, proto="tcp"): (4, ImpairmentParams(delay_ms=200.0))},
+    {Selector(port=5201): (4, ImpairmentParams(delay_ms=200.0))},
+    {Selector(port=1, end=65535): (4, ImpairmentParams(loss_pct=5.0))},
     {
-        Selector(5200, end=5220): (4, ImpairmentParams(delay_ms=10.0)),
-        Selector(5205, "tcp", side="dst"): (5, ImpairmentParams(loss_pct=1.0)),
+        Selector(port=65530, proto="udp", end=65535, side="src"): (
+            11,
+            ImpairmentParams(loss_pct=1.0),
+        )
+    },
+    {
+        Selector(port=5200, end=5220): (4, ImpairmentParams(delay_ms=10.0)),
+        Selector(port=5205, proto="tcp", side="dst"): (5, ImpairmentParams(loss_pct=1.0)),
     },
     {  # eight selectors, every tier, bands 4..11
-        Selector(100 * i + 1, proto, end=100 * i + 7, side=side): (
+        Selector(port=100 * i + 1, proto=proto, end=100 * i + 7, side=side): (
             4 + i,
             ImpairmentParams(delay_ms=float(i + 1)),
         )
@@ -934,7 +957,7 @@ ROUNDTRIP_CASES = [
 @pytest.mark.parametrize("mapping", ROUNDTRIP_CASES)
 def test_builder_output_reads_back_to_the_same_mapping(mapping: dict) -> None:
     tree = render_scoped_tree(mapping)
-    state = NetEmImpairer().parse_scoped(tree.qdisc, tree.filters)
+    state = NetEmImpairer().parse_scoped(qdisc_output=tree.qdisc, filter_output=tree.filters)
     assert state.kind == "scoped"
     assert state.selectors == mapping
 
@@ -993,7 +1016,9 @@ def _spec_winner(chosen: dict[int, Selector], proto: str, sport: int, dport: int
 
 
 _SELECTORS = st.builds(
-    lambda lo, width, proto, side: Selector(lo, proto, end=min(lo + width, 24), side=side),
+    lambda lo, width, proto, side: Selector(
+        port=lo, proto=proto, end=min(lo + width, 24), side=side
+    ),
     st.integers(1, 24),
     st.integers(0, 6),
     st.sampled_from([None, "tcp", "udp"]),
@@ -1014,7 +1039,11 @@ def test_kernel_walk_is_destination_first_narrowest_wins(candidates: list[Select
         chosen[4 + len(chosen)] = sel
     imp = NetEmImpairer()
     entries = _entries(
-        [c for band, s in chosen.items() for c in imp.scoped_filter_commands("d0", band, s)]
+        [
+            c
+            for band, s in chosen.items()
+            for c in imp.scoped_filter_commands(netdev="d0", band=band, selector=s)
+        ]
     )
     for proto, num in (("tcp", 6), ("udp", 17)):
         for sport in range(1, 25):

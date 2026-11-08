@@ -64,7 +64,7 @@ def test_the_registry_and_the_builtin_impairer_resolve():
 
     assert link_mod.IMPAIRERS is impairer.IMPAIRERS
     assert link_mod.NetEmImpairer is netem.NetEmImpairer
-    assert link_mod.build_impairer("netem") is netem.NetEmImpairer
+    assert link_mod.build_impairer(name="netem") is netem.NetEmImpairer
 
 
 def test_unknown_attribute_raises_attribute_error():

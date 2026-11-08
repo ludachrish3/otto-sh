@@ -31,7 +31,7 @@ _PROBE = "_default_output_probe"
 
 
 async def _probe() -> CommandResult:
-    return CommandResult(Status.Success, value="", command="probe", retcode=0)
+    return CommandResult(status=Status.Success, value="", command="probe", retcode=0)
 
 
 register_cli_command(_PROBE, _probe, help="internal test probe", gate=False)
@@ -118,7 +118,7 @@ def test_a_bare_run_tests_lands_under_the_home_xdir(home, tmp_path, monkeypatch)
     patch_bootstrap(monkeypatch, [project_double(tmp_path / "proj")])
     monkeypatch.setattr("pytest.main", pytest_main_returning())
 
-    result = _bare(run_tests, [DOUBLE_TEST_NAME])
+    result = _bare(run_tests, names=[DOUBLE_TEST_NAME])
 
     _assert_a_run_dir_of(result.output_dir, home / "otto-xdir" / "test")
     assert list((tmp_path / "work").iterdir()) == []

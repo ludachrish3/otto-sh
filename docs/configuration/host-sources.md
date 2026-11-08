@@ -375,7 +375,7 @@ unless a protocol has its own scoped cred (see below):
 ]
 ```
 
-Here otto logs in as `admin` by default. Calling `switch_user("mysql")` at
+Here otto logs in as `admin` by default. Calling `switch_user(user="mysql")` at
 runtime authenticates as `admin` first, then runs the `mysql-su` proxy to
 become `mysql`. A different default is a different first entry: to make
 `mysql` the session identity, move that entry to the front of the list. There

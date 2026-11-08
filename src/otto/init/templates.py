@@ -540,7 +540,7 @@ class TestExample:
     async def test_expect_and_artifacts(self, ctx, expect, test_dir) -> None:
         """`expect` records a failure without stopping the test; `test_dir` is this
         test's own artifact directory under the run's output dir."""
-        expect(len("otto") == 4, "four letters")
+        expect(len("otto") == 4, msg="four letters")
         note = test_dir / "message.txt"
         note.write_text(ctx.options(ProjectOptions).message)
         assert note.exists()

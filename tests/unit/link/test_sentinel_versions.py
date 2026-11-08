@@ -13,11 +13,11 @@ from otto.link.sentinel import (
 from tests._fixtures.paths import TESTS_ROOT
 
 SAMPLES = TESTS_ROOT / "_fixtures" / "formats" / "link-impairment-sentinel"
-RANGE = Selector(5000, "tcp", end=5010, side="dst")
+RANGE = Selector(port=5000, proto="tcp", end=5010, side="dst")
 
 MEANING = {
     "v1": [ImpairTimer(4242, "lnk-abc123", "eth1.100", None)],
-    "v2": [ImpairTimer(4243, "lnk-abc123", "eth1.100", Selector(5201, "tcp"))],
+    "v2": [ImpairTimer(4243, "lnk-abc123", "eth1.100", Selector(port=5201, proto="tcp"))],
     "v3": [ImpairTimer(4244, "lnk-abc123", "eth1.100", RANGE)],
 }
 """What each declared read version's sample must decode to; a version with no entry fails."""

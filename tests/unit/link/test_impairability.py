@@ -32,7 +32,7 @@ def test_a_declared_link_with_named_interfaces_is_impairable() -> None:
         LinkEndpoint(host="test1", interface="eth1"),
         LinkEndpoint(host="test2", interface="eth1"),
     )
-    assert impairment_refusal(link) is None
+    assert impairment_refusal(link=link) is None
 
 
 def test_an_endpoint_on_the_local_host_is_refused() -> None:
@@ -42,7 +42,7 @@ def test_an_endpoint_on_the_local_host_is_refused() -> None:
         LinkEndpoint(host="test1", interface="eth1"),
         provenance=Provenance.IMPLICIT,
     )
-    assert "path to the bed" in (impairment_refusal(link) or "")
+    assert "path to the bed" in (impairment_refusal(link=link) or "")
 
 
 def test_an_endpoint_without_a_named_interface_is_refused() -> None:
@@ -52,7 +52,7 @@ def test_an_endpoint_without_a_named_interface_is_refused() -> None:
         LinkEndpoint(host="zephyr37-fat"),
         provenance=Provenance.IMPLICIT,
     )
-    refusal = impairment_refusal(link) or ""
+    refusal = impairment_refusal(link=link) or ""
     assert "no named interface" in refusal
     assert "test4" in refusal
     assert "zephyr37-fat" in refusal
@@ -62,10 +62,10 @@ def test_an_in_path_link_is_not_judged_on_interfaces() -> None:
     """In-path placements come from the middlebox's LIVE address table, so the
     only structural rule that applies is the local-host refusal."""
     in_path = _link(LinkEndpoint(host="a"), LinkEndpoint(host="b"), impair="mid")
-    assert impairment_refusal(in_path) is None
+    assert impairment_refusal(link=in_path) is None
     assert "middlebox" in (
         impairment_refusal(
-            _link(LinkEndpoint(host="a"), LinkEndpoint(host="b"), impair=BUILTIN_LOCAL_HOST_ID)
+            link=_link(LinkEndpoint(host="a"), LinkEndpoint(host="b"), impair=BUILTIN_LOCAL_HOST_ID)
         )
         or ""
     )
@@ -85,7 +85,7 @@ def test_the_predicate_agrees_with_the_placement_layer() -> None:
         b=LinkEndpoint(host="test1", interface="eth1"),
         provenance=Provenance.IMPLICIT,
     )
-    assert impairment_refusal(local_link) is not None
+    assert impairment_refusal(link=local_link) is not None
     with pytest.raises(ValueError, match="local host"):
         ensure_not_local_link(local_link)
     # ...and it is NOT the interface rule doing the work here.
@@ -96,7 +96,7 @@ def test_the_predicate_agrees_with_the_placement_layer() -> None:
         b=LinkEndpoint(host="zephyr37-fat"),
         provenance=Provenance.IMPLICIT,
     )
-    assert impairment_refusal(hop_link) is not None
+    assert impairment_refusal(link=hop_link) is not None
     ensure_not_local_link(hop_link)  # ...and here it is not the local rule.
     with pytest.raises(ValueError, match="not impairable"):
         endpoint_placements(hop_link, _BOTH)
@@ -115,10 +115,10 @@ def test_a_half_interfaced_link_is_refused_only_in_the_bare_direction() -> None:
         LinkEndpoint(host="test1", interface="eth1"),
         LinkEndpoint(host="test2"),
     )
-    assert impairment_refusal(half, {FlowDirection.A_TO_B}) is None
+    assert impairment_refusal(link=half, directions={FlowDirection.A_TO_B}) is None
     endpoint_placements(half, {FlowDirection.A_TO_B})
 
-    refusal = impairment_refusal(half, {FlowDirection.B_TO_A})
+    refusal = impairment_refusal(link=half, directions={FlowDirection.B_TO_A})
     assert refusal is not None
     assert "test2" in refusal
     assert "test1" not in refusal
@@ -126,5 +126,5 @@ def test_a_half_interfaced_link_is_refused_only_in_the_bare_direction() -> None:
         endpoint_placements(half, {FlowDirection.B_TO_A})
 
     # ...and the default is both, which is what `list` and a bare `impair` ask.
-    assert impairment_refusal(half) == impairment_refusal(half, _BOTH)
-    assert impairment_refusal(half) is not None
+    assert impairment_refusal(link=half) == impairment_refusal(link=half, directions=_BOTH)
+    assert impairment_refusal(link=half) is not None

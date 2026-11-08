@@ -16,7 +16,7 @@ def _lab(**server_extra):
     lab = Lab(name="t")
     server = UnixHost(
         ip="10.10.200.11",
-        element=Element("test1"),
+        element=Element(name="test1"),
         creds=[Cred(login="vagrant", password="vagrant")],
         log=LogMode.QUIET,
         **server_extra,
@@ -28,7 +28,7 @@ def _lab(**server_extra):
 def _console_host(lab, *, element="test2", ip="10.10.200.12", **opts):
     dev = UnixHost(
         ip=ip,
-        element=Element(element),
+        element=Element(name=element),
         creds=[Cred(login="test", password="Password1")],
         log=LogMode.QUIET,
         valid_terms=["console"],
@@ -80,7 +80,7 @@ async def test_direct_dial_through_a_hopped_server_tunnels_into_the_servers_hop(
     lab.add_host(
         UnixHost(
             ip="10.10.200.1",
-            element=Element("jump"),
+            element=Element(name="jump"),
             creds=[Cred(login="jumper", password="pw")],
             log=LogMode.QUIET,
         )
@@ -101,7 +101,7 @@ def test_the_hosts_own_hop_is_never_consulted():
     lab = _lab()
     dev = UnixHost(
         ip="10.10.200.12",
-        element=Element("test2"),
+        element=Element(name="test2"),
         creds=[Cred(login="test", password="Password1")],
         log=LogMode.QUIET,
         hop="nowhere",
@@ -135,7 +135,7 @@ async def test_the_hop_cycle_guard_fires_for_a_console_server_chain():
     lab.add_host(
         UnixHost(
             ip="10.10.200.19",
-            element=Element("test9"),
+            element=Element(name="test9"),
             creds=[Cred(login="vagrant", password="vagrant")],
             log=LogMode.QUIET,
             hop="test1",
@@ -151,7 +151,7 @@ async def test_the_hop_cycle_guard_fires_for_a_console_server_chain():
 def test_embedded_console_forces_login_off():
     z = ZephyrHost(
         ip="127.0.0.1",
-        element=Element("z"),
+        element=Element(name="z"),
         valid_terms=["console"],
         term="console",
         console_options=ConsoleOptions(server="test4", port=2323, login=True),

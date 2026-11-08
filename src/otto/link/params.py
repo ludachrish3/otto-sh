@@ -71,7 +71,7 @@ IMPAIR_SENTINEL_WRITE_VERSIONS: list[str] = ["v1", "v3"]
 ``v1`` tags a whole-link timer and ``v3`` a per-selector one."""
 
 
-def parse_time_ms(text: str, *, option: str) -> float:
+def parse_time_ms(*, text: str, option: str) -> float:
     """Parse a time value in milliseconds; a bare number means ms (spec §3.1)."""
     m = _TIME_RE.match(text.strip().lower())
     if m is None:
@@ -81,7 +81,7 @@ def parse_time_ms(text: str, *, option: str) -> float:
     return float(m.group("num")) * _TIME_TO_MS[m.group("unit")]
 
 
-def parse_percent(text: str, *, option: str) -> float:
+def parse_percent(*, text: str, option: str) -> float:
     """Parse a percentage; a bare number means percent (spec §3.1)."""
     m = _PERCENT_RE.match(text.strip())
     if m is None:
@@ -92,7 +92,7 @@ def parse_percent(text: str, *, option: str) -> float:
     return value
 
 
-def parse_rate(text: str) -> str:
+def parse_rate(*, text: str) -> str:
     """Parse a rate; an explicit tc unit is REQUIRED. Bare ``"0"`` clears (§3.3)."""
     cleaned = text.strip().lower()
     if cleaned == "0":
@@ -110,7 +110,7 @@ def _fmt(value: float) -> str:
 
 
 @final
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImpairmentParams:
     """One impairment parameter set. ``None`` = not set/absent."""
 
@@ -127,7 +127,7 @@ class ImpairmentParams:
         """Return ``True`` if every param is unset."""
         return all(getattr(self, f.name) is None for f in fields(self))
 
-    def merged_over(self, base: "ImpairmentParams") -> "ImpairmentParams":
+    def merged_over(self, *, base: "ImpairmentParams") -> "ImpairmentParams":
         """Per-param last-one-wins over *base*; explicit zeros clear (spec §3.3)."""
         merged: dict[str, float | str | None] = {}
         for f in fields(self):
@@ -178,7 +178,7 @@ _PORT_TEXT_RE = re.compile(r"(?P<start>[0-9]{1,5})(?::(?P<end>[0-9]{1,5}))?")
 
 
 @final
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Selector:
     """One port-scoped impairment selector: a port or inclusive port range.
 
@@ -215,7 +215,9 @@ class Selector:
                 object.__setattr__(self, "end", None)
 
     @classmethod
-    def parse(cls, port_text: str, proto: str | None = None, side: str | None = None) -> "Selector":
+    def parse(
+        cls, *, port_text: str, proto: str | None = None, side: str | None = None
+    ) -> "Selector":
         """Build a selector from ``N`` or ``N:M`` text — the one text parser.
 
         The CLI and the expire-timer sentinel both go through here, so a
@@ -228,7 +230,10 @@ class Selector:
             )
         end = m.group("end")
         return cls(
-            int(m.group("start")), proto, end=int(end) if end is not None else None, side=side
+            port=int(m.group("start")),
+            proto=proto,
+            end=int(end) if end is not None else None,
+            side=side,
         )
 
     @property
@@ -310,7 +315,7 @@ def _canonical_rate_bps(rate: str | None) -> int | None:
 
 # DEBT(no-tuple-return): seven named impairment slots; wants a hashable NamedTuple.
 # ast-grep-ignore: no-tuple-return
-def canonical_key(params: ImpairmentParams) -> tuple[int | None, ...]:
+def canonical_key(*, params: ImpairmentParams) -> tuple[int | None, ...]:
     """Spelling-independent identity for *params* — compare MEANING, not text.
 
     tc canonicalizes on display, so the exact string otto applies is NOT the
@@ -364,7 +369,7 @@ def _time_close(x: int | None, y: int | None) -> bool:
     return abs(x - y) <= max(2, 0.005 * max(x, y))
 
 
-def equivalent(a: ImpairmentParams, b: ImpairmentParams) -> bool:
+def equivalent(*, a: ImpairmentParams, b: ImpairmentParams) -> bool:
     """Return ``True`` when *a* and *b* mean the same impairment (see :func:`canonical_key`).
 
     The delay/jitter (TIME) slots of the canonical key compare with a small
@@ -385,8 +390,8 @@ def equivalent(a: ImpairmentParams, b: ImpairmentParams) -> bool:
     field entirely — never a same-field sub-percent delta on the value
     that WAS actually applied. ``None`` is only equivalent to ``None``.
     """
-    ka = canonical_key(a)
-    kb = canonical_key(b)
+    ka = canonical_key(params=a)
+    kb = canonical_key(params=b)
     delay_a, jitter_a, *rest_a = ka
     delay_b, jitter_b, *rest_b = kb
     return _time_close(delay_a, delay_b) and _time_close(jitter_a, jitter_b) and rest_a == rest_b
@@ -424,13 +429,13 @@ class ScopedState:
         return cls("clean")
 
     @classmethod
-    def whole_link(cls, params: ImpairmentParams) -> "ScopedState":
+    def whole_link(cls, *, params: ImpairmentParams) -> "ScopedState":
         """Today's whole-link root netem."""
         return cls("whole", whole=params)
 
     @classmethod
     def from_selectors(
-        cls, selectors: dict[Selector, tuple[int, ImpairmentParams]]
+        cls, *, selectors: dict[Selector, tuple[int, ImpairmentParams]]
     ) -> "ScopedState":
         """Create a port-scoped tree: selector -> (band, params)."""
         return cls("scoped", selectors=dict(selectors))
@@ -457,7 +462,7 @@ class LinkImpairer:
     third-party impairers are unaffected; a ``--port`` request routed to a
     non-supporting impairer is a loud capability error in orchestration."""
 
-    def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+    def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
         """Shell command applying *params* to *netdev* (idempotent replace)."""
         raise NotImplementedError
 
@@ -473,28 +478,28 @@ class LinkImpairer:
         """Parse :meth:`read_command` output; ``None`` = no impairment present."""
         raise NotImplementedError
 
-    def scoped_root_command(self, netdev: str) -> str:
+    def scoped_root_command(self, *, netdev: str) -> str:
         """Command creating the scoped classful root on *netdev* (idempotent)."""
         raise NotImplementedError
 
-    def scoped_band_command(self, netdev: str, band: int, params: ImpairmentParams) -> str:
+    def scoped_band_command(self, *, netdev: str, band: int, params: ImpairmentParams) -> str:
         """Command applying *params* as band *band*'s per-selector leaf (idempotent)."""
         raise NotImplementedError
 
-    def scoped_filter_commands(self, netdev: str, band: int, selector: Selector) -> list[str]:
+    def scoped_filter_commands(self, *, netdev: str, band: int, selector: Selector) -> list[str]:
         """Commands steering *selector*'s traffic into band *band*."""
         raise NotImplementedError
 
     def scoped_clear_selector_commands(
-        self, netdev: str, band: int, selector: Selector
+        self, *, netdev: str, band: int, selector: Selector
     ) -> list[str]:
         """Commands removing *selector*'s filters and its band leaf (root kept)."""
         raise NotImplementedError
 
-    def scoped_read_commands(self, netdev: str) -> list[str]:
+    def scoped_read_commands(self, *, netdev: str) -> list[str]:
         """Return the two read commands whose outputs :meth:`parse_scoped` understands."""
         raise NotImplementedError
 
-    def parse_scoped(self, qdisc_output: str, filter_output: str) -> ScopedState:
+    def parse_scoped(self, *, qdisc_output: str, filter_output: str) -> ScopedState:
         """Parse :meth:`scoped_read_commands` outputs into a :class:`ScopedState`."""
         raise NotImplementedError

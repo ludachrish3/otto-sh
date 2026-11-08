@@ -35,7 +35,7 @@ class _MinimalRepository:
             raise LabNotFoundError(name)
         lab = Lab(name=name)
         for host_data in self._labs[name]:
-            element = Element(host_data["element"])
+            element = Element(name=host_data["element"])
             entry = {k: v for k, v in host_data.items() if k != "element"}
             lab.add_host(create_host_from_dict(entry, preferences=preferences, element=element))
         return lab
@@ -71,7 +71,7 @@ def test_fallback_summarizes_every_host(minimal_repository):
     its data (otto's ``local`` is injected later, by ``labs.loader.load_lab``),
     so nothing is filtered on the way through.
     """
-    summaries = host_summaries(minimal_repository)
+    summaries = host_summaries(repository=minimal_repository)
     assert [s.id for s in summaries] == ["router", "shared"]
 
     shared = next(s for s in summaries if s.id == "shared")
@@ -90,13 +90,13 @@ def test_a_backend_defining_its_own_local_keeps_it():
     repository = _MinimalRepository(
         {"east": [{"ip": "10.9.9.9", "element": "local", "creds": _CREDS}]},
     )
-    (summary,) = host_summaries(repository)
+    (summary,) = host_summaries(repository=repository)
     assert summary.id == "local"
     assert summary.ip == "10.9.9.9"
 
 
 def test_list_host_ids_is_the_id_only_view(minimal_repository):
-    ids = list_host_ids(minimal_repository)
+    ids = list_host_ids(repository=minimal_repository)
     assert "router" in ids
     assert ids == sorted(ids), "ids come back sorted"
 
@@ -116,6 +116,6 @@ def test_a_failing_lab_is_skipped_not_raised():
             "broken": [{"ip": "10.0.0.2", "element": "never", "creds": _CREDS}],
         }
     )
-    ids = [s.id for s in host_summaries(repository)]
+    ids = [s.id for s in host_summaries(repository=repository)]
     assert "fine" in ids
     assert "never" not in ids

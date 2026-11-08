@@ -56,7 +56,7 @@ class TestCovCtr:
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _container(cls):
-        (cls._host,) = all_hosts(_CONTAINER, include_containers=True)
+        (cls._host,) = all_hosts(pattern=_CONTAINER, include_containers=True)
         product = next(p for p in cls._host.products if p.name == _PRODUCT)
         cls._cov_dir = str(product.cov_dir)
         await _install(cls._host)

@@ -24,20 +24,17 @@ def test_bases_are_kw_only_unslotted_dataclasses(base):
     assert dataclasses.is_dataclass(base)
     assert "__slots__" not in vars(base), "a slotted base strips __dict__ from every family"
     positional = [f.name for f in dataclasses.fields(base) if f.init and not f.kw_only]
-    assert positional == ([] if base is BaseHost else ["ip"])
+    assert positional == []
 
 
 @pytest.mark.parametrize(
     ("leaf", "positional"),
     [
-        (UnixHost, ["ip", "creds"]),
-        (EmbeddedHost, ["ip"]),
-        (ZephyrHost, ["ip"]),
+        (UnixHost, []),
+        (EmbeddedHost, []),
+        (ZephyrHost, []),
         (LocalHost, []),
-        (
-            DockerContainerHost,
-            ["parent", "container_id", "project", "service", "compose_project"],
-        ),
+        (DockerContainerHost, []),
     ],
 )
 def test_leaf_positional_constructor_shape(leaf, positional):

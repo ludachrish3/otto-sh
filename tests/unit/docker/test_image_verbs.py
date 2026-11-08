@@ -37,10 +37,13 @@ def _record(host, *, fail: bool = False):
         commands.append(cmd)
         if fail:
             return CommandResult(
-                Status.Failed, value=f"Error: No such image on {host.id}\n", command=cmd, retcode=1
+                status=Status.Failed,
+                value=f"Error: No such image on {host.id}\n",
+                command=cmd,
+                retcode=1,
             )
         return CommandResult(
-            Status.Success, value=f"Deleted on {host.id}\n", command=cmd, retcode=0
+            status=Status.Success, value=f"Deleted on {host.id}\n", command=cmd, retcode=0
         )
 
     host.exec = AsyncMock(side_effect=_exec)
@@ -118,7 +121,7 @@ def test_image_prune_command_is_dockers_own_and_always_forced(kwargs, command):
     [
         (list_images, "docker image ls"),
         (lambda: list_images(all=True), "docker image ls -a"),
-        (lambda: remove_images(["api"], force=True), "docker image rm -f -- api"),
+        (lambda: remove_images(images=["api"], force=True), "docker image rm -f -- api"),
         (lambda: prune_images(force=True, all=True), "docker image prune -a -f"),
     ],
     ids=["ls", "ls-a", "rm", "prune"],
@@ -138,7 +141,7 @@ async def test_no_parent_runs_on_every_docker_capable_host_in_lab_order(two_host
     "call",
     [
         lambda: list_images(parent="alt2"),
-        lambda: remove_images(["api"], parent="alt2"),
+        lambda: remove_images(images=["api"], parent="alt2"),
         lambda: prune_images(force=True, parent="alt2"),
     ],
     ids=["ls", "rm", "prune"],
@@ -156,7 +159,7 @@ async def test_a_parent_narrows_to_that_host(two_hosts, call):
     "call",
     [
         lambda: list_images(parent="test2"),
-        lambda: remove_images(["api"], parent="test2"),
+        lambda: remove_images(images=["api"], parent="test2"),
         lambda: prune_images(force=True, parent="test2"),
     ],
     ids=["ls", "rm", "prune"],
@@ -172,7 +175,7 @@ async def test_a_parent_that_is_not_docker_capable_refuses_by_field(two_hosts, c
 async def test_a_failing_host_keeps_its_own_error_and_the_others_still_run(two_hosts):
     t3, alt2 = two_hosts
     _record(t3, fail=True)
-    report = await remove_images(["api"])
+    report = await remove_images(images=["api"])
     assert [h.result.is_ok for h in report.hosts] == [False, True]
     assert report.hosts[0].result.value == "Error: No such image on test3\n"
     assert report.hosts[1].result.value == "Deleted on alt2\n"
@@ -195,7 +198,7 @@ async def test_an_unreachable_host_is_reported_unreached_and_the_others_still_ru
 async def test_a_daemons_refusal_is_still_a_reached_host(two_hosts):
     t3, _alt2 = two_hosts
     _record(t3, fail=True)
-    report = await remove_images(["api"])
+    report = await remove_images(images=["api"])
     assert [h.reached for h in report.hosts] == [True, True]
 
 
@@ -228,7 +231,7 @@ async def test_prune_without_force_refuses_before_resolving_any_host():
 @pytest.mark.asyncio
 async def test_rm_with_no_image_refuses_by_field_and_runs_nothing(two_hosts):
     with pytest.raises(DockerVerbError) as exc:
-        await remove_images([])
+        await remove_images(images=[])
     assert exc.value.field == "images"
     assert all(host.commands == [] for host in two_hosts)
 
@@ -244,7 +247,7 @@ async def test_rm_with_no_image_refuses_by_field_and_runs_nothing(two_hosts):
     [
         (lambda: list_images(all=True), "docker image ls -a", "No daemon was asked."),
         (
-            lambda: remove_images(["my image"], force=True),
+            lambda: remove_images(images=["my image"], force=True),
             "docker image rm -f -- 'my image'",
             "No image was removed.",
         ),

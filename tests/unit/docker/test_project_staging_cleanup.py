@@ -288,7 +288,7 @@ def rootless_parent(monkeypatch):
     """A docker parent no cred names a login on, so it has no private staging root."""
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     host = _wire_parent_mock(
-        UnixHost(ip="10.10.200.13", element=Element("test3"), creds=[], docker_capable=True)
+        UnixHost(ip="10.10.200.13", element=Element(name="test3"), creds=[], docker_capable=True)
     )
     host.source_lab = "unix"
     with pytest.raises(StagingRefusedError):

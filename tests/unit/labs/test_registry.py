@@ -14,12 +14,19 @@ from otto.labs.registry import LAB_REPOSITORIES
 
 
 def _env(tmp_path):
-    return LabSourceEnv(tmp_path, "r/src", "settings.toml", ProfileContext.empty())
+    return LabSourceEnv(
+        project_root=tmp_path,
+        label="r/src",
+        origin="settings.toml",
+        profiles=ProfileContext.empty(),
+    )
 
 
 def test_json_builtin_builds_a_json_repository_over_anchored_paths(tmp_path):
-    prepared = LAB_REPOSITORIES.prepare("json", {"paths": ["lab_data"]}, _env(tmp_path))
-    built = LAB_REPOSITORIES.build(prepared)
+    prepared = LAB_REPOSITORIES.prepare(
+        name="json", raw={"paths": ["lab_data"]}, env=_env(tmp_path)
+    )
+    built = LAB_REPOSITORIES.build(prepared=prepared)
     assert isinstance(built, _JsonFileLabRepository)
     assert built.search_paths == [tmp_path / "lab_data"]
 
@@ -42,14 +49,14 @@ def test_register_and_build(tmp_path):
 
     register_lab_repository("mine-test", config=MyConfig, factory=lambda c: MyRepository())
     try:
-        prepared = LAB_REPOSITORIES.prepare("mine-test", {}, _env(tmp_path))
-        assert isinstance(LAB_REPOSITORIES.build(prepared), MyRepository)
+        prepared = LAB_REPOSITORIES.prepare(name="mine-test", raw={}, env=_env(tmp_path))
+        assert isinstance(LAB_REPOSITORIES.build(prepared=prepared), MyRepository)
     finally:
-        LAB_REPOSITORIES.unregister("mine-test")
+        LAB_REPOSITORIES.unregister(name="mine-test")
 
 
 def test_unknown_name_lists_registered(tmp_path):
     with pytest.raises(LabSourceConstructionError, match="Unknown lab repository backend") as err:
-        LAB_REPOSITORIES.prepare("does-not-exist", {}, _env(tmp_path))
+        LAB_REPOSITORIES.prepare(name="does-not-exist", raw={}, env=_env(tmp_path))
     assert isinstance(err.value, LabRepositoryError)
     assert "json" in str(err.value)

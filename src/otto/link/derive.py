@@ -58,7 +58,7 @@ def addressing_from_dict(
     than let one deny the rest. *profiles* is the project data the ``os_type``
     resolves through, as in :func:`~otto.host.factory.host_identity`.
     """
-    host_id = host_identity(host_data, element, profiles=profiles).id
+    host_id = host_identity(host_data, element=element, profiles=profiles).id
     raw = host_data.get("interfaces", {})
     interfaces = {
         name: (entry if isinstance(entry, str) else entry.get("ip", ""))

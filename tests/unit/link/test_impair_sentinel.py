@@ -20,8 +20,8 @@ class TestCodec:
     def test_percent_encoding_of_separator(self) -> None:
         token = encode_impair_sentinel("name:with:colons", "eth1")
         assert parse_impair_sentinel(token) == ("name:with:colons", "eth1", None)
-        token2 = encode_impair_sentinel_v3("name:with:colons", "eth1", Selector(80))
-        assert parse_impair_sentinel(token2) == ("name:with:colons", "eth1", Selector(80))
+        token2 = encode_impair_sentinel_v3("name:with:colons", "eth1", Selector(port=80))
+        assert parse_impair_sentinel(token2) == ("name:with:colons", "eth1", Selector(port=80))
 
     def test_reject_foreign_and_malformed(self) -> None:
         assert parse_impair_sentinel("otto-tunnel:v1:x:y") is None
@@ -40,7 +40,7 @@ class TestPsScan:
 
     def test_parse_ps_extracts_both_versions(self) -> None:
         v1 = encode_impair_sentinel("lnk-abc123", "eth1.100")
-        v2 = encode_impair_sentinel_v3("lnk-abc123", "eth1.100", Selector(5201, "tcp"))
+        v2 = encode_impair_sentinel_v3("lnk-abc123", "eth1.100", Selector(port=5201, proto="tcp"))
         text = "\n".join(
             [
                 f"  4242 05:00 {v1} -c sleep 30 && tc qdisc del dev eth1.100 root",
@@ -52,7 +52,7 @@ class TestPsScan:
         )
         assert parse_impair_ps(text) == [
             ImpairTimer(4242, "lnk-abc123", "eth1.100", None),
-            ImpairTimer(4243, "lnk-abc123", "eth1.100", Selector(5201, "tcp")),
+            ImpairTimer(4243, "lnk-abc123", "eth1.100", Selector(port=5201, proto="tcp")),
         ]
 
 
@@ -74,19 +74,19 @@ class TestWireGolden:
 
 class TestV3:
     def test_range_and_side_roundtrip(self) -> None:
-        sel = Selector(5000, "tcp", end=5010, side="dst")
+        sel = Selector(port=5000, proto="tcp", end=5010, side="dst")
         token = encode_impair_sentinel_v3("lnk-abc123", "eth1.100", sel)
         assert token == "otto-impair:v3:lnk-abc123:eth1.100:5000:5010:tcp:dst"
         assert parse_impair_sentinel(token) == ("lnk-abc123", "eth1.100", sel)
 
     def test_single_port_both_everything_has_empty_segments(self) -> None:
-        token = encode_impair_sentinel_v3("lnk-abc123", "eth1.100", Selector(53))
+        token = encode_impair_sentinel_v3("lnk-abc123", "eth1.100", Selector(port=53))
         assert token == "otto-impair:v3:lnk-abc123:eth1.100:53:::"
-        assert parse_impair_sentinel(token) == ("lnk-abc123", "eth1.100", Selector(53))
+        assert parse_impair_sentinel(token) == ("lnk-abc123", "eth1.100", Selector(port=53))
 
     def test_exact_bytes_with_percent_encoding(self) -> None:
         assert (
-            encode_impair_sentinel_v3("a:b", "e/th", Selector(5201, "udp"))
+            encode_impair_sentinel_v3("a:b", "e/th", Selector(port=5201, proto="udp"))
             == "otto-impair:v3:a%3Ab:e%2Fth:5201::udp:"
         )
 
@@ -94,12 +94,12 @@ class TestV3:
         assert parse_impair_sentinel("otto-impair:v2:lnk-abc123:eth1.100:5201:tcp") == (
             "lnk-abc123",
             "eth1.100",
-            Selector(5201, "tcp"),
+            Selector(port=5201, proto="tcp"),
         )
         assert parse_impair_sentinel("otto-impair:v2:lnk-abc123:eth1.100:53:") == (
             "lnk-abc123",
             "eth1.100",
-            Selector(53),
+            Selector(port=53),
         )
 
     def test_malformed_v3_is_not_ours(self) -> None:

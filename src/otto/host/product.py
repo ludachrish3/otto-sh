@@ -127,12 +127,12 @@ class StageDirPlan:
     loader."""
 
 
-def put_line(local: Path, remote_dir: str) -> str:
+def put_line(*, local: Path, remote_dir: str) -> str:
     """Return the plan's line for ``host.put(local, remote_dir)``."""
     return f"PUT {local} -> {remote_dir}"
 
 
-def mkdir_line(directory: str) -> str:
+def mkdir_line(*, directory: str) -> str:
     """Return the plan's line for :func:`ensure_stage_dir` making *directory*.
 
     Quoted as the host's ``mkdir`` quotes it; :data:`LOGIN_HOME_PLACEHOLDER`
@@ -144,22 +144,22 @@ def mkdir_line(directory: str) -> str:
     return f"mkdir -p {shown}"
 
 
-def stage_lines(host: "Host", local: Path, directory: str) -> list[str]:
+def stage_lines(*, host: "Host", local: Path, directory: str) -> list[str]:
     """Return the plan's lines for staging *local* into *directory* on *host*.
 
     The ``mkdir -p`` :func:`ensure_stage_dir` runs first, on a host that has a
     shell ``mkdir``, then the transfer.
     """
-    made = [mkdir_line(directory)] if _creates_stage_dir(host) else []
-    return [*made, put_line(local, directory)]
+    made = [mkdir_line(directory=directory)] if _creates_stage_dir(host) else []
+    return [*made, put_line(local=local, remote_dir=directory)]
 
 
-def sudo_line(command: str) -> str:
+def sudo_line(*, command: str) -> str:
     """Return the plan's line for ``host.run(command, sudo=True)``."""
     return f"sudo {command}"
 
 
-def planned_stage_dir(stage_dir: Path, host: "Host", who: str) -> StageDirPlan:
+def planned_stage_dir(*, stage_dir: Path, host: "Host", who: str) -> StageDirPlan:
     """Name the staging directory a plan can know, and the gap when it cannot.
 
     The same precedence as :func:`resolve_stage_dir`, never contacting *host*:
@@ -190,7 +190,7 @@ def planned_stage_dir(stage_dir: Path, host: "Host", who: str) -> StageDirPlan:
     )
 
 
-def unplanned(obj: object) -> ProductPlan:
+def unplanned(*, obj: object) -> ProductPlan:
     """Return the plan of a product or tool that does not describe itself.
 
     Empty step lists and one ``unchecked`` line naming *obj*'s class: the
@@ -336,7 +336,7 @@ def _creates_stage_dir(host: object) -> "TypeIs[PosixFileOps]":
     return isinstance(host, PosixFileOps)
 
 
-async def ensure_stage_dir(host: "Host", directory: Path, who: str) -> Result:
+async def ensure_stage_dir(*, host: "Host", directory: Path, who: str) -> Result:
     """Create the resolved staging *directory* on *host* (``mkdir -p``) before a transfer.
 
     A remote transfer to a directory that does not exist writes the artifact
@@ -352,13 +352,13 @@ async def ensure_stage_dir(host: "Host", directory: Path, who: str) -> Result:
     from .host import is_dry_run  # local: keeps the host graph off the product import path
 
     if not _creates_stage_dir(host) or is_dry_run():
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     made = await host.mkdir(directory)
     if made.is_ok:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     reason = made.msg.strip() or f"mkdir exited {made.status.name}"
     return Result(
-        made.status,
+        status=made.status,
         msg=(
             f"{who}: cannot create stage_dir {str(directory)!r} on host "
             f"{getattr(host, 'id', '?')}: {reason}"
@@ -456,7 +456,7 @@ class Product(ABC):
                 "GCOV_PREFIX_STRIP; set Product.build_root to the directory its build ran in"
             )
         try:
-            return gcov_prefix_strip(self.build_root)
+            return gcov_prefix_strip(build_root=self.build_root)
         except ValueError as e:
             raise ValueError(f"product {self.name!r}: {e} (got {str(self.build_root)!r})") from e
 
@@ -488,7 +488,7 @@ class Product(ABC):
         """
         return await resolve_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
 
-    def stage_key(self, host: "Host") -> str:
+    def stage_key(self, *, host: "Host") -> str:
         """:attr:`stage_dir` as a comparable key at lab load (:func:`stage_dir_key`)."""
         return stage_dir_key(self.stage_dir, host, who=f"product {self.name!r}")
 
@@ -503,7 +503,7 @@ class Product(ABC):
         against a recording host to keep the description equal to the deed.
         """
         del host  # the base describes the class, not the host
-        return unplanned(self)
+        return unplanned(obj=self)
 
     @abstractmethod
     async def stage(self, host: "Host") -> Result:
@@ -530,7 +530,7 @@ class Product(ABC):
         """Return True when this product is currently installed on *host*."""
         ...
 
-    async def get_logs(self, host: "Host", dest: Path) -> Result:  # noqa: ARG002 — required by the Product.get_logs hook signature; overrides use host/dest, this retrieves-nothing default does not
+    async def get_logs(self, host: "Host", *, dest: Path) -> Result:  # noqa: ARG002 — required by the Product.get_logs hook signature; overrides use host/dest, this retrieves-nothing default does not
         """Retrieve this product's log files into local directory *dest*.
 
         Default: retrieves nothing, successfully — zero logs is not a
@@ -538,9 +538,9 @@ class Product(ABC):
         not run on *host* (an external mechanism is fine). Write files
         under *dest*; the caller owns the directory layout above it.
         """
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
-    async def get_debug_logs(self, host: "Host", dest: Path) -> Result:
+    async def get_debug_logs(self, host: "Host", *, dest: Path) -> Result:
         """Fetch :attr:`debug_log_globs` matches into local directory *dest*.
 
         Same rules as the host-level haul: literal entries fetched as declared,
@@ -569,7 +569,7 @@ class Product(ABC):
         materialise them; a failure skips the product for that run and is
         logged with host and product.
         """
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def reset_coverage(self, host: "Host") -> Result:
         """Zero this product's counters on *host*.
@@ -601,7 +601,7 @@ def cov_dir_of(product: Product) -> str:
     return product.cov_dir or cov_dir_of_name(product.name)
 
 
-def gcov_prefix_strip(build_root: PurePosixPath) -> int:
+def gcov_prefix_strip(*, build_root: PurePosixPath) -> int:
     """Return the ``GCOV_PREFIX_STRIP`` for a build that ran in *build_root*.
 
     THE ONE RESOLVER: every component of *build_root* is stripped, so a
@@ -957,22 +957,25 @@ async def _clear_gcda(product: Product, host: "Host") -> Result:
 
     removal = await _run(gcda_delete_cmd(cov_dir))
     if removal is None:
-        return Result(Status.NotRun)
+        return Result(status=Status.NotRun)
     # No product name in the messages: every consumer prefixes `<host>/<product>: `.
     if not removal.is_ok:
         detail = failure_detail(removal.value, removal.retcode)
-        return Result(Status.Error, msg=f"deleting .gcda under {cov_dir} failed: {detail}")
+        return Result(status=Status.Error, msg=f"deleting .gcda under {cov_dir} failed: {detail}")
     check = await _run(gcda_check_cmd(cov_dir))
     if check is None:
-        return Result(Status.NotRun)
+        return Result(status=Status.NotRun)
     answer = classify_gcda_check(cov_dir, check)
     if isinstance(answer, GcdaFindError):
-        return Result(Status.Error, msg=f"checking .gcda under {cov_dir} failed: {answer.detail}")
+        return Result(
+            status=Status.Error, msg=f"checking .gcda under {cov_dir} failed: {answer.detail}"
+        )
     if answer == "absent" or not answer:
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     shown = ", ".join(answer[:LEFTOVERS_SHOWN])
     return Result(
-        Status.Error, msg=f"deleting .gcda under {cov_dir} left {len(answer)} file(s): {shown}"
+        status=Status.Error,
+        msg=f"deleting .gcda under {cov_dir} left {len(answer)} file(s): {shown}",
     )
 
 
@@ -1045,7 +1048,7 @@ def scan_for_instrumentation(path: Path) -> bool | None:
     return None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class ShellProduct(Product):
     """Convenience base for a product that *is* a single artifact file (the ``shell`` kind's base).
 
@@ -1107,7 +1110,7 @@ class ShellProduct(Product):
         is created first (:func:`ensure_stage_dir`).
         """
         directory = await self.resolved_stage_dir(host)
-        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        made = await ensure_stage_dir(host=host, directory=directory, who=f"product {self.name!r}")
         if not made.is_ok:
             return made
         return await host.put(self.artifact, directory)
@@ -1166,7 +1169,7 @@ def register_product_provider(provider: ProductProvider) -> None:
     A returned instance must accept ``kind``, ``origin`` and ``owner``
     attribute assignment: ingest stamps all three on it.
     """
-    PRODUCT_PROVIDERS.subscribe(provider)
+    PRODUCT_PROVIDERS.subscribe(value=provider)
 
 
 PRODUCT_KINDS: "Registry[KindEntry[Product]]" = Registry(
@@ -1187,8 +1190,8 @@ kind module is imported until a declared entry names it.
 
 PRODUCT_KIND_BUILDER: "KindBuilder[Product]" = KindBuilder(
     PRODUCT_KINDS,
-    class_factory=Ref("otto.host.shell_kind:class_entry"),
-    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+    class_factory=Ref(target="otto.host.shell_kind:class_entry"),
+    class_resolver=Ref(target="otto.host.shell_kind:resolve_class"),
 )
 """Builds the ``[[products]]`` entries a host matches, from :data:`PRODUCT_KINDS`."""
 
@@ -1218,7 +1221,7 @@ def register_product_kind(
     TypeError
         If *factory* is not callable.
     """
-    PRODUCT_KINDS.register(name, KindEntry(factory), overwrite=overwrite)
+    PRODUCT_KINDS.register(name=name, entry=KindEntry(factory), overwrite=overwrite)
 
 
 def apply_declared_products(host: "Host") -> None:
@@ -1350,7 +1353,7 @@ def _register_builtin_kinds() -> None:
         ("kmod", "otto.host.kmod_kind", "_kmod_kind"),
         ("embedded", "otto.host.embedded_kind", "_embedded_kind"),
     ]:
-        PRODUCT_KINDS.register(kind, KindEntry(Ref(f"{module}:{factory}")))
+        PRODUCT_KINDS.register(name=kind, entry=KindEntry(Ref(target=f"{module}:{factory}")))
 
 
 _register_builtin_kinds()

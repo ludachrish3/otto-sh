@@ -11,4 +11,4 @@ def bare_ref() -> None:
     frames: Registry[ClassEntry[Frame]] = Registry(
         "frame", entry=ClassEntry, register_hint="register_frame()"
     )
-    frames.register("b", Ref("m:Frame"))  # ty: ignore[invalid-argument-type]
+    frames.register(name="b", entry=Ref(target="m:Frame"))  # ty: ignore[invalid-argument-type]

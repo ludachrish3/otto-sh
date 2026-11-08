@@ -87,7 +87,7 @@ CAPTURE_MEANING = {3: _capture_v3}
 
 @pytest.mark.parametrize("version", formats.STORE_READ_VERSIONS)
 def test_store_reads_each_declared_sample(version):
-    STORE_MEANING[version](CoverageStore.load(_store_sample(version)))
+    STORE_MEANING[version](CoverageStore.load(path=_store_sample(version)))
 
 
 @pytest.mark.parametrize("version", formats.CAPTURE_READ_VERSIONS)
@@ -108,7 +108,7 @@ def test_the_readers_and_writers_hold_the_declared_lists():
 def test_store_load_accepts_only_the_declared_read_versions(monkeypatch):
     monkeypatch.setattr(store_model, "STORE_READ_VERSIONS", [10])
     with pytest.raises(ValueError, match=r"coverage store format v10 required; found v9"):
-        CoverageStore.load(_store_sample(9))
+        CoverageStore.load(path=_store_sample(9))
 
 
 def test_a_v8_store_names_the_regenerate_fix(tmp_path):
@@ -117,7 +117,7 @@ def test_a_v8_store_names_the_regenerate_fix(tmp_path):
     with pytest.raises(
         ValueError, match=r"format v9 required; found v8 — regenerate with otto cov get/report"
     ):
-        CoverageStore.load(path)
+        CoverageStore.load(path=path)
 
 
 def test_capture_load_accepts_only_the_declared_read_versions(monkeypatch):
@@ -136,19 +136,19 @@ def test_the_store_stamp_is_still_judged_by_equality(stamp, loads, tmp_path):
     path = tmp_path / "store.json"
     path.write_text(json.dumps(data))
     if loads:
-        _store_v9(CoverageStore.load(path))
+        _store_v9(CoverageStore.load(path=path))
     else:
         with pytest.raises(ValueError, match="regenerate"):
-            CoverageStore.load(path)
+            CoverageStore.load(path=path)
 
 
 @pytest.mark.parametrize("version", formats.STORE_WRITE_VERSIONS)
 def test_store_save_stamps_the_declared_write_version(version, tmp_path):
-    store = CoverageStore.load(_store_sample(formats.STORE_READ_VERSIONS[0]))
-    store.save(tmp_path / "store.json")
+    store = CoverageStore.load(path=_store_sample(formats.STORE_READ_VERSIONS[0]))
+    store.save(path=tmp_path / "store.json")
     assert json.loads((tmp_path / "store.json").read_text())["format"] == version
     if version in formats.STORE_READ_VERSIONS:
-        STORE_MEANING[version](CoverageStore.load(tmp_path / "store.json"))
+        STORE_MEANING[version](CoverageStore.load(path=tmp_path / "store.json"))
 
 
 @pytest.mark.parametrize("version", formats.CAPTURE_WRITE_VERSIONS)
@@ -183,7 +183,7 @@ def test_the_manual_store_rewrite_of_each_read_sample_keeps_it(version, tmp_path
 @pytest.mark.parametrize("version", formats.TICKETS_WRITE_VERSIONS)
 def test_tickets_export_stamps_the_declared_write_version(version):
     payload = build_ticket_export(
-        CoverageStore.load(_store_sample(9)),
+        CoverageStore.load(path=_store_sample(9)),
         project_root=Path("/work"),
         report_title="p",
         otto_version="0",

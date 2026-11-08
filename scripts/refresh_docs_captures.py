@@ -1036,7 +1036,7 @@ def _load_store(cap: Capture, raw_path: str, subs: dict[str, str]) -> "CoverageS
 
     path = Path(_substitute(raw_path, subs))
     try:
-        return CoverageStore.load(path)
+        return CoverageStore.load(path=path)
     except (OSError, ValueError) as exc:
         raise CaptureError(f"capture {cap.id!r}: cannot read the store {path}: {exc}") from exc
 

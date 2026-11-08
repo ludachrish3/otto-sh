@@ -56,8 +56,8 @@ class ProjectLoadError(OttoError):
     def __init__(
         self,
         errors: "list[BootstrapError]",
-        demoted: "list[DemotedProject] | None" = None,
         *,
+        demoted: "list[DemotedProject] | None" = None,
         required: "list[RequiredProject] | None" = None,
     ) -> None:
         """Frame every fatal error, one per line, then why any inactive project still counts."""
@@ -105,7 +105,7 @@ class DependencyRefusedError(OttoError):
     """
 
     def __init__(
-        self, unsatisfied: "list[Unsatisfied]", warnings: "list[str] | None" = None
+        self, unsatisfied: "list[Unsatisfied]", *, warnings: "list[str] | None" = None
     ) -> None:
         """One line per blocking requirement, the requirement quoted as written."""
         # An empty list still says something: an exception with an empty
@@ -137,8 +137,8 @@ class InstructionInactiveError(OttoError):
     def __init__(
         self,
         instruction: str,
-        owner: str,
         *,
+        owner: str,
         project: str,
         reason: 'Literal["excluded", "out_of_lab_scope", "host_starved"]',
         loaded_labs: "list[str] | None" = None,

@@ -87,7 +87,7 @@ async def test_ssh_connection_lost_is_still_reported():
         side_effect=[identity_handshake_reply(s._ready_marker), asyncssh.ConnectionLost("gone")]
     )
 
-    result = await s.run_cmd("echo hi")
+    result = await s.run_cmd(cmd="echo hi")
 
     assert result.status == Status.Error
     assert result.value == "Session died unexpectedly (connection lost)"
@@ -172,7 +172,7 @@ async def test_run_cmd_read_after_close_marks_session_dead(caplog):
     session._alive = True
 
     with caplog.at_level(logging.DEBUG):
-        result = await session.run_cmd("echo hi", timeout=5)
+        result = await session.run_cmd(cmd="echo hi", timeout=5)
         await closing[0]  # run_cmd bounds itself; the close is bounded by its budget
 
     assert result.status == Status.Error
@@ -185,4 +185,4 @@ async def test_run_cmd_read_after_close_marks_session_dead(caplog):
     assert "already waiting" not in caplog.text
     # The refusal itself is the read entry's: a read after the take never starts.
     with pytest.raises(ReadGateClosed):
-        await session.read_transport_until(re.compile("x"))
+        await session.read_transport_until(pattern=re.compile("x"))

@@ -92,7 +92,7 @@ def _ip_by_host(projects: list["Project"]) -> dict[str, str]:
 
     ip_by_host: dict[str, str] = {}
     resolution = resolve_process_inventory(projects)
-    profiles = ProfileContext.from_projects(projects)
+    profiles = ProfileContext.from_projects(projects=projects)
     for project in projects:
         for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.ip:
@@ -215,7 +215,7 @@ async def add(
         dest_spec = _parse_endpoint(dest) if dest else None
         added = await add_tunnel(
             lab,
-            _parse_hosts(hosts),
+            hosts=_parse_hosts(hosts),
             port=port,
             protocol=protocol,
             dest=dest_spec,
@@ -326,7 +326,7 @@ async def check(
     lab = get_lab()
     try:
         result = await check_tunnel(
-            lab, host_specs, port=port, protocol=protocol, dest=dest_spec, carrier=carrier
+            lab=lab, hosts=host_specs, port=port, protocol=protocol, dest=dest_spec, carrier=carrier
         )
     except (ValueError, RuntimeError) as e:
         fail(e)
@@ -462,9 +462,9 @@ async def remove(
     lab = get_lab()
     try:
         if all_:
-            report = await remove_all_tunnels(lab)
+            report = await remove_all_tunnels(lab=lab)
         else:
-            report = await remove_tunnel(lab, tunnel_id or "")
+            report = await remove_tunnel(lab, tunnel_id=tunnel_id or "")
     except (ValueError, RuntimeError) as e:
         fail(e)
     if report.plan is not None:

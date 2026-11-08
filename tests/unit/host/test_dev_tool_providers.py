@@ -388,7 +388,7 @@ def test_source_lab_is_stamped_before_the_providers_run():
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="somelab",
-        element=Element("probe-box"),
+        element=Element(name="probe-box"),
     )
 
     assert seen == ["somelab"], "the provider ran before the lab stamp landed"

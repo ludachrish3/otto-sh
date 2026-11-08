@@ -85,10 +85,10 @@ class ReservationReport:
 
 
 def build_report(
+    *,
     lab: "Lab",
     username: str,
     backend: "ReservationBackend",
-    *,
     host_ids: "Iterable[str] | None" = None,
     now: "datetime | None" = None,
 ) -> ReservationReport:
@@ -113,8 +113,8 @@ def build_report(
     from .protocol import SupportsResourceHolders
 
     ids = list(lab.hosts) if host_ids is None else list(host_ids)
-    origins = required_resource_origins(lab, host_ids=ids)
-    null = is_null_backend(backend)
+    origins = required_resource_origins(lab=lab, host_ids=ids)
+    null = is_null_backend(backend=backend)
     if null or not origins:
         return ReservationReport(
             lab=lab.name,
@@ -136,7 +136,7 @@ def build_report(
             f"{username!r}; these must agree"
         )
 
-    own = [r for r in active_reservations(backend) if r.user == username]
+    own = [r for r in active_reservations(backend=backend) if r.user == username]
     held = {r.resource for r in own}
     needed = {o.resource for o in origins}
     reference = now if now is not None else datetime.now(tz=timezone.utc)
@@ -146,7 +146,7 @@ def build_report(
             for r in own
             if r.end is not None
             and r.resource in needed
-            and r.expires_within(EXPIRY_WARNING_WINDOW, now=reference)
+            and r.expires_within(delta=EXPIRY_WARNING_WINDOW, now=reference)
         ),
         key=lambda r: (r.end, r.resource),
     )

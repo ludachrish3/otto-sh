@@ -33,9 +33,9 @@ first failure. Request the `expect` fixture:
 async def test_device_config(dut, expect) -> None:
     result = (await dut.run("show running-config")).only
 
-    expect("hostname" in result.value, "Config should contain hostname")
-    expect("ntp server" in result.value, "Config should have NTP configured")
-    expect("logging" in result.value, "Config should have logging enabled")
+    expect("hostname" in result.value, msg="Config should contain hostname")
+    expect("ntp server" in result.value, msg="Config should have NTP configured")
+    expect("logging" in result.value, msg="Config should have logging enabled")
     # All three are checked; the test fails at the end with every failure listed
 ```
 

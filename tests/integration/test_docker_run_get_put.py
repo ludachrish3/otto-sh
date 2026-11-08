@@ -62,7 +62,7 @@ async def stack(test3_lease, ottopath_env_module):
     async with held_for_scope("test_docker_run_get_put.py's loop"):
         parent = UnixHost(
             ip="10.10.200.13",
-            element=Element("test3"),
+            element=Element(name="test3"),
             creds=[Cred(login="vagrant", password="vagrant")],
             is_virtual=True,
             term="ssh",
@@ -73,13 +73,13 @@ async def stack(test3_lease, ottopath_env_module):
         lab = Lab(name="docker_run_test")
         lab.hosts[parent.id] = parent
 
-        build_results = await build_images(project, parent)
+        build_results = await build_images(project=project, parent=parent)
         assert build_results["project1-api"].is_ok, build_results
-        hosts = await compose_up(project, lab, parent=parent.id)
+        hosts = await compose_up(project=project, lab=lab, parent=parent.id)
         try:
             yield hosts["api"]
         finally:
-            await compose_down(project, lab, parent=parent.id)
+            await compose_down(project=project, lab=lab, parent=parent.id)
             await parent.close()
 
 

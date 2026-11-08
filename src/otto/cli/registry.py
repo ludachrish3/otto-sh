@@ -128,7 +128,7 @@ def register_cli_command(
         async_leaves=async_leaves,
         dry_run_preview=dry_run_preview,
     )
-    CLI_COMMANDS.register(name, spec, overwrite=overwrite)
+    CLI_COMMANDS.register(name=name, entry=spec, overwrite=overwrite)
 
 
 def cli_command(
@@ -429,7 +429,7 @@ def collect_cli_commands() -> list[dict[str, Any]]:
     log = logging.getLogger(__name__)
     out: list[dict[str, Any]] = []
     for name, spec in CLI_COMMANDS.items():
-        if CLI_COMMANDS.origin(name).startswith("otto."):
+        if CLI_COMMANDS.origin(name=name).startswith("otto."):
             continue
         entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
         try:

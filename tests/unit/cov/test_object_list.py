@@ -449,14 +449,14 @@ def _ok(value=""):
     from otto.result import Result
     from otto.utils import Status
 
-    return Result(Status.Success, value=value)
+    return Result(status=Status.Success, value=value)
 
 
 def _failed(value="", msg="failed"):
     from otto.result import Result
     from otto.utils import Status
 
-    return Result(Status.Error, value=value, msg=msg)
+    return Result(status=Status.Error, value=value, msg=msg)
 
 
 def _scan(paths, rcs=(0,), extra=()):
@@ -536,7 +536,7 @@ class _DockerHost:
         if self.before_get is not None:
             await self.before_get()
         if self.get_fails:
-            return Result(Status.Error, value={}, msg="sftp: connection lost")
+            return Result(status=Status.Error, value={}, msg="sftp: connection lost")
         got = {}
         for src in src_files:
             if self.host_files[str(src)] in self.get_drops:
@@ -544,7 +544,7 @@ class _DockerHost:
                 continue
             (Path(dest_dir) / src.name).write_bytes(self.host_files[str(src)])
             got[src] = _ok()
-        return Result(Status.Success, value=got)
+        return Result(status=Status.Success, value=got)
 
     def issued(self, prefix):
         return [c for c in self.calls if c.startswith(prefix)]
@@ -767,7 +767,7 @@ async def test_a_declined_image_inspect_is_a_dry_run(tmp_path):
     from otto.result import NotRunResult
     from otto.utils import Status
 
-    declined = NotRunResult(Status.NotRun, command="docker image inspect", msg="declined")
+    declined = NotRunResult(status=Status.NotRun, command="docker image inspect", msg="declined")
     host = _DockerHost(_TWO, answers={_INSPECT: _NO_CONTAINER, _IMAGE_ID: declined})
     result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
@@ -779,7 +779,9 @@ async def test_a_dry_run_is_unavailable_and_issues_nothing_further(tmp_path):
     from otto.result import NotRunResult
     from otto.utils import Status
 
-    declined = NotRunResult(Status.NotRun, command="docker container inspect", msg="declined")
+    declined = NotRunResult(
+        status=Status.NotRun, command="docker container inspect", msg="declined"
+    )
     host = _DockerHost(_TWO, answers={_INSPECT: declined})
     result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
@@ -1183,7 +1185,7 @@ async def test_a_declined_temp_dir_creation_removes_nothing(tmp_path, token):
     from otto.result import NotRunResult
     from otto.utils import Status
 
-    declined = NotRunResult(Status.NotRun, command="mkdir", msg="declined")
+    declined = NotRunResult(status=Status.NotRun, command="mkdir", msg="declined")
     host = _DockerHost(_TWO, answers={_MKDIR: declined})
     result = await ObjectListCache(tmp_path).read_container(_RefImg(), host)
     assert isinstance(result, Unavailable)
@@ -1952,7 +1954,7 @@ class _StatefulDaemon:
         for src in src_files:
             (Path(dest_dir) / src.name).write_bytes(self.host_files[str(src)])
             got[src] = _ok()
-        return Result(Status.Success, value=got)
+        return Result(status=Status.Success, value=got)
 
 
 @pytest.fixture

@@ -559,7 +559,7 @@ async def _build_for(units: "list[_ProjectUnit]", parent: UnixHost) -> None:
     for unit in units:
         if not unit.project.docker_settings.images:
             continue
-        results = await build_images(unit.project, parent)
+        results = await build_images(project=unit.project, parent=parent)
         for name, built in results.items():
             if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
@@ -617,7 +617,7 @@ def resolve_use_case(
     from .observe import docker_parent
 
     lab = require_run().lab
-    host = docker_parent(lab, parent)
+    host = docker_parent(lab=lab, parent=parent)
     selection = select_fragments(use_case, current_projects(), provide=provide)
     placed = place(selection, host)
     order = {project.name: i for i, project in enumerate(current_ordered_projects())}
@@ -829,8 +829,8 @@ async def deploy(
     if dry:
         raise CommandNotRunError(
             f"deploy({use_case})",
-            ", ".join(sorted(resolution.placed)),
-            f"{_plan(resolution.placed, resolution.selection)} {_command_preview(previews)}",
+            host=", ".join(sorted(resolution.placed)),
+            detail=f"{_plan(resolution.placed, resolution.selection)} {_command_preview(previews)}",
         )
     return stack
 
@@ -965,8 +965,8 @@ async def teardown(
     if is_dry_run():
         raise CommandNotRunError(
             f"teardown({use_case})",
-            ", ".join(sorted(resolution.placed)),
-            f"{_plan(resolution.placed, resolution.selection)} No container was stopped "
+            host=", ".join(sorted(resolution.placed)),
+            detail=f"{_plan(resolution.placed, resolution.selection)} No container was stopped "
             f"and no host was unregistered from the lab.",
         )
 
@@ -1049,8 +1049,8 @@ async def deployed(
     if is_dry_run():
         raise CommandNotRunError(
             f"deployed({use_case})",
-            ", ".join(sorted(resolution.placed)),
-            f"{_plan(resolution.placed, resolution.selection)} No stack was brought up, "
+            host=", ".join(sorted(resolution.placed)),
+            detail=f"{_plan(resolution.placed, resolution.selection)} No stack was brought up, "
             f"so none was torn down either.",
         )
 

@@ -5,7 +5,7 @@ from otto.link import Link, LinkEndpoint, Provenance
 
 def test_lab_default() -> None:
 
-    lab = Lab("lab1")
+    lab = Lab(name="lab1")
 
     assert lab.name == "lab1"
     assert lab.resources == set()
@@ -24,7 +24,7 @@ class _FakeHost:
 
 class TestStaticLinks:
     def test_merges_implicit_and_declared(self):
-        lab = Lab("lab1")
+        lab = Lab(name="lab1")
         lab.hosts = {
             "local": _FakeHost("local", ip="127.0.0.1"),
             "gw": _FakeHost("gw"),
@@ -49,7 +49,7 @@ class TestStaticLinks:
         """A declared link that duplicates an implicit hop-edge's route
         (same hosts, no interfaces, same protocol) overrides it in the merge.
         """
-        lab = Lab("lab1")
+        lab = Lab(name="lab1")
         lab.hosts = {
             "local": _FakeHost("local", ip="127.0.0.1"),
             "gw": _FakeHost("gw", term="ssh"),
@@ -72,9 +72,9 @@ class TestStaticLinks:
 
 class TestLabAddDedupesLinks:
     def test_shared_link_by_id_is_deduped(self):
-        lab_a = Lab("a")
+        lab_a = Lab(name="a")
         lab_a.hosts = {"h1": _FakeHost("h1")}
-        lab_b = Lab("b")
+        lab_b = Lab(name="b")
         lab_b.hosts = {"h2": _FakeHost("h2")}
 
         link_in_a = Link(a=LinkEndpoint(host="h1"), b=LinkEndpoint(host="h2"), protocol="tcp")
@@ -121,16 +121,16 @@ def test_load_lab_forwards_preferences(tmp_path):
                         "creds": [{"login": "u", "password": "p"}],
                     },
                     lab_name=name,
-                    element=Element("fake"),
+                    element=Element(name="fake"),
                 )
             )
             return lab
 
     # Replaced in the registry ``load_lab`` builds its json source through;
     # the root isolation fixture restores the built-in afterwards.
-    entry = LAB_REPOSITORIES.peek("json")
+    entry = LAB_REPOSITORIES.peek(name="json")
     register_lab_repository(
         "json", config=entry.config, factory=lambda c: FakeRepository(), overwrite=True
     )
-    load_lab("x", [tmp_path], preferences={".*": {"transfer": ["scp"]}})
+    load_lab("x", search_paths=[tmp_path], preferences={".*": {"transfer": ["scp"]}})
     assert captured["preferences"] == {".*": {"transfer": ["scp"]}}

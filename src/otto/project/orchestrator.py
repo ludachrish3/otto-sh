@@ -516,7 +516,7 @@ def _walk_order(
         ctx, ordered, name, require_dependencies=spec.require_dependencies, announce=announce
     )
     for project in kept:
-        actions = actions_for(project, ctx)
+        actions = actions_for(project=project, ctx=ctx)
         body = entry.body_for(type(actions))
         # Unreachable: every registered actions class descends from
         # ProjectActions, whose own bodies are in the table, so the MRO walk
@@ -577,7 +577,7 @@ def _combine(name: str, results: "dict[str, Any]") -> Any:
         return spec.combine_results(results)
     stamped = [
         Result(
-            result.status,
+            status=result.status,
             msg=f"{name} {'failed' if not result.is_ok else 'declined'} in project "
             f"{project_name!r}: {result.msg or result.status.name.lower()}",
         )
@@ -753,7 +753,7 @@ def _live_refusals(lab: "Lab", skipped: "list[str]") -> "list[str]":
     structural = tuple(
         f"{link.id}: "
         for link in lab.static_links()
-        if impairment_refusal(link, BOTH_DIRECTIONS) is not None
+        if impairment_refusal(link=link, directions=BOTH_DIRECTIONS) is not None
     )
     if not structural:
         return list(skipped)
@@ -793,10 +793,10 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
     """
     from ..link.manage import describe_out_of_scope, repair_all
 
-    report = await repair_all(ctx.lab)
+    report = await repair_all(lab=ctx.lab)
     if report.dry_run:
         return Result(
-            Status.NotRun,
+            status=Status.NotRun,
             msg="dry run: no link was read and no impairment was reset",
         )
     # An out-of-scope link is named only when otto cleared something on the end
@@ -808,10 +808,10 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
     if report.failures:
         also = f" (declined: {declined})" if declined else ""
         failed = "; ".join(report.failures)
-        return Result(Status.Failed, msg=f"impairment reset failed: {failed}{also}")
+        return Result(status=Status.Failed, msg=f"impairment reset failed: {failed}{also}")
     if declined:
-        return Result(Status.Skipped, msg=f"impairment reset declined: {declined}")
-    return Result(Status.Success)
+        return Result(status=Status.Skipped, msg=f"impairment reset declined: {declined}")
+    return Result(status=Status.Success)
 
 
 async def _remove_tunnels(ctx: "OttoContext") -> Result:
@@ -833,21 +833,21 @@ async def _remove_tunnels(ctx: "OttoContext") -> Result:
     """
     from ..tunnel.manage import remove_all_tunnels
 
-    report = await remove_all_tunnels(ctx.lab)
+    report = await remove_all_tunnels(lab=ctx.lab)
     if report.plan is not None:
         return Result(
-            Status.NotRun,
+            status=Status.NotRun,
             msg="dry run: no host was scanned for tunnel processes and none was reaped",
         )
     if report.survivors:
         still = ", ".join(f"{host_id}/{pid}" for host_id, pid in report.survivors)
-        return Result(Status.Failed, msg=f"tunnel processes survived the kill: {still}")
+        return Result(status=Status.Failed, msg=f"tunnel processes survived the kill: {still}")
     if report.unreachable:
         return Result(
-            Status.Failed,
+            status=Status.Failed,
             msg=f"tunnel reap could not reach: {', '.join(report.unreachable)}",
         )
-    return Result(Status.Success)
+    return Result(status=Status.Success)
 
 
 ####################
@@ -855,7 +855,7 @@ async def _remove_tunnels(ctx: "OttoContext") -> Result:
 ####################
 
 
-async def install(opts: "InstallOptions | OptionsSource | None" = None) -> Result:
+async def install(*, opts: "InstallOptions | OptionsSource | None" = None) -> Result:
     """Install every project's products, dependencies first, stopping at the first failure.
 
     With ``ensure``, this is :func:`ensure_installed` instead: the lab's
@@ -866,7 +866,7 @@ async def install(opts: "InstallOptions | OptionsSource | None" = None) -> Resul
     """
     source = _source(opts, InstallOptions)
     if source.build(InstallOptions).ensure:
-        return await ensure_installed(source)
+        return await ensure_installed(opts=source)
     return await _install(source)
 
 
@@ -882,7 +882,7 @@ async def _install(source: OptionsSource) -> Result:
     return await _walk("install", ctx, projects, source)
 
 
-async def uninstall(opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
+async def uninstall(*, opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
     """Uninstall every project in reverse order (best-effort), then sweep debug logs once.
 
     Product logs come off inside each project's own uninstall, before that project's
@@ -900,7 +900,7 @@ async def uninstall(opts: "UninstallOptions | OptionsSource | None" = None) -> R
     return _reported(torn, await _sweep_debug_logs(ctx))
 
 
-async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
+async def cleanup(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
     """Clean the lab: every project, the debug logs, the toolchain, impairments, tunnels.
 
     Strictly more than :func:`uninstall`: each project also removes its own dev
@@ -935,10 +935,12 @@ async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Resul
     base = source.build(CleanupOptions)
     ctx, projects = _lab()
     cleaned = await _walk("cleanup", ctx, projects, source)
-    swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(Status.Success)
+    swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(status=Status.Success)
     removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
-    repaired = await _reset_impairments(ctx) if base.reset_impairments else Result(Status.Success)
-    reaped = await _remove_tunnels(ctx) if base.remove_tunnels else Result(Status.Success)
+    repaired = (
+        await _reset_impairments(ctx) if base.reset_impairments else Result(status=Status.Success)
+    )
+    reaped = await _remove_tunnels(ctx) if base.remove_tunnels else Result(status=Status.Success)
     return _reported(cleaned, swept, removed, repaired, reaped)
 
 
@@ -947,7 +949,7 @@ async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Resul
 ####################
 
 
-async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Result:
+async def get_logs(*, opts: "GetLogsOptions | OptionsSource | None" = None) -> Result:
     """Gather every project's product logs (best-effort), then sweep debug logs once.
 
     Walk order is immaterial here, so it is the natural one. Each project hauls
@@ -963,7 +965,7 @@ async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Resu
     source = _source(opts, GetLogsOptions)
     base = source.build(GetLogsOptions)
     if base.require_product_logs and not base.product_logs:
-        return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
+        return Result(status=Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
     ctx, projects = _lab()
     hauled = await _walk("get-logs", ctx, projects, source)
     if not base.debug_logs:
@@ -976,7 +978,7 @@ async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Resu
 ####################
 
 
-async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = None) -> Result:
+async def install_tools(*, opts: "InstallToolsOptions | OptionsSource | None" = None) -> Result:
     """Install every project's dev tools, then (when asked) the host toolchains.
 
     Fail-fast like :func:`install`, and in the same order as the host verb it
@@ -999,7 +1001,7 @@ async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = Non
     return _reported(installed, placed)
 
 
-async def uninstall_tools(opts: "UninstallToolsOptions | OptionsSource | None" = None) -> Result:
+async def uninstall_tools(*, opts: "UninstallToolsOptions | OptionsSource | None" = None) -> Result:
     """Remove every project's dev tools, then (when asked) the host toolchains.
 
     Best-effort end to end, like :func:`cleanup` and unlike
@@ -1038,7 +1040,7 @@ def _counts(actions: ProjectActions) -> bool:
     return actions.owns_products or actions.project.name in PROJECT_ACTIONS
 
 
-async def status(opts: "StatusOptions | OptionsSource | None" = None) -> ProjectStatus:
+async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> ProjectStatus:
     """Report each counted project's install state, the lab aggregate, and who was left out.
 
     A project the counted-project rule excludes is absent from
@@ -1105,7 +1107,7 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
                     "— skipping it for status"
                 )
             continue
-        actions = actions_for(project, ctx)
+        actions = actions_for(project=project, ctx=ctx)
         if _counts(actions):
             body = entry.body_for(type(actions))
             # Unreachable for the same reason as in _run_bodies: otto's own
@@ -1239,7 +1241,7 @@ async def _project_items(
     # printed.
     for project in _applicable(ctx, projects, "cleanliness", require_dependencies=False):
         try:
-            clean = await actions_for(project, ctx).is_clean()
+            clean = await actions_for(project=project, ctx=ctx).is_clean()
         except Exception as exc:  # noqa: BLE001,PERF203 — a display marks what it could not learn; is_clean is the surface that refuses to answer
             items.append(
                 _unreadable(
@@ -1505,7 +1507,7 @@ async def is_clean() -> bool:
     # deciding to install, and a refusal here would pre-empt the decision it
     # informs.
     for project in _applicable(ctx, projects, "is_clean", require_dependencies=False):
-        if not await actions_for(project, ctx).is_clean():
+        if not await actions_for(project=project, ctx=ctx).is_clean():
             return False
     return (
         _verdict(await _toolchain_items(ctx))
@@ -1519,7 +1521,7 @@ async def is_clean() -> bool:
 ####################
 
 
-async def ensure_installed(opts: "InstallOptions | OptionsSource | None" = None) -> Result:
+async def ensure_installed(*, opts: "InstallOptions | OptionsSource | None" = None) -> Result:
     """Bring the lab to INSTALLED, doing only the work its current state needs.
 
     INSTALLED is a skip. UNINSTALLED installs. PARTIAL is the state this exists
@@ -1538,18 +1540,18 @@ async def ensure_installed(opts: "InstallOptions | OptionsSource | None" = None)
     project that declared a field on its own install options still sees it here.
     """
     source = _source(opts, InstallOptions)
-    state = (await status(source)).overall
+    state = (await status(opts=source)).overall
     if state is InstallState.INSTALLED:
-        return Result(Status.Skipped, msg="already installed")
+        return Result(status=Status.Skipped, msg="already installed")
     if state is InstallState.PARTIAL and source.build(InstallOptions).recover_partial:
-        torn = await uninstall(source)
+        torn = await uninstall(opts=source)
         if not torn.is_ok:
             refusal = "partial-install recovery: teardown failed, not installing over it"
-            return Result(torn.status, msg=f"{refusal}: {torn.msg}")
+            return Result(status=torn.status, msg=f"{refusal}: {torn.msg}")
     return await _install(source)
 
 
-async def ensure_uninstalled(opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
+async def ensure_uninstalled(*, opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
     """Bring the lab to UNINSTALLED; a fully uninstalled lab is a skip.
 
     PARTIAL runs the uninstall -- that is the case a boolean ``is_installed``
@@ -1557,11 +1559,11 @@ async def ensure_uninstalled(opts: "UninstallOptions | OptionsSource | None" = N
     """
     source = _source(opts, UninstallOptions)
     if await is_uninstalled():
-        return Result(Status.Skipped, msg="already uninstalled")
-    return await uninstall(source)
+        return Result(status=Status.Skipped, msg="already uninstalled")
+    return await uninstall(opts=source)
 
 
-async def ensure_clean(opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
+async def ensure_clean(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
     """Run :func:`cleanup` unless the lab is already clean.
 
     Asks :func:`is_clean` rather than :func:`status`: clean is a stronger
@@ -1570,8 +1572,8 @@ async def ensure_clean(opts: "CleanupOptions | OptionsSource | None" = None) -> 
     """
     source = _source(opts, CleanupOptions)
     if await is_clean():
-        return Result(Status.Skipped, msg="already clean")
-    return await cleanup(source)
+        return Result(status=Status.Skipped, msg="already clean")
+    return await cleanup(opts=source)
 
 
 ####################
@@ -1613,8 +1615,8 @@ async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
     source = OptionsSource.from_kwargs(kwargs)
     fn_name = _ENTRIES.get(name)
     if fn_name is not None:
-        entry_fn: "Callable[[OptionsSource], Awaitable[Any]]" = globals()[fn_name]
-        combined = await entry_fn(source)
+        entry_fn: "Callable[..., Awaitable[Any]]" = globals()[fn_name]
+        combined = await entry_fn(opts=source)
     else:
         ctx, projects = _lab()
         combined = await _walk(name, ctx, projects, source)

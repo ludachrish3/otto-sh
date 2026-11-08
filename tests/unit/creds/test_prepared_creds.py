@@ -11,7 +11,7 @@ from otto.models.base import OttoModel
 
 
 def _compile(table: dict, anchor: Path, *, origin: str = "o.toml"):
-    return compile_creds_table(table, anchor_dir=anchor, origin=origin)
+    return compile_creds_table(table=table, anchor_dir=anchor, origin=origin)
 
 
 def test_two_projects_naming_one_creds_file_from_their_own_roots_are_the_same(tmp_path):
@@ -19,7 +19,7 @@ def test_two_projects_naming_one_creds_file_from_their_own_roots_are_the_same(tm
     (tmp_path / "b").mkdir()
     a = _compile({"backend": "json", "path": "creds.json"}, tmp_path / "a")
     b = _compile({"backend": "json", "path": str(tmp_path / "a" / "creds.json")}, tmp_path / "b")
-    assert a.same_as(b)
+    assert a.same_as(other=b)
     assert a.prepared.env == CredsEnv(tmp_path / "a", "o.toml")
 
 
@@ -40,12 +40,13 @@ def test_a_factory_s_error_names_origin_and_backend(tmp_path):
         CredsConstructionError,
         match=r"'boom' \(registered by .*; configured in o\.toml\): construction failed.*urll",
     ):
-        construct_creds_store(_compile({"backend": "boom"}, tmp_path))
+        construct_creds_store(compiled=_compile({"backend": "boom"}, tmp_path))
 
 
 def test_the_built_in_store_passes_the_result_check(tmp_path):
     _check_creds_result(
-        "json", construct_creds_store(_compile({"backend": "json", "path": "c.json"}, tmp_path))
+        "json",
+        construct_creds_store(compiled=_compile({"backend": "json", "path": "c.json"}, tmp_path)),
     )
 
 
@@ -89,4 +90,4 @@ def test_a_store_missing_any_protocol_member_is_a_result_error(tmp_path, member)
 
     register_creds_backend("partial", config=Cfg, factory=lambda c: _lacking(member))
     with pytest.raises(CredsConstructionError, match=rf"result failed.*\b{member}\b"):
-        construct_creds_store(_compile({"backend": "partial"}, tmp_path))
+        construct_creds_store(compiled=_compile({"backend": "partial"}, tmp_path))

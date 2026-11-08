@@ -23,7 +23,7 @@ from ..registry import (
 
 
 @final
-@dataclass
+@dataclass(kw_only=True)
 class AdapterResult:
     """What a compose adapter hands back to otto (spec §7)."""
 
@@ -71,7 +71,7 @@ COMPOSE_ADAPTERS: "Registry[ComposeAdapterEntry]" = Registry(
     validate=_check_adapter_entry,
     capabilities=[
         Justified(
-            RequireProject(),
+            capability=RequireProject(),
             reason="one adapter per (project, use case); the project is half the key",
         ),
     ],
@@ -113,7 +113,9 @@ def register_compose_adapter(
         # Outside an init import the engine refuses before the key is checked,
         # and its message names the bare use case rather than a "None:" key.
         key = f"{project}:{use_case}" if project is not None else use_case
-        COMPOSE_ADAPTERS.register(key, ComposeAdapterEntry(use_case, fn), overwrite=overwrite)
+        COMPOSE_ADAPTERS.register(
+            name=key, entry=ComposeAdapterEntry(use_case, fn), overwrite=overwrite
+        )
         return fn
 
     return _register

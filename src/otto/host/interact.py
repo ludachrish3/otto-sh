@@ -480,7 +480,7 @@ class _BridgeProxyIO:
         await self._write_remote(data)
 
     async def expect(
-        self, pattern: "str | re.Pattern[str]", timeout: float = DEFAULT_COMMAND_TIMEOUT
+        self, pattern: "str | re.Pattern[str]", *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
         """Accumulate ``read_remote()`` chunks until *pattern* matches.
 
@@ -550,7 +550,7 @@ class _BridgeShellSession(ShellSession):
         return None
 
     @override
-    async def write_transport(self, data: str | SecretStr) -> None:
+    async def write_transport(self, *, data: str | SecretStr) -> None:
         if isinstance(data, SecretStr):
             await self._write_remote(_secret_line(data, self._newline))
             return
@@ -559,7 +559,7 @@ class _BridgeShellSession(ShellSession):
         await self._write_remote(data.encode("utf-8"))
 
     @override
-    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         matched = await self._reader.read_until(pattern)
         if matched is None:
             raise asyncio.IncompleteReadError(self._reader.unmatched.encode(OUTPUT_ENCODING), None)
@@ -664,7 +664,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     landing = session._frame  # noqa: SLF001 — the bridge is this session's manager
     restore = landing.restore_interactive()
     if restore is not None:
-        await session.run_cmd(restore)
+        await session.run_cmd(cmd=restore)
     handle = HostSession(
         name="login",
         session=session,
@@ -689,7 +689,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     await apply_session_setup(session, handle, ctx, setup, target_frame)
     restore = target_frame.restore_interactive()
     if restore is not None:
-        await session.run_cmd(restore)
+        await session.run_cmd(cmd=restore)
     return session.take_residual()
 
 

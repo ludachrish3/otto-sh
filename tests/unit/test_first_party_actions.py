@@ -54,7 +54,7 @@ def _empty_the_slot() -> None:
     while ``otto.project.actions`` is loaded.
     """
     if "otto" in FIRST_PARTY_ACTIONS:
-        FIRST_PARTY_ACTIONS.unregister("otto")
+        FIRST_PARTY_ACTIONS.unregister(name="otto")
 
 
 async def _handler() -> None: ...
@@ -99,12 +99,12 @@ def test_a_view_read_early_derives_the_six_once_otto_declares_them(initialize, t
 
 
 def test_otto_s_class_is_declared_by_its_installer_outside_any_project():
-    entry = FIRST_PARTY_ACTIONS.peek("otto")
+    entry = FIRST_PARTY_ACTIONS.peek(name="otto")
     assert entry.cls is ProjectActions
     assert sorted(body.name for body in entry.bodies) == SIX
     assert {body.project for body in entry.bodies} == {None}
-    assert FIRST_PARTY_ACTIONS.origin("otto") == "otto.project.actions"
-    assert FIRST_PARTY_ACTIONS.project("otto") is None
+    assert FIRST_PARTY_ACTIONS.origin(name="otto") == "otto.project.actions"
+    assert FIRST_PARTY_ACTIONS.project(name="otto") is None
 
 
 def test_redeclaring_inside_a_project_s_import_keeps_the_slot_otto_s():
@@ -112,8 +112,8 @@ def test_redeclaring_inside_a_project_s_import_keeps_the_slot_otto_s():
     with registering_project("acme"):
         declare()
         assert get_registering_project() == "acme"
-    assert FIRST_PARTY_ACTIONS.project("otto") is None
-    assert {body.project for body in FIRST_PARTY_ACTIONS.peek("otto").bodies} == {None}
+    assert FIRST_PARTY_ACTIONS.project(name="otto") is None
+    assert {body.project for body in FIRST_PARTY_ACTIONS.peek(name="otto").bodies} == {None}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -156,7 +156,7 @@ with registering_project('acme'):
     import otto.project.actions
     inside = get_registering_project()
 from otto.instruction_catalog import FIRST_PARTY_ACTIONS
-print(FIRST_PARTY_ACTIONS.project('otto'), inside)
+print(FIRST_PARTY_ACTIONS.project(name='otto'), inside)
 """
 
 
@@ -182,7 +182,7 @@ def test_a_raw_write_under_a_project_s_marker_is_refused():
         registering_project("acme"),
         pytest.raises(ValueError, match="first-party actions are otto's, but project 'acme'"),
     ):
-        FIRST_PARTY_ACTIONS.register("otto", entry)
+        FIRST_PARTY_ACTIONS.register(name="otto", entry=entry)
     assert "otto" not in FIRST_PARTY_ACTIONS
 
 
@@ -191,7 +191,7 @@ def test_declaring_again_does_nothing():
     declare()
     declare_first_party_actions(ProjectActions)
     assert FIRST_PARTY_ACTIONS.revision == revision
-    assert FIRST_PARTY_ACTIONS.peek("otto").cls is ProjectActions
+    assert FIRST_PARTY_ACTIONS.peek(name="otto").cls is ProjectActions
 
 
 def test_a_second_class_is_refused_and_changes_nothing():
@@ -199,7 +199,7 @@ def test_a_second_class_is_refused_and_changes_nothing():
     revision = FIRST_PARTY_ACTIONS.revision
     with pytest.raises(DuplicateRegistration):
         declare_first_party_actions(other)
-    assert FIRST_PARTY_ACTIONS.peek("otto").cls is ProjectActions
+    assert FIRST_PARTY_ACTIONS.peek(name="otto").cls is ProjectActions
     assert FIRST_PARTY_ACTIONS.revision == revision
 
 
@@ -269,7 +269,7 @@ async def test_run_instruction_declares_before_its_lookup():
     """A library caller with an empty slot still sees otto's six (the lookup error lists them)."""
     _empty_the_slot()
     with pytest.raises(ValueError, match=r"Registered: .*install"):
-        await run_instruction(OttoContext(lab=Lab(name="t")), "no-such-instruction")
+        await run_instruction(OttoContext(lab=Lab(name="t")), name="no-such-instruction")
 
 
 _LIBRARY = """
@@ -280,7 +280,7 @@ from otto.context import OttoContext
 from otto.instructions import run_instruction
 before = 'otto.project.actions' in sys.modules
 try:
-    asyncio.run(run_instruction(OttoContext(lab=Lab(name='t')), 'no-such-instruction'))
+    asyncio.run(run_instruction(OttoContext(lab=Lab(name='t')), name='no-such-instruction'))
 except ValueError as exc:
     print(before, 'install' in str(exc))
 """
@@ -335,7 +335,7 @@ def test_bootstrap_declares_before_any_project_init(tmp_path, monkeypatch):
     finally:
         bs._reset()
         sys.modules.pop(_ORDER_INIT_MODULE, None)
-    assert FIRST_PARTY_ACTIONS.peek("otto").cls is ProjectActions
+    assert FIRST_PARTY_ACTIONS.peek(name="otto").cls is ProjectActions
     assert result.errors == []
     assert PROJECT_ACTIONS.names() == ["proj"]
-    assert PROJECT_ACTIONS.peek("proj").cls.__name__ == "OrderActions"
+    assert PROJECT_ACTIONS.peek(name="proj").cls.__name__ == "OrderActions"

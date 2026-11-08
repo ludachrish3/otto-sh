@@ -19,7 +19,7 @@ class _Product:
     cov_dir = "/var/cov/app"
 
     async def prepare_coverage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 class _Host:
@@ -54,17 +54,17 @@ class _Host:
         if "tar -cf" in cmd and token is not None:
             # What mktemp would print for the command's own template.
             path = f"/tmp/{token.group(0)}.Ab12Cd"
-            return CommandResult(Status.Success, value=f"otto-archive:{path}\n", retcode=0)
-        return CommandResult(Status.Success, value="", retcode=0)
+            return CommandResult(status=Status.Success, value=f"otto-archive:{path}\n", retcode=0)
+        return CommandResult(status=Status.Success, value="", retcode=0)
 
     async def get(self, files, dest, show_progress=False):
         self.gets.append(([str(f) for f in files], Path(dest)))
         if self.get_status is not Status.Success:
-            return Result(self.get_status, msg="boom")
+            return Result(status=self.get_status, msg="boom")
         for f in files:
             if self.tar_bytes is not None:
                 (Path(dest) / Path(f).name).write_bytes(self.tar_bytes)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 _RM = re.compile(r'rm -f "\$\{TMPDIR:-/tmp\}"/otto-fetch-[0-9a-f]+\.\*')
@@ -283,7 +283,7 @@ class _ShellHost:
         )
         out, _ = await proc.communicate()
         status = Status.Success if proc.returncode == 0 else Status.Error
-        return CommandResult(status, value=out.decode(), retcode=proc.returncode)
+        return CommandResult(status=status, value=out.decode(), retcode=proc.returncode)
 
     async def get(self, files, dest, show_progress=False):
         import shutil
@@ -293,7 +293,7 @@ class _ShellHost:
             with tarfile.open(f) as tf:
                 self.members.extend(tf.getnames())
             shutil.copy(f, Path(dest) / Path(f).name)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def _here(cov_dir: Path) -> _Product:
@@ -466,7 +466,7 @@ class _Chatty(_Host):
         result = await super().exec(cmd, timeout=timeout, **kw)
         if "tar -cf" in str(cmd):
             noise = "motd: see otto-no-cov-dir in the docs\n"
-            return CommandResult(Status.Success, value=noise + result.value, retcode=0)
+            return CommandResult(status=Status.Success, value=noise + result.value, retcode=0)
         return result
 
 
@@ -485,7 +485,7 @@ class _NoCovDir(_Host):
     async def exec(self, cmd, timeout=60, **kw):
         if "tar -cf" in str(cmd):
             self.cmds.append(str(cmd))
-            return CommandResult(Status.Success, value="otto-no-cov-dir\n", retcode=0)
+            return CommandResult(status=Status.Success, value="otto-no-cov-dir\n", retcode=0)
         return await super().exec(cmd, timeout=timeout, **kw)
 
 
@@ -506,7 +506,7 @@ class _NoArchivePath(_Host):
     async def exec(self, cmd, timeout=60, **kw):
         if "tar -cf" in str(cmd):
             self.cmds.append(str(cmd))
-            return CommandResult(Status.Success, value="[/x] [red]oops\n", retcode=0)
+            return CommandResult(status=Status.Success, value="[/x] [red]oops\n", retcode=0)
         return await super().exec(cmd, timeout=timeout, **kw)
 
 

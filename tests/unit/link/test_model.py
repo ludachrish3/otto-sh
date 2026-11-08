@@ -38,21 +38,21 @@ class TestLinkId:
         by calling it directly.
         """
         a, b = _ep("test1"), _ep("test2")
-        assert make_link_id(a, b, "udp") != make_link_id(a, b, "tcp")
+        assert make_link_id(a=a, b=b, protocol="udp") != make_link_id(a=a, b=b, protocol="tcp")
 
     def test_id_protocol_case_insensitive(self):
         """Protocol is lowercased in the id, so a future ``--protocol UDP`` mints
         the same route id as the declared ``"udp"`` (stability contract)."""
         a, b = _ep("test1"), _ep("test2")
-        assert make_link_id(a, b, "UDP") == make_link_id(a, b, "udp")
-        assert make_link_id(a, b, "TCP") == make_link_id(a, b, "tcp")
+        assert make_link_id(a=a, b=b, protocol="UDP") == make_link_id(a=a, b=b, protocol="udp")
+        assert make_link_id(a=a, b=b, protocol="TCP") == make_link_id(a=a, b=b, protocol="tcp")
 
     def test_id_distinguishes_interface(self):
         """Same rationale as ``test_id_distinguishes_protocol`` above: exercise
         ``make_link_id`` directly since the static (default-provenance) ``Link``
         id no longer varies by interface."""
-        assert make_link_id(_ep("test1", "eth1"), _ep("test2"), "tcp") != make_link_id(
-            _ep("test1", "eth2"), _ep("test2"), "tcp"
+        assert make_link_id(a=_ep("test1", "eth1"), b=_ep("test2"), protocol="tcp") != make_link_id(
+            a=_ep("test1", "eth2"), b=_ep("test2"), protocol="tcp"
         )
 
     def test_explicit_id_preserved(self):
@@ -64,7 +64,7 @@ class TestLinkId:
         route hash) is no longer involved for static links.
         """
         a, b = _ep("test1"), _ep("test2")
-        assert make_static_link_id(a, b, None) == Link(a=a, b=b).id
+        assert make_static_link_id(a=a, b=b, name=None) == Link(a=a, b=b).id
 
 
 class TestLinkDefaults:

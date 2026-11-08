@@ -2,11 +2,11 @@
 
 import enum
 import math
-from pathlib import Path
 
 import pytest
 
 from scripts import api_compat, api_records
+from tests._fixtures.paths import TESTS_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -406,7 +406,7 @@ def test_a_name_python_would_not_accept_is_refused(line):
 
 
 _WITHDRAWN_HEADER = f"{api_records.V2_HEADER}\n{api_records.SCHEMA_PREFIX}1\n"
-_GOLDEN = Path(__file__).parents[1] / "api_snapshot" / "public_api.txt"
+_GOLDEN = TESTS_ROOT / "unit" / "api_snapshot" / "public_api.txt"
 
 
 def test_a_withdrawn_constructor_parses_as_a_withdrawn_call():

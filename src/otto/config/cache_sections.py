@@ -113,7 +113,7 @@ def lab_key_paths(projects: list[Project]) -> list[Path]:
 
     paths: list[Path] = []
     visited: set[Path] = set()
-    profiles = ProfileContext.from_projects(projects)
+    profiles = ProfileContext.from_projects(projects=projects)
     for project in projects:
         try:
             states = prepared_lab_sources(project, profiles=profiles)

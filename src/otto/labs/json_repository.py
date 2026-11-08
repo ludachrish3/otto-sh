@@ -340,6 +340,7 @@ class _JsonFileLabRepository:
     def load_lab(
         self,
         name: str,
+        *,
         preferences: dict[str, dict[str, Any]] | None = None,
         inventory: "Inventory | None" = None,
     ) -> "Lab":
@@ -436,7 +437,7 @@ class _JsonFileLabRepository:
                 # hold) is skipped here exactly like any other unresolvable
                 # record, rather than failing this lab's load.
                 host_id, host_addressing = addressing_from_dict(
-                    resolve_host_entry(h, inventory, runtime).host_data,
+                    resolve_host_entry(h, inventory=inventory, element=runtime).host_data,
                     runtime,
                     profiles=self.profiles,
                 )
@@ -478,7 +479,7 @@ class _JsonFileLabRepository:
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return lab
 
-    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
+    def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Every host across the configured lab files, without building hosts.
 
         The :class:`~otto.labs.protocol.SupportsHostSummaries` fast path.
@@ -538,8 +539,10 @@ class _JsonFileLabRepository:
                     continue
                 for index, entry in enumerate(element.hosts):
                     try:
-                        host_data = resolve_host_entry(entry, inventory, runtime).host_data
-                        identity = host_identity(host_data, runtime, profiles=self.profiles)
+                        host_data = resolve_host_entry(
+                            entry, inventory=inventory, element=runtime
+                        ).host_data
+                        identity = host_identity(host_data, element=runtime, profiles=self.profiles)
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
@@ -777,7 +780,7 @@ def _add_host(
     )
 
     try:
-        entry = resolve_host_entry(host_data, inventory, element)
+        entry = resolve_host_entry(host_data, inventory=inventory, element=element)
         host = create_host_from_dict(
             entry.host_data,
             preferences=preferences,

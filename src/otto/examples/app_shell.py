@@ -12,7 +12,7 @@ A single-level model maps named groups straight to fields:
 
 >>> from otto.examples.app_shell import Version
 >>> from otto.host.app_shell import parse_one
->>> version = parse_one(Version, "Python 3.10.12")
+>>> version = parse_one(Version, text="Python 3.10.12")
 >>> version.major, version.minor
 (3, 10)
 
@@ -25,7 +25,7 @@ self-checks its own group-to-field mapping at class-definition time):
 >>> from otto.examples.app_shell import Listing, Row
 >>> from otto.host.app_shell import apply_parse
 >>> text = "| 1 | alice |\n| 2 | bob   |\n2 rows returned\n"
->>> listing = parse_one(Listing, text)
+>>> listing = parse_one(Listing, text=text)
 >>> [row.name for row in listing.table]
 ['alice', 'bob']
 >>> listing.stats.count
@@ -35,7 +35,7 @@ self-checks its own group-to-field mapping at class-definition time):
 output in hand; passing a bare ``list[Model]`` spec is the same
 ``finditer``-per-row path ``Listing.table`` used above:
 
->>> apply_parse(list[Row], text) == listing.table
+>>> apply_parse(list[Row], text=text) == listing.table
 True
 
 The REPL half of :class:`~otto.host.app_shell.AppShell` wraps an application

@@ -40,9 +40,9 @@ class _Host(SimpleNamespace):
             return Path(attrs.get("home", "/home/tester"))
 
         self.login_home = _login_home
-        self.load = AsyncMock(return_value=Result(Status.Success))
-        self.unload = AsyncMock(return_value=Result(Status.Success))
-        self.lsmod = AsyncMock(return_value=Result(Status.Success, value=list(loaded)))
+        self.load = AsyncMock(return_value=Result(status=Status.Success))
+        self.unload = AsyncMock(return_value=Result(status=Status.Success))
+        self.lsmod = AsyncMock(return_value=Result(status=Status.Success, value=list(loaded)))
         self.dev_tools = []
         self.products = []
 
@@ -102,7 +102,10 @@ async def test_kmod_tool_stage_is_a_noop_and_install_loads_with_params():
     assert (await tool.stage(host)).is_ok
     assert (await tool.install(host)).is_ok
     host.load.assert_awaited_once_with(
-        Path("/project/build/tracer.ko"), "tracer", params="debug=1", dest_dir=Path("/home/tester")
+        Path("/project/build/tracer.ko"),
+        name="tracer",
+        params="debug=1",
+        dest_dir=Path("/home/tester"),
     )
 
 
@@ -123,7 +126,7 @@ async def test_kmod_tool_is_installed_reads_lsmod_and_uninstall_unloads():
     tool = _build(host)
     assert await tool.is_installed(host) is True
     assert await _build(host, module_name="other").is_installed(host) is False
-    host.lsmod.return_value = Result(Status.Error, value=[], msg="boom")
+    host.lsmod.return_value = Result(status=Status.Error, value=[], msg="boom")
     assert await tool.is_installed(host) is False
     assert (await tool.uninstall(host)).is_ok
     host.unload.assert_awaited_once_with("tracer")
@@ -250,7 +253,7 @@ async def test_kmodcov_install_checks_the_interface_before_loading(tmp_path: Pat
     _fake_ko(tmp_path).rename(tmp_path / "later.ko")
     assert (await tool.install(host)).is_ok
     host.load.assert_awaited_once_with(
-        tmp_path / "later.ko", "otto_kmodcov", params="", dest_dir=Path("/home/tester")
+        tmp_path / "later.ko", name="otto_kmodcov", params="", dest_dir=Path("/home/tester")
     )
 
 

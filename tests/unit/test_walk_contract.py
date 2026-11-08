@@ -133,7 +133,7 @@ def test_row8_the_sentinel_lab_resolves_nothing(tmp_path, monkeypatch):
 
 def test_row9_a_refusal_is_cached(tmp_path, monkeypatch):
     calls = []
-    unowned = BootstrapError(tmp_path / "x", ".otto/settings.toml", ValueError("bad"))
+    unowned = BootstrapError(tmp_path / "x", source=".otto/settings.toml", cause=ValueError("bad"))
     result = patch_bootstrap(monkeypatch, [], errors=[unowned])
     monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: calls.append(1) or result)
     ctx = OttoContext(lab=_rig())

@@ -55,7 +55,7 @@ def apply_exclusions(store: CoverageStore, rules: "list[ExclusionRule]", root: P
             if not path_rule_matches(record.path, resolved_root, rule):
                 continue
             if rule.stat == "line":
-                store.remove_file(record.path)
+                store.remove_file(path=record.path)
                 dropped = True
                 break
             # Which lines HAD branches is only knowable before the clear, so

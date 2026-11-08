@@ -38,8 +38,10 @@ def _inv(stub, **kw):
 
 
 def test_netbox_is_registered_and_construction_is_lazy(tmp_path):
-    prepared = INVENTORY_BACKENDS.prepare("netbox", {"url": DEAD}, InventoryEnv(tmp_path, "o.toml"))
-    inv = INVENTORY_BACKENDS.build(prepared)  # nothing listens; no error until first use
+    prepared = INVENTORY_BACKENDS.prepare(
+        name="netbox", raw={"url": DEAD}, env=InventoryEnv(tmp_path, "o.toml")
+    )
+    inv = INVENTORY_BACKENDS.build(prepared=prepared)  # nothing listens; no error until first use
     assert isinstance(inv, _NetBoxInventory)
     assert inv.label == f"netbox:{DEAD}"
     assert inv.supplies == NATIVE_SUPPLIES
@@ -250,7 +252,7 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_at_construction(bad)
 def _compiled(tmp_path, table, *, anchor=None):
     """The ``[inventory]`` table prepared as a project's settings file would declare it."""
     return compile_inventory(
-        InventoryConfigSpec.model_validate({"backend": "netbox", "cache_ttl": "0", **table}),
+        cfg=InventoryConfigSpec.model_validate({"backend": "netbox", "cache_ttl": "0", **table}),
         anchor_dir=anchor or tmp_path,
         origin=str(tmp_path / ".otto" / "settings.toml"),
     )
@@ -263,7 +265,7 @@ def test_a_refused_timeout_names_the_settings_file_and_the_backend(tmp_path):
         match=r"'netbox' \(registered by .*; configured in .*settings\.toml\): "
         r"construction failed: ValueError: timeout must be a positive number of seconds",
     ):
-        construct_inventory(_compiled(tmp_path, {"url": DEAD, "timeout": 0}))
+        construct_inventory(compiled=_compiled(tmp_path, {"url": DEAD, "timeout": 0}))
 
 
 def test_two_projects_declaring_one_table_build_identical_inventories(tmp_path):
@@ -272,8 +274,8 @@ def test_two_projects_declaring_one_table_build_identical_inventories(tmp_path):
     # not a chosen pair, because `CompiledInventory.same_as` ignores
     # anchor_dir and an attribute that quietly remembered it would make two
     # such projects disagree about an inventory they call the same.
-    a = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-a"))
-    b = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-b"))
+    a = construct_inventory(compiled=_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-a"))
+    b = construct_inventory(compiled=_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-b"))
     assert vars(a) == vars(b)
     assert not [v for v in vars(a).values() if isinstance(v, Path)]
 
@@ -284,7 +286,7 @@ def test_a_bad_value_names_the_settings_file_and_the_backend(tmp_path):
     with pytest.raises(
         InventoryConstructionError, match=r"'netbox' \(.*settings\.toml\): construction failed"
     ):
-        construct_inventory(_compiled(tmp_path, {"url": DEAD, "ip_source": "bogus"}))
+        construct_inventory(compiled=_compiled(tmp_path, {"url": DEAD, "ip_source": "bogus"}))
 
 
 def test_an_unknown_key_names_the_settings_file_and_the_backend(tmp_path):

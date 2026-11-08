@@ -56,7 +56,7 @@ def test_graceful_interrupt_exits_130_and_skips_post_coverage(
 
     monkeypatch.setattr("pytest.main", fake_main)
     with pytest.raises(SystemExit) as excinfo:
-        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
+        run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert excinfo.value.code == 130
     assert "ran" not in post_cov_sentinel, "interrupt means STOP: no post-coverage"
 
@@ -71,7 +71,7 @@ def test_hard_abort_exits_130(tmp_path, monkeypatch, post_cov_sentinel, real_syn
 
     monkeypatch.setattr("pytest.main", fake_main)
     with pytest.raises(SystemExit) as excinfo:
-        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
+        run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert excinfo.value.code == 130
     assert "ran" not in post_cov_sentinel
 
@@ -84,7 +84,7 @@ def test_undisturbed_session_unchanged(tmp_path, monkeypatch, post_cov_sentinel)
     in the suite gets from the root conftest's autouse patch).
     """
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    result = run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
+    result = run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert result.exit_code == 0
     assert post_cov_sentinel.get("ran") is True
 
@@ -106,7 +106,7 @@ def test_off_main_thread_runs_unguarded(tmp_path, monkeypatch, post_cov_sentinel
 
     def call():
         try:
-            holder["result"] = run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
+            holder["result"] = run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path)
         except BaseException as exc:  # noqa: BLE001 — the failure surface under test
             holder["error"] = exc
 

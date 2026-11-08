@@ -23,30 +23,30 @@ VOL = Mount(
 
 
 def test_mount_for_exact_match():
-    assert mount_for([APP], "/var/lib/app") is APP
+    assert mount_for(mounts=[APP], container_path="/var/lib/app") is APP
 
 
 def test_mount_for_sub_path():
-    assert mount_for([APP], "/var/lib/app/logs/x.txt") is APP
+    assert mount_for(mounts=[APP], container_path="/var/lib/app/logs/x.txt") is APP
 
 
 def test_mount_for_prefers_the_longest_prefix():
     # LOGS nests inside APP. First-match would answer APP and name a parent
     # path where the file does not exist.
-    assert mount_for([APP, LOGS], "/var/lib/app/logs/x.txt") is LOGS
-    assert mount_for([LOGS, APP], "/var/lib/app/logs/x.txt") is LOGS
+    assert mount_for(mounts=[APP, LOGS], container_path="/var/lib/app/logs/x.txt") is LOGS
+    assert mount_for(mounts=[LOGS, APP], container_path="/var/lib/app/logs/x.txt") is LOGS
 
 
 def test_mount_for_matches_components_not_string_prefixes():
-    assert mount_for([APP], "/var/lib/application/x") is None
+    assert mount_for(mounts=[APP], container_path="/var/lib/application/x") is None
 
 
 def test_mount_for_no_match_returns_none():
-    assert mount_for([APP], "/etc/hosts") is None
+    assert mount_for(mounts=[APP], container_path="/etc/hosts") is None
 
 
 def test_mount_for_empty_list_returns_none():
-    assert mount_for([], "/var/lib/app") is None
+    assert mount_for(mounts=[], container_path="/var/lib/app") is None
 
 
 def test_mount_for_parent_matches_on_the_parent_side():

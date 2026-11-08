@@ -67,56 +67,67 @@ returning a `bool` prints it and exits 0 for `True`, 1 for `False`; any other
 plain value exits 0 ({ref}`cli-return-values`). See
 [Exit codes](../cli/host/index.md#exit-codes).
 
-### Parameter inference rules
+(cli-follows-signature)=
+### The signature decides arguments and options
 
-The synthesizer reads the method's type annotations and builds the Typer
-command automatically:
+The synthesizer reads the method's signature, and the parameter's **kind**
+decides its CLI form: what is positional in Python is positional on the command
+line, and what is keyword-only is an option. The same decision shapes both
+surfaces, so `host.ls("/var/log")` and `otto host <id> ls /var/log` cannot
+disagree.
 
-| Parameter shape | CLI form |
+| Python parameter | CLI form |
 | --- | --- |
-| No default value | positional argument |
-| Has a default value | `--option` |
-| `bool` (with default) | `--flag / --no-flag` pair |
-| `list[T]` with no default | space-separated positional variadic |
-| `list[T]` option | `--opt a,b,c` (comma-separated) |
-| `dict[str, T]` option | `--opt K=V,K2=V2` (comma-separated key=value) |
+| positional (before `*`), required or defaulted | positional argument, in signature order |
+| positional `list[T]` (or a union containing `list[T]`) | the verb's one space-separated variadic argument, wherever it sits |
+| keyword-only (after `*`), no default | required `--option` (a `bool` is a required `--flag/--no-flag`) |
+| keyword-only, with a default | `--option` with that default (a `bool` is a `--flag/--no-flag` pair) |
+| keyword-only `list[T]` / `dict[str, T]` | `--opt a,b,c` / `--opt K=V,K2=V2` |
+| `Exclude`-marked | not on the CLI; the method gets its default |
+| `**kwargs` | not on the CLI |
 
-At most **one** parameter per verb may be a positional variadic.
+Synthesis refuses a verb with a positional-only parameter (before `/`: the
+command passes every value by keyword, which cannot reach it), a `*args`
+(spell a variadic as a positional list parameter), or more than one positional
+list parameter.
 
 `bool` flag strings — the strings `1`, `true`, `yes`, `on` (case-insensitive)
 map to `True`; everything else maps to `False`.  `Path`/`int`/`float` are
 coerced from strings automatically.
 
-### Overriding inference with `Annotated[...]` markers
+### Presentation markers: `Arg`, `Opt`, `Exclude`
 
-Import `Arg`, `Opt`, and `Exclude` from `otto.utils` to override the defaults:
+Import `Arg`, `Opt`, and `Exclude` from `otto.utils`:
 
 ```python
 from typing import Annotated
 from otto.utils import Arg, Opt, Exclude, cli_exposed
 ```
 
-**`Arg(variadic=True, elem_type=T)`** — make a union-typed (or otherwise
-Typer-incompatible) list a space-separated positional variadic.  `elem_type`
-specifies the element type each word is coerced to; the method gets a `list[T]`.
-`elem_type` also overrides the CLI type of a scalar union.
-Used by `put` (`src_files`) and `get` (`src_files`):
+`Arg` and `Opt` describe how a parameter is presented — metavar, help text,
+flag spelling, completion, the CLI type — and never move it between argument
+and option. `Arg` belongs on a positional parameter and `Opt` on a keyword-only
+one; the other way round contradicts the signature and synthesis refuses it.
+
+**`Arg(name=..., help=..., elem_type=T)`** — a positional argument's metavar
+and help. `elem_type` sets the CLI type of a scalar union, or the element type
+each word of the variadic is coerced to (the method gets a `list[T]`). `put`'s
+sources, the variadic:
 
 ```python
-src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path)]
+src_files: Annotated[list[Path] | Path, Arg(elem_type=Path, help="Local file(s) to upload.")]
 ```
 
-**`Arg()`** — keep a *defaulted* scalar positional (prevents it from becoming
-an `--option`).  Used by `power` (`state`) and `ls` (`path`), where passing
-the value positionally is natural:
+A defaulted positional stays positional, as `power`'s `state` and `ls`'s `path` do:
 
 ```python
 state: Annotated[str | None, Arg()] = None  # otto host <id> power on
 path: Annotated[str | Path, Arg()] = "."  # otto host <id> ls /var/log
 ```
 
-**`Opt(...)`** — force a parameter to an `--option` regardless of whether it
-has a default.  Used by `exec`'s `timeout`:
+**`Opt(name=..., short=..., help=..., min=...)`** — a keyword-only option's
+flag spelling, short alias, help, and inclusive numeric lower bound. `exec`'s
+`timeout`:
 
 ```python
 timeout: Annotated[
@@ -132,10 +143,7 @@ offers files and directories, `"dir"` offers directories only.  Used by `get`
 a remote path the same way:
 
 ```python
-src_files: Annotated[
-    list[Path] | Path,
-    Arg(variadic=True, elem_type=Path, remote_path="any"),
-]
+src_files: Annotated[list[Path] | Path, Arg(elem_type=Path, remote_path="any")]
 dest_dir: Annotated[Path, Arg(remote_path="dir")]
 ```
 
@@ -143,7 +151,8 @@ The marker only affects tab completion — see
 [Remote path completion](../cli/index.md#remote-path-completion) for what
 completion offers and when it stays quiet.  It is rejected on a comma-list or
 `key=value` option (which render as a single string the completer can't split);
-mark a completable path list as `Arg(variadic=True, remote_path=...)` instead.
+make a completable path list a positional list parameter with
+`Arg(remote_path=...)` instead.
 
 **`Exclude`** — drop a parameter from the CLI entirely; the method receives its
 default value.  Use this for SDK-only parameters that make no sense as CLI
@@ -166,6 +175,8 @@ log: Annotated[bool, Exclude] = True
 | `install` | — | `--stage-only / --no-stage-only` | |
 | `power` | `STATE` (optional positional) | — | `on`/`off`/omit to toggle |
 | `ls` | `PATH` (optional positional, default `.`) | `--all / --no-all` | |
+| `write-file` | `PATH` | `--data TEXT` (required), `--append / --no-append` | |
+| `load` | `FILE` | `--name NAME` (required on an embedded host; defaults to the file stem on a Unix host), `--params` | |
 ## Registering products from a product project
 
 Products are **behavior**, so they're customized in code — never declared in lab

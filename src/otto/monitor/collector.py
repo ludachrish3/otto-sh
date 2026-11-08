@@ -128,7 +128,7 @@ _SILENT_PARSER_TICKS = 3
 
 
 @final
-@dataclass
+@dataclass(kw_only=True)
 class MonitorTarget:
     """Pairs a UnixHost with the parser dict to use when collecting from it.
 
@@ -333,7 +333,7 @@ class MetricCollector:
         self._db = self._pending_db
 
     async def spawn_collection(
-        self, interval: timedelta, duration: "timedelta | None" = None
+        self, *, interval: timedelta, duration: "timedelta | None" = None
     ) -> "asyncio.Task[None]":
         """Open the session archive, THEN spawn collection — the owning seam.
 
@@ -349,7 +349,7 @@ class MetricCollector:
         seam fails immediately instead of racing.
         """
         await self.init_db()
-        return asyncio.create_task(self.run(interval, duration=duration))
+        return asyncio.create_task(self.run(interval=interval, duration=duration))
 
     async def close_db(self) -> None:
         """Close the persistent DB connection and release the file lock."""
@@ -453,6 +453,7 @@ class MetricCollector:
 
     async def run(
         self,
+        *,
         interval: timedelta = timedelta(seconds=5),
         duration: timedelta | None = None,
     ) -> None:
@@ -829,6 +830,7 @@ class MetricCollector:
 
     async def add_event(
         self,
+        *,
         label: str,
         timestamp: datetime | None = None,
         color: str = DEFAULT_EVENT_COLOR,
@@ -861,7 +863,7 @@ class MetricCollector:
         return event
 
     async def mutate_event(
-        self, event_id: int, resolve: "Callable[[MonitorEvent], MonitorEvent | None]"
+        self, *, event_id: int, resolve: "Callable[[MonitorEvent], MonitorEvent | None]"
     ) -> "MonitorEvent | None":
         """Change or delete a stored event: the ONE entry point for both (#868).
 
@@ -911,15 +913,15 @@ class MetricCollector:
             )
             return current
 
-    async def delete_event(self, event_id: int) -> "MonitorEvent | None":
+    async def delete_event(self, *, event_id: int) -> "MonitorEvent | None":
         """Remove an event by id. Returns the removed event, or ``None`` if no event has this id.
 
         The removed event is the one read under the mutation lock, so a caller
         that records it (the dashboard's undo) records what was really deleted.
         """
-        return await self.mutate_event(event_id, lambda _current: None)
+        return await self.mutate_event(event_id=event_id, resolve=lambda _current: None)
 
-    async def restore_event(self, event_id: int, write: EventRecord) -> MonitorEvent:
+    async def restore_event(self, *, event_id: int, write: EventRecord) -> MonitorEvent:
         """Put a deleted event back under its own id (the undo of a delete).
 
         Under the mutation lock, like every other event mutation, and in the
@@ -963,7 +965,7 @@ class MetricCollector:
         return event
 
     async def revert_event(
-        self, event_id: int, expect: EventRecord | None, write: EventRecord | None
+        self, *, event_id: int, expect: EventRecord | None, write: EventRecord | None
     ) -> MonitorEvent:
         """Move an event from ``expect`` to ``write``, only if it is still ``expect`` (#929).
 
@@ -983,7 +985,7 @@ class MetricCollector:
         """
         if event_ops.revert_leg(expect, write) == "restore":
             assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
-            return await self.restore_event(event_id, write)
+            return await self.restore_event(event_id=event_id, write=write)
 
         def resolve(current: MonitorEvent) -> "MonitorEvent | None":
             current_record = EventRecord.model_validate(current.to_dict())
@@ -993,15 +995,15 @@ class MetricCollector:
                 return None
             return replace(current, **event_ops.editable_fields(write))
 
-        result = await self.mutate_event(event_id, resolve)
+        result = await self.mutate_event(event_id=event_id, resolve=resolve)
         if result is None:
             raise event_ops.EventChanged(None)
         return result
 
     async def update_event(
         self,
-        event_id: int,
         *,
+        event_id: int,
         label: str,
         color: str,
         dash: str,
@@ -1024,7 +1026,8 @@ class MetricCollector:
             label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
         )
         return await self.mutate_event(
-            event_id, lambda current: replace(current, **event_ops.editable_fields(written))
+            event_id=event_id,
+            resolve=lambda current: replace(current, **event_ops.editable_fields(written)),
         )
 
     # ------------------------------------------------------------------
@@ -1145,7 +1148,7 @@ class MetricCollector:
         """Register a new SSE subscriber and return its queue."""
         return self._broadcast.subscribe()
 
-    def unsubscribe(self, q: "asyncio.Queue[dict[str, Any]]") -> None:
+    def unsubscribe(self, *, q: "asyncio.Queue[dict[str, Any]]") -> None:
         """Remove ``q`` from the SSE subscriber list so it receives no further pushes."""
         self._broadcast.unsubscribe(q)
 

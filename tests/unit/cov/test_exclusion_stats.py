@@ -31,7 +31,7 @@ def _build(tmp_path: Path) -> tuple[CoverageStore, Path]:
     path = tmp_path / "main.c"
     path.write_text(SRC)
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     for lineno in (1, 2, 7):
         record.get_or_create_line(lineno).hits.add("unit", 1)
     for lineno in (4, 5):
@@ -45,11 +45,11 @@ def _rule() -> PreprocessorRule:
 
 def test_file_percentage_moves(tmp_path: Path) -> None:
     unfiltered, path = _build(tmp_path)
-    baseline = unfiltered.get_or_create_file(path).line_coverage_pct()
+    baseline = unfiltered.get_or_create_file(path=path).line_coverage_pct()
 
     filtered, path2 = _build(tmp_path)
     apply_exclusions(filtered, [_rule()], tmp_path)
-    after = filtered.get_or_create_file(path2).line_coverage_pct()
+    after = filtered.get_or_create_file(path=path2).line_coverage_pct()
 
     assert baseline == pytest.approx(60.0)
     assert after == pytest.approx(100.0)

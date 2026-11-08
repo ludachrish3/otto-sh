@@ -44,13 +44,15 @@ def test_run_tests_threads_the_pre_clean_report_to_the_fetcher(
     evidence = frozenset({("t1", "app")})
     one_project(files={"tests/test_thread.py": "def test_thread():\n    pass\n"})
     _force_cov(monkeypatch)
-    report = CleanReport(hosts={"t1": {"app": Result(Status.Success)}}, present_at_reset=evidence)
+    report = CleanReport(
+        hosts={"t1": {"app": Result(status=Status.Success)}}, present_at_reset=evidence
+    )
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report))
     collect = AsyncMock(return_value=MagicMock(clean=None))
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", collect)
 
     result = run_tests(
-        ["test_thread"],
+        names=["test_thread"],
         run_options=RunOptions(cov=True, cov_clean=True),
         output_dir=tmp_path / "out",
     )
@@ -122,7 +124,7 @@ def test_two_run_tests_on_one_active_context_reach_the_real_fetcher(
             # Run 1: present at the pre-run reset, removed by the test.
             cov_dir.mkdir(parents=True)
             run_tests(
-                ["test_loss"],
+                names=["test_loss"],
                 run_options=RunOptions(cov=True, cov_clean=True),
                 output_dir=tmp_path / "o1",
             )
@@ -133,7 +135,7 @@ def test_two_run_tests_on_one_active_context_reach_the_real_fetcher(
             # Run 2: absent at the pre-run reset (run 1's test removed it).
             assert not cov_dir.exists()
             run_tests(
-                ["test_loss"],
+                names=["test_loss"],
                 run_options=RunOptions(cov=True, cov_clean=True),
                 output_dir=tmp_path / "o2",
             )
@@ -143,7 +145,7 @@ def test_two_run_tests_on_one_active_context_reach_the_real_fetcher(
             # Run 3: no pre-run reset, so no evidence, though the dir is lost again.
             cov_dir.mkdir(parents=True)
             run_tests(
-                ["test_loss"],
+                names=["test_loss"],
                 run_options=RunOptions(cov=True, cov_clean=False),
                 output_dir=tmp_path / "o3",
             )

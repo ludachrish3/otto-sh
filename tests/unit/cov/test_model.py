@@ -23,7 +23,7 @@ def test_load_rejects_old_format(tmp_path):
     p = tmp_path / "store.json"
     p.write_text('{"format": 7, "contexts": []}')
     with pytest.raises(ValueError, match="regenerate"):
-        CoverageStore.load(p)
+        CoverageStore.load(path=p)
 
 
 class TestLineHits:
@@ -169,9 +169,9 @@ class TestFileRecord:
 class TestCoverageStore:
     def test_get_or_create_file(self):
         store = CoverageStore()
-        fr = store.get_or_create_file(Path("/a.c"))
+        fr = store.get_or_create_file(path=Path("/a.c"))
         assert store.file_count() == 1
-        assert store.get_or_create_file(Path("/a.c")) is fr
+        assert store.get_or_create_file(path=Path("/a.c")) is fr
 
     def test_register_tier(self):
         store = CoverageStore()
@@ -186,16 +186,16 @@ class TestCoverageStore:
 
     def test_overall_pct(self):
         store = CoverageStore()
-        fr = store.get_or_create_file(Path("/a.c"))
+        fr = store.get_or_create_file(path=Path("/a.c"))
         fr.get_or_create_line(1).hits.add("system", 1)
         fr.get_or_create_line(2)
         assert store.overall_pct() == 50.0
-        assert store.overall_pct("system") == 50.0
+        assert store.overall_pct(tier="system") == 50.0
 
     def test_save_load_roundtrip(self, tmp_path):
         store = CoverageStore(tier_order=["system", "unit"])
         store.add_run(tier="system", source="run", board="h1", host="h1", product="app")
-        fr = store.get_or_create_file(Path("/a.c"))
+        fr = store.get_or_create_file(path=Path("/a.c"))
         lr = fr.get_or_create_line(1)
         lr.hits.add("system", 5)
         lr.state = "stale"
@@ -204,9 +204,9 @@ class TestCoverageStore:
         lr.branches.append(bh)
 
         save_path = tmp_path / "store.json"
-        store.save(save_path)
+        store.save(path=save_path)
 
-        loaded = CoverageStore.load(save_path)
+        loaded = CoverageStore.load(path=save_path)
         assert loaded.file_count() == 1
         assert loaded.tier_order == ["system", "unit"]
         loaded_files = list(loaded.files())
@@ -221,11 +221,11 @@ class TestCoverageStore:
         store = CoverageStore()
         fr1 = FileRecord(path=Path("/a.c"))
         fr1.get_or_create_line(1).hits.add("system", 3)
-        store.merge_file(fr1)
+        store.merge_file(record=fr1)
 
         fr2 = FileRecord(path=Path("/a.c"))
         fr2.get_or_create_line(1).hits.add("unit", 2)
-        store.merge_file(fr2)
+        store.merge_file(record=fr2)
 
         assert store.file_count() == 1
         merged = next(iter(store.files()))
@@ -248,7 +248,7 @@ class TestCoverageStore:
         save_path = tmp_path / "minimal.json"
         save_path.write_text(json.dumps(minimal))
 
-        loaded = CoverageStore.load(save_path)
+        loaded = CoverageStore.load(path=save_path)
         assert loaded.runs == []
         assert loaded.tier_colors == {}
         loaded_lr = next(iter(loaded.files())).lines[1]
@@ -259,16 +259,16 @@ class TestCoverageStore:
         assert not hasattr(store, "provenance")
         store.add_run(tier="manual", source="manual", ticket="T-1")
         path = tmp_path / "store.json"
-        store.save(path)
+        store.save(path=path)
         assert "provenance" not in json.loads(path.read_text())
 
     def test_save_omits_removed_commit_keys(self, tmp_path):
         store = CoverageStore()
-        fr = store.get_or_create_file(Path("/a.c"))
+        fr = store.get_or_create_file(path=Path("/a.c"))
         fr.get_or_create_line(1).hits.add("system", 1)
 
         save_path = tmp_path / "store.json"
-        store.save(save_path)
+        store.save(path=save_path)
 
         raw = json.loads(save_path.read_text())
         line_dict = raw["files"][0]["lines"]["1"]
@@ -289,7 +289,7 @@ class TestCoverageStore:
                 }
             )
         )
-        reloaded = CoverageStore.load(store_json)
+        reloaded = CoverageStore.load(path=store_json)
         (frec,) = list(reloaded.files())
         assert frec.excluded_lines == set()
         assert frec.branch_excluded_lines == set()
@@ -327,23 +327,23 @@ class TestRuns:
         store = CoverageStore(tier_order=["manual"])
         store.add_run(tier="manual", source="manual", board="test2", host="test2", product="stack")
         path = tmp_path / "store.json"
-        store.save(path)
+        store.save(path=path)
         raw = json.loads(path.read_text())
         raw["runs"][0]["label"] = "test2:stack"
         path.write_text(json.dumps(raw))
         with pytest.raises(ValueError, match=r"run 0 label 'test2:stack'.*expected 'test2/stack'"):
-            CoverageStore.load(path)
+            CoverageStore.load(path=path)
 
     def test_a_row_without_a_known_source_is_refused(self, tmp_path):
         store = CoverageStore(tier_order=["lab"])
         store.add_run(tier="lab", source="tracefile")
         path = tmp_path / "store.json"
-        store.save(path)
+        store.save(path=path)
         raw = json.loads(path.read_text())
         del raw["runs"][0]["source"]
         path.write_text(json.dumps(raw))
         with pytest.raises(ValueError, match=r"run 0 source None is not one of run, manual"):
-            CoverageStore.load(path)
+            CoverageStore.load(path=path)
 
     def test_source_and_run_dir_round_trip(self, tmp_path):
         store = CoverageStore(tier_order=["e2e"])
@@ -351,8 +351,8 @@ class TestRuns:
             tier="e2e", source="run", board="h1", host="h1", product="app", run_dir="/x/run1"
         )
         path = tmp_path / "store.json"
-        store.save(path)
-        (rec,) = CoverageStore.load(path).runs
+        store.save(path=path)
+        (rec,) = CoverageStore.load(path=path).runs
         assert (rec.source, rec.run_dir) == ("run", "/x/run1")
 
     def test_line_merge_adds_run_hits_and_unions_stale(self):
@@ -384,14 +384,14 @@ class TestRuns:
         )
         store.runs[rid].aging = True
         store.tier_colors = {"manual": "#ff0000"}
-        fr = store.get_or_create_file(Path("/a.c"))
+        fr = store.get_or_create_file(path=Path("/a.c"))
         lr = fr.get_or_create_line(5)
         lr.hits.add("manual", 4)
         lr.run_hits[rid] = 4
         fr.get_or_create_line(6).stale_runs.append(rid)
 
         path = tmp_path / "store.json"
-        store.save(path)
+        store.save(path=path)
         raw = json.loads(path.read_text())
         assert raw["format"] == 9
         assert raw["runs"][0]["base_commit"] == "deadbeef"
@@ -400,7 +400,7 @@ class TestRuns:
         assert "stale_run" not in line5  # omitted when empty
         assert raw["files"][0]["lines"]["6"]["stale_run"] == [0]
 
-        loaded = CoverageStore.load(path)
+        loaded = CoverageStore.load(path=path)
         assert loaded.tier_colors == {"manual": "#ff0000"}
         (lrec,) = list(loaded.runs)
         assert (lrec.id, lrec.label, lrec.ticket, lrec.aging) == (0, "slot4-id/fw", "T-1", True)
@@ -418,7 +418,7 @@ class TestRuns:
         }
         path = tmp_path / "minimal.json"
         path.write_text(json.dumps(minimal))
-        loaded = CoverageStore.load(path)
+        loaded = CoverageStore.load(path=path)
         assert loaded.runs == []
         assert next(iter(loaded.files())).lines[1].run_hits == {}
 
@@ -439,7 +439,7 @@ class TestStoreConfig:
     def test_save_emits_thresholds_and_stat_types(self, tmp_path) -> None:
         store = CoverageStore(tier_order=["system"])
         p = tmp_path / "store.json"
-        store.save(p)
+        store.save(path=p)
         raw = json.loads(p.read_text())
         assert raw["format"] == 9
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
@@ -449,21 +449,21 @@ class TestStoreConfig:
         store = CoverageStore(tier_order=["system"])
         store.thresholds = Thresholds(high=90.0, medium=75.0)
         p = tmp_path / "store.json"
-        store.save(p)
-        loaded = CoverageStore.load(p)
+        store.save(path=p)
+        loaded = CoverageStore.load(path=p)
         assert loaded.thresholds == Thresholds(high=90.0, medium=75.0)
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
         p.write_text('{"format": 9, "tier_order": ["system"], "files": []}')
-        loaded = CoverageStore.load(p)
+        loaded = CoverageStore.load(path=p)
         assert loaded.thresholds == Thresholds()
 
     def test_load_rejects_v3(self, tmp_path) -> None:
         p = tmp_path / "store.json"
         p.write_text('{"format": 3, "tier_order": [], "files": []}')
         with pytest.raises(ValueError, match="found v3"):
-            CoverageStore.load(p)
+            CoverageStore.load(path=p)
 
 
 def test_run_record_product_defaults_empty_and_serialises():
@@ -480,10 +480,10 @@ class TestRunHost:
         store = CoverageStore(tier_order=["nightly"])
         rid = store.add_run(tier="nightly", source="run", board="rig-1", host="rig-1")
         p = tmp_path / "store.json"
-        store.save(p)
+        store.save(path=p)
         raw = json.loads(p.read_text())
         assert raw["runs"][0]["host"] == "rig-1"
-        loaded = CoverageStore.load(p)
+        loaded = CoverageStore.load(path=p)
         assert loaded.runs[rid].host == "rig-1"
 
     def test_add_run_defaults_host_empty(self) -> None:
@@ -505,7 +505,7 @@ class TestRunHost:
         l2 = f.get_or_create_line(2)
         l2.hits.add("nightly", 1)
         l2.run_hits = {r1: 1, r2: 1}
-        store.merge_file(f)
+        store.merge_file(record=f)
         per_host: dict[str, int] = {}
         for rec in store.files():
             for line in rec.lines.values():
@@ -522,19 +522,19 @@ class TestLineTicketSlot:
         line = f.get_or_create_line(1)
         line.hits.add("system", 1)
         line.ticket = ["PROJ-123"]
-        store.merge_file(f)
+        store.merge_file(record=f)
         p = tmp_path / "store.json"
-        store.save(p)
-        loaded = CoverageStore.load(p)
+        store.save(path=p)
+        loaded = CoverageStore.load(path=p)
         assert next(iter(loaded.files())).lines[1].ticket == ["PROJ-123"]
 
     def test_ticket_absent_when_unset(self, tmp_path) -> None:
         store = CoverageStore(tier_order=["system"])
         f = FileRecord(path=Path("a.c"))
         f.get_or_create_line(1).hits.add("system", 1)
-        store.merge_file(f)
+        store.merge_file(record=f)
         p = tmp_path / "store.json"
-        store.save(p)
+        store.save(path=p)
         raw = json.loads(p.read_text())
         (line_dict,) = raw["files"][0]["lines"].values()
         assert "ticket" not in line_dict
@@ -558,7 +558,7 @@ def test_v8_store_fails_loud(tmp_path):
     """The v9 bump is real for on-disk data: a v8 store is refused, not read."""
     (tmp_path / "store.json").write_text('{"format": 8}')
     with pytest.raises(ValueError, match="v9 required"):
-        CoverageStore.load(tmp_path / "store.json")
+        CoverageStore.load(path=tmp_path / "store.json")
 
 
 def test_line_ticket_defaults_to_empty_list():
@@ -569,23 +569,23 @@ def test_line_ticket_defaults_to_empty_list():
 def test_empty_ticket_list_is_omitted_from_json(tmp_path):
     """The v4 `is not None` guard serialized a meaningless empty string."""
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     rec.get_or_create_line(1)
     path = tmp_path / "store.json"
-    store.save(path)
+    store.save(path=path)
     assert "ticket" not in json.loads(path.read_text())["files"][0]["lines"]["1"]
 
 
 def test_ticket_list_round_trips(tmp_path):
     """Per-line ticket lists and the top-level ticket table both round-trip."""
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     rec.get_or_create_line(1).ticket = ["PROJ-1", "PROJ-2"]
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url="u/1", commits=["abc"])
     path = tmp_path / "store.json"
-    store.save(path)
+    store.save(path=path)
 
-    loaded = CoverageStore.load(path)
+    loaded = CoverageStore.load(path=path)
 
     assert next(loaded.files()).lines[1].ticket == ["PROJ-1", "PROJ-2"]
     assert loaded.tickets["PROJ-1"].url == "u/1"
@@ -605,7 +605,7 @@ def test_v4_store_is_rejected_loud(tmp_path):
     path = tmp_path / "store.json"
     path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
     with pytest.raises(ValueError, match="v9"):
-        CoverageStore.load(path)
+        CoverageStore.load(path=path)
 
 
 def test_store_v6_round_trips_overrides_and_asserted(tmp_path):
@@ -614,12 +614,12 @@ def test_store_v6_round_trips_overrides_and_asserted(tmp_path):
         OverrideRecord(id=0, tier="bench", key="ticket:#1", reason="legacy", as_of="a" * 40)
     )
     store.overrides_file_active = True
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     line = rec.get_or_create_line(1)
     line.hits.add("bench", 1)
     line.asserted = {"bench": [0]}
-    store.save(tmp_path / "store.json")
-    loaded = CoverageStore.load(tmp_path / "store.json")
+    store.save(path=tmp_path / "store.json")
+    loaded = CoverageStore.load(path=tmp_path / "store.json")
     (ov,) = loaded.overrides
     assert (ov.id, ov.tier, ov.key, ov.reason, ov.as_of) == (
         0,
@@ -642,30 +642,30 @@ def test_overrides_file_active_defaults_false_and_round_trips(tmp_path):
     at all)."""
     store = CoverageStore(tier_order=["bench"])
     assert store.overrides_file_active is False
-    store.save(tmp_path / "store.json")
+    store.save(path=tmp_path / "store.json")
     raw = json.loads((tmp_path / "store.json").read_text())
     assert raw["overrides_file_active"] is False
-    loaded = CoverageStore.load(tmp_path / "store.json")
+    loaded = CoverageStore.load(path=tmp_path / "store.json")
     assert loaded.overrides_file_active is False
 
     # True with an empty `overrides` list — the reattribute-only shape
     # `overrides_active` (spec §7) must distinguish from `bool(overrides)`.
     store2 = CoverageStore(tier_order=["bench"])
     store2.overrides_file_active = True
-    store2.save(tmp_path / "store2.json")
+    store2.save(path=tmp_path / "store2.json")
     raw2 = json.loads((tmp_path / "store2.json").read_text())
     assert raw2["overrides_file_active"] is True
     assert raw2["overrides"] == []
-    loaded2 = CoverageStore.load(tmp_path / "store2.json")
+    loaded2 = CoverageStore.load(path=tmp_path / "store2.json")
     assert loaded2.overrides_file_active is True
     assert loaded2.overrides == []
 
 
 def test_asserted_is_omitted_from_json_when_empty(tmp_path):
     store = CoverageStore(tier_order=["bench"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     rec.get_or_create_line(1).hits.add("bench", 1)
-    store.save(tmp_path / "store.json")
+    store.save(path=tmp_path / "store.json")
     raw = (tmp_path / "store.json").read_text()
     assert '"asserted"' not in raw
     assert json.loads(raw)["overrides"] == []
@@ -681,39 +681,39 @@ def test_line_merge_unions_asserted_ids_per_tier():
 def test_v5_store_fails_loud(tmp_path):
     (tmp_path / "store.json").write_text('{"format": 5}')
     with pytest.raises(ValueError, match="v9 required"):
-        CoverageStore.load(tmp_path / "store.json")
+        CoverageStore.load(path=tmp_path / "store.json")
 
 
 def test_v6_store_fails_loud(tmp_path):
     """A v6 store is refused, not read."""
     (tmp_path / "store.json").write_text('{"format": 6}')
     with pytest.raises(ValueError, match="v9 required"):
-        CoverageStore.load(tmp_path / "store.json")
+        CoverageStore.load(path=tmp_path / "store.json")
 
 
 def test_branch_excluded_lines_round_trip(tmp_path):
     """v7's per-file ``branch_excluded_lines`` is written sorted and read back."""
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(Path("/a.c"))
+    rec = store.get_or_create_file(path=Path("/a.c"))
     rec.get_or_create_line(1)
     rec.branch_excluded_lines = {7, 2}
     path = tmp_path / "store.json"
-    store.save(path)
+    store.save(path=path)
     assert json.loads(path.read_text())["files"][0]["branch_excluded_lines"] == [2, 7]
-    (reloaded,) = list(CoverageStore.load(path).files())
+    (reloaded,) = list(CoverageStore.load(path=path).files())
     assert reloaded.branch_excluded_lines == {2, 7}
 
 
 class TestFunctions:
     def test_function_record_roundtrips_through_store_json(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
-        rec = store.get_or_create_file(Path("/x/f.c"))
+        rec = store.get_or_create_file(path=Path("/x/f.c"))
         fn = rec.get_or_create_function("checked_add", start_line=4, end_line=9)
         fn.hits.add("system", 3)
         path = tmp_path / "store.json"
-        store.save(path)
+        store.save(path=path)
 
-        reloaded = CoverageStore.load(path)
+        reloaded = CoverageStore.load(path=path)
         (frec,) = list(reloaded.files())
         assert frec.functions["checked_add"].start_line == 4
         assert frec.functions["checked_add"].end_line == 9
@@ -731,7 +731,7 @@ class TestFunctions:
                 }
             )
         )
-        (frec,) = list(CoverageStore.load(store_json).files())
+        (frec,) = list(CoverageStore.load(path=store_json).files())
         assert frec.functions == {}
 
     def test_load_registers_tiers_seen_only_on_functions(self, tmp_path):
@@ -758,7 +758,7 @@ class TestFunctions:
                 }
             )
         )
-        assert "bench" in CoverageStore.load(store_json).tier_order
+        assert "bench" in CoverageStore.load(path=store_json).tier_order
 
     def test_merge_adds_function_hits_and_keeps_first_seen_lines(self):
         first = FunctionRecord(name="f", start_line=4, end_line=9, hits=LineHits({"system": 1}))

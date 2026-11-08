@@ -57,7 +57,7 @@ class ScriptedHost:
         self.commands.append(cmd)
         if sudo:
             self.sudo_commands.append(cmd)
-        return Results.collect([self._result(cmd)])
+        return Results.collect(items=[self._result(cmd)])
 
 
 def _script(cmd: str) -> str:

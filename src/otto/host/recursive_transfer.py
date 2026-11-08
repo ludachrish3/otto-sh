@@ -250,20 +250,20 @@ async def _put_one_tree(
 
     tree = _walk_local(root)
     if tree.error is not None:
-        return Result(Status.Error, msg=tree.error, value={})
+        return Result(status=Status.Error, msg=tree.error, value={})
     if not is_dry_run():
         made = await host._mkdir_all(  # noqa: SLF001 — the host's declared batch-mkdir hook
             [dest_root / level.rel for level in tree.levels], user=user
         )
         if not made.is_ok:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=f"{root}: could not create the destination tree under {dest_root}: {made.msg}",
                 value={},
             )
     elif not any(level.files for level in tree.levels):
         return Result(
-            Status.NotRun,
+            status=Status.NotRun,
             value={},
             msg=f"[DRY RUN] PUT {root} -> {dest_root}: directories only",
         )
@@ -283,7 +283,7 @@ async def _put_one_tree(
     for landed in await _run_levels(coros, concurrent=concurrent):
         for src, outcome in (landed.value or {}).items():
             per_file[src.relative_to(root)] = outcome
-    return aggregate_transfer(per_file)
+    return aggregate_transfer(per_file=per_file)
 
 
 async def put_tree(
@@ -322,10 +322,12 @@ async def put_tree(
 
     *concurrent* fans the levels out together under the backend's own cap.
     """
-    check = parse_file_mode(mode)
+    check = parse_file_mode(value=mode)
     if not check.is_ok:
         return aggregate_transfer(
-            {src: Result(check.status, msg=check.msg, value={}) for src in src_files}
+            per_file={
+                src: Result(status=check.status, msg=check.msg, value={}) for src in src_files
+            }
         )
     plain = [p for p in src_files if not p.is_dir()]
     per_source: dict[Path, Result] = {}
@@ -354,7 +356,7 @@ async def put_tree(
                 show_progress=show_progress,
                 concurrent=concurrent,
             )
-    return aggregate_transfer({src: per_source[src] for src in src_files})
+    return aggregate_transfer(per_file={src: per_source[src] for src in src_files})
 
 
 async def _get_one_tree(
@@ -373,7 +375,7 @@ async def _get_one_tree(
             (dest_root / d.relative_to(root)).mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return Result(
-            Status.Error,
+            status=Status.Error,
             msg=f"{root}: could not create the local tree under {dest_root}: "
             f"{exc.filename}: {exc.strerror}",
             value={},
@@ -391,7 +393,7 @@ async def _get_one_tree(
     for landed in await _run_levels(coros, concurrent=concurrent):
         for src, outcome in (landed.value or {}).items():
             per_file[src.relative_to(root)] = outcome
-    return aggregate_transfer(per_file)
+    return aggregate_transfer(per_file=per_file)
 
 
 async def get_tree(
@@ -417,9 +419,9 @@ async def get_tree(
 
     if is_dry_run():
         return aggregate_transfer(
-            {
+            per_file={
                 src: Result(
-                    Status.NotRun,
+                    status=Status.NotRun,
                     value=dest_dir / src.name,
                     msg=f"[DRY RUN] GET {src} -> {dest_dir / src.name}: tree not enumerated",
                 )
@@ -432,11 +434,11 @@ async def get_tree(
         try:
             listing = await host._walk_remote(src)  # noqa: SLF001 — the host's declared walk hook
         except ListingError as exc:
-            per_source[src] = Result(Status.Error, msg=str(exc), value={})
+            per_source[src] = Result(status=Status.Error, msg=str(exc), value={})
             continue
         if listing.kind == "-":
             per_source[src] = Result(
-                Status.Error, msg=f"{src}: no such file or directory", value={}
+                status=Status.Error, msg=f"{src}: no such file or directory", value={}
             )
         elif listing.kind == "f":
             plain.append(src)
@@ -455,4 +457,4 @@ async def get_tree(
             plain, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
         )
         per_source.update(flat.value or {})
-    return aggregate_transfer({src: per_source[src] for src in src_files})
+    return aggregate_transfer(per_file={src: per_source[src] for src in src_files})

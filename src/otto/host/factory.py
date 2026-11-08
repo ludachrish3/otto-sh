@@ -165,7 +165,7 @@ def _pipeline(
     """Resolve, merge, validate structurally, identify and select preferences."""
     reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
-    profile = resolve_os_profile(selector, data=_data(profiles))
+    profile = resolve_os_profile(name=selector, data=_data(profiles))
     entry = HOST_CLASSES.get(profile.base)
     spec_cls = resolved(entry.spec)
     merged = _merge_host_dict(host_data, None, profile, spec_cls)
@@ -212,7 +212,7 @@ def host_context(
 
 
 def host_identity(
-    host_data: dict[str, Any], element: Element, *, profiles: ProfileContext | None = None
+    host_data: dict[str, Any], *, element: Element, profiles: ProfileContext | None = None
 ) -> HostIdentity:
     """Resolve a raw host dict's identity WITHOUT building the host.
 
@@ -253,9 +253,9 @@ def host_identity(
 
 def create_host_from_dict(
     host_data: dict[str, Any],
+    *,
     preferences: dict[str, dict[str, Any]] | None = None,
     lab_name: str | None = None,
-    *,
     element: Element,
     inventory_ref: InventoryRef | None = None,
     profiles: ProfileContext | None = None,
@@ -409,7 +409,7 @@ def check_stage_collisions(host: "RemoteHost | Any") -> None:
         artifact = getattr(item, "artifact", None)
         if artifact is None or not hasattr(item, "stage_key"):
             continue
-        key = (item.stage_key(host), Path(artifact).name)
+        key = (item.stage_key(host=host), Path(artifact).name)
         first = seen.get(key)
         if first is not None:
             raise ValueError(
@@ -421,7 +421,7 @@ def check_stage_collisions(host: "RemoteHost | Any") -> None:
 
 
 def validate_host_dict(
-    host_data: dict[str, Any], *, element: Element, profiles: ProfileContext | None = None
+    *, host_data: dict[str, Any], element: Element, profiles: ProfileContext | None = None
 ) -> None:
     """Validate a host dict without constructing the host.
 

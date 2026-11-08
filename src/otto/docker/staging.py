@@ -139,8 +139,8 @@ async def stage_image_archive(parent: Host, project: str, image: DockerImage) ->
     if is_dry_run():
         raise CommandNotRunError(
             f"stage_image_archive({project}/{image.name})",
-            getattr(parent, "id", ""),
-            "Nothing was copied to the parent.",
+            host=getattr(parent, "id", ""),
+            detail="Nothing was copied to the parent.",
         )
     remote = image_archive_path(await ensure_private_root(parent), project, image)
     prepared = await parent.exec(f"mkdir -p {path_operand(remote.parent)}")
@@ -179,8 +179,8 @@ async def stage_image_context(
     if is_dry_run():
         raise CommandNotRunError(
             f"stage_image_context({project}/{image.name})",
-            getattr(parent, "id", ""),
-            "Nothing was tarred locally and nothing was copied to the parent.",
+            host=getattr(parent, "id", ""),
+            detail="Nothing was tarred locally and nothing was copied to the parent.",
         )
 
     remote_dir = image_build_dir(await ensure_private_root(parent), project, image.name)
@@ -272,8 +272,8 @@ async def stage_compose_files(
     if is_dry_run():
         raise CommandNotRunError(
             f"stage_compose_files({project})",
-            getattr(parent, "id", ""),
-            "No compose file was copied to the parent.",
+            host=getattr(parent, "id", ""),
+            detail="No compose file was copied to the parent.",
         )
 
     base = compose_dir(await ensure_private_root(parent), project)
@@ -896,8 +896,8 @@ async def stage_use_case(
     if is_dry_run():
         raise CommandNotRunError(
             f"stage_use_case({compose_project})",
-            getattr(parent, "id", ""),
-            "No compose file, sidecar or env launcher was copied to the parent.",
+            host=getattr(parent, "id", ""),
+            detail="No compose file, sidecar or env launcher was copied to the parent.",
         )
 
     extra_files_map = dict(extra_files or {})

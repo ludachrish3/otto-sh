@@ -87,19 +87,19 @@ def _parse_params(given: dict[str, str | None]) -> ImpairmentParams:
     """
     kwargs: dict[str, float | str] = {}
     if given["--delay"] is not None:
-        kwargs["delay_ms"] = parse_time_ms(given["--delay"], option="--delay")
+        kwargs["delay_ms"] = parse_time_ms(text=given["--delay"], option="--delay")
     if given["--jitter"] is not None:
-        kwargs["jitter_ms"] = parse_time_ms(given["--jitter"], option="--jitter")
+        kwargs["jitter_ms"] = parse_time_ms(text=given["--jitter"], option="--jitter")
     if given["--loss"] is not None:
-        kwargs["loss_pct"] = parse_percent(given["--loss"], option="--loss")
+        kwargs["loss_pct"] = parse_percent(text=given["--loss"], option="--loss")
     if given["--corrupt"] is not None:
-        kwargs["corrupt_pct"] = parse_percent(given["--corrupt"], option="--corrupt")
+        kwargs["corrupt_pct"] = parse_percent(text=given["--corrupt"], option="--corrupt")
     if given["--duplicate"] is not None:
-        kwargs["duplicate_pct"] = parse_percent(given["--duplicate"], option="--duplicate")
+        kwargs["duplicate_pct"] = parse_percent(text=given["--duplicate"], option="--duplicate")
     if given["--reorder"] is not None:
-        kwargs["reorder_pct"] = parse_percent(given["--reorder"], option="--reorder")
+        kwargs["reorder_pct"] = parse_percent(text=given["--reorder"], option="--reorder")
     if given["--rate"] is not None:
-        kwargs["rate"] = parse_rate(given["--rate"])
+        kwargs["rate"] = parse_rate(text=given["--rate"])
     return ImpairmentParams(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
@@ -214,13 +214,13 @@ async def impair(  # noqa: PLR0913 — CLI command params
     selector: Selector | None = None
     if port is not None:
         try:
-            selector = Selector.parse(port, proto, side)
+            selector = Selector.parse(port_text=port, proto=proto, side=side)
         except ValueError as e:
             fail(e, 2)
     lab = get_lab()
     try:
         report = await impair_link(
-            lab, link, params, from_host=from_host, expire=expire, selector=selector
+            lab, ident=link, params=params, from_host=from_host, expire=expire, selector=selector
         )
     except (ValueError, RuntimeError) as e:
         fail(e)
@@ -288,12 +288,12 @@ async def repair(
     selector: Selector | None = None
     if port is not None:
         try:
-            selector = Selector.parse(port, proto, side)
+            selector = Selector.parse(port_text=port, proto=proto, side=side)
         except ValueError as e:
             fail(e, 2)
     lab = get_lab()
     if all_:
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
         if sweep.dry_run:
             # On `sweep.dry_run`, NOT on `sweep.planned` being non-empty: a lab
             # whose links are all structurally refused (every implicit link is)
@@ -338,7 +338,7 @@ async def repair(
             raise typer.Exit(1)
         return
     try:
-        report = await repair_link(lab, link or "", selector=selector)
+        report = await repair_link(lab, ident=link or "", selector=selector)
     except (ValueError, RuntimeError) as e:
         fail(e)
     _print_repair_report(report)
@@ -582,7 +582,9 @@ async def check(
         fail(e, 2)
     lab = get_lab()
     try:
-        result = await check_link(lab, link, live=live, features=features, from_host=from_host)
+        result = await check_link(
+            lab=lab, ident=link, live=live, features=features, from_host=from_host
+        )
     except (ValueError, RuntimeError) as e:
         fail(e)
     if result.dry_run_plan:

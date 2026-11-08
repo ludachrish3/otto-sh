@@ -298,7 +298,7 @@ hosts, where no real host is ever polled.
 """
 
 
-def validate_interval(seconds: float) -> float:
+def validate_interval(*, seconds: float) -> float:
     """Return *seconds*, or raise ``ValueError`` if it is below the floor.
 
     The one home for the refusal's wording. It names no field and no flag,
@@ -591,20 +591,20 @@ def _get_literal_values(
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Arg:
-    """CLI overlay: force a parameter to a positional argument.
+    """CLI overlay: how a positional parameter's argument is PRESENTED. Imports no typer.
 
-    ``variadic=True`` makes it a space-separated list of ``elem_type`` (used for
-    Python-union list params Typer can't read, e.g. ``str | Sequence[...]``).
-    ``elem_type`` also overrides the CLI type for a scalar union. ``name`` sets
-    the argument's displayed metavar (e.g. ``Arg(name="SOURCE")`` shows
-    ``SOURCE`` in ``--help`` instead of the parameter's Python name); it does
-    not change how the argument is passed, since positional arguments have no
-    flag. Imports no typer.
+    The parameter's kind decides that it is an argument (see
+    :ref:`cli-follows-signature`); this marker only describes it, and on a
+    keyword-only parameter it is refused as a contradiction. A positional
+    list parameter (``list[X]``, or a union containing it) is the verb's one
+    variadic argument. ``elem_type`` overrides the CLI type (a scalar union's,
+    or the variadic's element). ``name`` sets the displayed metavar (e.g.
+    ``Arg(name="SOURCE")`` shows ``SOURCE`` in ``--help`` instead of the
+    parameter's Python name).
     """
 
-    variadic: bool = False
     elem_type: type | None = None
     name: str | None = None
     help: str | None = None
@@ -618,9 +618,13 @@ class Arg:
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Opt:
-    """CLI overlay: force a parameter to a ``--option``. Imports no typer.
+    """CLI overlay: how a keyword-only parameter's ``--option`` is PRESENTED. Imports no typer.
+
+    The parameter's kind decides that it is an option, required when it has
+    no default (see :ref:`cli-follows-signature`); this marker only describes
+    it, and on a positional parameter it is refused as a contradiction.
 
     ``name`` overrides the synthesized flag (e.g. ``Opt(name="--dest")`` makes
     the CLI flag ``--dest`` regardless of the parameter's Python name); the

@@ -119,27 +119,27 @@ ADMIN_UNIX = Cred(login="admin", password="unix-pw")
 
 
 def test_resolve_chain_direct():
-    direct, hops = resolve_chain([ADMIN, MYSQL], "admin")
+    direct, hops = resolve_chain([ADMIN, MYSQL], target_login="admin")
     assert direct == ADMIN
     assert hops == []
 
 
 def test_resolve_chain_one_hop():
-    direct, hops = resolve_chain([ADMIN, MYSQL], "mysql")
+    direct, hops = resolve_chain([ADMIN, MYSQL], target_login="mysql")
     assert direct == ADMIN
     assert hops == [MYSQL]
 
 
 def test_resolve_chain_default_via_is_first_directly_loginable():
     orphan = Cred(login="svc", proxy="su")  # no via
-    direct, hops = resolve_chain([ADMIN, orphan], "svc")
+    direct, hops = resolve_chain([ADMIN, orphan], target_login="svc")
     assert direct == ADMIN
     assert hops == [orphan]
 
 
 def test_resolve_chain_unknown_login_is_loud():
     with pytest.raises(LoginProxyError, match="admin"):
-        resolve_chain([ADMIN], "nobody")
+        resolve_chain([ADMIN], target_login="nobody")
 
 
 @pytest.mark.asyncio
@@ -264,7 +264,7 @@ async def test_a_proxy_that_declares_no_prompt_is_never_answered_for():
         io.shell.user = "mysql"  # the proxy's own mechanism did the switch
         await run_proxy(io, hop, via=ADMIN, host_id="h1")
     finally:
-        LOGIN_PROXIES.unregister("quiet-test")
+        LOGIN_PROXIES.unregister(name="quiet-test")
     assert _passwords(io) == [], "the engine typed a credential for a proxy that never asked"
 
 
@@ -289,7 +289,7 @@ async def test_run_proxy_wraps_failure_with_context():
                 io=RecorderIO(), hop=Cred(login="mysql", proxy="boom"), via=ADMIN, host_id="h1"
             )
     finally:
-        LOGIN_PROXIES.unregister("boom")
+        LOGIN_PROXIES.unregister(name="boom")
 
 
 @pytest.mark.asyncio
@@ -314,7 +314,7 @@ async def test_run_undo_failure_wrapped_with_context():
                 RecorderIO(), Cred(login="mysql", proxy="bad-undo"), via=ADMIN, host_id="h1"
             )
     finally:
-        LOGIN_PROXIES.unregister("bad-undo")
+        LOGIN_PROXIES.unregister(name="bad-undo")
 
 
 @pytest.mark.asyncio
@@ -340,7 +340,7 @@ async def test_custom_undo_used_when_registered():
         await run_proxy(RecorderIO(user="x"), hop, via=ADMIN, host_id="h1")
         await run_undo(RecorderIO(user="admin"), hop, via=ADMIN, host_id="h1")
     finally:
-        LOGIN_PROXIES.unregister("custom")
+        LOGIN_PROXIES.unregister(name="custom")
     assert steps == ["enter", "leave"]
 
 
@@ -352,7 +352,7 @@ def test_duplicate_registration_is_loud():
         with pytest.raises(ValueError, match="already registered"):
             register_login_proxy("dup-test", p)
     finally:
-        LOGIN_PROXIES.unregister("dup-test")
+        LOGIN_PROXIES.unregister(name="dup-test")
 
 
 @pytest.mark.asyncio
@@ -871,21 +871,23 @@ class TestScopeAwareLookup:
     def test_via_resolves_same_scope_first_then_unscoped(self):
         tn_admin = Cred(login="admin", password="tn-pw", protocols=["telnet"])
         tn_root = Cred(login="root", proxy="su", via="admin", protocols=["telnet"])
-        direct, hops = resolve_chain([UNIX_ADMIN, tn_admin, tn_root], "root", protocol="telnet")
+        direct, hops = resolve_chain(
+            [UNIX_ADMIN, tn_admin, tn_root], target_login="root", protocol="telnet"
+        )
         assert direct is tn_admin
         assert hops == [tn_root]
         # No same-scope admin: falls to the unscoped one.
-        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], "root", protocol="telnet")
+        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], target_login="root", protocol="telnet")
         assert direct is UNIX_ADMIN
 
     def test_via_existing_only_in_a_foreign_scope_fails_loud(self):
         tn_root = Cred(login="root", proxy="su", via="admin", protocols=["telnet"])
         with pytest.raises(LoginProxyError, match="missing or cyclic 'via'"):
-            resolve_chain([FTP_ADMIN, tn_root], "root", protocol="telnet")
+            resolve_chain([FTP_ADMIN, tn_root], target_login="root", protocol="telnet")
 
     def test_a_proxied_cred_scoped_to_ftp_resolves_to_its_direct_end(self):
         ftp_svc = Cred(login="svc", proxy="su", via="admin", protocols=["ftp"])
-        direct, hops = resolve_chain([UNIX_ADMIN, ftp_svc], "svc", protocol="ftp")
+        direct, hops = resolve_chain([UNIX_ADMIN, ftp_svc], target_login="svc", protocol="ftp")
         assert direct is UNIX_ADMIN
         assert hops == [ftp_svc]
 
@@ -893,9 +895,11 @@ class TestScopeAwareLookup:
         # via omitted: the chain starts from the first proxy-less CANDIDATE, scoped first.
         tn_admin = Cred(login="tadmin", password="tn", protocols=["telnet"])
         tn_root = Cred(login="root", proxy="su", protocols=["telnet"])
-        direct, _ = resolve_chain([UNIX_ADMIN, tn_admin, tn_root], "root", protocol="telnet")
+        direct, _ = resolve_chain(
+            [UNIX_ADMIN, tn_admin, tn_root], target_login="root", protocol="telnet"
+        )
         assert direct is tn_admin
-        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], "root", protocol="telnet")
+        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], target_login="root", protocol="telnet")
         assert direct is UNIX_ADMIN
 
     def test_default_direct_without_a_protocol_falls_back_to_any_proxyless_cred(self):
@@ -903,6 +907,6 @@ class TestScopeAwareLookup:
         # fallback still applies rather than leaving the chain unresolved.
         ftpadmin = Cred(login="ftpadmin", password="x", protocols=["ftp"])
         root = Cred(login="root", proxy="su", protocols=["ftp"])
-        direct, hops = resolve_chain([ftpadmin, root], "root")
+        direct, hops = resolve_chain([ftpadmin, root], target_login="root")
         assert direct is ftpadmin
         assert hops == [root]

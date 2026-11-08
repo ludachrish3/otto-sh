@@ -10,7 +10,7 @@ from otto.host.command_frame import SessionMarkers
 from otto.host.shell_liveness import confirm_live
 from tests._fixtures.clock import LONG_DEADLINE, stepped_loop_clock
 
-_FIXED = SessionMarkers.for_session("cafef00d")
+_FIXED = SessionMarkers.for_session(session_id="cafef00d")
 
 
 def _render(m: SessionMarkers) -> str:
@@ -145,7 +145,7 @@ async def test_fresh_markers_used_per_probe():
     seen: list[str] = []
 
     def _counting_markers() -> SessionMarkers:
-        return SessionMarkers.for_session(f"id{len(seen)}")
+        return SessionMarkers.for_session(session_id=f"id{len(seen)}")
 
     def _render_track(m: SessionMarkers) -> str:
         seen.append(m.end_prefix)

@@ -49,7 +49,7 @@ def _make_host(name: str = "router1") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
@@ -117,7 +117,7 @@ def _make_host_with_session(
     """
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
         term=term,
@@ -348,7 +348,7 @@ class _SlotBackend(ReservationBackendBase):
     def backend_name(self) -> str:
         return "fake"
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return [
             Reservation(user=username, resource=r, end=self._ends.get(r))
             for r in sorted(self._held)
@@ -647,7 +647,7 @@ class TestHostPut:
         # success message ("Transfer complete.").  The dynamic path reads the
         # success string from __cli_success__ on the bound method, so we must
         # preserve that marker on the AsyncMock.
-        mock_host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+        mock_host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
         mock_host.put.__cli_success__ = "Transfer complete."
         mock_host.close = AsyncMock()
 
@@ -665,7 +665,7 @@ class TestHostPut:
 
         mock_host = _make_host()
         mock_host.put = AsyncMock(
-            return_value=Result(Status.Failed, value={}, msg="permission denied")
+            return_value=Result(status=Status.Failed, value={}, msg="permission denied")
         )
         mock_host.close = AsyncMock()
 
@@ -809,7 +809,7 @@ class TestHostTermAndTransfer:
 
         console_host = UnixHost(
             ip="10.0.0.2",
-            element=Element("test2"),
+            element=Element(name="test2"),
             creds=[Cred(login="test", password="pw")],
             term="console",
             valid_terms=["ssh", "console"],
@@ -836,7 +836,7 @@ class TestHostGet:
         # success message ("Download complete.").  The dynamic path reads the
         # success string from __cli_success__ on the bound method, so we must
         # preserve that marker on the AsyncMock.
-        mock_host.get = AsyncMock(return_value=Result(Status.Success, value={}))
+        mock_host.get = AsyncMock(return_value=Result(status=Status.Success, value={}))
         mock_host.get.__cli_success__ = "Download complete."
         mock_host.close = AsyncMock()
 
@@ -850,7 +850,9 @@ class TestHostGet:
 
     def test_get_failure(self, tmp_path):
         mock_host = _make_host()
-        mock_host.get = AsyncMock(return_value=Result(Status.Failed, value={}, msg="not found"))
+        mock_host.get = AsyncMock(
+            return_value=Result(status=Status.Failed, value={}, msg="not found")
+        )
         mock_host.close = AsyncMock()
 
         with patch("otto.fleet.get_host", return_value=mock_host):
@@ -1297,7 +1299,7 @@ def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(tmp_path, c
     class _ExplodingNullBackend(NullReservationBackend):
         """Null-shaped to ``is_null_backend``'s ``isinstance``, fatal to query."""
 
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             raise AssertionError(
                 "the null backend was queried; the is_null_backend guard is missing"
             )

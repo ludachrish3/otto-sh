@@ -143,12 +143,12 @@ def test_the_db_export_decodes_each_declared_archive(version, tmp_path):
 
 @pytest.mark.parametrize("version", formats.MONITOR_DB_READ_VERSIONS)
 def test_review_mode_opens_each_declared_archive(version, tmp_path):
-    DECODED[version](load_review_document(_archive(version, tmp_path)))
+    DECODED[version](load_review_document(path=_archive(version, tmp_path)))
 
 
 @pytest.mark.parametrize("version", model_formats.MONITOR_EXPORT_READ_VERSIONS)
 def test_review_mode_reads_each_declared_export(version):
-    DOCUMENTS[version](load_review_document(SAMPLES / "monitor-export" / f"{version}.json"))
+    DOCUMENTS[version](load_review_document(path=SAMPLES / "monitor-export" / f"{version}.json"))
 
 
 def test_the_archive_paths_hold_the_declared_lists():
@@ -172,7 +172,7 @@ def test_review_mode_refuses_an_export_version_outside_the_declared_reads(tmp_pa
     with pytest.raises(
         ReviewSourceError, match=r"format\n\s+Input should be .*\[type=literal_error"
     ):
-        load_review_document(path)
+        load_review_document(path=path)
 
 
 @pytest.mark.asyncio

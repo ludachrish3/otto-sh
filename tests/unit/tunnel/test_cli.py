@@ -1093,7 +1093,7 @@ def test_check_passes_every_option_through():
             ],
         )
     assert result.exit_code == 0, result.output
-    assert mock.call_args.args[1] == [("test1", "eth0"), ("test2", None)]
+    assert mock.call_args.kwargs["hosts"] == [("test1", "eth0"), ("test2", None)]
     assert mock.call_args.kwargs["port"] == 8080
     assert mock.call_args.kwargs["protocol"] == "udp"
     assert mock.call_args.kwargs["dest"] == ("test3", "eth2")

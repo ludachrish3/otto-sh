@@ -49,7 +49,7 @@ OTHER_REPO = fake_project("other")
 
 
 def _fail(msg):
-    return Result(Status.Failed, msg=msg)
+    return Result(status=Status.Failed, msg=msg)
 
 
 class _FakeItem:
@@ -64,7 +64,7 @@ class _FakeItem:
 
     async def _verb(self, verb, host):
         self.calls.append((verb, host.id))
-        return self._scripted.get(verb, Result(Status.Success))
+        return self._scripted.get(verb, Result(status=Status.Success))
 
     async def stage(self, host):
         return await self._verb("stage", host)
@@ -126,7 +126,7 @@ class _FakeHost:
 
         async def _recorder(*_args, **kwargs):
             self.calls.append((name, kwargs))
-            outcome = self._scripted.get(name, Result(Status.Success))
+            outcome = self._scripted.get(name, Result(status=Status.Success))
             if isinstance(outcome, BaseException):
                 raise outcome
             return outcome
@@ -209,7 +209,7 @@ def _actions(ctx, project=PROJECT, cls=ProjectActions):
     every ``{"owner": "acme"}`` assertion below would be measuring the absence
     of a seam rather than the seam.
     """
-    return cls(project=project, ctx=ctx.for_project(project.name))
+    return cls(project=project, ctx=ctx.for_project(name=project.name))
 
 
 def _ctx_with_products(owner, installed_flags, other_flags=()):
@@ -276,12 +276,12 @@ async def test_a_failed_command_result_with_no_msg_still_names_why():
 
     ctx, hosts = _fake_ctx(n=2)
     failed = CommandResult(
-        Status.Failed,
+        status=Status.Failed,
         value="chmod: cannot access '/opt/stage/app.bin': Not a directory\n",
         command="chmod +x /opt/stage/app.bin",
         retcode=1,
     )
-    hosts[1].script("install", Results.collect([failed]))
+    hosts[1].script("install", Results.collect(items=[failed]))
     result = await _actions(ctx).install(InstallOptions())
     assert result.status is Status.Failed
     assert result.msg.startswith(f"host {hosts[1].id!r}: ")
@@ -293,7 +293,7 @@ async def test_a_failed_command_result_with_no_msg_still_names_why():
 @pytest.mark.asyncio
 async def test_a_failed_result_with_no_reason_at_all_still_says_how_it_ended():
     ctx, hosts = _fake_ctx(n=1)
-    hosts[0].script("install", Result(Status.Error))
+    hosts[0].script("install", Result(status=Status.Error))
     result = await _actions(ctx).install(InstallOptions())
     assert not result.msg.endswith(": "), result.msg
     assert result.msg == f"host {hosts[0].id!r}: failed (Error) with no reason given"
@@ -435,7 +435,7 @@ def staging_removals(monkeypatch):
     async def _record(host, project):
         seen.append((host.id, project.name))
         host.calls.append(("remove_project_staging", {}))
-        return outcomes.get(host.id, Result(Status.Success))
+        return outcomes.get(host.id, Result(status=Status.Success))
 
     monkeypatch.setattr(compose_mod, "remove_project_staging", _record)
     _record.seen = seen
@@ -493,7 +493,7 @@ def staging_survey(monkeypatch):
     from otto.docker.compose import StagingKey, StagingSurvey
 
     # A removed tree: the command succeeded and printed nothing.
-    removed = Result(Status.Success, value="")
+    removed = Result(status=Status.Success, value="")
     state = {"survey": StagingSurvey([], [], []), "removed": [], "rm": removed}
 
     async def _survey(host, project):
@@ -569,10 +569,12 @@ async def test_a_failed_staging_removal_outranks_a_declined_dev_tool_removal(sta
 
     staging_survey(remove=["stack-a"])
     staging_survey.state["rm"] = CommandResult(
-        Status.Failed, value="rm: Permission denied", command="rm", retcode=1
+        status=Status.Failed, value="rm: Permission denied", command="rm", retcode=1
     )
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
-    hosts[0].script("uninstall_dev_tools", Result(Status.Skipped, msg="h0: container not running"))
+    hosts[0].script(
+        "uninstall_dev_tools", Result(status=Status.Skipped, msg="h0: container not running")
+    )
 
     result = await _actions(ctx).cleanup(CleanupOptions())
 
@@ -589,7 +591,9 @@ async def test_get_logs_reports_a_passed_over_host_whatever_the_requirement(requ
     the host once.
     """
     ctx, hosts = _fake_ctx(n=1)
-    hosts[0].script("get_product_logs", Result(Status.Skipped, msg="h0: container not running"))
+    hosts[0].script(
+        "get_product_logs", Result(status=Status.Skipped, msg="h0: container not running")
+    )
 
     result = await _actions(ctx).get_logs(GetLogsOptions(require_product_logs=required))
 
@@ -754,11 +758,11 @@ async def test_dev_tool_walks_dispatch_through_the_host_instance():
     class _OverridingHost(_FakeHost):
         async def install_dev_tools(self, owner=None):
             self.calls.append(("overridden-install", {"owner": owner}))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def uninstall_dev_tools(self, owner=None):
             self.calls.append(("overridden-uninstall", {"owner": owner}))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
     host = _OverridingHost("h0", dev_tools=[_FakeItem("probe", "acme")])
     actions = _actions(_FakeCtx([host]))
@@ -792,8 +796,8 @@ async def test_cleanup_twice_over_a_gone_docker_container_succeeds(tmp_path, mon
     async def _exec(cmd, **_kw):
         calls.append(cmd)
         if "docker logs" in cmd or "docker rm -f" in cmd:
-            return CommandResult(Status.Error, value=gone, command=cmd, retcode=1)
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+            return CommandResult(status=Status.Error, value=gone, command=cmd, retcode=1)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     host = LocalHost()
     host.exec = _exec
@@ -1302,7 +1306,7 @@ async def test_cleanup_of_project_a_leaves_project_bs_counters(monkeypatch):
 
     async def _spy(host, products):
         swept.append((host.id, [p.name for p in products]))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     monkeypatch.setattr("otto.host.cov_sweep.remove_coverage", _spy)
     host = _SweepingHost("h0", products=[_CovItem("a1", "acme"), _CovItem("b1", "other")])
@@ -1330,7 +1334,7 @@ async def test_cleanup_passes_over_a_stopped_container_s_coverage(caplog):
 @pytest.mark.asyncio
 async def test_cleanup_under_dry_run_declines_the_sweep_without_a_reprobe():
     ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
-    hosts[0].script("remove_coverage_dirs", Result(Status.NotRun))
+    hosts[0].script("remove_coverage_dirs", Result(status=Status.NotRun))
     result = await _actions(ctx).cleanup(CleanupOptions())
     assert result.status is Status.NotRun, result
     assert "coverage_dirs_clean" not in [verb for verb, _ in hosts[0].calls]
@@ -1358,7 +1362,9 @@ async def test_is_clean_refuses_under_a_dry_run():
     from otto.result import CommandNotRunError
 
     ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
-    hosts[0].script("coverage_dirs_clean", CommandNotRunError("h0.coverage_dirs_clean()", "h0"))
+    hosts[0].script(
+        "coverage_dirs_clean", CommandNotRunError("h0.coverage_dirs_clean()", host="h0")
+    )
     with pytest.raises(CommandNotRunError):
         await _actions(ctx).is_clean()
 
@@ -1415,12 +1421,12 @@ async def test_reading_ctx_cov_does_not_arm_the_warning(caplog):
 @pytest.mark.asyncio
 async def test_a_dry_run_cleanup_does_not_warn_or_claim_the_latch(caplog):
     ctx = _collecting_ctx()
-    ctx.hosts[0].script("remove_coverage_dirs", Result(Status.NotRun))
+    ctx.hosts[0].script("remove_coverage_dirs", Result(status=Status.NotRun))
     with caplog.at_level(logging.WARNING):
         await _actions(ctx).cleanup(CleanupOptions())
         assert _cleanup_warnings(caplog) == []
         assert ctx.policy.coverage.warned is False
-        ctx.hosts[0].script("remove_coverage_dirs", Result(Status.Success))
+        ctx.hosts[0].script("remove_coverage_dirs", Result(status=Status.Success))
         await _actions(ctx).cleanup(CleanupOptions())
     assert len(_cleanup_warnings(caplog)) == 1
 
@@ -1486,7 +1492,7 @@ class _CleaningHost(_FakeHost):
     _remove_coverage_dirs_warned = BaseHost._remove_coverage_dirs_warned
 
     async def remove_toolchain_tools(self):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 async def _clean_through(entry, ctx, host):
@@ -1507,9 +1513,9 @@ async def _clean_through(entry, ctx, host):
 @pytest.mark.parametrize(
     ("swept", "warnings"),
     [
-        pytest.param(Result(Status.Success), 1, id="swept"),
-        pytest.param(Result(Status.NotRun), 0, id="dry-run"),
-        pytest.param(Result(Status.Skipped), 0, id="passed-over"),
+        pytest.param(Result(status=Status.Success), 1, id="swept"),
+        pytest.param(Result(status=Status.NotRun), 0, id="dry-run"),
+        pytest.param(Result(status=Status.Skipped), 0, id="passed-over"),
         pytest.param(ConnectionResetError("peer reset"), 1, id="crashed"),
     ],
 )
@@ -1585,8 +1591,8 @@ def test_actions_for_prefers_registered_class_else_default():
     with registering_project("acme"):
         register_project_actions(Custom)
     ctx, _ = _fake_ctx(n=0)
-    assert type(actions_for(PROJECT, ctx)) is Custom
-    assert type(actions_for(fake_project("unregistered"), ctx)) is ProjectActions
+    assert type(actions_for(project=PROJECT, ctx=ctx)) is Custom
+    assert type(actions_for(project=fake_project("unregistered"), ctx=ctx)) is ProjectActions
 
 
 def test_actions_for_hands_the_instance_a_view_bound_to_its_own_project():
@@ -1599,7 +1605,7 @@ def test_actions_for_hands_the_instance_a_view_bound_to_its_own_project():
     through the same view ``actions_for`` does.
     """
     ctx, _ = _fake_ctx(n=0)
-    actions = actions_for(PROJECT, ctx)
+    actions = actions_for(project=PROJECT, ctx=ctx)
     assert actions.project is PROJECT
     assert isinstance(actions.ctx, ProjectContextView)
     assert actions.ctx._project_name == PROJECT.name
@@ -1625,15 +1631,15 @@ def test_hand_building_actions_around_a_plain_context_refuses():
     assert "acme" in message
     assert "owner=None" in message  # WHY it is refused, not just that it is
     # The remedy names the real API, so following it works.
-    assert "actions_for(project, ctx)" in message
-    assert "ctx.for_project(project.name)" in message
+    assert "actions_for(project=project, ctx=ctx)" in message
+    assert "ctx.for_project(name=project.name)" in message
     assert "for_repo" not in message
 
     # The two constructions that ARE the seam are untouched: the real context's
     # own view, and a double that borrows `for_project` to build one.
-    assert isinstance(actions_for(PROJECT, ctx).ctx, ProjectContextView)
+    assert isinstance(actions_for(project=PROJECT, ctx=ctx).ctx, ProjectContextView)
     fake, _ = _fake_ctx(n=0)
-    assert isinstance(actions_for(PROJECT, fake).ctx, ProjectContextView)
+    assert isinstance(actions_for(project=PROJECT, ctx=fake).ctx, ProjectContextView)
 
 
 # ── state vocabulary ─────────────────────────────────────────────────────
@@ -1761,7 +1767,7 @@ class TestBodyRegistration:
 
                 @instruction(options=DeployOpts, walk="reverse")
                 async def deploy(self, opts: DeployOpts):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         install = PROJECT_INSTRUCTIONS.get("install")
         assert install.body_for(Widget).options_cls is WidgetInstall
@@ -1793,7 +1799,7 @@ class TestBodyRegistration:
             class Widget(ProjectActions):
                 @instruction(options=Foreign)
                 async def install(self, opts: Foreign):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
     def test_two_methods_on_one_class_claiming_one_name_are_refused(self) -> None:
         """A class holds ONE body per name, so the second declaration cannot be silent.
@@ -1827,11 +1833,11 @@ class TestBodyRegistration:
             class Widget(ProjectActions):
                 @instruction("deploy", options=DeployOpts, walk="forward")
                 async def deploy(self, opts: DeployOpts):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
                 @instruction("deploy", options=DeployOpts, walk="forward")
                 async def deploy_again(self, opts: DeployOpts):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         message = str(caught.value)
         assert "Widget" in message
@@ -1859,11 +1865,11 @@ class TestBodyRegistration:
             class Widget(ProjectActions):
                 @instruction("deploy", options=DeployOpts, walk="forward")
                 async def deploy(self, opts: DeployOpts):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
                 @instruction("deploy", options=DeployOpts, walk="forward")
                 async def deploy_again(self, opts: DeployOpts):
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         assert "deploy" not in set(PROJECT_INSTRUCTIONS.names())
 

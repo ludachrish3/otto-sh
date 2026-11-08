@@ -69,7 +69,7 @@ class CompiledCreds:
     origin: str
     """The settings file that declared the table — for error text."""
 
-    def same_as(self, other: "CompiledCreds") -> bool:
+    def same_as(self, *, other: "CompiledCreds") -> bool:
         """Return whether this names the same store as *other* — origin and anchor excluded.
 
         Two projects declaring the same store from their own settings files are
@@ -83,7 +83,7 @@ class CompiledCreds:
         )
 
 
-def compile_creds(cfg: "CredsConfigSpec", *, anchor_dir: Path, origin: str) -> CompiledCreds:
+def compile_creds(*, cfg: "CredsConfigSpec", anchor_dir: Path, origin: str) -> CompiledCreds:
     """Prepare the table's keys with the selected store's configuration model.
 
     Every key but ``backend`` is parsed by the model the store registered, so
@@ -95,12 +95,15 @@ def compile_creds(cfg: "CredsConfigSpec", *, anchor_dir: Path, origin: str) -> C
             or its keys do not parse.
     """
     prepared = CREDS_BACKENDS.prepare(
-        cfg.backend, dict(cfg.model_extra or {}), CredsEnv(anchor_dir, origin), source=origin
+        name=cfg.backend,
+        raw=dict(cfg.model_extra or {}),
+        env=CredsEnv(anchor_dir, origin),
+        source=origin,
     )
     return CompiledCreds(prepared=prepared, anchor_dir=anchor_dir, origin=origin)
 
 
-def compile_creds_table(table: dict[str, Any], *, anchor_dir: Path, origin: str) -> CompiledCreds:
+def compile_creds_table(*, table: dict[str, Any], anchor_dir: Path, origin: str) -> CompiledCreds:
     """Validate a raw ``[creds]`` table as :class:`~otto.models.settings.CredsConfigSpec`.
 
     Then :func:`compile_creds`.
@@ -111,10 +114,10 @@ def compile_creds_table(table: dict[str, Any], *, anchor_dir: Path, origin: str)
         cfg = CredsConfigSpec.model_validate(table)
     except ValidationError as e:
         raise CredsError(f"{origin}: [creds] {e}") from e
-    return compile_creds(cfg, anchor_dir=anchor_dir, origin=origin)
+    return compile_creds(cfg=cfg, anchor_dir=anchor_dir, origin=origin)
 
 
-def construct_creds_store(compiled: CompiledCreds) -> CredsStore:
+def construct_creds_store(*, compiled: CompiledCreds) -> CredsStore:
     """Build the store with its registered factory.
 
     Raises:
@@ -122,4 +125,4 @@ def construct_creds_store(compiled: CompiledCreds) -> CredsStore:
             it built is not a creds store; the message names the backend, the
             module that registered it and the settings file.
     """
-    return CREDS_BACKENDS.build(compiled.prepared)
+    return CREDS_BACKENDS.build(prepared=compiled.prepared)

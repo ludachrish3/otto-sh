@@ -63,14 +63,14 @@ async def test_direct_churn(tunnel_lab, reap_tunnels) -> None:
     the first and last cycle."""
     chain = [(INGRESS, None), (EXIT, None)]
     for cycle in range(SOAK_CYCLES):
-        added = await add_tunnel(tunnel_lab, chain, port=PORT_CHURN_DIRECT, protocol="udp")
+        added = await add_tunnel(tunnel_lab, hosts=chain, port=PORT_CHURN_DIRECT, protocol="udp")
         reap_tunnels.append(added.tunnel.id)
         await assert_discovered(tunnel_lab, added.tunnel.id, procs=4, label=f"cycle {cycle}: ")
         if cycle in (0, SOAK_CYCLES - 1):
             await _probe_traffic(
                 tunnel_lab, ingress_ne="test1", listen_host_id=EXIT, port=PORT_CHURN_DIRECT
             )
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
         await assert_gone(tunnel_lab, added.tunnel.id, label=f"cycle {cycle}: ")
@@ -81,7 +81,7 @@ async def test_multihop_churn(tunnel_lab, reap_tunnels) -> None:
     """CYCLES x the 3-hop lifecycle: ok/6 procs, relay pair on the middle host."""
     chain = [(INGRESS, None), (EXIT, None), (RELAY, None)]
     for cycle in range(SOAK_CYCLES):
-        added = await add_tunnel(tunnel_lab, chain, port=PORT_CHURN_MULTIHOP, protocol="udp")
+        added = await add_tunnel(tunnel_lab, hosts=chain, port=PORT_CHURN_MULTIHOP, protocol="udp")
         reap_tunnels.append(added.tunnel.id)
         discovery = await discover_tunnels(tunnel_lab)
         found = next((d for d in discovery.tunnels if d.tunnel.id == added.tunnel.id), None)
@@ -94,7 +94,7 @@ async def test_multihop_churn(tunnel_lab, reap_tunnels) -> None:
             await _probe_traffic(
                 tunnel_lab, ingress_ne="test1", listen_host_id=RELAY, port=PORT_CHURN_MULTIHOP
             )
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
         await assert_gone(tunnel_lab, added.tunnel.id, label=f"cycle {cycle}: ")
@@ -131,10 +131,10 @@ async def test_remove_all_sweep_cycling(tunnel_lab, reap_tunnels) -> None:
     for cycle in range(SOAK_CYCLES):
         ids = []
         for chain, port in shapes:
-            added = await add_tunnel(tunnel_lab, chain, port=port, protocol="udp")
+            added = await add_tunnel(tunnel_lab, hosts=chain, port=port, protocol="udp")
             reap_tunnels.append(added.tunnel.id)
             ids.append(added.tunnel.id)
-        report = await remove_all_tunnels(tunnel_lab)
+        report = await remove_all_tunnels(lab=tunnel_lab)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         assert set(ids) <= set(report.removed_ids), (
             f"cycle {cycle}: removed {report.removed_ids!r}, expected ⊇ {ids!r}"

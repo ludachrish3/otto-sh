@@ -176,9 +176,9 @@ async def refuse_if_scp_is_absent(
     if userland is None:
         return
     await userland.resolve()
-    if not userland.is_settled(applet_capability(SCP_APPLET)):
+    if not userland.is_settled(name=applet_capability(SCP_APPLET)):
         return
-    if userland.has_applet(SCP_APPLET) != APPLET_ABSENT:
+    if userland.has_applet(applet=SCP_APPLET) != APPLET_ABSENT:
         return
     refuse_if_gapped("scp-transfer", host=host, attempted=attempted)
 
@@ -332,8 +332,8 @@ class ScpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         await refuse_if_scp_is_absent(
@@ -353,8 +353,8 @@ class ScpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         await refuse_if_scp_is_absent(
@@ -392,9 +392,9 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     async def _put_files_scp(
         self,
@@ -419,6 +419,6 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)

@@ -63,7 +63,7 @@ class TestLcovMergerStampGuard:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov --capture ...", retcode=0
+                status=Status.Success, value="", command="lcov --capture ...", retcode=0
             )
             with pytest.raises(CoverageDataMismatchError) as ei:
                 await merger.capture_dir(gcda_dir, tmp_path / "out.info")
@@ -85,7 +85,7 @@ class TestLcovMergerStampGuard:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov --capture ...", retcode=0
+                status=Status.Success, value="", command="lcov --capture ...", retcode=0
             )
             result = await merger.capture_dir(gcda_dir, tmp_path / "out.info")
             assert result == tmp_path / "out.info"
@@ -186,7 +186,7 @@ class TestLcovMergerFunctionChecksumGuard:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov --capture ...", retcode=0
+                status=Status.Success, value="", command="lcov --capture ...", retcode=0
             )
             result = await merger.capture_dir(gcda_dir, tmp_path / "out.info")
             assert result == tmp_path / "out.info"
@@ -230,7 +230,7 @@ class TestLcovMergerFunctionChecksumGuard:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov --capture ...", retcode=0
+                status=Status.Success, value="", command="lcov --capture ...", retcode=0
             )
             result = await merger.capture_dir(gcda_dir, tmp_path / "out.info")
             assert result == tmp_path / "out.info"
@@ -254,7 +254,7 @@ class TestLcovMergerToolchain:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov ...", retcode=0
+                status=Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture_dir(
                 tmp_path,
@@ -274,7 +274,7 @@ class TestLcovMergerToolchain:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov ...", retcode=0
+                status=Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture_dir(
                 tmp_path,
@@ -297,7 +297,7 @@ class TestLcovMergerToolchain:
 
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov ...", retcode=0
+                status=Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture_dir(
                 tmp_path,
@@ -322,7 +322,7 @@ class TestLcovMergerToolchain:
         tc = Toolchain(sysroot=Path("/"), gcov=Path("usr/bin/llvm-cov"))
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov ...", retcode=0
+                status=Status.Success, value="", command="lcov ...", retcode=0
             )
             with LcovMerger(localhost) as merger:
                 await merger.capture_dir(tmp_path, out, toolchain=tc)
@@ -344,7 +344,7 @@ async def test_a_system_temp_dir_lcov_cannot_run_puts_the_wrapper_under_tmp(tmp_
     tc = Toolchain(sysroot=Path("/"), gcov=Path("usr/bin/llvm-cov"))
     with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
         mock_exec.return_value = CommandResult(
-            Status.Success, value="", command="lcov ...", retcode=0
+            status=Status.Success, value="", command="lcov ...", retcode=0
         )
         with LcovMerger(localhost) as merger:
             await merger.capture_dir(tmp_path, tmp_path / "out.info", toolchain=tc)
@@ -389,7 +389,7 @@ class TestLcovMergerExtraArguments:
         directory, output = self._paired(tmp_path)
         with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = CommandResult(
-                Status.Success, value="", command="lcov ...", retcode=0
+                status=Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture_dir(directory, output, toolchain=toolchain)
             cmd = mock_exec.call_args[0][0]

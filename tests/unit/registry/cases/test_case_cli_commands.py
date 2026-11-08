@@ -28,4 +28,4 @@ def test_the_decorator_credits_the_decorating_module():
 
     decorate = cli_command(name="case-deco", lab_free=True)
     conformance.from_module("case_decorating.init", decorate, leaf)
-    assert CLI_COMMANDS.origin("case-deco") == "case_decorating.init"
+    assert CLI_COMMANDS.origin(name="case-deco") == "case_decorating.init"

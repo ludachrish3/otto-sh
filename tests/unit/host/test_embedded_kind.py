@@ -38,23 +38,25 @@ class _Board:
     async def load(self, file, name, **kw):
         self.calls.append(("load", file, name))
         if self.load_fails:
-            return Result(Status.Error, msg="Failed to load: return code -8")
-        return Result(Status.Success)
+            return Result(status=Status.Error, msg="Failed to load: return code -8")
+        return Result(status=Status.Success)
 
     async def unload(self, name, **kw):
         self.calls.append(("unload", name))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def exec(self, cmd, timeout=None):
         self.calls.append(("exec", cmd))
         if self.fn_fails and cmd.endswith(f" {self.fn_fails}"):
-            return CommandResult(Status.Error, value="undefined symbol", command=cmd, retcode=1)
+            return CommandResult(
+                status=Status.Error, value="undefined symbol", command=cmd, retcode=1
+            )
         if cmd == "llext list":
             status = Status.Error if self.list_fails else Status.Success
-            return CommandResult(status, value=self.list_output, command=cmd, retcode=0)
+            return CommandResult(status=status, value=self.list_output, command=cmd, retcode=0)
         if self.exec_result is not None:
             return self.exec_result
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
 
 def _entry(*, kind="embedded", **params):
@@ -242,14 +244,14 @@ _BOARD_NOT_LOADED = "No such extension cov_ext"
 
 def _answer(status: Status, value: str) -> CommandResult:
     return CommandResult(
-        status, value=value, command="", retcode=0 if status is Status.Success else 1
+        status=status, value=value, command="", retcode=0 if status is Status.Success else 1
     )
 
 
 @pytest.mark.asyncio
 async def test_reset_calls_the_reset_fn_through_the_hosts_loader():
     board = _Board(exec_result=_answer(Status.Success, _BOARD_CONFIRMED))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Success
     assert ("exec", "llext call_fn cov_ext cov_reset") in board.calls
 
@@ -258,7 +260,7 @@ async def test_reset_calls_the_reset_fn_through_the_hosts_loader():
 async def test_a_success_the_board_did_not_confirm_fails_naming_both_causes():
     """An unexported reset_fn: the shell's answer on both beds was an empty success."""
     board = _Board(exec_result=_answer(Status.Success, ""))
-    result = await _build(board, reset_fn="no_such_fn").reset_coverage(board)
+    result = await _build(board, reset_fn="no_such_fn").reset_coverage(host=board)
     assert result.status is Status.Error
     # Every consumer prefixes `<host>/<product>: ` itself; the reason never repeats the name.
     assert result.msg.startswith(
@@ -273,7 +275,7 @@ async def test_a_success_the_board_did_not_confirm_fails_naming_both_causes():
 @pytest.mark.asyncio
 async def test_an_unconfirmed_reset_quotes_what_the_board_did_print():
     board = _Board(exec_result=_answer(Status.Success, "retval: 0"))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Error
     assert result.msg.startswith(
         "reset_fn 'cov_reset' failed: the board did not confirm the reset "
@@ -284,7 +286,7 @@ async def test_an_unconfirmed_reset_quotes_what_the_board_did_print():
 @pytest.mark.asyncio
 async def test_the_confirmation_must_be_its_own_word():
     board = _Board(exec_result=_answer(Status.Success, "gcov_clear_counters"))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Error
 
 
@@ -292,7 +294,7 @@ async def test_the_confirmation_must_be_its_own_word():
 async def test_the_confirmation_must_be_its_own_line():
     """A reset_fn named ``gcov_clear``: the echoed call must not confirm itself."""
     board = _Board(exec_result=_answer(Status.Success, "llext call_fn cov_ext gcov_clear\n"))
-    result = await _build(board, reset_fn="gcov_clear").reset_coverage(board)
+    result = await _build(board, reset_fn="gcov_clear").reset_coverage(host=board)
     assert result.status is Status.Error
     assert "did not confirm the reset" in result.msg
 
@@ -300,7 +302,7 @@ async def test_the_confirmation_must_be_its_own_line():
 @pytest.mark.asyncio
 async def test_the_confirmation_line_may_carry_surrounding_whitespace():
     board = _Board(exec_result=_answer(Status.Success, "  gcov_clear\r\nretval: 0\r\n"))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Success
 
 
@@ -309,7 +311,7 @@ async def test_the_confirmation_line_may_carry_surrounding_whitespace():
 async def test_an_extension_that_is_not_loaded_has_nothing_to_clear(status):
     """The board's not-loaded line is a successful no-op, whatever status the frame gave it."""
     board = _Board(exec_result=_answer(status, _BOARD_NOT_LOADED))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Success
     assert result.msg == "not loaded, so there are no counters to clear"
 
@@ -317,16 +319,18 @@ async def test_an_extension_that_is_not_loaded_has_nothing_to_clear(status):
 @pytest.mark.asyncio
 async def test_another_extensions_absence_is_still_a_failure():
     board = _Board(exec_result=_answer(Status.Error, "No such extension cov_ext_two"))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Error
 
 
 @pytest.mark.asyncio
 async def test_a_failed_reset_names_the_fix():
     board = _Board(
-        exec_result=CommandResult(Status.Error, value="symbol not found", command="", retcode=1)
+        exec_result=CommandResult(
+            status=Status.Error, value="symbol not found", command="", retcode=1
+        )
     )
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Error
     assert result.msg.startswith("reset_fn 'cov_reset' failed: symbol not found. An extension")
     assert "void cov_reset(void) { __gcov_clear(); }" in result.msg
@@ -336,7 +340,7 @@ async def test_a_failed_reset_names_the_fix():
 @pytest.mark.asyncio
 async def test_a_failed_reset_with_no_output_says_the_board_printed_nothing(status):
     board = _Board(exec_result=_answer(status, ""))
-    result = await _build(board).reset_coverage(board)
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.Error
     assert result.msg.startswith(
         "reset_fn 'cov_reset' failed and the board printed nothing. An extension"
@@ -345,6 +349,6 @@ async def test_a_failed_reset_with_no_output_says_the_board_printed_nothing(stat
 
 @pytest.mark.asyncio
 async def test_a_declined_reset_is_returned_as_declined():
-    board = _Board(exec_result=CommandResult(Status.NotRun, value="", command="", retcode=0))
-    result = await _build(board).reset_coverage(board)
+    board = _Board(exec_result=CommandResult(status=Status.NotRun, value="", command="", retcode=0))
+    result = await _build(board).reset_coverage(host=board)
     assert result.status is Status.NotRun

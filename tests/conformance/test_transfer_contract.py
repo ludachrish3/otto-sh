@@ -851,7 +851,7 @@ async def test_control_the_batch_that_comes_back_is_the_batch_that_was_sent(
                 finally:
                     in_flight -= 1
 
-            return await original(src_files, _probe, concurrent=concurrent)
+            return await original(src_files, transfer_one=_probe, concurrent=concurrent)
 
         backend.dispatch_per_file = _counting_dispatch
         count = limit + 3

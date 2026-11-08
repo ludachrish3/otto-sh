@@ -237,7 +237,7 @@ async def test_proxied_default_session(leased_host: tuple[str, str]) -> None:
     """A host whose first cred is ``mysql`` must land its default session on mysql."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(name=element)
     )
     try:
         result = (await host.run("whoami")).only
@@ -257,13 +257,13 @@ async def test_switch_user_roundtrip(leased_host: tuple[str, str]) -> None:
     """``as_user('mysql')`` switches in, runs as mysql, and restores vagrant on exit."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element), element=Element(element)
+        _mysql_host_dict(ip, element), element=Element(name=element)
     )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
-        async with host.as_user("mysql"):
+        async with host.as_user(user="mysql"):
             during = (await host.run("whoami")).only.value
             assert during == "mysql"
 
@@ -283,7 +283,7 @@ async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
     """``exec`` on a proxied-user host must route through the proxied pool session."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(name=element)
     )
     try:
         result = await host.exec("whoami")
@@ -303,7 +303,7 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
     """A file ``put`` via ``nc`` to a proxied-user host must land owned by that user."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, login="mysql", transfer="nc"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql", transfer="nc"), element=Element(name=element)
     )
 
     remote_dir = f"/tmp/otto_lp_{uuid.uuid4().hex}"
@@ -463,13 +463,13 @@ async def test_builtin_su_proxy_switch_user_does_not_hang(leased_host: tuple[str
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _builtin_su_host_dict(ip, element), element=Element(element)
+        _builtin_su_host_dict(ip, element), element=Element(name=element)
     )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
-        async with host.as_user("test"):
+        async with host.as_user(user="test"):
             during = (await host.run("whoami")).only.value
             assert during == "test"
             # Nothing was dropped by the switch: a second command right after it.
@@ -520,13 +520,13 @@ async def test_builtin_su_proxy_does_not_stall_when_root_is_not_challenged(
     element, ip = leased_host
     host = create_host_from_dict(
         _builtin_su_host_dict(ip, element, creds=[dict(c) for c in _UNPROMPTED_CREDS]),
-        element=Element(element),
+        element=Element(name=element),
     )
     try:
         assert (await host.run("whoami")).only.value == "vagrant"
 
         started = time.monotonic()
-        async with host.as_user("test"):
+        async with host.as_user(user="test"):
             elapsed = time.monotonic() - started
             assert elapsed < 20.0, (
                 f"the switch took {elapsed:.1f}s: a configured password stalled on a "

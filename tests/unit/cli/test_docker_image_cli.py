@@ -32,7 +32,7 @@ _LS = "REPOSITORY   TAG       IMAGE ID       CREATED   SIZE\n"
 
 def _out(host: str, text: str, *, ok: bool = True, reached: bool = True) -> HostOutput:
     status = Status.Success if ok else Status.Failed
-    result = CommandResult(status, value=text, command="docker x", retcode=0 if ok else 1)
+    result = CommandResult(status=status, value=text, command="docker x", retcode=0 if ok else 1)
     return HostOutput(host, "docker x", result, reached=reached)
 
 
@@ -139,7 +139,7 @@ def _lab() -> Lab:
         lab.add_host(
             UnixHost(
                 ip=ip,
-                element=Element(host_id),
+                element=Element(name=host_id),
                 creds=[Cred(login="u", password="p")],
                 docker_capable=True,
             )
@@ -154,7 +154,9 @@ def _run(argv, *, dry_run: bool):
 
     async def _exec(self, cmd, *_a, **_kw):
         commands.append(f"{self.id}: {cmd}")
-        return CommandResult(Status.Success, value=f"done on {self.id}\n", command=cmd, retcode=0)
+        return CommandResult(
+            status=Status.Success, value=f"done on {self.id}\n", command=cmd, retcode=0
+        )
 
     with (
         patch.object(fleet_mod, "get_lab", return_value=lab),

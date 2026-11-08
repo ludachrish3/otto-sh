@@ -80,7 +80,7 @@ def user_settings_path() -> Path:
     return otto_home() / "settings.toml"
 
 
-def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None":
+def load_user_settings(*, path: "Path | None" = None) -> "UserSettingsModel | None":
     """Parse the user settings file; ``None`` when it is absent.
 
     *path* defaults to :func:`user_settings_path`, so ordinary callers ask for

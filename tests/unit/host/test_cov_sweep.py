@@ -50,7 +50,7 @@ class _ScriptedHost:
 
 def _answer(value: str, retcode: int = 0) -> CommandResult:
     status = Status.Success if retcode == 0 else Status.Error
-    return CommandResult(status, value=value, command="probe", retcode=retcode)
+    return CommandResult(status=status, value=value, command="probe", retcode=retcode)
 
 
 # ── the presence probe (§3) ──────────────────────────────────────────────────
@@ -328,7 +328,7 @@ class _BrokenRemovalHost(ShellHost):
     async def run(self, cmd, *, sudo=False, **kwargs):
         if self._group == "elevated" and "otto-cov-remove" in cmd:
             self.calls.append(("run", cmd))
-            return Results.collect([self._answer])
+            return Results.collect(items=[self._answer])
         return await super().run(cmd, sudo=sudo, **kwargs)
 
 
@@ -337,15 +337,15 @@ class _BrokenRemovalHost(ShellHost):
     "answer",
     [
         pytest.param(
-            CommandResult(Status.Error, value="", command="x", retcode=-1, timed_out=True),
+            CommandResult(status=Status.Error, value="", command="x", retcode=-1, timed_out=True),
             id="timed-out",
         ),
         pytest.param(
-            CommandResult(Status.Error, value="", command="x", retcode=-1), id="never-ran"
+            CommandResult(status=Status.Error, value="", command="x", retcode=-1), id="never-ran"
         ),
         pytest.param(
             CommandResult(
-                Status.Success,
+                status=Status.Success,
                 value="\notto-cov-remove\notto-cov-begin 0\n",
                 command="x",
                 retcode=0,
@@ -379,7 +379,7 @@ class _KeptHost(ShellHost):
     async def exec(self, cmd, **kwargs):
         if "otto-cov-remove" in cmd:
             self.calls.append(("exec", cmd))
-            return CommandResult(Status.Error, value="", command=cmd, retcode=-1)
+            return CommandResult(status=Status.Error, value="", command=cmd, retcode=-1)
         return await super().exec(cmd, **kwargs)
 
 
@@ -399,7 +399,7 @@ class _ProbeFailsAfterRemoval(ShellHost):
     async def exec(self, cmd, **kwargs):
         if "otto-cov-probe" in cmd:
             self.calls.append(("exec", cmd))
-            return CommandResult(Status.Success, value="garbage", command=cmd, retcode=0)
+            return CommandResult(status=Status.Success, value="garbage", command=cmd, retcode=0)
         return await super().exec(cmd, **kwargs)
 
 
@@ -787,7 +787,7 @@ def test_the_reset_check_and_the_sweeps_files_section_answer_alike(retcode, line
     body = "".join(f"{line}\n" for line in lines)
     status = Status.Success if retcode == 0 else Status.Failed
     check = CommandResult(
-        status, value=f"\notto-gcda-check\n{body}", command="find", retcode=retcode
+        status=status, value=f"\notto-gcda-check\n{body}", command="find", retcode=retcode
     )
     reset = classify_gcda_check(_D, check)
     absent = retcode != 0 and len(lines) == 1 and "No such file" in lines[0]

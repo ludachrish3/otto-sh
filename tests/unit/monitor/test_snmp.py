@@ -39,7 +39,7 @@ def clean_registry():
         yield
     finally:
         for oid in set(snmp.SNMP_METRICS.names()) - before:
-            snmp.SNMP_METRICS.unregister(oid)
+            snmp.SNMP_METRICS.unregister(name=oid)
 
 
 # ---------------------------------------------------------------------------
@@ -50,15 +50,15 @@ def clean_registry():
 class TestSnmpMetric:
     def test_scale_applied(self):
         m = SnmpMetric(oid="1.2.3", label="CPU", chart="CPU", unit="%", scale=0.01)
-        assert m.to_point(4250).value == 42.5
+        assert m.to_point(raw=4250).value == 42.5
 
     def test_unit_scale_is_identity(self):
         m = SnmpMetric(oid="1.2.3", label="Heap", chart="Memory", unit="B")
-        assert m.to_point(8192).value == 8192.0
+        assert m.to_point(raw=8192).value == 8192.0
 
     def test_rounds_to_two_places(self):
         m = SnmpMetric(oid="1.2.3", label="X", chart="X", scale=1 / 3)
-        assert m.to_point(1).value == 0.33
+        assert m.to_point(raw=1).value == 0.33
 
 
 # ---------------------------------------------------------------------------

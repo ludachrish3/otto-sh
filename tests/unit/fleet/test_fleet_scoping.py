@@ -192,8 +192,8 @@ def test_pattern_is_fullmatch_not_search(tmp_path, scoped_context):
     ctx = scoped_context(lab, [_project(tmp_path, "r1")])
 
     with pytest.raises(EmptySelectionError):
-        list(ctx.all_hosts(re.compile("h")))
-    assert sorted(h.id for h in ctx.all_hosts(re.compile("h.*"))) == ["h1", "h2"]
+        list(ctx.all_hosts(pattern=re.compile("h")))
+    assert sorted(h.id for h in ctx.all_hosts(pattern=re.compile("h.*"))) == ["h1", "h2"]
 
 
 def test_pattern_selects_within_the_universe_never_beyond_it(tmp_path, scoped_context):
@@ -206,7 +206,7 @@ def test_pattern_selects_within_the_universe_never_beyond_it(tmp_path, scoped_co
     project = _project(tmp_path, "r1", labs=["a"], hosts=["h1"])
     ctx = scoped_context(lab, [project])
 
-    assert [h.id for h in ctx.all_hosts(re.compile("h.*"))] == ["h1"]
+    assert [h.id for h in ctx.all_hosts(pattern=re.compile("h.*"))] == ["h1"]
 
 
 def test_zero_match_error_names_pattern_and_hint(tmp_path, scoped_context):
@@ -215,7 +215,7 @@ def test_zero_match_error_names_pattern_and_hint(tmp_path, scoped_context):
     ctx = scoped_context(lab, [_project(tmp_path, "r1")])
 
     with pytest.raises(EmptySelectionError, match=r"h\b.*\.\*") as excinfo:
-        list(ctx.all_hosts(re.compile("h")))
+        list(ctx.all_hosts(pattern=re.compile("h")))
     message = str(excinfo.value)
     assert "'h'" in message
     assert "'h.*'" in message  # the actionable hint, not just the word "wildcard"
@@ -249,7 +249,7 @@ def test_a_pattern_over_an_empty_lab_does_not_blame_the_pattern(scoped_context):
     """
     ctx = scoped_context(Lab(name="empty"), [])
 
-    assert list(ctx.all_hosts(re.compile(".*"))) == []
+    assert list(ctx.all_hosts(pattern=re.compile(".*"))) == []
 
 
 # ── §10 row 5: an empty effective fleet is loud ───────────────────────────────
@@ -695,7 +695,7 @@ def test_require_nonempty_false_still_refuses_an_unknown_owner(tmp_path, scoped_
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
 
     with pytest.raises(ProjectScopeError, match="typo"):
-        ctx.admissible_ids("typo", require_nonempty=False)
+        ctx.admissible_ids(owner="typo", require_nonempty=False)
 
 
 # ── deliberately unscoped surfaces (§6) ───────────────────────────────────────
@@ -889,7 +889,7 @@ async def test_view_walk_supplies_owner_to_host_verbs(tmp_path, scoped_context):
     lab = _lab(("h1", "a"), ("h2", "a"))
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[".*"])])
 
-    assert sorted(await _verb_saw(ctx.for_project("r1"))) == [("h1", "r1"), ("h2", "r1")]
+    assert sorted(await _verb_saw(ctx.for_project(name="r1"))) == [("h1", "r1"), ("h2", "r1")]
 
 
 @pytest.mark.asyncio
@@ -907,7 +907,7 @@ async def test_view_walk_is_universe_bounded(tmp_path, scoped_context):
     ]
     ctx = scoped_context(lab, projects)
 
-    assert [host_id for host_id, _ in await _verb_saw(ctx.for_project("r1"))] == ["h1"]
+    assert [host_id for host_id, _ in await _verb_saw(ctx.for_project(name="r1"))] == ["h1"]
 
 
 @pytest.mark.asyncio
@@ -926,7 +926,7 @@ async def test_view_all_hosts_is_universe_bounded_too(tmp_path, scoped_context):
     ]
     ctx = scoped_context(lab, projects)
 
-    assert [host.id for host in ctx.for_project("r1").all_hosts()] == ["h1"]
+    assert [host.id for host in ctx.for_project(name="r1").all_hosts()] == ["h1"]
 
 
 @pytest.mark.asyncio
@@ -952,7 +952,7 @@ async def test_view_run_on_all_hosts_is_universe_bounded(tmp_path, scoped_contex
 
     monkeypatch.setattr(type(lab.hosts["h1"]), "run", _run)
 
-    assert sorted(await ctx.for_project("r1").run_on_all_hosts("uname -a")) == ["h1"]
+    assert sorted(await ctx.for_project(name="r1").run_on_all_hosts("uname -a")) == ["h1"]
     assert ran == ["h1"]
 
 
@@ -971,7 +971,7 @@ async def test_with_owner_false_dispatches_an_ownerless_verb(tmp_path, scoped_co
     async def _ownerless(host):  # the shape of a host verb that takes no owner
         return f"swept:{host.id}"
 
-    results = await ctx.for_project("r1").do_for_all_hosts(_ownerless, with_owner=False)
+    results = await ctx.for_project(name="r1").do_for_all_hosts(_ownerless, with_owner=False)
     assert results == {"h1": "swept:h1"}
 
 
@@ -1003,13 +1003,13 @@ async def test_a_mismatched_owner_through_the_view_refuses(tmp_path, scoped_cont
         contacted.append(host.id)
 
     with pytest.raises(ProjectScopeError) as excinfo:
-        await ctx.for_project("r1").do_for_all_hosts(_verb, owner="r2")
+        await ctx.for_project(name="r1").do_for_all_hosts(_verb, owner="r2")
     message = str(excinfo.value)
     assert "'r1'" in message  # the view's project
     assert "'r2'" in message  # and the one that was asked for
     assert contacted == []  # refused BEFORE the walk — no host was reached
 
-    assert await _verb_saw(ctx.for_project("r1"), owner="r1") == [("h1", "r1")]
+    assert await _verb_saw(ctx.for_project(name="r1"), owner="r1") == [("h1", "r1")]
 
 
 @pytest.mark.asyncio
@@ -1040,7 +1040,7 @@ def test_view_get_host_stays_unscoped(tmp_path, scoped_context):
     lab = _lab(("h1", "a"), ("h2", "a"))
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
 
-    assert ctx.for_project("r1").get_host("h2") is lab.hosts["h2"]
+    assert ctx.for_project(name="r1").get_host("h2") is lab.hosts["h2"]
 
 
 # ── a project's own containers join its walk (#676) ───────────────────────────
@@ -1076,7 +1076,7 @@ async def test_a_project_walk_includes_the_containers_it_owns_something_on(
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
     _containers_with_attachments(lab)
 
-    view = ctx.for_project("r1")
+    view = ctx.for_project(name="r1")
     assert sorted(h.id for h in view.all_hosts()) == ["h1", "h1.r1.api", "h1.r1.tools"]
     assert sorted(host_id for host_id, _ in await _verb_saw(view)) == [
         "h1",
@@ -1104,7 +1104,7 @@ async def test_include_containers_on_a_project_walk_still_means_every_container(
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
     _containers_with_attachments(lab)
 
-    ids = sorted(h.id for h in ctx.for_project("r1").all_hosts(include_containers=True))
+    ids = sorted(h.id for h in ctx.for_project(name="r1").all_hosts(include_containers=True))
     assert ids == ["h1", "h1.r1.api", "h1.r1.cache", "h1.r1.db", "h1.r1.tools"]
 
 
@@ -1118,5 +1118,5 @@ async def test_a_pattern_naming_an_owned_container_selects_it(tmp_path, scoped_c
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
     _containers_with_attachments(lab)
 
-    ids = [h.id for h in ctx.for_project("r1").all_hosts(re.compile(r"h1\.r1\.api"))]
+    ids = [h.id for h in ctx.for_project(name="r1").all_hosts(pattern=re.compile(r"h1\.r1\.api"))]
     assert ids == ["h1.r1.api"]

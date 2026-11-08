@@ -33,7 +33,7 @@ def test_overwrite_replaces_the_verb_list():
 
 def test_a_raw_entry_under_the_wrong_key_is_refused():
     with pytest.raises(OptionsRegistrationError, match="key"):
-        OPTIONS.register("wrong:Key", OptionsEntry(target=Opts, verbs=("run",)))
+        OPTIONS.register(name="wrong:Key", entry=OptionsEntry(target=Opts, verbs=("run",)))
 
 
 def test_the_project_comes_from_the_engine():
@@ -41,13 +41,15 @@ def test_the_project_comes_from_the_engine():
 
     with registering_project("acme"):
         register_options(Opts, verbs=["run"])
-    assert OPTIONS.project(f"{__name__}:Opts") == "acme"
+    assert OPTIONS.project(name=f"{__name__}:Opts") == "acme"
     assert verb_option_classes("run")[-1].project == "acme"
 
 
 def test_a_raw_entry_with_an_unknown_verb_is_refused():
     with pytest.raises(OptionsRegistrationError, match="unknown verb 'deploy'"):
-        OPTIONS.register(f"{__name__}:Opts", OptionsEntry(target=Opts, verbs=("deploy",)))
+        OPTIONS.register(
+            name=f"{__name__}:Opts", entry=OptionsEntry(target=Opts, verbs=("deploy",))
+        )
     assert f"{__name__}:Opts" not in OPTIONS
 
 
@@ -56,7 +58,7 @@ def test_the_direct_decorator_call_credits_the_calling_module():
         flag: bool = False
 
     built = from_module("case_direct.init", options, Direct, verbs=["run"])
-    assert OPTIONS.origin(f"{__name__}:{built.__qualname__}") == "case_direct.init"
+    assert OPTIONS.origin(name=f"{__name__}:{built.__qualname__}") == "case_direct.init"
 
 
 def _declare(verbs: list, **kwargs: object) -> type:
@@ -73,6 +75,6 @@ def test_the_decorator_passes_overwrite_through():
     key = f"{__name__}:{built.__qualname__}"
     with pytest.raises(DuplicateRegistration):
         _declare(["test"])
-    assert OPTIONS.peek(key).verbs == ("run",)
+    assert OPTIONS.peek(name=key).verbs == ("run",)
     _declare(["test"], overwrite=True)
-    assert OPTIONS.peek(key).verbs == ("test",)
+    assert OPTIONS.peek(name=key).verbs == ("test",)

@@ -50,7 +50,7 @@ def test_cli_exposed_accepts_explicit_name_and_help():
 
 class _Sample:
     @cli_exposed
-    async def reboot(self, hard: bool = False): ...
+    async def reboot(self, *, hard: bool = False): ...
     @cli_exposed(name="pwr")
     async def power(self, state: str): ...
     async def not_exposed(self): ...
@@ -68,7 +68,7 @@ def test_collect_finds_only_exposed_methods():
 
 def test_make_method_command_signature_has_real_params():
     @cli_exposed
-    async def reboot(self, hard: bool = False) -> tuple: ...
+    async def reboot(self, *, hard: bool = False) -> tuple: ...
 
     cmd = make_method_command("reboot", reboot)
     params = inspect.signature(cmd).parameters
@@ -85,9 +85,9 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
         id = "h1"
         close = AsyncMock()
 
-        async def reboot(self, hard: bool = False):
+        async def reboot(self, *, hard: bool = False):
             seen["hard"] = hard
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
     host = _Host()
 
@@ -96,7 +96,7 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
         meta: ClassVar[dict] = {}  # real typer.Context always carries .meta
 
     @cli_exposed
-    async def reboot(self, hard: bool = False): ...
+    async def reboot(self, *, hard: bool = False): ...
 
     cmd = make_method_command("reboot", reboot)
     await cmd(_Ctx(), hard=True)
@@ -124,8 +124,8 @@ def test_make_method_command_failure_result_exits_nonzero(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def reboot(self, hard: bool = False):
-            return Result(Status.Failed, msg="did not come back")
+        async def reboot(self, *, hard: bool = False):
+            return Result(status=Status.Failed, msg="did not come back")
 
         async def close(self):
             close_calls.append(None)
@@ -210,15 +210,11 @@ def test_positional_scalar_arg_routes_correctly():
 
 def test_variadic_then_scalar_routes_correctly():
     """Variadic list arg followed by a no-default scalar routes positionals correctly."""
-    from collections.abc import Sequence
-    from typing import Annotated
-
-    from otto.utils import Arg
 
     @cli_exposed
     async def transfer(
         self,
-        sources: Annotated[str | Sequence[str], Arg(variadic=True, elem_type=str)],
+        sources: str | list[str],
         dest: str,
     ) -> tuple: ...
 
@@ -406,7 +402,7 @@ def test_logout_renders_its_returned_outcome_once(monkeypatch):
 
         @cli_exposed(output_dir=False)
         async def logout(self) -> Result:
-            return Result(Status.Success, value="h1: console s:1 already at login prompt")
+            return Result(status=Status.Success, value="h1: console s:1 already at login prompt")
 
         async def close(self) -> None:
             pass
@@ -456,7 +452,7 @@ def test_login_user_flag_dispatches_end_to_end(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def login(self, user: str | None = None) -> None:
+        async def login(self, *, user: str | None = None) -> None:
             captured["user"] = user
 
         async def close(self) -> None:
@@ -636,7 +632,7 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
         # returns a plain value. This is intentional fallback-path coverage,
         # not a stale pre-unification shape.
         @cli_exposed
-        async def reboot(self, hard: bool = False) -> tuple[Status, str]:
+        async def reboot(self, *, hard: bool = False) -> tuple[Status, str]:
             reboot_calls.append(hard)
             return (Status.Success, "ok")
 
@@ -817,7 +813,7 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def ls(self, path: "Annotated[str, Arg()]" = ".", all: bool = False):  # noqa: A002 — CLI-exposed param name, maps to --all flag
+        async def ls(self, path: "Annotated[str, Arg()]" = ".", *, all: bool = False):  # noqa: A002 — CLI-exposed param name, maps to --all flag
             captured["ls"] = (path, all)
             return ["x"]
 
@@ -920,7 +916,7 @@ def test_class_command_builds_parser_from_the_given_class():
 
     class HostY:
         @cli_exposed
-        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None: ...
+        async def frob(self, *, target: Annotated[str | None, Opt()] = None) -> None: ...
 
     g = HostGroup(name="host")
     cmd_x = g._class_command(HostX, "frob", "frob")
@@ -956,7 +952,7 @@ def test_get_command_uses_resolved_class_parser(monkeypatch):
 
     class HostY:
         @cli_exposed
-        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None: ...
+        async def frob(self, *, target: Annotated[str | None, Opt()] = None) -> None: ...
 
     g = HostGroup(name="host")
     monkeypatch.setattr(g, "_class_for", lambda ctx: HostY)
@@ -971,8 +967,8 @@ def test_get_command_uses_resolved_class_parser(monkeypatch):
 
 
 def test_embedded_and_unix_load_have_per_class_signatures():
-    """Same verb name, divergent signatures: embedded `load` requires a
-    positional `name`; unix `load` exposes it as the `--name` option."""
+    """Same verb name, divergent signatures: both take `name` as `--name`
+    (keyword-only); embedded requires it, unix defaults it to the file stem."""
     from otto.cli.expose import HostGroup
     from otto.host.embedded_host import ZephyrHost
     from otto.host.unix_host import UnixHost
@@ -980,8 +976,9 @@ def test_embedded_and_unix_load_have_per_class_signatures():
     g = HostGroup(name="host")
     emb = {p.name: p for p in g._class_command(ZephyrHost, "load", "load").params}
     unix = {p.name: p for p in g._class_command(UnixHost, "load", "load").params}
-    assert emb["name"].param_type_name == "argument"  # embedded: required positional
+    assert emb["name"].param_type_name == "option"  # embedded: required --name
     assert emb["name"].required is True
+    assert unix["name"].required is False
     assert unix["name"].param_type_name == "option"  # unix: --name
     assert unix["params"].param_type_name == "option"  # unix: --params "k=v ..."
     assert unix["params"].required is False
@@ -1057,7 +1054,9 @@ def test_opt_name_rename_dispatches_end_to_end(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def frob(self, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"):
+        async def frob(
+            self, *, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"
+        ):
             captured["dest_dir"] = dest_dir
 
         async def close(self):
@@ -1112,14 +1111,12 @@ def test_cli_mode_755_is_octal_not_decimal():
     result = CliRunner().invoke(app, ["--mode", "755"])
     assert result.exit_code == 0, result.output
     assert captured["raw"] == "755"  # a STRING leaves the CLI...
-    assert parse_file_mode(captured["raw"]).value == 0o755  # ...read base-8
-    assert parse_file_mode(captured["raw"]).value != 755  # ...never decimal
+    assert parse_file_mode(value=captured["raw"]).value == 0o755  # ...read base-8
+    assert parse_file_mode(value=captured["raw"]).value != 755  # ...never decimal
 
 
 def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message(monkeypatch):
     """`--mode 789` must fail the command, not transfer with a default mode."""
-    from collections.abc import Sequence
-
     close_calls: list[None] = []
 
     class _Host:
@@ -1128,14 +1125,17 @@ def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message(monkeypatch):
         @cli_exposed
         async def put(
             self,
-            src_files: Annotated[str | Sequence[str], Arg(variadic=True, elem_type=str)],
+            src_files: str | list[str],
             dest_dir: str,
+            *,
             mode: str | None = None,
         ):
             from otto.host.transfer.base import aggregate_transfer, parse_file_mode
 
-            check = parse_file_mode(mode)
-            return aggregate_transfer({f: Result(check.status, msg=check.msg) for f in src_files})
+            check = parse_file_mode(value=mode)
+            return aggregate_transfer(
+                per_file={f: Result(status=check.status, msg=check.msg) for f in src_files}
+            )
 
         async def close(self):
             close_calls.append(None)
@@ -1195,6 +1195,7 @@ def test_run_accepts_infinite_timeout(monkeypatch):
         async def run(
             self,
             cmds: str,
+            *,
             timeout: Annotated[float, Opt(help="Timeout.", min=0.0)] = DEFAULT_COMMAND_TIMEOUT,
         ) -> None:
             captured["timeout"] = timeout

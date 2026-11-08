@@ -116,7 +116,7 @@ async def make_host():
                 "creds": [dict(c) for c in _CREDS],
             }
             data.update(overrides)
-            host = create_host_from_dict(data, element=Element(element))
+            host = create_host_from_dict(data, element=Element(name=element))
             # close() is idempotent, so tests that also use `async with host:`
             # are free to close early — this just guarantees it happens.
             stack.push_async_callback(host.close)
@@ -571,7 +571,7 @@ async def test_suppression_survives_a_login_proxy_hop(leased_host, make_host):
 
     async with host:
         assert await _shells_histfile(host) == "HISTFILE=[/dev/null]"
-        async with host.as_user("root"):
+        async with host.as_user(user="root"):
             assert await _shells_histfile(host) == "HISTFILE=[/dev/null]", (
                 f"{element}: HISTFILE reset when su'ing to root — the resync "
                 f"probe did not carry the suppression payload"
@@ -601,7 +601,7 @@ async def test_root_history_untouched_across_elevation(leased_host, make_host):
     # ends root's shell with `exit`. That is bash's always-saving path, so a
     # broken suppression is certain to show in root's digest. Only the login
     # shell underneath is then hung up, and it does not own root's file.
-    async with host, host.as_user("root"):
+    async with host, host.as_user(user="root"):
         assert (await host.run(f"echo {marker}")).only.status is Status.Success
         # Root's shell is the one that would write /root/.bash_history, so it
         # is that shell's exit we must wait on, not the unprivileged one's.

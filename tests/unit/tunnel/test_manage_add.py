@@ -177,7 +177,7 @@ def _ps_line(
     tunnel: Tunnel, direction: Direction, role: Role, hop_index: int, carrier: int, pid: int
 ) -> str:
     token = encode_sentinel(
-        tunnel, direction=direction, role=role, hop_index=hop_index, carrier_port=carrier
+        tunnel=tunnel, direction=direction, role=role, hop_index=hop_index, carrier_port=carrier
     )
     return f"  {pid} 00:10 {token} socat TCP4-LISTEN:{carrier},fork ..."
 
@@ -207,7 +207,7 @@ def _full_ps(
 def _extract_sentinel(cmd: str) -> ParsedSentinel:
     match = _SENTINEL_RE.search(cmd)
     assert match, f"no sentinel token found in launch command: {cmd!r}"
-    parsed = parse_sentinel(match.group(0))
+    parsed = parse_sentinel(token=match.group(0))
     assert parsed is not None, f"sentinel token failed to parse: {match.group(0)!r}"
     return parsed
 
@@ -234,7 +234,7 @@ class TestAddDirectPair:
         a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
         b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert isinstance(added, AddedTunnel)
         assert added.tunnel.id == tunnel.id
@@ -267,7 +267,9 @@ class TestProtocolCase:
         a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
         b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, protocol="UDP"))
+        added = asyncio.run(
+            add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080, protocol="UDP")
+        )
 
         assert added.tunnel.id == tunnel.id
         assert added.tunnel.protocol == "udp"
@@ -287,7 +289,9 @@ class TestAddThreeHop:
         for host_id, host in (("a", a), ("b", b), ("c", c)):
             host.ps_texts = ["", _full_ps(tunnel, host_id, carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None), ("c", None)], port=8080))
+        added = asyncio.run(
+            add_tunnel(lab, hosts=[("a", None), ("b", None), ("c", None)], port=8080)
+        )
 
         assert added.tunnel.id == tunnel.id
         launches = _launches(calls)
@@ -307,7 +311,9 @@ class TestRejectedBeforeLaunch:
     def test_unsupported_protocol_rejected(self) -> None:
         lab, calls, _tunnel = _pair()
         with pytest.raises(ValueError, match="carrier 'socat' does not support protocol 'icmp'"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, protocol="icmp"))
+            asyncio.run(
+                add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080, protocol="icmp")
+            )
         assert calls == []
 
     def test_conflict_id_rejected_before_launch(self) -> None:
@@ -318,7 +324,7 @@ class TestRejectedBeforeLaunch:
         b.ps_texts = [""]
 
         with pytest.raises(ValueError, match="already exists"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert all("command -v socat" not in cmd for _h, cmd in calls)
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
@@ -331,7 +337,9 @@ class TestRejectedBeforeLaunch:
         lab, calls, _tunnel = _pair()
 
         with pytest.raises(ValueError, match="--dest") as exc_info:
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, dest=("a", None)))
+            asyncio.run(
+                add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080, dest=("a", None))
+            )
 
         message = str(exc_info.value)
         assert "path" in message
@@ -349,7 +357,7 @@ class TestPortProbe:
         a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
         b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert added.carrier_fwd == _LO + 2
         assert added.carrier_rev == _LO + 3
@@ -362,7 +370,7 @@ class TestPortProbe:
         a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
         b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert added.carrier_fwd == carrier_fwd
         assert added.carrier_rev == carrier_rev
@@ -372,7 +380,7 @@ class TestPortProbe:
         lab.hosts["b"].probe_timeout = True
 
         with pytest.raises(HostUnreachableError, match="host 'b' timed out probing"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
         assert all(not cmd.startswith("kill ") for _h, cmd in calls)
@@ -405,7 +413,7 @@ class TestCarrierPortRandomness:
         # for carrier_rev) proves carrier_fwd's own exclusion still works.
         monkeypatch.setattr(manage, "_carrier_rng", _PickRNG(pick=far_fwd))
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert added.carrier_fwd == far_fwd
         assert added.carrier_rev == _LO
@@ -423,7 +431,7 @@ class TestCarrierPortRandomness:
         a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
         b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=61050))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=61050))
 
         assert added.carrier_fwd == carrier_fwd  # 61000, 61001 and 61050 (--port) excluded
         assert added.carrier_rev == carrier_rev  # carrier_fwd (61002) excluded too
@@ -445,7 +453,7 @@ class TestRequireTools:
         lab.hosts["b"].tools_ok = False
 
         with pytest.raises(HostCommandError, match="host 'b' is missing socat"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert all(cmd != FREE_PORT_PROBE_COMMAND for _h, cmd in calls)
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
@@ -475,7 +483,7 @@ class TestRollback:
         ]
 
         with pytest.raises(HostCommandError, match="host 'a' failed to launch"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert not any(cmd.startswith("kill ") for cmd in a.commands)
         assert any(cmd.startswith("kill ") for cmd in b.commands)
@@ -485,7 +493,9 @@ class TestRollback:
         lab, calls, _tunnel = _pair()
 
         with pytest.raises(ValueError, match="idle timeout"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, idle_timeout=bad))
+            asyncio.run(
+                add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080, idle_timeout=bad)
+            )
 
         assert calls == []
         assert all(not h.commands for h in lab.hosts.values())
@@ -513,7 +523,7 @@ class TestRollback:
         b.ps_texts = ["", incomplete]
 
         with pytest.raises(HostCommandError, match=r"not running: .*b/rev/ingress") as exc_info:
-            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert "b/rev/ingress" in str(exc_info.value)
         assert len(verify_calls) == 2  # initial + exactly one retry, then gives up
@@ -548,7 +558,7 @@ class TestRollback:
         )
 
         with pytest.raises(HostCommandError) as exc_info:
-            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         message = str(exc_info.value)
         assert "b/fwd/egress" in message
@@ -576,7 +586,7 @@ class TestRollback:
 
         with pytest.raises(HostCommandError) as exc_info:
             asyncio.run(
-                manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080, protocol="udp")
+                manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080, protocol="udp")
             )
 
         message = str(exc_info.value)
@@ -601,7 +611,7 @@ class TestRollback:
         b.socket_dump = "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n"
 
         with pytest.raises(HostCommandError) as exc_info:
-            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
         assert "port is free" in str(exc_info.value)
 
     def test_verify_failure_stays_raisable_when_diagnosis_is_unobtainable(
@@ -621,7 +631,7 @@ class TestRollback:
         b.socket_dump = ""  # host said nothing
 
         with pytest.raises(HostCommandError) as exc_info:
-            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
         message = str(exc_info.value)
         assert "b/fwd/egress" in message, "the original failure survives intact"
         assert "port is free" not in message
@@ -647,7 +657,7 @@ class TestRollback:
         complete = _full_ps(tunnel, "b", carrier_fwd, carrier_rev)
         b.ps_texts = ["", incomplete, complete]
 
-        added = asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(manage.add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert added.tunnel.id == tunnel.id
         assert len(verify_calls) == 2
@@ -669,7 +679,7 @@ class TestRollback:
         a.ps_texts = ["", ""]
 
         with pytest.raises(HostUnreachableError, match="host 'b' timed out spawning"):
-            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+            asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         launch_idx = next(i for i, (_h, cmd) in enumerate(calls) if cmd.startswith(_LAUNCH_PREFIX))
         scan_idx = next(
@@ -716,7 +726,7 @@ class TestRollback:
         _gate(a)
         _gate(b)
 
-        task = asyncio.ensure_future(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        task = asyncio.ensure_future(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
         await launch_started.wait()
         task.cancel()  # 1st cancel: tears the parked launch, triggers rollback
         await rollback_scanning.wait()
@@ -919,8 +929,8 @@ class TestRacingAdds:
         chain = [("a", None), ("b", None)]
 
         results = await asyncio.gather(
-            add_tunnel(lab, chain, port=15999, protocol="udp"),
-            add_tunnel(lab, chain, port=15999, protocol="udp"),
+            add_tunnel(lab, hosts=chain, port=15999, protocol="udp"),
+            add_tunnel(lab, hosts=chain, port=15999, protocol="udp"),
             return_exceptions=True,
         )
         winners = [r for r in results if isinstance(r, AddedTunnel)]
@@ -934,12 +944,14 @@ class TestCarrierSelection:
     def test_unknown_carrier_is_a_rich_error_before_any_host_io(self) -> None:
         with pytest.raises(ValueError, match="Unknown carrier 'wireguard'"):
             asyncio.run(
-                add_tunnel(_lab(), [("a", None), ("b", None)], port=8080, carrier="wireguard")
+                add_tunnel(_lab(), hosts=[("a", None), ("b", None)], port=8080, carrier="wireguard")
             )
 
     def test_protocol_unsupported_by_carrier_names_the_carrier(self) -> None:
         with pytest.raises(ValueError, match="carrier 'socat' does not support protocol 'sctp'"):
-            asyncio.run(add_tunnel(_lab(), [("a", None), ("b", None)], port=8080, protocol="sctp"))
+            asyncio.run(
+                add_tunnel(_lab(), hosts=[("a", None), ("b", None)], port=8080, protocol="sctp")
+            )
 
 
 # ── --dry-run: the preview, and what it refuses to claim ─────────────────────
@@ -957,7 +969,7 @@ class TestAddDryRunPlansInsteadOfAccusing:
 
     def _dry_add(self, lab, specs, **kw):
         with active_context(dry_run=True):
-            return asyncio.run(add_tunnel(lab, specs, **kw))
+            return asyncio.run(add_tunnel(lab, hosts=specs, **kw))
 
     def test_it_previews_every_argv_and_launches_nothing(self) -> None:
         lab, calls, tunnel = _pair()
@@ -1008,7 +1020,7 @@ class TestAddDryRunPlansInsteadOfAccusing:
         a.ps_texts = ["", _full_ps(tunnel, "a", _LO, _LO + 1)]
         b.ps_texts = ["", _full_ps(tunnel, "b", _LO, _LO + 1)]
 
-        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        added = asyncio.run(add_tunnel(lab, hosts=[("a", None), ("b", None)], port=8080))
 
         assert added.plan is None
         assert {added.carrier_fwd, added.carrier_rev} == {_LO, _LO + 1}
@@ -1079,7 +1091,9 @@ class TestAddDryRunWithAContainerEndpoint:
         lab, parent, ctr, other = self._lab()
         with active_context(dry_run=True):
             added = asyncio.run(
-                add_tunnel(lab, [(other.id, None), (parent.id, None), (ctr.id, None)], port=8080)
+                add_tunnel(
+                    lab, hosts=[(other.id, None), (parent.id, None), (ctr.id, None)], port=8080
+                )
             )
         assert ctr.parent.calls == []
         would = "\n".join(added.plan.would)
@@ -1093,7 +1107,9 @@ class TestAddDryRunWithAContainerEndpoint:
         """Positive control: the missing argv is the CONTAINER's doing, not the mode's."""
         lab, parent, _ctr, other = self._lab()
         with active_context(dry_run=True):
-            added = asyncio.run(add_tunnel(lab, [(other.id, None), (parent.id, None)], port=8080))
+            added = asyncio.run(
+                add_tunnel(lab, hosts=[(other.id, None), (parent.id, None)], port=8080)
+            )
         assert "socat" in "\n".join(added.plan.would)
 
 

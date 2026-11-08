@@ -188,8 +188,8 @@ class _Scope:
         try:
             await impair_link(
                 self.live.lab,
-                link.id,
-                params,
+                ident=link.id,
+                params=params,
                 from_host=origin,
                 expire=LIVE_EXPIRE_S,
                 selector=selector,
@@ -215,7 +215,7 @@ class _Scope:
                 f"repair_link {link.id}" + (f" {selector.describe()}" if selector else "")
             )
             try:
-                await repair_link(self.live.lab, link.id, selector=selector)
+                await repair_link(self.live.lab, ident=link.id, selector=selector)
             except (ValueError, LinkCommandFailedError) as e:
                 self.live.halted = self.live.halted or f"repair failed: {e}"
 
@@ -243,8 +243,8 @@ def _same(expected: DirectionState, got: DirectionState | None) -> bool:
     if (got.whole is None) != (expected.whole is None):
         return False
     if got.whole is not None and expected.whole is not None:
-        return equivalent(got.whole, expected.whole)
-    return all(equivalent(got.scoped[s], p) for s, p in expected.scoped.items())
+        return equivalent(a=got.whole, b=expected.whole)
+    return all(equivalent(a=got.scoped[s], b=p) for s, p in expected.scoped.items())
 
 
 def _shapes(by_direction: dict[FlowDirection, DirectionState | None]) -> str:

@@ -87,8 +87,8 @@ def test_standalone_instructions_wrapper_case():
 def test_the_decorator_credits_the_decorating_module():
     decorate = instruction(name="__c-deco")
     conformance.from_module("case_decorating.init", decorate, _HANDLERS[2])
-    assert STANDALONE_INSTRUCTIONS.origin("__c-deco") == "case_decorating.init"
-    assert INSTRUCTIONS.origin("__c-deco") == "case_decorating.init"
+    assert STANDALONE_INSTRUCTIONS.origin(name="__c-deco") == "case_decorating.init"
+    assert INSTRUCTIONS.origin(name="__c-deco") == "case_decorating.init"
 
 
 def test_project_actions_raw_case():
@@ -122,7 +122,7 @@ def _first_party(i: int) -> ProjectActionsEntry:
 def test_first_party_actions_raw_case():
     """The one-row table, emptied first: the case registers its own row under ``"otto"``."""
     state = FIRST_PARTY_ACTIONS._snapshot()
-    FIRST_PARTY_ACTIONS.unregister("otto")
+    FIRST_PARTY_ACTIONS.unregister(name="otto")
     try:
         conformance.assert_raw_registry(
             FIRST_PARTY_ACTIONS,
@@ -156,11 +156,11 @@ def test_project_actions_refuse_a_registration_outside_a_project():
 
 def test_the_instructions_view_case():
     def contribute(name: str) -> None:
-        STANDALONE_INSTRUCTIONS.register(name, _standalone(name, 4))
+        STANDALONE_INSTRUCTIONS.register(name=name, entry=_standalone(name, 4))
 
     def clash() -> None:
         with registering_project(_PROJECT):
-            STANDALONE_INSTRUCTIONS.register("install", _standalone("install", 5))
+            STANDALONE_INSTRUCTIONS.register(name="install", entry=_standalone("install", 5))
 
     conformance.assert_view(
         INSTRUCTIONS,

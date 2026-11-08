@@ -353,7 +353,7 @@ async def _remove_leftover_tunnels(
         if tunnel_id in young:
             done.notes[tunnel_id] = f"its tunnel {tunnel_id} was left: a younger echo names it"
             continue
-        removed = await remove_tunnel(lab, tunnel_id)
+        removed = await remove_tunnel(lab, tunnel_id=tunnel_id)
         lost = [host for host in removed.unreachable if host in path]
         done.notes[tunnel_id] = _removal_note(tunnel_id, removed, lost)
         if removed.survivors or lost:
@@ -496,7 +496,7 @@ async def _build(run: _Run, protocol: str, tunnel_id: str, state: _ColumnState) 
     try:
         added = await add_tunnel(
             run.lab,
-            run.specs,
+            hosts=run.specs,
             port=run.scratch,
             protocol=protocol,
             dest=full.spec if full is not None else None,
@@ -579,7 +579,7 @@ async def _teardown(run: _Run, tunnel_id: str, state: _ColumnState) -> _Teardown
     if state.add_attempted:
         path = {r.hop.host for r in run.resolved}
         try:
-            removed = await remove_tunnel(run.lab, tunnel_id)
+            removed = await remove_tunnel(run.lab, tunnel_id=tunnel_id)
         except (OSError, ValueError, RuntimeError) as e:
             problems.append(f"removing tunnel {tunnel_id} failed: {e}")
             leaked = True
@@ -657,7 +657,9 @@ async def _column(run: _Run, protocol: str) -> TunnelCheckColumn:
             [run.first.host, run.last.host], protocol, run.port
         )
     }
-    tunnel_id = make_tunnel_id(tuple(r.hop for r in run.resolved), protocol, run.scratch)
+    tunnel_id = make_tunnel_id(
+        path=tuple(r.hop for r in run.resolved), protocol=protocol, service_port=run.scratch
+    )
     skipped: str | None = None
     state = _ColumnState()
     try:
@@ -692,9 +694,9 @@ def _proven(columns: list[TunnelCheckColumn], dest: _Dest | None) -> str:
 
 
 async def check_tunnel(
+    *,
     lab: "Lab",
     hosts: list[EndpointSpec],
-    *,
     port: int,
     protocol: str = "both",
     dest: EndpointSpec | None = None,

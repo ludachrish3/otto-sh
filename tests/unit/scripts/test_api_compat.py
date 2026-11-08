@@ -6,8 +6,9 @@ import itertools
 import pytest
 
 from scripts import api_compat, api_records
-from scripts.api_manifest import Format, Symbol
+from scripts.api_manifest import Format, Symbol, load_symbols
 from tests._fixtures.api_dump import dump_of, run_child_json, write_tree
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -909,6 +910,51 @@ def test_implementer_true_in_either_manifest_counts(tmp_path):
     assert union == frozenset({"otto:C.hook"})
     assert api_compat.compare_dumps(old, new, implementer=union) == [
         "otto:C.hook: new parameter y on an implementer-facing member"
+    ]
+
+
+_PRODUCT_BINDINGS = [
+    "otto.host.product:Product",
+    "otto.host.product:ShellProduct",
+    "otto.host:Product",
+    "otto.host:ShellProduct",
+    "otto.host:DeclaredProduct",
+]
+_DEFAULT_BODY_HOOKS = [
+    "get_logs",
+    "get_debug_logs",
+    "instrumented",
+    "prepare_coverage",
+    "reset_coverage",
+]
+
+
+@pytest.mark.parametrize("hook", _DEFAULT_BODY_HOOKS)
+def test_a_documented_default_body_product_hook_is_implementer_facing(tmp_path, hook):
+    """A hook the docs tell users to override is judged as one at every public path.
+
+    Default-body hooks have no ``abstract`` record, so only ``implementer = true``
+    in api/public.toml makes an added keyword on them a finding (spec §6.3).
+    """
+    syms = load_symbols(CHECKOUT_ROOT / "api" / "public.toml")
+    for binding in _PRODUCT_BINDINGS:
+        key = f"{binding}.{hook}"
+        assert key in syms, key
+        assert syms[key].implementer, key
+    real = syms[f"otto.host:Product.{hook}"]
+    params = ", host" if real.positional else ""
+    old = _dump(
+        tmp_path / "a", f"class Product:\n    def {hook}(self{params}): pass\n", ["Product"]
+    )
+    new = _dump(
+        tmp_path / "b",
+        f"class Product:\n    def {hook}(self{params}, *, extra=0): pass\n",
+        ["Product"],
+    )
+    manifest = {f"otto:Product.{hook}": _sym(f"otto:Product.{hook}", implementer=real.implementer)}
+    members = api_compat.implementer_members(old, manifest)
+    assert api_compat.compare_dumps(old, new, implementer=members) == [
+        f"otto:Product.{hook}: new parameter extra on an implementer-facing member"
     ]
 
 

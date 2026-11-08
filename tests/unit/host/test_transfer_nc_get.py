@@ -395,7 +395,7 @@ class TestGetFilesNcNonTunnel:
         with patch.object(
             NcFileTransfer,
             "_get_files_nc_tunneled",
-            new=AsyncMock(return_value={src_remote: Result(Status.Success, value=dst_dir)}),
+            new=AsyncMock(return_value={src_remote: Result(status=Status.Success, value=dst_dir)}),
         ) as mock_tunneled:
             status, msg = _only(await ft._get_files_nc([src_remote], dst_dir), src_remote)
 
@@ -1480,7 +1480,7 @@ class TestTheTunneledGetIsSizeTerminated:
         userland = Userland(UserlandOptions(shell_dialect="ash", applet_nc="present"), _unreachable)
         await userland.resolve()
         assert userland.shell_dialect == "ash", "the premise never held"
-        assert userland.has_applet("nc") == "present", "the premise never held"
+        assert userland.has_applet(applet="nc") == "present", "the premise never held"
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if cmd.startswith("stat"):
@@ -1940,7 +1940,7 @@ class TestNcGetStallSemantics:
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
 
-        async def parked_forward(port: int) -> int:
+        async def parked_forward(*, dest_port: int) -> int:
             await asyncio.Event().wait()
             raise AssertionError("unreachable")  # pragma: no cover
 

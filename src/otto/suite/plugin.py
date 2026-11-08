@@ -1300,7 +1300,7 @@ class OttoPlugin:
         # would escape a session-scoped fixture as an errored-fixture traceback
         # once per test. RunOptions already refused a malformed regex.
         try:
-            hosts = select_monitor_hosts(self._monitor_hosts)
+            hosts = select_monitor_hosts(pattern=self._monitor_hosts)
         except EmptySelectionError as exc:
             pytest.exit(
                 f"--monitor-hosts: {exc.cli_message()}", returncode=pytest.ExitCode.USAGE_ERROR
@@ -1311,7 +1311,7 @@ class OttoPlugin:
         output = self._monitor_output
         to_db = output is not None and output.suffix.lower() == ".db"
         session = MonitorSession.build(
-            hosts,
+            hosts=hosts,
             interval=self._monitor_interval,
             db_path=output if to_db else None,
             export_path=None if to_db else output,

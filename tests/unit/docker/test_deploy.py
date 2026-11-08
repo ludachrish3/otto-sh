@@ -61,11 +61,11 @@ _COMPOSE_YAML = "services:\n  api:\n    image: alpine\n"
 
 
 def _ok(out: str = "", command: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command=command, retcode=0)
+    return CommandResult(status=Status.Success, value=out, command=command, retcode=0)
 
 
 def _fail(out: str = "boom", command: str = "") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command=command, retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command=command, retcode=1)
 
 
 def _compose_file(
@@ -116,7 +116,7 @@ ROOT = staging_root("vagrant")
 def _host(host_id: str, ip: str) -> UnixHost:
     return UnixHost(
         ip=ip,
-        element=Element(host_id),
+        element=Element(name=host_id),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -143,7 +143,7 @@ def _wire(host: UnixHost, *, already_up: bool = False, cid: str = "cid1") -> Uni
 
     async def _put(paths, dest, mode=None):
         staged.extend((Path(p).name, str(dest), Path(p).read_text()) for p in paths)
-        return Result(Status.Success, value={})
+        return Result(status=Status.Success, value={})
 
     host.exec = AsyncMock(side_effect=_exec)  # type: ignore[method-assign]
     host.put = AsyncMock(side_effect=_put)  # type: ignore[method-assign]
@@ -874,7 +874,7 @@ async def test_build_runs_once_per_project_in_dependency_order(tmp_path):
     lab = _lab(host)
     built: list[str] = []
 
-    async def _build(project, _parent, **_kw):
+    async def _build(*, project, parent=None, **_kw):
         built.append(project.name)
         return {}
 
@@ -1773,7 +1773,7 @@ async def test_builds_skip_a_project_whose_services_were_all_narrowed_away(tmp_p
     lab = _lab(host)
     built: list[str] = []
 
-    async def _build(project, _parent, **_kw):
+    async def _build(*, project, parent=None, **_kw):
         built.append(project.name)
         return {}
 

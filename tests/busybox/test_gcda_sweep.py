@@ -99,7 +99,7 @@ def _check(release, applets: Path, cov_dir: str):
     """Run the reset's check under *release* and classify it as otto does."""
     done = run_in_busybox_sh(release, applets, gcda_check_cmd(cov_dir))
     status = Status.Success if done.returncode == 0 else Status.Failed
-    cmd = CommandResult(status, value=done.stdout, command="find", retcode=done.returncode)
+    cmd = CommandResult(status=status, value=done.stdout, command="find", retcode=done.returncode)
     return classify_gcda_check(cov_dir, cmd)
 
 

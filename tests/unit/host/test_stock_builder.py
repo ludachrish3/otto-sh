@@ -52,7 +52,8 @@ def test_a_bad_converted_input_is_refused_at_validation_not_in_the_conversion(ba
     register_host_class("t-gadget", GadgetHost, spec=GadgetSpec)
     with pytest.raises(ValidationError, match="buffer_bytes"):
         host_context(
-            {"ip": "10.0.0.1", "os_type": "t-gadget", "buffer_bytes": bad}, element=Element("lab")
+            {"ip": "10.0.0.1", "os_type": "t-gadget", "buffer_bytes": bad},
+            element=Element(name="lab"),
         )
 
 
@@ -85,7 +86,7 @@ def test_omit_for_a_required_parameter_is_a_validation_error_naming_the_field():
 
 
 def test_build_kwargs_consumes_the_record():
-    hc = host_context({"ip": "10.0.0.1"}, element=Element("lab"))
+    hc = host_context({"ip": "10.0.0.1"}, element=Element(name="lab"))
     ready = hc.spec.validate_in(hc.context)
     hc.spec.build_kwargs(ready)
     with pytest.raises(HostValidationError, match="record already consumed"):
@@ -96,10 +97,10 @@ def test_a_credless_unix_entry_builds_with_the_constructor_s_default():
     assert build_host({"ip": "10.0.0.1"}).creds == []
 
 
-def test_unixhost_takes_creds_positionally_but_no_longer_requires_them():
-    assert UnixHost("10.0.0.1", element=Element("lab")).creds == []
+def test_unixhost_no_longer_requires_creds():
+    assert UnixHost(ip="10.0.0.1", element=Element(name="lab")).creds == []
     cred = Cred(login="u", password="p")
-    assert UnixHost("10.0.0.1", [cred], element=Element("lab")).creds == [cred]
+    assert UnixHost(ip="10.0.0.1", creds=[cred], element=Element(name="lab")).creds == [cred]
 
 
 class _OverrideSpec(UnixHostSpec):
@@ -111,9 +112,11 @@ def test_an_override_through_build_kwargs_keeps_its_data_profile_prompts():
     """The factory's own constructing_with scope covers an override that skips the stock to_host."""
     register_host_class("t-override", UnixHost, spec=_OverrideSpec)
     alpha = OsProfile("alpha", "t-override", ProfileFields(login_prompt="alpha-login: "))
-    data = ProfileContext(profiles=FrozenMap({"alpha": alpha}), owners=FrozenMap({"alpha": "r"}))
+    data = ProfileContext(
+        profiles=FrozenMap(mapping={"alpha": alpha}), owners=FrozenMap(mapping={"alpha": "r"})
+    )
     host = create_host_from_dict(
-        {"ip": "10.0.0.1", "os_type": "alpha"}, element=Element("lab"), profiles=data
+        {"ip": "10.0.0.1", "os_type": "alpha"}, element=Element(name="lab"), profiles=data
     )
     assert host._profile_fields is not None
     assert host._profile_fields.login_prompt == "alpha-login: "

@@ -27,7 +27,7 @@ from otto.host.session import SessionMarkers
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-M = SessionMarkers.for_session("abcd1234")
+M = SessionMarkers.for_session(session_id="abcd1234")
 
 # Always present wherever otto's own suite runs; a missing one is a broken
 # runner and fails.
@@ -53,7 +53,7 @@ def _run(argv: "list[str]", frame: BashFrame, *cmds: str) -> "list[tuple[str, in
     """Type each framed command into one shell; return each one's (output, exit code)."""
     if shutil.which(argv[0]) is None:
         pytest.fail(f"{argv[0]} is not installed on this machine")
-    script = "".join(frame.frame(c, M) for c in cmds)
+    script = "".join(frame.frame(c, m=M) for c in cmds)
     done = subprocess.run(
         argv,
         input=script,
@@ -70,7 +70,7 @@ def _run(argv: "list[str]", frame: BashFrame, *cmds: str) -> "list[tuple[str, in
         end = frame.end_pattern(M).search(out)
         assert end is not None, f"no END marker in:\n{out}"
         chunk, out = out[: end.end()], out[end.end() :]
-        results.append((frame.parse_output(chunk, "", M), frame.extract_retcode(chunk, M)))
+        results.append((frame.parse_output(chunk, cmd="", m=M), frame.extract_retcode(chunk, m=M)))
     return results
 
 

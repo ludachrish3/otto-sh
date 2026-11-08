@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from .base import TransferProgressFactory, TransferProgressHandler
 
 
-def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferProgressHandler":
+def make_rich_progress_handler(*, progress: Progress, host_name: str) -> "TransferProgressHandler":
     """Return a ``TransferProgressHandler`` that drives the given Rich Progress bar.
 
     One task is created per source file, detected by a change in *src_path*.
@@ -64,7 +64,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
     return handler
 
 
-def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferProgressFactory":
+def make_rich_progress_factory(*, progress: Progress, host_name: str) -> "TransferProgressFactory":
     """Return a factory that creates a fresh ``TransferProgressHandler`` per file.
 
     Each call to the returned factory produces an independent handler with its
@@ -80,7 +80,7 @@ def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferP
     """
 
     def factory() -> "TransferProgressHandler":
-        return make_rich_progress_handler(progress, host_name)
+        return make_rich_progress_handler(progress=progress, host_name=host_name)
 
     return factory
 

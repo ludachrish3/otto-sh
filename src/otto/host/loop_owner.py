@@ -48,6 +48,7 @@ class HostLoopError(OttoError, RuntimeError):
     def __init__(
         self,
         host_id: str,
+        *,
         owner: asyncio.AbstractEventLoop,
         caller: asyncio.AbstractEventLoop,
     ) -> None:

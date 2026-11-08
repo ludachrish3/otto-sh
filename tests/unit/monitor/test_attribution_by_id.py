@@ -10,13 +10,13 @@ from otto.host.unix_host import UnixHost
 def _host(**over):
     base = {
         "ip": "10.0.0.1",
-        "element": Element("server"),
+        "element": Element(name="server"),
         "name": "Friendly Label",
         "creds": [Cred(login="user", password="pass")],
     }
     base.update(over)
     if isinstance(base.get("element"), str):
-        base["element"] = Element(base["element"])
+        base["element"] = Element(name=base["element"])
     return UnixHost(**base)
 
 

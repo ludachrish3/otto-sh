@@ -1243,8 +1243,8 @@ class ShellFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: "TransferProgressFactory | None",
         *,
+        progress_factory: "TransferProgressFactory | None",
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         """One-at-a-time shell PUT: pick a codec or refuse, then chunk-and-mv one file at a time.
@@ -1302,15 +1302,17 @@ class ShellFileTransfer(UnixFileTransfer):
                 src, dest_dir / src.name, codec, checksum, stat_size, handler
             )
 
-        return await self.dispatch_per_file(src_files, _put_file, concurrent=concurrent)
+        return await self.dispatch_per_file(
+            src_files, transfer_one=_put_file, concurrent=concurrent
+        )
 
     @override
     async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: "TransferProgressFactory | None",
         *,
+        progress_factory: "TransferProgressFactory | None",
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         """One-at-a-time shell GET: size it, pick a codec, then decode one file at a time.
@@ -1369,7 +1371,9 @@ class ShellFileTransfer(UnixFileTransfer):
                 src, dest_dir / src.name, codec, stat_size, checksum, handler
             )
 
-        return await self.dispatch_per_file(src_files, _get_file, concurrent=concurrent)
+        return await self.dispatch_per_file(
+            src_files, transfer_one=_get_file, concurrent=concurrent
+        )
 
     def _select_codec(self, direction: str, applet: str) -> ShellCodec:
         """Choose the codec this host can actually run, or refuse before anything is sent.
@@ -1421,7 +1425,7 @@ class ShellFileTransfer(UnixFileTransfer):
         flag = self._userland.base64_flag
         if flag != "absent":
             return Base64Codec(flag)
-        if not self._userland.is_settled("base64_flag"):
+        if not self._userland.is_settled(name="base64_flag"):
             raise UnsupportedOnUserlandError(
                 f"{self._name}: shell {direction} needs a codec on the remote host, and "
                 "this host's userland could not be asked which it has -- base64_flag is "
@@ -1431,8 +1435,8 @@ class ShellFileTransfer(UnixFileTransfer):
                 "base64_flag / applet_uudecode in this host's userland_options."
             )
         if (
-            self._userland.is_settled(applet_capability(applet))
-            and self._userland.has_applet(applet) == APPLET_ABSENT
+            self._userland.is_settled(name=applet_capability(applet))
+            and self._userland.has_applet(applet=applet) == APPLET_ABSENT
         ):
             raise UnsupportedOnUserlandError(
                 f"{self._name}: shell {direction} needs either base64 or {applet} on the "
@@ -1577,14 +1581,14 @@ class ShellFileTransfer(UnixFileTransfer):
             )
             if outcome.error is not None:
                 await self._cleanup_temp(quoted_temp)
-                return Result(Status.Error, msg=f"{src}: {outcome.error}")
+                return Result(status=Status.Error, msg=f"{src}: {outcome.error}")
 
             if outcome.chunks == 0:
                 create_result = await self._exec_cmd(f": > {quoted_temp}")
                 if not create_result.is_ok:
                     await self._cleanup_temp(quoted_temp)
                     return Result(
-                        Status.Error,
+                        status=Status.Error,
                         msg=(
                             f"{src}: creating empty temp {temp} failed "
                             f"(exit {create_result.retcode}): "
@@ -1603,13 +1607,15 @@ class ShellFileTransfer(UnixFileTransfer):
             )
             if mismatch is not None:
                 await self._cleanup_temp(quoted_temp)
-                return Result(Status.Error, msg=f"{src}: integrity check failed -- {mismatch}")
+                return Result(
+                    status=Status.Error, msg=f"{src}: integrity check failed -- {mismatch}"
+                )
 
             mv_result = await self._exec_cmd(f"mv -- {quoted_temp} {path_operand(dst)}")
             if not mv_result.is_ok:
                 await self._cleanup_temp(quoted_temp)
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=(
                         f"{src}: moving {temp} to {dst} failed "
                         f"(exit {mv_result.retcode}): {mv_result.value or mv_result.msg}"
@@ -1620,8 +1626,8 @@ class ShellFileTransfer(UnixFileTransfer):
             raise
         except OSError as e:
             await self._cleanup_temp(quoted_temp)
-            return Result(Status.Error, msg=f"{src}: could not read local file: {e}")
-        return Result(Status.Success, value=dst)
+            return Result(status=Status.Error, msg=f"{src}: could not read local file: {e}")
+        return Result(status=Status.Success, value=dst)
 
     async def _cleanup_temp(self, quoted_temp: str) -> None:
         """Best-effort removal of a staged temp after a failed chunk/create/mv step.
@@ -1836,7 +1842,7 @@ class ShellFileTransfer(UnixFileTransfer):
             total = await self._remote_size(src, stat_size)
             if total is None:
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=f"{src}: could not determine the remote file's size (stat/wc probe "
                     "failed or returned unparseable output)",
                 )
@@ -1885,7 +1891,7 @@ class ShellFileTransfer(UnixFileTransfer):
                     f.close()
             if outcome.error is not None:
                 self._cleanup_local_temp(temp)
-                return Result(Status.Error, msg=f"{src}: {outcome.error}")
+                return Result(status=Status.Error, msg=f"{src}: {outcome.error}")
             if outcome.chunks == 0 and handler is not None:
                 handler(str(src), str(dst), 0, 0)
 
@@ -1899,7 +1905,9 @@ class ShellFileTransfer(UnixFileTransfer):
             )
             if mismatch is not None:
                 self._cleanup_local_temp(temp)
-                return Result(Status.Error, msg=f"{src}: integrity check failed -- {mismatch}")
+                return Result(
+                    status=Status.Error, msg=f"{src}: integrity check failed -- {mismatch}"
+                )
 
             temp.replace(dst)
         except asyncio.CancelledError:
@@ -1907,8 +1915,8 @@ class ShellFileTransfer(UnixFileTransfer):
             raise
         except OSError as e:
             self._cleanup_local_temp(temp)
-            return Result(Status.Error, msg=f"{src}: local write failed: {e}")
-        return Result(Status.Success, value=dst)
+            return Result(status=Status.Error, msg=f"{src}: local write failed: {e}")
+        return Result(status=Status.Success, value=dst)
 
     async def _verify_integrity(
         self,

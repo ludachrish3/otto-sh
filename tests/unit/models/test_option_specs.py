@@ -56,7 +56,9 @@ def test_local_port_forward_from_dict_and_positional():
     fwd = LocalPortForward(
         listen_host="127.0.0.1", listen_port=8080, dest_host="10.0.0.1", dest_port=80
     )
-    assert fwd == LocalPortForward("127.0.0.1", 8080, "10.0.0.1", 80)
+    assert fwd == LocalPortForward(
+        listen_host="127.0.0.1", listen_port=8080, dest_host="10.0.0.1", dest_port=80
+    )
 
 
 def test_remote_port_forward_from_dict_and_positional():

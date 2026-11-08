@@ -384,8 +384,8 @@ def _selector_from_band(slots: dict[_Slot, set[PortPrefix]], tiers: set[int]) ->
         return None
     try:
         selector = Selector(
-            span.start,
-            protos.pop() if len(protos) == 1 else None,
+            port=span.start,
+            proto=protos.pop() if len(protos) == 1 else None,
             end=span.stop - 1,
             side=sides.pop() if len(sides) == 1 else None,
         )
@@ -408,7 +408,9 @@ def parse_scoped_outputs(qdisc_output: str, filter_output: str) -> ScopedState:
         return ScopedState.clean()
     if root[1] == "netem":
         params = parse_qdisc_show(qdisc_output)
-        return ScopedState.whole_link(params) if params is not None else ScopedState.foreign()
+        return (
+            ScopedState.whole_link(params=params) if params is not None else ScopedState.foreign()
+        )
     if not _is_our_prio_root(root):
         return ScopedState.foreign()
     leaves = _parse_band_leaves(qdisc_output)
@@ -443,7 +445,7 @@ def parse_scoped_outputs(qdisc_output: str, filter_output: str) -> ScopedState:
         ):
             return ScopedState.foreign()
         selectors[selector] = (band, leaves[band])
-    return ScopedState.from_selectors(selectors)
+    return ScopedState.from_selectors(selectors=selectors)
 
 
 def _dev(netdev: str) -> str:
@@ -466,7 +468,7 @@ class NetEmImpairer(LinkImpairer):
     supports_selectors: ClassVar[bool] = True
 
     @override
-    def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+    def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
         """Idempotent ``tc qdisc replace`` command applying *params* to *netdev*."""
         return f"tc qdisc replace {_dev(netdev)} root netem {netem_args(params)}"
 
@@ -486,7 +488,7 @@ class NetEmImpairer(LinkImpairer):
         return parse_qdisc_show(output)
 
     @override
-    def scoped_root_command(self, netdev: str) -> str:
+    def scoped_root_command(self, *, netdev: str) -> str:
         """Idempotent 11-band prio root; bands 1-3 keep kernel-default semantics."""
         return (
             f"tc qdisc replace {_dev(netdev)} root handle 1: "
@@ -494,7 +496,7 @@ class NetEmImpairer(LinkImpairer):
         )
 
     @override
-    def scoped_band_command(self, netdev: str, band: int, params: ImpairmentParams) -> str:
+    def scoped_band_command(self, *, netdev: str, band: int, params: ImpairmentParams) -> str:
         """Idempotent netem leaf for *band*. classid/handle minors are HEX."""
         return (
             f"tc qdisc replace {_dev(netdev)} parent 1:{band:x} "
@@ -502,7 +504,7 @@ class NetEmImpairer(LinkImpairer):
         )
 
     @override
-    def scoped_filter_commands(self, netdev: str, band: int, selector: Selector) -> list[str]:
+    def scoped_filter_commands(self, *, netdev: str, band: int, selector: Selector) -> list[str]:
         """u32 entries steering *selector* into *band*: one per port prefix per slot.
 
         Every entry of a slot shares that slot's single pref, so one
@@ -520,7 +522,7 @@ class NetEmImpairer(LinkImpairer):
 
     @override
     def scoped_clear_selector_commands(
-        self, netdev: str, band: int, selector: Selector
+        self, *, netdev: str, band: int, selector: Selector
     ) -> list[str]:
         """Delete *selector*'s slots (one ``tc filter del`` per pref) then its band's leaf."""
         cmds = [
@@ -532,7 +534,7 @@ class NetEmImpairer(LinkImpairer):
         return cmds
 
     @override
-    def scoped_read_commands(self, netdev: str) -> list[str]:
+    def scoped_read_commands(self, *, netdev: str) -> list[str]:
         """Qdisc + filter reads for :meth:`parse_scoped`.
 
         The filter read is guarded (``2>/dev/null || true``) belt-and-braces:
@@ -550,6 +552,6 @@ class NetEmImpairer(LinkImpairer):
         ]
 
     @override
-    def parse_scoped(self, qdisc_output: str, filter_output: str) -> ScopedState:
+    def parse_scoped(self, *, qdisc_output: str, filter_output: str) -> ScopedState:
         """Parse :meth:`scoped_read_commands` outputs via :func:`parse_scoped_outputs`."""
         return parse_scoped_outputs(qdisc_output, filter_output)

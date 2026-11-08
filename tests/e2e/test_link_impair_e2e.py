@@ -299,7 +299,7 @@ async def impair_lab():
             yield lab
         finally:
             with contextlib.suppress(Exception):
-                await repair_all(lab)
+                await repair_all(lab=lab)
             for rule in _FORWARD_RULES:
                 with contextlib.suppress(Exception):
                     await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
@@ -401,7 +401,7 @@ async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
     test1 = impair_lab.hosts[_TEST1]
     baseline = await _avg_rtt_ms(test1, _TEST3_VLAN100_IP)
 
-    report = await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=100.0))
+    report = await impair_link(impair_lab, ident="edge", params=ImpairmentParams(delay_ms=100.0))
     try:
         placements = {(p.placement.host_id, p.placement.netdev) for p in report.applied}
         assert placements == {(_TEST1, _VLAN100_DEV), (_TEST3, _VLAN100_DEV)}, (
@@ -428,7 +428,7 @@ async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
             f"expected b->a whole-link state 100ms delay, got {b_to_a!r}"
         )
     finally:
-        await repair_link(impair_lab, "edge")
+        await repair_link(impair_lab, ident="edge")
 
     healed = await _avg_rtt_ms(test1, _TEST3_VLAN100_IP)
     assert abs(healed - baseline) <= _RTT_RESTORE_TOLERANCE_MS, (
@@ -450,7 +450,9 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
     test1 = impair_lab.hosts[_TEST1]
     baseline = await _avg_rtt_ms(test1, _TEST2_VLAN_IP)
 
-    report = await impair_link(impair_lab, "dataplane", ImpairmentParams(delay_ms=100.0))
+    report = await impair_link(
+        impair_lab, ident="dataplane", params=ImpairmentParams(delay_ms=100.0)
+    )
     try:
         assert all(p.placement.host_id == _TEST3 for p in report.applied), (
             f"in-path placements must all land on test3, got "
@@ -477,7 +479,7 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
             f"test1's {_VLAN100_DEV} must stay pure in in-path mode, got: {purity.value!r}"
         )
     finally:
-        await repair_link(impair_lab, "dataplane")
+        await repair_link(impair_lab, ident="dataplane")
 
     healed = await _avg_rtt_ms(test1, _TEST2_VLAN_IP)
     assert abs(healed - baseline) <= _RTT_RESTORE_TOLERANCE_MS, (
@@ -496,7 +498,9 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
     """An ``expire``d impairment clears itself off the kernel (a->b direction)
     within the timer window, and its tagged timer process is gone with it."""
     test1 = impair_lab.hosts[_TEST1]
-    await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=100.0), expire=_EXPIRE_SECONDS)
+    await impair_link(
+        impair_lab, ident="edge", params=ImpairmentParams(delay_ms=100.0), expire=_EXPIRE_SECONDS
+    )
     try:
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
@@ -530,7 +534,7 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
         timers = [t for t in parse_impair_ps(ps_result.value) if t.link_id == "edge"]
         assert not timers, f"expire timer for 'edge' still running on test1: {timers!r}"
     finally:
-        await repair_link(impair_lab, "edge")
+        await repair_link(impair_lab, ident="edge")
 
 
 # ---------------------------------------------------------------------------
@@ -562,12 +566,17 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
     # Sub-ms delay: establishes a base for the merge to layer onto, AND is
     # the live tolerance proof -- this impair's own post-apply verify reads
     # the tick-quantized value back and must accept it via equivalent().
-    await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=0.7), from_host=_TEST1)
+    await impair_link(
+        impair_lab, ident="edge", params=ImpairmentParams(delay_ms=0.7), from_host=_TEST1
+    )
     # mbps is BYTES/s in tc: 10mbps -> 80Mbit on read-back; plus a plain loss.
     # Without canonicalization the SECOND impair's own verify would false-fail
     # here (merged rate "10mbps" vs observed "80Mbit"), before we ever read state.
     await impair_link(
-        impair_lab, "edge", ImpairmentParams(loss_pct=5.0, rate="10mbps"), from_host=_TEST1
+        impair_lab,
+        ident="edge",
+        params=ImpairmentParams(loss_pct=5.0, rate="10mbps"),
+        from_host=_TEST1,
     )
     try:
         states = await read_link_states(impair_lab)
@@ -577,7 +586,7 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
         observed = observed_state.whole
         assert observed is not None, "expected the merged impairment to be present on the kernel"
         expected = ImpairmentParams(delay_ms=0.7, loss_pct=5.0, rate="10mbps")
-        assert equivalent(observed, expected), (
+        assert equivalent(a=observed, b=expected), (
             "merged kernel state must match by MEANING despite tc canonicalization "
             f"(rate 10mbps->80Mbit) and tick quantization (delay 0.7ms->0.699ms): "
             f"observed {observed!r}, expected {expected!r}"
@@ -602,7 +611,7 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
             f"{healed_state!r}"
         )
     finally:
-        await repair_link(impair_lab, "edge")  # no-op clean: a->b already clear out-of-band
+        await repair_link(impair_lab, ident="edge")  # no-op clean: a->b already clear out-of-band
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +632,7 @@ async def test_mgmt_link_refused(impair_lab: Lab) -> None:
     )
     impair_lab.links.append(mgmt_link)
     with pytest.raises(ValueError, match="management interface"):
-        await impair_link(impair_lab, mgmt_link.id, ImpairmentParams(delay_ms=10.0))
+        await impair_link(impair_lab, ident=mgmt_link.id, params=ImpairmentParams(delay_ms=10.0))
 
 
 # ---------------------------------------------------------------------------
@@ -638,11 +647,11 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
     from otto.link import DirectionState, Selector
 
     test1 = impair_lab.hosts[_TEST1]
-    sel = Selector(_SCOPED_PORT, "tcp")
+    sel = Selector(port=_SCOPED_PORT, proto="tcp")
     report = await impair_link(
         impair_lab,
-        "edge",
-        ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+        ident="edge",
+        params=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
         from_host=_TEST1,
         selector=sel,
     )
@@ -653,11 +662,11 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
         a = edge_state.by_direction[FlowDirection.A_TO_B]
         assert isinstance(a, DirectionState)
         assert set(a.scoped) == {sel}
-        assert equivalent(a.scoped[sel], ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
+        assert equivalent(a=a.scoped[sel], b=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
         assert a.whole is None
         assert not a.foreign
     finally:
-        await repair_link(impair_lab, "edge")
+        await repair_link(impair_lab, ident="edge")
     qdisc = await test1.exec(
         f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
@@ -714,9 +723,9 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
 
         await impair_link(
             impair_lab,
-            "edge",
-            ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
-            selector=Selector(_SCOPED_PORT, "tcp"),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+            selector=Selector(port=_SCOPED_PORT, proto="tcp"),
         )
         try:
             impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
@@ -733,20 +742,20 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
 
             await impair_link(
                 impair_lab,
-                "edge",
-                ImpairmentParams(loss_pct=5.0),
-                selector=Selector(_CLEAN_PORT, "tcp"),
+                ident="edge",
+                params=ImpairmentParams(loss_pct=5.0),
+                selector=Selector(port=_CLEAN_PORT, proto="tcp"),
             )
             states = await read_link_states(impair_lab)
             edge_state = next(s for s in states if s.link.id == "edge")
             a = edge_state.by_direction[FlowDirection.A_TO_B]
             assert isinstance(a, DirectionState)
             assert set(a.scoped) == {
-                Selector(_SCOPED_PORT, "tcp"),
-                Selector(_CLEAN_PORT, "tcp"),
+                Selector(port=_SCOPED_PORT, proto="tcp"),
+                Selector(port=_CLEAN_PORT, proto="tcp"),
             }
         finally:
-            await repair_link(impair_lab, "edge")
+            await repair_link(impair_lab, ident="edge")
     finally:
         for port in (_SCOPED_PORT, _CLEAN_PORT):
             await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
@@ -762,7 +771,7 @@ async def test_range_dst_selector_live(impair_lab: Lab) -> None:
 
     test1 = impair_lab.hosts[_TEST1]
     test3 = impair_lab.hosts[_TEST3]
-    sel = Selector(_SCOPED_PORT - 1, "tcp", end=_SCOPED_PORT, side="dst")
+    sel = Selector(port=_SCOPED_PORT - 1, proto="tcp", end=_SCOPED_PORT, side="dst")
     for port in (_SCOPED_PORT, _CLEAN_PORT):
         await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
         await test3.exec(
@@ -776,7 +785,10 @@ async def test_range_dst_selector_live(impair_lab: Lab) -> None:
         # both directions: a->b (test1) sees dport 5201 requests; b->a (test3)
         # sees replies with sport 5201 — which a dst-only selector must NOT match.
         await impair_link(
-            impair_lab, "edge", ImpairmentParams(delay_ms=_SCOPED_DELAY_MS), selector=sel
+            impair_lab,
+            ident="edge",
+            params=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+            selector=sel,
         )
         try:
             impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
@@ -799,16 +811,16 @@ async def test_range_dst_selector_live(impair_lab: Lab) -> None:
             with pytest.raises(ValueError, match="same scope"):
                 await impair_link(
                     impair_lab,
-                    "edge",
-                    ImpairmentParams(loss_pct=1.0),
-                    selector=Selector(_SCOPED_PORT, "tcp", side="dst"),
+                    ident="edge",
+                    params=ImpairmentParams(loss_pct=1.0),
+                    selector=Selector(port=_SCOPED_PORT, proto="tcp", side="dst"),
                 )
             states = await read_link_states(impair_lab)
             a = next(s for s in states if s.link.id == "edge").by_direction[FlowDirection.A_TO_B]
             assert isinstance(a, DirectionState)
             assert set(a.scoped) == {sel}, "a refused collision must leave the tree untouched"
         finally:
-            await repair_link(impair_lab, "edge", selector=sel)
+            await repair_link(impair_lab, ident="edge", selector=sel)
         qdisc = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
@@ -832,15 +844,22 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
     from otto.link import DirectionState, Selector
 
     test1 = impair_lab.hosts[_TEST1]
-    keep, expire_sel = Selector(_SCOPED_PORT, "tcp"), Selector(_CLEAN_PORT, "tcp")
+    keep, expire_sel = (
+        Selector(port=_SCOPED_PORT, proto="tcp"),
+        Selector(port=_CLEAN_PORT, proto="tcp"),
+    )
     await impair_link(
-        impair_lab, "edge", ImpairmentParams(delay_ms=50.0), from_host=_TEST1, selector=keep
+        impair_lab,
+        ident="edge",
+        params=ImpairmentParams(delay_ms=50.0),
+        from_host=_TEST1,
+        selector=keep,
     )
     try:
         await impair_link(
             impair_lab,
-            "edge",
-            ImpairmentParams(delay_ms=80.0),
+            ident="edge",
+            params=ImpairmentParams(delay_ms=80.0),
             from_host=_TEST1,
             selector=expire_sel,
             expire=_EXPIRE_SECONDS,
@@ -877,7 +896,7 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
         ]
         assert not stale, f"expired selector's timer still running: {stale!r}"
     finally:
-        await repair_link(impair_lab, "edge")
+        await repair_link(impair_lab, ident="edge")
 
 
 # ---------------------------------------------------------------------------
@@ -915,8 +934,8 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
 
     test1 = impair_lab.hosts[_TEST1]
     test3 = impair_lab.hosts[_TEST3]
-    wide = Selector(_WIDE_RANGE_LO, end=_WIDE_RANGE_HI)
-    narrow = Selector(_NARROW_PORT, "tcp")
+    wide = Selector(port=_WIDE_RANGE_LO, end=_WIDE_RANGE_HI)
+    narrow = Selector(port=_NARROW_PORT, proto="tcp")
     await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{_NARROW_PORT}')}'")
     await test3.exec(
         f"setsid socat TCP4-LISTEN:{_NARROW_PORT},fork,reuseaddr EXEC:cat </dev/null "
@@ -928,11 +947,17 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
         baseline = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _NARROW_PORT)
 
         await impair_link(
-            impair_lab, "edge", ImpairmentParams(delay_ms=_SCOPED_DELAY_MS), selector=wide
+            impair_lab,
+            ident="edge",
+            params=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+            selector=wide,
         )
         try:
             await impair_link(
-                impair_lab, "edge", ImpairmentParams(delay_ms=_NARROW_DELAY_MS), selector=narrow
+                impair_lab,
+                ident="edge",
+                params=ImpairmentParams(delay_ms=_NARROW_DELAY_MS),
+                selector=narrow,
             )
             try:
                 states = await read_link_states(impair_lab)
@@ -942,8 +967,8 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
                 assert set(a.scoped) == {wide, narrow}, (
                     "both selectors must coexist, un-merged, in otto's own state"
                 )
-                assert equivalent(a.scoped[wide], ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
-                assert equivalent(a.scoped[narrow], ImpairmentParams(delay_ms=_NARROW_DELAY_MS))
+                assert equivalent(a=a.scoped[wide], b=ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
+                assert equivalent(a=a.scoped[narrow], b=ImpairmentParams(delay_ms=_NARROW_DELAY_MS))
 
                 impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _NARROW_PORT)
                 delta = impaired - baseline
@@ -956,9 +981,9 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
                     "(~800ms), and the two summed (~1040ms) are all rejected by this window."
                 )
             finally:
-                await repair_link(impair_lab, "edge", selector=narrow)
+                await repair_link(impair_lab, ident="edge", selector=narrow)
         finally:
-            await repair_link(impair_lab, "edge", selector=wide)
+            await repair_link(impair_lab, ident="edge", selector=wide)
         qdisc = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
@@ -999,7 +1024,7 @@ async def test_link_check_sandbox_passes_on_the_bed(impair_lab: Lab) -> None:
     from otto.link import check_link
     from otto.link.check import FEATURES
 
-    report = await check_link(impair_lab, "edge", from_host=_TEST1)
+    report = await check_link(lab=impair_lab, ident="edge", from_host=_TEST1)
     _show(report)
     (host,) = report.hosts
     assert host.host_id == _TEST1
@@ -1016,7 +1041,7 @@ async def test_link_check_live_passes_and_heals(impair_lab: Lab) -> None:
     from otto.link import DirectionState, check_link
     from otto.link.check import FEATURES, LIVE_FEATURES
 
-    report = await check_link(impair_lab, "edge", live=True, from_host=_TEST1)
+    report = await check_link(lab=impair_lab, ident="edge", live=True, from_host=_TEST1)
     _show(report)
     (host,) = report.hosts
     # Live rows come back in report (FEATURES) order, narrowed to the live ones.
@@ -1051,7 +1076,9 @@ async def test_link_check_sweeps_a_killed_runs_sandbox(impair_lab: Lab, monkeypa
         for cmd in setup_commands(stale):
             await _root(test1, cmd)
         assert stale.name in await _check_netns_left(test1)
-        report = await check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"])
+        report = await check_link(
+            lab=impair_lab, ident="edge", from_host=_TEST1, features=["delay"]
+        )
         swept = report.hosts[0].swept
         assert any(
             line.startswith(f"swept leftover sandbox {stale.name} on {_TEST1} (earlier or")
@@ -1083,7 +1110,9 @@ async def test_link_check_leaves_a_sandbox_too_young_to_sweep(impair_lab: Lab) -
     try:
         for cmd in setup_commands(young):
             await _root(test1, cmd)
-        report = await check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"])
+        report = await check_link(
+            lab=impair_lab, ident="edge", from_host=_TEST1, features=["delay"]
+        )
         swept = report.hosts[0].swept
         assert any(
             re.fullmatch(
@@ -1137,11 +1166,13 @@ async def test_link_check_two_sandbox_runs_at_once_on_one_host_both_pass(impair_
                 interval=0.2,
                 on_timeout="the first check never created its namespace on test1",
             )
-            return await check_link(second_lab, "edge", from_host=_TEST1, features=["delay"])
+            return await check_link(
+                lab=second_lab, ident="edge", from_host=_TEST1, features=["delay"]
+            )
 
         # Both run to the end, each with its own teardown, even when one raises.
         outcomes = await asyncio.gather(
-            check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"]),
+            check_link(lab=impair_lab, ident="edge", from_host=_TEST1, features=["delay"]),
             once_the_first_has_its_namespace(),
             return_exceptions=True,
         )

@@ -97,7 +97,7 @@ def _mock_session_mgr(*, prompts: bool = True, user: str = "admin", **model_kw):
     async def _send(text, **_kw) -> None:
         wrote(text)
 
-    async def _expect(_pat, _timeout=10.0) -> str:
+    async def _expect(_pat, timeout=10.0) -> str:
         return reply()
 
     mgr.send = AsyncMock(side_effect=_send)
@@ -168,12 +168,12 @@ async def test_switch_user_records_current_user():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
-    await host.switch_user("root")
+    await host.switch_user(user="root")
     host._session_mgr._set_current_user.assert_called_once_with("root")
 
 
@@ -183,13 +183,13 @@ async def test_as_user_restores_previous_user():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="admin")
     host._session_mgr = mgr
-    async with host.as_user("root"):
+    async with host.as_user(user="root"):
         pass
     calls = [c.args[0] for c in mgr._set_current_user.call_args_list]
     assert calls == ["root", "admin"]  # entered as root, restored to admin
@@ -199,7 +199,7 @@ async def test_as_user_restores_previous_user():
 async def test_embedded_run_sudo_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="sudo"):
         await host.run("ls", sudo=True)
 
@@ -255,7 +255,7 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
     )
@@ -287,7 +287,7 @@ async def test_sudo_preserves_caller_expects():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
     )
@@ -308,12 +308,12 @@ async def test_switch_user_sends_su_and_password():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.NORMAL,  # NORMAL host so the su exchange's per-command modes pass through
     )
     host._session_mgr = _mock_session_mgr()
-    await host.switch_user("root")
+    await host.switch_user(user="root")
     host._session_mgr.send.assert_any_await("su - root\n", log=LogMode.NORMAL)
     host._session_mgr.send.assert_any_await(SecretStr("rootpw"), log=LogMode.NEVER)
 
@@ -324,7 +324,7 @@ async def test_switch_user_default_is_root_no_user_arg():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
@@ -338,9 +338,9 @@ async def test_switch_user_default_is_root_no_user_arg():
 async def test_embedded_switch_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="su"):
-        await host.switch_user("root")
+        await host.switch_user(user="root")
 
 
 @pytest.mark.asyncio
@@ -349,12 +349,12 @@ async def test_as_user_switches_then_exits():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
-    async with host.as_user("root"):
+    async with host.as_user(user="root"):
         pass
     sent = [c.args[0] for c in host._session_mgr.send.await_args_list]
     assert "su - root\n" in sent  # entered
@@ -366,9 +366,9 @@ async def test_as_user_switches_then_exits():
 async def test_embedded_as_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match=r"as_user|su"):
-        async with host.as_user("root"):
+        async with host.as_user(user="root"):
             pass
 
 
@@ -387,7 +387,7 @@ async def test_switch_user_password_not_logged(caplog):
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.NORMAL,
     )
@@ -408,7 +408,7 @@ async def test_switch_user_password_not_logged(caplog):
     host._session_mgr._session = mock_transport
 
     with caplog.at_level(logging.INFO, logger="otto"):
-        await host.switch_user("root")
+        await host.switch_user(user="root")
 
     # The su command line must be logged (proves suppression is surgical).
     assert "su - root" in caplog.text
@@ -423,14 +423,14 @@ async def test_switch_user_quotes_special_char_username():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
     )
     # Replace the session manager with a mock to capture what was sent.
     host._session_mgr = _mock_session_mgr(prompts=False)
 
-    await host.switch_user("od d")  # space in username — must be shell-quoted
+    await host.switch_user(user="od d")  # space in username — must be shell-quoted
 
     # The first send must be the shlex-quoted su command.
     first_call = host._session_mgr.send.await_args_list[0]
@@ -441,7 +441,7 @@ async def test_switch_user_quotes_special_char_username():
 async def test_embedded_current_user_is_empty_loginless():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     assert host.current_user == ""  # loginless embedded shell
 
 
@@ -466,14 +466,14 @@ async def test_as_user_multi_hop_undoes_in_reverse():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=_MULTI_HOP_CREDS,
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="root")
     host._session_mgr = mgr
 
-    async with host.as_user("mysql"):
+    async with host.as_user(user="mysql"):
         sent_inside = [c.args[0] for c in mgr.send.await_args_list]
         assert "su - admin\n" in sent_inside
         assert "su - mysql\n" in sent_inside
@@ -496,14 +496,14 @@ async def test_switch_user_from_via_user_runs_only_final_hop():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=_MULTI_HOP_CREDS,
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="admin")  # already at mysql's `via` user
     host._session_mgr = mgr
 
-    await host.switch_user("mysql")
+    await host.switch_user(user="mysql")
 
     sent = [c.args[0] for c in mgr.send.await_args_list]
     assert _without_resync(sent) == ["su - mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
@@ -539,7 +539,7 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
         host_id="n",
     )
 
-    await hs.switch_user("mysql")
+    await hs.switch_user(user="mysql")
 
     assert hs.current_user == "mysql"
     sent = [c.args[0] for c in shell.send.await_args_list]
@@ -561,7 +561,7 @@ async def test_sudo_password_reflects_current_user_after_switch():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="adminpw"), Cred(login="root", password="rootpw")],
         log=LogMode.NORMAL,
     )
@@ -581,7 +581,7 @@ async def test_sudo_password_reflects_current_user_after_switch():
     # Before any switch: sudo uses the login user's (admin's) password.
     assert host._sudo_password() == SecretStr("adminpw")
 
-    await host.switch_user("root")
+    await host.switch_user(user="root")
 
     # After switching: current_user is root, and sudo must use ROOT's
     # password — not admin's (the login user's) — for the *current* user.
@@ -633,7 +633,7 @@ async def test_as_user_undo_via_ordering_observable_host():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=_fake_undo_chain("task6-fake-undo-host"),
         log=LogMode.QUIET,
     )
@@ -648,7 +648,7 @@ async def test_as_user_undo_via_ordering_observable_host():
     )
     host._session_mgr = mgr
 
-    async with host.as_user("mysql"):
+    async with host.as_user(user="mysql"):
         assert captured == []  # nothing undone until the block exits
 
     # (target, via.login, via.password), in the order run_undo fired them.
@@ -703,7 +703,7 @@ async def test_as_user_resolves_the_via_cred_under_the_terms_scope_both_ways():
     ]
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=creds,
         term="telnet",
         log=LogMode.QUIET,
@@ -714,7 +714,7 @@ async def test_as_user_resolves_the_via_cred_under_the_terms_scope_both_ways():
         exit_re=re.compile(r"^\s*leave\s*$", re.MULTILINE),
     )
 
-    async with host.as_user("admin"):
+    async with host.as_user(user="admin"):
         assert forward == [("admin", "root", "tn-rootpw")]
 
     assert undone == [("admin", "root", "tn-rootpw")]
@@ -729,7 +729,7 @@ async def test_as_user_undo_survives_cancellation():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=_MULTI_HOP_CREDS,
         log=LogMode.QUIET,
     )
@@ -752,7 +752,7 @@ async def test_as_user_undo_survives_cancellation():
     release = asyncio.Event()
 
     async def body() -> None:
-        async with host.as_user("mysql"):
+        async with host.as_user(user="mysql"):
             inside.set()
             await release.wait()
 
@@ -842,7 +842,7 @@ def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None):
 
     return _Host(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=_ADMIN_AND_ROOT if creds is None else creds,
         log=LogMode.QUIET,
     )
@@ -1320,7 +1320,7 @@ async def test_a_refusal_is_not_swallowed_into_a_successful_reboot():
 
     host = _Host(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
     )

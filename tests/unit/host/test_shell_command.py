@@ -24,7 +24,7 @@ from otto.utils import Status
 def host() -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -58,18 +58,18 @@ class TestShellCommandConstruction:
 class TestResultsOnly:
     def test_only_returns_single_status(self):
         cs = CommandResult(status=Status.Success, value="", command="x", retcode=0)
-        result = Results.collect([cs])
+        result = Results.collect(items=[cs])
         assert result.only is cs
 
     def test_only_raises_when_empty(self):
-        result = Results.collect([])
+        result = Results.collect(items=[])
         with pytest.raises(ValueError, match="exactly 1 command result"):
             _ = result.only
 
     def test_only_raises_when_multiple(self):
         cs1 = CommandResult(status=Status.Success, value="", command="a", retcode=0)
         cs2 = CommandResult(status=Status.Success, value="", command="b", retcode=0)
-        result = Results.collect([cs1, cs2])
+        result = Results.collect(items=[cs1, cs2])
         with pytest.raises(ValueError, match="exactly 1 command result"):
             _ = result.only
 
@@ -209,7 +209,7 @@ class TestRunForwardsLog:
     @pytest.mark.asyncio
     async def test_run_per_command_log_in_batch(self, host, ok):
         with patch.object(host, "_run_one", new=AsyncMock(return_value=ok)) as m:
-            await host.run([ShellCommand("a", log=LogMode.QUIET), "b"], log=LogMode.NORMAL)
+            await host.run([ShellCommand(cmd="a", log=LogMode.QUIET), "b"], log=LogMode.NORMAL)
         logs = [c.kwargs["log"] for c in m.await_args_list]
         assert logs == [LogMode.QUIET, LogMode.NORMAL]
 
@@ -234,12 +234,12 @@ class TestShellCommandLog:
 
     def test_resolve_per_command_log_overrides_default(self):
         sc = _resolve_command(
-            ShellCommand("ls", log=LogMode.NORMAL), None, None, default_log=LogMode.QUIET
+            ShellCommand(cmd="ls", log=LogMode.NORMAL), None, None, default_log=LogMode.QUIET
         )
         assert sc.log is LogMode.NORMAL
 
     def test_resolve_none_log_falls_back_to_default(self):
-        sc = _resolve_command(ShellCommand("ls"), None, None, default_log=LogMode.QUIET)
+        sc = _resolve_command(ShellCommand(cmd="ls"), None, None, default_log=LogMode.QUIET)
         assert sc.log is LogMode.QUIET
 
 
@@ -249,7 +249,7 @@ def test_shellcommand_log_defaults_to_none_and_inherits_normal():
 
 
 def test_resolve_command_inherits_explicit_mode():
-    sc = _resolve_command(ShellCommand("x", log=LogMode.QUIET), None, None)
+    sc = _resolve_command(ShellCommand(cmd="x", log=LogMode.QUIET), None, None)
     assert sc.log is LogMode.QUIET
 
 
@@ -267,19 +267,19 @@ class TestResolveCommandValidatesTimeout:
 
     def test_nan_timeout_raises(self):
         with pytest.raises(ValueError, match="must not be NaN"):
-            _resolve_command(ShellCommand("x", timeout=float("nan")), None, None)
+            _resolve_command(ShellCommand(cmd="x", timeout=float("nan")), None, None)
 
     def test_negative_timeout_raises(self):
         with pytest.raises(ValueError, match="must be >= 0"):
-            _resolve_command(ShellCommand("x", timeout=-1), None, None)
+            _resolve_command(ShellCommand(cmd="x", timeout=-1), None, None)
 
     def test_none_timeout_passes_through_to_default(self):
         """Guard against over-tightening: None must keep meaning 'inherit'."""
-        sc = _resolve_command(ShellCommand("x", timeout=None), None, 5.0)
+        sc = _resolve_command(ShellCommand(cmd="x", timeout=None), None, 5.0)
         assert sc.timeout == 5.0
 
     def test_valid_timeout_is_preserved(self):
-        sc = _resolve_command(ShellCommand("x", timeout=2.0), None, None)
+        sc = _resolve_command(ShellCommand(cmd="x", timeout=2.0), None, None)
         assert sc.timeout == 2.0
 
 

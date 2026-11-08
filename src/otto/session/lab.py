@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from ..labs.loader import Lab
 
 
-def merge_host_preferences(projects: "list[Project]") -> dict[str, dict[str, Any]]:
+def merge_host_preferences(*, projects: "list[Project]") -> dict[str, dict[str, Any]]:
     """Merge every project's ``[host_preferences]`` in ``OTTOPATH`` order.
 
     Later projects overlay earlier ones. A selection (a list) is atomic: the last
@@ -28,7 +28,7 @@ def merge_host_preferences(projects: "list[Project]") -> dict[str, dict[str, Any
     return merged
 
 
-def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
+def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
     """Build lab(s) *labs* exactly as ``otto --lab`` does.
 
     *labs* are component lab names that are already split: a ``+``-joined
@@ -68,7 +68,7 @@ def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
     from ..labs.sources import build_lab_sources
 
     try:
-        repository = build_lab_sources(projects)
+        repository = build_lab_sources(projects=projects)
     except (ValueError, LabRepositoryError) as e:
         raise LabBuildError(
             f"host source unavailable: {e}", field=None, kind="sources", detail=str(e)
@@ -80,7 +80,7 @@ def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = build_inventory(projects)
+        inventory = build_inventory(projects=projects)
     except InventoryError as e:
         raise LabBuildError(
             f"inventory unavailable: {e}", field=None, kind="inventory", detail=str(e)
@@ -89,7 +89,7 @@ def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
     try:
         lab = load_lab(
             labs,
-            preferences=merge_host_preferences(projects),
+            preferences=merge_host_preferences(projects=projects),
             repository=repository,
             inventory=inventory,
         )

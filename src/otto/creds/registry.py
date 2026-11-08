@@ -108,17 +108,19 @@ def register_creds_backend(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite* is false.
     """
     CREDS_BACKENDS.register(
-        name, configured_backend(config=config, factory=factory, metadata=None), overwrite=overwrite
+        name=name,
+        entry=configured_backend(config=config, factory=factory, metadata=None),
+        overwrite=overwrite,
     )
 
 
 def _register_builtins() -> None:
     """Register the built-in creds store by reference."""
     CREDS_BACKENDS.register(
-        "json",
-        configured_backend(
-            config=Ref("otto.creds.config:JsonCredsConfig"),
-            factory=Ref("otto.creds.json_store:_json_creds"),
+        name="json",
+        entry=configured_backend(
+            config=Ref(target="otto.creds.config:JsonCredsConfig"),
+            factory=Ref(target="otto.creds.json_store:_json_creds"),
             metadata=None,
         ),
     )

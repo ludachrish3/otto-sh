@@ -49,7 +49,7 @@ def test_tab_spec_wire_shape() -> None:
 def _table_parser() -> "RegexLogEventParser":
     return RegexLogEventParser(
         "tail -n 200 /var/log/syslog",
-        r"^(?P<ts>\S+) (?P<proc>\S+): (?P<message>.*)$",
+        pattern=r"^(?P<ts>\S+) (?P<proc>\S+): (?P<message>.*)$",
         tab="syslog",
         tab_label="Syslog",
     )
@@ -129,9 +129,10 @@ def _make_mock_host(name: str) -> MagicMock:
         cmds: list[str], timeout: float | None = None, log: object = None
     ) -> Results:
         results = [
-            CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
+            CommandResult(status=Status.Success, value="42\n", command=cmd, retcode=0)
+            for cmd in cmds
         ]
-        return Results.collect(results)
+        return Results.collect(items=results)
 
     host.run = AsyncMock(side_effect=_run_cmds)
     return host

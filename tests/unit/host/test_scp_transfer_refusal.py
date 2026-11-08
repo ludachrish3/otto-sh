@@ -217,7 +217,7 @@ def _unix_host(*, resolverless: bool = False):
     cls = _Resolverless if resolverless else UnixHost
     return cls(
         ip="10.0.0.9",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
@@ -343,7 +343,7 @@ class TestTheGuardKeysOnASettledAbsence:
     async def test_a_measured_absence_is_refused(self) -> None:
         """The BusyBox shape: the batch landed and said no ``scp``."""
         userland = await _measuring(present={"base64", "nc", "poweroff"})
-        assert userland.is_settled(applet_capability(SCP_APPLET))
+        assert userland.is_settled(name=applet_capability(SCP_APPLET))
         with pytest.raises(UnsupportedOnUserlandError):
             await refuse_if_scp_is_absent(userland)
 
@@ -351,7 +351,7 @@ class TestTheGuardKeysOnASettledAbsence:
     async def test_a_device_with_a_real_scp_is_not_refused(self) -> None:
         """The host the ``busybox`` profile keeps ``scp`` in ``valid_transfers`` for."""
         userland = await _measuring(present={"scp", "nc", "poweroff"})
-        assert userland.is_settled(applet_capability(SCP_APPLET))
+        assert userland.is_settled(name=applet_capability(SCP_APPLET))
         await refuse_if_scp_is_absent(userland)
 
     @pytest.mark.asyncio
@@ -369,8 +369,8 @@ class TestTheGuardKeysOnASettledAbsence:
         _applets_default_to_absent(monkeypatch)
         userland = Userland(UserlandOptions(), _unreachable_runner)
         await userland.resolve()
-        assert userland.has_applet(SCP_APPLET) == APPLET_ABSENT
-        assert not userland.is_settled(applet_capability(SCP_APPLET))
+        assert userland.has_applet(applet=SCP_APPLET) == APPLET_ABSENT
+        assert not userland.is_settled(name=applet_capability(SCP_APPLET))
         await refuse_if_scp_is_absent(userland)
 
     @pytest.mark.asyncio
@@ -462,7 +462,9 @@ class TestPutArrivesAtTheGuard:
         backend = _backend(await _declaring(scp=APPLET_ABSENT))
         put, _ = _spy_on_the_protocol(backend)
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await backend.put_files([Path("/tmp/a.bin")], Path("/opt"), show_progress=False)
+            await backend.put_files(
+                src_files=[Path("/tmp/a.bin")], dest_dir=Path("/opt"), show_progress=False
+            )
         assert _HOST in str(exc_info.value)
         put.assert_not_awaited()
         assert backend._connections.ssh_calls == 0  # type: ignore[attr-defined]
@@ -472,7 +474,9 @@ class TestPutArrivesAtTheGuard:
         """Non-vacuity: the refusal above is the guard's, not the fake wire's."""
         backend = _backend(await _declaring(scp=APPLET_PRESENT))
         put, _ = _spy_on_the_protocol(backend)
-        result = await backend.put_files([Path("/tmp/a.bin")], Path("/opt"), show_progress=False)
+        result = await backend.put_files(
+            src_files=[Path("/tmp/a.bin")], dest_dir=Path("/opt"), show_progress=False
+        )
         assert result.is_ok
         put.assert_awaited_once()
 
@@ -494,8 +498,8 @@ class TestPutArrivesAtTheGuard:
         backend = _backend(userland)
         put, _ = _spy_on_the_protocol(backend)
         files = [Path(f"/tmp/f{i}.bin") for i in range(5)]
-        await backend.put_files(files, Path("/opt"), show_progress=False)
-        await backend.put_files(files, Path("/opt"), show_progress=False)
+        await backend.put_files(src_files=files, dest_dir=Path("/opt"), show_progress=False)
+        await backend.put_files(src_files=files, dest_dir=Path("/opt"), show_progress=False)
         assert len(runner.batches) == 1, (
             f"the applet batch was issued {len(runner.batches)} times: {runner.batches}"
         )
@@ -517,7 +521,9 @@ class TestGetArrivesAtTheGuard:
         backend = _backend(await _declaring(scp=APPLET_ABSENT))
         _, get = _spy_on_the_protocol(backend)
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await backend.get_files([Path("/opt/a.bin")], Path("/tmp"), show_progress=False)
+            await backend.get_files(
+                src_files=[Path("/opt/a.bin")], dest_dir=Path("/tmp"), show_progress=False
+            )
         assert _HOST in str(exc_info.value)
         get.assert_not_awaited()
         assert backend._connections.ssh_calls == 0  # type: ignore[attr-defined]
@@ -526,7 +532,9 @@ class TestGetArrivesAtTheGuard:
     async def test_a_device_with_scp_still_reaches_the_protocol(self) -> None:
         backend = _backend(await _declaring(scp=APPLET_PRESENT))
         _, get = _spy_on_the_protocol(backend)
-        result = await backend.get_files([Path("/opt/a.bin")], Path("/tmp"), show_progress=False)
+        result = await backend.get_files(
+            src_files=[Path("/opt/a.bin")], dest_dir=Path("/tmp"), show_progress=False
+        )
         assert result.is_ok
         get.assert_awaited_once()
 
@@ -611,7 +619,9 @@ class TestTheResolverIsOptionalBecauseScpIsTheDefaultTransfer:
         assert isinstance(backend, ScpFileTransfer)
         assert backend._userland is None
         put, _ = _spy_on_the_protocol(backend)
-        await backend.put_files([Path("/tmp/a.bin")], Path("/opt"), show_progress=False)
+        await backend.put_files(
+            src_files=[Path("/tmp/a.bin")], dest_dir=Path("/opt"), show_progress=False
+        )
         put.assert_awaited_once()
 
 
@@ -629,7 +639,7 @@ class TestTheRefusalIsKeyedOnTheDeviceNotTheProfile:
     """
 
     def test_the_busybox_profile_still_offers_scp(self) -> None:
-        profile = get_os_profile("busybox")
+        profile = get_os_profile(name="busybox")
         assert profile is not None
         assert "scp" in profile.fields.defaults["valid_transfers"]
 
@@ -639,5 +649,7 @@ class TestTheRefusalIsKeyedOnTheDeviceNotTheProfile:
         userland = await _measuring(present={"scp", "nc", "poweroff", "uuencode", "uudecode"})
         backend = _backend(userland)
         put, _ = _spy_on_the_protocol(backend)
-        await backend.put_files([Path("/tmp/a.bin")], Path("/opt"), show_progress=False)
+        await backend.put_files(
+            src_files=[Path("/tmp/a.bin")], dest_dir=Path("/opt"), show_progress=False
+        )
         put.assert_awaited_once()

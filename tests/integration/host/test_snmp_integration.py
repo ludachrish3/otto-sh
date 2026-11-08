@@ -78,7 +78,7 @@ class TestSnmpCollection:
         )
         assert host.snmp is not None, "backend should be SNMP-wired"
 
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         try:
             # duration=0 runs only the immediate initial collection (one GET
             # per host) — deterministic and fast, no inter-tick sleep. interval
@@ -120,7 +120,7 @@ class TestSnmpCollection:
         host = create_host_from_dict(
             host_data(_BACKEND_NE[backend]), element=element_for(_BACKEND_NE[backend])
         )
-        client_src = build_monitor_collector([host])._targets[0].snmp
+        client_src = build_monitor_collector(hosts=[host])._targets[0].snmp
         assert client_src is not None
         try:
             first = await client_src.client.get([client_src.oids[0]])

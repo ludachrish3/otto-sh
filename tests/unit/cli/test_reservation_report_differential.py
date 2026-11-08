@@ -26,7 +26,7 @@ class _Backend(ReservationBackendBase):
         super().__init__(username=username)
         self.rows = rows
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return list(self.rows)
 
     def backend_name(self):
@@ -81,7 +81,7 @@ def test_the_check_command_shows_exactly_the_report(case, capsys, caplog):
     gate = ReservationGate(
         backend=make_backend(), identity=ResolvedIdentity(username="alice", source="$USER")
     )
-    report = gate.report(lab, get_hosts_in_play())
+    report = gate.report(lab, host_ids=get_hosts_in_play())
 
     ctx = click.Context(click.Command("reservation"))
     ctx.meta["otto_reservation"] = gate
@@ -118,4 +118,4 @@ def test_the_expiring_case_really_has_an_expiring_booking():
     gate = ReservationGate(
         backend=make_backend(), identity=ResolvedIdentity(username="alice", source="$USER")
     )
-    assert [r.resource for r in gate.report(lab, get_hosts_in_play()).expiring] == ["r1"]
+    assert [r.resource for r in gate.report(lab, host_ids=get_hosts_in_play()).expiring] == ["r1"]

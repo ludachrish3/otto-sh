@@ -31,14 +31,14 @@ def _store(tmp_path):
       ``sorted(per_ticket)``, PROJ-9 would wrongly sort first.
     """
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     for n in (1, 2, 3, 4):
         line = rec.get_or_create_line(n)
         line.ticket = ["PROJ-1"]
     rec.lines[1].hits.add("unit", 1)
     rec.lines[4].hits.add("unit", 1)
 
-    rec2 = store.get_or_create_file(tmp_path / "0.c")
+    rec2 = store.get_or_create_file(path=tmp_path / "0.c")
     rec2.get_or_create_line(1).ticket = ["PROJ-9"]
 
     # Ticket metadata added in reverse-id order too (store.tickets isn't
@@ -74,9 +74,9 @@ def _store_with_reordering_paths(tmp_path):
     # Created in Path-sort order (b.c first) so a REMOVED `sorted()` call
     # would surface the bug via dict insertion order, not accidentally
     # mask it by already inserting in the desired final order.
-    rec_b = store.get_or_create_file(tmp_path / "a" / "b.c")
+    rec_b = store.get_or_create_file(path=tmp_path / "a" / "b.c")
     rec_b.get_or_create_line(1).ticket = ["PROJ-7"]
-    rec_a = store.get_or_create_file(tmp_path / "a.c")
+    rec_a = store.get_or_create_file(path=tmp_path / "a.c")
     rec_a.get_or_create_line(1).ticket = ["PROJ-7"]
     store.tickets["PROJ-7"] = TicketRecord(id="PROJ-7", url=None, commits=["abc"])
     return store
@@ -226,7 +226,7 @@ def test_export_treats_sentinel_tickets_as_ordinary_entries_in_sorted_position(t
     not a hardcoded position, so this would catch a future change to
     either literal string just as readily as an ordering bug."""
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     rec.get_or_create_line(1).ticket = ["PROJ-1"]
     rec.get_or_create_line(2).ticket = ["(no ticket)"]
     rec.get_or_create_line(3).ticket = ["(uncommitted)"]
@@ -258,7 +258,7 @@ def test_export_succeeds_when_only_sentinel_tickets_attributed(tmp_path):
     zero ticket-referencing commits must still export successfully —
     raising here would be the exact regression the brief warns about."""
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     rec.get_or_create_line(1).ticket = ["(no ticket)"]
     store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
 
@@ -290,7 +290,7 @@ def test_export_totals_dedupe_a_line_owned_by_two_tickets(tmp_path):
     test in this file) cannot tell a summing implementation from a
     deduping one, which is exactly why nothing here caught this."""
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     shared = record.get_or_create_line(1)
     shared.ticket = ["PROJ-1", "PROJ-2"]
     shared.hits.add("unit", 1)
@@ -324,7 +324,7 @@ def test_export_paths_are_project_relative(tmp_path):
     project_root = tmp_path / "proj"
     (project_root / "src").mkdir(parents=True)
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(project_root / "src" / "a.c")
+    rec = store.get_or_create_file(path=project_root / "src" / "a.c")
     rec.get_or_create_line(1).ticket = ["PROJ-1"]
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["abc"])
 
@@ -350,7 +350,7 @@ def _store_with_asserted_line(tmp_path):
     from a real run (``line.asserted`` empty). ``store.overrides`` carries
     the one entry line 1's assertion refers to."""
     store = CoverageStore(tier_order=["bench"])
-    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec = store.get_or_create_file(path=tmp_path / "a.c")
     line1 = rec.get_or_create_line(1)
     line1.ticket = ["#1"]
     line1.hits.add("bench", 1)

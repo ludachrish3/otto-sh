@@ -730,7 +730,7 @@ async def _build(
     build_args = _parse_pairs(build_arg, form="KEY=VALUE", flag="--build-arg KEY=VALUE")
     report = await _run_docker(
         build_on(
-            parent,
+            parent=parent,
             project=project,
             images=image,
             tags=tag,
@@ -1031,7 +1031,7 @@ def _use_cases(
     parent: "UnixHost | None" = None
     parent_problem = ""
     try:
-        parent = docker_parent(lab, None)
+        parent = docker_parent(lab=lab, parent=None)
     except DockerVerbError as e:
         parent_problem = str(e)
     for name in names:
@@ -1236,7 +1236,9 @@ async def _image_rm(
     """Run `docker image rm` on every docker-capable host, printing what docker printed."""
     from ..docker.image_verbs import remove_images
 
-    report = await _run_docker(remove_images(image, force=force, no_prune=no_prune, parent=parent))
+    report = await _run_docker(
+        remove_images(images=image, force=force, no_prune=no_prune, parent=parent)
+    )
     if isinstance(report, _Declined):
         return
     try:
@@ -1298,7 +1300,7 @@ async def _follow(resolve: "Coroutine[Any, Any, list[LogsTarget]]") -> None:
     targets = await _run_docker(resolve)
     if isinstance(targets, _Declined):
         return
-    status = await _run_docker(follow_logs(targets))
+    status = await _run_docker(follow_logs(targets=targets))
     if isinstance(status, int) and status != 0:
         raise typer.Exit(status)
 
@@ -1355,7 +1357,7 @@ async def _logs(
         async def _target() -> "list[LogsTarget]":
             return [
                 await resolve_logs(
-                    container,
+                    container=container,
                     parent=parent,
                     tail=tail,
                     since=since,
@@ -1367,7 +1369,9 @@ async def _logs(
         await _follow(_target())
         return
     report = await _run_docker(
-        container_logs(container, parent=parent, tail=tail, since=since, timestamps=timestamps)
+        container_logs(
+            container=container, parent=parent, tail=tail, since=since, timestamps=timestamps
+        )
     )
     if isinstance(report, _Declined):
         return
@@ -1414,7 +1418,7 @@ async def _compose_ps(
 
     name = _default_use_case(use_case)
     report = await _run_docker(
-        compose_ps(name, all=all_, parent=parent, provide=_parse_provide(provide))
+        compose_ps(use_case=name, all=all_, parent=parent, provide=_parse_provide(provide))
     )
     if isinstance(report, _Declined):
         return
@@ -1486,8 +1490,8 @@ async def _compose_logs(
 
         async def _targets() -> "list[LogsTarget]":
             return resolve_compose_logs(
-                name,
-                service or [],
+                use_case=name,
+                services=service or [],
                 parent=parent,
                 provide=provide_map,
                 tail=tail,
@@ -1499,8 +1503,8 @@ async def _compose_logs(
         return
     report = await _run_docker(
         compose_logs(
-            name,
-            service or [],
+            use_case=name,
+            services=service or [],
             parent=parent,
             provide=_parse_provide(provide),
             tail=tail,

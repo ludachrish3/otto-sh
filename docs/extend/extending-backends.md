@@ -186,7 +186,7 @@ from pathlib import Path
 from otto.result import Result
 
 
-async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result: ...
+async def apply_mode(self, dest_paths: list[Path], *, mode: int) -> Result: ...
 ```
 
 `put_files` calls it once, after the transfer and only when the caller gave a
@@ -229,8 +229,8 @@ backend. A custom backend overrides `create` and reads only the fields it needs:
 Selector validation runs before construction, so a backend never sees a ctx
 missing the fields its family supplies. The registered string is the **only**
 way to select a backend: unix and embedded hosts both build their term backend
-through `build_term_backend(term, ctx)` and their transfer backend through
-`build_transfer_backend(transfer, ctx)`, so a replacement registered over a
+through `build_term_backend(name=term, ctx=ctx)` and their transfer backend through
+`build_transfer_backend(name=transfer, ctx=ctx)`, so a replacement registered over a
 built-in name with `overwrite=True` reaches every host that selects that name,
 a test double included. The options an embedded host forces are listed on
 {class}`~otto.host.connections.TermContext`.
@@ -252,7 +252,7 @@ importing the backend: `TERM_BACKENDS.peek(name).metadata.host_families`
 answers for a backend registered by reference without loading its module.
 `register_transfer_backend` copies the three class declarations into the
 metadata; `register_term_backend` takes them as keywords, and its class may be
-a {class}`~otto.registry.Ref` (`Ref("my_pkg.terms:MyTerm")`), imported the
+a {class}`~otto.registry.Ref` (`Ref(target="my_pkg.terms:MyTerm")`), imported the
 first time a host builds the term.
 
 ## `tftp` is reserved
@@ -307,17 +307,17 @@ class XmodemTransfer(BaseFileTransfer):
         async def _put_one(src: Path) -> Result:
             progress = progress_factory() if progress_factory is not None else None
             ...  # send src over XMODEM; drive `progress` as bytes move
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)
 
     # same shape as run_put, reading from the device instead
     async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
         async def _get_one(src: Path) -> Result:
             ...  # receive src over XMODEM
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
 
 register_transfer_backend("xmodem", XmodemTransfer)
@@ -372,7 +372,7 @@ register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}), auth
 ```
 
 `TermContext` does not carry `user`; a backend that needs the session
-identity asks the manager it builds for `login_target_for(ctx.term)`.
+identity asks the manager it builds for `login_target_for(protocol=ctx.term)`.
 
 ### Proving it
 

@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.embedded, pytest.mark.timeout(120)]
 async def _heap_used(ne_name: str) -> float:
     """Read the device's current heap-used bytes over SNMP (read-only)."""
     host = create_host_from_dict(host_data(ne_name), element=element_for(ne_name))
-    collector = build_monitor_collector([host])
+    collector = build_monitor_collector(hosts=[host])
     try:
         await collector.run(interval=timedelta(seconds=5), duration=timedelta(seconds=0))
         series = {

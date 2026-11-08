@@ -39,21 +39,21 @@ def _from_module(module: str, fn, *args, **kwargs):
 def test_user_registration_during_test_load_is_refused():
     r = _widgets()
     with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused, match="init module"):
-        _from_module("test_widgets", r.register, "w", Widget(1))
+        _from_module("test_widgets", r.register, name="w", entry=Widget(1))
     assert "w" not in r
 
 
 def test_otto_module_registration_during_test_load_is_allowed():
     r = _widgets()
     with reg.loading_test_files():
-        _from_module("otto.host.embedded_kind", r.register, "w", Widget(1))
+        _from_module("otto.host.embedded_kind", r.register, name="w", entry=Widget(1))
     assert "w" in r
 
 
 def test_the_refusal_names_test_files_and_conftests_and_points_at_an_init_module():
     r = _widgets()
     with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused) as err:
-        _from_module("test_widgets", r.register, "w", Widget(1))
+        _from_module("test_widgets", r.register, name="w", entry=Widget(1))
     text = str(err.value)
     assert "'test_widgets'" in text
     assert "init module listed in .otto/settings.toml" in text
@@ -76,17 +76,24 @@ def test_a_ref_resolved_while_test_files_load_may_register_on_import(tmp_path, m
     other = _widgets("gadget")
     monkeypatch.setitem(sys.modules, "_refhome", types.SimpleNamespace(OTHER=other, Widget=Widget))
     (tmp_path / "late_widget_mod.py").write_text(
-        "import _refhome\n_refhome.OTHER.register('companion', _refhome.Widget(2))\nWIDGET = 1\n"
+        "import _refhome\n"
+        "_refhome.OTHER.register(name='companion', entry=_refhome.Widget(2))\n"
+        "WIDGET = 1\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "late_widget_mod", raising=False)
-    _from_module("project_init", home.register, "w", LazyWidget(reg.Ref("late_widget_mod:WIDGET")))
+    _from_module(
+        "project_init",
+        home.register,
+        name="w",
+        entry=LazyWidget(reg.Ref(target="late_widget_mod:WIDGET")),
+    )
     with reg.loading_test_files():
         assert home.get("w").value == 1
         assert reg.is_loading_test_files()
         with pytest.raises(reg.RegistrationRefused):
-            _from_module("test_widgets", other.register, "late", Widget(3))
-    assert other.origin("companion") == "late_widget_mod"
+            _from_module("test_widgets", other.register, name="late", entry=Widget(3))
+    assert other.origin(name="companion") == "late_widget_mod"
 
 
 # ── discovery: the source scan and the engine's own list ───────────────────
@@ -209,11 +216,11 @@ def test_every_otto_registry_refuses_during_test_load():
             continue
         revision = r.revision
         if isinstance(r, reg.Subscription):
-            write, args = r.subscribe, (object(),)
+            write, kwargs = r.subscribe, {"value": object()}
         else:
-            write, args = r.register, ("__refusal_probe__", object())
+            write, kwargs = r.register, {"name": "__refusal_probe__", "entry": object()}
         with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused):
-            _from_module("test_probe", write, *args)
+            _from_module("test_probe", write, **kwargs)
         assert r.revision == revision, f"{r.kind}: the refused write changed the table"
         if not isinstance(r, reg.Subscription):
             assert "__refusal_probe__" not in r, r.kind

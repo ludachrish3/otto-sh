@@ -12,7 +12,8 @@ from tests._fixtures.host_build import build_host
 
 def _unix_host(**kw):
     return build_host(
-        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}], **kw}, element=Element("x")
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}], **kw},
+        element=Element(name="x"),
     )
 
 
@@ -44,7 +45,7 @@ def test_directly_built_unix_host_validates_active_against_menu():
     with pytest.raises(ValueError, match="transfer 'sftp' is not in"):
         UnixHost(
             ip="1.1.1.1",
-            element=Element("x"),
+            element=Element(name="x"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             valid_transfers=["scp"],
@@ -55,7 +56,7 @@ def test_directly_built_unix_host_validates_active_against_menu():
 def test_embedded_defaults_active():
     h = build_host(
         {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"},
-        element=Element("x"),
+        element=Element(name="x"),
     )
     assert h.term == "telnet"
     assert h.valid_terms == ["telnet"]
@@ -68,7 +69,7 @@ def test_embedded_connection_uses_self_term_not_hardcoded():
     # ZephyrHost (not a bare EmbeddedHost): EmbeddedHost requires a command_frame,
     # and ZephyrHost supplies the built-in "zephyr" frame, so it constructs without
     # an explicit frame argument.
-    h = ZephyrHost(ip="192.0.2.1", element=Element("d"), log=LogMode.QUIET)
+    h = ZephyrHost(ip="192.0.2.1", element=Element(name="d"), log=LogMode.QUIET)
     assert h.term == "telnet"
     assert h._connections.term == "telnet"
 
@@ -79,7 +80,7 @@ def test_host_id_and_name_leave_the_element_id_out():
     h = UnixHost(
         ip="1.1.1.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("Test", id=5),
+        element=Element(name="Test", id=5),
         board="BoardX",
         slot=2,
     )
@@ -91,7 +92,9 @@ def test_host_id_and_name_leave_the_element_id_out():
     # (spec 2026-09-05 §2.4); board/slot are space-separated, original case.
     assert h.name == "Test BoardX 2"
 
-    h2 = UnixHost(ip="1.1.1.1", creds=[Cred(login="root", password="x")], element=Element("solo"))
+    h2 = UnixHost(
+        ip="1.1.1.1", creds=[Cred(login="root", password="x")], element=Element(name="solo")
+    )
     assert h2.id == "solo"
     assert h2.name == "solo"
 
@@ -106,7 +109,7 @@ def test_make_host_id_matches_built_host_id():
     h = UnixHost(
         ip="1.1.1.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("Test", id=5),
+        element=Element(name="Test", id=5),
         board="BoardX",
         slot=2,
     )

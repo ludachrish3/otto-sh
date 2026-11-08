@@ -29,8 +29,8 @@ class _TftpFileTransfer(EmbeddedFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         raise NotImplementedError(
@@ -42,8 +42,8 @@ class _TftpFileTransfer(EmbeddedFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         raise NotImplementedError(

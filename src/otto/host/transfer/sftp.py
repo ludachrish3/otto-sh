@@ -255,8 +255,8 @@ class SftpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         sftp_conn = await open_sftp_or_attribute(
@@ -271,8 +271,8 @@ class SftpFileTransfer(UnixFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         sftp_conn = await open_sftp_or_attribute(
@@ -302,9 +302,9 @@ class SftpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 block_size=_SFTP_BLOCK_SIZE,
             )
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     async def _put_files_sftp(
         self,
@@ -326,6 +326,6 @@ class SftpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 block_size=_SFTP_BLOCK_SIZE,
             )
-            return Result(Status.Success, value=dest_dir / src.name)
+            return Result(status=Status.Success, value=dest_dir / src.name)
 
-        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)

@@ -38,7 +38,7 @@ _NO_SUCH_CONTAINER = [
 @pytest.mark.parametrize("where", ["value", "msg"])
 def test_missing_container_matches_dockers_answers_case_insensitively(text, where):
     kw = {"value": text} if where == "value" else {"value": "", "msg": text}
-    assert missing(Result(Status.Error, **kw), "container") is True
+    assert missing(Result(status=Status.Error, **kw), "container") is True
 
 
 @pytest.mark.parametrize(
@@ -50,8 +50,8 @@ def test_missing_container_matches_dockers_answers_case_insensitively(text, wher
     ],
 )
 def test_missing_container_is_false_for_any_other_answer(text):
-    assert missing(Result(Status.Error, value=text), "container") is False
-    assert missing(Result(Status.Error, value="", msg=text), "container") is False
+    assert missing(Result(status=Status.Error, value=text), "container") is False
+    assert missing(Result(status=Status.Error, value="", msg=text), "container") is False
 
 
 def test_missing_is_false_for_a_declined_command():
@@ -63,9 +63,9 @@ def test_missing_is_false_for_a_declined_command():
 
 
 def test_said_prefers_the_message_then_the_value_then_the_status():
-    assert said(Result(Status.Error, value="out\n", msg="the message")) == "the message"
-    assert said(Result(Status.Error, value="  the output\n")) == "the output"
-    assert said(Result(Status.Error, value="")) == "status Error"
+    assert said(Result(status=Status.Error, value="out\n", msg="the message")) == "the message"
+    assert said(Result(status=Status.Error, value="  the output\n")) == "the output"
+    assert said(Result(status=Status.Error, value="")) == "status Error"
 
 
 # ── one answer, every former call site ───────────────────────────────────────
@@ -80,7 +80,7 @@ async def test_one_no_such_container_answer_drives_every_former_call_site(tmp_pa
 
     # (b) get_debug_logs over `docker logs`
     host = _KindHost(answers={"docker logs": (Status.Error, answer)})
-    logs = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
+    logs = await _build(host, image="app:1").get_debug_logs(host=host, dest=tmp_path)
     assert logs.status is Status.Success
     assert not (tmp_path / "container.log").exists()
 
@@ -93,7 +93,7 @@ async def test_one_no_such_container_answer_drives_every_former_call_site(tmp_pa
 
 
 def test_a_result_with_a_command_result_value_is_read_as_text():
-    result = CommandResult(Status.Error, value="Error: No such container: x", command="c")
+    result = CommandResult(status=Status.Error, value="Error: No such container: x", command="c")
     assert missing(result, "container") is True
 
 

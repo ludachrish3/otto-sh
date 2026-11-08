@@ -325,7 +325,7 @@ def test_a_table_another_env_wrote_offers_nothing_when_the_seed_fails(
     project, tmp_path, sessions, monkeypatch
 ):
     """An outdated table is cold: its names may be wrong in every file, so none are offered."""
-    assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
     project.write("pytest.ini", "[pytest]\n")
     monkeypatch.setattr(subprocess, "run", lambda argv, **_k: subprocess.CompletedProcess(argv, 1))
 
@@ -496,7 +496,7 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
 
 def _warm(project: ImportLogProject, tmp_path: Path, sessions: list) -> None:
     """Run once, so the table holds what pytest collected; then forget the run."""
-    assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
+    assert run_tests(names=["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
     project.next_run()
     sessions.clear()
 
@@ -661,7 +661,7 @@ def test_a_run_before_the_refresh_collects_the_saved_file_itself(
     assert "test_b_new" not in _tab()
     assert cc._collect_refresh_requested  # ...but the child has not run yet
 
-    result = run_tests(["test_b_new"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_b_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert project.ran_tests() == ["test_b_new"]
@@ -695,7 +695,7 @@ def test_a_run_restarts_the_check_window_and_the_ttl(project, tmp_path, sessions
         project, "tests/test_b.py", project.module("test_b", _B + "\n\n" + logged_test("test_b2"))
     )
 
-    assert run_tests(["test_b2"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["test_b2"], output_dir=tmp_path / "out").exit_code == 0
 
     assert sessions == [{"files": None, "dirs": [], "collect_only": False}]
     assert time.time() - _check_marker().stat().st_mtime < 60, "the window restarted"

@@ -38,13 +38,13 @@ class ProbeProduct(Product):
         self.name = name
 
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -55,13 +55,13 @@ class ProbeTool(DevTool):
         self.name = name
 
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -71,10 +71,10 @@ class ArtifactProduct(ShellProduct):
     """A code product that stages a file."""
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True

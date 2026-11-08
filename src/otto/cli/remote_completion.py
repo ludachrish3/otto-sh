@@ -304,7 +304,7 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     from ..session.lab import build_lab
 
     projects = get_projects()
-    lab = build_lab(projects, chain.labs)
+    lab = build_lab(projects, labs=chain.labs)
     token = set_context(OttoContext(lab=lab))
     try:
         host = get_host(chain.host_id)
@@ -456,7 +456,7 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from ..run_context import OttoContext, reset_context, set_context
     from ..session.lab import build_lab
 
-    lab = build_lab(get_projects(), chain.labs)
+    lab = build_lab(get_projects(), labs=chain.labs)
     ctx = OttoContext(
         lab=lab,
         include_projects=tuple(chain.include_projects),
@@ -468,7 +468,7 @@ def _required_for(chain: _ChainParams) -> "set[str]":
         host_ids = get_hosts_in_play() | {
             host.id for host in named if host is not None and not is_builtin_host(host)
         }
-        return required_resources(lab, host_ids=host_ids)
+        return required_resources(lab=lab, host_ids=host_ids)
     finally:
         reset_context(token)
 
@@ -517,7 +517,7 @@ def _reservation_allows(chain: _ChainParams) -> bool:
         return cached
 
     gate = build_reservation_gate(
-        projects,
+        projects=projects,
         holder=chain.holder,
         skip_reservation_check=False,
         cwd_fallback=Path.cwd(),
@@ -527,12 +527,12 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     # check_reservations and the held column of ``otto reservation check`` all
     # have to reach the same conclusion about what backend "none" means, and
     # three spellings of it is how they drift apart.
-    if backend is None or is_null_backend(backend):
+    if backend is None or is_null_backend(backend=backend):
         return True
     # The backend queries for the username it was CONSTRUCTED with, and the
     # gate above was built from the same ``chain.holder`` that ``username``
     # was resolved from — so the two agree, but only by construction.
-    reservations = active_reservations(backend)
+    reservations = active_reservations(backend=backend)
     store_reservations(username, reservations, now)
     # `Reservation.is_active` and not a fourth spelling of the bounds check:
     # this gate and the cached one it just consulted must agree to the instant
