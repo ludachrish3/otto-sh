@@ -86,17 +86,19 @@ def register_lab_repository(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite* is false.
     """
     LAB_REPOSITORIES.register(
-        name, configured_backend(config=config, factory=factory, metadata=None), overwrite=overwrite
+        name=name,
+        entry=configured_backend(config=config, factory=factory, metadata=None),
+        overwrite=overwrite,
     )
 
 
 def _register_builtins() -> None:
     """Register the built-in lab repositories by reference."""
     LAB_REPOSITORIES.register(
-        "json",
-        configured_backend(
-            config=Ref("otto.labs.json_repository:JsonLabSourceConfig"),
-            factory=Ref("otto.labs.json_repository:_json_lab_source"),
+        name="json",
+        entry=configured_backend(
+            config=Ref(target="otto.labs.json_repository:JsonLabSourceConfig"),
+            factory=Ref(target="otto.labs.json_repository:_json_lab_source"),
             metadata=None,
         ),
     )

@@ -133,7 +133,7 @@ def test_every_offered_id_resolves_and_is_impairable(tmp_path: Path) -> None:
             }
         ],
     )
-    lab = build_lab_sources([project]).load_lab("unix")
+    lab = build_lab_sources(projects=[project]).load_lab("unix")
     by_ident = {link.id: link for link in lab.static_links()}
     by_ident.update({link.name: link for link in lab.static_links() if link.name})
 
@@ -149,7 +149,7 @@ def test_implicit_links_are_offered_by_nobody_because_nothing_can_impair_them(
 ) -> None:
     """Pins the reason for the exclusion, so a future widening has to face it."""
     project = _project_with_lab(tmp_path, hosts=[_TEST1, {**_TEST2, "hop": "test1"}], links=[])
-    lab = build_lab_sources([project]).load_lab("unix")
+    lab = build_lab_sources(projects=[project]).load_lab("unix")
 
     implicit = [link for link in lab.static_links() if link.provenance.value == "implicit"]
     assert implicit, "positive control: the lab must have implicit links"

@@ -102,7 +102,7 @@ async def test_the_real_uninstall_on_a_loaderless_host_still_asks_the_host_to_un
 
         async def unload(self, name: str) -> Result:
             self.unloaded.append(name)
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
     host = _Loaderless()
     product = EmbeddedProduct(artifact=tmp_path / "fw.llext", name="fw")
@@ -113,7 +113,10 @@ async def test_the_real_uninstall_on_a_loaderless_host_still_asks_the_host_to_un
 def _real_zephyr_host() -> ZephyrHost:
     """A real ``ZephyrHost`` with an LLEXT loader and a mocked session (as test_embedded_host)."""
     host = ZephyrHost(
-        ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET, loader=LlextHexLoader()
+        ip="192.0.2.1",
+        element=Element(name="zephyr37_fat"),
+        log=LogMode.QUIET,
+        loader=LlextHexLoader(),
     )
     host._connections = None  # type: ignore[assignment]  # so __del__ does not churn a loop
     host._session_mgr = AsyncMock()
@@ -131,7 +134,7 @@ async def test_the_plans_unload_line_is_what_the_real_host_sends(tmp_path):
     host._session_mgr.run_cmd.return_value = _answer("No such extension fw-2")
     product = _ext(host, tmp_path, name="fw-2")
     assert (await product.uninstall(host)).is_ok
-    sent = [call.args[0] for call in host._session_mgr.run_cmd.await_args_list]
+    sent = [call.kwargs["cmd"] for call in host._session_mgr.run_cmd.await_args_list]
     assert sent == product.plan(host).uninstall == ["llext unload fw-2"]
 
 
@@ -142,7 +145,7 @@ async def test_the_plans_load_line_names_what_the_real_host_loads(tmp_path):
     host._session_mgr.run_cmd.return_value = _answer("Successfully loaded extension fw-2")
     product = _ext(host, tmp_path, name="fw-2")
     assert (await product.install(host)).is_ok
-    sent = host._session_mgr.run_cmd.await_args_list[0].args[0]
+    sent = host._session_mgr.run_cmd.await_args_list[0].kwargs["cmd"]
     assert product.plan(host).install[0] == f"LOAD {product.artifact} as fw-2"
     assert sent.startswith(host.loader.load_command("fw-2", b"")), sent
     assert sent == host.loader.load_command("fw-2", product.artifact.read_bytes())

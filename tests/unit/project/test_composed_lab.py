@@ -85,17 +85,17 @@ class _FleetHost(BaseHost):
     ):
         del timeout, log, user, expects, needs_shell
         self.events.append((self.id, f"exec:{cmd}"))
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     async def put(self, src_files, dest_dir, mode=None):
         self.events.append((self.id, f"put:{src_files}"))
         del dest_dir, mode
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def get(self, src_files, dest_dir):
         self.events.append((self.id, f"get:{src_files}"))
         del dest_dir
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @asynccontextmanager
     async def as_user(self, user="root", password=None):  # ty: ignore[invalid-overload]
@@ -118,7 +118,7 @@ class _JournaldHost(_FleetHost):
     async def get_debug_logs(self, dest=None):
         del dest
         self.events.append((self.id, "journald"))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 class _RecordingProduct(Product):
@@ -134,7 +134,7 @@ class _RecordingProduct(Product):
 
     async def _note(self, verb, host):
         self.events.append((host.id, f"{verb}:{self.name}"))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def stage(self, host):
         return await self._note("stage", host)
@@ -224,31 +224,31 @@ def _ok(outcome):
 # ``do_for_all_hosts`` call site in the package: if a site is added without a
 # row, nothing proves that walk honours an override either.
 _WALKED_VERBS = [
-    ("install", Result(Status.Success), project.install),
+    ("install", Result(status=Status.Success), project.install),
     (
         "uninstall",
-        Result(Status.Success),
-        lambda: project.uninstall(UninstallOptions(product_logs=False, debug_logs=False)),
+        Result(status=Status.Success),
+        lambda: project.uninstall(opts=UninstallOptions(product_logs=False, debug_logs=False)),
     ),
     (
         "get_product_logs",
-        Result(Status.Success),
-        lambda: project.get_logs(GetLogsOptions(debug_logs=False)),
+        Result(status=Status.Success),
+        lambda: project.get_logs(opts=GetLogsOptions(debug_logs=False)),
     ),
     (
         "get_debug_logs",
-        Result(Status.Success),
-        lambda: project.get_logs(GetLogsOptions(product_logs=False)),
+        Result(status=Status.Success),
+        lambda: project.get_logs(opts=GetLogsOptions(product_logs=False)),
     ),
     (
         "install_toolchain_tools",
-        Result(Status.Success),
-        lambda: project.install_tools(InstallToolsOptions(dev=False, toolchain=True)),
+        Result(status=Status.Success),
+        lambda: project.install_tools(opts=InstallToolsOptions(dev=False, toolchain=True)),
     ),
     (
         "remove_toolchain_tools",
-        Result(Status.Success),
-        lambda: project.cleanup(CleanupOptions(product_logs=False, debug_logs=False)),
+        Result(status=Status.Success),
+        lambda: project.cleanup(opts=CleanupOptions(product_logs=False, debug_logs=False)),
     ),
     ("toolchain_tools_absent", True, project.is_clean),
 ]
@@ -306,7 +306,7 @@ async def test_two_projects_stamped_at_ingest_tear_down_in_reverse_dependency_or
         "app-svc@h1": "app",
     }
 
-    result = await project.uninstall(UninstallOptions(product_logs=False))
+    result = await project.uninstall(opts=UninstallOptions(product_logs=False))
 
     assert result.is_ok, result.msg
     for host in hosts:
@@ -377,7 +377,7 @@ async def test_the_starved_dependencys_own_view_really_does_refuse(monkeypatch, 
     _starved_lab(monkeypatch, tmp_path, [])
 
     with pytest.raises(ProjectScopeError) as excinfo:
-        list(get_context().for_project("base").all_hosts())
+        list(get_context().for_project(name="base").all_hosts())
 
     assert "nothing-.*" in " ".join(str(excinfo.value).split())
 
@@ -418,7 +418,7 @@ async def test_a_starved_dependency_strands_no_host_global_step_of_a_teardown(
     events = []
     _starved_lab(monkeypatch, tmp_path, events)
 
-    result = await project.uninstall(UninstallOptions(product_logs=False))
+    result = await project.uninstall(opts=UninstallOptions(product_logs=False))
 
     assert result.is_ok, result.msg
     assert [e for _, e in events if e.startswith("uninstall")] == ["uninstall:app-svc@h1"]

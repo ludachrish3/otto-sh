@@ -42,12 +42,12 @@ Subclass `CommandFrame` and implement seven methods — a *render half* (command
 | Method | Half | Responsibility |
 |--------|------|----------------|
 | `handshake(m, prefix="")` | render | Readiness-probe payload printing `m.ready`, with `prefix` (history suppression; empty for a dialect without history) placed in the same line, after anything that has to open it. |
-| `frame(cmd, m)` | render | Full payload that runs `cmd` bracketed by the sentinels. |
+| `frame(cmd, m=m)` | render | Full payload that runs `cmd` bracketed by the sentinels. |
 | `recover(m)` | render | Post-timeout re-sync payload echoing `m.recover`. |
 | `end_pattern(m)` | parse | Regex marking the end of a command's output (the session compiles it once and uses it to detect completion and bound parsing). |
-| `marks_begin(data, m)` | parse | `True` if `data` is the chunk carrying the BEGIN sentinel. |
-| `parse_output(buffer, cmd, m)` | parse | Extract the command's output from the accumulated `buffer`. When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
-| `extract_retcode(buffer, m)` | parse | Recover the exit code; return `-1` when none can be read. |
+| `marks_begin(data, m=m)` | parse | `True` if `data` is the chunk carrying the BEGIN sentinel. |
+| `parse_output(buffer, cmd=cmd, m=m)` | parse | Extract the command's output from the accumulated `buffer`. When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
+| `extract_retcode(buffer, m=m)` | parse | Recover the exit code; return `-1` when none can be read. |
 | `restore_interactive()` | render | *Optional.* Line that undoes what `handshake` did to a terminal for a human (`None` by default); the `login` bridge sends it after a session-setup hook. |
 
 Set a unique `type_name` class attribute — the string lab data uses to select
@@ -92,10 +92,10 @@ from otto.host.command_frame import CommandFrame, SessionMarkers, register_comma
 class MyShellFrame(CommandFrame):
     type_name = "myshell"
 
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         return f"{prefix}{m.ready}\n"
 
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         # The braces and the newline before "}" keep a command ending in "&"
         # or a "#" comment from swallowing the END echo. An empty group is a
         # syntax error, so an empty command becomes ":".
@@ -108,13 +108,13 @@ class MyShellFrame(CommandFrame):
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
         return re.compile(re.escape(m.end_prefix) + r"(\d+)__")
 
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
         return data.rstrip("\r\n").endswith(m.begin)
 
     # slice between the BEGIN marker and end_pattern
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str: ...
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str: ...
 
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         match = self.end_pattern(m).search(buffer)
         return int(match.group(1)) if match and match.groups() else -1
 
@@ -230,7 +230,7 @@ class MyFsFileSystem(EmbeddedFileSystem):
     def read_command(self, path):
         return f"myfs read {path}"
 
-    def write_command(self, path, offset, hexbytes):
+    def write_command(self, path, *, offset, hexbytes):
         return f"myfs write {path} {offset} {hexbytes}"
 
     def rm_command(self, path):

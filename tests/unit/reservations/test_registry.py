@@ -19,7 +19,7 @@ class _Cfg(OttoModel, frozen=True):
 
 
 class _Mine:
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return []
 
     def backend_name(self):
@@ -40,7 +40,7 @@ def test_register_and_lookup():
     register_reservation_backend("mine-test", config=_Cfg, factory=_mine)
     entry = RESERVATION_BACKENDS.get("mine-test")
     assert (entry.config, entry.factory) == (_Cfg, _mine)
-    assert RESERVATION_BACKENDS.origin("mine-test") == __name__
+    assert RESERVATION_BACKENDS.origin(name="mine-test") == __name__
 
 
 def test_a_taken_name_needs_overwrite():
@@ -52,4 +52,4 @@ def test_a_taken_name_needs_overwrite():
 
 def test_builtins_are_named_and_peekable():
     assert "none" in RESERVATION_BACKENDS
-    assert RESERVATION_BACKENDS.peek("json") is not None
+    assert RESERVATION_BACKENDS.peek(name="json") is not None

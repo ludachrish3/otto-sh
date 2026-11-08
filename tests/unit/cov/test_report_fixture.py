@@ -74,7 +74,7 @@ def test_ring_c_branches_agree_with_its_lines(tmp_path):
     and branch 1 (early return) unit-only, and every line's tier set must
     follow — no tier credits a branch without the line it leads to."""
     report_dir = build_fixture_report(tmp_path)
-    store = CoverageStore.load(report_dir / "store.json")
+    store = CoverageStore.load(path=report_dir / "store.json")
     (ring,) = [fr for fr in store.files() if fr.path.name == "ring.c"]
     hit_by = {
         tier: sorted(n for n, rec in ring.lines.items() if rec.hits.is_hit(tier))
@@ -249,7 +249,7 @@ def test_line_pct_counts_pin_utils_c_below_main_c(tmp_path):
 
 def test_fixture_functions_cover_both_pill_states(tmp_path):
     report_dir = build_fixture_report(tmp_path)
-    store = CoverageStore.load(report_dir / "store.json")
+    store = CoverageStore.load(path=report_dir / "store.json")
     by_name = {fn.name: fn for fr in store.files() for fn in fr.functions.values()}
     assert by_name["checked_add"].start_line == 3
     assert by_name["checked_add"].end_line == 8

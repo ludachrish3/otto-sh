@@ -157,7 +157,7 @@ def _pending(label: str, backend: str, root: Path, **raw: object) -> PendingLabS
     return PendingLabSource(
         backend=backend,
         label=label,
-        raw=FrozenMap.freeze_json(raw),
+        raw=FrozenMap.freeze_json(value=raw),
         origin=str(root / ".otto" / "settings.toml"),
         project_root=root,
     )
@@ -450,8 +450,8 @@ class TestCollectCurrentCommands:
         async def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
 
         STANDALONE_INSTRUCTIONS.register(
-            "_cc_probe_instr",
-            InstructionEntry(name="_cc_probe_instr", module=__name__, handler=_probe_instr),
+            name="_cc_probe_instr",
+            entry=InstructionEntry(name="_cc_probe_instr", module=__name__, handler=_probe_instr),
         )
         instructions = cli_registry.collect_current_commands()
 
@@ -470,8 +470,8 @@ class TestCollectCurrentCommands:
         ) -> None: ...
 
         STANDALONE_INSTRUCTIONS.register(
-            "_cc_probe_bad",
-            InstructionEntry(name="_cc_probe_bad", module=__name__, handler=_probe_bad),
+            name="_cc_probe_bad",
+            entry=InstructionEntry(name="_cc_probe_bad", module=__name__, handler=_probe_bad),
         )
         instructions = cli_registry.collect_current_commands()
 
@@ -578,7 +578,7 @@ def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> 
         commands = collect_cli_commands()
         assert {"name": "e2etool", "help": "Tool.", "lab_free": False} in commands
     finally:
-        CLI_COMMANDS.unregister("e2etool")
+        CLI_COMMANDS.unregister(name="e2etool")
 
 
 def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
@@ -598,13 +598,13 @@ def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
     async def _probe() -> None: ...
 
     try:
-        assert CLI_COMMANDS.origin("_cc_probe_leaf") == __name__
+        assert CLI_COMMANDS.origin(name="_cc_probe_leaf") == __name__
         commands = {c["name"]: c for c in collect_cli_commands()}
         assert "_cc_probe_leaf" in commands
         assert commands["_cc_probe_leaf"]["help"] == "Probe leaf."
         assert commands["_cc_probe_leaf"]["lab_free"] is True
     finally:
-        CLI_COMMANDS.unregister("_cc_probe_leaf")
+        CLI_COMMANDS.unregister(name="_cc_probe_leaf")
 
 
 def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
@@ -628,7 +628,7 @@ def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
     )
     exec(compile(source, "<acme_cli>", "exec"), acme.__dict__)  # noqa: S102 — a synthetic plugin
 
-    assert CLI_COMMANDS.origin("acme-version") == "acme_cli"
+    assert CLI_COMMANDS.origin(name="acme-version") == "acme_cli"
     commands = {c["name"]: c for c in collect_cli_commands()}
     assert commands["acme-version"] == {
         "name": "acme-version",
@@ -678,7 +678,7 @@ class TestCollectCliCommandChildren:
             assert children["ping"]["help"] == "Pong."
             assert ["--force"] in [o["flags"] for o in children["re-set"]["options"]]
         finally:
-            CLI_COMMANDS.unregister("grptool")
+            CLI_COMMANDS.unregister(name="grptool")
 
     def test_nested_group_recurses(self) -> None:
         from otto.cli.registry import CLI_COMMANDS, register_cli_command
@@ -704,7 +704,7 @@ class TestCollectCliCommandChildren:
             inner_children = {c["name"] for c in children["inner"]["commands"]}
             assert inner_children == {"alpha", "beta"}
         finally:
-            CLI_COMMANDS.unregister("outer")
+            CLI_COMMANDS.unregister(name="outer")
 
     def test_string_loader_group_imports_at_cache_write(self, monkeypatch) -> None:
         import sys
@@ -728,7 +728,7 @@ class TestCollectCliCommandChildren:
             names = {c["name"] for c in self._collect_entry("fptool")["commands"]}
             assert names == {"x", "y"}
         finally:
-            CLI_COMMANDS.unregister("fptool")
+            CLI_COMMANDS.unregister(name="fptool")
 
     def test_broken_loader_degrades_to_name_only(self) -> None:
         from otto.cli.registry import CLI_COMMANDS, register_cli_command
@@ -740,7 +740,7 @@ class TestCollectCliCommandChildren:
             assert "commands" not in entry
             assert "options" not in entry
         finally:
-            CLI_COMMANDS.unregister("brokentool")
+            CLI_COMMANDS.unregister(name="brokentool")
 
     def test_flattened_leaf_app_serializes_options(self) -> None:
         from otto.cli.registry import CLI_COMMANDS, register_cli_command
@@ -759,7 +759,7 @@ class TestCollectCliCommandChildren:
             assert "commands" not in entry  # flattens to a leaf, not a group
             assert ["--count"] in [o["flags"] for o in entry["options"]]
         finally:
-            CLI_COMMANDS.unregister("solotool")
+            CLI_COMMANDS.unregister(name="solotool")
 
 
 def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
@@ -1337,9 +1337,9 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
     # Registered from a synthetic third-party module (attribution is by calling
     # frame), so `collect_cli_commands`, which skips anything whose origin starts
     # with "otto.", sees it; the root registry isolation removes it after the test.
-    code = compile("CLI_COMMANDS.register('probecmd', spec)", "<thirdparty.pkg>", "exec")
+    code = compile("CLI_COMMANDS.register(name='probecmd', entry=spec)", "<thirdparty.pkg>", "exec")
     exec(code, {"__name__": "thirdparty.pkg", "CLI_COMMANDS": CLI_COMMANDS, "spec": spec})  # noqa: S102
-    assert CLI_COMMANDS.origin("probecmd") == "thirdparty.pkg"
+    assert CLI_COMMANDS.origin(name="probecmd") == "thirdparty.pkg"
 
     try:
         out = cli_registry.collect_cli_commands()

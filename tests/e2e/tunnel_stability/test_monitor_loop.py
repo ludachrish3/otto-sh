@@ -70,7 +70,9 @@ async def test_loop_converges_with_churn_and_seam_parity(tunnel_lab, reap_tunnel
 
     chain = [(INGRESS, None), (EXIT, None)]
     for cycle in range(SOAK_CYCLES):
-        added = await add_tunnel(tunnel_lab, chain, port=PORTS_MONITOR_CHURN[0], protocol="udp")
+        added = await add_tunnel(
+            tunnel_lab, hosts=chain, port=PORTS_MONITOR_CHURN[0], protocol="udp"
+        )
         reap_tunnels.append(added.tunnel.id)
         elapsed = await _timed_pass(collector)
         assert elapsed < _TICK_BUDGET, f"cycle {cycle}: tick took {elapsed:.1f}s"
@@ -84,7 +86,7 @@ async def test_loop_converges_with_churn_and_seam_parity(tunnel_lab, reap_tunnel
         )
         assert records[0].hops == [INGRESS, EXIT], f"cycle {cycle}: hops {records[0].hops!r}"
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == []
         reap_tunnels.remove(added.tunnel.id)
         elapsed = await _timed_pass(collector)
@@ -111,7 +113,10 @@ async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, re
     collector, _published = _spy_collector(monitor_lab)
 
     added = await add_tunnel(
-        tunnel_lab, [(INGRESS, None), (EXIT, None)], port=PORTS_MONITOR_CHURN[1], protocol="udp"
+        tunnel_lab,
+        hosts=[(INGRESS, None), (EXIT, None)],
+        port=PORTS_MONITOR_CHURN[1],
+        protocol="udp",
     )
     reap_tunnels.append(added.tunnel.id)
     pid = await sshd_listener_pid(control)
@@ -149,7 +154,7 @@ async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, re
         assert records, f"did not reconverge: {records!r}"
         assert records[0].status == "ok", f"did not reconverge: {records!r}"
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == []
         reap_tunnels.remove(added.tunnel.id)
         elapsed = await _timed_pass(collector)

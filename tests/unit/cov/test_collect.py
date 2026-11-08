@@ -480,7 +480,7 @@ class TestCleanAfterFetch:
         result, project = self._run(cov_dir, produce_mock, clean_mock)  # default True
         # Scoped to the captured pair (test1/lib fetched but did not capture),
         # through the same project list collect_coverage itself resolved.
-        clean_mock.assert_awaited_once_with([project], pairs=[self.APP])
+        clean_mock.assert_awaited_once_with(projects=[project], pairs=[self.APP])
         assert set(result.product_dirs) == {("test1", "app"), ("test1", "lib")}
         assert result.produce.captured == [self.APP]
         assert result.clean == CleanReport(hosts={})
@@ -506,14 +506,14 @@ class TestCleanAfterFetch:
         from otto.coverage.errors import CoverageCaptureError
 
         cov_dir = tmp_path / "cov"
-        report = CleanReport(hosts={"test1": {"app": Result(Status.Success)}})
+        report = CleanReport(hosts={"test1": {"app": Result(status=Status.Success)}})
         clean_mock = AsyncMock(return_value=report)
         failure = CoverageCaptureError(self._outcome(cov_dir, lib_fails=True))
         produce_mock = AsyncMock(side_effect=failure)
         with pytest.raises(CoverageCaptureError) as excinfo:
             self._run(cov_dir, produce_mock, clean_mock)
         assert excinfo.value is failure
-        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        clean_mock.assert_awaited_once_with(projects=ANY, pairs=[self.APP])
         # The clean's report rides on the error, for a caller that fails on it.
         assert excinfo.value.clean is report
 
@@ -594,7 +594,7 @@ class TestCollectEmbedded:
 
         zephyr37_llext = ZephyrHost(
             ip="192.0.2.33",
-            element=Element("zephyr37_llext"),
+            element=Element(name="zephyr37_llext"),
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/opt/sdk/arm-zephyr-eabi"),
@@ -635,7 +635,7 @@ class TestCollectEmbedded:
 
         host = ZephyrHost(
             ip="192.0.2.33",
-            element=Element("zephyr37_llext"),
+            element=Element(name="zephyr37_llext"),
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi"),
@@ -682,7 +682,9 @@ class TestCollectEmbedded:
         from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = ZephyrHost(ip="192.0.2.33", element=Element("zephyr37_llext"), transfer="console")
+        host = ZephyrHost(
+            ip="192.0.2.33", element=Element(name="zephyr37_llext"), transfer="console"
+        )
         # No toolchain configured -> default Toolchain() -> discovery fallback.
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
@@ -801,7 +803,7 @@ class TestCollectEmbedded:
 
         zephyr37_fat = ZephyrHost(
             ip="192.0.2.33",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             transfer="console",
             os_version="3.7",
             toolchain=Toolchain(
@@ -812,7 +814,7 @@ class TestCollectEmbedded:
         )
         zephyr44_fat = ZephyrHost(
             ip="192.0.2.34",
-            element=Element("zephyr44_fat"),
+            element=Element(name="zephyr44_fat"),
             transfer="console",
             os_version="4.4",
             toolchain=Toolchain(
@@ -987,7 +989,7 @@ class TestBuildDirPathAnchoring:
         kwargs.setdefault("ip", "192.0.2.33")
         kwargs.setdefault("transfer", "console")
         if isinstance(kwargs.get("element"), str):
-            kwargs["element"] = Element(kwargs["element"])
+            kwargs["element"] = Element(name=kwargs["element"])
         kwargs.setdefault(
             "toolchain",
             Toolchain(
@@ -1778,7 +1780,7 @@ class TestAFailedFetchIsAFailedProduct:
 
     @staticmethod
     def _app_cleaned() -> CleanReport:
-        return CleanReport(hosts={"test1": {"app": Result(Status.Success)}})
+        return CleanReport(hosts={"test1": {"app": Result(status=Status.Success)}})
 
     def test_it_is_raised_after_the_captured_products_are_cleaned(self, tmp_path):
         from otto.coverage.errors import CoverageCaptureError
@@ -1793,7 +1795,7 @@ class TestAFailedFetchIsAFailedProduct:
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
-        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        clean_mock.assert_awaited_once_with(projects=ANY, pairs=[self.APP])
         assert info.value.clean is report
         assert info.value.result.captured == [self.APP]
         [failed] = info.value.result.failed
@@ -1821,7 +1823,7 @@ class TestAFailedFetchIsAFailedProduct:
         failed = {p.key for p in info.value.result.failed}
         assert failed == {ProductKey("test1", "lib"), self.LOST}
         assert "2 product(s) failed to fetch or capture;" in str(info.value)
-        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        clean_mock.assert_awaited_once_with(projects=ANY, pairs=[self.APP])
 
     def test_a_product_whose_remedy_is_a_declaration_is_not_told_to_rerun(self):
         from otto.coverage.errors import CoverageCaptureError
@@ -1903,4 +1905,4 @@ class TestAFailedFetchIsAFailedProduct:
         assert warned == [
             "Coverage not collected: ctr/wordcount: fetch failed: bound to a different event loop"
         ]
-        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        clean_mock.assert_awaited_once_with(projects=ANY, pairs=[self.APP])

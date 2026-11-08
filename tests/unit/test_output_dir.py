@@ -31,7 +31,7 @@ _PROBE = "_output_dir_probe"
 
 
 async def _probe() -> CommandResult:
-    return CommandResult(Status.Success, value="", command="probe", retcode=0)
+    return CommandResult(status=Status.Success, value="", command="probe", retcode=0)
 
 
 register_cli_command(_PROBE, _probe, help="internal test probe", gate=False)
@@ -192,7 +192,7 @@ def _log_dest_adapter(tmp_path, monkeypatch, dest):
     from otto import layout
     from otto.host.local_host import LocalHost
 
-    return layout.run_dir_of(LocalHost().log_dest(dest))
+    return layout.run_dir_of(LocalHost().log_dest(dest=dest))
 
 
 def _run_tests_adapter(tmp_path, monkeypatch, dest):
@@ -202,7 +202,7 @@ def _run_tests_adapter(tmp_path, monkeypatch, dest):
 
     patch_bootstrap(monkeypatch, [project_double(tmp_path / "proj")])
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    return run_tests([DOUBLE_TEST_NAME], output_dir=dest).output_dir
+    return run_tests(names=[DOUBLE_TEST_NAME], output_dir=dest).output_dir
 
 
 def _git_sut(tmp_path: Path) -> Path:

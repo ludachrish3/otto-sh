@@ -20,10 +20,9 @@ its default. It used to be deliberately field-less — the field-ordering rule o
 dataclass inheritance (no non-default field after a default one) ruled a shared
 dataclass base out, so the base carried bare annotations and each concrete
 subclass re-declared every field. ``kw_only=True`` (Python 3.10+) removes that
-rule for keyword-only fields, so the base can hold the declarations and a
-subclass can still take required positional arguments. ``ip`` is the one field
-that stays positional (``field(kw_only=False)``), so ``UnixHost("10.0.0.1",
-creds)`` keeps working. The base stays UNSLOTTED, matching
+rule for keyword-only fields, so the base can hold the declarations. Every
+field is keyword-only, ``ip`` included: ``UnixHost(ip="10.0.0.1", creds=creds)``.
+The base stays UNSLOTTED, matching
 :class:`~otto.host.host.BaseHost`: the concrete subclasses are
 ``@dataclass(slots=True)`` over it, exactly as before.
 """
@@ -163,7 +162,7 @@ class RemoteHost(BaseHost):
     ``tests/unit/host/test_field_homes.py`` for the allowlist).
     """
 
-    ip: str = field(kw_only=False)
+    ip: str
     """IP address of the host."""
 
     element: "Element" = field(  # ty: ignore[invalid-mutable-override] — REQUIRED by design: a remote host always has an element; BaseHost admits None only for container/local
@@ -426,7 +425,7 @@ class RemoteHost(BaseHost):
         return self._session_mgr.has_live_sessions or self._connections.connected
 
     @override
-    async def is_reachable(self, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
         """Probe by attempting a connection (no command), bounded by *timeout*."""
         try:
             result = await asyncio.wait_for(self.verify_connection(), timeout)
@@ -527,7 +526,7 @@ class RemoteHost(BaseHost):
     #  Addressing
     ####################
 
-    def address_for(self, name_or_literal: str) -> str:
+    def address_for(self, *, name_or_literal: str) -> str:
         """Resolve an interface *name* to its address, or pass a literal through.
 
         If *name_or_literal* is a key in :attr:`interfaces`, return that
@@ -659,7 +658,7 @@ class RemoteHost(BaseHost):
             # via-chain's directly-loginable end (the proxy hops themselves
             # are applied post-handshake by the hop host's own session, not
             # here).
-            cred = hop_host._connections.transport_cred_for("ssh") or LOGINLESS  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
+            cred = hop_host._connections.transport_cred_for(protocol="ssh") or LOGINLESS  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
             # The hop host's OWN ssh_options: its port, algorithm lists, keys
             # and timeouts apply to the tunnel exactly as they would to a
             # direct login. A RemoteHost family without the field (an

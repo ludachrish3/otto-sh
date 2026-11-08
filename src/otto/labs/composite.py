@@ -75,6 +75,7 @@ class CompositeLabRepository:
     def load_lab(
         self,
         name: str,
+        *,
         preferences: dict[str, dict[str, Any]] | None = None,
         inventory: "Inventory | None" = None,
     ) -> "Lab":
@@ -207,7 +208,7 @@ class CompositeLabRepository:
             names.update(source.repository.list_labs())
         return sorted(names)
 
-    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
+    def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Union by host id, later source wins, memberships unioned (spec §6.3).
 
         Memberships are also RE-RESOLVED: a summary carries the membership
@@ -231,7 +232,7 @@ class CompositeLabRepository:
         by_id: dict[str, HostSummary] = {}
         for source in self.sources:
             try:
-                summaries = host_summaries(source.repository, inventory=inventory)
+                summaries = host_summaries(repository=source.repository, inventory=inventory)
             except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
                 from .drops import record_drop
 

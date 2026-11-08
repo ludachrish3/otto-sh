@@ -33,7 +33,9 @@ class _StubHost:
 def _result(
     status: Status, *, timed_out: bool = False, msg: str = "", value: str = ""
 ) -> CommandResult:
-    return CommandResult(status, value=value, msg=msg, command="x", retcode=0, timed_out=timed_out)
+    return CommandResult(
+        status=status, value=value, msg=msg, command="x", retcode=0, timed_out=timed_out
+    )
 
 
 class _MyUnreachableError(OttoError, RuntimeError):

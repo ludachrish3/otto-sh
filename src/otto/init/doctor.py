@@ -84,7 +84,7 @@ class DoctorReport:
         """True when no area failed (``absent`` and ``blocked`` do not fail)."""
         return all(verdict.state != "failed" for verdict in self.verdicts)
 
-    def verdict(self, name: str) -> AreaVerdict:
+    def verdict(self, *, name: str) -> AreaVerdict:
         """Return the verdict for area *name*."""
         return next(verdict for verdict in self.verdicts if verdict.name == name)
 
@@ -122,7 +122,7 @@ def check_project(root: Path) -> DoctorReport:
     # the labels each ask _inventory_for the same question. Owned here, never
     # a module global.
     cache: "dict[Path, Inventory | Exception | None]" = {}
-    present = set(detect_areas(root))
+    present = set(detect_areas(root=root))
     settings_problems = validate_settings(root) if "settings" in present else []
     profiles: "ProfileContext | None" = None
     if "settings" in present and not settings_problems:
@@ -131,7 +131,7 @@ def check_project(root: Path) -> DoctorReport:
 
         project = Project(root=root)
         settings_problems = _data_profile_problems(project)
-        profiles = None if settings_problems else ProfileContext.from_projects([project])
+        profiles = None if settings_problems else ProfileContext.from_projects(projects=[project])
     lab_blocked = bool(settings_problems)
     lab_unprepared = [] if lab_blocked else _lab_preparation_problems(root)
     deferred = "" if lab_blocked or lab_unprepared else _deferred_detail(root)
@@ -179,7 +179,7 @@ def _data_profile_problems(project: "Project") -> list[str]:
     from ..host.os_profile import check_data_profiles
 
     try:
-        check_data_profiles([project])
+        check_data_profiles(projects=[project])
     except ValueError as e:
         return [f"{project.root / TOML_SETTINGS_PATH}: {e}"]
     return []
@@ -279,7 +279,9 @@ def _inventory_for(
         else []
     )
     try:
-        result = build_inventory_from_declarations(declarations, user_settings=load_user_settings())
+        result = build_inventory_from_declarations(
+            declarations=declarations, user_settings=load_user_settings()
+        )
     except (InventoryError, ValueError) as e:
         if cache is not None:
             cache[root] = e
@@ -444,7 +446,7 @@ def _validate_lab(
 
     def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
         validate_host_dict(
-            resolve_host_entry(host_data, inventory, element).host_data,
+            host_data=resolve_host_entry(host_data, inventory=inventory, element=element).host_data,
             element=element,
             profiles=profiles,
         )
@@ -527,7 +529,7 @@ def _lab_warnings(
             orphan_creds = None
         # Read AFTER the orphan check, never before: the notice is set by the
         # resolution that check performs, and construction touches nothing.
-        snapshot = snapshot_cache_of(inventory)
+        snapshot = snapshot_cache_of(inventory=inventory)
         stale = snapshot.stale_notice if snapshot is not None else None
         # Staleness first — it is the fact that qualifies every finding under
         # it, orphan list included.

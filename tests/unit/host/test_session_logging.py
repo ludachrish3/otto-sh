@@ -172,7 +172,7 @@ class TestRunCmdLogging:
         feed_task = asyncio.create_task(
             s.feed_after_write(f"{s._begin_marker}\nhello\n{s._end_marker_prefix}0__\n")
         )
-        result = await s.run_cmd("echo hello")
+        result = await s.run_cmd(cmd="echo hello")
         await feed_task
 
         assert result.retcode == 0
@@ -208,7 +208,7 @@ class TestRunCmdLogging:
                 f"{s._begin_marker}\nimage:[sha256:abc] [/x]\n{s._end_marker_prefix}0__\n"
             )
         )
-        result = await s.run_cmd("echo '[red]x[/red]'")
+        result = await s.run_cmd(cmd="echo '[red]x[/red]'")
         await feed_task
 
         assert result.retcode == 0
@@ -234,7 +234,7 @@ class TestRunCmdLogging:
         feed_task = asyncio.create_task(
             s.feed_after_write(f"{s._begin_marker}\nok\n{s._end_marker_prefix}0__\n")
         )
-        result = await s.run_cmd("SECRETPW", redact=True)
+        result = await s.run_cmd(cmd="SECRETPW", redact=True)
         await feed_task
 
         assert result.retcode == 0
@@ -350,7 +350,7 @@ class TestPerCommandLogSuppression:
     @pytest.mark.asyncio
     async def test_log_true_records_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()
-        result = await mgr.run_cmd("echo hi", log=LogMode.NORMAL)
+        result = await mgr.run_cmd(cmd="echo hi", log=LogMode.NORMAL)
         assert result.value == "OUT"
         assert cmds == ["echo hi"]
         assert outs == ["OUT"]
@@ -358,7 +358,7 @@ class TestPerCommandLogSuppression:
     @pytest.mark.asyncio
     async def test_never_suppresses_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()
-        result = await mgr.run_cmd("llext load_hex foo DEADBEEF", log=LogMode.NEVER)
+        result = await mgr.run_cmd(cmd="llext load_hex foo DEADBEEF", log=LogMode.NEVER)
         # Output still returned to the caller — only logging is suppressed.
         assert result.value == "OUT"
         assert cmds == []
@@ -371,8 +371,8 @@ class TestPerCommandLogSuppression:
         # mutation that forgot to restore would suppress "b" too.) This is the
         # property the concurrent-netcat-shells requirement depends on.
         mgr, cmds, outs = _logging_mgr()
-        await mgr.run_cmd("a", log=LogMode.NEVER)
-        await mgr.run_cmd("b", log=LogMode.NORMAL)
+        await mgr.run_cmd(cmd="a", log=LogMode.NEVER)
+        await mgr.run_cmd(cmd="b", log=LogMode.NORMAL)
         assert cmds == ["b"]
         assert outs == ["OUT"]
 
@@ -416,7 +416,7 @@ from otto.logger.mode import effective_mode
 
 def _make_unix_host(log=LogMode.NORMAL) -> UnixHost:
     return UnixHost(
-        ip="10.0.0.1", element=Element("box"), creds=[Cred(login="u", password="p")], log=log
+        ip="10.0.0.1", element=Element(name="box"), creds=[Cred(login="u", password="p")], log=log
     )
 
 

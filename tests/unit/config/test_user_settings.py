@@ -40,12 +40,12 @@ def test_path_is_pure_and_creates_nothing(tmp_path, monkeypatch):
 
 
 def test_absent_file_is_none(tmp_path):
-    assert load_user_settings(tmp_path / "settings.toml") is None
+    assert load_user_settings(path=tmp_path / "settings.toml") is None
 
 
 def test_parses_inventory_table(tmp_path):
     p = _user_file(tmp_path, '[inventory]\nbackend = "json"\npath = "i.json"\n')
-    model = load_user_settings(p)
+    model = load_user_settings(path=p)
     assert model is not None
     assert model.inventory is not None
     assert model.inventory.backend == "json"
@@ -54,7 +54,7 @@ def test_parses_inventory_table(tmp_path):
 
 def test_an_empty_file_parses_to_a_model_with_no_inventory(tmp_path):
     p = _user_file(tmp_path)
-    model = load_user_settings(p)
+    model = load_user_settings(path=p)
     assert model is not None
     assert model.inventory is None
 
@@ -65,7 +65,7 @@ def test_a_project_only_table_errors_naming_the_key_and_file(tmp_path):
         ValueError,
         match=r"settings\.toml: [\s\S]*reservations: Extra inputs are not permitted",
     ):
-        load_user_settings(p)
+        load_user_settings(path=p)
 
 
 def test_a_broken_file_errors_naming_the_file(tmp_path):
@@ -73,7 +73,7 @@ def test_a_broken_file_errors_naming_the_file(tmp_path):
     with pytest.raises(
         ValueError, match=r"settings\.toml: Expected '\]' at the end of a table declaration"
     ):
-        load_user_settings(p)
+        load_user_settings(path=p)
 
 
 def test_default_path_is_used_when_none_is_passed(tmp_path, monkeypatch):
@@ -89,7 +89,7 @@ def test_default_path_is_used_when_none_is_passed(tmp_path, monkeypatch):
 
 def test_parses_creds_table(tmp_path):
     p = _user_file(tmp_path, '[creds]\nbackend = "json"\npath = "c.json"\n')
-    model = load_user_settings(p)
+    model = load_user_settings(path=p)
     assert model is not None
     assert model.creds is not None
     assert model.creds.backend == "json"
@@ -186,12 +186,12 @@ def test_an_absent_file_is_memoized_and_an_error_is_not(monkeypatch):
 def test_an_explicit_path_bypasses_the_memo(tmp_path):
     assert load_user_settings() is None
     other = _user_file(tmp_path, "[cache]\nenabled = false\n")
-    first = load_user_settings(other)
+    first = load_user_settings(path=other)
     assert first is not None
     assert first.cache is not None
     assert not first.cache.enabled
     other.write_text("[cache]\nenabled = true\n")
-    second = load_user_settings(other)
+    second = load_user_settings(path=other)
     assert second is not None
     assert second.cache is not None
     assert second.cache.enabled
@@ -509,7 +509,7 @@ def test_disable_rewrites_a_coerced_string_as_a_boolean():
 def test_a_validation_error_is_one_line_without_the_input():
     path = _own_file('[cache]\nenabled = "maybe-secret"\n')
     with pytest.raises(ValueError, match=r"settings\.toml") as ei:
-        load_user_settings(path)
+        load_user_settings(path=path)
     text = str(ei.value)
     assert "\n" not in text
     assert "maybe-secret" not in text
@@ -532,7 +532,7 @@ def test_an_error_without_a_location_reads_as_the_shared_compact_form(monkeypatc
 
     monkeypatch.setattr(UserSettingsModel, "model_validate", classmethod(validate))
     with pytest.raises(ValueError, match=r"settings\.toml") as ei:
-        load_user_settings(path)
+        load_user_settings(path=path)
     assert isinstance(ei.value.__cause__, ValidationError)
     assert str(ei.value).endswith(
         "settings.toml: <entry>: Value error, cache and inventory disagree [type=value_error]"

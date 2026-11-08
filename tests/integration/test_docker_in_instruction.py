@@ -36,7 +36,7 @@ pytestmark = [
 async def parent_lab(test3_lease):
     parent = UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -56,12 +56,12 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
     project = Project(root=PROJECT1_DIR)
     container_id = f"{parent.id}.project1.api"
 
-    build_results = await build_images(project, parent)
+    build_results = await build_images(project=project, parent=parent)
     assert build_results["project1-api"].is_ok, build_results
 
     # Mimic: @instruction async def my_workflow(): async with composed(...) as ...
     async def my_workflow() -> str:
-        async with composed(project, lab, parent=parent.id, own=True) as containers:
+        async with composed(project=project, lab=lab, parent=parent.id, own=True) as containers:
             api = containers["api"]
             res = await api.exec("hostname")
             assert res.status is Status.Success
@@ -81,14 +81,14 @@ async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     project = Project(root=PROJECT1_DIR)
     container_id = f"{parent.id}.project1.api"
 
-    build_results = await build_images(project, parent)
+    build_results = await build_images(project=project, parent=parent)
     assert build_results["project1-api"].is_ok, build_results
 
-    async with composed(project, lab, parent=parent.id, own=True) as outer_hosts:
+    async with composed(project=project, lab=lab, parent=parent.id, own=True) as outer_hosts:
         outer_id = outer_hosts["api"].container_id
 
         # Inner user: default own=False — must reuse and NOT teardown on exit.
-        async with composed(project, lab, parent=parent.id, own=False) as inner_hosts:
+        async with composed(project=project, lab=lab, parent=parent.id, own=False) as inner_hosts:
             assert inner_hosts["api"].container_id == outer_id
 
         # Container must still be running after inner exit.

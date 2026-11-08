@@ -19,7 +19,9 @@ def _unix(**fields) -> UnixHost:
     fields.setdefault("valid_transfers", ["scp", "sftp", "ftp"])
     fields.setdefault("transfer", "scp")
     fields.setdefault("creds", [Cred(login="admin", password="pw")])
-    return UnixHost(element=Element("u1"), name="u1", ip="127.0.0.1", log=LogMode.QUIET, **fields)
+    return UnixHost(
+        element=Element(name="u1"), name="u1", ip="127.0.0.1", log=LogMode.QUIET, **fields
+    )
 
 
 def test_the_declared_ssh_port_is_the_port_the_connect_dials() -> None:

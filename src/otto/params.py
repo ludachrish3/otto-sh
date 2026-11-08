@@ -529,7 +529,7 @@ def options_key(cls_or_path: "type | str | Ref") -> str:
     if isinstance(cls_or_path, Ref):
         return cls_or_path.target
     if isinstance(cls_or_path, str):
-        return Ref(cls_or_path).target
+        return Ref(target=cls_or_path).target
     return f"{cls_or_path.__module__}:{cls_or_path.__qualname__}"
 
 
@@ -611,9 +611,11 @@ def register_options(
     unless *overwrite* is true, which replaces the verb list.
     """
     _check_verbs(verbs)
-    target: "type | Ref" = Ref(cls_or_path) if isinstance(cls_or_path, str) else cls_or_path
+    target: "type | Ref" = Ref(target=cls_or_path) if isinstance(cls_or_path, str) else cls_or_path
     OPTIONS.register(
-        options_key(target), OptionsEntry(target=target, verbs=tuple(verbs)), overwrite=overwrite
+        name=options_key(target),
+        entry=OptionsEntry(target=target, verbs=tuple(verbs)),
+        overwrite=overwrite,
     )
 
 
@@ -648,7 +650,14 @@ def options(
     just to print help text (tests/unit/test_import_contracts.py). Only
     actually declaring an ``@options`` class pays for it -- exactly the
     module that needed pydantic anyway to be a pydantic dataclass.
+
+    The record is always keyword-only (``kw_only=True``); an explicit
+    ``kw_only=False`` raises ``OptionsRegistrationError``.
     """
+    if dataclass_kwargs.get("kw_only", True) is not True:
+        raise OptionsRegistrationError(
+            f"@options records are keyword-only; drop kw_only={dataclass_kwargs['kw_only']!r}"
+        )
     import pydantic.dataclasses
 
     @registration_boundary
@@ -670,12 +679,15 @@ def options(
         config.setdefault("defer_build", True)
         target.__pydantic_config__ = cast("pydantic.ConfigDict", config)  # ty: ignore[unresolved-attribute]
         call_kwargs = {k: v for k, v in dataclass_kwargs.items() if k != "config"}
+        # Options records are keyword-only like every public record (spec §6.1);
+        # the rule is not a default a caller can switch off.
+        call_kwargs["kw_only"] = True
         built = cast("type", pydantic.dataclasses.dataclass(target, **call_kwargs))
         if verbs is not None:
             _check_verbs(verbs)
             OPTIONS.register(
-                options_key(built),
-                OptionsEntry(target=built, verbs=tuple(verbs)),
+                name=options_key(built),
+                entry=OptionsEntry(target=built, verbs=tuple(verbs)),
                 overwrite=overwrite,
             )
         return built
@@ -707,17 +719,17 @@ def verb_option_classes(verb: str) -> list[OptionsOrigin]:
                 # contain it and `otto run` says it in one line.
                 raise OptionsRegistrationError(
                     f"options class {key!r}, registered for {verb} by "
-                    f"{_who(OPTIONS.project(key))}, cannot be imported: {exc}"
+                    f"{_who(OPTIONS.project(name=key))}, cannot be imported: {exc}"
                 ) from exc
         cls = cast("type", OPTIONS.get(key).target)
-        found.append(OptionsOrigin(cls=cls, project=OPTIONS.project(key)))
+        found.append(OptionsOrigin(cls=cls, project=OPTIONS.project(name=key)))
     return found
 
 
 def verbs_for(cls: type) -> "list[OptionVerb] | None":
     """Return the verbs *cls* is registered for, or ``None`` when it is not registered."""
     key = options_key(cls)
-    return list(OPTIONS.peek(key).verbs) if key in OPTIONS else None
+    return list(OPTIONS.peek(name=key).verbs) if key in OPTIONS else None
 
 
 def _who(project: str | None) -> str:

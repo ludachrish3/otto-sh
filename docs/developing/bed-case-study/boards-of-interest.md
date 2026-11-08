@@ -49,7 +49,7 @@ os.chdir(_old_cwd)
 >>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
 >>> sorted(lab.hosts)
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
->>> sorted(fleet_of_interest(lab, [project]))
+>>> sorted(fleet_of_interest(lab, projects=[project]))
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu']
 ```
 

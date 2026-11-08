@@ -94,7 +94,7 @@ UNIX_PASSWORD_PROMPT = r"[Pp]assword: ?$"  # noqa: S105 — a regex pattern, not
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ProfileFields:
     """What a profile supplies a host: field defaults and the console prompts."""
 
@@ -263,10 +263,10 @@ def profile_vocabulary(base: str) -> frozenset[str]:
 
 
 def check_os_profile(
+    *,
     name: str,
     base: str,
     defaults: "Mapping[str, object] | None" = None,
-    *,
     login_prompt: str | None = None,
     password_prompt: str | None = None,
 ) -> None:
@@ -309,7 +309,7 @@ def _check_profile_meaning(
         vocabulary = profile_vocabulary(base)
     except Exception as exc:
         raise ValueError(
-            f"{where}: base {base!r} (host class registered by {HOST_CLASSES.origin(base)}): "
+            f"{where}: base {base!r} (host class registered by {HOST_CLASSES.origin(name=base)}): "
             f"resolution failed: {type(exc).__name__}: {exc}"
         ) from exc
     unknown = [k for k in (defaults or {}) if k not in vocabulary]
@@ -325,9 +325,9 @@ def _check_code_profile(name: str, entry: OsProfile, _proposed: object) -> None:
             f"register_os_profile({name!r}): the profile record is named {entry.name!r}"
         )
     check_os_profile(
-        name,
-        entry.base,
-        entry.fields.defaults.thaw_json(),
+        name=name,
+        base=entry.base,
+        defaults=entry.fields.defaults.thaw_json(),
         login_prompt=entry.fields.login_prompt,
         password_prompt=entry.fields.password_prompt,
     )
@@ -422,13 +422,13 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
     backend is actually registered in ``TRANSFER_BACKENDS``.
     """
     return FrozenMap(
-        {
+        mapping={
             "busybox": OsProfile(
                 "busybox",
                 "unix",
                 ProfileFields(
-                    FrozenMap.freeze_json(
-                        {
+                    defaults=FrozenMap.freeze_json(
+                        value={
                             "has_bash": False,
                             "command_frame": "ash",
                             "transfer": "shell",
@@ -461,21 +461,23 @@ def _builtin_host_classes() -> "list[tuple[str, HostClassEntry]]":
         (
             "unix",
             HostClassEntry(
-                Ref("otto.host.unix_host:UnixHost"), Ref("otto.host.specs:UnixHostSpec"), unix
+                Ref(target="otto.host.unix_host:UnixHost"),
+                Ref(target="otto.host.specs:UnixHostSpec"),
+                unix,
             ),
         ),
         (
             "embedded",
             HostClassEntry(
-                Ref("otto.host.embedded_host:EmbeddedHost"),
-                Ref("otto.host.specs:EmbeddedHostSpec"),
+                Ref(target="otto.host.embedded_host:EmbeddedHost"),
+                Ref(target="otto.host.specs:EmbeddedHostSpec"),
             ),
         ),
         (
             "zephyr",
             HostClassEntry(
-                Ref("otto.host.embedded_host:ZephyrHost"),
-                Ref("otto.host.specs:EmbeddedHostSpec"),
+                Ref(target="otto.host.embedded_host:ZephyrHost"),
+                Ref(target="otto.host.specs:EmbeddedHostSpec"),
             ),
         ),
     ]
@@ -601,8 +603,8 @@ def register_host_class(
         stored_spec = _resolve_host_spec(name, cls, spec)
     shadows = name in _BUILTIN_NAMES and (name in HOST_CLASSES or name in BUILTIN_PROFILES)
     HOST_CLASSES.register(
-        name,
-        HostClassEntry(cls, stored_spec, profile if profile is not None else ProfileFields()),
+        name=name,
+        entry=HostClassEntry(cls, stored_spec, profile if profile is not None else ProfileFields()),
         overwrite=overwrite,
     )
     if shadows:
@@ -613,8 +615,8 @@ def register_host_class(
 def register_os_profile(
     name: str,
     base: str,
-    defaults: "Mapping[str, object] | None" = None,
     *,
+    defaults: "Mapping[str, object] | None" = None,
     login_prompt: str | None = None,
     password_prompt: str | None = None,
     overwrite: bool = False,
@@ -659,12 +661,14 @@ def register_os_profile(
     """
     shadows = name in _BUILTIN_NAMES and (name in BUILTIN_PROFILES or name in HOST_CLASSES)
     OS_PROFILES.register(
-        name,
-        OsProfile(
+        name=name,
+        entry=OsProfile(
             name,
             base,
             ProfileFields(
-                FrozenMap.freeze_json(dict(defaults or {})), login_prompt, password_prompt
+                defaults=FrozenMap.freeze_json(value=dict(defaults or {})),
+                login_prompt=login_prompt,
+                password_prompt=password_prompt,
             ),
         ),
         overwrite=overwrite,
@@ -678,7 +682,9 @@ def register_os_profile(
 
 def _profile_from_spec(name: str, spec: "OsProfileSpec") -> OsProfile:
     """Return the record for one parsed ``[os_profiles.<name>]`` table (it carries no prompts)."""
-    return OsProfile(name, spec.base, ProfileFields(FrozenMap.freeze_json(spec.defaults)))
+    return OsProfile(
+        name, spec.base, ProfileFields(defaults=FrozenMap.freeze_json(value=spec.defaults))
+    )
 
 
 @final
@@ -703,7 +709,7 @@ class ProfileContext:
         return cls(profiles=FrozenMap(), owners=FrozenMap())
 
     @classmethod
-    def from_projects(cls, projects: "Sequence[Project]") -> "ProfileContext":
+    def from_projects(cls, *, projects: "Sequence[Project]") -> "ProfileContext":
         """Merge the ``[os_profiles]`` tables of *projects*, in the given order (later wins)."""
         profiles: dict[str, OsProfile] = {}
         owners: dict[str, str] = {}
@@ -711,7 +717,7 @@ class ProfileContext:
             for name, spec in project.os_profiles.items():
                 profiles[name] = _profile_from_spec(name, spec)
                 owners[name] = project.name
-        return cls(profiles=FrozenMap(profiles), owners=FrozenMap(owners))
+        return cls(profiles=FrozenMap(mapping=profiles), owners=FrozenMap(mapping=owners))
 
     def digest(self, *, secret_key: "Callable[[], bytes]") -> str:
         """Return the sha256 of the profiles' canonical JSON, stable across processes.
@@ -749,7 +755,7 @@ def _check_data_profile(profile: OsProfile, *, owner: str) -> None:
     )
 
 
-def check_data_profiles(projects: "Sequence[Project]") -> None:
+def check_data_profiles(*, projects: "Sequence[Project]") -> None:
     """Check every ``[os_profiles]`` table of every project in *projects*; idempotent.
 
     Run once every init module has run, so a table may name a host class an
@@ -775,7 +781,7 @@ def _layer_names(data: ProfileContext) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def resolve_os_profile(name: str, *, data: ProfileContext) -> OsProfile:
+def resolve_os_profile(*, name: str, data: ProfileContext) -> OsProfile:
     """Return the profile *name* selects: the first layer holding it supplies the whole profile.
 
     Code profiles first, then the project data in *data* (checked as it is
@@ -793,7 +799,7 @@ def resolve_os_profile(name: str, *, data: ProfileContext) -> OsProfile:
         _check_data_profile(profile, owner=data.owners[name])
         return profile
     if name in HOST_CLASSES:
-        return OsProfile(name, name, HOST_CLASSES.peek(name).profile)
+        return OsProfile(name, name, HOST_CLASSES.peek(name=name).profile)
     if name in BUILTIN_PROFILES:
         return BUILTIN_PROFILES[name]
     import difflib
@@ -807,16 +813,16 @@ def resolve_os_profile(name: str, *, data: ProfileContext) -> OsProfile:
     )
 
 
-def build_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfile:
+def build_os_profile(*, name: str, data: ProfileContext | None = None) -> OsProfile:
     """Return the :class:`OsProfile` *name* selects, seeing project data only through *data*.
 
     Raises:
         ValueError: As :func:`resolve_os_profile` does.
     """
-    return resolve_os_profile(name, data=data if data is not None else ProfileContext.empty())
+    return resolve_os_profile(name=name, data=data if data is not None else ProfileContext.empty())
 
 
-def get_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfile | None:
+def get_os_profile(*, name: str, data: ProfileContext | None = None) -> OsProfile | None:
     """Return the :class:`OsProfile` *name* selects, or ``None`` when no layer holds it.
 
     Non-raising for an unknown name, so a caller can skip it or produce its
@@ -826,7 +832,7 @@ def get_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfil
     context = data if data is not None else ProfileContext.empty()
     if name not in _layer_names(context):
         return None
-    return resolve_os_profile(name, data=context)
+    return resolve_os_profile(name=name, data=context)
 
 
 def registered_profile_names(*, data: ProfileContext | None = None) -> list[str]:
@@ -864,18 +870,18 @@ def registered_host_specs(*, builtins_only: bool = False) -> "dict[str, type[Hos
     }
 
 
-def build_host_class(name: str) -> type:
+def build_host_class(*, name: str) -> type:
     """Return the host class registered under *name* (raising on miss)."""
     return resolved(HOST_CLASSES.get(name).cls)
 
 
-def get_host_class(name: str) -> type | None:
+def get_host_class(*, name: str) -> type | None:
     """Return the host class registered under *name*, or ``None``.
 
     Non-raising counterpart to :func:`build_host_class`, for callers that
     produce their own answer (e.g. ``otto.cli.expose``'s verb lookup).
     """
-    return build_host_class(name) if name in HOST_CLASSES else None
+    return build_host_class(name=name) if name in HOST_CLASSES else None
 
 
 # --- console prompts ----------------------------------------------------------
@@ -913,7 +919,7 @@ def construction_fields(os_type: str) -> ProfileFields | None:
     held = _CONSTRUCTION_PROFILE.get()
     if held is not None and held[0] == os_type:
         return held[1]
-    profile = get_os_profile(os_type)
+    profile = get_os_profile(name=os_type)
     return profile.fields if profile is not None else None
 
 
@@ -955,7 +961,7 @@ def resolve_console_prompts(
 def _register_builtin_host_classes() -> None:
     """Register the built-in host classes, each by reference."""
     for name, entry in _builtin_host_classes():
-        HOST_CLASSES.register(name, entry)
+        HOST_CLASSES.register(name=name, entry=entry)
 
 
 _register_builtin_host_classes()

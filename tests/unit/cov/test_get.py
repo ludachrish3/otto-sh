@@ -39,7 +39,7 @@ from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.gitrepo import TmpGitRepo
 
-OK = Result(Status.Success)
+OK = Result(status=Status.Success)
 
 
 def _produced(*captures: Path) -> ProduceResult:
@@ -252,7 +252,7 @@ async def test_a_selector_matching_no_host_refuses(monkeypatch):
     """
 
     def _raising_all_hosts(*args, **kwargs):
-        raise EmptySelectionError("sensor", 3)
+        raise EmptySelectionError("sensor", base_size=3)
         yield  # pragma: no cover — unreachable; keeps this a generator function
 
     monkeypatch.setattr("otto.fleet.all_hosts", _raising_all_hosts)
@@ -268,7 +268,9 @@ async def test_a_local_only_selector_names_no_keyword_a_library_caller_cannot_pa
     """No coverage call takes ``include_local``, so ``get_coverage`` cannot advise passing it."""
 
     def _hidden(pattern=None, **_kw):
-        raise EmptySelectionError(pattern.pattern, 4, excluded_by=["include_local"], matched_size=1)
+        raise EmptySelectionError(
+            pattern.pattern, base_size=4, excluded_by=["include_local"], matched_size=1
+        )
         yield  # pragma: no cover — unreachable; keeps this a generator function
 
     monkeypatch.setattr("otto.fleet.all_hosts", _hidden)
@@ -369,7 +371,7 @@ async def test_the_engines_no_data_refusal_passes_through(all_hosts_of, git_sut)
         patch("otto.coverage.collect.collect_coverage", collect_mock),
         pytest.raises(NoCoverageDataError, match="zephyr37-fat"),
     ):
-        await get_coverage(Path("/tmp/out"), projects=[project])
+        await get_coverage(output_dir=Path("/tmp/out"), projects=[project])
 
 
 @pytest.mark.asyncio
@@ -391,7 +393,7 @@ async def test_no_captures_produced_raises_no_coverage_data(all_hosts_of, git_su
         patch("otto.coverage.collect.collect_coverage", collect_mock),
         pytest.raises(NoCoverageDataError, match="board1/app"),
     ):
-        await get_coverage(tmp_path, projects=[project])
+        await get_coverage(output_dir=tmp_path, projects=[project])
 
 
 @pytest.mark.asyncio
@@ -420,7 +422,7 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
         patch("otto.coverage.collect.collect_coverage", collect_mock),
         pytest.raises(NoCoverageDataError) as exc,
     ):
-        await get_coverage(tmp_path, projects=[project])
+        await get_coverage(output_dir=tmp_path, projects=[project])
 
     assert "t1/app, zephyr/ext" in str(exc.value)
 
@@ -559,7 +561,7 @@ async def test_get_manual_tier_writes_capture_and_manual_store(all_hosts_of, git
 
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
         report = await get_coverage(
-            tmp_path,
+            output_dir=tmp_path,
             tier="manual",
             ticket="T-1",
             note="session note",
@@ -599,7 +601,7 @@ async def test_get_default_tier_no_manual_store(all_hosts_of, git_sut, tmp_path)
     )
 
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
-        report = await get_coverage(tmp_path, projects=[project])
+        report = await get_coverage(output_dir=tmp_path, projects=[project])
 
     assert report.manual_captures == []
     manual_dir = git_sut / ".otto" / "coverage" / "manual"
@@ -641,7 +643,7 @@ async def test_resolve_get_tier_called_once_across_full_get_flow(all_hosts_of, g
         ),
         patch.object(produce_module.LcovMerger, "capture_pairs", _fake_capture(git_sut)),
     ):
-        report = await get_coverage(tmp_path, projects=[project])
+        report = await get_coverage(output_dir=tmp_path, projects=[project])
 
     assert resolve_spy.call_count == 1
     assert report.captures == [tmp_path / "cov" / "board1" / "app" / "capture.json"]
@@ -674,9 +676,9 @@ async def test_get_clean_resets_only_the_pairs_that_captured(all_hosts_of, git_s
         patch("otto.coverage.collect.collect_coverage", collect_mock),
         patch("otto.coverage.collect.clean_coverage", clean_mock),
     ):
-        report = await get_coverage(tmp_path, clean=True, projects=[project])
+        report = await get_coverage(output_dir=tmp_path, clean=True, projects=[project])
 
-    clean_mock.assert_awaited_once_with([project], pairs=[ProductKey("t1", "app")])
+    clean_mock.assert_awaited_once_with(projects=[project], pairs=[ProductKey("t1", "app")])
     assert report.ok
     assert isinstance(collect_mock.await_args.kwargs["tier"], TierConfig)
 
@@ -696,7 +698,9 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
         produce=_produced(cap_path),
     )
     clean_mock = AsyncMock(
-        return_value=CleanReport(hosts={"board1": {"app": Result(Status.Error, msg="denied")}})
+        return_value=CleanReport(
+            hosts={"board1": {"app": Result(status=Status.Error, msg="denied")}}
+        )
     )
     collect_mock = AsyncMock(return_value=collected)
 
@@ -704,7 +708,7 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
         patch("otto.coverage.collect.collect_coverage", collect_mock),
         patch("otto.coverage.collect.clean_coverage", clean_mock),
     ):
-        report = await get_coverage(tmp_path, clean=True, projects=[project])
+        report = await get_coverage(output_dir=tmp_path, clean=True, projects=[project])
 
     assert report.captures == [cap_path]
     assert not report.ok
@@ -792,7 +796,7 @@ async def test_e2e_kind_keeps_ticket_and_note_but_no_tester(all_hosts_of, git_su
     )
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
         await get_coverage(
-            tmp_path,
+            output_dir=tmp_path,
             ticket="CI-77",
             note="nightly run",
             tester_name="Al",
@@ -833,7 +837,7 @@ async def test_manual_kind_resolves_tester(all_hosts_of, git_sut, tmp_path):
     )
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
         await get_coverage(
-            tmp_path,
+            output_dir=tmp_path,
             tier="manual",
             ticket="T-1",
             tester_name="Al",
@@ -891,12 +895,14 @@ async def test_a_failed_product_keeps_the_good_ones_manual_capture_and_cleans_on
         patch("otto.coverage.collect.clean_coverage", clean_mock),
         pytest.raises(CoverageCaptureError) as excinfo,
     ):
-        await get_coverage(tmp_path, tier="manual", ticket="T-1", clean=True, projects=[project])
+        await get_coverage(
+            output_dir=tmp_path, tier="manual", ticket="T-1", clean=True, projects=[project]
+        )
 
     assert excinfo.value is failure
     manual = list((git_sut / ".otto" / "coverage" / "manual").glob("*.json"))
     assert [Capture.load(m).product for m in manual] == ["good"]
-    clean_mock.assert_awaited_once_with([project], pairs=[ProductKey("board1", "good")])
+    clean_mock.assert_awaited_once_with(projects=[project], pairs=[ProductKey("board1", "good")])
     assert excinfo.value.clean is report
 
 
@@ -912,7 +918,7 @@ async def test_a_failed_product_without_clean_cleans_nothing(all_hosts_of, git_s
         patch("otto.coverage.collect.clean_coverage", clean_mock),
         pytest.raises(CoverageCaptureError),
     ):
-        await get_coverage(tmp_path, tier="manual", ticket="T-1", projects=[project])
+        await get_coverage(output_dir=tmp_path, tier="manual", ticket="T-1", projects=[project])
 
     clean_mock.assert_not_awaited()
     assert failure.clean is None
@@ -924,14 +930,14 @@ async def test_capture_failure_and_clean_failure_both_surface(all_hosts_of, git_
     project = _project({"hosts": ".*"}, root=git_sut)
     all_hosts_of(_embedded_board("board1", products=("good", "bad")))
     _good, failure = _one_failed_capture(tmp_path / "cov")
-    bad = CleanReport(hosts={"board1": {"good": Result(Status.Error, msg="denied")}})
+    bad = CleanReport(hosts={"board1": {"good": Result(status=Status.Error, msg="denied")}})
 
     with (
         patch("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=failure)),
         patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=bad)),
         pytest.raises(CoverageCaptureError, match="board1/bad") as excinfo,
     ):
-        await get_coverage(tmp_path, clean=True, projects=[project])
+        await get_coverage(output_dir=tmp_path, clean=True, projects=[project])
 
     assert excinfo.value.clean is bad
     assert not excinfo.value.clean.ok

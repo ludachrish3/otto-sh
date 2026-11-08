@@ -168,7 +168,7 @@ async def reap_tunnels(tunnel_lab):
     yield created
     for tunnel_id in created:
         with contextlib.suppress(Exception):
-            await remove_tunnel(tunnel_lab, tunnel_id)
+            await remove_tunnel(tunnel_lab, tunnel_id=tunnel_id)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -220,7 +220,7 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
 
     try:
         added = await add_tunnel(
-            tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port, protocol="udp"
+            tunnel_lab, hosts=[(_INGRESS, None), (_EXIT, None)], port=port, protocol="udp"
         )
         reap_tunnels.append(added.tunnel.id)
 
@@ -250,7 +250,7 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
         assert len(found.present) == 4, f"expected 4 processes, got {len(found.present)}"
 
         # --- remove: reap, verify clean ---
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert added.tunnel.id in report.removed_ids
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
@@ -283,7 +283,7 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
     try:
         added = await add_tunnel(
             tunnel_lab,
-            [(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
+            hosts=[(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
             port=port,
             protocol="udp",
         )
@@ -311,7 +311,7 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
             f"expected {_EXIT!r} in _fmt_via output: {_fmt_via(added.tunnel)!r}"
         )
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
@@ -474,7 +474,11 @@ async def test_container_endpoint_oldos(ingress_docker_daemon, tunnel_lab, reap_
     """
     project = _oldos_project()
     hosts = await compose_up(
-        project, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
+        project=project,
+        lab=tunnel_lab,
+        parent=_INGRESS,
+        project_name=OLDOS_COMPOSE_PROJECT,
+        build=True,
     )
     try:
         container = hosts["oldos"]
@@ -485,7 +489,7 @@ async def test_container_endpoint_oldos(ingress_docker_daemon, tunnel_lab, reap_
 
         added = await add_tunnel(
             tunnel_lab,
-            [(_EXIT, None), (_INGRESS, None), (container.id, None)],
+            hosts=[(_EXIT, None), (_INGRESS, None), (container.id, None)],
             port=port,
             protocol="udp",
         )
@@ -508,11 +512,13 @@ async def test_container_endpoint_oldos(ingress_docker_daemon, tunnel_lab, reap_
             f"expected 2 container-origin processes, got {container_procs!r}"
         )
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await compose_down(project, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT)
+        await compose_down(
+            project=project, lab=tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +553,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
         )
 
         added = await add_tunnel(
-            tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port, protocol="udp"
+            tunnel_lab, hosts=[(_INGRESS, None), (_EXIT, None)], port=port, protocol="udp"
         )
         reap_tunnels.append(added.tunnel.id)
 
@@ -569,7 +575,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
             f"expected a degraded status after out-of-band kill, got {found.status!r}"
         )
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
@@ -708,7 +714,7 @@ async def test_udp_datagrams_cross_three_hops_whole(tunnel_lab, reap_tunnels) ->
     tag = f"otto-tunnel-e2e-echo-{uuid.uuid4().hex[:8]}"
     added = await add_tunnel(
         tunnel_lab,
-        [(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
+        hosts=[(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
         port=port,
         protocol="udp",
     )
@@ -751,7 +757,7 @@ async def test_udp_datagrams_cross_three_hops_whole(tunnel_lab, reap_tunnels) ->
                 b.sendto(_datagram(64, 200 + i), ingress)
             assert sorted(_collect(a, 5)) == sorted(_datagram(64, 100 + i) for i in range(5))
             assert sorted(_collect(b, 5)) == sorted(_datagram(64, 200 + i) for i in range(5))
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
@@ -775,7 +781,7 @@ async def test_udp_flow_resumes_after_an_opted_in_idle_timeout(tunnel_lab, reap_
     tag = f"otto-tunnel-e2e-echo-{uuid.uuid4().hex[:8]}"
     added = await add_tunnel(
         tunnel_lab,
-        [(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
+        hosts=[(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
         port=port,
         protocol="udp",
         idle_timeout=_IDLE_S,
@@ -801,7 +807,7 @@ async def test_udp_flow_resumes_after_an_opted_in_idle_timeout(tunnel_lab, reap_
             assert busy == 3, f"expected 2 relay parents + 1 fwd child busy, got {busy}"
             assert idle == 2, f"expected only the 2 relay parents left idle, got {idle}"
             assert _round_trip(c, ingress, b"after-idle") == b"after-idle"
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
@@ -831,7 +837,7 @@ async def test_tcp_idle_timeout_never_takes_down_the_listeners(tunnel_lab, reap_
     tag = f"otto-tunnel-e2e-tcpecho-{uuid.uuid4().hex[:8]}"
     added = await add_tunnel(
         tunnel_lab,
-        [(_INGRESS, None), (_EXIT, None)],
+        hosts=[(_INGRESS, None), (_EXIT, None)],
         port=port,
         protocol="tcp",
         idle_timeout=_IDLE_S,
@@ -916,7 +922,7 @@ async def test_tcp_idle_timeout_never_takes_down_the_listeners(tunnel_lab, reap_
                 f"idle_timeout, but it was still open"
             )
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
@@ -943,10 +949,16 @@ async def test_two_concurrent_adds_on_shared_hosts_do_not_collide(tunnel_lab, re
     """
     port_a, port_b = _PORT_CONCURRENT_A, _PORT_CONCURRENT_B
     path = (TunnelHop(_INGRESS), TunnelHop(_EXIT))
-    reap_tunnels.extend(make_tunnel_id(path, "udp", port) for port in (port_a, port_b))
+    reap_tunnels.extend(
+        make_tunnel_id(path=path, protocol="udp", service_port=port) for port in (port_a, port_b)
+    )
     added_a, added_b = await asyncio.gather(
-        add_tunnel(tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port_a, protocol="udp"),
-        add_tunnel(tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port_b, protocol="udp"),
+        add_tunnel(
+            tunnel_lab, hosts=[(_INGRESS, None), (_EXIT, None)], port=port_a, protocol="udp"
+        ),
+        add_tunnel(
+            tunnel_lab, hosts=[(_INGRESS, None), (_EXIT, None)], port=port_b, protocol="udp"
+        ),
     )
     assert [added_a.tunnel.id, added_b.tunnel.id] == reap_tunnels[-2:]
 
@@ -962,6 +974,6 @@ async def test_two_concurrent_adds_on_shared_hosts_do_not_collide(tunnel_lab, re
         assert len(found.present) == 4, f"expected 4 processes, got {len(found.present)}"
 
     for added in (added_a, added_b):
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)

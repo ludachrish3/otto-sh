@@ -53,7 +53,7 @@ There is no force mode. To install a product again, uninstall it first.
 
 ## Injecting products
 
-    host = UnixHost(ip="10.0.0.1", element=Element("box"), creds=[Cred(login="u", password="p")],
+    host = UnixHost(ip="10.0.0.1", element=Element(name="box"), creds=[Cred(login="u", password="p")],
                     products=[MyApp(artifact=Path("dist/myapp.tgz"), stage_dir=Path("/opt"))])
 
 ## Lifecycle verbs
@@ -88,7 +88,7 @@ callable directly:
 | Method | Behavior |
 |--------|----------|
 | `await host.get_logs(product=True, debug=True)` | Both halves; `require_product_logs=True` makes an empty product haul a failure. |
-| `await host.get_product_logs()` | Each product's `get_logs(host, dest)` hook, then its `get_debug_logs(host, dest)` hook — its own `debug_log_globs` (both best-effort). |
+| `await host.get_product_logs()` | Each product's `get_logs(host, dest=dest)` hook, then its `get_debug_logs(host=host, dest=dest)` hook — its own `debug_log_globs` (both best-effort). |
 | `await host.get_debug_logs()` | Fetch the host's `debug_log_globs`. |
 
 Retrieving zero logs is success. Files land in a documented tree, keyed by host

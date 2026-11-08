@@ -49,7 +49,7 @@ class _Complete(ReservationBackendBase):
         super().__init__(url=url, project_root=project_root, username=username)
         self._holdings = holdings or {}
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         now = datetime.now(tz=timezone.utc)
         window_start = start if start is not None else now
         expires = now + timedelta(hours=1)
@@ -76,7 +76,7 @@ class RecordingBackend(ReservationBackendBase):
         self.calls: list[str] = []
         self.late_attribute = "set after super().__init__"
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         self.calls.append(username)
         # Touching an attribute assigned AFTER super().__init__ proves the
         # base never fetched during construction.

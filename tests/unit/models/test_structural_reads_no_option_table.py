@@ -60,6 +60,8 @@ def test_no_structural_validator_reads_an_options_table():
 
 def test_an_option_table_only_a_preference_sets_reaches_the_host():
     host = create_host_from_dict(
-        {"ip": "10.0.0.1"}, {".*": {"telnet_options": {"port": 2323}}}, element=Element("e")
+        {"ip": "10.0.0.1"},
+        preferences={".*": {"telnet_options": {"port": 2323}}},
+        element=Element(name="e"),
     )
     assert host.telnet_options.port == 2323

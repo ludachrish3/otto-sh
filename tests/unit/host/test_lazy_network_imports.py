@@ -38,7 +38,7 @@ from otto.host.os_profile import get_host_class, HOST_CLASSES
 
 assert set(HOST_CLASSES.names()) >= {"unix", "embedded", "zephyr"}, sorted(HOST_CLASSES.names())
 
-cls = get_host_class("unix")
+cls = get_host_class(name="unix")
 exposed = [
     name
     for name, fn in inspect.getmembers(cls, inspect.iscoroutinefunction)

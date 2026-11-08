@@ -32,7 +32,7 @@ def test_make_host_id_has_no_element_id_parameter():
 
 
 def test_element_id_never_reaches_the_host_id_or_name():
-    host = UnixHost(ip="10.0.0.1", creds=[], element=Element("server", id=103))
+    host = UnixHost(ip="10.0.0.1", creds=[], element=Element(name="server", id=103))
     assert host.id == "server"
     assert host.name == "server"
     assert host.element.id == 103
@@ -69,8 +69,8 @@ def test_distinct_names_are_distinct_elements():
 
 def test_two_board_less_hosts_of_one_element_collide_with_the_new_wording():
     lab = Lab(name="t")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("server")))
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element(name="server")))
     other = Lab(name="u")
-    other.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element("server")))
+    other.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element(name="server")))
     with pytest.raises(ValueError, match="Give the elements distinct names, or set board/slot"):
         _ = lab + other

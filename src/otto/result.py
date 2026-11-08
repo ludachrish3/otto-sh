@@ -6,13 +6,13 @@ or :class:`CommandResult`; ``run()`` returns :class:`Results`. The CLI derives
 its exit code from :attr:`Result.exit_code`.
 
 >>> from otto.utils import Status
->>> r = Result(Status.Success, value=["mod_a"], msg="")
+>>> r = Result(status=Status.Success, value=["mod_a"], msg="")
 >>> r.is_ok, r.exit_code
 (True, 0)
->>> cr = CommandResult(Status.Failed, value="", command="false", retcode=1)
+>>> cr = CommandResult(status=Status.Failed, value="", command="false", retcode=1)
 >>> cr.exit_code
 1
->>> res = Results.collect([cr])
+>>> res = Results.collect(items=[cr])
 >>> res.only.command, res.exit_code, bool(res)
 ('false', 1, False)
 """
@@ -65,7 +65,7 @@ class CommandNotRunError(OttoError, RuntimeError):
     Import it from ``otto.result``.
     """
 
-    def __init__(self, command: str, host: str, detail: str = "") -> None:
+    def __init__(self, command: str, *, host: str, detail: str = "") -> None:
         """Name the call, the host, and optionally why the preview stopped here.
 
         *detail* is appended to the standard sentence rather than replacing it,
@@ -85,7 +85,7 @@ _SUMMARY_VALUE_CAP = 60
 """How much of a result's value repr its one-line summary keeps."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Result:
     """Outcome of a host verb: status + optional payload + human diagnostic."""
 
@@ -117,7 +117,7 @@ class Result:
         return 0 if self.is_ok else self.status.value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CommandResult(Result):
     """Result of one shell command; :attr:`~otto.result.Result.value` holds the command's output.
 
@@ -225,7 +225,7 @@ class NotRunResult(CommandResult):
         docstring's ``prefix: rest`` as ``type: description`` and ``-W -n``
         then fails on the unresolvable ``prefix`` class.
         """
-        raise CommandNotRunError(self.command, self.host_name)
+        raise CommandNotRunError(self.command, host=self.host_name)
 
     @value.setter
     @override
@@ -314,7 +314,7 @@ class NotRunResult(CommandResult):
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ShellResult(Result):
     """Result of one :class:`~otto.host.app_shell.AppShell` command.
 
@@ -331,7 +331,7 @@ class ShellResult(Result):
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Results(Result, Sequence[CommandResult]):
     """Aggregate over per-command results; itself a :class:`Result`.
 
@@ -343,7 +343,7 @@ class Results(Result, Sequence[CommandResult]):
     """
 
     @classmethod
-    def collect(cls, items: Sequence[CommandResult], msg: str = "") -> "Results":
+    def collect(cls, *, items: Sequence[CommandResult], msg: str = "") -> "Results":
         """Build a Results from per-command entries, computing the aggregate."""
         entries = list(items)
         status = next((e.status for e in entries if not e.is_ok), Status.Success)

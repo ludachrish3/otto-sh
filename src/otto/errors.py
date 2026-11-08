@@ -83,6 +83,8 @@ seam should catch ``BaseException`` and re-raise what :func:`is_containable`
 rejects.
 """
 
+from typing_extensions import override
+
 __all__ = ["EnsureStateError", "OttoError"]
 
 #: Exceptions a containment seam must re-raise rather than frame.
@@ -140,8 +142,63 @@ def is_containable(exc: BaseException) -> bool:
     return not isinstance(exc, UNCONTAINABLE)
 
 
+#: The builtin bases whose state lives in C slots outside ``__dict__``, and
+#: the slot names their own ``__reduce__`` carries. ``winerror`` exists on
+#: Windows only, so a slot the instance lacks is skipped.
+_NATIVE_SLOTS: tuple[tuple[type[BaseException], tuple[str, ...]], ...] = (
+    (OSError, ("errno", "strerror", "filename", "filename2", "winerror")),
+)
+
+
+def _native_state(exc: BaseException) -> dict[str, object]:
+    """Return the C-slot attributes of *exc*'s builtin bases that are set, by name.
+
+    An unset slot is left out: assigning ``None`` to one is not the same as
+    leaving it unset (``OSError.__str__`` tests the slot, not its value).
+    """
+    return {
+        name: getattr(exc, name)
+        for base, names in _NATIVE_SLOTS
+        if isinstance(exc, base)
+        for name in names
+        if getattr(exc, name, None) is not None
+    }
+
+
+def _restore_error(
+    cls: "type[OttoError]",
+    args: tuple[object, ...],
+    state: dict[str, object],
+    native: "dict[str, object] | None" = None,
+) -> "OttoError":
+    """Rebuild a pickled :class:`OttoError` without calling its ``__init__``."""
+    exc = cls.__new__(cls, *args)
+    exc.args = args
+    for name, value in (native or {}).items():
+        setattr(exc, name, value)
+    exc.__dict__.update(state)
+    return exc
+
+
 class OttoError(Exception):
-    """Base class for every exception otto defines (not every one it raises)."""
+    """Base class for every exception otto defines (not every one it raises).
+
+    Every otto error pickles, whatever its constructor's shape. The stdlib's
+    ``BaseException.__reduce__`` rebuilds by calling ``cls(*self.args)``, which
+    fails for a constructor with keyword-only or extra required parameters
+    (most of otto's). ``__reduce__`` instead restores ``args`` and the
+    instance attributes onto a fresh instance without calling ``__init__``, so
+    an error raised in a worker process (``otto.coverage``, pytest-xdist)
+    arrives with the same type, message and attributes. The state a builtin
+    base keeps outside ``__dict__`` (an ``OSError``'s ``errno``, ``strerror``,
+    ``filename``, ``filename2``) is carried too. A subclass's attributes must
+    themselves be picklable.
+    """
+
+    @override
+    def __reduce__(self) -> tuple[object, ...]:
+        state = dict(self.__dict__)
+        return (_restore_error, (type(self), self.args, state, _native_state(self)))
 
 
 class FieldError(OttoError):

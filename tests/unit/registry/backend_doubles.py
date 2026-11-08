@@ -20,7 +20,7 @@ def _replace_term_backend(name: str, cls: type[ConnectionManager]) -> None:
     Overwrites a built-in. The root conftest's ``_isolate_registries`` restores
     the original after the test.
     """
-    current = conn_mod.TERM_BACKENDS.peek(name).metadata
+    current = conn_mod.TERM_BACKENDS.peek(name=name).metadata
     register_term_backend(
         name,
         cls,
@@ -71,7 +71,7 @@ def _unix_host(**kwargs):
     return UnixHost(
         ip="10.0.0.9",
         creds=[Cred(login="root", password="x")],
-        element=Element("ne"),
+        element=Element(name="ne"),
         term="ssh",
         **kwargs,
     )
@@ -83,7 +83,7 @@ def _zephyr(term: str, **kwargs) -> ZephyrHost:
         return ZephyrHost(
             ip="192.0.2.1",
             creds=[Cred(login="root", password="x")],
-            element=Element("z"),
+            element=Element(name="z"),
             valid_terms=["console"],
             term="console",
             console_options=ConsoleOptions(server="test4", port=2323, login=True),
@@ -93,7 +93,7 @@ def _zephyr(term: str, **kwargs) -> ZephyrHost:
     return ZephyrHost(
         ip="192.0.2.1",
         creds=[Cred(login="root", password="x")],
-        element=Element("z"),
+        element=Element(name="z"),
         telnet_options=TelnetOptions(port=2323, login=True),
         log=LogMode.QUIET,
         **kwargs,

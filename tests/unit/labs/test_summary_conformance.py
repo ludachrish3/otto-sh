@@ -20,7 +20,7 @@ from otto.testing.conformance import assert_lab_repository_conforms
 def _host(element: str, *, ip: str = "10.0.0.1", docker: bool = False) -> UnixHost:
     return UnixHost(
         ip=ip,
-        element=Element(element),
+        element=Element(name=element),
         creds=[Cred(login="u", password="p")],
         docker_capable=docker,
     )
@@ -48,7 +48,7 @@ class _Backend:
             lab.hosts.update(self._hosts)
         return lab
 
-    def list_host_summaries(self, inventory: object = None) -> list[HostSummary]:
+    def list_host_summaries(self, *, inventory: object = None) -> list[HostSummary]:
         if self._summaries is not None:
             return self._summaries
         return [
@@ -58,7 +58,7 @@ class _Backend:
                 ip=h.ip,
                 docker_capable=h.docker_capable,
                 os_type=h.os_type,
-                logins=logins_of_creds(h.creds),
+                logins=logins_of_creds(creds=h.creds),
             )
             for h in self._hosts.values()
         ]

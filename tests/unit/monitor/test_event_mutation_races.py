@@ -225,7 +225,7 @@ async def test_a_failed_archive_write_releases_the_entry_point_and_leaves_memory
     live.archive.fail_next = True
     with pytest.raises(OSError, match="disk full"):
         await live.collector.update_event(
-            live.event_id,
+            event_id=live.event_id,
             label="lost",
             color="#888888",
             dash="dash",

@@ -175,7 +175,7 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
         names = sorted(
             n
             for n in IMPAIRERS.names()
-            if family is None or family in build_impairer(n).host_families
+            if family is None or family in build_impairer(name=n).host_families
         )
         props["valid_impairers"] = _scalar_or_list_with_enum(props["valid_impairers"], names)
 

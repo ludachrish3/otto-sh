@@ -1452,7 +1452,7 @@ def _progress_promises_section() -> "list[str]":
         "|---|---|---|---|",
     ]
     for name in sorted(TRANSFER_BACKENDS.names()):
-        granularity = TRANSFER_BACKENDS.peek(name).metadata.progress_granularity
+        granularity = TRANSFER_BACKENDS.peek(name=name).metadata.progress_granularity
         lines.append(
             f"| `{name}` | {cell(granularity.put)} | {cell(granularity.get)} | {granularity.note} |"
         )
@@ -1771,7 +1771,7 @@ def _transfer_cell(capabilities: "HostCapabilities") -> str:
     names = [
         name
         for name in sorted(TRANSFER_BACKENDS.names())
-        if capabilities.transfer_family in TRANSFER_BACKENDS.peek(name).metadata.host_families
+        if capabilities.transfer_family in TRANSFER_BACKENDS.peek(name=name).metadata.host_families
     ]
     return _join(_code(names))
 

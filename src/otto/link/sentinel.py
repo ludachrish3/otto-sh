@@ -81,7 +81,7 @@ def encode_impair_sentinel_v3(link_id: str, netdev: str, selector: Selector) -> 
 def _selector_or_none(port_text: str, proto_text: str, side_text: str) -> Selector | None:
     """Decode a sentinel's selector segments; ``None`` = not a selector otto writes."""
     try:
-        return Selector.parse(port_text, proto_text or None, side_text or None)
+        return Selector.parse(port_text=port_text, proto=proto_text or None, side=side_text or None)
     except ValueError:
         return None
 

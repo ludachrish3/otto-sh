@@ -371,7 +371,7 @@ def build_root_param(entry: DeclaredEntry, params: dict[str, Any]) -> PurePosixP
         entry.base_dir if value is None else anchor_path(Path(value), entry.base_dir)
     )
     try:
-        gcov_prefix_strip(root)
+        gcov_prefix_strip(build_root=root)
     except ValueError as e:
         written = str(entry.base_dir) if value is None else value
         raise ValueError(f"[[{entry.seam}]] {entry.name!r}: {e} (got {written!r})") from e
@@ -388,7 +388,7 @@ def placeholder_values(
     """
     values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
     if build_root is not None:
-        values["gcov_prefix_strip"] = str(gcov_prefix_strip(build_root))
+        values["gcov_prefix_strip"] = str(gcov_prefix_strip(build_root=build_root))
     return values
 
 
@@ -468,7 +468,7 @@ def resolve_class(entry: DeclaredEntry) -> type[DeclaredProduct]:
     if entry.cls is None:  # pragma: no cover — the registry routes only class entries here
         raise ValueError(f"[[{entry.seam}]] {entry.name!r}: no class to build")
     try:
-        obj = Ref(entry.cls).resolve()
+        obj = Ref(target=entry.cls).resolve()
     except (ImportError, AttributeError, ValueError) as e:
         raise ValueError(f"[[{entry.seam}]] {entry.name!r}: class {entry.cls!r} — {e}") from e
     if not (isinstance(obj, type) and issubclass(obj, DeclaredProduct)):

@@ -44,9 +44,9 @@ class _KmodHost(SimpleNamespace):
             return Path(attrs.get("home", "/home/tester"))
 
         self.login_home = _login_home
-        self.load = AsyncMock(return_value=Result(Status.Success))
-        self.unload = AsyncMock(return_value=Result(Status.Success))
-        self.lsmod = AsyncMock(return_value=Result(Status.Success, value=list(loaded)))
+        self.load = AsyncMock(return_value=Result(status=Status.Success))
+        self.unload = AsyncMock(return_value=Result(status=Status.Success))
+        self.lsmod = AsyncMock(return_value=Result(status=Status.Success, value=list(loaded)))
         self.run_calls: list[tuple[str, dict]] = []
         self.exec_calls: list[tuple[str, dict]] = []
         self.dev_tools: list = []
@@ -59,11 +59,11 @@ class _KmodHost(SimpleNamespace):
         retcode = 0 if self._run_status is Status.Success else 1
         value = framed(cmd, self._run_value)
         result = CommandResult(command=cmd, value=value, status=self._run_status, retcode=retcode)
-        return Results.collect([result])
+        return Results.collect(items=[result])
 
     async def exec(self, cmd, **kw):
         self.exec_calls.append((cmd, kw))
-        return CommandResult(self._run_status, value=framed(cmd, ""), command=cmd, retcode=0)
+        return CommandResult(status=self._run_status, value=framed(cmd, ""), command=cmd, retcode=0)
 
 
 def _build(host=None, **params) -> KmodProduct:
@@ -246,7 +246,7 @@ async def test_kmod_stage_is_a_noop_and_install_loads_with_params():
     assert (await p.install(host)).is_ok
     host.load.assert_awaited_once_with(
         Path("/project/build/demo/otto_kmod_demo.ko"),
-        "otto_kmod_demo",
+        name="otto_kmod_demo",
         params="debug=1",
         dest_dir=Path("/home/tester"),  # no host default: the login home
     )
@@ -282,7 +282,7 @@ async def test_kmod_is_installed_reads_lsmod_and_uninstall_unloads():
     p = _build(host)
     assert await p.is_installed(host) is True
     assert await _build(host, module_name="other").is_installed(host) is False
-    host.lsmod.return_value = Result(Status.Error, value=[], msg="boom")
+    host.lsmod.return_value = Result(status=Status.Error, value=[], msg="boom")
     assert await p.is_installed(host) is False
     assert (await p.uninstall(host)).is_ok
     host.unload.assert_awaited_once_with("otto_kmod_demo")
@@ -295,8 +295,10 @@ async def test_kmod_module_install_loads_the_library_first_when_absent(tmp_path)
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     assert (await p.install(host)).is_ok
     calls = host.load.await_args_list
-    assert calls[0].args == (tool.artifact, "otto_kmodcov")
-    assert calls[1].args == (Path("/project/build/demo/otto_kmod_demo.ko"), "otto_kmod_demo")
+    assert calls[0].args == (tool.artifact,)
+    assert calls[0].kwargs["name"] == "otto_kmodcov"
+    assert calls[1].args == (Path("/project/build/demo/otto_kmod_demo.ko"),)
+    assert calls[1].kwargs["name"] == "otto_kmod_demo"
     assert calls[1].kwargs["params"] == "cov_dir=/var/cov/demo"
 
 
@@ -330,7 +332,7 @@ async def test_kmod_module_install_skips_the_library_when_resident(tmp_path):
     p = _build(host, coverage="module")
     assert (await p.install(host)).is_ok
     assert host.load.await_count == 1
-    assert host.load.await_args.args[1] == "otto_kmod_demo"
+    assert host.load.await_args.kwargs["name"] == "otto_kmod_demo"
 
 
 @pytest.mark.asyncio
@@ -349,7 +351,7 @@ async def test_kmod_module_install_fails_naming_the_missing_kmodcov_tool():
 async def test_kmod_module_install_reports_a_library_load_failure_as_the_tools(tmp_path):
     host = _KmodHost(loaded=[])
     tool = _attach_kmodcov(host, tmp_path)
-    host.load.return_value = Result(Status.Error, msg="insmod otto_kmodcov failed: vermagic")
+    host.load.return_value = Result(status=Status.Error, msg="insmod otto_kmodcov failed: vermagic")
     p = _build(host, coverage="module")
     result = await p.install(host)
     assert result.status is Status.Error
@@ -366,11 +368,13 @@ async def test_kmod_module_install_failure_after_the_library_loaded_is_the_consu
     host = _KmodHost(loaded=["ext4"])
     _attach_kmodcov(host, tmp_path)
 
-    async def _load(file, name, params="", dest_dir=None):
+    async def _load(file, *, name, params="", dest_dir=None):
         if name == "otto_kmodcov":
-            host.lsmod.return_value = Result(Status.Success, value=["ext4", "otto_kmodcov"])
-            return Result(Status.Success)
-        return Result(Status.Error, msg="insmod otto_kmod_demo failed: Unknown symbol in module")
+            host.lsmod.return_value = Result(status=Status.Success, value=["ext4", "otto_kmodcov"])
+            return Result(status=Status.Success)
+        return Result(
+            status=Status.Error, msg="insmod otto_kmod_demo failed: Unknown symbol in module"
+        )
 
     host.load = AsyncMock(side_effect=_load)
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
@@ -398,10 +402,8 @@ async def test_kmod_module_install_propagates_a_dry_run_decline_from_the_library
     result = await p.install(host)
     assert result.status is Status.NotRun
     assert host.load.await_count == 2
-    assert host.load.await_args.args == (
-        Path("/project/build/demo/otto_kmod_demo.ko"),
-        "otto_kmod_demo",
-    )
+    assert host.load.await_args.args == (Path("/project/build/demo/otto_kmod_demo.ko"),)
+    assert host.load.await_args.kwargs["name"] == "otto_kmod_demo"
     assert host.load.await_args.kwargs["params"] == "cov_dir=/var/cov/demo"
 
 
@@ -428,10 +430,10 @@ async def test_kmod_none_method_resets_elevated_because_root_ownership_is_per_cl
     """
     host = _KmodHost()
     p = _build(host, cov_dir="/var/cov/demo")
-    assert (await p.prepare_coverage(host)).is_ok
+    assert (await p.prepare_coverage(host=host)).is_ok
     assert host.run_calls == []
     assert host.exec_calls == []
-    await p.reset_coverage(host)
+    await p.reset_coverage(host=host)
     assert host.run_calls == [
         (_expected_sudo_delete_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
         (_expected_sudo_check_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
@@ -443,7 +445,7 @@ async def test_kmod_none_method_resets_elevated_because_root_ownership_is_per_cl
 async def test_kmod_module_prepare_writes_dump_while_loaded_under_sudo():
     host = _KmodHost(loaded=["otto_kmod_demo"])
     p = _build(host, coverage="module")
-    assert (await p.prepare_coverage(host)).is_ok
+    assert (await p.prepare_coverage(host=host)).is_ok
     ((cmd, kw),) = host.run_calls
     assert kw == {"sudo": True}
     assert cmd == _expected_module_write_cmd("otto_kmod_demo", "dump")
@@ -456,7 +458,7 @@ async def test_kmod_module_dump_is_written_under_the_modules_own_sysfs_directory
     # either side shows here.
     host = _KmodHost(loaded=["otto_kmod_demo"])
     p = _build(host, coverage="module")
-    assert (await p.prepare_coverage(host)).is_ok
+    assert (await p.prepare_coverage(host=host)).is_ok
     ((cmd, _),) = host.run_calls
     assert cmd == "sh -c 'echo 1 > /sys/module/otto_kmod_demo/kmodcov/dump'"
 
@@ -465,7 +467,7 @@ async def test_kmod_module_dump_is_written_under_the_modules_own_sysfs_directory
 async def test_kmod_module_prepare_is_a_noop_success_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module")
-    assert (await p.prepare_coverage(host)).is_ok
+    assert (await p.prepare_coverage(host=host)).is_ok
     assert host.run_calls == []
 
 
@@ -473,7 +475,7 @@ async def test_kmod_module_prepare_is_a_noop_success_when_unloaded():
 async def test_kmod_module_prepare_failure_names_the_sysfs_path():
     host = _KmodHost(loaded=["otto_kmod_demo"], run_status=Status.Error)
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert not result.is_ok
     assert "/sys/module/otto_kmod_demo/kmodcov/dump" in result.msg
     assert "otto_kmodcov" in result.msg
@@ -484,7 +486,7 @@ async def test_kmod_module_prepare_failure_points_at_dmesg_for_an_unreadable_gcd
     """A dump that cannot read an earlier load's .gcda fails too; the kernel log says which."""
     host = _KmodHost(loaded=["otto_kmod_demo"], run_status=Status.Error)
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert "consumer snippet" in result.msg
     assert "dmesg" in result.msg
     assert "a dump that cannot read the .gcda fails and keeps the file" in result.msg
@@ -504,7 +506,7 @@ async def test_kmod_module_prepare_failure_names_the_kmodcov_tool(tmp_path, load
     host = _KmodHost(loaded=loaded, run_status=Status.Error, run_value="No such file")
     _attach_kmodcov(host, tmp_path)
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert result.status is Status.Error
     assert expected in result.msg
 
@@ -520,12 +522,12 @@ async def test_kmod_module_prepare_propagates_a_dry_run_decline():
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert result.status is Status.NotRun
 
 
@@ -544,12 +546,12 @@ async def test_kmod_module_prepare_announces_the_write_when_lsmod_is_declined():
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert result.status is Status.NotRun
     ((cmd, kw),) = host.run_calls
     assert kw == {"sudo": True}
@@ -559,9 +561,9 @@ async def test_kmod_module_prepare_announces_the_write_when_lsmod_is_declined():
 @pytest.mark.asyncio
 async def test_kmod_module_prepare_fails_when_lsmod_itself_fails():
     host = _KmodHost()
-    host.lsmod.return_value = Result(Status.Error, value=[], msg="boom")
+    host.lsmod.return_value = Result(status=Status.Error, value=[], msg="boom")
     p = _build(host, coverage="module")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert not result.is_ok
     assert result.status is not Status.NotRun
     assert "lsmod" in result.msg
@@ -572,7 +574,7 @@ async def test_kmod_module_prepare_fails_when_lsmod_itself_fails():
 async def test_kmod_module_reset_writes_reset_then_deletes_under_sudo():
     host = _KmodHost(loaded=["otto_kmod_demo"])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    assert (await p.reset_coverage(host)).is_ok
+    assert (await p.reset_coverage(host=host)).is_ok
     assert host.run_calls == [
         (_expected_module_write_cmd("otto_kmod_demo", "reset"), {"sudo": True}),
         (_expected_sudo_delete_cmd("/var/cov/demo"), {"sudo": True, "timeout": 60}),
@@ -584,9 +586,9 @@ async def test_kmod_module_reset_writes_reset_then_deletes_under_sudo():
 @pytest.mark.asyncio
 async def test_kmod_module_reset_fails_when_lsmod_itself_fails():
     host = _KmodHost()
-    host.lsmod.return_value = Result(Status.Error, value=[], msg="boom")
+    host.lsmod.return_value = Result(status=Status.Error, value=[], msg="boom")
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert not result.is_ok
     assert result.status is not Status.NotRun
     assert result.msg == "lsmod failed: boom"  # no `demo: ` — the consumer names the product
@@ -600,7 +602,7 @@ async def test_kmod_module_reset_failure_names_the_kmodcov_tool_and_its_residenc
     )
     _attach_kmodcov(host, tmp_path)
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.Error
     assert result.msg.startswith("`echo 1 > ")  # no `demo: ` — the consumer names the product
     assert "otto_kmodcov: 'kmodcov-6.8' dev tool, resident" in result.msg
@@ -612,7 +614,7 @@ async def test_kmod_module_reset_failure_names_the_kmodcov_tool_and_its_residenc
 async def test_kmod_module_reset_skips_the_sysfs_write_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    await p.reset_coverage(host)
+    await p.reset_coverage(host=host)
     assert [c for c, _ in host.run_calls] == [
         _expected_sudo_delete_cmd("/var/cov/demo"),
         _expected_sudo_check_cmd("/var/cov/demo"),
@@ -631,12 +633,12 @@ async def test_kmod_module_reset_propagates_a_dry_run_decline_with_no_delete_fol
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.NotRun
     assert len(host.run_calls) == 1  # the reset write only — no delete followed
 
@@ -654,12 +656,12 @@ async def test_kmod_module_reset_announces_the_write_and_delete_when_lsmod_is_de
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.NotRun
     cmds = [c for c, _ in host.run_calls]
     assert cmds == [
@@ -679,7 +681,7 @@ async def test_kmod_module_reset_announces_the_write_and_delete_when_lsmod_is_de
 async def test_kmod_kernel_prepare_emits_the_exact_quoted_script(gcov_path, cov_dir):
     host = _KmodHost()
     p = _build(host, coverage="kernel", gcov_path=gcov_path, cov_dir=cov_dir)
-    assert (await p.prepare_coverage(host)).is_ok
+    assert (await p.prepare_coverage(host=host)).is_ok
     ((cmd, kw),) = host.run_calls
     assert kw == {"sudo": True}
     assert cmd == _expected_kernel_prepare_cmd(gcov_path, cov_dir)
@@ -689,7 +691,7 @@ async def test_kmod_kernel_prepare_emits_the_exact_quoted_script(gcov_path, cov_
 async def test_kmod_kernel_prepare_failure_names_the_missing_path():
     host = _KmodHost(run_status=Status.Error)
     p = _build(host, coverage="kernel", gcov_path="/sys/kernel/debug/gcov/home/b/demo")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert not result.is_ok
     assert "/sys/kernel/debug/gcov/home/b/demo" in result.msg
     assert "CONFIG_GCOV_KERNEL" in result.msg
@@ -702,7 +704,7 @@ async def test_kmod_kernel_prepare_fails_when_gcov_path_is_missing():
     # script fail; here the double stands in for that shell failure directly.
     host = _KmodHost(run_status=Status.Error, run_value="find: 'x': No such file or directory")
     p = _build(host, coverage="kernel", gcov_path="/sys/kernel/debug/gcov/home/b/demo")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert not result.is_ok
     assert "/sys/kernel/debug/gcov/home/b/demo" in result.msg
 
@@ -714,12 +716,12 @@ async def test_kmod_kernel_prepare_propagates_a_dry_run_decline():
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     p = _build(host, coverage="kernel", gcov_path="/sys/kernel/debug/gcov/home/b/demo")
-    result = await p.prepare_coverage(host)
+    result = await p.prepare_coverage(host=host)
     assert result.status is Status.NotRun
 
 
@@ -736,7 +738,7 @@ async def test_kmod_kernel_reset_emits_the_exact_quoted_scripts_never_the_global
 ):
     host = _KmodHost()
     p = _build(host, coverage="kernel", gcov_path=gcov_path, cov_dir=cov_dir)
-    assert (await p.reset_coverage(host)).is_ok
+    assert (await p.reset_coverage(host=host)).is_ok
     cmds = [c for c, _ in host.run_calls]
     assert cmds == _expected_kernel_reset_cmds(gcov_path, cov_dir)
     assert "/sys/kernel/debug/gcov/reset" not in cmds[0]
@@ -753,13 +755,13 @@ async def test_kmod_kernel_reset_propagates_a_dry_run_decline_but_still_deletes(
     async def run(cmd, **kw):
         host.run_calls.append((cmd, kw))
         return Results.collect(
-            [NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
+            items=[NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host.id)]
         )
 
     host.run = run
     gcov_path, cov_dir = "/sys/kernel/debug/gcov/home/b/demo", "/var/cov/demo"
     p = _build(host, coverage="kernel", gcov_path=gcov_path, cov_dir=cov_dir)
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.NotRun
     cmds = [c for c, _ in host.run_calls]
     # The declined delete ends the reset: no check follows a decline.
@@ -771,7 +773,7 @@ async def test_kmod_kernel_reset_error_names_gcov_path():
     host = _KmodHost(run_status=Status.Error, run_value="find: 'x': No such file or directory")
     gcov_path, cov_dir = "/sys/kernel/debug/gcov/home/b/demo", "/var/cov/demo"
     p = _build(host, coverage="kernel", gcov_path=gcov_path, cov_dir=cov_dir)
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert not result.is_ok
     assert result.status is not Status.NotRun
     # The consumer prefixes `<host>/<product>: `; the reason never repeats the name.

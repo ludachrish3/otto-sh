@@ -25,7 +25,7 @@ from .remote_host import slug
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Element:
     """One element — its name, optional id, opaque metadata, and reservation set.
 

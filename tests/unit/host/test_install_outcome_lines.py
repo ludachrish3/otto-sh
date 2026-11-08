@@ -28,7 +28,7 @@ class _Product(Product):
 
     def _answer(self, verb):
         self.calls.append(verb)
-        return self.results.get(verb, Result(Status.Success))
+        return self.results.get(verb, Result(status=Status.Success))
 
     async def stage(self, host):
         return self._answer("stage")
@@ -52,7 +52,7 @@ class _Tool(DevTool):
 
     def _answer(self, verb):
         self.calls.append(verb)
-        return self.results.get(verb, Result(Status.Success))
+        return self.results.get(verb, Result(status=Status.Success))
 
     async def stage(self, host):
         return self._answer("stage")
@@ -169,7 +169,7 @@ async def test_a_probe_that_raises_stops_the_install_before_anything_is_staged(c
 
 @pytest.mark.asyncio
 async def test_a_skipped_install_says_why(caplog_host):
-    skipped = Result(Status.Skipped, msg="already there")
+    skipped = Result(status=Status.Skipped, msg="already there")
     host = _host(products=[_Product("a"), _Product("b", install=skipped)])
 
     result = await host.install()
@@ -184,7 +184,7 @@ async def test_a_skipped_install_says_why(caplog_host):
 
 @pytest.mark.asyncio
 async def test_a_skipped_result_without_a_message_is_just_skipped(caplog_host):
-    host = _host(products=[_Product("a", install=Result(Status.Skipped))])
+    host = _host(products=[_Product("a", install=Result(status=Status.Skipped))])
 
     await host.install()
 
@@ -193,7 +193,7 @@ async def test_a_skipped_result_without_a_message_is_just_skipped(caplog_host):
 
 @pytest.mark.asyncio
 async def test_a_failed_install_warns_and_still_short_circuits(caplog_host):
-    failure = Result(Status.Error, msg="boom")
+    failure = Result(status=Status.Error, msg="boom")
     a, b, c = _Product("a"), _Product("b", install=failure), _Product("c")
     host = _host(products=[a, b, c])
 
@@ -214,7 +214,7 @@ async def test_a_failed_install_warns_and_still_short_circuits(caplog_host):
 
 @pytest.mark.asyncio
 async def test_a_failed_stage_warns_and_returns_the_failure(caplog_host):
-    failure = Result(Status.Failed, msg="no space")
+    failure = Result(status=Status.Failed, msg="no space")
     host = _host(products=[_Product("a", stage=failure), _Product("b")])
 
     result = await host.install()
@@ -226,7 +226,10 @@ async def test_a_failed_stage_warns_and_returns_the_failure(caplog_host):
 @pytest.mark.asyncio
 async def test_stage_logs_staged_and_skipped(caplog_host):
     host = _host(
-        products=[_Product("a"), _Product("b", stage=Result(Status.Skipped, msg="unchanged"))]
+        products=[
+            _Product("a"),
+            _Product("b", stage=Result(status=Status.Skipped, msg="unchanged")),
+        ]
     )
 
     result = await host.stage()
@@ -240,7 +243,7 @@ async def test_stage_logs_staged_and_skipped(caplog_host):
 
 @pytest.mark.asyncio
 async def test_uninstall_is_best_effort_and_every_product_gets_a_line(caplog_host):
-    failure = Result(Status.Error, msg="stuck")
+    failure = Result(status=Status.Error, msg="stuck")
     a, b = _Product("a", uninstall=failure), _Product("b")
     host = _host(products=[a, b])
 
@@ -270,7 +273,7 @@ async def test_install_dev_tools_names_each_tool(caplog_host):
 
 @pytest.mark.asyncio
 async def test_install_dev_tools_still_stops_at_the_first_failure(caplog_host):
-    failure = Result(Status.Error, msg="nope")
+    failure = Result(status=Status.Error, msg="nope")
     t1, t2 = _Tool("t1", install=failure), _Tool("t2")
     host = _host(dev_tools=[t1, t2])
 
@@ -283,7 +286,7 @@ async def test_install_dev_tools_still_stops_at_the_first_failure(caplog_host):
 
 @pytest.mark.asyncio
 async def test_install_dev_tools_stage_failure_warns_and_stops(caplog_host):
-    failure = Result(Status.Failed, msg="no space")
+    failure = Result(status=Status.Failed, msg="no space")
     t1, t2 = _Tool("t1", stage=failure), _Tool("t2")
     host = _host(dev_tools=[t1, t2])
 
@@ -297,7 +300,7 @@ async def test_install_dev_tools_stage_failure_warns_and_stops(caplog_host):
 
 @pytest.mark.asyncio
 async def test_uninstall_dev_tools_is_best_effort_and_names_each_tool(caplog_host):
-    failure = Result(Status.Error, msg="stuck")
+    failure = Result(status=Status.Error, msg="stuck")
     t1, t2 = _Tool("t1", uninstall=failure), _Tool("t2")
     host = _host(dev_tools=[t1, t2])
 
@@ -314,7 +317,9 @@ async def test_uninstall_dev_tools_is_best_effort_and_names_each_tool(caplog_hos
 
 @pytest.mark.asyncio
 async def test_markup_in_a_message_is_escaped_not_interpreted(caplog_host):
-    host = _host(products=[_Product("a", install=Result(Status.Error, msg="[sudo] denied [/x]"))])
+    host = _host(
+        products=[_Product("a", install=Result(status=Status.Error, msg="[sudo] denied [/x]"))]
+    )
 
     await host.install()
 
@@ -329,7 +334,7 @@ async def test_a_dry_run_decline_adds_no_line(caplog_host):
     """The dry-run preview is its own surface; a declined verb logs nothing here."""
     from otto.result import NotRunResult
 
-    declined = NotRunResult(Status.NotRun, command="x", msg="declined")
+    declined = NotRunResult(status=Status.NotRun, command="x", msg="declined")
     host = _host(products=[_Product("a", stage=declined)])
 
     result = await host.stage()
@@ -347,13 +352,13 @@ async def test_a_timed_out_install_command_says_it_timed_out(caplog_host):
     from otto.result import CommandResult, Results
 
     timed_out = CommandResult(
-        Status.Error,
+        status=Status.Error,
         value="Command timed out after 30.0s",
         command="/opt/stack/apigw 8080 &",
         retcode=-1,
         timed_out=True,
     )
-    host = _host(products=[_Product("apigw", install=Results.collect([timed_out]))])
+    host = _host(products=[_Product("apigw", install=Results.collect(items=[timed_out]))])
 
     await host.install()
 
@@ -365,12 +370,12 @@ async def test_a_failed_install_command_names_its_exit_and_first_line(caplog_hos
     from otto.result import CommandResult, Results
 
     failed = CommandResult(
-        Status.Failed,
+        status=Status.Failed,
         value="cp: cannot stat '/opt/stack/apigw': No such file or directory\nmore",
         command="cp /opt/stack/apigw /usr/bin",
         retcode=1,
     )
-    host = _host(products=[_Product("apigw", install=Results.collect([failed]))])
+    host = _host(products=[_Product("apigw", install=Results.collect(items=[failed]))])
 
     await host.install()
 

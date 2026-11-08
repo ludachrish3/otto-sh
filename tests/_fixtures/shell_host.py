@@ -54,7 +54,7 @@ class ShellHost:
         out, _ = await proc.communicate()
         status = Status.Success if proc.returncode == 0 else Status.Error
         value = self._noise + out.decode()
-        return CommandResult(status, value=value, command=line, retcode=proc.returncode)
+        return CommandResult(status=status, value=value, command=line, retcode=proc.returncode)
 
     async def exec(self, cmd, **kwargs):
         self.calls.append(("exec", cmd))
@@ -63,7 +63,7 @@ class ShellHost:
     async def run(self, cmd, *, sudo=False, **kwargs):
         assert sudo, "the double only models elevated runs"
         self.calls.append(("run", cmd))
-        return Results.collect([await self._sh(f"env {ELEVATED_MARK}=1 {cmd}")])
+        return Results.collect(items=[await self._sh(f"env {ELEVATED_MARK}=1 {cmd}")])
 
 
 def fake_bin(tmp_path: Path, name: str, body: str) -> Path:
@@ -80,10 +80,10 @@ class CovShellProduct(ShellProduct):
     """An instrumented shell product with the abstract halves stubbed: coverage only."""
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True

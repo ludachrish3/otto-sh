@@ -178,4 +178,4 @@ def builtin_command_names() -> list[str]:
     from .registry import CLI_COMMANDS
 
     register_builtin_commands()
-    return [name for name in CLI_COMMANDS.names() if CLI_COMMANDS.origin(name) == __name__]
+    return [name for name in CLI_COMMANDS.names() if CLI_COMMANDS.origin(name=name) == __name__]

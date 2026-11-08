@@ -41,11 +41,11 @@ def test_options_raw_case(tmp_path, monkeypatch):
         OPTIONS,
         make=lambda i: (
             "pkg.m:C",
-            OptionsEntry(target=Ref("pkg.m:C"), verbs=("run",) if i % 2 else ("test",)),
+            OptionsEntry(target=Ref(target="pkg.m:C"), verbs=("run",) if i % 2 else ("test",)),
         ),
-        invalid=("pkg.b:C", OptionsEntry(target=Ref("pkg.a:C"), verbs=("run",))),
-        lazy=(lazy, OptionsEntry(target=Ref(lazy), verbs=("run",))),
-        wrongly_typed_lazy=(reexport, OptionsEntry(target=Ref(reexport), verbs=("run",))),
+        invalid=("pkg.b:C", OptionsEntry(target=Ref(target="pkg.a:C"), verbs=("run",))),
+        lazy=(lazy, OptionsEntry(target=Ref(target=lazy), verbs=("run",))),
+        wrongly_typed_lazy=(reexport, OptionsEntry(target=Ref(target=reexport), verbs=("run",))),
     )
 
 
@@ -53,7 +53,7 @@ def test_options_wrapper_case():
     conformance.assert_wrapper_matches_raw(
         OPTIONS,
         via_wrapper=functools.partial(register_options, "pkg.m:C", verbs=["run"]),
-        record_for=lambda: OptionsEntry(target=Ref("pkg.m:C"), verbs=("run",)),
+        record_for=lambda: OptionsEntry(target=Ref(target="pkg.m:C"), verbs=("run",)),
     )
 
 
@@ -62,5 +62,5 @@ def test_the_decorator_credits_the_decorating_module():
         flag: bool = False
 
     built = conformance.from_module("case_decorating.init", options(verbs=["run"]), Decorated)
-    assert OPTIONS.origin(options_key(built)) == "case_decorating.init"
-    assert OPTIONS.peek(options_key(built)) == OptionsEntry(target=built, verbs=("run",))
+    assert OPTIONS.origin(name=options_key(built)) == "case_decorating.init"
+    assert OPTIONS.peek(name=options_key(built)) == OptionsEntry(target=built, verbs=("run",))

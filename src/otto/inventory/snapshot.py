@@ -46,7 +46,7 @@ def _stated(record: InventoryRecord) -> dict[str, Any]:
     return dumped
 
 
-def records_to_document(records: "Mapping[str, InventoryRecord]") -> dict[str, Any]:
+def records_to_document(*, records: "Mapping[str, InventoryRecord]") -> dict[str, Any]:
     """``{key: record}`` as a stage-1 document: sorted keys, stated fields only, no ``creds``.
 
     Sorted so two dumps of the same inventory are byte-identical — the diff a
@@ -56,14 +56,14 @@ def records_to_document(records: "Mapping[str, InventoryRecord]") -> dict[str, A
 
 
 def document_to_records(
-    data: object, *, source: str, supplies: frozenset[str]
+    *, data: object, source: str, supplies: frozenset[str]
 ) -> dict[str, InventoryRecord]:
     """Parse a stage-1 document with the ``json`` backend's own parser.
 
     A thin alias on purpose: the snapshot cache must read back exactly what the
     file backend would, so there is one parser and not two that drift.
     """
-    return parse_inventory_document(data, source=source, supplies=supplies)
+    return parse_inventory_document(data=data, source=source, supplies=supplies)
 
 
 def document_hash(doc: "Mapping[str, Any]") -> str:
@@ -158,7 +158,7 @@ def _rendered(stated: "Mapping[str, Any]", field: str) -> "str | None":
 
 
 def diff_records(
-    left: "Mapping[str, InventoryRecord]", right: "Mapping[str, InventoryRecord]"
+    *, left: "Mapping[str, InventoryRecord]", right: "Mapping[str, InventoryRecord]"
 ) -> list[RecordDifference]:
     """Record by record, field by field, ``creds`` excluded; sorted by key then field.
 

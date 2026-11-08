@@ -135,10 +135,13 @@ def test_frame_classes_raw_case(scratch):
 
     conformance.assert_raw_registry(
         FRAME_CLASSES,
-        make=lambda i: ("case-frame", ClassEntry(_subclass(BashFrame, i, type_name="case-frame"))),
-        invalid=("case-frame", ClassEntry(_subclass(BashFrame, 0, type_name="other"))),
-        lazy=("case-frame", ClassEntry(Ref(f"{scratch}:CaseFrame"))),
-        wrongly_typed_lazy=("case-frame", ClassEntry(Ref(f"{scratch}:WrongFrame"))),
+        make=lambda i: (
+            "case-frame",
+            ClassEntry(cls=_subclass(BashFrame, i, type_name="case-frame")),
+        ),
+        invalid=("case-frame", ClassEntry(cls=_subclass(BashFrame, 0, type_name="other"))),
+        lazy=("case-frame", ClassEntry(cls=Ref(target=f"{scratch}:CaseFrame"))),
+        wrongly_typed_lazy=("case-frame", ClassEntry(cls=Ref(target=f"{scratch}:WrongFrame"))),
     )
 
 
@@ -149,11 +152,11 @@ def test_loader_classes_raw_case(scratch):
         LOADER_CLASSES,
         make=lambda i: (
             "case-loader",
-            ClassEntry(_subclass(BinaryLoader, i, type_name="case-loader")),
+            ClassEntry(cls=_subclass(BinaryLoader, i, type_name="case-loader")),
         ),
-        invalid=("case-loader", ClassEntry(_subclass(BinaryLoader, 0, type_name="other"))),
-        lazy=("case-loader", ClassEntry(Ref(f"{scratch}:CaseLoader"))),
-        wrongly_typed_lazy=("case-loader", ClassEntry(Ref(f"{scratch}:WrongLoader"))),
+        invalid=("case-loader", ClassEntry(cls=_subclass(BinaryLoader, 0, type_name="other"))),
+        lazy=("case-loader", ClassEntry(cls=Ref(target=f"{scratch}:CaseLoader"))),
+        wrongly_typed_lazy=("case-loader", ClassEntry(cls=Ref(target=f"{scratch}:WrongLoader"))),
     )
 
 
@@ -164,11 +167,11 @@ def test_filesystem_classes_raw_case(scratch):
         FILESYSTEM_CLASSES,
         make=lambda i: (
             "case-fs",
-            ClassEntry(_subclass(EmbeddedFileSystem, i, type_name="case-fs")),
+            ClassEntry(cls=_subclass(EmbeddedFileSystem, i, type_name="case-fs")),
         ),
-        invalid=("case-fs", ClassEntry(_subclass(EmbeddedFileSystem, 0, type_name="other"))),
-        lazy=("case-fs", ClassEntry(Ref(f"{scratch}:CaseFs"))),
-        wrongly_typed_lazy=("case-fs", ClassEntry(Ref(f"{scratch}:WrongFs"))),
+        invalid=("case-fs", ClassEntry(cls=_subclass(EmbeddedFileSystem, 0, type_name="other"))),
+        lazy=("case-fs", ClassEntry(cls=Ref(target=f"{scratch}:CaseFs"))),
+        wrongly_typed_lazy=("case-fs", ClassEntry(cls=Ref(target=f"{scratch}:WrongFs"))),
     )
 
 
@@ -180,14 +183,17 @@ def test_impairers_raw_case(scratch):
         IMPAIRERS,
         make=lambda i: (
             "case-impairer",
-            ClassEntry(_subclass(LinkImpairer, i, host_families=frozenset({"unix"}))),
+            ClassEntry(cls=_subclass(LinkImpairer, i, host_families=frozenset({"unix"}))),
         ),
         invalid=(
             "case-impairer",
-            ClassEntry(_subclass(LinkImpairer, 0, host_families=frozenset())),
+            ClassEntry(cls=_subclass(LinkImpairer, 0, host_families=frozenset())),
         ),
-        lazy=("case-impairer", ClassEntry(Ref(f"{scratch}:CaseImpairer"))),
-        wrongly_typed_lazy=("case-impairer", ClassEntry(Ref(f"{scratch}:WrongImpairer"))),
+        lazy=("case-impairer", ClassEntry(cls=Ref(target=f"{scratch}:CaseImpairer"))),
+        wrongly_typed_lazy=(
+            "case-impairer",
+            ClassEntry(cls=Ref(target=f"{scratch}:WrongImpairer")),
+        ),
     )
 
 
@@ -198,14 +204,14 @@ def test_carriers_raw_case(scratch):
         CARRIERS,
         make=lambda i: (
             "case-carrier",
-            ClassEntry(_subclass(TunnelCarrier, i, supported_protocols=frozenset({"tcp"}))),
+            ClassEntry(cls=_subclass(TunnelCarrier, i, supported_protocols=frozenset({"tcp"}))),
         ),
         invalid=(
             "case-carrier",
-            ClassEntry(_subclass(TunnelCarrier, 0, supported_protocols=frozenset())),
+            ClassEntry(cls=_subclass(TunnelCarrier, 0, supported_protocols=frozenset())),
         ),
-        lazy=("case-carrier", ClassEntry(Ref(f"{scratch}:CaseCarrier"))),
-        wrongly_typed_lazy=("case-carrier", ClassEntry(Ref(f"{scratch}:WrongCarrier"))),
+        lazy=("case-carrier", ClassEntry(cls=Ref(target=f"{scratch}:CaseCarrier"))),
+        wrongly_typed_lazy=("case-carrier", ClassEntry(cls=Ref(target=f"{scratch}:WrongCarrier"))),
     )
 
 
@@ -253,7 +259,7 @@ def test_class_seam_wrapper_matches_the_raw_path(seam):
     conformance.assert_wrapper_matches_raw(
         table,
         via_wrapper=functools.partial(wrapper, name, cls),
-        record_for=lambda: ClassEntry(cls),
+        record_for=lambda: ClassEntry(cls=cls),
     )
 
 
@@ -267,7 +273,7 @@ def test_a_class_seam_refuses_an_object_of_the_wrong_type(scratch, seam):
     with pytest.raises(TypeError, match="subclass"):
         wrapper(name, object())
     assert name not in table
-    wrapper(name, Ref(f"{scratch}:NotASeamClass"))
+    wrapper(name, Ref(target=f"{scratch}:NotASeamClass"))
     for _ in range(2):  # nothing is cached, so the retry re-checks
         with pytest.raises(TypeError, match="subclass"):
             table.get(name)
@@ -305,8 +311,8 @@ def test_session_setups_raw_and_wrapper_cases(scratch):
         SESSION_SETUPS,
         make=lambda i: ("case-setup", SessionSetupEntry(_hook(i))),
         invalid=("case-setup", SessionSetupEntry(fn=42)),
-        lazy=("case-setup", SessionSetupEntry(Ref(f"{scratch}:case_setup"))),
-        wrongly_typed_lazy=("case-setup", SessionSetupEntry(Ref(f"{scratch}:NOT_CALLABLE"))),
+        lazy=("case-setup", SessionSetupEntry(Ref(target=f"{scratch}:case_setup"))),
+        wrongly_typed_lazy=("case-setup", SessionSetupEntry(Ref(target=f"{scratch}:NOT_CALLABLE"))),
     )
     shared = _hook(1)
     conformance.assert_wrapper_matches_raw(
@@ -325,7 +331,7 @@ def test_a_raw_session_setup_with_a_non_callable_fn_is_refused_at_registration()
 
     revision = SESSION_SETUPS.revision
     with pytest.raises(TypeError, match="not callable"):
-        SESSION_SETUPS.register("x", SessionSetupEntry(fn=42))
+        SESSION_SETUPS.register(name="x", entry=SessionSetupEntry(fn=42))
     assert "x" not in SESSION_SETUPS
     assert SESSION_SETUPS.revision == revision
 
@@ -347,8 +353,8 @@ def test_kinds_raw_and_wrapper_cases(scratch, seam):
         table,
         make=lambda i: ("case-kind", KindEntry(_factory(i))),
         invalid=("case-kind", KindEntry(factory=42)),
-        lazy=("case-kind", KindEntry(Ref(f"{scratch}:case_kind"))),
-        wrongly_typed_lazy=("case-kind", KindEntry(Ref(f"{scratch}:NOT_CALLABLE"))),
+        lazy=("case-kind", KindEntry(Ref(target=f"{scratch}:case_kind"))),
+        wrongly_typed_lazy=("case-kind", KindEntry(Ref(target=f"{scratch}:NOT_CALLABLE"))),
     )
     shared = _factory(1)
     conformance.assert_wrapper_matches_raw(
@@ -371,7 +377,7 @@ def test_a_raw_kind_with_a_non_callable_factory_is_refused_at_registration(seam)
     table = {"product": PRODUCT_KINDS, "dev_tool": DEV_TOOL_KINDS}[seam]
     revision = table.revision
     with pytest.raises(TypeError, match="not callable"):
-        table.register("x", KindEntry(factory=42))
+        table.register(name="x", entry=KindEntry(factory=42))
     assert "x" not in table
     assert table.revision == revision
 
@@ -391,7 +397,7 @@ def test_a_callable_seam_refuses_an_object_of_the_wrong_type(scratch, seam):
     with pytest.raises(TypeError, match="not callable"):
         wrapper("case-wrong", 42)
     assert "case-wrong" not in table
-    wrapper("case-wrong", Ref(f"{scratch}:NOT_CALLABLE"))
+    wrapper("case-wrong", Ref(target=f"{scratch}:NOT_CALLABLE"))
     for _ in range(2):
         with pytest.raises(TypeError, match="not callable"):
             table.get("case-wrong")

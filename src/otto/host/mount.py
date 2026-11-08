@@ -57,7 +57,7 @@ def _is_under(base: Path, path: Path) -> bool:
     return path == base or base in path.parents
 
 
-def mount_for(mounts: "list[Mount]", container_path: "str | Path") -> "Mount | None":
+def mount_for(*, mounts: "list[Mount]", container_path: "str | Path") -> "Mount | None":
     """Return the mount covering *container_path*, or ``None``.
 
     Longest prefix wins. Compose permits one mount nested inside another,

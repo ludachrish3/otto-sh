@@ -551,10 +551,10 @@ def _store(path: Path, *, tier: str, product: str, file: str, line: int, hits: i
 
     store = CoverageStore()
     run_id = store.add_run(tier=tier, source="unit", product=product)
-    record = store.get_or_create_file(Path(file)).get_or_create_line(line)
+    record = store.get_or_create_file(path=Path(file)).get_or_create_line(line)
     record.hits.add(tier, hits)
     record.run_hits[run_id] = hits
-    store.save(path)
+    store.save(path=path)
     return path
 
 
@@ -1087,7 +1087,7 @@ def _two_file_store(path: Path, *, product: str, other_hits: int) -> Path:
     store = CoverageStore()
     run_id = store.add_run(tier="unit", source="unit", product=product)
     LCOVLoader(store).load(info, "unit", run_id=run_id)
-    store.save(path)
+    store.save(path=path)
     return path
 
 
@@ -1123,7 +1123,7 @@ def test_a_product_s_source_set_leaves_out_a_file_only_another_product_ran(tmp_p
         LCOVLoader(store).load(
             info, "unit", run_id=store.add_run(tier="unit", source="unit", product=product)
         )
-    store.save(tmp_path / "prepared.json")
+    store.save(path=tmp_path / "prepared.json")
     m = _sources_manifest(tmp_path, tmp_path / "prepared.json", "app")
     rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
 

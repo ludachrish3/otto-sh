@@ -25,11 +25,11 @@ from .test_deploy import ROOT, _frag, _host, _lab
 
 
 def _ok(value="") -> CommandResult:
-    return CommandResult(Status.Success, value=value, command="docker build", retcode=0)
+    return CommandResult(status=Status.Success, value=value, command="docker build", retcode=0)
 
 
 def _fail(value="boom") -> CommandResult:
-    return CommandResult(Status.Failed, value=value, command="docker build", retcode=1)
+    return CommandResult(status=Status.Failed, value=value, command="docker build", retcode=1)
 
 
 def _image(name, *, is_archive=False, context=None):
@@ -132,7 +132,7 @@ def builds():
 async def test_two_selected_projects_declaring_one_image_name_are_refused(install, builds):
     projects = [_project("a", images=("api",)), _project("b", images=("api", "db"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
-        await build_on("test3")
+        await build_on(parent="test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
     assert "'api'" in message
@@ -146,7 +146,7 @@ async def test_two_selected_projects_declaring_one_image_name_are_refused(instal
 async def test_narrowing_to_one_project_lifts_the_refusal(install, builds):
     projects = [_project("a", images=("api",)), _project("b", images=("api",))]
     with install(projects):
-        await build_on("test3", project="a")
+        await build_on(parent="test3", project="a")
     assert [call[0] for call in builds] == ["a"]
 
 
@@ -154,7 +154,7 @@ async def test_narrowing_to_one_project_lifts_the_refusal(install, builds):
 async def test_a_clash_outside_the_selected_images_is_not_this_builds_problem(install, builds):
     projects = [_project("a", images=("api", "x")), _project("b", images=("api", "y"))]
     with install(projects):
-        await build_on("test3", images=["x", "y"])
+        await build_on(parent="test3", images=["x", "y"])
     assert len(builds) == 2
 
 
@@ -162,7 +162,7 @@ async def test_a_clash_outside_the_selected_images_is_not_this_builds_problem(in
 async def test_two_images_of_one_project_sharing_a_staging_key_are_refused(install, builds):
     projects = [_project("a", images=("team/api", "team_api"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
-        await build_on("test3")
+        await build_on(parent="test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
     assert "'team/api'" in message
@@ -177,7 +177,7 @@ async def test_two_images_of_one_project_sharing_a_staging_key_are_refused(insta
 async def test_narrowing_the_selection_lifts_a_staging_key_refusal(install, builds):
     projects = [_project("a", images=("team/api", "team_api"))]
     with install(projects):
-        await build_on("test3", images=["team/api"])
+        await build_on(parent="test3", images=["team/api"])
     assert [call[0] for call in builds] == ["a"]
 
 
@@ -185,7 +185,7 @@ async def test_narrowing_the_selection_lifts_a_staging_key_refusal(install, buil
 async def test_two_projects_may_declare_names_that_share_a_staging_key(install, builds):
     projects = [_project("a", images=("team/api",)), _project("b", images=("team_api",))]
     with install(projects):
-        await build_on("test3")
+        await build_on(parent="test3")
     assert [call[0] for call in builds] == ["a", "b"]
 
 
@@ -205,7 +205,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
         active_context(lab, dry_run=True),  # the inner run: on the same lab
         pytest.raises(CommandNotRunError) as excinfo,
     ):
-        await build_on("test3", no_cache=True)
+        await build_on(parent="test3", no_cache=True)
 
     text = str(excinfo.value)
     assert build_command(ROOT, build_staging_key("a"), image, BuildOptions(no_cache=True)) in text
@@ -217,7 +217,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
 async def test_builds_every_docker_project_on_the_named_host_in_dependency_order(install, builds):
     a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b], ordered=[b, a]):
-        report = await build_on("test3")
+        report = await build_on(parent="test3")
     assert isinstance(report, BuildReport)
     assert [(rb.project, rb.host, rb.kind) for rb in report.projects] == [
         ("b", "test3", "built"),
@@ -247,20 +247,20 @@ async def test_a_host_outside_the_lab_or_not_docker_capable_is_refused(install, 
         install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'ghost' is not a docker-capable") as e,
     ):
-        await build_on("ghost")
+        await build_on(parent="ghost")
     assert e.value.field == "parent"
     with (
         install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'test3' is not a docker-capable.*\['alt2'\]"),
     ):
-        await build_on("test3")
+        await build_on(parent="test3")
 
 
 @pytest.mark.asyncio
 async def test_project_narrows_and_an_unknown_project_is_refused(install, builds):
     a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b]):
-        report = await build_on("test3", project="b")
+        report = await build_on(parent="test3", project="b")
     assert [rb.project for rb in report.projects] == ["b"]
     with (
         install([a, b]),
@@ -268,7 +268,7 @@ async def test_project_narrows_and_an_unknown_project_is_refused(install, builds
             DockerVerbError, match=r"project 'c' is not a loaded project.*\['a', 'b'\]"
         ) as e,
     ):
-        await build_on("test3", project="c")
+        await build_on(parent="test3", project="c")
     assert e.value.field == "project"
 
 
@@ -276,7 +276,7 @@ async def test_project_narrows_and_an_unknown_project_is_refused(install, builds
 async def test_each_project_builds_the_subset_of_images_it_declares(install, builds):
     a, b = _project("a", images=("api", "worker")), _project("b", images=("db",))
     with install([a, b]):
-        report = await build_on("test3", images=["api", "db"])
+        report = await build_on(parent="test3", images=["api", "db"])
     assert [(c[0], c[2]) for c in builds] == [("a", ["api"]), ("b", ["db"])]
     assert [sorted(rb.images) for rb in report.projects] == [["api"], ["db"]]
 
@@ -286,7 +286,7 @@ async def test_a_project_with_none_of_the_requested_images_is_left_out(install, 
     """b declares db, not api: narrowing to api alone must not add an empty b entry."""
     a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b]):
-        report = await build_on("test3", images=["api"])
+        report = await build_on(parent="test3", images=["api"])
     assert [rb.project for rb in report.projects] == ["a"]
 
     with (
@@ -294,7 +294,7 @@ async def test_a_project_with_none_of_the_requested_images_is_left_out(install, 
         patch.object(verbs_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as e,
     ):
-        await build_on("test3", images=["api"])
+        await build_on(parent="test3", images=["api"])
     text = str(e.value)
     assert "a[api]" in text
     assert "b[db]" not in text
@@ -304,7 +304,7 @@ async def test_a_project_with_none_of_the_requested_images_is_left_out(install, 
 @pytest.mark.asyncio
 async def test_a_duplicated_image_name_builds_once(install, builds):
     with install([_project("a", images=("api",))]):
-        await build_on("test3", images=["api", "api"])
+        await build_on(parent="test3", images=["api", "api"])
     assert builds[0][2] == ["api"]
 
 
@@ -314,7 +314,7 @@ async def test_an_image_no_selected_project_declares_is_refused(install):
         install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'apo'.*declared: \['api'\]") as e,
     ):
-        await build_on("test3", images=["apo"])
+        await build_on(parent="test3", images=["apo"])
     assert e.value.field == "images"
 
 
@@ -322,7 +322,7 @@ async def test_an_image_no_selected_project_declares_is_refused(install):
 async def test_a_project_declaring_no_images_is_a_no_images_entry(install, builds):
     a, b = _project("a", images=("api",)), _project("b")
     with install([a, b]):
-        report = await build_on("test3")
+        report = await build_on(parent="test3")
     assert [(rb.project, rb.kind) for rb in report.projects] == [("a", "built"), ("b", "no_images")]
     assert [c[0] for c in builds] == ["a"]
     assert report.ok
@@ -334,7 +334,7 @@ async def test_nothing_to_build_is_refused_before_any_host_is_touched(install, b
         install([_project("a"), _project("b")]),
         pytest.raises(DockerVerbError, match=r"nothing to build.*\['a', 'b'\]") as e,
     ):
-        await build_on("test3")
+        await build_on(parent="test3")
     assert e.value.field is None
     assert builds == []
 
@@ -348,7 +348,7 @@ async def test_a_failed_image_makes_the_report_not_ok(install):
         install([_project("a", images=("api",))]),
         patch.object(verbs_mod, "build_images", AsyncMock(side_effect=_build_images)),
     ):
-        report = await build_on("test3")
+        report = await build_on(parent="test3")
     assert not report.ok
     assert [(f.project, f.image) for f in report.failed] == [("a", "api")]
     assert "syntax error" in report.failed[0].result.value
@@ -362,7 +362,7 @@ async def test_dry_run_declines_with_the_whole_plan_and_builds_nothing(install, 
         patch.object(verbs_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as e,
     ):
-        await build_on("test3", images=["api", "db"])
+        await build_on(parent="test3", images=["api", "db"])
     text = str(e.value)
     assert "test3 <- a[api]; b[db]" in text
     assert "No context was staged" in text
@@ -525,7 +525,7 @@ async def test_build_on_hands_the_flags_to_every_build(install, builds):
     projects = [_project("a", images=("api",))]
     with install(projects):
         await build_on(
-            "test3",
+            parent="test3",
             tags=["api:1.4"],
             no_cache=True,
             pull=True,
@@ -542,7 +542,7 @@ async def test_build_on_hands_the_flags_to_every_build(install, builds):
 async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(install, builds):
     projects = [_project("a", images=("api", "db"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
-        await build_on("test3", tags=["x:1"])
+        await build_on(parent="test3", tags=["x:1"])
     assert excinfo.value.field == "tag"
     assert "api" in str(excinfo.value)
     assert "db" in str(excinfo.value)
@@ -553,7 +553,7 @@ async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(in
 async def test_a_tag_with_one_image_named_is_fine(install, builds):
     projects = [_project("a", images=("api", "db"))]
     with install(projects):
-        await build_on("test3", images=["api"], tags=["x:1"])
+        await build_on(parent="test3", images=["api"], tags=["x:1"])
     assert builds[0][2] == ["api"]
 
 
@@ -581,7 +581,7 @@ async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(
         "a", docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=())
     )
     with install([project]), pytest.raises(DockerImageConfigError, match=r"/nonexistent/ctx\.tar"):
-        await build_on("test3")
+        await build_on(parent="test3")
     assert builds == [], "no build was started"
 
 
@@ -604,7 +604,7 @@ async def test_a_missing_dockerfile_refuses_build_on_before_any_project_builds(
         patch.object(verbs_mod, "is_dry_run", return_value=dry),
         pytest.raises(DockerImageConfigError) as caught,
     ):
-        await build_on("test3")
+        await build_on(parent="test3")
     message = str(caught.value)
     assert "\n" not in message
     assert "'db'" in message

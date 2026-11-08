@@ -72,7 +72,7 @@ Every preview has the same three parts:
 A preview names actions and targets; it never carries file bodies or secrets:
 
 ```console
-$ otto --lab my_lab -n host dut1 write-file /etc/motd "hello there"
+$ otto --lab my_lab -n host dut1 write-file /etc/motd --data "hello there"
 [DRY RUN] WRITE: 11 bytes -> /etc/motd
 @dut1   | [DRY RUN] WRITE: 11 bytes -> /etc/motd
 ```
@@ -276,7 +276,7 @@ Turn the debug half off, or declare concrete paths, to get the decline back
 everywhere.
 
 `write_file` is the shape in between: it returns
-`Result(Status.NotRun, msg="[DRY RUN] WRITE: 11 bytes -> /etc/motd")` with
+`Result(status=Status.NotRun, msg="[DRY RUN] WRITE: 11 bytes -> /etc/motd")` with
 `value` still `None`. A write measures nothing, so there is no payload to
 poison — but `is_ok` is `False`, so
 `if (await host.write_file(...)).is_ok:` no longer tells a caller the file was

@@ -295,13 +295,13 @@ reads what the compose file and the daemon agree on.
 Use {attr}`~otto.host.docker_host.DockerContainerHost.mounts` and its three
 helpers:
 
-- `mount_for(container_path)` — returns the covering
+- `mount_for(container_path=...)` — returns the covering
   {class}`~otto.host.mount.Mount`, or `None` if the path isn't shared. Use
   this to ask.
 - `parent_path(container_path)` — translates a container-side path to the
   parent. Raises {class}`~otto.host.errors.MountNotFoundError` if the path
   isn't under any known mount.
-- `container_path(parent_path)` — the reverse translation, same exception
+- `container_path(parent_path=...)` — the reverse translation, same exception
   on no match.
 
 Each {class}`~otto.host.mount.Mount` also carries `kind` (`"bind"` or

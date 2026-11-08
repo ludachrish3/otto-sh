@@ -2354,12 +2354,12 @@ class _FakeHost:
 
     async def run(self, command, timeout=None):
         commands = [command] if isinstance(command, str) else list(command)
-        return Results.collect([self._answer(one, timeout) for one in commands])
+        return Results.collect(items=[self._answer(one, timeout) for one in commands])
 
     def _answer(self, command: str, timeout) -> CommandResult:
         if "always-times-out" in self._twists:
             return CommandResult(
-                Status.Error,
+                status=Status.Error,
                 value=f"Command timed out after {timeout}s; partial output discarded",
                 command=command,
                 retcode=-1,
@@ -2367,19 +2367,19 @@ class _FakeHost:
             )
         if command == POSIX.long_running_command and timeout is not None:
             return CommandResult(
-                Status.Error,
+                status=Status.Error,
                 value=f"Command timed out after {timeout}s; partial output discarded",
                 command=command,
                 retcode=-1,
                 timed_out=True,
             )
         if "one-exit-code" in self._twists:
-            return CommandResult(Status.Failed, value="", command=command, retcode=7)
+            return CommandResult(status=Status.Failed, value="", command=command, retcode=7)
         if "every-command-fails" in self._twists:
-            return CommandResult(Status.Failed, value="", command=command, retcode=3)
+            return CommandResult(status=Status.Failed, value="", command=command, retcode=3)
         retcode, value = self._honest(command)
         status = Status.Success if retcode == 0 else Status.Failed
-        return CommandResult(status, value=value, command=command, retcode=retcode)
+        return CommandResult(status=status, value=value, command=command, retcode=retcode)
 
     def _honest(self, command: str) -> "tuple[int, str]":
         if command == POSIX.succeeding_command:
@@ -2448,7 +2448,9 @@ class _FakeHost:
                 )
             )
             return Result(
-                Status.Error, value={one: Result(Status.Error, msg=msg) for one in srcs}, msg=msg
+                status=Status.Error,
+                value={one: Result(status=Status.Error, msg=msg) for one in srcs},
+                msg=msg,
             )
         first_payload: "bytes | None" = None
 
@@ -2482,10 +2484,12 @@ class _FakeHost:
             if mode is not None:
                 self._modes[landed] = mode
             self._report_progress(one, landed, len(payload))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         return aggregate_transfer(
-            await self._file_transfer.dispatch_per_file(srcs, _store, concurrent=concurrent)
+            per_file=await self._file_transfer.dispatch_per_file(
+                srcs, transfer_one=_store, concurrent=concurrent
+            )
         )
 
     def _report_progress(self, src: Path, landed: str, total: int) -> None:
@@ -2508,7 +2512,9 @@ class _FakeHost:
             return
         from otto.host.transfer import progress as _progress
 
-        handler = _progress.make_rich_progress_factory(_progress.make_transfer_progress(), "fake")()
+        handler = _progress.make_rich_progress_factory(
+            progress=_progress.make_transfer_progress(), host_name="fake"
+        )()
         if "progress-jumps-to-the-total" in self._twists:
             # The bug the surface exists for: one 0 -> 100% event, whatever the
             # backend promised.
@@ -2532,12 +2538,14 @@ class _FakeHost:
             else:
                 data = self._files.get(str(one))
             if data is None:
-                return Result(Status.Error, msg=f"no such file: {one}")
+                return Result(status=Status.Error, msg=f"no such file: {one}")
             (dest_dir / Path(one).name).write_bytes(data)
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         return aggregate_transfer(
-            await self._file_transfer.dispatch_per_file(srcs, _fetch, concurrent=concurrent)
+            per_file=await self._file_transfer.dispatch_per_file(
+                srcs, transfer_one=_fetch, concurrent=concurrent
+            )
         )
 
     def _put_tree(self, src: Path, dest_dir: Path):
@@ -2550,7 +2558,7 @@ class _FakeHost:
                 self._dirs.add(landed)
             else:
                 self._files[landed] = path.read_bytes()
-        return Result(Status.Success, value={src: Result(Status.Success)})
+        return Result(status=Status.Success, value={src: Result(status=Status.Success)})
 
     def _get_tree(self, src: Path, dest_dir: Path):
         """Write back what a recursive put stored -- or, twisted, the contract's own tree.
@@ -2567,11 +2575,11 @@ class _FakeHost:
             (back / "empty").mkdir()
             (back / "a.bin").write_bytes(_PAYLOAD)
             (back / "sub" / "b.bin").write_bytes(bytes(range(256)))
-            return Result(Status.Success, value={src: Result(Status.Success)})
+            return Result(status=Status.Success, value={src: Result(status=Status.Success)})
         prefix = f"{src}/"
         stored = [path for path in self._dirs if path.startswith(prefix)]
         if not (stored or any(path.startswith(prefix) for path in self._files)):
-            return Result(Status.Error, msg=f"no such directory: {src}")
+            return Result(status=Status.Error, msg=f"no such directory: {src}")
         for path in sorted(stored):
             (back / path[len(prefix) :]).mkdir(parents=True, exist_ok=True)
         for path, data in sorted(self._files.items()):
@@ -2579,7 +2587,7 @@ class _FakeHost:
                 landed = back / path[len(prefix) :]
                 landed.parent.mkdir(parents=True, exist_ok=True)
                 landed.write_bytes(data)
-        return Result(Status.Success, value={src: Result(Status.Success)})
+        return Result(status=Status.Success, value={src: Result(status=Status.Success)})
 
     async def rm(self, path: Path, recursive=False, force=False):
         """Remove a landed tree. Only the recursive cleanup the tree control runs.
@@ -2593,7 +2601,7 @@ class _FakeHost:
         for landed in [key for key in self._files if key.startswith(prefix)]:
             del self._files[landed]
         self._dirs -= {key for key in self._dirs if key == str(path) or key.startswith(prefix)}
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def _fake_cell(host: _FakeHost) -> ResolvedCell:

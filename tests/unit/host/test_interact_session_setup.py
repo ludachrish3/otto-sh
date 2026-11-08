@@ -89,7 +89,7 @@ def _hooked_host(creds: list[Cred], setup_name: str) -> UnixHost:
     """A lab-shaped Unix host carrying a hook and the DEFAULT ``shell_history``."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=creds,
         log=LogMode.QUIET,
         session_setup=SessionSetup(name=setup_name),
@@ -138,7 +138,7 @@ def hook():
 
     register_session_setup("t7-export", fn, overwrite=True)
     yield calls
-    SESSION_SETUPS.unregister("t7-export")
+    SESSION_SETUPS.unregister(name="t7-export")
 
 
 @pytest.mark.asyncio
@@ -234,7 +234,7 @@ async def test_raw_landing_on_the_bridge_sends_nothing_before_the_hook():
         )
         assert console.sent[0] == b"python3\n"
     finally:
-        SESSION_SETUPS.unregister("t7-raw")
+        SESSION_SETUPS.unregister(name="t7-raw")
 
 
 @pytest.mark.asyncio
@@ -252,7 +252,7 @@ async def test_telnet_bridge_translates_every_newline_of_a_multiline_payload():
     s = interact._BridgeShellSession(
         write_remote, read_remote, newline=b"\r", command_frame=BashFrame()
     )
-    await s.write_transport("a\nb\r\nc\n")
+    await s.write_transport(data="a\nb\r\nc\n")
     assert sent == [b"a\rb\rc\r"]
 
 
@@ -464,7 +464,7 @@ async def test_the_hook_sees_the_identity_the_hops_left_the_bridge_in():
         )
         assert seen == ["mysql"]
     finally:
-        SESSION_SETUPS.unregister("t7-identity")
+        SESSION_SETUPS.unregister(name="t7-identity")
 
 
 @pytest.mark.asyncio
@@ -624,7 +624,7 @@ async def test_a_hooks_own_switch_user_is_not_quieted_on_the_bridge():
     """
 
     async def fn(session, ctx):
-        await session.switch_user("mysql")
+        await session.switch_user(user="mysql")
 
     register_session_setup("t7-switch", fn, overwrite=True)
     try:
@@ -639,7 +639,7 @@ async def test_a_hooks_own_switch_user_is_not_quieted_on_the_bridge():
         assert probes, writes
         assert not any("HISTFILE" in p for p in probes), probes
     finally:
-        SESSION_SETUPS.unregister("t7-switch")
+        SESSION_SETUPS.unregister(name="t7-switch")
 
 
 @pytest.mark.asyncio
@@ -688,7 +688,7 @@ def console_login_hook():
 
     register_session_setup("t10-console-login", fn, overwrite=True)
     yield seen
-    SESSION_SETUPS.unregister("t10-console-login")
+    SESSION_SETUPS.unregister(name="t10-console-login")
 
 
 def _console_bridge_kwargs(console: _Console, **extra):

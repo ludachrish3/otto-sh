@@ -92,7 +92,7 @@ def check_project_images(project: Project, image_names: "Iterable[str] | None" =
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class BuildOptions:
     """The ``docker build`` flags a caller may add; each is docker's own."""
 
@@ -206,7 +206,7 @@ async def _read_back(
                     found.append(row_reference)
     if not found:
         missing = CommandResult(
-            Status.Failed,
+            status=Status.Failed,
             value=(
                 f"docker build succeeded, but the daemon lists no image for {', '.join(references)}"
             ),
@@ -230,7 +230,7 @@ def build_staging_key(project_name: str, suffix: "str | None" = None) -> str:
     """
     from .compose import get_user_compose_project  # lazy: compose imports this module
 
-    return get_user_compose_project(project_name, suffix)
+    return get_user_compose_project(project_name=project_name, suffix=suffix)
 
 
 async def _remove_build_input(parent: Host, root: Path, key: str, path: Path) -> None:
@@ -290,9 +290,9 @@ async def _build_one(
 
 
 async def build_images(
+    *,
     project: Project,
     parent: Host,
-    *,
     image_names: Iterable[str] | None = None,
     options: BuildOptions | None = None,
 ) -> dict[str, ImageBuild]:
@@ -346,8 +346,8 @@ async def build_images(
     if selected and is_dry_run():
         raise CommandNotRunError(
             f"build_images({project.name}: {', '.join(img.name for img in selected)})",
-            parent.id,
-            "No context was staged and no image was built.",
+            host=parent.id,
+            detail="No context was staged and no image was built.",
         )
 
     key = build_staging_key(project.name)

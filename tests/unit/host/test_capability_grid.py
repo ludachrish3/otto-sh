@@ -83,7 +83,7 @@ class TestRegistrationRefusesAnUndeclaredClass:
         register_host_class("declared", Declared, spec=EmbeddedHostSpec)
         from otto.host.os_profile import build_host_class
 
-        assert build_host_class("declared") is Declared
+        assert build_host_class(name="declared") is Declared
 
 
 class TestTheDeclarationItself:

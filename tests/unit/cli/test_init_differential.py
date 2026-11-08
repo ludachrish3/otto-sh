@@ -57,7 +57,8 @@ def test_area_flags_reach_scaffold_candidates_exactly(
     candidates.assert_called_once_with(
         tmp_path.resolve(), requested=requested, all_areas=all_areas, inline_hosts=False
     )
-    (config, chosen), _ = scaffold.call_args
+    (config,), scaffold_kwargs = scaffold.call_args
+    chosen = scaffold_kwargs["areas"]
     assert chosen == ["lab"]
     assert config.root == tmp_path.resolve()
     check.assert_called_once_with(tmp_path.resolve())

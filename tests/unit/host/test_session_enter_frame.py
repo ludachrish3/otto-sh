@@ -52,7 +52,7 @@ async def test_enter_frame_never_reopens_the_transport():
         s.feed(f"{s.markers.ready}: command not found\n")
 
     feeder = asyncio.create_task(s.feed_after_write(then=answer_target_handshake))
-    await s.enter_frame(ZephyrFrame())
+    await s.enter_frame(frame=ZephyrFrame())
     await feeder
     assert s.opens == opens_after_landing
     assert isinstance(s._frame, ZephyrFrame)
@@ -70,7 +70,7 @@ async def test_enter_frame_mints_fresh_markers_and_ignores_a_stale_landing_ready
         landed.feed(f"{landed.markers.ready}: command not found\n")
 
     feeder = asyncio.create_task(landed.feed_after_write(then=answer_with_new_marker))
-    await landed.enter_frame(ZephyrFrame())
+    await landed.enter_frame(frame=ZephyrFrame())
     await feeder
     assert landed.markers.ready != old.ready
     assert landed.written[-1] == landed.markers.ready + "\n"
@@ -85,10 +85,10 @@ async def test_enter_frame_twice_sends_two_handshakes(landed):
         landed.feed(f"{landed.markers.ready}: command not found\n")
 
     first = asyncio.create_task(landed.feed_after_write(then=answer_one))
-    await landed.enter_frame(ZephyrFrame())
+    await landed.enter_frame(frame=ZephyrFrame())
     await first
     second = asyncio.create_task(landed.feed_after_write(then=answer_one))
-    await landed.enter_frame(ZephyrFrame())
+    await landed.enter_frame(frame=ZephyrFrame())
     await second
     assert len(seen) == 2
     assert seen[0] != seen[1]
@@ -104,7 +104,7 @@ async def test_enter_frame_failure_closes_and_raises_connection_error(landed, ca
         caplog.at_level(logging.DEBUG, logger="otto.host.session"),
         pytest.raises(ConnectionError, match="never became ready"),
     ):
-        await landed.enter_frame(ZephyrFrame(), timeout=0.2)
+        await landed.enter_frame(frame=ZephyrFrame(), timeout=0.2)
     assert not landed.alive
     assert any(
         "handshake start" in r.getMessage() and "timeout=0.2s" in r.getMessage()
@@ -117,7 +117,7 @@ async def test_enter_frame_refuses_inside_an_attached_app_shell(landed):
     old = landed.markers
     landed._app_shell = object()  # the lock an AppShell holds while attached
     with pytest.raises(AppShellActiveError):
-        await landed.enter_frame(ZephyrFrame())
+        await landed.enter_frame(frame=ZephyrFrame())
     # The refusal precedes every state change: same markers, nothing typed.
     assert landed.markers is old
     assert landed.written == []
@@ -128,7 +128,7 @@ async def test_enter_frame_refuses_on_a_dead_session(landed):
     old = landed.markers
     landed._alive = False
     with pytest.raises(SessionSetupError, match="dead"):
-        await landed.enter_frame(ZephyrFrame())
+        await landed.enter_frame(frame=ZephyrFrame())
     # The refusal precedes every state change: same markers, nothing typed.
     assert landed.markers is old
     assert landed.written == []
@@ -152,7 +152,7 @@ async def test_enter_frame_clears_pending_recovery(landed, reply, mapping):
         landed.feed(_PS1 + reply(landed.markers.ready))
 
     feeder = asyncio.create_task(landed.feed_after_write(then=answer))
-    await landed.enter_frame(BashFrame())
+    await landed.enter_frame(frame=BashFrame())
     await feeder
     assert landed._needs_recovery is False
     assert landed.terminal_mapping == mapping
@@ -175,7 +175,7 @@ async def test_enter_frame_never_confirms_a_marker_the_prompt_runs_into(landed):
 
     feeder = asyncio.create_task(landed.feed_after_write(then=answer_without_the_blank_line))
     with pytest.raises(ConnectionError, match="never became ready"):
-        await landed.enter_frame(BashFrame(), timeout=0.4)
+        await landed.enter_frame(frame=BashFrame(), timeout=0.4)
     await feeder
     assert not landed.alive
 
@@ -196,7 +196,7 @@ async def test_run_cmd_in_a_raw_landing_refuses_and_keeps_the_session_alive():
     await s.open_transport()
     await s._ensure_initialized()
     with pytest.raises(RawLandingError, match="enter_frame"):
-        await s.run_cmd("ls")
+        await s.run_cmd(cmd="ls")
     assert s.alive
     assert s.written == []
 
@@ -207,7 +207,7 @@ async def test_run_cmd_in_a_raw_landing_refuses_before_ensure_ready():
     await s.open_transport()  # transport up, NOT initialized
     s._needs_recovery = True
     with pytest.raises(RawLandingError, match="enter_frame"):
-        await s.run_cmd("ls")
+        await s.run_cmd(cmd="ls")
     # Both pin the guard's POSITION (before _ensure_ready, not after): an
     # _ensure_ready that ran would have marked the session initialized and
     # written the recovery Ctrl+C. A raw handshake writes nothing on its own,

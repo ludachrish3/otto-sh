@@ -52,7 +52,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 
     type_name = "zephyr-inline"
 
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         # Unlike 3.7+, the Zephyr 2.7 telnet shell echoes input by default.
         # Left on, the echoed END marker would match otto's read loop *before*
         # the command's real output arrives, desyncing every command by one.
@@ -63,7 +63,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         # not input echo, so the handshake probe is unaffected.
         return f"{prefix}shell echo off\r{m.ready}\n"
 
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         # Three CR-separated lines — no `retval`. Every command self-reports its
         # code via the firmware patch, so the bracketing markers are enough:
         #   BEGIN  -> rejected, emits `<token>: command not found` + retCode=-8
@@ -82,7 +82,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         """
         return max((i for i, ln in enumerate(lines) if m.begin in ln), default=-1)
 
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Return the command's exit code: the last ``retCode = <n>`` after the
         BEGIN marker.
 
@@ -90,7 +90,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         *last* match is the real command's. ``-1`` if none is found (e.g. an
         unpatched 2.7 build — a clear signal the firmware patch is missing).
         """
-        lines = self.region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m=m)
         begin = self._begin_line(lines, m)
         for ln in reversed(lines[begin + 1 :]):
             match = _RETCODE_RE.search(ln)
@@ -98,7 +98,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
                 return int(match.group(1))
         return -1
 
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
+    def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:
         """Extract the command's output from the framed response.
 
         Region layout after the BEGIN marker (prompt printed after each
@@ -116,7 +116,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         the first line the shell prints after BEGIN's code, so this never reads
         or hard-codes the prompt text.
         """
-        lines = self.region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m=m)
         begin = self._begin_line(lines, m)
         rc_idx = [i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])]
         if len(rc_idx) < 2:

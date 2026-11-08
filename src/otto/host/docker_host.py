@@ -205,7 +205,7 @@ def parent_staging_root(parent: "Host") -> Path:
     # whose connection authenticates as the term's cred.
     upload_protocol = connection_protocol(parent.transfer) or parent.term
     for protocol, role in [(parent.term, "it logs in"), (upload_protocol, "it uploads")]:
-        cred = connections.transport_cred_for(protocol)
+        cred = connections.transport_cred_for(protocol=protocol)
         login = cred.login if cred is not None else ""
         if login != session:
             raise StagingRefusedError(
@@ -489,7 +489,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    parent: "Host" = field(kw_only=False)
+    parent: "Host"
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
     :class:`~otto.host.host.Host` (the protocol) so the type-system surface stays narrow,
@@ -499,19 +499,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     asyncssh connection. ``exec`` and file transfer work against any
     parent."""
 
-    container_id: str = field(kw_only=False)
+    container_id: str
     """Docker container id or unique name. Resolved by
     :func:`otto.docker.compose.compose_up` via
     ``docker compose -p <proj> ps -q <service>``."""
 
-    project: str = field(kw_only=False)
+    project: str
     """Owning project name (the project's settings ``name``). Combined with
     *parent* and *service* to form the host id."""
 
-    service: str = field(kw_only=False)
+    service: str
     """Compose service name (e.g. ``api``)."""
 
-    compose_project: str = field(kw_only=False)
+    compose_project: str
     """The ``-p`` value passed to ``docker compose`` for this stack. Stored
     so other commands (``logs``, ``ps``, ``down``) can scope correctly."""
 
@@ -848,13 +848,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         return self._live_session_mgr().ambient_user
 
-    def mount_for(self, container_path: "str | Path") -> "Mount | None":
+    def mount_for(self, *, container_path: "str | Path") -> "Mount | None":
         """Return the mount covering *container_path*, or ``None`` if it is not shared.
 
         The predicate form -- use it to ASK. :meth:`parent_path` is for
         callers that have already established the path is shared.
         """
-        return mount_for(self.mounts, container_path)
+        return mount_for(mounts=self.mounts, container_path=container_path)
 
     def parent_path(self, container_path: "str | Path") -> Path:
         """Return where *container_path* lives on :attr:`parent`.
@@ -863,12 +863,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             ~otto.host.errors.MountNotFoundError: the path is not under any
                 mount this container is known to have.
         """
-        found = mount_for(self.mounts, container_path)
+        found = mount_for(mounts=self.mounts, container_path=container_path)
         if found is None:
             raise MountNotFoundError(self._no_mount_message(container_path, on_parent=False))
         return translate(found, container_path, to_parent=True)
 
-    def container_path(self, parent_path: "str | Path") -> Path:
+    def container_path(self, *, parent_path: "str | Path") -> Path:
         """Return where a parent-side *parent_path* appears inside this container.
 
         Raises:
@@ -1009,6 +1009,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 help="One command, quoted as one arg; join steps with && on a POSIX shell.",
             ),
         ],
+        *,
         expects: Annotated["Expect | list[Expect] | None", Exclude] = None,
         timeout: Annotated[
             float,
@@ -1192,7 +1193,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
     @override
-    async def run_login(self, user: "str | None" = None, force: bool = False) -> None:
+    async def run_login(self, *, user: "str | None" = None, force: bool = False) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
         ``user`` lands the shell as that identity (``docker exec -u``); the
@@ -1252,9 +1253,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def put(
         self,
         src_files: Annotated[
-            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+            list[Path] | Path, Arg(elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        *,
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
@@ -1330,9 +1332,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir, mode)
-        mode_check = parse_file_mode(mode)
+        mode_check = parse_file_mode(value=mode)
         if not mode_check.is_ok:
-            return aggregate_transfer({f: Result(Status.Error, msg=mode_check.msg) for f in files})
+            return aggregate_transfer(
+                per_file={f: Result(status=Status.Error, msg=mode_check.msg) for f in files}
+            )
         resolved_mode: int | None = mode_check.value  # ty: ignore[unsound-assignment] — Result.value is Any by design (payload slot); retired by the Result[T] workstream
         effective = self._effective_user(user)
         await self._ensure_running()
@@ -1345,7 +1349,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
-                return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
+                return aggregate_transfer(
+                    per_file={f: Result(status=Status.Error, msg=msg) for f in files}
+                )
 
             stage_result = await self.parent.put(
                 files, stage, show_progress=show_progress, concurrent=concurrent
@@ -1354,7 +1360,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             per_file: dict[Path, Result] = {}
             for f in files:
                 staged_entry = staged_entries.get(
-                    f, Result(Status.Error, msg=stage_result.msg or "staging failed")
+                    f, Result(status=Status.Error, msg=stage_result.msg or "staging failed")
                 )
                 if staged_entry.status is not Status.Success:
                     # The staging leg's own verdict IS this file's entry --
@@ -1377,9 +1383,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
-                    per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
+                    per_file[f] = Result(status=Status.Error, msg=f"docker cp failed: {cp.value}")
                 else:
-                    per_file[f] = Result(Status.Success, value=dest_dir / f.name)
+                    per_file[f] = Result(status=Status.Success, value=dest_dir / f.name)
             # chown BEFORE chmod: chown-ing an already-chmod'd file clears
             # setuid/setgid (S_ISUID/S_ISGID) on most filesystems, which
             # would silently defeat a `mode="4755"` + `user=...` put. Running
@@ -1398,18 +1404,18 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                         # The effective user may not own what docker cp landed;
                         # only root can be relied on to chmod it.
                         wrapped = await self._docker_exec(
-                            chmod_command(resolved_mode, landed), user=ROOT_LOGIN
+                            chmod_command(mode=resolved_mode, paths=landed), user=ROOT_LOGIN
                         )
                         chmod = await self.parent.exec(wrapped, timeout=float("inf"))
                     else:
                         # self.exec runs INSIDE the container (parent.exec would
                         # chmod the staging copy, about to be deleted).
-                        chmod = await self.exec(chmod_command(resolved_mode, landed))
+                        chmod = await self.exec(chmod_command(mode=resolved_mode, paths=landed))
                     if not chmod.status.is_ok:
                         for f, r in per_file.items():
                             if r.status is Status.Success:
                                 per_file[f] = Result(
-                                    Status.Error,
+                                    status=Status.Error,
                                     value=r.value,
                                     msg=(
                                         f"{f}: transferred, but setting mode "
@@ -1417,7 +1423,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                                         f"{chmod.value or f'chmod exited {chmod.retcode}'}"
                                     ),
                                 )
-            return aggregate_transfer(per_file)
+            return aggregate_transfer(per_file=per_file)
         finally:
             with teardown_step(host_name, "staging-dir removal"):
                 await self.parent.exec(self._unstage_command(stage))
@@ -1443,7 +1449,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         for f, r in per_file.items():
             if r.status is Status.Success:
                 per_file[f] = Result(
-                    Status.Error,
+                    status=Status.Error,
                     value=r.value,
                     msg=(
                         f"{f}: transferred, but chown to {effective!r} failed: "
@@ -1457,9 +1463,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         src_files: Annotated[
             list[Path] | Path,
-            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+            Arg(elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        *,
         user: Annotated[
             str | None,
             Opt(
@@ -1515,7 +1522,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
-                return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
+                return aggregate_transfer(
+                    per_file={f: Result(status=Status.Error, msg=msg) for f in files}
+                )
 
             per_file: dict[Path, Result] = {}
             staged_paths: list[Path] = []
@@ -1531,7 +1540,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 if not cp.status.is_ok:
                     # One file's docker cp failure is that file's own entry;
                     # the files that DID stage are still fetched below.
-                    per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
+                    per_file[f] = Result(status=Status.Error, msg=f"docker cp failed: {cp.value}")
                 else:
                     staged_paths.append(staged)
 
@@ -1543,11 +1552,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     staged_paths, dest_dir, show_progress=show_progress, concurrent=concurrent
                 )
                 staged_map = parent_result.value if isinstance(parent_result.value, dict) else {}
-                fallback = Result(parent_result.status, msg=parent_result.msg)
+                fallback = Result(status=parent_result.status, msg=parent_result.msg)
                 for f in files:
                     if f not in per_file:
                         per_file[f] = staged_map.get(stage / f.name, fallback)
-            return aggregate_transfer({f: per_file[f] for f in files})
+            return aggregate_transfer(per_file={f: per_file[f] for f in files})
         finally:
             with teardown_step(host_name, "staging-dir removal"):
                 await self.parent.exec(self._unstage_command(stage))

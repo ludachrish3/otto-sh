@@ -47,7 +47,7 @@ async def test_run_coverage_report_refuses_a_non_empty_output_dir(tmp_path):
 
     (tmp_path / "stale.html").write_text("stale")
     with pytest.raises(DestinationError, match=r"output_dir target .* set overwrite=True"):
-        await run_coverage_report([], tmp_path, ReportInputs())
+        await run_coverage_report([], output_dir=tmp_path, inputs=ReportInputs())
 
 
 @pytest.mark.asyncio
@@ -62,7 +62,9 @@ async def test_run_coverage_report_overwrite_clears_and_proceeds(tmp_path, monke
         return CoverageStore()
 
     monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
-    await reporter_module.run_coverage_report([], tmp_path, ReportInputs(), overwrite=True)
+    await reporter_module.run_coverage_report(
+        [], output_dir=tmp_path, inputs=ReportInputs(), overwrite=True
+    )
     assert not (tmp_path / "stale.html").exists()
     ran.assert_called_once()
 
@@ -82,7 +84,7 @@ async def test_run_coverage_report_creates_a_missing_output_dir(tmp_path, monkey
         return CoverageStore()
 
     monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
-    await reporter_module.run_coverage_report([], out, ReportInputs())
+    await reporter_module.run_coverage_report([], output_dir=out, inputs=ReportInputs())
     assert out.is_dir()
     ran.assert_called_once()
 

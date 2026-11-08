@@ -38,7 +38,7 @@ class _Host:
 
     @cli_exposed
     async def report(self) -> Result:
-        return Result(Status.Success, value=_DEVICE_TEXT)
+        return Result(status=Status.Success, value=_DEVICE_TEXT)
 
     async def close(self) -> None:
         pass

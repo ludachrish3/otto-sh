@@ -24,8 +24,8 @@ def _other(c):
 
 
 def test_the_built_ins_state_their_snapshot_cache_metadata():
-    assert INVENTORY_BACKENDS.peek("json").metadata == InventoryMetadata(snapshot_cache=False)
-    assert INVENTORY_BACKENDS.peek("netbox").metadata == InventoryMetadata(snapshot_cache=True)
+    assert INVENTORY_BACKENDS.peek(name="json").metadata == InventoryMetadata(snapshot_cache=False)
+    assert INVENTORY_BACKENDS.peek(name="netbox").metadata == InventoryMetadata(snapshot_cache=True)
 
 
 def test_register_and_lookup():
@@ -51,7 +51,9 @@ def test_duplicate_registration_raises_naming_both_origins():
 
 def test_unknown_name_lists_registered_and_points_at_the_registrar(tmp_path):
     with pytest.raises(InventoryConstructionError, match="lookup failed") as exc:
-        INVENTORY_BACKENDS.prepare("does-not-exist", {}, InventoryEnv(tmp_path, "o.toml"))
+        INVENTORY_BACKENDS.prepare(
+            name="does-not-exist", raw={}, env=InventoryEnv(tmp_path, "o.toml")
+        )
     message = str(exc.value)
     assert "Unknown inventory backend 'does-not-exist'" in message
     assert "Registered:" in message

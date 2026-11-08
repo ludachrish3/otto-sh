@@ -204,7 +204,7 @@ def _fleet(*pairs):
                 "creds": [{"login": "admin", "password": "admin"}],
             },
             lab_name=lab_name,
-            element=Element(element),
+            element=Element(name=element),
         )
         hosts[host.id] = host
     return hosts

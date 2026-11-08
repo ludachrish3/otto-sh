@@ -58,8 +58,8 @@ class _DockerHost(SimpleNamespace):
         self.answers.setdefault("docker image inspect", (Status.Success, _IMAGE_ID))
         self.exec_calls: list[str] = []
         self.run_calls: list[tuple[str, dict]] = []
-        self.put = AsyncMock(return_value=Result(Status.Success, value={}))
-        self.get = AsyncMock(return_value=Result(Status.Success, value={}))
+        self.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
+        self.get = AsyncMock(return_value=Result(status=Status.Success, value={}))
 
     def _answer(self, cmd: str) -> tuple[Status, str]:
         for needle, (status, output) in self.answers.items():
@@ -73,7 +73,7 @@ class _DockerHost(SimpleNamespace):
         if status is Status.NotRun:
             return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.id)
         retcode = 0 if status is Status.Success else 1
-        return CommandResult(status, value=framed(cmd, output), command=cmd, retcode=retcode)
+        return CommandResult(status=status, value=framed(cmd, output), command=cmd, retcode=retcode)
 
     async def run(self, cmd, **kw):
         self.run_calls.append((cmd, kw))
@@ -84,7 +84,7 @@ class _DockerHost(SimpleNamespace):
             retcode = 0 if status is Status.Success else 1
             value = framed(cmd, output)
             entry = CommandResult(command=cmd, value=value, status=status, retcode=retcode)
-        return Results.collect([entry])
+        return Results.collect(items=[entry])
 
 
 _INSPECT = "docker container inspect"
@@ -648,7 +648,7 @@ async def test_injection_shaped_values_are_quoted_not_executed():
         f"{shlex.quote(nasty_image)}"
     )
     assert host.exec_calls[-1] == expected_run
-    assert (await p.reset_coverage(host)).is_ok
+    assert (await p.reset_coverage(host=host)).is_ok
     cov_q = shlex.quote(nasty_cov)
     delete = f"! test -d {cov_q} || find {cov_q} -name '*.gcda' -type f -exec rm -f {{}} \\;"
     check = f"{CHECK_PREFIX}LC_ALL=C find {cov_q} -name '*.gcda' -type f -print 2>&1"
@@ -721,7 +721,7 @@ async def test_is_installed_does_not_crash_on_a_dry_run_decline():
 @pytest.mark.asyncio
 async def test_prepare_coverage_never_contacts_a_declining_host():
     host = _DockerHost(answers={"docker": (Status.NotRun, "")})
-    result = await _build(host, image="app:1").prepare_coverage(host)
+    result = await _build(host, image="app:1").prepare_coverage(host=host)
     assert result.is_ok
     assert host.exec_calls == []
     assert host.run_calls == []
@@ -730,14 +730,14 @@ async def test_prepare_coverage_never_contacts_a_declining_host():
 @pytest.mark.asyncio
 async def test_reset_coverage_propagates_a_dry_run_decline():
     host = _DockerHost(answers={"find": (Status.NotRun, "")})
-    result = await _build(host, image="app:1").reset_coverage(host)
+    result = await _build(host, image="app:1").reset_coverage(host=host)
     assert result.status is Status.NotRun
 
 
 @pytest.mark.asyncio
 async def test_debug_logs_propagates_a_dry_run_decline(tmp_path):
     host = _DockerHost(answers={"docker logs": (Status.NotRun, "")})
-    result = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
+    result = await _build(host, image="app:1").get_debug_logs(host=host, dest=tmp_path)
     assert result.status is Status.NotRun
 
 
@@ -748,7 +748,7 @@ async def test_debug_logs_propagates_a_dry_run_decline(tmp_path):
 async def test_reset_coverage_deletes_under_sudo():
     host = _DockerHost()
     p = _build(host, image="app:1", cov_dir="/var/cov/app")
-    assert (await p.reset_coverage(host)).is_ok
+    assert (await p.reset_coverage(host=host)).is_ok
     delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
     check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls == [
@@ -761,7 +761,7 @@ async def test_reset_coverage_deletes_under_sudo():
 @pytest.mark.asyncio
 async def test_reset_coverage_fails_when_the_check_fails_after_a_successful_removal():
     host = _DockerHost(answers={"-print": (Status.Error, "find: '/var/cov': Permission denied")})
-    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host)
+    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host=host)
     assert result.status is Status.Error
     assert result.msg == (
         "checking .gcda under /var/cov/app failed: find: '/var/cov': Permission denied"
@@ -771,7 +771,7 @@ async def test_reset_coverage_fails_when_the_check_fails_after_a_successful_remo
 @pytest.mark.asyncio
 async def test_reset_coverage_fails_naming_a_counter_the_removal_left():
     host = _DockerHost(answers={"-print": (Status.Success, "/var/cov/app/a.gcda")})
-    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host)
+    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host=host)
     assert result.status is Status.Error
     assert result.msg == "deleting .gcda under /var/cov/app left 1 file(s): /var/cov/app/a.gcda"
 
@@ -779,7 +779,7 @@ async def test_reset_coverage_fails_naming_a_counter_the_removal_left():
 @pytest.mark.asyncio
 async def test_reset_coverage_failure_names_the_product():
     host = _DockerHost(answers={"find": (Status.Error, "permission denied")})
-    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host)
+    result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host=host)
     assert not result.is_ok
     assert "deleting .gcda under /var/cov/app failed: permission denied" in result.msg
 
@@ -788,7 +788,7 @@ async def test_reset_coverage_failure_names_the_product():
 async def test_debug_logs_add_container_log_to_the_haul(tmp_path):
     host = _DockerHost(answers={"docker logs": (Status.Success, "hello from the container\n")})
     p = _build(host, image="app:1")
-    result = await p.get_debug_logs(host, tmp_path)
+    result = await p.get_debug_logs(host=host, dest=tmp_path)
     assert result.is_ok
     assert (tmp_path / "container.log").read_text() == "hello from the container\n"
     assert "docker logs app" in host.exec_calls[-1]
@@ -799,7 +799,7 @@ async def test_debug_logs_add_container_log_to_the_haul(tmp_path):
 async def test_debug_logs_hauls_the_declared_globs_too(tmp_path):
     host = _DockerHost(answers={"docker logs": (Status.Success, "hello\n")})
     p = _build(host, image="app:1", debug_log_globs=["/var/log/app.log"])
-    result = await p.get_debug_logs(host, tmp_path)
+    result = await p.get_debug_logs(host=host, dest=tmp_path)
     assert result.is_ok
     host.get.assert_awaited_once_with([Path("/var/log/app.log")], tmp_path)
     assert (tmp_path / "container.log").read_text() == "hello\n"
@@ -818,7 +818,7 @@ _GONE = [
 async def test_debug_logs_missing_container_is_nothing_to_collect(tmp_path, caplog, answer):
     host = _DockerHost(answers={"docker logs": (Status.Error, answer)})
     with caplog.at_level("INFO", logger="otto.host.docker_image_kind"):
-        result = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
+        result = await _build(host, image="app:1").get_debug_logs(host=host, dest=tmp_path)
     assert result.status is Status.Success
     assert not (tmp_path / "container.log").exists()
     assert "test3: app: container app is gone; no docker logs to collect" in caplog.messages
@@ -827,9 +827,9 @@ async def test_debug_logs_missing_container_is_nothing_to_collect(tmp_path, capl
 @pytest.mark.asyncio
 async def test_debug_logs_missing_container_still_reports_the_haul_failure(tmp_path):
     host = _DockerHost(answers={"docker logs": (Status.Error, _GONE[0])})
-    host.get = AsyncMock(return_value=Result(Status.Error, msg="fetch failed"))
+    host.get = AsyncMock(return_value=Result(status=Status.Error, msg="fetch failed"))
     p = _build(host, image="app:1", debug_log_globs=["/var/log/app.log"])
-    result = await p.get_debug_logs(host, tmp_path)
+    result = await p.get_debug_logs(host=host, dest=tmp_path)
     assert result.msg == "fetch failed"
 
 
@@ -837,7 +837,7 @@ async def test_debug_logs_missing_container_still_reports_the_haul_failure(tmp_p
 async def test_debug_logs_failure_is_reported_when_the_declared_haul_succeeded(tmp_path):
     unreachable = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
     host = _DockerHost(answers={"docker logs": (Status.Error, unreachable)})
-    result = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
+    result = await _build(host, image="app:1").get_debug_logs(host=host, dest=tmp_path)
     assert not result.is_ok
     assert "docker logs app failed on test3" in result.msg
 
@@ -846,9 +846,9 @@ async def test_debug_logs_failure_is_reported_when_the_declared_haul_succeeded(t
 async def test_debug_logs_reports_the_haul_failure_even_when_docker_logs_also_fails(tmp_path):
     unreachable = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
     host = _DockerHost(answers={"docker logs": (Status.Error, unreachable)})
-    host.get = AsyncMock(return_value=Result(Status.Error, msg="fetch failed"))
+    host.get = AsyncMock(return_value=Result(status=Status.Error, msg="fetch failed"))
     p = _build(host, image="app:1", debug_log_globs=["/var/log/app.log"])
-    result = await p.get_debug_logs(host, tmp_path)
+    result = await p.get_debug_logs(host=host, dest=tmp_path)
     assert not result.is_ok
     assert result.msg == "fetch failed"
 

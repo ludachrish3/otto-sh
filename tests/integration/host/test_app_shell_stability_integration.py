@@ -212,7 +212,7 @@ async def test_mysql_appshell_cycle(leased_host: tuple[str, str]) -> None:
     await _assert_sshd_reachable(element, ip)
 
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element), element=Element(element)
+        _mysql_host_dict(ip, element), element=Element(name=element)
     )  # default user: vagrant
     try:
         async with host.app_shell(MySql) as sql:

@@ -369,7 +369,7 @@ class _NetBoxInventory:
                 f"netbox inventory {self.url}: device {key!r} (id {self._no_address[key]}) "
                 f"has no address at ip_source {self.ip_source!r}"
             )
-        raise InventoryKeyError(key, self.label)
+        raise InventoryKeyError(key, label=self.label)
 
     def list_keys(self) -> list[str]:
         """Every device name the filter selects that has an address, sorted."""

@@ -60,7 +60,7 @@ async def test_concurrent_population(tunnel_lab, reap_tunnels) -> None:
 
     for i in range(3):
         added = await add_tunnel(
-            tunnel_lab, shapes[i % len(shapes)], port=ports.popleft(), protocol="udp"
+            tunnel_lab, hosts=shapes[i % len(shapes)], port=ports.popleft(), protocol="udp"
         )
         reap_tunnels.append(added.tunnel.id)
         live.append((added.tunnel.id, added.tunnel.service_port))
@@ -68,20 +68,20 @@ async def test_concurrent_population(tunnel_lab, reap_tunnels) -> None:
 
     for cycle in range(SOAK_CYCLES):
         oldest_id, oldest_port = live.pop(0)
-        report = await remove_tunnel(tunnel_lab, oldest_id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=oldest_id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         reap_tunnels.remove(oldest_id)
         ports.append(oldest_port)
         await _assert_exact_live_set()
         added = await add_tunnel(
-            tunnel_lab, shapes[cycle % len(shapes)], port=ports.popleft(), protocol="udp"
+            tunnel_lab, hosts=shapes[cycle % len(shapes)], port=ports.popleft(), protocol="udp"
         )
         reap_tunnels.append(added.tunnel.id)
         live.append((added.tunnel.id, added.tunnel.service_port))
         await _assert_exact_live_set()
 
     for tunnel_id, _port in live:
-        report = await remove_tunnel(tunnel_lab, tunnel_id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=tunnel_id)
         assert report.survivors == []
         reap_tunnels.remove(tunnel_id)
 
@@ -96,8 +96,8 @@ async def test_racing_conflicting_adds(tunnel_lab, reap_tunnels) -> None:
     chain = [(INGRESS, None), (EXIT, None)]
     for cycle in range(SOAK_CYCLES):
         results = await asyncio.gather(
-            add_tunnel(tunnel_lab, chain, port=PORT_RACING, protocol="udp"),
-            add_tunnel(tunnel_lab, chain, port=PORT_RACING, protocol="udp"),
+            add_tunnel(tunnel_lab, hosts=chain, port=PORT_RACING, protocol="udp"),
+            add_tunnel(tunnel_lab, hosts=chain, port=PORT_RACING, protocol="udp"),
             return_exceptions=True,
         )
         winners = [r for r in results if isinstance(r, AddedTunnel)]
@@ -107,7 +107,7 @@ async def test_racing_conflicting_adds(tunnel_lab, reap_tunnels) -> None:
         assert len(winners) == 1, f"cycle {cycle}: exactly-one-wins violated: {results!r}"
         assert len(losers) == 1, f"cycle {cycle}: exactly-one-wins violated: {results!r}"
         await assert_discovered(tunnel_lab, winners[0].tunnel.id, procs=4)
-        report = await remove_tunnel(tunnel_lab, winners[0].tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=winners[0].tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         reap_tunnels.remove(winners[0].tunnel.id)
 

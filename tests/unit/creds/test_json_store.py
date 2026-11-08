@@ -65,33 +65,33 @@ def test_construction_does_no_io_and_a_missing_file_names_itself_at_first_use(tm
 def test_an_entry_level_error_names_the_file_the_key_and_the_index():
     """``via`` without ``proxy`` fails CredSpec's model validator, whose loc is empty."""
     with pytest.raises(CredsError, match=r"creds\.json: key 'k': creds\[0\]: .*require 'proxy'"):
-        parse_creds_document({"k": [{"login": "r", "via": "x"}]}, source="creds.json")
+        parse_creds_document(data={"k": [{"login": "r", "via": "x"}]}, source="creds.json")
 
 
 def test_a_field_level_error_names_the_offending_field():
     with pytest.raises(CredsError, match=r"login: Input should be a valid string"):
-        parse_creds_document({"k": [{"login": 3}]}, source="creds.json")
+        parse_creds_document(data={"k": [{"login": 3}]}, source="creds.json")
 
 
 def test_the_document_must_be_a_json_object():
     with pytest.raises(CredsError, match="must be a JSON object"):
-        parse_creds_document([], source="creds.json")
+        parse_creds_document(data=[], source="creds.json")
 
 
 def test_schema_and_comment_keys_are_skipped():
-    out = parse_creds_document({"$schema": "x", "_comment": "not a key", "k": []}, source="s")
+    out = parse_creds_document(data={"$schema": "x", "_comment": "not a key", "k": []}, source="s")
     assert out == {"k": []}
 
 
 def test_a_non_list_value_names_its_key():
     with pytest.raises(CredsError, match="key 'k': expected a list of creds"):
-        parse_creds_document({"k": {"login": "r"}}, source="s")
+        parse_creds_document(data={"k": {"login": "r"}}, source="s")
 
 
 def test_a_duplicate_login_within_one_key_is_refused():
     with pytest.raises(CredsError, match=r"key 'k': duplicate cred entries: \['root'\]"):
         parse_creds_document(
-            {"k": [{"login": "root"}, {"login": "root", "password": "x"}]}, source="s"
+            data={"k": [{"login": "root"}, {"login": "root", "password": "x"}]}, source="s"
         )
 
 

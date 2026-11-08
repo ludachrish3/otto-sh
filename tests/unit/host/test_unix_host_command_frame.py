@@ -6,7 +6,7 @@ from otto.host.unix_host import UnixHost
 
 def _unix(**kw):
     return UnixHost(
-        ip="10.0.0.1", creds=[Cred(login="u", password="p")], element=Element("e"), **kw
+        ip="10.0.0.1", creds=[Cred(login="u", password="p")], element=Element(name="e"), **kw
     )
 
 

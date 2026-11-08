@@ -14,7 +14,7 @@ def _clean_registry():
     names = set(STANDALONE_INSTRUCTIONS.names())
     yield
     for name in set(STANDALONE_INSTRUCTIONS.names()) - names:
-        STANDALONE_INSTRUCTIONS.unregister(name)
+        STANDALONE_INSTRUCTIONS.unregister(name=name)
 
 
 @dataclasses.dataclass

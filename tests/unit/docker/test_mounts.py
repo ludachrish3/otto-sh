@@ -96,7 +96,7 @@ async def test_inspect_mounts_keys_by_the_ids_the_caller_passed():
     parent.id = "test3"
     parent.exec = AsyncMock(
         return_value=CommandResult(
-            Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
+            status=Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
         )
     )
     table = await inspect_mounts(parent, [CID_A])
@@ -117,7 +117,7 @@ async def test_inspect_mounts_pins_the_object_type():
     parent.id = "test3"
     parent.exec = AsyncMock(
         return_value=CommandResult(
-            Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
+            status=Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
         )
     )
     await inspect_mounts(parent, [CID_A])
@@ -135,7 +135,7 @@ async def test_inspect_mounts_resolves_a_short_id_against_the_full_hex_row():
     parent.id = "test3"
     parent.exec = AsyncMock(
         return_value=CommandResult(
-            Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
+            status=Status.Success, value=f"{CID_A}\t[{BIND}]", command="", retcode=0
         )
     )
     table = await inspect_mounts(parent, [short])
@@ -155,7 +155,9 @@ async def test_inspect_mounts_a_legit_empty_table_is_not_treated_as_unanswered(c
     parent = MagicMock()
     parent.id = "test3"
     parent.exec = AsyncMock(
-        return_value=CommandResult(Status.Success, value=f"{CID_A}\t[]", command="", retcode=0)
+        return_value=CommandResult(
+            status=Status.Success, value=f"{CID_A}\t[]", command="", retcode=0
+        )
     )
     table = await inspect_mounts(parent, [CID_A])
     assert table[CID_A] == []
@@ -170,7 +172,7 @@ async def test_inspect_mounts_keeps_the_good_rows_when_one_container_is_gone(cap
     parent.id = "test3"
     parent.exec = AsyncMock(
         return_value=CommandResult(
-            Status.Failed,
+            status=Status.Failed,
             value=f"{CID_A}\t[{BIND}]\nerror: no such object: {CID_B}",
             command="",
             retcode=1,
@@ -190,7 +192,7 @@ async def test_inspect_mounts_refuses_a_dry_run_decline():
     parent = MagicMock()
     parent.id = "test3"
     parent.exec = AsyncMock(
-        return_value=CommandResult(Status.NotRun, value="", command="", retcode=-1)
+        return_value=CommandResult(status=Status.NotRun, value="", command="", retcode=-1)
     )
     with pytest.raises(CommandNotRunError, match="inspect_mounts"):
         await inspect_mounts(parent, [CID_A])

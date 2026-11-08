@@ -396,8 +396,8 @@ class TestE2eBaseCommitGuard:
         with pytest.raises(CaptureCommitError) as excinfo:
             await run_coverage_report(
                 [cov],
-                tmp_path / "report",
-                ReportInputs(
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(
                     project_root=project,
                     tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
                 ),
@@ -424,8 +424,8 @@ class TestE2eBaseCommitGuard:
 
         store = await run_coverage_report(
             [cov],
-            tmp_path / "report",
-            ReportInputs(
+            output_dir=tmp_path / "report",
+            inputs=ReportInputs(
                 project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project)
             ),
         )
@@ -466,8 +466,8 @@ class TestE2eDirtyTreeRemap:
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
                 [cov],
-                tmp_path / "report",
-                ReportInputs(
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(
                     project_root=project,
                     tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
                 ),
@@ -499,8 +499,8 @@ class TestE2eDirtyTreeRemap:
         with caplog.at_level("WARNING"):
             await run_coverage_report(
                 [cov],
-                tmp_path / "report",
-                ReportInputs(
+                output_dir=tmp_path / "report",
+                inputs=ReportInputs(
                     project_root=project,
                     tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV, root=project),
                 ),
@@ -572,7 +572,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, cov_config)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -621,7 +621,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, cov_config)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
         )
         assert store is not None
         assert {r.product for r in store.runs} == {"app", "agent"}
@@ -661,7 +661,7 @@ class TestUnitHarvest:
         products = {"app": [str(build / "app-tests")], "lib": [str(build / "lib-tests")]}
         cov_config = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "products": products}}}
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, cov_config)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "core.cpp"]
@@ -714,7 +714,7 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [], tmp_path / "report", _unit_inputs(project, cov_config)
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
             )
         assert store is not None
         assert any("does not exist" in rec.message for rec in caplog.records)
@@ -748,7 +748,7 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [], tmp_path / "report", _unit_inputs(project, cov_config)
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
             )
         assert store is not None
         assert any(
@@ -789,7 +789,7 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [], tmp_path / "report", _unit_inputs(project, cov_config)
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
             )
         assert store is not None
         assert any(
@@ -814,7 +814,9 @@ class TestUnitHarvest:
         }
 
         with pytest.raises(ValueError, match="cannot expand ~nosuchuser/b"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov_config))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
+            )
 
         assert calls == []
         assert not (tmp_path / "report").exists()
@@ -852,7 +854,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, cov_config)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -893,7 +895,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, cov_config)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -911,7 +913,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with caplog.at_level("DEBUG"):
-            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            store = await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -936,7 +940,9 @@ class TestUnitHarvest:
         install_capture(monkeypatch)
 
         with caplog.at_level("DEBUG"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert "unit unit/core: kept 1 source files of product core, dropped 1 others" in (
             _messages(caplog, "INFO")
@@ -954,7 +960,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         message = str(excinfo.value)
         assert (
@@ -1002,7 +1010,9 @@ class TestUnitHarvest:
         }
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov_config))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
+            )
 
         message = str(excinfo.value)
         assert "unit tier unit/app: no product named 'app'" in message
@@ -1018,7 +1028,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert "product 'core' of project proj is declared instrumented = false" in str(
             excinfo.value
@@ -1033,7 +1045,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         message = str(excinfo.value)
         assert "unit tier unit/core: no products of project proj found: no lab is active" in message
@@ -1049,7 +1063,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with caplog.at_level("INFO"):
-            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            store = await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert calls == []
         assert (
@@ -1092,7 +1108,9 @@ class TestUnitHarvest:
         }
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([cov], tmp_path / "report", _unit_inputs(project, cov_config))
+            await run_coverage_report(
+                [cov], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov_config)
+            )
 
         message = str(excinfo.value)
         assert "unit tier unit/app: product 'app'" in message
@@ -1122,7 +1140,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with caplog.at_level("DEBUG"):
-            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            store = await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -1153,7 +1173,9 @@ class TestUnitHarvest:
 
         monkeypatch.setattr(Path, "rglob", counting_rglob)
 
-        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+        store = await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+        )
 
         assert _store_paths(store, project) == ["src/core/add.c"]
         assert walks == [project]
@@ -1194,7 +1216,9 @@ class TestUnitHarvest:
         (cov / "h1" / "core" / "add.c.gcda").write_bytes(b"")
         _write_meta(cov, project)
 
-        await run_coverage_report([cov], tmp_path / "report", _unit_inputs(project))
+        await run_coverage_report(
+            [cov], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+        )
 
         # asked twice (the unit preflight and the pending capture), read once
         assert reads == ["core", "core"]
@@ -1213,7 +1237,9 @@ class TestUnitHarvest:
         unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
         calls = install_capture(monkeypatch)
 
-        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+        store = await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+        )
 
         assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -1232,7 +1258,9 @@ class TestUnitHarvest:
         unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
         install_capture(monkeypatch)
 
-        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+        store = await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+        )
 
         assert _store_paths(store, project) == ["src/core/add.c"]
         assert any(c.startswith("docker commit --pause=false") for c in host.calls)
@@ -1250,7 +1278,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with caplog.at_level("WARNING"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+            )
 
         assert host.calls == []
         assert calls == []
@@ -1269,7 +1299,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageInputError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+            )
 
         assert excinfo.value.field is None
         assert str(excinfo.value) == (
@@ -1291,13 +1323,15 @@ class TestUnitHarvest:
         host = ContainerHost("h1", [reference_image()])
         host.files = dict.fromkeys(hits, b"\x7fELF\x00/build/app/main.c.gcda\x00")
         listed = "".join(f"{p}\n" for p in hits)
-        host.scan = Result(Status.Success, value=listed + "otto-scan-rc:1\notto-scan-rc:2\n")
+        host.scan = Result(status=Status.Success, value=listed + "otto-scan-rc:1\notto-scan-rc:2\n")
         install_lab(monkeypatch, [host])
         unit_build(project / "build/tests", project, ["src/core/add.c"])
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CaptureFailedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+            )
 
         assert str(excinfo.value).startswith(
             "unit tier unit/img: could not read product 'img''s object list: "
@@ -1314,7 +1348,9 @@ class TestUnitHarvest:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, _IMG_COV))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _IMG_COV)
+            )
 
         assert str(excinfo.value).startswith(
             "unit tier unit/img: product 'img' (registry.example/img:1) is not instrumented: "
@@ -1334,7 +1370,9 @@ class TestUnitHarvest:
         unit_build(project / "build/tests", project, ["src/core/add.c"])
         install_capture(monkeypatch)
 
-        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+        store = await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+        )
 
         assert "src/core/add.c" in _store_paths(store, project)
 
@@ -1357,7 +1395,9 @@ class TestUnitHarvest:
         install_capture(monkeypatch)
 
         with caplog.at_level("DEBUG"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project)
+            )
 
         assert not [
             r for r in caplog.records if r.levelno == logging.WARNING and "config.h" in r.message
@@ -1406,7 +1446,9 @@ class TestUnitToolchain:
         project = self._project(tmp_path, monkeypatch)
         calls = install_capture(monkeypatch)
 
-        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+        await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+        )
 
         assert [c["toolchain"] for c in calls] == [
             Toolchain(gcov=tools / "gcov", lcov=tools / "lcov")
@@ -1421,7 +1463,9 @@ class TestUnitToolchain:
         unit_build(project / "build/tests", project, ["src/core/add.c"])
         calls = install_capture(monkeypatch)
 
-        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+        await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+        )
 
         assert [c["toolchain"] for c in calls] == [
             Toolchain(gcov=tools / "gcov", lcov=tools / "lcov")
@@ -1437,7 +1481,9 @@ class TestUnitToolchain:
         args = ["--rc", "geninfo_unexecuted_blocks=1"]
 
         await run_coverage_report(
-            [], tmp_path / "report", _toolchain_inputs(project, {"lcov_args": args})
+            [],
+            output_dir=tmp_path / "report",
+            inputs=_toolchain_inputs(project, {"lcov_args": args}),
         )
 
         assert [c["toolchain"] for c in calls] == [
@@ -1456,7 +1502,9 @@ class TestUnitToolchain:
         calls = install_capture(monkeypatch)
 
         await run_coverage_report(
-            [], tmp_path / "report", _toolchain_inputs(project, {"lcov": "tools/my-lcov"})
+            [],
+            output_dir=tmp_path / "report",
+            inputs=_toolchain_inputs(project, {"lcov": "tools/my-lcov"}),
         )
 
         assert [c["toolchain"] for c in calls] == [Toolchain(gcov=tools / "gcov", lcov=my_lcov)]
@@ -1477,7 +1525,9 @@ class TestUnitToolchain:
         calls = install_capture(monkeypatch)
 
         await run_coverage_report(
-            [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": written})
+            [],
+            output_dir=tmp_path / "report",
+            inputs=_toolchain_inputs(project, {"coverage_tool": written}),
         )
 
         assert calls[0]["toolchain"].gcov == expected
@@ -1499,7 +1549,7 @@ class TestUnitToolchain:
             products={"core": ["build/tests"], "other": ["build/other-tests"]},
         )
 
-        await run_coverage_report([], tmp_path / "report", inputs)
+        await run_coverage_report([], output_dir=tmp_path / "report", inputs=inputs)
 
         assert [c["directory"].name for c in calls] == ["tests", "other-tests"]
         assert [c["toolchain"].gcov for c in calls] == [reader, reader]
@@ -1523,7 +1573,9 @@ class TestUnitToolchain:
             }
         }
 
-        await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+        await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov)
+        )
 
         assert [c["toolchain"].gcov for c in calls] == [llvm17, llvm18]
 
@@ -1536,7 +1588,9 @@ class TestUnitToolchain:
         calls = install_capture(monkeypatch)
 
         with caplog.at_level("INFO"):
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         assert [c["toolchain"].gcov for c in calls] == [gcov_12]
         assert (
@@ -1561,7 +1615,9 @@ class TestUnitToolchain:
 
         with pytest.raises(CoverageInputError) as excinfo:
             await run_coverage_report(
-                [], tmp_path / "report", _toolchain_inputs(project, {field: written})
+                [],
+                output_dir=tmp_path / "report",
+                inputs=_toolchain_inputs(project, {field: written}),
             )
 
         assert str(excinfo.value).startswith(f"coverage.tiers.unit.toolchain.{field} = {written!r}")
@@ -1579,7 +1635,9 @@ class TestUnitToolchain:
 
         with pytest.raises(CoverageInputError, match=r"toolchain\.coverage_tool = 'gcov-99'"):
             await run_coverage_report(
-                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": "gcov-99"})
+                [],
+                output_dir=tmp_path / "report",
+                inputs=_toolchain_inputs(project, {"coverage_tool": "gcov-99"}),
             )
 
     @pytest.mark.asyncio
@@ -1595,7 +1653,9 @@ class TestUnitToolchain:
         }
 
         with pytest.raises(CoverageInputError, match=r"toolchain\.lcov = 'no-lcov'"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov)
+            )
 
         assert not (tmp_path / "report").exists()
 
@@ -1611,7 +1671,9 @@ class TestUnitToolchain:
         calls = install_capture(monkeypatch)
 
         with pytest.raises(CoverageToolMissingError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         message = str(excinfo.value)
         assert message == (
@@ -1631,7 +1693,9 @@ class TestUnitToolchain:
         project = self._project(tmp_path, monkeypatch)
         calls = install_capture(monkeypatch)
 
-        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+        await run_coverage_report(
+            [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+        )
 
         assert [c["toolchain"].gcov for c in calls] == [gcov_13]
 
@@ -1650,8 +1714,10 @@ class TestUnitToolchain:
 
         await run_coverage_report(
             [],
-            tmp_path / "report",
-            _toolchain_inputs(project, products={"core": ["build/tests", "build/core-tests"]}),
+            output_dir=tmp_path / "report",
+            inputs=_toolchain_inputs(
+                project, products={"core": ["build/tests", "build/core-tests"]}
+            ),
         )
 
         assert probes == ["gcov"]
@@ -1663,7 +1729,9 @@ class TestUnitToolchain:
         project = self._project(tmp_path, monkeypatch, "gcc12")
 
         with pytest.raises(CoverageToolMissingError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         message = str(excinfo.value)
         assert f"unit tier unit/core (directory {project / 'build/tests'})" in message
@@ -1694,7 +1762,9 @@ class TestUnitToolchain:
 
         with pytest.raises(CoverageInputError) as excinfo:
             await run_coverage_report(
-                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": reader})
+                [],
+                output_dir=tmp_path / "report",
+                inputs=_toolchain_inputs(project, {"coverage_tool": reader}),
             )
 
         message = str(excinfo.value)
@@ -1718,8 +1788,8 @@ class TestUnitToolchain:
 
         await run_coverage_report(
             [],
-            tmp_path / "report",
-            _toolchain_inputs(project, {"coverage_tool": f"tools/{name}"}),
+            output_dir=tmp_path / "report",
+            inputs=_toolchain_inputs(project, {"coverage_tool": f"tools/{name}"}),
         )
 
         assert [c["toolchain"].gcov for c in calls] == [wrapper]
@@ -1742,7 +1812,7 @@ class TestUnitToolchain:
 
         with pytest.raises(CoverageInputError) as excinfo:
             await run_coverage_report(
-                [], tmp_path / "report", _toolchain_inputs(project, toolchain)
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project, toolchain)
             )
 
         theirs = (
@@ -1772,7 +1842,9 @@ class TestUnitToolchain:
 
         with pytest.raises(CoverageInputError) as excinfo:
             await run_coverage_report(
-                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": "gcov-15"})
+                [],
+                output_dir=tmp_path / "report",
+                inputs=_toolchain_inputs(project, {"coverage_tool": "gcov-15"}),
             )
 
         assert str(excinfo.value) == (
@@ -1791,7 +1863,9 @@ class TestUnitToolchain:
         monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{spaced}")
 
         with pytest.raises(CoverageToolMissingError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         assert str(excinfo.value).startswith(
             f"unit tier unit/core: the tool found on PATH at {spaced / 'lcov'} cannot be run "
@@ -1820,8 +1894,8 @@ class TestUnitToolchain:
         with pytest.raises(CaptureFailedError) as excinfo:
             await run_coverage_report(
                 [],
-                tmp_path / "report",
-                _toolchain_inputs(project, {"coverage_tool": "tools/wrap.sh"}),
+                output_dir=tmp_path / "report",
+                inputs=_toolchain_inputs(project, {"coverage_tool": "tools/wrap.sh"}),
             )
 
         message = str(excinfo.value)
@@ -1846,7 +1920,9 @@ class TestUnitToolchain:
         monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", failing_capture)
 
         with pytest.raises(CaptureFailedError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         assert str(excinfo.value) == (
             f"unit tier unit/core: capturing {project / 'build/tests'} failed; if the counter "
@@ -1867,7 +1943,9 @@ class TestUnitToolchain:
         monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", refusing_capture)
 
         with pytest.raises(CoverageToolVersionError) as excinfo:
-            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_toolchain_inputs(project)
+            )
 
         message = str(excinfo.value)
         assert "set `coverage.tiers.unit.toolchain.coverage_tool` to an llvm-cov path" in message
@@ -1952,7 +2030,7 @@ class TestUnitHarvestRealTools:
         install_lab(monkeypatch, [FakeHost("h1", [core])])
 
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _REAL_UNIT_COV)
         )
 
         raw = (tmp_path / "report/_work/unit_unit_core_0.raw.info").read_text()
@@ -1968,7 +2046,7 @@ class TestUnitHarvestRealTools:
         install_lab(monkeypatch, [FakeHost("h1", [core])])
 
         store = await run_coverage_report(
-            [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+            [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _REAL_UNIT_COV)
         )
 
         raw = (tmp_path / "report/_work/unit_unit_core_0.raw.info").read_text()
@@ -1993,7 +2071,7 @@ class TestUnitHarvestRealTools:
 
         with caplog.at_level("INFO"):
             store = await run_coverage_report(
-                [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _REAL_UNIT_COV)
             )
 
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -2019,7 +2097,9 @@ class TestUnitHarvestRealTools:
         cov["tiers"]["unit"]["toolchain"] = {"coverage_tool": "llvm-cov"}
 
         with pytest.raises(CoverageInputError, match="an llvm-cov reads only gcov stamps"):
-            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+            await run_coverage_report(
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, cov)
+            )
 
         assert not (tmp_path / "report").exists()
 
@@ -2047,7 +2127,7 @@ class TestUnitHarvestRealTools:
 
         monkeypatch.setattr(LocalHost, "exec", recording_exec)
 
-        store = await run_coverage_report([], out, _unit_inputs(project, cov))
+        store = await run_coverage_report([], output_dir=out, inputs=_unit_inputs(project, cov))
 
         assert _store_paths(store, project) == ["src/core/add.c"]
         (capture,) = [c for c in commands if "--capture" in c]
@@ -2106,7 +2186,7 @@ class TestUnitHarvestRealTools:
         install_lab(monkeypatch, [FakeHost("h1", [core])])
         with caplog.at_level("DEBUG"):
             store = await run_coverage_report(
-                [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+                [], output_dir=tmp_path / "report", inputs=_unit_inputs(project, _REAL_UNIT_COV)
             )
 
         assert _store_paths(store, project) == ["src/core/add.c"]
@@ -2461,7 +2541,7 @@ def _store_with_lines(project: Path):
     from otto.coverage.store.model import CoverageStore
 
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(project / "a.c")
+    record = store.get_or_create_file(path=project / "a.c")
     record.get_or_create_line(1)
     record.get_or_create_line(2)
     return store
@@ -2666,7 +2746,7 @@ def test_ticket_owning_only_a_non_coverable_line_gets_no_ticket_record(tmp_path)
 
     project, first, _second = _git_repo_with_a_non_coverable_gap(tmp_path)
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(project / "a.c")
+    record = store.get_or_create_file(path=project / "a.c")
     record.get_or_create_line(1)
     record.get_or_create_line(3)  # line 2 deliberately absent: the gap
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))

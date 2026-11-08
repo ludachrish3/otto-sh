@@ -21,7 +21,7 @@ def _store_with(tmp_path: Path, source: str, linenos: list[int]) -> tuple[Covera
     path = tmp_path / "main.c"
     path.write_text(source)
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     for lineno in linenos:
         record.get_or_create_line(lineno).hits.add("unit", 0)
     return store, path
@@ -34,26 +34,26 @@ def _path_rule(*globs: str, stat: str = "line") -> PathRule:
 def test_line_records_are_deleted_not_flagged(tmp_path: Path) -> None:
     store, path = _store_with(tmp_path, SRC, [1, 2, 3, 4])
     apply_exclusions(store, [], tmp_path)
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     assert sorted(record.lines) == [1, 2, 4], "line 3 must be gone from the data"
     assert record.excluded_lines == {3}
 
 
 def test_excluded_line_leaves_the_denominator(tmp_path: Path) -> None:
     store, path = _store_with(tmp_path, SRC, [1, 2, 3, 4])
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     for lineno in (1, 2, 4):
         record.get_or_create_line(lineno).hits.add("unit", 1)
     before = record.line_coverage_pct()
     apply_exclusions(store, [], tmp_path)
-    after = store.get_or_create_file(path).line_coverage_pct()
+    after = store.get_or_create_file(path=path).line_coverage_pct()
     assert before == 75.0
     assert after == 100.0, "removing the one uncovered line must move the number"
 
 
 def test_branch_stat_clears_branches_and_keeps_the_line(tmp_path: Path) -> None:
     store, path = _store_with(tmp_path, "a;\nassert(x);\nb;\n", [1, 2, 3])
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     record.lines[2].branches.append(BranchHits(block=0, branch=0))
     rule = RegexRule(stat="branch", pattern=re.compile(r"\bassert\("))
     apply_exclusions(store, [rule], tmp_path)
@@ -75,7 +75,7 @@ def test_a_branch_rule_records_a_line_that_has_no_record(tmp_path: Path) -> None
     store, path = _store_with(tmp_path, "a;\nif (x) y();\nb;\n", [1, 3])
     rule = RegexRule(stat="branch", pattern=re.compile(r"\bif\b"))
     apply_exclusions(store, [rule], tmp_path)
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     assert sorted(record.lines) == [1, 3], "no record may be conjured for line 2"
     assert record.branch_excluded_lines == {2}
 
@@ -89,7 +89,7 @@ def test_a_stale_branch_exclusion_is_replaced_not_accumulated(tmp_path: Path) ->
     must not disagree about re-entry.
     """
     store, path = _store_with(tmp_path, "a;\nif (x) y();\nb;\n", [1, 2, 3])
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     record.lines[2].branches.append(BranchHits(block=0, branch=0))
     # What a previous run, under a different rule set, left on the record.
     record.branch_excluded_lines = {99}
@@ -97,20 +97,20 @@ def test_a_stale_branch_exclusion_is_replaced_not_accumulated(tmp_path: Path) ->
 
     apply_exclusions(store, [RegexRule(stat="branch", pattern=re.compile(r"\bif\b"))], tmp_path)
 
-    kept = store.get_or_create_file(path)
+    kept = store.get_or_create_file(path=path)
     assert kept.branch_excluded_lines == {2}, "the stale 99 must not survive"
     assert kept.excluded_lines == set(), "and excluded_lines behaves the same way"
 
 
 def test_line_stat_subsumes_branch_stat_on_the_same_line(tmp_path: Path) -> None:
     store, path = _store_with(tmp_path, "a;\nassert(x);\nb;\n", [1, 2, 3])
-    store.get_or_create_file(path).lines[2].branches.append(BranchHits(block=0, branch=0))
+    store.get_or_create_file(path=path).lines[2].branches.append(BranchHits(block=0, branch=0))
     rules = [
         RegexRule(stat="branch", pattern=re.compile(r"\bassert\(")),
         RegexRule(stat="line", pattern=re.compile(r"\bassert\(")),
     ]
     apply_exclusions(store, rules, tmp_path)
-    record = store.get_or_create_file(path)
+    record = store.get_or_create_file(path=path)
     assert 2 not in record.lines
     assert record.branch_excluded_lines == set(), "a deleted line no longer 'still counts'"
 
@@ -121,7 +121,7 @@ def test_path_rule_drops_the_whole_file(tmp_path: Path) -> None:
     store, _ = _store_with(tmp_path, "a;\n", [1])
     vendor_file = vendor / "v.c"
     vendor_file.write_text("a;\n")
-    store.get_or_create_file(vendor_file).get_or_create_line(1).hits.add("unit", 0)
+    store.get_or_create_file(path=vendor_file).get_or_create_line(1).hits.add("unit", 0)
     assert store.file_count() == 2
     rule = _path_rule("vendor/**")
     apply_exclusions(store, [rule], tmp_path)
@@ -142,7 +142,7 @@ def test_a_relative_glob_matches_under_a_symlinked_root(tmp_path: Path) -> None:
     vendor_file = link / "vendor" / "v.c"
     vendor_file.write_text("a;\n")
     store = CoverageStore(tier_order=["unit"])
-    store.get_or_create_file(vendor_file).get_or_create_line(1).hits.add("unit", 0)
+    store.get_or_create_file(path=vendor_file).get_or_create_line(1).hits.add("unit", 0)
     assert store.file_count() == 1
 
     apply_exclusions(store, [_path_rule("vendor/**")], link)
@@ -156,14 +156,14 @@ def test_branch_path_rule_clears_branches_and_names_the_lines(tmp_path: Path) ->
     vendor_file = vendor / "v.c"
     vendor_file.write_text("a;\nif (x) y();\nb;\n")
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(vendor_file)
+    record = store.get_or_create_file(path=vendor_file)
     for lineno in (1, 2, 3):
         record.get_or_create_line(lineno).hits.add("unit", 0)
     record.lines[2].branches.append(BranchHits(block=0, branch=0))
 
     apply_exclusions(store, [_path_rule("vendor/**", stat="branch")], tmp_path)
 
-    kept = store.get_or_create_file(vendor_file)
+    kept = store.get_or_create_file(path=vendor_file)
     assert sorted(kept.lines) == [1, 2, 3], "a branch-scoped path rule drops no lines"
     assert kept.lines[2].branches == []
     assert kept.branch_excluded_lines == {2}
@@ -181,7 +181,7 @@ def test_a_deleted_line_leaves_the_branch_excluded_set(tmp_path: Path) -> None:
     vendor_file = vendor / "v.c"
     vendor_file.write_text("a;\nif (x) y();  // LCOV_EXCL_LINE\nif (z) w();\n")
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(vendor_file)
+    record = store.get_or_create_file(path=vendor_file)
     for lineno in (1, 2, 3):
         record.get_or_create_line(lineno).hits.add("unit", 0)
     record.lines[2].branches.append(BranchHits(block=0, branch=0))
@@ -189,7 +189,7 @@ def test_a_deleted_line_leaves_the_branch_excluded_set(tmp_path: Path) -> None:
 
     apply_exclusions(store, [_path_rule("vendor/**", stat="branch")], tmp_path)
 
-    kept = store.get_or_create_file(vendor_file)
+    kept = store.get_or_create_file(path=vendor_file)
     assert sorted(kept.lines) == [1, 3], "the marker still deletes its own line"
     assert kept.branch_excluded_lines == {3}
 
@@ -213,11 +213,11 @@ def test_a_path_excluded_file_is_never_opened(tmp_path: Path, monkeypatch) -> No
 def test_unreadable_source_keeps_every_line(tmp_path: Path, caplog) -> None:
     store = CoverageStore(tier_order=["unit"])
     missing = tmp_path / "gone.c"
-    record = store.get_or_create_file(missing)
+    record = store.get_or_create_file(path=missing)
     for lineno in (1, 2, 3):
         record.get_or_create_line(lineno).hits.add("unit", 0)
     apply_exclusions(store, [], tmp_path)
-    assert sorted(store.get_or_create_file(missing).lines) == [1, 2, 3]
+    assert sorted(store.get_or_create_file(path=missing).lines) == [1, 2, 3]
     assert "gone.c" in caplog.text
 
 
@@ -232,7 +232,7 @@ def test_an_unreadable_source_reports_no_verdict_in_either_field(tmp_path: Path)
     """
     store = CoverageStore(tier_order=["unit"])
     missing = tmp_path / "gone.c"
-    record = store.get_or_create_file(missing)
+    record = store.get_or_create_file(path=missing)
     for lineno in (1, 2, 3):
         record.get_or_create_line(lineno).hits.add("unit", 0)
     # What CoverageStore.load restores from a previous run's store.json.
@@ -241,7 +241,7 @@ def test_an_unreadable_source_reports_no_verdict_in_either_field(tmp_path: Path)
 
     apply_exclusions(store, [], tmp_path)
 
-    kept = store.get_or_create_file(missing)
+    kept = store.get_or_create_file(path=missing)
     assert sorted(kept.lines) == [1, 2, 3], "an unreadable source keeps every line"
     assert kept.excluded_lines == set()
     assert kept.branch_excluded_lines == set()
@@ -251,18 +251,18 @@ def test_a_record_past_eof_is_never_excluded(tmp_path: Path) -> None:
     """Shrunk-file tolerance: the scan only sees lines the source has."""
     store, path = _store_with(tmp_path, SRC, [1, 2, 3, 4, 999])
     apply_exclusions(store, [], tmp_path)
-    assert 999 in store.get_or_create_file(path).lines
+    assert 999 in store.get_or_create_file(path=path).lines
 
 
 def test_builtin_markers_apply_with_no_configured_rules(tmp_path: Path) -> None:
     """otto now enforces LCOV_EXCL_* itself, so harvested .info is covered."""
     store, path = _store_with(tmp_path, SRC, [3])
     apply_exclusions(store, [], tmp_path)
-    assert store.get_or_create_file(path).lines == {}
+    assert store.get_or_create_file(path=path).lines == {}
 
 
 def test_custom_marker_rule_removes_its_line(tmp_path: Path) -> None:
     src = "a;\nb();  // MYPROJ_NO_COV_LINE\nc;\n"
     store, path = _store_with(tmp_path, src, [1, 2, 3])
     apply_exclusions(store, [MarkerRule(stat="line", name="MYPROJ_NO_COV")], tmp_path)
-    assert sorted(store.get_or_create_file(path).lines) == [1, 3]
+    assert sorted(store.get_or_create_file(path=path).lines) == [1, 3]

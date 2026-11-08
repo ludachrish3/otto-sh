@@ -111,11 +111,11 @@ def test_any_interface_key_loads_and_reaches_tc_as_one_word(model, tmp_path):
     env = stub_env(tmp_path, ["tc"])
     for key in keys:
         for cmd in [
-            impairer.apply_command(key, ImpairmentParams(delay_ms=5.0)),
+            impairer.apply_command(key, params=ImpairmentParams(delay_ms=5.0)),
             impairer.read_command(key),
             impairer.clear_command(key),
-            impairer.scoped_root_command(key),
-            *impairer.scoped_read_commands(key),
+            impairer.scoped_root_command(netdev=key),
+            *impairer.scoped_read_commands(netdev=key),
         ]:
             run_sh(cmd, env)
     calls = recorded(tmp_path, "tc")

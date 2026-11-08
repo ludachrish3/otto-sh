@@ -24,7 +24,7 @@ from tests.unit.host._gcda_frame import CHECK_MARK, CHECK_PREFIX
 
 def _raw(retcode: int, value: str) -> CommandResult:
     status = Status.Success if retcode == 0 else Status.Failed
-    return CommandResult(status, value=value, command="find", retcode=retcode)
+    return CommandResult(status=status, value=value, command="find", retcode=retcode)
 
 
 def _cmd(retcode: int, value: str) -> CommandResult:
@@ -144,7 +144,7 @@ def test_a_failure_carries_finds_output():
 
 
 def test_a_zero_exit_that_otto_marked_failed_is_an_error_not_a_listing():
-    cmd = CommandResult(Status.Error, value=f"\n{CHECK_MARK}\n", command="find", retcode=0)
+    cmd = CommandResult(status=Status.Error, value=f"\n{CHECK_MARK}\n", command="find", retcode=0)
     assert isinstance(classify_gcda_check("/x/cov", cmd), GcdaFindError)
 
 

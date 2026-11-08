@@ -28,7 +28,7 @@ from tests.conftest import active_context
 @pytest.fixture
 def host():
     """Bare ZephyrHost, no connections established."""
-    h = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    h = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     yield h
     # Several tests swap internals for AsyncMocks. A mocked ``_connections``
     # makes ``__del__``'s ``connected`` check truthy, so at GC it would churn
@@ -41,7 +41,7 @@ def _embedded_console() -> ZephyrHost:
 
     return ZephyrHost(
         ip="127.0.0.1",
-        element=Element("z"),
+        element=Element(name="z"),
         valid_terms=["console"],
         term="console",
         console_options=ConsoleOptions(server="test4", port=2323),
@@ -57,12 +57,12 @@ def _embedded_console() -> ZephyrHost:
 class TestGenericEmbeddedFailsLoud:
     def test_no_command_frame_raises(self):
         with pytest.raises(ValueError, match="command_frame"):
-            EmbeddedHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+            EmbeddedHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
 
     def test_explicit_frame_builds_generic_embedded(self):
         h = EmbeddedHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
@@ -83,7 +83,7 @@ class TestGenericEmbeddedFailsLoud:
         monkeypatch.setenv("OTTO_INIT_TIMEOUT", raised)
         h = EmbeddedHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
@@ -122,7 +122,7 @@ class TestInit:
     def test_os_schema_overrides(self):
         host = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             os_name="Zephyr",
             os_version="3.7.0",
@@ -138,7 +138,7 @@ class TestInit:
     def test_custom_telnet_options(self):
         host = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             telnet_options=TelnetOptions(port=2323),
         )
@@ -152,20 +152,20 @@ class TestInit:
 
 class TestIdAndNameGeneration:
     def test_id_no_board(self):
-        host = ZephyrHost(ip="192.0.2.1", element=Element("Zephyr37_Fat"), log=LogMode.QUIET)
+        host = ZephyrHost(ip="192.0.2.1", element=Element(name="Zephyr37_Fat"), log=LogMode.QUIET)
         assert host.id == "zephyr37-fat"
         assert host.name == "Zephyr37_Fat"
 
     def test_id_with_board(self):
         host = ZephyrHost(
-            ip="192.0.2.1", element=Element("Zephyr37_Fat"), board="Mote", log=LogMode.QUIET
+            ip="192.0.2.1", element=Element(name="Zephyr37_Fat"), board="Mote", log=LogMode.QUIET
         )
         assert host.id == "zephyr37-fat-mote"
         assert host.name == "Zephyr37_Fat Mote"
 
     def test_custom_name_preserved(self):
         host = ZephyrHost(
-            ip="192.0.2.1", element=Element("zephyr37_fat"), name="custom", log=LogMode.QUIET
+            ip="192.0.2.1", element=Element(name="zephyr37_fat"), name="custom", log=LogMode.QUIET
         )
         assert host.name == "custom"
 
@@ -182,7 +182,7 @@ class TestHop:
     def test_hop_builds_transport(self):
         """A configured hop produces an _SshHopTransport on the ConnectionManager."""
         host = ZephyrHost(
-            ip="192.0.2.1", element=Element("zephyr37_fat"), hop="test4", log=LogMode.QUIET
+            ip="192.0.2.1", element=Element(name="zephyr37_fat"), hop="test4", log=LogMode.QUIET
         )
         assert host.hop == "test4"
         assert host._connections._hop is not None
@@ -354,7 +354,7 @@ class TestFileTransfer:
 
         host = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             transfer="tftp",
             valid_transfers=["tftp"],
@@ -399,7 +399,7 @@ class TestDefaultDestDir:
         must coerce it so ``_resolve_dest`` can use Path arithmetic."""
         h = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             default_dest_dir="/RAM:",  # type: ignore[arg-type]
         )
@@ -409,7 +409,7 @@ class TestDefaultDestDir:
     def test_resolve_empty_returns_default(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -419,7 +419,7 @@ class TestDefaultDestDir:
     def test_resolve_absolute_passes_through(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -431,7 +431,7 @@ class TestDefaultDestDir:
     def test_resolve_relative_joins_under_default(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -454,7 +454,7 @@ class TestDefaultDestDir:
         src = tmp_path / "output1.bin"
         src.write_bytes(b"x")
         await host.put(src, Path())
-        passed_dest = host._file_transfer.put_files.call_args.args[1]
+        passed_dest = host._file_transfer.put_files.call_args.kwargs["dest_dir"]
         assert passed_dest == Path("/RAM:")
 
     @pytest.mark.asyncio
@@ -470,13 +470,19 @@ class TestDefaultDestDir:
         src.write_bytes(b"x")
         seen: dict[str, object] = {}
 
-        async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+        async def put_files(*, src_files, dest_dir, show_progress, mode, concurrent):
+            files = src_files
             seen["put"] = concurrent
-            return Result(Status.Success, value={f: Result(Status.Success) for f in files})
+            return Result(
+                status=Status.Success, value={f: Result(status=Status.Success) for f in files}
+            )
 
-        async def get_files(files, dest_dir, show_progress, *, concurrent):
+        async def get_files(*, src_files, dest_dir, show_progress, concurrent):
+            files = src_files
             seen["get"] = concurrent
-            return Result(Status.Success, value={f: Result(Status.Success) for f in files})
+            return Result(
+                status=Status.Success, value={f: Result(status=Status.Success) for f in files}
+            )
 
         monkeypatch.setattr(host._file_transfer, "put_files", put_files)
         monkeypatch.setattr(host._file_transfer, "get_files", get_files)
@@ -563,7 +569,7 @@ class TestDelegation:
         host._session_mgr.open_session.return_value = sentinel
         result = await host.open_session("monitor")
         assert result is sentinel
-        host._session_mgr.open_session.assert_awaited_once_with("monitor")
+        host._session_mgr.open_session.assert_awaited_once_with(name="monitor")
 
     @pytest.mark.asyncio
     async def test_close_tears_down_sessions_and_connections(self, host: EmbeddedHost):
@@ -587,7 +593,7 @@ class TestDelegation:
         # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
         await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         host._session_mgr.run_cmd.assert_awaited_once_with(
-            "llext load_hex foo DEADBEEF",
+            cmd="llext load_hex foo DEADBEEF",
             expects=None,
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
@@ -623,7 +629,7 @@ class TestClose:
         unix fix was hand-mirrored here and once missed)."""
         h = EmbeddedHost(
             ip="192.0.2.1",
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
@@ -660,16 +666,19 @@ class TestVerifyConnection:
 class TestLoaderField:
     def test_loader_string_coerced_to_instance(self):
         h = ZephyrHost(
-            ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET, loader="llext-hex"
+            ip="192.0.2.1",
+            element=Element(name="zephyr37_fat"),
+            log=LogMode.QUIET,
+            loader="llext-hex",
         )
         assert isinstance(h.loader, LlextHexLoader)
 
     def test_loader_defaults_to_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+        h = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
         assert h.loader is None
 
     def test_require_loader_raises_when_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+        h = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
         with pytest.raises(ValueError, match="no binary loader"):
             h._require_loader()
 
@@ -693,12 +702,12 @@ class TestLoad:
         f = tmp_path / "cov_ext.llext"
         f.write_bytes(b"\x01\x02\x03")
 
-        result = await host.load(f, "cov_ext")
+        result = await host.load(f, name="cov_ext")
 
         assert result.status == Status.Success
         assert result.msg == ""
         _, kwargs = host._session_mgr.run_cmd.await_args
-        assert host._session_mgr.run_cmd.await_args.args[0] == "llext load_hex cov_ext 010203"
+        assert host._session_mgr.run_cmd.await_args.kwargs["cmd"] == "llext load_hex cov_ext 010203"
         assert kwargs["log"] is LogMode.NEVER
         assert "write_progress" not in kwargs
 
@@ -710,7 +719,7 @@ class TestLoad:
         f = tmp_path / "cov_ext.llext"
         f.write_bytes(b"\x01")
 
-        result = await host.load(f, "cov_ext")
+        result = await host.load(f, name="cov_ext")
 
         assert result.status == Status.Error
         assert "Failed to load" in result.msg
@@ -721,7 +730,7 @@ class TestLoad:
         f = tmp_path / "x.llext"
         f.write_bytes(b"\x00")
         with pytest.raises(ValueError, match="no binary loader"):
-            await host.load(f, "x")
+            await host.load(f, name="x")
 
     @pytest.mark.asyncio
     async def test_load_show_progress_passes_write_progress(self, host, tmp_path, monkeypatch):
@@ -735,7 +744,7 @@ class TestLoad:
 
         monkeypatch.setattr(eh, "_acquire_shared_progress", _fake_progress)
         monkeypatch.setattr(
-            eh, "make_rich_progress_handler", lambda progress, name: lambda *a: None
+            eh, "make_rich_progress_handler", lambda *, progress, host_name: lambda *a: None
         )
         host.loader = LlextHexLoader()
         host._session_mgr = AsyncMock()
@@ -743,7 +752,7 @@ class TestLoad:
         f = tmp_path / "cov_ext.llext"
         f.write_bytes(b"\x01\x02")
 
-        await host.load(f, "cov_ext", show_progress=True)
+        await host.load(f, name="cov_ext", show_progress=True)
 
         assert host._session_mgr.run_cmd.await_args.kwargs["write_progress"] is not None
 
@@ -822,7 +831,7 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     )
     host._session_mgr = mgr
 
-    await mgr.run_cmd("kernel version")  # opens the default session; baseline = admin
+    await mgr.run_cmd(cmd="kernel version")  # opens the default session; baseline = admin
     assert await host.exec("kernel uptime")  # no ambient user yet: the call goes through
 
     mgr._set_current_user("root")

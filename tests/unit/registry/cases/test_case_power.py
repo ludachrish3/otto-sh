@@ -25,10 +25,10 @@ class _Controller(PowerController):
     """The least a built power controller must be."""
 
     async def on(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def off(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 @dataclass
@@ -105,15 +105,17 @@ def test_the_construction_error_is_a_value_error_under_the_power_error():
 def test_a_result_that_is_not_a_power_controller_is_refused():
     register_power_controller("not-a-controller", config=_CaseConfig, factory=lambda c: object())
     with pytest.raises(PowerConstructionError, match="result failed"):
-        POWER_CONTROLLERS.build(POWER_CONTROLLERS.prepare("not-a-controller", {}, PowerEnv("h")))
+        POWER_CONTROLLERS.build(
+            prepared=POWER_CONTROLLERS.prepare(name="not-a-controller", raw={}, env=PowerEnv("h"))
+        )
 
 
 def test_a_command_parse_failure_never_echoes_the_rejected_value():
     with pytest.raises(PowerConstructionError, match="parse failed") as err:
         POWER_CONTROLLERS.prepare(
-            "command",
-            {"on_cmd": "x", "off_cmd": "y", "token": "hunter2-secret"},
-            PowerEnv("h1"),
+            name="command",
+            raw={"on_cmd": "x", "off_cmd": "y", "token": "hunter2-secret"},
+            env=PowerEnv("h1"),
             source="power_control of host 'h1'",
         )
     assert "hunter2-secret" not in str(err.value)

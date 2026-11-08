@@ -210,7 +210,9 @@ class LCOVLoader:
         records = read_info(info_path)
         for raw_path, record in records.items():
             resolved = self.resolver.resolve(raw_path) if self.resolver else None
-            current_file: FileRecord = self.store.get_or_create_file(resolved or Path(raw_path))
+            current_file: FileRecord = self.store.get_or_create_file(
+                path=resolved or Path(raw_path)
+            )
 
             for name, parsed in record.functions.items():
                 if name not in current_file.functions:

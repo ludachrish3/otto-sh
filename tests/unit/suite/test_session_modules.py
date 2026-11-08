@@ -46,10 +46,10 @@ def _recorded(root: Path, rel: str) -> list[str]:
 
 def test_a_run_after_an_edit_runs_and_records_the_new_test(one_project, tmp_path):
     root = one_project(files={"tests/test_a.py": _ONE})
-    assert run_tests(["test_one"], output_dir=tmp_path / "o1").exit_code == 0
+    assert run_tests(names=["test_one"], output_dir=tmp_path / "o1").exit_code == 0
     _save(root / "tests/test_a.py", _TWO)
 
-    result = run_tests(["test_two"], output_dir=tmp_path / "o2")
+    result = run_tests(names=["test_two"], output_dir=tmp_path / "o2")
 
     assert result.exit_code == 0
     assert _recorded(root, "tests/test_a.py") == ["test_one", "test_two"]
@@ -87,7 +87,7 @@ def test_a_helper_edited_between_two_sessions_is_read_again(one_project, tmp_pat
             "tests/test_x.py": "from helpers import Base\n\nclass TestX(Base):\n    pass\n",
         }
     )
-    assert run_tests(["TestX"], output_dir=tmp_path / "o1").exit_code == 0
+    assert run_tests(names=["TestX"], output_dir=tmp_path / "o1").exit_code == 0
     _save(
         root / "tests/helpers.py",
         "class Base:\n    def test_h1(self):\n        pass\n    def test_h2(self):\n        pass\n",
@@ -128,7 +128,7 @@ def test_two_projects_with_the_same_test_file_name_both_list_and_both_run(
         "project_a": ["test_in_a"],
         "project_b": ["test_in_b"],
     }
-    result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
+    result = run_tests(names=["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
     assert result.exit_code == 0
     assert len(result.junit_paths) == 2
 
@@ -259,7 +259,7 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     try:
-        assert run_tests(["test_l"], output_dir=tmp_path / "out").exit_code == 0
+        assert run_tests(names=["test_l"], output_dir=tmp_path / "out").exit_code == 0
         assert tag in sys.modules
         assert "test_l" not in sys.modules
     finally:

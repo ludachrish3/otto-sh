@@ -129,10 +129,10 @@ class TestFraming:
     expected strings are concrete.
     """
 
-    M = SessionMarkers.for_session("deadbeef")
+    M = SessionMarkers.for_session(session_id="deadbeef")
 
     def test_frame_command_is_four_cr_separated_lines(self):
-        framed = ZephyrFrame().frame("kernel version", self.M)
+        framed = ZephyrFrame().frame("kernel version", m=self.M)
         assert framed == (f"{self.M.begin}\rkernel version\rretval\r{self.M.end_prefix}\r")
 
     def test_handshake_command_is_bare_marker(self):
@@ -148,8 +148,8 @@ class TestFraming:
     def test_marks_begin_matches_command_not_found_line(self):
         """Zephyr rejects BEGIN as `<token>: command not found` — substring."""
         frame = ZephyrFrame()
-        assert frame.marks_begin(f"{self.M.begin}: command not found\r\n", self.M)
-        assert not frame.marks_begin("some other line\r\n", self.M)
+        assert frame.marks_begin(f"{self.M.begin}: command not found\r\n", m=self.M)
+        assert not frame.marks_begin("some other line\r\n", m=self.M)
 
     def test_session_init_timeout_is_generous(self):
         """The QEMU telnet shell needs warm-up; the embedded session's
@@ -164,9 +164,9 @@ class TestFraming:
         feed_task = asyncio.create_task(
             session.feed_after_write(session.shell_response("3.7.2", 0))
         )
-        await session.run_cmd("kernel version")
+        await session.run_cmd(cmd="kernel version")
         await feed_task
-        assert session.written[0] == ZephyrFrame().frame("kernel version", session._markers)
+        assert session.written[0] == ZephyrFrame().frame("kernel version", m=session._markers)
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(session.shell_response("Zephyr version 3.7.2", 0))
         )
-        result = await session.run_cmd("kernel version")
+        result = await session.run_cmd(cmd="kernel version")
         await feed_task
 
         assert result.value == "Zephyr version 3.7.2"
@@ -194,7 +194,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(session.shell_response("usage: ...", -22))
         )
-        result = await session.run_cmd("device off bad")
+        result = await session.run_cmd(cmd="device off bad")
         await feed_task
 
         assert result.retcode == -22
@@ -207,7 +207,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(session.shell_response("bogus: command not found", -8))
         )
-        result = await session.run_cmd("bogus")
+        result = await session.run_cmd(cmd="bogus")
         await feed_task
 
         assert result.retcode == -8
@@ -217,7 +217,7 @@ class TestRunCmd:
     @pytest.mark.asyncio
     async def test_empty_output(self, session: MockZephyrSession):
         feed_task = asyncio.create_task(session.feed_after_write(session.shell_response("", 0)))
-        result = await session.run_cmd("kernel reboot cold")
+        result = await session.run_cmd(cmd="kernel reboot cold")
         await feed_task
 
         assert result.value == ""
@@ -230,7 +230,7 @@ class TestRunCmd:
                 session.shell_response("devices:\n- uart@3f8 (READY)\n- eth0 (READY)", 0)
             )
         )
-        result = await session.run_cmd("device list")
+        result = await session.run_cmd(cmd="device list")
         await feed_task
 
         assert result.value == "devices:\n- uart@3f8 (READY)\n- eth0 (READY)"
@@ -246,7 +246,7 @@ class TestRunCmd:
         feed_task = asyncio.create_task(
             session.feed_after_write(session.shell_response("123456", 0))
         )
-        result = await session.run_cmd("kernel uptime")
+        result = await session.run_cmd(cmd="kernel uptime")
         await feed_task
 
         assert result.value == "123456"
@@ -263,7 +263,7 @@ class TestRunCmd:
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="zephyr-board:/$ ")
             )
         )
-        result = await session.run_cmd("kernel version")
+        result = await session.run_cmd(cmd="kernel version")
         await feed_task
 
         assert result.value == "Zephyr version 3.7.2"
@@ -280,7 +280,7 @@ class TestRunCmd:
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="\x1b[1;32m~$ \x1b[m")
             )
         )
-        result = await session.run_cmd("kernel version")
+        result = await session.run_cmd(cmd="kernel version")
         await feed_task
 
         assert result.value == "Zephyr version 3.7.2"
@@ -307,7 +307,7 @@ class TestExpect:
                 f"\r\n{session._end_marker_prefix}: command not found\r\n~$ ",
             )
         )
-        result = await session.run_cmd("risky", expects=[("confirm", "y\r")])
+        result = await session.run_cmd(cmd="risky", expects=[("confirm", "y\r")])
         await feed_task
 
         assert "y\r" in session.written

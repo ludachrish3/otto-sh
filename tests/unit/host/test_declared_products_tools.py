@@ -189,11 +189,11 @@ class _RunHost(SimpleNamespace):
 
     async def run(self, cmds, **kwargs):
         self.run_calls.append(cmds)
-        return Result(self._run_status)
+        return Result(status=self._run_status)
 
     async def put(self, src_files, dest_dir, mode=None, user=None):
         self.put_calls.append((src_files, dest_dir))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 @pytest.mark.parametrize("registry", [product_mod.PRODUCT_KINDS, dev_tool_mod.DEV_TOOL_KINDS])
@@ -317,7 +317,7 @@ def _factory_host():
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="somelab",
-        element=Element("probe-box"),
+        element=Element(name="probe-box"),
     )
 
 

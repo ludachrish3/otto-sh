@@ -89,7 +89,7 @@ class _LoggingProduct(Product):
 
     def _record(self, phase):
         self.events.append(f"{self.name}:{phase}")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def stage(self, host):
         del host
@@ -113,8 +113,8 @@ class _LoggingProduct(Product):
         if self.writes is not None:
             (dest / self.writes).write_text("log line\n")
         if self.fail_logs:
-            return Result(Status.Failed, msg=f"{self.name} logs failed")
-        return Result(Status.Success)
+            return Result(status=Status.Failed, msg=f"{self.name} logs failed")
+        return Result(status=Status.Success)
 
 
 class _MtimePreservingProduct(_LoggingProduct):
@@ -130,7 +130,7 @@ class _MtimePreservingProduct(_LoggingProduct):
         self.mtime_ns = mtime_ns
 
     async def get_logs(self, host, dest):
-        result = await super().get_logs(host, dest)
+        result = await super().get_logs(host, dest=dest)
         os.utime(dest / self.writes, ns=(self.mtime_ns, self.mtime_ns))
         return result
 
@@ -143,7 +143,7 @@ class _MtimePreservingProduct(_LoggingProduct):
 def test_log_dest_is_logs_slash_host_id_under_an_explicit_dest(recording_host, tmp_path):
     # Contract test: the directory shape is API (it mirrors coverage's
     # per-host-id keying). Kills: any drive-by reorganization of the tree.
-    assert recording_host.log_dest(tmp_path) == tmp_path / "logs" / "h1"
+    assert recording_host.log_dest(dest=tmp_path) == tmp_path / "logs" / "h1"
 
 
 def test_log_dest_defaults_to_the_active_commands_output_dir(recording_host, tmp_path):
@@ -208,7 +208,9 @@ async def test_logs_written_with_no_run_dir_are_found_through_log_dest(
 def test_explicit_dest_beats_the_context(recording_host, tmp_path):
     # Kills: preferring the context when a caller named a destination.
     with active_context(output_dir=tmp_path / "ctx"):
-        assert recording_host.log_dest(tmp_path / "given") == tmp_path / "given" / "logs" / "h1"
+        assert (
+            recording_host.log_dest(dest=tmp_path / "given") == tmp_path / "given" / "logs" / "h1"
+        )
 
 
 # =========================================================================== #
@@ -393,7 +395,7 @@ def _get_fails_while(host, missing):
     async def _get(src_files, dest_dir):
         result = await real_get(src_files, dest_dir)
         if any(str(p) in missing for p in src_files):
-            return Result(Status.Error, msg="scp: No such file or directory")
+            return Result(status=Status.Error, msg="scp: No such file or directory")
         return result
 
     host.get = _get
@@ -469,7 +471,7 @@ async def test_a_session_that_dies_during_the_probe_keeps_the_failed_fetch(
     recording_host.debug_log_globs = ["/var/log/myprod.log"]
     _get_fails_while(recording_host, {"/var/log/myprod.log"})
     recording_host._scripted_exec.append(
-        CommandResult(Status.Error, value="Session died unexpectedly (EOF)", retcode=-1)
+        CommandResult(status=Status.Error, value="Session died unexpectedly (EOF)", retcode=-1)
     )
     result = await recording_host.get_debug_logs(dest=tmp_path)
     assert not result.is_ok

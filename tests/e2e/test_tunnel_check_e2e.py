@@ -154,7 +154,7 @@ async def reap_check_leftovers(tunnel_lab):
     tunnel_ids = {token.split(":")[3] for _host, _pid, token in found if token.count(":") >= 4}
     for tunnel_id in sorted(tunnel_ids - {"-"}):
         with contextlib.suppress(Exception):
-            await remove_tunnel(tunnel_lab, tunnel_id)
+            await remove_tunnel(tunnel_lab, tunnel_id=tunnel_id)
     for host_id in {host for host, _pid, _token in found}:
         pids = [pid for host, pid, _token in found if host == host_id]
         with contextlib.suppress(Exception):
@@ -203,7 +203,7 @@ async def test_tunnel_check_passes_over_three_hops_for_tcp_and_udp(
     tunnel_lab, reap_check_leftovers
 ) -> None:
     """Both protocols pass every row over test1 → test2 → test3, and nothing is left."""
-    report = await check_tunnel(tunnel_lab, _PATH, port=_PORT_CHECK)
+    report = await check_tunnel(lab=tunnel_lab, hosts=_PATH, port=_PORT_CHECK)
     _print_report("test1 → test2 → test3, both protocols", report)
 
     assert report.refusal is None, report.refusal
@@ -224,7 +224,7 @@ async def _plant_killed_run(lab: Lab, token: str) -> str:
     """
     test2 = lab.hosts["test2"]
     added = await add_tunnel(
-        lab, [("test1", None), ("test2", None)], port=_PORT_PLANTED, protocol="tcp"
+        lab, hosts=[("test1", None), ("test2", None)], port=_PORT_PLANTED, protocol="tcp"
     )
     tag = EchoTag(token, added.tunnel.id, "tcp", "fwd-echo", "test2")
     launched = await test2.exec(
@@ -261,7 +261,7 @@ async def test_tunnel_check_sweeps_a_killed_run(
     try:
         planted_id = await _plant_killed_run(tunnel_lab, token)
 
-        report = await check_tunnel(tunnel_lab, _PATH, port=_PORT_SWEEP_CHECK)
+        report = await check_tunnel(lab=tunnel_lab, hosts=_PATH, port=_PORT_SWEEP_CHECK)
         _print_report("sweep of a killed run's echo and tunnel", report)
 
         swept = [line for hop in report.hops for line in hop.swept]
@@ -280,7 +280,7 @@ async def test_tunnel_check_sweeps_a_killed_run(
         await kill_tagged(test2, f"{CHECK_PREFIX}:v1:{token}")
         if planted_id is not None:
             with contextlib.suppress(Exception):
-                await remove_tunnel(tunnel_lab, planted_id)
+                await remove_tunnel(tunnel_lab, tunnel_id=planted_id)
 
 
 @pytest.mark.asyncio
@@ -299,7 +299,7 @@ async def test_tunnel_check_leaves_a_leftover_too_young_to_sweep(
     try:
         planted_id = await _plant_killed_run(tunnel_lab, token)
 
-        report = await check_tunnel(tunnel_lab, _PATH, port=_PORT_SWEEP_CHECK)
+        report = await check_tunnel(lab=tunnel_lab, hosts=_PATH, port=_PORT_SWEEP_CHECK)
         _print_report("a leftover too young to sweep", report)
 
         swept = [line for hop in report.hops for line in hop.swept]
@@ -318,7 +318,7 @@ async def test_tunnel_check_leaves_a_leftover_too_young_to_sweep(
         await kill_tagged(test2, f"{CHECK_PREFIX}:v1:{token}")
         if planted_id is not None:
             with contextlib.suppress(Exception):
-                await remove_tunnel(tunnel_lab, planted_id)
+                await remove_tunnel(tunnel_lab, tunnel_id=planted_id)
     await _assert_nothing_tagged_left(tunnel_lab)
 
 
@@ -328,7 +328,10 @@ async def test_tunnel_check_dest_that_runs_socat_is_verified_end_to_end(
 ) -> None:
     """A --dest with socat and bash gets the full proof: the whole path payload-verified."""
     report = await check_tunnel(
-        tunnel_lab, [("test1", None), ("test2", None)], port=_PORT_DEST, dest=("test3", None)
+        lab=tunnel_lab,
+        hosts=[("test1", None), ("test2", None)],
+        port=_PORT_DEST,
+        dest=("test3", None),
     )
     _print_report("test1 → test2 → dest test3, both protocols", report)
 
@@ -356,8 +359,8 @@ async def test_two_concurrent_checks_on_shared_hosts_are_safe(
     once both are done.
     """
     report_a, report_b = await asyncio.gather(
-        check_tunnel(tunnel_lab, _PATH, port=_PORT_CONCURRENT_A),
-        check_tunnel(tunnel_lab, _PATH, port=_PORT_CONCURRENT_B),
+        check_tunnel(lab=tunnel_lab, hosts=_PATH, port=_PORT_CONCURRENT_A),
+        check_tunnel(lab=tunnel_lab, hosts=_PATH, port=_PORT_CONCURRENT_B),
     )
     _print_report("concurrent check A, test1 → test2 → test3", report_a)
     _print_report("concurrent check B, test1 → test2 → test3", report_b)

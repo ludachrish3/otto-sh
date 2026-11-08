@@ -200,7 +200,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     from ..reservations.check import MissingReservationError
 
     try:
-        gate.check_hosts(get_lab(), named)
+        gate.check_hosts(lab=get_lab(), hosts=named)
     except MissingReservationError as e:
         fail(e)
 

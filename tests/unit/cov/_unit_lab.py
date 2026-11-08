@@ -60,7 +60,7 @@ class ContainerHost(FakeHost):
         if self.scan is not None:
             return self.scan
         listed = "".join(f"{p}\n" for p in self.files)
-        return Result(Status.Success, value=listed + "otto-scan-rc:0\n")
+        return Result(status=Status.Success, value=listed + "otto-scan-rc:0\n")
 
     async def exec(self, cmd: str, timeout: float | None = None) -> Any:  # noqa: PLR0911 — one answer per docker command
         import json
@@ -69,11 +69,12 @@ class ContainerHost(FakeHost):
         from otto.utils import Status
 
         self.calls.append(cmd)
-        ok = Result(Status.Success, value="")
+        ok = Result(status=Status.Success, value="")
         if cmd.startswith("docker container inspect"):
             if self.state is None:
                 return Result(
-                    Status.Error, value="Error response from daemon: No such container: img-c"
+                    status=Status.Error,
+                    value="Error response from daemon: No such container: img-c",
                 )
             state = {
                 "status": self.state,
@@ -83,16 +84,16 @@ class ContainerHost(FakeHost):
                 "user": "",
                 "groups": None,
             }
-            return Result(Status.Success, value=json.dumps(state))
+            return Result(status=Status.Success, value=json.dumps(state))
         if cmd.startswith("docker image inspect --format '{{.Id}}' "):
             if not self.image_present:
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     value="Error response from daemon: No such image: registry.example/img:1",
                 )
-            return Result(Status.Success, value="sha256:feed")
+            return Result(status=Status.Success, value="sha256:feed")
         if cmd == "date +%s":
-            return Result(Status.Success, value="1700000000")
+            return Result(status=Status.Success, value="1700000000")
         if cmd.startswith(("docker ps -a --filter label=otto.scan=1", "docker image ls -q")):
             return ok  # no scan leftovers to sweep
         if cmd.startswith(("docker commit", "docker create", "docker rm -f -v otto-scan-")):
@@ -106,13 +107,13 @@ class ContainerHost(FakeHost):
         if cmd.startswith("docker exec"):
             return self._scan_answer()
         if cmd.startswith('d="${TMPDIR:-/tmp}/otto-objlist.'):
-            return Result(Status.Success, value="/tmp/otto-objlist.x\n")
+            return Result(status=Status.Success, value="/tmp/otto-objlist.x\n")
         if cmd.startswith("docker cp"):
             _docker, _cp, src, dest = shlex.split(cmd)
             self.staged[dest] = self.files[src.split(":", 1)[1]]
-            return Result(Status.Success, value="")
+            return Result(status=Status.Success, value="")
         if cmd.startswith("rm -rf"):
-            return Result(Status.Success, value="")
+            return Result(status=Status.Success, value="")
         raise AssertionError(f"unexpected command: {cmd}")
 
     async def get(self, src_files: list[Path], dest_dir: Path, **_: Any) -> Any:
@@ -121,7 +122,9 @@ class ContainerHost(FakeHost):
 
         for src in src_files:
             (dest_dir / src.name).write_bytes(self.staged[str(src)])
-        return Result(Status.Success, value={src: Result(Status.Success) for src in src_files})
+        return Result(
+            status=Status.Success, value={src: Result(status=Status.Success) for src in src_files}
+        )
 
 
 def reference_image(name: str = "img", container: str = "img-c") -> FakeProduct:

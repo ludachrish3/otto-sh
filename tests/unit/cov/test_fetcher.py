@@ -30,10 +30,10 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
     # only awaits a side_effect it recognises via iscoroutinefunction; a
     # lambda wrapping a coroutine function hands back an un-awaited coroutine.
     async def _prepare_coverage(host: object) -> Result:
-        return await Product.prepare_coverage(p, host)
+        return await Product.prepare_coverage(p, host=host)
 
     async def _reset_coverage(host: object) -> Result:
-        return await Product.reset_coverage(p, host)
+        return await Product.reset_coverage(p, host=host)
 
     p.prepare_coverage = AsyncMock(side_effect=_prepare_coverage)
     p.reset_coverage = AsyncMock(side_effect=_reset_coverage)
@@ -58,12 +58,12 @@ def _tar_get(files: dict[str, bytes] | None = None):
     async def _get(paths, dest, **_kwargs):
         for remote in paths:
             (Path(dest) / Path(remote).name).write_bytes(buf.getvalue())
-        return Result(Status.Success, value={})
+        return Result(status=Status.Success, value={})
 
     return _get
 
 
-_OK = CommandResult(Status.Success, value="", command="sh", retcode=0)
+_OK = CommandResult(status=Status.Success, value="", command="sh", retcode=0)
 
 
 def _mktemp_exec(host: MagicMock):
@@ -78,7 +78,7 @@ def _mktemp_exec(host: MagicMock):
         if "tar -cf" in cmd and token is not None:
             path = f"/tmp/{token.group(0)}.Ab12Cd"
             return CommandResult(
-                Status.Success, value=f"otto-archive:{path}\n", command="sh", retcode=0
+                status=Status.Success, value=f"otto-archive:{path}\n", command="sh", retcode=0
             )
         return _OK
 
@@ -203,7 +203,7 @@ class TestGcdaFetcher:
 
         async def _bad_then_good(paths, dest, **kwargs):
             if host.get.await_count == 1:
-                return Result(Status.Error, value={}, msg="connection refused")
+                return Result(status=Status.Error, value={}, msg="connection refused")
             return await good_get(paths, dest, **kwargs)
 
         host.get.side_effect = _bad_then_good
@@ -230,7 +230,7 @@ class TestGcdaFetcher:
             if host.get.await_count == 1:
                 for remote in paths:
                     (Path(dest) / Path(remote).name).write_bytes(b"not a tar at all" * 64)
-                return Result(Status.Success, value={})
+                return Result(status=Status.Success, value={})
             return await good_get(paths, dest, **kwargs)
 
         host.get.side_effect = _corrupt_then_good
@@ -325,7 +325,10 @@ class TestGcdaFetcher:
 
         host = _make_mock_host("host1")
         host.exec.return_value = CommandResult(
-            Status.Error, value="tar: ./z: Cannot open: Permission denied", command="sh", retcode=2
+            status=Status.Error,
+            value="tar: ./z: Cannot open: Permission denied",
+            command="sh",
+            retcode=2,
         )
         fake_config_module(host)
 
@@ -357,7 +360,9 @@ class TestGcdaFetcher:
 
         output = "tar: ./[x:y].gcda: Cannot open [/x]"
         host = _make_mock_host("host1")
-        host.exec.return_value = CommandResult(Status.Error, value=output, command="sh", retcode=2)
+        host.exec.return_value = CommandResult(
+            status=Status.Error, value=output, command="sh", retcode=2
+        )
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
@@ -377,7 +382,7 @@ class TestGcdaFetcher:
 
         host = _make_mock_host("host1")
         host.exec.return_value = CommandResult(
-            Status.Success, value=f"{_NO_COV_DIR}\n", command="sh", retcode=0
+            status=Status.Success, value=f"{_NO_COV_DIR}\n", command="sh", retcode=0
         )
         fake_config_module(host)
 
@@ -411,7 +416,7 @@ class TestGcdaFetcher:
         a product that genuinely produced nothing."""
         host = _make_mock_host("host1")
         host.get.side_effect = None
-        host.get.return_value = Result(Status.Error, value={}, msg="connection refused")
+        host.get.return_value = Result(status=Status.Error, value={}, msg="connection refused")
         fake_config_module(host)
 
         fetcher = _GcdaFetcher(tmp_path / "staging")
@@ -429,7 +434,7 @@ class TestGcdaFetcher:
 
         async def _get_half_way(_files, dest, **_kwargs):
             (dest / "foo.gcda").write_bytes(b"partial")
-            return Result(Status.Error, value={}, msg="connection reset")
+            return Result(status=Status.Error, value={}, msg="connection reset")
 
         host.get = AsyncMock(side_effect=_get_half_way)
         fake_config_module(host)
@@ -512,7 +517,7 @@ class TestGcdaFetcher:
         host = _make_mock_host("host1")
         order: list[str] = []
         host.products[0].prepare_coverage = AsyncMock(
-            side_effect=lambda h: (order.append("prepare"), Result(Status.Success))[1]
+            side_effect=lambda host: (order.append("prepare"), Result(status=Status.Success))[1]
         )
         host.exec.side_effect = lambda cmd, **k: (
             order.append("archive" if "tar -cf" in cmd else "rm"),
@@ -528,7 +533,7 @@ class TestGcdaFetcher:
     ):
         host = _make_mock_host("host1")
         host.products[0].prepare_coverage = AsyncMock(
-            return_value=Result(Status.Error, msg="no /sys/module/app/kmodcov/dump")
+            return_value=Result(status=Status.Error, msg="no /sys/module/app/kmodcov/dump")
         )
         fake_config_module(host)
         result = await _GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
@@ -625,7 +630,7 @@ class TestFetchFailuresAreRecorded:
 
         async def _bad_then_good(paths, dest, **kwargs):
             if host.get.await_count == 1:
-                return Result(Status.Error, value={}, msg="connection refused")
+                return Result(status=Status.Error, value={}, msg="connection refused")
             return await good_get(paths, dest, **kwargs)
 
         host.get.side_effect = _bad_then_good
@@ -660,7 +665,7 @@ class TestFetchFailuresAreRecorded:
     async def test_a_product_with_no_cov_dir_is_not_a_failure(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")
         host.exec.return_value = CommandResult(
-            Status.Success, value="otto-no-cov-dir\n", command="sh", retcode=0
+            status=Status.Success, value="otto-no-cov-dir\n", command="sh", retcode=0
         )
         fake_config_module(host)
         failures: dict = {}

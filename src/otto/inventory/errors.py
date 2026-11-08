@@ -10,7 +10,7 @@ class InventoryError(OttoError):
 class InventoryKeyError(InventoryError):
     """A host entry references a key the inventory does not hold."""
 
-    def __init__(self, key: str, label: str) -> None:
+    def __init__(self, key: str, *, label: str) -> None:
         super().__init__(f"inventory key {key!r} not found in inventory {label!r}")
         self.key = key
         self.label = label

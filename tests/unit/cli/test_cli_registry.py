@@ -26,7 +26,7 @@ def _clean_registry():
     yield
     for name in list(CLI_COMMANDS.names()):
         if name not in before:
-            CLI_COMMANDS.unregister(name)
+            CLI_COMMANDS.unregister(name=name)
 
 
 def test_register_multi_command_typer_app_resolves_to_group():
@@ -258,7 +258,7 @@ def test_spec_defaults():
     assert spec.lab_free is False
     assert spec.output_dir is True
     assert spec.gate is True
-    assert CLI_COMMANDS.origin("d") == __name__
+    assert CLI_COMMANDS.origin(name="d") == __name__
 
 
 def test_command_spec_is_frozen():

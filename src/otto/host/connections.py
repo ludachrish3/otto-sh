@@ -588,6 +588,7 @@ class ConnectionManager:
 
     def __init__(  # noqa: PLR0913 — one options slot per transport plus the console endpoint seam; TermContext is the grouped form callers use via create()
         self,
+        *,
         ip: str,
         creds: list[Cred],
         term: str,
@@ -597,7 +598,6 @@ class ConnectionManager:
         telnet_options: TelnetOptions | None = None,
         sftp_options: SftpOptions | None = None,
         ftp_options: FtpOptions | None = None,
-        *,
         console_options: ConsoleOptions | None = None,
         console_endpoint: "Callable[[], ConsoleEndpoint] | None" = None,
         host_id: str,
@@ -675,7 +675,7 @@ class ConnectionManager:
         """The stored ``ConsoleOptions`` (server, port, dial, prompts)."""
         return self._console_options
 
-    def login_target_for(self, protocol: str) -> str:
+    def login_target_for(self, *, protocol: str) -> str:
         """Return the login *protocol* authenticates as (spec 2026-09-13 cred-scope §3.2).
 
         First entry that applies, else ``""``.
@@ -685,9 +685,9 @@ class ConnectionManager:
     @property
     def login_target(self) -> str:
         """The login the session should end up as — the active term's pick."""
-        return self.login_target_for(self._term)
+        return self.login_target_for(protocol=self._term)
 
-    def transport_cred_for(self, protocol: str) -> Cred | None:
+    def transport_cred_for(self, *, protocol: str) -> Cred | None:
         """Resolve the TRANSPORT cred for *protocol* — the pick's directly-loginable end.
 
         The pick's via-chain resolves to the cred with no proxy; a protocol
@@ -695,10 +695,10 @@ class ConnectionManager:
         as-is. ``None`` when no cred applies to *protocol* (no creds, or only
         creds scoped elsewhere) — callers substitute :data:`LOGINLESS`.
         """
-        target = self.login_target_for(protocol)
+        target = self.login_target_for(protocol=protocol)
         if not target:
             return None
-        direct, _ = resolve_chain(self._creds, target, protocol)
+        direct, _ = resolve_chain(self._creds, target_login=target, protocol=protocol)
         return direct
 
     @property
@@ -712,7 +712,7 @@ class ConnectionManager:
         ``proxy_hops``). :data:`LOGINLESS`'s empty pair when no cred applies
         to the term.
         """
-        cred = self.transport_cred_for(self._term) or LOGINLESS
+        cred = self.transport_cred_for(protocol=self._term) or LOGINLESS
         return (cred.login, cred.password)
 
     @property
@@ -724,7 +724,7 @@ class ConnectionManager:
         target = self.login_target
         if not target:
             return []
-        _, hops = resolve_chain(self._creds, target, self._term)
+        _, hops = resolve_chain(self._creds, target_login=target, protocol=self._term)
         return hops
 
     @property
@@ -741,7 +741,7 @@ class ConnectionManager:
     def term(self, value: str) -> None:
         self._term = value
 
-    def connect_allowance(self, term: str | None = None) -> float:
+    def connect_allowance(self, *, term: str | None = None) -> float:
         """Seconds one session open on *term* waits, bounded, besides the readiness deadline.
 
         *term* defaults to the active one; a caller sizing a login over another
@@ -786,7 +786,7 @@ class ConnectionManager:
             return opened + 2 * each + way_out
         return 0.0
 
-    def release_allowance(self, term: str | None = None) -> float:
+    def release_allowance(self, *, term: str | None = None) -> float:
         """Seconds one release of the stream on *term* can spend draining it, bounded.
 
         *term* defaults to the active one. A single-client stream is drained
@@ -802,7 +802,7 @@ class ConnectionManager:
         term = self._term if term is None else term
         return CONSOLE_QUIESCE_BUDGET if single_client(term, self._telnet_options) else 0.0
 
-    def retries_failed_open(self, term: str | None = None) -> bool:
+    def retries_failed_open(self, *, term: str | None = None) -> bool:
         """Return whether ``SessionManager._ensure_session`` retries a failed open on *term*.
 
         Every term but a console that logs in: once its client has typed the
@@ -845,7 +845,7 @@ class ConnectionManager:
         Returns the local port number to connect to.
         """
         assert self._hop is not None  # noqa: S101 — internal invariant: callers must check has_tunnel before calling _forward_port()
-        local_port = await self._hop.forward_port(self._ip, dest_port)
+        local_port = await self._hop.forward_port(self._ip, dest_port=dest_port)
         logger.debug(
             f"Forwarding localhost:{local_port} -> {self._ip}:{dest_port} for {self._name}"
         )
@@ -858,7 +858,7 @@ class ConnectionManager:
         async with self._ssh_lock:
             if self._ssh_conn is not None:
                 return self._ssh_conn
-            cred = self.transport_cred_for("ssh") or LOGINLESS
+            cred = self.transport_cred_for(protocol="ssh") or LOGINLESS
             logger.debug(f"Connecting to {self._name} via SSH")
             tunnel = None
             if self._hop is not None:
@@ -890,14 +890,14 @@ class ConnectionManager:
             logger.debug(f"SFTP client connected for {self._name}")
             return sftp
 
-    def has_direct_cred(self, user: str) -> bool:
+    def has_direct_cred(self, *, user: str) -> bool:
         """Whether *user* can authenticate an SSH transport of their own.
 
         The question ``_direct_cred_for`` answers by raising. A caller
         choosing between a raw channel authenticated as *user* and a
         switched shell needs the answer without the exception.
         """
-        direct, hops = resolve_chain(self._creds, user, "ssh")
+        direct, hops = resolve_chain(self._creds, target_login=user, protocol="ssh")
         return not hops and direct.login == user
 
     def _direct_cred_for(self, user: str) -> Cred:
@@ -909,7 +909,7 @@ class ConnectionManager:
         (spec 2026-09-01 §2.4) — ``login(user=...)``/``as_user`` CAN, and the
         message says so.
         """
-        direct, hops = resolve_chain(self._creds, user, "ssh")
+        direct, hops = resolve_chain(self._creds, target_login=user, protocol="ssh")
         if hops or direct.login != user:
             raise LoginProxyError(
                 f"{self._name}: user {user!r} has no directly-loginable cred "
@@ -919,7 +919,7 @@ class ConnectionManager:
             )
         return direct
 
-    async def ssh_as(self, user: str) -> "SSHClientConnection":
+    async def ssh_as(self, *, user: str) -> "SSHClientConnection":
         """Return a cached SSH connection AUTHENTICATED AS *user* (spec 2026-09-01 §3).
 
         Separate from :meth:`ssh` (the login-target connection) and keyed by
@@ -952,7 +952,7 @@ class ConnectionManager:
             self._user_ssh_conns[user] = conn
             return conn
 
-    async def sftp_as(self, user: str) -> "SFTPClient":
+    async def sftp_as(self, *, user: str) -> "SFTPClient":
         """Return a cached SFTP client on :meth:`ssh_as`'s connection for *user*."""
         sftp = self._user_sftp_conns.get(user)
         if sftp is not None:
@@ -962,7 +962,7 @@ class ConnectionManager:
             sftp = self._user_sftp_conns.get(user)
             if sftp is not None:
                 return sftp
-            conn = await self.ssh_as(user)
+            conn = await self.ssh_as(user=user)
             sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())  # noqa: SLF001 — intra-package access to SftpOptions._kwargs
             self._user_sftp_conns[user] = sftp
             return sftp
@@ -976,7 +976,7 @@ class ConnectionManager:
         async with self._ftp_lock:
             if self._ftp_conn is not None:
                 return self._ftp_conn
-            cred = self.transport_cred_for("ftp") or LOGINLESS
+            cred = self.transport_cred_for(protocol="ftp") or LOGINLESS
             ftp_port = self._ftp_options.port
             client_kwargs = self._ftp_options._client_kwargs()  # noqa: SLF001 — intra-package access to FtpOptions._client_kwargs
             if self._hop is not None:
@@ -1089,7 +1089,7 @@ class ConnectionManager:
             if self._telnet_conn is not None:
                 return self._telnet_conn
 
-            cred = self.transport_cred_for("telnet") or LOGINLESS
+            cred = self.transport_cred_for(protocol="telnet") or LOGINLESS
             target = await self.telnet_target()
             logger.debug(f"Connecting to {self._name} via telnet")
             client = TelnetClient(
@@ -1161,7 +1161,7 @@ class ConnectionManager:
 
         opts = self._console_options
         try:
-            return await hop.forward_port(dest_host, opts.port)
+            return await hop.forward_port(dest_host, dest_port=opts.port)
         except ConsoleError:
             raise
         except Exception as exc:
@@ -1193,7 +1193,7 @@ class ConnectionManager:
             if self._console_conn is not None:
                 return self._console_conn
             opts = self._console_options
-            cred = self.transport_cred_for("console") or LOGINLESS
+            cred = self.transport_cred_for(protocol="console") or LOGINLESS
             target = await self.console_target()
             logger.debug(f"Connecting to {self._name} via console {opts.server}:{opts.port}")
             client = ConsoleClient(
@@ -1226,7 +1226,7 @@ class ConnectionManager:
         if console is not None:
             console.abort()
 
-    async def forward_port(self, dest_port: int) -> int:
+    async def forward_port(self, *, dest_port: int) -> int:
         """Forward a local ephemeral port to ``self._ip:dest_port`` through the tunnel.
 
         This is the public interface for protocols (like netcat) that need
@@ -1240,7 +1240,7 @@ class ConnectionManager:
             raise RuntimeError(f"{self._name}: forward_port requires a tunnel (hop)")
         return await self._forward_port(dest_port)
 
-    def unforward_port(self, dest_port: int) -> None:
+    def unforward_port(self, *, dest_port: int) -> None:
         """Release a forward taken out by :meth:`forward_port`.
 
         The counterpart a per-transfer caller needs: without it a forward
@@ -1256,7 +1256,7 @@ class ConnectionManager:
         """
         if self._hop is None:
             return
-        self._hop.unforward_port(self._ip, dest_port)
+        self._hop.unforward_port(self._ip, dest_port=dest_port)
         logger.debug(f"Released forward to {self._ip}:{dest_port} for {self._name}")
 
     async def close(self) -> None:
@@ -1365,10 +1365,10 @@ class _UserConnections:
         self._user = user
 
     async def ssh(self) -> "SSHClientConnection":
-        return await self._primary.ssh_as(self._user)
+        return await self._primary.ssh_as(user=self._user)
 
     async def sftp(self) -> "SFTPClient":
-        return await self._primary.sftp_as(self._user)
+        return await self._primary.sftp_as(user=self._user)
 
     async def ftp(self) -> "NoReturn":
         raise NotImplementedError(
@@ -1561,8 +1561,8 @@ def register_term_backend(
     :class:`~otto.registry.DuplicateRegistration`.
     """
     TERM_BACKENDS.register(
-        name,
-        class_backend(
+        name=name,
+        entry=class_backend(
             cls=cls,
             metadata=TermMetadata(
                 host_families=host_families,
@@ -1574,7 +1574,7 @@ def register_term_backend(
     )
 
 
-def build_term_backend(name: str, ctx: TermContext) -> ConnectionManager:
+def build_term_backend(*, name: str, ctx: TermContext) -> ConnectionManager:
     """Build the connection backend registered under *name* for *ctx*.
 
     Raises:
@@ -1585,7 +1585,7 @@ def build_term_backend(name: str, ctx: TermContext) -> ConnectionManager:
             stage and the module that registered the backend; the cause is
             chained.
     """
-    return TERM_BACKENDS.build(TERM_BACKENDS.prepare(name, {}, ctx))
+    return TERM_BACKENDS.build(prepared=TERM_BACKENDS.prepare(name=name, raw={}, env=ctx))
 
 
 def _register_builtin_term_backends() -> None:
@@ -1604,7 +1604,7 @@ def _register_builtin_term_backends() -> None:
             TermMetadata(frozenset({"unix", "embedded"}), authenticates=True, dials_host=False),
         ),
     ]:
-        TERM_BACKENDS.register(name, class_backend(cls=manager, metadata=metadata))
+        TERM_BACKENDS.register(name=name, entry=class_backend(cls=manager, metadata=metadata))
 
 
 _register_builtin_term_backends()

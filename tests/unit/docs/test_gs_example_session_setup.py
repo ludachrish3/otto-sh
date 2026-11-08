@@ -9,7 +9,7 @@ from otto.host.command_frame import BashFrame, RawFrame, SessionMarkers, ZephyrF
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup
 from tests._fixtures.gs_example import import_gs_example, load_example_lab
 
-M = SessionMarkers.for_session("cafef00d")
+M = SessionMarkers.for_session(session_id="cafef00d")
 
 
 def test_registrations():
@@ -55,7 +55,7 @@ class TestPyReplFrame:
         assert hs.rstrip().endswith(f"print({M.ready!r})")
 
     def test_frame_is_one_repl_line(self):
-        line = self._frame().frame("1 + 1", M)
+        line = self._frame().frame("1 + 1", m=M)
         assert line.count("\n") == 1
         assert line.endswith("\n")
         assert M.begin in line
@@ -64,20 +64,20 @@ class TestPyReplFrame:
     def test_parse_a_printing_line(self):
         f = self._frame()
         buf = f"{M.begin}\n2\n{M.end_prefix}0__\n"
-        assert f.parse_output(buf, "1 + 1", M) == "2"
-        assert f.extract_retcode(buf, M) == 0
+        assert f.parse_output(buf, cmd="1 + 1", m=M) == "2"
+        assert f.extract_retcode(buf, m=M) == 0
 
     def test_parse_a_raising_line(self):
         f = self._frame()
         buf = f"{M.begin}\ndivision by zero\n{M.end_prefix}1__\n"
-        assert f.parse_output(buf, "1 / 0", M) == "division by zero"
-        assert f.extract_retcode(buf, M) == 1
+        assert f.parse_output(buf, cmd="1 / 0", m=M) == "division by zero"
+        assert f.extract_retcode(buf, m=M) == 1
 
     def test_echoed_frame_is_skipped(self):
         f = self._frame()
-        echoed = f.frame("1 + 1", M)
+        echoed = f.frame("1 + 1", m=M)
         buf = f"{echoed}{M.begin}\n2\n{M.end_prefix}0__\n"
-        assert f.parse_output(buf, "1 + 1", M) == "2"
+        assert f.parse_output(buf, cmd="1 + 1", m=M) == "2"
 
     def test_recover_is_echo_proof(self):
         f = self._frame()
@@ -116,22 +116,22 @@ class TestPyReplFrame:
         # The handshake defines the helper and announces readiness, nothing else.
         assert self._run(f.handshake(M), ns).splitlines() == [M.ready]
 
-        raised = self._run(f.frame("1 / 0", M), ns)
-        assert f.parse_output(raised, "1 / 0", M) == "division by zero"
-        assert f.extract_retcode(raised, M) == 1
+        raised = self._run(f.frame("1 / 0", m=M), ns)
+        assert f.parse_output(raised, cmd="1 / 0", m=M) == "division by zero"
+        assert f.extract_retcode(raised, m=M) == 1
 
-        printed = self._run(f.frame("1 + 1", M), ns)
-        assert f.parse_output(printed, "1 + 1", M) == "2"
-        assert f.extract_retcode(printed, M) == 0
+        printed = self._run(f.frame("1 + 1", m=M), ns)
+        assert f.parse_output(printed, cmd="1 + 1", m=M) == "2"
+        assert f.extract_retcode(printed, m=M) == 0
 
         # The probe must satisfy its own pattern once a REPL has EXECUTED it.
         assert f.recover_pattern(M).search(self._run(f.recover(M), ns)) is not None
 
     def test_extract_retcode_is_minus_one_when_the_line_never_closed(self):
         # A hung command must not read as success: `-1`, never `0`.
-        assert self._frame().extract_retcode(f"{M.begin}\npartial\n", M) == -1
+        assert self._frame().extract_retcode(f"{M.begin}\npartial\n", m=M) == -1
 
     def test_marks_begin_only_on_the_begin_chunk(self):
         f = self._frame()
-        assert f.marks_begin(f"{M.begin}\n", M) is True
-        assert f.marks_begin("noise\n", M) is False
+        assert f.marks_begin(f"{M.begin}\n", m=M) is True
+        assert f.marks_begin("noise\n", m=M) is False

@@ -246,7 +246,7 @@ def ctr_run(tmp_path_factory):
         assert torn.after_sweep == _CLEAN, f"{project} still on test3 after the sweep: {torn}"
     return Outcome(
         log_dir=log_dir,
-        store=CoverageStore.load(report_dir / "store.json"),
+        store=CoverageStore.load(path=report_dir / "store.json"),
         get_dir=get_dir,
         while_up=while_up,
         after_down=torn.after_down,

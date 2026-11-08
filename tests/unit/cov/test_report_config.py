@@ -32,8 +32,10 @@ async def test_run_coverage_report_stamps_thresholds_into_store_json(tmp_path) -
     )
     store = await run_coverage_report(
         [],
-        out,
-        ReportInputs(tier_configs=tier_configs, thresholds=Thresholds(high=90.0, medium=75.0)),
+        output_dir=out,
+        inputs=ReportInputs(
+            tier_configs=tier_configs, thresholds=Thresholds(high=90.0, medium=75.0)
+        ),
     )
     assert store is not None
     raw = json.loads((out / "store.json").read_text())

@@ -29,7 +29,7 @@ from otto.utils import wait_for_async
 from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host.test_session import MockSession
 
-M = SessionMarkers.for_session("cafef00d")
+M = SessionMarkers.for_session(session_id="cafef00d")
 R = M.ready
 
 
@@ -199,7 +199,7 @@ class TestTheSessionMeasures:
             # A second handshake on the same session (frame entry after a hook).
             # enter_frame mints new markers, so the reply is built inside the feed.
             feed = asyncio.create_task(_feed_after_entry(s, lossy_reply))
-            await s.enter_frame(BashFrame())
+            await s.enter_frame(frame=BashFrame())
             await feed
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1, [r.getMessage() for r in warnings]
@@ -228,7 +228,7 @@ class TestTheSessionMeasures:
         assert s.terminal_mapping == "onlcr"
         feed = asyncio.create_task(_feed_after_entry(s, identity_reply))
         with caplog.at_level(logging.DEBUG, logger="otto.host.session"):
-            await s.enter_frame(BashFrame())
+            await s.enter_frame(frame=BashFrame())
         await feed
         assert s.terminal_mapping == "identity"
         assert any("terminal mapping: identity" in r.getMessage() for r in caplog.records)

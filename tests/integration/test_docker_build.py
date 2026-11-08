@@ -46,7 +46,7 @@ async def parent(test3_lease):
     async with held_for_scope("test_docker_build.py's loop"):
         h = UnixHost(
             ip="10.10.200.13",
-            element=Element("test3"),
+            element=Element(name="test3"),
             creds=[Cred(login="vagrant", password="vagrant")],
             is_virtual=True,
             term="ssh",
@@ -64,14 +64,14 @@ def project1():
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_succeeds(parent, project1):
-    built = await build_images(project1, parent)
+    built = await build_images(project=project1, parent=parent)
     assert built["project1-api"].is_ok, f"build failed: {built['project1-api'].result.value}"
     assert built["project1-api"].references == ["project1-api:latest"]
 
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_tags_locally(parent, project1):
-    await build_images(project1, parent)
+    await build_images(project=project1, parent=parent)
     # The daemon holds the image under exactly the declared name.
     result = await parent.exec("docker image inspect project1-api:latest")
     assert result.status.is_ok, f"image missing: {result.value}"

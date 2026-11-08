@@ -21,12 +21,12 @@ def _token(**overrides: object) -> str:
         "carrier_port": 50001,
     }
     kwargs.update(overrides)
-    return encode_sentinel(TUNNEL, **kwargs)
+    return encode_sentinel(tunnel=TUNNEL, **kwargs)
 
 
 class TestRoundTrip:
     def test_full_round_trip(self) -> None:
-        parsed = parse_sentinel(_token())
+        parsed = parse_sentinel(token=_token())
         assert parsed is not None
         assert parsed.tunnel == TUNNEL
         assert parsed.direction is Direction.FWD
@@ -42,8 +42,12 @@ class TestRoundTrip:
             id="tun-feedface0000-5000",
         )
         parsed = parse_sentinel(
-            encode_sentinel(
-                t, direction=Direction.REV, role=Role.INGRESS, hop_index=1, carrier_port=50002
+            token=encode_sentinel(
+                tunnel=t,
+                direction=Direction.REV,
+                role=Role.INGRESS,
+                hop_index=1,
+                carrier_port=50002,
             )
         )
         assert parsed is not None
@@ -52,8 +56,12 @@ class TestRoundTrip:
     def test_no_dest_encodes_empty(self) -> None:
         t = Tunnel(protocol="tcp", service_port=80, path=(TunnelHop("a"), TunnelHop("b")))
         parsed = parse_sentinel(
-            encode_sentinel(
-                t, direction=Direction.FWD, role=Role.INGRESS, hop_index=0, carrier_port=49500
+            token=encode_sentinel(
+                tunnel=t,
+                direction=Direction.FWD,
+                role=Role.INGRESS,
+                hop_index=0,
+                carrier_port=49500,
             )
         )
         assert parsed is not None
@@ -63,8 +71,12 @@ class TestRoundTrip:
     def test_hostile_interface_chars_survive(self, iface: str) -> None:
         t = Tunnel(protocol="udp", service_port=5000, path=(TunnelHop("a", iface), TunnelHop("b")))
         parsed = parse_sentinel(
-            encode_sentinel(
-                t, direction=Direction.FWD, role=Role.INGRESS, hop_index=0, carrier_port=49500
+            token=encode_sentinel(
+                tunnel=t,
+                direction=Direction.FWD,
+                role=Role.INGRESS,
+                hop_index=0,
+                carrier_port=49500,
             )
         )
         assert parsed is not None
@@ -86,23 +98,23 @@ class TestRejection:
         ],
     )
     def test_foreign_or_malformed_is_none(self, token: str) -> None:
-        assert parse_sentinel(token) is None
+        assert parse_sentinel(token=token) is None
 
     def test_bad_int_fields_are_none(self) -> None:
         good = _token()
         parts = good.split(":")
         parts[4] = "notaport"  # svc-port
-        assert parse_sentinel(":".join(parts)) is None
+        assert parse_sentinel(token=":".join(parts)) is None
 
     def test_bad_direction_or_role_is_none(self) -> None:
         parts = _token().split(":")
         parts[6] = "sideways"
-        assert parse_sentinel(":".join(parts)) is None
+        assert parse_sentinel(token=":".join(parts)) is None
 
     def test_single_host_path_is_none(self) -> None:
         parts = _token().split(":")
         parts[10] = "onlyone"
-        assert parse_sentinel(":".join(parts)) is None
+        assert parse_sentinel(token=":".join(parts)) is None
 
 
 class TestWireGolden:
@@ -117,11 +129,15 @@ class TestWireGolden:
             id="tun-abc-8080",
         )
         token = encode_sentinel(
-            tunnel, direction=Direction.FWD, role=Role.INGRESS, hop_index=0, carrier_port=50000
+            tunnel=tunnel,
+            direction=Direction.FWD,
+            role=Role.INGRESS,
+            hop_index=0,
+            carrier_port=50000,
         )
         assert token == (
             "otto-tunnel:v1:tun-abc-8080:tcp:8080:50000:fwd:ingress:0::h1%2540eth0%2Ch2"
         )
-        parsed = parse_sentinel(token)
+        parsed = parse_sentinel(token=token)
         assert parsed is not None
         assert parsed.tunnel == tunnel

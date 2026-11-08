@@ -39,7 +39,7 @@ class TestPublishedPayloadsAreFragments:
         # name — chart_map["cpu"] == "CPU" confirms the newly-seen label was
         # grouped into that chart, so that's the label to look for here.
         assert any(c.label == "CPU" for c in frag.meta.charts)
-        collector.unsubscribe(q)
+        collector.unsubscribe(q=q)
 
     @pytest.mark.asyncio
     async def test_event_add_update_delete_publish_fragments(self) -> None:
@@ -47,22 +47,22 @@ class TestPublishedPayloadsAreFragments:
         collector.session_id = "s1"
         q = collector.subscribe()
 
-        ev = await collector.add_event("boot")
+        ev = await collector.add_event(label="boot")
         added = MonitorSessionFragment.model_validate(q.get_nowait())
         assert [e.id for e in added.events] == [ev.id]
 
         await collector.update_event(
-            ev.id, label="boot2", color="#111111", dash="solid", timestamp=ev.timestamp
+            event_id=ev.id, label="boot2", color="#111111", dash="solid", timestamp=ev.timestamp
         )
         updated = MonitorSessionFragment.model_validate(q.get_nowait())
         # No separate "updated" kind — the client upserts by id, so an edited
         # event is just an event.
         assert updated.events[0].label == "boot2"
 
-        await collector.delete_event(ev.id)
+        await collector.delete_event(event_id=ev.id)
         deleted = MonitorSessionFragment.model_validate(q.get_nowait())
         assert deleted.deleted_event_ids == [ev.id]
-        collector.unsubscribe(q)
+        collector.unsubscribe(q=q)
 
     @pytest.mark.asyncio
     async def test_log_events_publish_a_fragment(self) -> None:
@@ -80,7 +80,7 @@ class TestPublishedPayloadsAreFragments:
         assert frag.log_events[0].host == "r1"
         assert frag.log_events[0].tab == "syslog"
         assert frag.log_events[0].fields == {"msg": "up"}
-        collector.unsubscribe(q)
+        collector.unsubscribe(q=q)
 
 
 class TestPublishedPayloadsCarryObservedAt:
@@ -101,7 +101,7 @@ class TestPublishedPayloadsCarryObservedAt:
         collector.session_id = "s1"
         q = collector.subscribe()
 
-        mark = await collector.add_event("mark")
+        mark = await collector.add_event(label="mark")
         assert mark.timestamp == fixed, "an unstamped mark reads the one server clock"
         await collector.push("r1", "cpu", 1.0, ts=datetime(2020, 1, 1, tzinfo=timezone.utc))
         for raw in (q.get_nowait(), q.get_nowait()):
@@ -110,7 +110,7 @@ class TestPublishedPayloadsCarryObservedAt:
             dumped = frag.model_dump(mode="json")
             again = MonitorSessionFragment.model_validate(dumped)
             assert again.observed_at == frag.observed_at
-        collector.unsubscribe(q)
+        collector.unsubscribe(q=q)
 
 
 class TestServerStampsTheSessionId:

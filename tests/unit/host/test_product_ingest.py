@@ -16,10 +16,10 @@ from otto.utils import Status
 
 class _P(ShellProduct):
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -33,13 +33,13 @@ class _BareProduct(Product):
         self.name = name
 
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -50,13 +50,13 @@ class _DevTool(DevTool):
         self.name = name
 
     async def stage(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -288,13 +288,13 @@ def test_a_dev_tool_that_stages_nothing_is_not_a_collision():
             return product_mod.stage_dir_key(self.stage_dir, host, who="dev tool")
 
         async def stage(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def install(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def uninstall(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def is_installed(self, host):
             return True

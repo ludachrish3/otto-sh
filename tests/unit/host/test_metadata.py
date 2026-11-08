@@ -13,14 +13,15 @@ _CREDS = [{"login": "u", "password": "p"}]
 
 def test_host_metadata_rides_the_spec_to_the_host() -> None:
     host = create_host_from_dict(
-        {"ip": "10.0.0.1", "creds": _CREDS, "metadata": {"owner": "infra"}}, element=Element("dut")
+        {"ip": "10.0.0.1", "creds": _CREDS, "metadata": {"owner": "infra"}},
+        element=Element(name="dut"),
     )
     assert host.metadata == {"owner": "infra"}
 
 
 def test_metadata_defaults_empty_and_is_not_shared() -> None:
-    a = create_host_from_dict({"ip": "10.0.0.1", "creds": _CREDS}, element=Element("a"))
-    b = create_host_from_dict({"ip": "10.0.0.2", "creds": _CREDS}, element=Element("b"))
+    a = create_host_from_dict({"ip": "10.0.0.1", "creds": _CREDS}, element=Element(name="a"))
+    b = create_host_from_dict({"ip": "10.0.0.2", "creds": _CREDS}, element=Element(name="b"))
     assert a.metadata == {}
     assert a.element.metadata == {}
     a.metadata["x"] = 1
@@ -36,10 +37,10 @@ def test_element_metadata_rides_on_the_element_and_is_copied_from_the_caller() -
     """
     shared = {"rack": "B4"}
     a = create_host_from_dict(
-        {"ip": "10.0.0.1", "creds": _CREDS}, element=Element("a", metadata=shared)
+        {"ip": "10.0.0.1", "creds": _CREDS}, element=Element(name="a", metadata=shared)
     )
     b = create_host_from_dict(
-        {"ip": "10.0.0.2", "creds": _CREDS}, element=Element("b", metadata=shared)
+        {"ip": "10.0.0.2", "creds": _CREDS}, element=Element(name="b", metadata=shared)
     )
     a.element.metadata["rack"] = "Z9"
     assert b.element.metadata == {"rack": "B4"}
@@ -47,7 +48,7 @@ def test_element_metadata_rides_on_the_element_and_is_copied_from_the_caller() -
 
 
 def test_lab_info_defaults_to_the_unattributed_lab() -> None:
-    host = create_host_from_dict({"ip": "10.0.0.1", "creds": _CREDS}, element=Element("a"))
+    host = create_host_from_dict({"ip": "10.0.0.1", "creds": _CREDS}, element=Element(name="a"))
     assert host.lab_info == LabInfo()
 
 

@@ -157,7 +157,7 @@ def _shell_login_budget(host: "BaseHost", term: "str | None" = None) -> float:
     session leaves unbounded.
     """
     mgr = host._session_mgr  # noqa: SLF001 — intra-package read of the host's own session manager
-    return max(LOGIN_TIMEOUT_S, mgr.open_budget(term) + 2 * LOGIN_MARGIN_S)
+    return max(LOGIN_TIMEOUT_S, mgr.open_budget(term=term) + 2 * LOGIN_MARGIN_S)
 
 
 async def _open_own_session(
@@ -276,7 +276,7 @@ def _snmp_target(host: "RemoteHost") -> "tuple[str, int, str, str] | None":
     """(address, port, community, version) from the host's block, or a direct host's defaults."""
     if host.snmp is not None:
         return (
-            host.address_for(host.snmp.address or host.ip),
+            host.address_for(name_or_literal=host.snmp.address or host.ip),
             host.snmp.port,
             host.snmp.community,
             host.snmp.version,
@@ -547,7 +547,7 @@ class _UnixSurvey:
         if cred is None or user is None:
             return await _bounded(self.deadline, budget, _open_own_session(host, budget))
         who = f"login {cred_identity(cred.login, cred.protocols)!r} (--user)"
-        async with host.as_user(user):
+        async with host.as_user(user=user):
             return await _bounded(self.deadline, budget, _open_own_session(host, budget, who=who))
 
     def _no_session_detail(self) -> str:
@@ -624,11 +624,11 @@ class _UnixSurvey:
                 self.session_vantage,
                 "no userland resolver on this host",
             )
-        if not ul.is_settled(applet_capability(c.protocol)):
+        if not ul.is_settled(name=applet_capability(c.protocol)):
             return _verdict(
                 c, "not-checkable", "userland", self.session_vantage, "userland probe unsettled"
             )
-        if ul.has_applet(c.protocol) == APPLET_PRESENT:
+        if ul.has_applet(applet=c.protocol) == APPLET_PRESENT:
             return _verdict(
                 c, "supported", "userland", self.session_vantage, f"{c.protocol} applet present"
             )
@@ -721,7 +721,7 @@ class _UnixSurvey:
         run = partial(_run_only, host)
         refused = False
         if self.user is not None:
-            async with host.as_user(self.user):
+            async with host.as_user(user=self.user):
                 inv = await _bounded(
                     self.deadline, INVENTORY_TIMEOUT_S * 2 + 1.0, run_inventory(run, elevate=False)
                 )

@@ -79,17 +79,17 @@ _PARENT_IP = "10.0.0.1"
 
 
 def _ok(out: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command="", retcode=0)
+    return CommandResult(status=Status.Success, value=out, command="", retcode=0)
 
 
 def _fail(out: str = "boom") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command="", retcode=1)
 
 
 def _bare_parent() -> UnixHost:
     return UnixHost(
         ip=_PARENT_IP,
-        element=Element("probe"),
+        element=Element(name="probe"),
         creds=[Cred(login="u", password="p")],
         board="seed",
         docker_capable=True,
@@ -99,7 +99,7 @@ def _bare_parent() -> UnixHost:
 async def _real_decline(cmd: str = "docker ps -q") -> NotRunResult:
     """The decline a REAL ``host.exec`` produces under a dry run.
 
-    Not hand-built. ``CommandResult(Status.NotRun, ...)`` typed out here would
+    Not hand-built. ``CommandResult(status=Status.NotRun, ...)`` typed out here would
     still satisfy every guard below after the primitive stopped producing that
     shape -- and the primitive's shape (a ``NotRunResult`` whose ``value``
     raises) is precisely what the guards exist to catch. Asserted on the way
@@ -139,7 +139,7 @@ def _spied_parent() -> UnixHost:
     """A real ``UnixHost`` whose two device seams are counted, never dialled."""
     parent = _bare_parent()
     parent.exec = AsyncMock(side_effect=_router)  # type: ignore[method-assign]
-    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(status=Status.Success, value={}))  # type: ignore[method-assign]
     return parent
 
 
@@ -180,15 +180,15 @@ def _bed(tmp: Path) -> "tuple[Project, Lab, UnixHost]":
 
 
 def _call_build_images(project: Project, lab: Lab, parent: UnixHost) -> Any:
-    return build_images(project, parent)
+    return build_images(project=project, parent=parent)
 
 
 def _call_compose_up(project: Project, lab: Lab, parent: UnixHost) -> Any:
-    return compose_up(project, lab, parent=parent.id)
+    return compose_up(project=project, lab=lab, parent=parent.id)
 
 
 def _call_compose_down(project: Project, lab: Lab, parent: UnixHost) -> Any:
-    return compose_down(project, lab, parent=parent.id)
+    return compose_down(project=project, lab=lab, parent=parent.id)
 
 
 def _call_stage_image_context(project: Project, lab: Lab, parent: UnixHost) -> Any:
@@ -262,7 +262,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         entered = False
 
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError) as caught:
-            async with composed(project, lab, parent=parent.id, own=True):
+            async with composed(project=project, lab=lab, parent=parent.id, own=True):
                 entered = True
 
         assert entered is False, "a dry run entered the composed() body"
@@ -273,7 +273,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
 
         # POSITIVE CONTROL, same seam: the block IS entered, a container host
         # IS yielded, and the teardown IS compensated.
-        async with composed(project, lab, parent=parent.id, own=True) as hosts:
+        async with composed(project=project, lab=lab, parent=parent.id, own=True) as hosts:
             entered = True
             assert "api" in hosts, f"the control never registered a container: {hosts}"
         assert entered is True
@@ -292,14 +292,17 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         project, lab, parent = _bed(tmp_path)
 
         with active_context(lab=lab, dry_run=True):
-            assert await build_images(project, parent, image_names=["nosuchimage"]) == {}
+            assert (
+                await build_images(project=project, parent=parent, image_names=["nosuchimage"])
+                == {}
+            )
         assert parent.exec.await_count == 0
 
         # POSITIVE CONTROL: the same call naming a DECLARED image refuses,
         # so the {} above is the empty selection talking and not a dry run
         # that quietly answers {} for everything.
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError):
-            await build_images(project, parent, image_names=["api"])
+            await build_images(project=project, parent=parent, image_names=["api"])
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +651,9 @@ class TestEveryPublicDockerExportIsAdjudicated:
         from otto.docker import get_user_compose_project
 
         with active_context(dry_run=True):
-            assert get_user_compose_project("project1", "ci").startswith("otto-project1-")
+            assert get_user_compose_project(project_name="project1", suffix="ci").startswith(
+                "otto-project1-"
+            )
 
 
 class TestTheDeployVerbsOwnTheirDryRunPreview:
@@ -673,7 +678,7 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         from tests._fixtures.dispatch import DispatchRunner
 
         decline = CommandNotRunError(
-            f"{verb}(integration)", "test3", "Resolved plan: test3 <- project1[core]."
+            f"{verb}(integration)", host="test3", detail="Resolved plan: test3 <- project1[core]."
         )
         called: "list[str]" = []
 
@@ -723,7 +728,7 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         from tests._fixtures.dispatch import DispatchRunner
 
         decline = CommandNotRunError(
-            "build_on(test3)", "test3", "Build plan: test3 <- project1[api]."
+            "build_on(test3)", host="test3", detail="Build plan: test3 <- project1[api]."
         )
         called: "list[str]" = []
 

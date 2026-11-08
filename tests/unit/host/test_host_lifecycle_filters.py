@@ -42,7 +42,9 @@ class _ScriptedProduct(Product):
     def _record(self, phase):
         self.events.append(f"{self.name}:{phase}")
         ok = self.fail_on != phase
-        return Result(Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed")
+        return Result(
+            status=Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed"
+        )
 
     async def stage(self, host):
         del host
@@ -74,7 +76,9 @@ class _ScriptedTool(DevTool):
     def _record(self, phase):
         self.events.append(f"{self.name}:{phase}")
         ok = self.fail_on != phase
-        return Result(Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed")
+        return Result(
+            status=Status.Success if ok else Status.Failed, msg=f"{self.name} {phase} failed"
+        )
 
     async def stage(self, host):
         del host
@@ -322,7 +326,7 @@ async def test_cleanup_removes_dev_tools_through_the_extracted_verb(recording_ho
 
     async def _removal(owner=None):
         calls.append(owner)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     recording_host.uninstall_dev_tools = _removal
     events = []
@@ -343,7 +347,7 @@ async def test_cleanup_forwards_the_log_flags_to_uninstall(recording_host, tmp_p
 
     async def _uninstall(get_product_logs=True, get_debug_logs=True, owner=None):
         seen.update(product=get_product_logs, debug=get_debug_logs, owner=owner)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     recording_host.uninstall = _uninstall
     with active_context(output_dir=tmp_path):
@@ -473,7 +477,7 @@ async def test_cleanup_removes_the_toolchain_through_the_extracted_helper(record
 
     async def _removal():
         calls.append("remove")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     recording_host.remove_toolchain_tools = _removal
     recording_host.toolchain = Toolchain(tools=[_tool(dest="/d")])
@@ -546,11 +550,11 @@ async def test_host_cleanup_sweeps_every_owner_after_uninstall(recording_host, t
 
     async def _sweep(owner=None):
         events.append(("sweep", owner))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _tools(owner=None):
         events.append(("tools", owner))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     recording_host.remove_coverage_dirs = _sweep
     recording_host.uninstall_dev_tools = _tools
@@ -567,11 +571,13 @@ async def test_host_cleanup_reports_a_failed_sweep_and_still_removes_the_tooling
     tools = []
 
     async def _sweep(owner=None):
-        return Result(Status.Failed, msg="h1: cleanup left coverage data: app: left /x/a.gcda")
+        return Result(
+            status=Status.Failed, msg="h1: cleanup left coverage data: app: left /x/a.gcda"
+        )
 
     async def _tools(owner=None):
         tools.append(owner)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     recording_host.remove_coverage_dirs = _sweep
     recording_host.uninstall_dev_tools = _tools
@@ -605,7 +611,7 @@ async def test_remove_coverage_dirs_sweeps_only_the_owners_eligible_products(
 
     async def _spy(host, products):
         swept.append([p.name for p in products])
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     monkeypatch.setattr("otto.host.cov_sweep.remove_coverage", _spy)
     recording_host.products = [
@@ -642,7 +648,7 @@ async def test_remove_coverage_dirs_on_an_embedded_host_sends_nothing():
 
     board = EmbeddedHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         command_frame=ZephyrFrame(),
     )

@@ -103,7 +103,7 @@ async def dataplane_lab():
         yield lab
     finally:
         with contextlib.suppress(Exception):
-            await repair_link(lab, "soak-seg")
+            await repair_link(lab, ident="soak-seg")
         # The netdev is permanent bed infrastructure — prove repair left it
         # pristine on BOTH peers, but never let a dirty qdisc leak the host
         # connections: collect first, close, then judge.
@@ -148,13 +148,16 @@ async def test_churn_under_port_scoped_impairment(dataplane_lab) -> None:
     created: list[str] = []
     test2 = dataplane_lab.hosts[EXIT]
     chain = [(INGRESS, _DP_DEV), (EXIT, _DP_DEV)]
-    sel = Selector(PORT_IMPAIRED, "udp")
+    sel = Selector(port=PORT_IMPAIRED, proto="udp")
     await impair_link(
-        dataplane_lab, "soak-seg", ImpairmentParams(delay_ms=80.0, loss_pct=10.0), selector=sel
+        dataplane_lab,
+        ident="soak-seg",
+        params=ImpairmentParams(delay_ms=80.0, loss_pct=10.0),
+        selector=sel,
     )
     try:
         for cycle in range(SOAK_CYCLES):
-            added = await add_tunnel(dataplane_lab, chain, port=PORT_IMPAIRED, protocol="udp")
+            added = await add_tunnel(dataplane_lab, hosts=chain, port=PORT_IMPAIRED, protocol="udp")
             created.append(added.tunnel.id)
             discovery = await discover_tunnels(dataplane_lab)
             found = next((d for d in discovery.tunnels if d.tunnel.id == added.tunnel.id), None)
@@ -181,15 +184,15 @@ async def test_churn_under_port_scoped_impairment(dataplane_lab) -> None:
                     )
                 finally:
                     await remove_remote_file(test2, outfile)
-            report = await remove_tunnel(dataplane_lab, added.tunnel.id)
+            report = await remove_tunnel(dataplane_lab, tunnel_id=added.tunnel.id)
             assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
             created.remove(added.tunnel.id)
     finally:
         for tunnel_id in created:
             with contextlib.suppress(Exception):
-                await remove_tunnel(dataplane_lab, tunnel_id)
+                await remove_tunnel(dataplane_lab, tunnel_id=tunnel_id)
         with contextlib.suppress(Exception):
-            await repair_link(dataplane_lab, "soak-seg")
+            await repair_link(dataplane_lab, ident="soak-seg")
 
 
 @pytest.mark.asyncio
@@ -209,7 +212,7 @@ async def test_repeated_degrade_recover(tunnel_lab, reap_tunnels, tmp_path: Path
     chain = [(INGRESS, None), (EXIT, None)]
     cli_sut = cli_project_root(tmp_path)
     for cycle in range(SOAK_CYCLES):
-        added = await add_tunnel(tunnel_lab, chain, port=PORT_DEGRADE, protocol="udp")
+        added = await add_tunnel(tunnel_lab, hosts=chain, port=PORT_DEGRADE, protocol="udp")
         reap_tunnels.append(added.tunnel.id)
 
         observations, _unreachable = await discover_observations(tunnel_lab)
@@ -238,6 +241,6 @@ async def test_repeated_degrade_recover(tunnel_lab, reap_tunnels, tmp_path: Path
             assert added.tunnel.id in stdout, f"CLI list does not show {added.tunnel.id!r}"
             assert "degraded (" in stdout, f"CLI list does not render degradation: {stdout!r}"
 
-        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        report = await remove_tunnel(tunnel_lab, tunnel_id=added.tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)

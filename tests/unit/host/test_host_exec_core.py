@@ -88,7 +88,7 @@ class TestTheSharedCore:
     @pytest.mark.asyncio
     async def test_a_shell_command_carries_its_own_expects_timeout_and_log(self):
         host = _Recording()
-        sc = ShellCommand("cat", expects=[("more", " ")], timeout=3.0, log=LogMode.QUIET)
+        sc = ShellCommand(cmd="cat", expects=[("more", " ")], timeout=3.0, log=LogMode.QUIET)
         await host.exec(sc)
         call = host.exec_calls[0]
         assert call["cmd"] == "cat"
@@ -100,7 +100,7 @@ class TestTheSharedCore:
     @pytest.mark.asyncio
     async def test_call_level_expects_are_the_default_a_shell_command_inherits(self):
         host = _Recording()
-        await host.exec(ShellCommand("cat"), expects=("more", " "))
+        await host.exec(ShellCommand(cmd="cat"), expects=("more", " "))
         assert host.exec_calls[0]["expects"] == [("more", " ")]
 
     @pytest.mark.asyncio
@@ -179,7 +179,7 @@ class TestTheSharedCore:
         self,
     ):
         host = _Recording()
-        sc = ShellCommand("cat", expects=[("more", " ")])
+        sc = ShellCommand(cmd="cat", expects=[("more", " ")])
         await host.exec(sc)
         assert host.refuse_exec_expects_calls == 1
 
@@ -199,7 +199,7 @@ class TestTheSharedCore:
         """
         host = _Recording()
         with pytest.raises(TypeError, match="expects"):
-            await host.exec("id", 10.0)
+            await host.exec("id", expects=10.0)
         with pytest.raises(TypeError, match="expects"):
             await host.exec("id", expects="password")
         with pytest.raises(TypeError, match="expects"):
@@ -260,7 +260,7 @@ class TestOneCommandDifferential:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "cmd",
-        ["id", ShellCommand("cat", expects=[("more", " ")], timeout=2.0, log=LogMode.QUIET)],
+        ["id", ShellCommand(cmd="cat", expects=[("more", " ")], timeout=2.0, log=LogMode.QUIET)],
     )
     async def test_exec_and_run_hand_the_family_the_same_call(self, cmd):
         host = _Recording()

@@ -39,4 +39,4 @@ class NotAProduct:
 
 
 def not_a_class(entry, host):
-    return Result(Status.Success)
+    return Result(status=Status.Success)

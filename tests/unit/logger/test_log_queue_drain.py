@@ -60,7 +60,7 @@ def _otto_console_print() -> None:
 
 
 def _docker_observe() -> None:
-    result = CommandResult(Status.Success, value="lab: direct output\n", retcode=0)
+    result = CommandResult(status=Status.Success, value="lab: direct output\n", retcode=0)
     docker_cli._render_observe(ObserveReport([HostOutput("h1", "docker ps", result)]), header=False)
 
 

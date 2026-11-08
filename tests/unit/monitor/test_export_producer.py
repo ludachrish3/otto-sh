@@ -193,7 +193,7 @@ async def test_db_export_chart_map_survives_a_real_collector_run(tmp_path):
     await collector._process_host_results(
         "h1",
         T0,
-        [CommandResult(Status.Success, value="raw", command=parser.command, retcode=0)],
+        [CommandResult(status=Status.Success, value="raw", command=parser.command, retcode=0)],
         {parser.command: parser},
         ctx=ParseContext(ts=T0),
     )

@@ -61,13 +61,15 @@ def test_host_classes_raw_case(scratch):
         lazy=(
             "case-host",
             HostClassEntry(
-                cls=Ref(f"{scratch}:CaseHost"), spec=Ref("otto.host.specs:UnixHostSpec")
+                cls=Ref(target=f"{scratch}:CaseHost"),
+                spec=Ref(target="otto.host.specs:UnixHostSpec"),
             ),
         ),
         wrongly_typed_lazy=(
             "case-host",
             HostClassEntry(
-                cls=Ref(f"{scratch}:NotAHost"), spec=Ref("otto.host.specs:UnixHostSpec")
+                cls=Ref(target=f"{scratch}:NotAHost"),
+                spec=Ref(target="otto.host.specs:UnixHostSpec"),
             ),
         ),
     )
@@ -76,11 +78,11 @@ def test_host_classes_raw_case(scratch):
 def test_a_host_class_record_refuses_defaults_its_class_does_not_have():
     with pytest.raises(ValueError, match="unknown default field"):
         HOST_CLASSES.register(
-            "case-host",
-            HostClassEntry(
+            name="case-host",
+            entry=HostClassEntry(
                 cls=_host_class(0),
                 spec=UnixHostSpec,
-                profile=ProfileFields(FrozenMap({"osTyp": "unix"})),
+                profile=ProfileFields(defaults=FrozenMap(mapping={"osTyp": "unix"})),
             ),
         )
     assert "case-host" not in HOST_CLASSES
@@ -110,15 +112,15 @@ def test_register_os_profile_matches_the_raw_path():
     conformance.assert_wrapper_matches_raw(
         OS_PROFILES,
         via_wrapper=functools.partial(
-            register_os_profile, "case-profile", "unix", {"has_bash": False}
+            register_os_profile, "case-profile", "unix", defaults={"has_bash": False}
         ),
         record_for=lambda: OsProfile(
-            "case-profile", "unix", ProfileFields(FrozenMap({"has_bash": False}))
+            "case-profile", "unix", ProfileFields(defaults=FrozenMap(mapping={"has_bash": False}))
         ),
     )
 
 
 def test_a_code_profile_record_named_for_another_key_is_refused():
     with pytest.raises(ValueError, match="the profile record is named 'b'"):
-        OS_PROFILES.register("a", OsProfile("b", "unix"))
+        OS_PROFILES.register(name="a", entry=OsProfile("b", "unix"))
     assert "a" not in OS_PROFILES

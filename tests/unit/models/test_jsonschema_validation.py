@@ -94,7 +94,7 @@ def test_lab_schema_accepts_scaffolded_lab_json(lab_validator, tmp_path):
     """The very file `otto init` writes must validate against the emitted schema."""
     from otto.init import InitConfig, scaffold
 
-    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), ["lab"])
+    scaffold(InitConfig(tmp_path, "widget", "0.1.0"), areas=["lab"])
     doc = json.loads((tmp_path / "lab_data" / "lab.json").read_text())
     lab_validator.validate(doc)  # $schema + top-level/_ and host-level _comment
 

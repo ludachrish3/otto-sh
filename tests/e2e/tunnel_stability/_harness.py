@@ -84,10 +84,10 @@ async def add_remove_cycle(
 
     Returns the cycled tunnel id (deterministic per (chain, port) — spec §4 of
     the tunnel design: ``tun-<12hex>-<port>``)."""
-    added = await add_tunnel(lab, chain, port=port, protocol=protocol)
+    added = await add_tunnel(lab, hosts=chain, port=port, protocol=protocol)
     reap.append(added.tunnel.id)
     await assert_discovered(lab, added.tunnel.id, procs=procs, label=label)
-    report = await remove_tunnel(lab, added.tunnel.id)
+    report = await remove_tunnel(lab, tunnel_id=added.tunnel.id)
     assert added.tunnel.id in report.removed_ids, (
         f"{label}remove did not report {added.tunnel.id!r} as removed"
     )

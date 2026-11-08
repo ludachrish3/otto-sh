@@ -50,17 +50,17 @@ def test_replaces_names_every_built_in_class_seam_entry():
         (key, name)
         for key, table in live.items()
         for name in table.names()
-        if table.origin(name).startswith("otto.")
+        if table.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
 
 @pytest.mark.parametrize("name", _FRAMES)
 def test_a_replaced_frame_is_what_build_command_frame_builds(name):
-    base = type(build_command_frame(name))
+    base = type(build_command_frame(type_name=name))
     replacement = type("Replacement", (base,), {"type_name": name})
     register_command_frame(name, replacement, overwrite=True)
-    assert type(build_command_frame(name)) is replacement
+    assert type(build_command_frame(type_name=name)) is replacement
 
 
 @pytest.mark.parametrize("name", _LOADERS)
@@ -81,13 +81,13 @@ def test_a_replaced_filesystem_is_what_build_filesystem_builds(name):
 
 @pytest.mark.parametrize("name", _IMPAIRERS)
 def test_a_replaced_impairer_is_what_build_impairer_returns(name):
-    replacement = type("Replacement", (build_impairer(name),), {})
+    replacement = type("Replacement", (build_impairer(name=name),), {})
     register_impairer(name, replacement, overwrite=True)
-    assert build_impairer(name) is replacement
+    assert build_impairer(name=name) is replacement
 
 
 @pytest.mark.parametrize("name", _CARRIERS)
 def test_a_replaced_carrier_is_what_build_carrier_returns(name):
-    replacement = type("Replacement", (build_carrier(name),), {})
+    replacement = type("Replacement", (build_carrier(name=name),), {})
     register_carrier(name, replacement, overwrite=True)
-    assert build_carrier(name) is replacement
+    assert build_carrier(name=name) is replacement

@@ -104,7 +104,7 @@ async def remove_tunnels(lab: Any, tunnel_ids: list[str]) -> list[str]:
 
     removed: list[str] = []
     for tunnel_id in tunnel_ids:
-        report = await remove_tunnel(lab, tunnel_id)
+        report = await remove_tunnel(lab, tunnel_id=tunnel_id)
         if report.survivors:
             raise RuntimeError(
                 f"tunnel {tunnel_id}: processes survived removal: {report.survivors}"
@@ -124,7 +124,7 @@ async def repair_links(lab: Any) -> list[str]:
     """Repair every declared link; the failures, if any (a skipped link is no failure)."""
     from otto.link import repair_all
 
-    report = await repair_all(lab)
+    report = await repair_all(lab=lab)
     return list(report.failures)
 
 

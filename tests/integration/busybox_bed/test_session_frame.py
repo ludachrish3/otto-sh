@@ -110,7 +110,7 @@ async def test_the_recover_probes_status_is_its_own_lines(guest):
     """
     host, version = guest
     frame = BashFrame()
-    markers = SessionMarkers.for_session(_RECOVER_PROBE_SESSION_ID)
+    markers = SessionMarkers.for_session(session_id=_RECOVER_PROBE_SESSION_ID)
     probe = frame.recover(markers).rstrip("\n")
     res = await host.exec(f"(exit {_PRECEDING_CODE}); {probe}")
 

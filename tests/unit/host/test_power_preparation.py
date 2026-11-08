@@ -30,9 +30,9 @@ _UNIX = {"ip": "10.0.0.1"}
 _TABLE = {"type": "command", "on_cmd": "on {name}", "off_cmd": "off {name}", "controller": "hyp"}
 _MALFORMED = {"type": "command", "on_cmd": 5}
 _ROUTES = {
-    "doctor": lambda d: validate_host_dict(d, element=Element("e")),
-    "identity": lambda d: host_identity(d, Element("e")),
-    "construction": lambda d: create_host_from_dict(d, element=Element("e")),
+    "doctor": lambda d: validate_host_dict(host_data=d, element=Element(name="e")),
+    "identity": lambda d: host_identity(d, element=Element(name="e")),
+    "construction": lambda d: create_host_from_dict(d, element=Element(name="e")),
 }
 
 
@@ -82,13 +82,13 @@ def test_the_json_schema_shows_all_three_forms():
 
 
 def test_the_built_host_carries_the_controller_built_from_the_parse():
-    host = create_host_from_dict({**_UNIX, "power_control": _TABLE}, element=Element("e"))
+    host = create_host_from_dict({**_UNIX, "power_control": _TABLE}, element=Element(name="e"))
     assert isinstance(host.power_control, _CommandPowerController)
     assert host.power_control.config.controller == "hyp"
 
 
 def _build_kwargs(entry):
-    hc = host_context(entry, element=Element("e"))
+    hc = host_context(entry, element=Element(name="e"))
     return hc.spec.build_kwargs(hc.spec.validate_in(hc.context))
 
 
@@ -112,8 +112,8 @@ def test_a_parse_error_never_quotes_the_rejected_value():
         HostValidationError, match=r"host 'e': .*power controller 't-secret'.*parse failed"
     ) as exc:
         validate_host_dict(
-            {**_UNIX, "power_control": {"type": "t-secret", "password": "s3cret-value"}},
-            element=Element("e"),
+            host_data={**_UNIX, "power_control": {"type": "t-secret", "password": "s3cret-value"}},
+            element=Element(name="e"),
         )
     assert "s3cret-value" not in str(exc.value)
 
@@ -122,10 +122,10 @@ def test_no_controller_is_built_during_validation():
     _Recorder.built.clear()
     register_power_controller("t-rec", config=_SecretConfig, factory=_recording_factory)
     entry = {**_UNIX, "power_control": {"type": "t-rec", "password": 1}}
-    validate_host_dict(dict(entry), element=Element("e"))
-    host_identity(dict(entry), Element("e"))
+    validate_host_dict(host_data=dict(entry), element=Element(name="e"))
+    host_identity(dict(entry), element=Element(name="e"))
     assert _Recorder.built == []
-    create_host_from_dict(dict(entry), element=Element("e"))
+    create_host_from_dict(dict(entry), element=Element(name="e"))
     assert len(_Recorder.built) == 1
 
 
@@ -142,21 +142,21 @@ def test_an_uncopyable_config_fails_validation_naming_the_host(route):
 
 
 def test_the_build_s_prepared_power_passes_the_registry_s_provenance_check():
-    hc = host_context({**_UNIX, "power_control": _TABLE}, element=Element("e"))
+    hc = host_context({**_UNIX, "power_control": _TABLE}, element=Element(name="e"))
     ready = hc.spec.validate_in(hc.context)
     power = ready._payload.power
     assert power.registry is POWER_CONTROLLERS
-    assert isinstance(POWER_CONTROLLERS.build(power), _CommandPowerController)
+    assert isinstance(POWER_CONTROLLERS.build(prepared=power), _CommandPowerController)
 
 
 def test_stock_checks_then_check_in_once_then_preparation(monkeypatch):
     events: list[str] = []
     real_prepare = BackendRegistry.prepare
 
-    def spy(self, name, raw, env, *, source=None):
+    def spy(self, *, name, raw, env, source=None):
         if self is POWER_CONTROLLERS:
             events.append("prepare")
-        return real_prepare(self, name, raw, env, source=source)
+        return real_prepare(self, name=name, raw=raw, env=env, source=source)
 
     monkeypatch.setattr(BackendRegistry, "prepare", spy)
 
@@ -169,15 +169,18 @@ def test_stock_checks_then_check_in_once_then_preparation(monkeypatch):
     register_host_class("t-order", EmbeddedHost, spec=Order)
     base = {"ip": "192.0.2.1", "os_type": "t-order", "power_control": _TABLE}
     with pytest.raises(HostValidationError, match="supplies no command_frame"):
-        validate_host_dict(dict(base), element=Element("e"))  # a stock contextual failure
+        validate_host_dict(
+            host_data=dict(base), element=Element(name="e")
+        )  # a stock contextual failure
     assert events == []
     with pytest.raises(HostValidationError, match="refused by check_in"):
         validate_host_dict(
-            {**base, "command_frame": "zephyr", "name": "refuse"}, element=Element("e")
+            host_data={**base, "command_frame": "zephyr", "name": "refuse"},
+            element=Element(name="e"),
         )
     assert events == ["check_in"]
     events.clear()
-    validate_host_dict({**base, "command_frame": "zephyr"}, element=Element("e"))
+    validate_host_dict(host_data={**base, "command_frame": "zephyr"}, element=Element(name="e"))
     assert events == ["check_in", "prepare"]
 
 
@@ -223,7 +226,7 @@ def test_a_summary_keeps_a_host_whose_controller_is_registered_and_records_the_d
     register_power_controller("t-project", config=_SecretConfig, factory=_recording_factory)
     project = _lab(tmp_path, {"type": "t-project", "password": 1})
     assert {s.id for s in project.list_host_summaries()} == {"p"}
-    POWER_CONTROLLERS.unregister("t-project")
+    POWER_CONTROLLERS.unregister(name="t-project")
     with collecting_drops() as drops:
         assert project.list_host_summaries() == []
     assert any("t-project" in d.reason for d in drops)
@@ -240,7 +243,7 @@ class _CopyLeaksASecret(OttoModel):
 
 
 def _validate_in_context(d):
-    hc = host_context(d, element=Element("e"))
+    hc = host_context(d, element=Element(name="e"))
     return hc.spec.validate_in(hc.context)
 
 

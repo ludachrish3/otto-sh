@@ -220,7 +220,7 @@ async def test_mv_moves_file(tmp_path):
 async def test_write_then_read_round_trip(tmp_path):
     host = LocalHost()
     f = tmp_path / "note.txt"
-    result = await host.write_file(f, "hello\nworld\n")
+    result = await host.write_file(f, data="hello\nworld\n")
     assert result.status is Status.Success
     assert await host.read_file(f) == "hello\nworld\n"
 
@@ -229,8 +229,8 @@ async def test_write_then_read_round_trip(tmp_path):
 async def test_write_file_append(tmp_path):
     host = LocalHost()
     f = tmp_path / "log.txt"
-    await host.write_file(f, "a\n")
-    await host.write_file(f, "b\n", append=True)
+    await host.write_file(f, data="a\n")
+    await host.write_file(f, data="b\n", append=True)
     assert await host.read_file(f) == "a\nb\n"
 
 
@@ -239,7 +239,7 @@ async def test_write_file_handles_shell_special_chars(tmp_path):
     host = LocalHost()
     f = tmp_path / "tricky.txt"
     payload = "x';rm -rf /;$(echo bad)`echo worse`\n"
-    await host.write_file(f, payload)
+    await host.write_file(f, data=payload)
     assert await host.read_file(f) == payload  # base64 transport is injection-safe
 
 
@@ -257,7 +257,7 @@ async def test_read_file_round_trips_arbitrary_content_exactly(tmp_path):
     host = LocalHost()
     f = tmp_path / "exact.txt"
     payload = "trailing spaces   \n__OTTO_EOF__ in body\nno final newline"
-    await host.write_file(f, payload)
+    await host.write_file(f, data=payload)
     assert await host.read_file(f) == payload
 
 
@@ -276,7 +276,7 @@ async def test_read_file_round_trips_content_whose_base64_wraps_multiple_lines(t
     host = LocalHost()
     f = tmp_path / "wrapped.bin"
     payload = "y" * 200
-    await host.write_file(f, payload)
+    await host.write_file(f, data=payload)
     assert await host.read_file(f) == payload
 
 
@@ -333,7 +333,7 @@ def _zephyr_with_fs():
 
     return ZephyrHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         filesystem=build_filesystem("fat-ram"),
     )
@@ -396,7 +396,7 @@ async def test_embedded_unsupported_ops_fail_loud():
         host.cp("/a", "/b"),
         host.mv("/a", "/b"),
         host.read_file("/a"),
-        host.write_file("/a", "x"),
+        host.write_file("/a", data="x"),
     ):
         with pytest.raises(NotImplementedError):
             await coro

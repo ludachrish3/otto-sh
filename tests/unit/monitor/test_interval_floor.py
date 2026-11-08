@@ -20,14 +20,14 @@ from otto.utils import Status, wait_for_async
 
 class TestValidator:
     def test_accepts_the_floor_and_above(self) -> None:
-        assert validate_interval(1.0) == 1.0
-        assert validate_interval(5.0) == 5.0
+        assert validate_interval(seconds=1.0) == 1.0
+        assert validate_interval(seconds=5.0) == 5.0
 
     def test_rejects_below_the_floor_naming_the_value_and_the_reason(self) -> None:
         with pytest.raises(
             ValueError, match=r"^interval must be at least 1\.0s, got 0\.5s — a host needs time"
         ):
-            validate_interval(0.5)
+            validate_interval(seconds=0.5)
 
     def test_floor_is_one_second(self) -> None:
         assert MIN_INTERVAL_SECONDS == 1.0
@@ -72,9 +72,10 @@ def _make_instant_host(name: str) -> MagicMock:
         cmds: list[str], timeout: float | None = None, log: object = None
     ) -> Results:
         results = [
-            CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
+            CommandResult(status=Status.Success, value="42\n", command=cmd, retcode=0)
+            for cmd in cmds
         ]
-        return Results.collect(results)
+        return Results.collect(items=results)
 
     host.run = AsyncMock(side_effect=_run_cmds)
     return host

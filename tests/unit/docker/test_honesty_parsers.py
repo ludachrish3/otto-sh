@@ -58,7 +58,10 @@ def console(monkeypatch):
 
 def _built(refs: "list[str]", image_id: str = "cbd8571d4b6e") -> BuildReport:
     image = ImageBuild(
-        "project1-api", refs, image_id, CommandResult(Status.Success, value="built", retcode=0)
+        "project1-api",
+        refs,
+        image_id,
+        CommandResult(status=Status.Success, value="built", retcode=0),
     )
     return BuildReport(
         projects=[ProjectBuild("project1", "test3", "built", {"project1-api": image})]
@@ -319,7 +322,7 @@ async def test_names_a_missing_image_reads_the_failure_otto_wraps_it_in():
     parent = SimpleNamespace(
         id="test3",
         exec=AsyncMock(
-            return_value=CommandResult(Status.Failed, value=denied, command="", retcode=1)
+            return_value=CommandResult(status=Status.Failed, value=denied, command="", retcode=1)
         ),
     )
     with pytest.raises(HostCommandError) as raised:
@@ -420,7 +423,9 @@ def test_the_parsers_read_what_the_renderer_prints(capsys):
     from otto.docker.observe import HostOutput, ObserveReport
 
     def _out(host: str, text: str) -> HostOutput:
-        return HostOutput(host, "docker ps", CommandResult(Status.Success, value=text, retcode=0))
+        return HostOutput(
+            host, "docker ps", CommandResult(status=Status.Success, value=text, retcode=0)
+        )
 
     ps = "CONTAINER ID   IMAGE   NAMES\n3f1c2a9b7d10   img     c1\n"
     images = "REPOSITORY   TAG      IMAGE ID       SIZE\nr            latest   cbd8571d4b6e   1MB\n"
@@ -458,7 +463,7 @@ def test_parse_compose_ps_names_reads_what_the_renderer_prints(capsys):
         "NAME                 IMAGE   COMMAND   SERVICE   CREATED   STATUS   PORTS\n"
         "unix-project1-x-api-1   img     cmd       api       1m ago    Up 1 minute\n"
     )
-    done = CommandResult(Status.Success, value=text, retcode=0)
+    done = CommandResult(status=Status.Success, value=text, retcode=0)
     docker_cli._render_observe(
         ObserveReport([HostOutput("test3", "docker compose ps", done)]), header=True
     )

@@ -35,17 +35,17 @@ def _isolate_term_registry():
         yield
     finally:
         for name in set(conn_mod.TERM_BACKENDS.names()) - before:
-            conn_mod.TERM_BACKENDS.unregister(name)
+            conn_mod.TERM_BACKENDS.unregister(name=name)
 
 
 class TestBuiltins:
     def test_ssh_and_telnet_registered_to_connection_manager(self):
-        assert conn_mod.TERM_BACKENDS.peek("ssh").cls is ConnectionManager
-        assert conn_mod.TERM_BACKENDS.peek("telnet").cls is ConnectionManager
+        assert conn_mod.TERM_BACKENDS.peek(name="ssh").cls is ConnectionManager
+        assert conn_mod.TERM_BACKENDS.peek(name="telnet").cls is ConnectionManager
 
     def test_builtin_term_families(self):
-        assert conn_mod.TERM_BACKENDS.peek("ssh").metadata.host_families == frozenset({"unix"})
-        assert conn_mod.TERM_BACKENDS.peek("telnet").metadata.host_families == frozenset(
+        assert conn_mod.TERM_BACKENDS.peek(name="ssh").metadata.host_families == frozenset({"unix"})
+        assert conn_mod.TERM_BACKENDS.peek(name="telnet").metadata.host_families == frozenset(
             {"unix", "embedded"}
         )
 
@@ -53,10 +53,10 @@ class TestBuiltins:
 class TestRegistry:
     def test_unknown_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown term backend"):
-            build_term_backend("nope", _term_ctx())
+            build_term_backend(name="nope", ctx=_term_ctx())
         # known names are listed so a typo is diagnosable
         with pytest.raises(ValueError, match="ssh") as exc_info:
-            build_term_backend("nope", _term_ctx())
+            build_term_backend(name="nope", ctx=_term_ctx())
         assert "ssh" in str(exc_info.value)
         assert "telnet" in str(exc_info.value)
 
@@ -67,8 +67,10 @@ class TestRegistry:
         register_term_backend(
             "myterm", CustomTerm, host_families=frozenset({"unix"}), authenticates=True
         )
-        assert conn_mod.TERM_BACKENDS.peek("myterm").cls is CustomTerm
-        assert conn_mod.TERM_BACKENDS.peek("myterm").metadata.host_families == frozenset({"unix"})
+        assert conn_mod.TERM_BACKENDS.peek(name="myterm").cls is CustomTerm
+        assert conn_mod.TERM_BACKENDS.peek(name="myterm").metadata.host_families == frozenset(
+            {"unix"}
+        )
 
     def test_register_rejects_empty_families(self):
         class CustomTerm(ConnectionManager):
@@ -78,8 +80,8 @@ class TestRegistry:
             register_term_backend("bad", CustomTerm, host_families=frozenset(), authenticates=True)
 
     def test_built_in_terms_authenticate(self):
-        assert conn_mod.TERM_BACKENDS.peek("ssh").metadata.authenticates is True
-        assert conn_mod.TERM_BACKENDS.peek("telnet").metadata.authenticates is True
+        assert conn_mod.TERM_BACKENDS.peek(name="ssh").metadata.authenticates is True
+        assert conn_mod.TERM_BACKENDS.peek(name="telnet").metadata.authenticates is True
 
     def test_register_records_authenticates(self):
         class Quiet(ConnectionManager):
@@ -88,7 +90,7 @@ class TestRegistry:
         register_term_backend(
             "quiet", Quiet, host_families=frozenset({"unix"}), authenticates=False
         )
-        assert conn_mod.TERM_BACKENDS.peek("quiet").metadata.authenticates is False
+        assert conn_mod.TERM_BACKENDS.peek(name="quiet").metadata.authenticates is False
 
     def test_register_rejects_a_non_bool_authenticates(self):
         class Bad(ConnectionManager):
@@ -127,13 +129,13 @@ class TestCreate:
 
 class TestBuildsThroughTheRegistry:
     def test_build_term_backend_returns_a_built_backend(self):
-        cm = build_term_backend("ssh", _term_ctx())
+        cm = build_term_backend(name="ssh", ctx=_term_ctx())
         assert isinstance(cm, ConnectionManager)
         assert (cm.ip, cm.term) == ("10.0.0.5", "ssh")
 
     def test_an_unknown_term_names_the_stage_and_lists_names(self):
         with pytest.raises(TermConstructionError, match="lookup failed") as exc_info:
-            build_term_backend("sshh", _term_ctx())
+            build_term_backend(name="sshh", ctx=_term_ctx())
         assert isinstance(exc_info.value, ValueError)
         message = str(exc_info.value)
         assert "'ssh'" in message  # the near miss
@@ -147,7 +149,7 @@ class TestBuildsThroughTheRegistry:
 
         register_term_backend("boom", Boom, host_families=frozenset({"unix"}), authenticates=True)
         with pytest.raises(TermConstructionError, match="construction failed") as exc_info:
-            build_term_backend("boom", _term_ctx())
+            build_term_backend(name="boom", ctx=_term_ctx())
         assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     def test_a_create_returning_a_non_manager_is_a_result_error(self):
@@ -158,28 +160,28 @@ class TestBuildsThroughTheRegistry:
 
         register_term_backend("wrong", Wrong, host_families=frozenset({"unix"}), authenticates=True)
         with pytest.raises(TermConstructionError, match="result failed"):
-            build_term_backend("wrong", _term_ctx())
+            build_term_backend(name="wrong", ctx=_term_ctx())
 
     def test_a_reference_to_a_non_manager_is_a_resolution_error(self):
         register_term_backend(
             "notamanager",
-            Ref("otto.host.options:ConsoleOptions"),
+            Ref(target="otto.host.options:ConsoleOptions"),
             host_families=frozenset({"unix"}),
             authenticates=False,
         )
         with pytest.raises(TermConstructionError, match="resolution failed") as exc_info:
-            build_term_backend("notamanager", _term_ctx())
+            build_term_backend(name="notamanager", ctx=_term_ctx())
         assert isinstance(exc_info.value.__cause__, TypeError)
         assert "not a ConnectionManager subclass" in str(exc_info.value.__cause__)
 
     def test_term_metadata_is_read_without_importing(self):
         register_term_backend(
             "lazy",
-            Ref("never_imported_term_mod:Term"),
+            Ref(target="never_imported_term_mod:Term"),
             host_families=frozenset({"unix"}),
             authenticates=False,
         )
-        metadata = conn_mod.TERM_BACKENDS.peek("lazy").metadata
+        metadata = conn_mod.TERM_BACKENDS.peek(name="lazy").metadata
         assert (metadata.host_families, metadata.authenticates, metadata.dials_host) == (
             frozenset({"unix"}),
             False,

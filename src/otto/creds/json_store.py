@@ -29,7 +29,7 @@ def _validated(source: str, key: str, idx: int, entry: Any) -> CredSpec:
         ) from e
 
 
-def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpec]]:
+def parse_creds_document(*, data: object, source: str) -> dict[str, list[CredSpec]]:
     """``{key: [CredSpec, ...]}`` from a parsed creds document.
 
     Errors name *source*, the key, the index and the field.
@@ -66,7 +66,7 @@ class _JsonCredsStore(JsonFileSource):
     def _load(self) -> dict[str, list[CredSpec]]:
         if self._creds is None:
             self._creds = parse_creds_document(
-                self.read_document(CredsError), source=str(self.path)
+                data=self.read_document(refuse=CredsError), source=str(self.path)
             )
         return self._creds
 

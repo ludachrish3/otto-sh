@@ -262,7 +262,7 @@ class TestElevationThatNeverAnswers:
                 timeout = kw.get("timeout")
                 seen.append(timeout if isinstance(timeout, float | int) else None)
                 return Results.collect(
-                    [
+                    items=[
                         CommandResult(
                             status=Status.Error,
                             value=f"Command timed out after {timeout}s\n[sudo] password for v:",

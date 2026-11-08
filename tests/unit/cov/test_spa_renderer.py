@@ -113,7 +113,7 @@ class TestEmptyStoreReport:
     def test_render_writes_the_search_and_symbols_chunks(self, tmp_path, hermetic_covapp_bundle):
         src = _write(tmp_path, "a.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(src).get_or_create_line(1).hits.add("system", 1)
+        store.get_or_create_file(path=src).get_or_create_line(1).hits.add("system", 1)
         out = tmp_path / "report"
         SpaRenderer(out).render(store)
         assert (out / "cov_data" / "search.js").exists()
@@ -124,7 +124,7 @@ class TestPrefixAndChunkNaming:
     def test_prefix_strips_display_path_but_chunk_name_uses_full_path(self, tmp_path):
         src = _write(tmp_path, "proj/f.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
         fr.lines[1] = LineRecord(line_number=1, hits=LineHits(counts={"system": 1}))
 
         out = tmp_path / "report"
@@ -141,7 +141,7 @@ class TestOutOfRangeTolerance:
     def test_out_of_range_line_included_in_chunk_without_crash(self, tmp_path):
         src = _write(tmp_path, "f.c", "a;\nb;\nc;\n")
         store = CoverageStore(tier_order=["system"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
         fr.lines[999] = LineRecord(line_number=999, state="stale")
 
         out = tmp_path / "report"
@@ -219,8 +219,8 @@ class TestExcludedLinesRoundTripThroughReporter:
         out = tmp_path / "report"
         store = await run_coverage_report(
             [],
-            out,
-            ReportInputs(
+            output_dir=out,
+            inputs=ReportInputs(
                 project_root=project,
                 project_name="proj",
                 tier_configs=load_tiers(cov_config, root=project),

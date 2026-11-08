@@ -180,7 +180,7 @@ def test_the_construction_errors_are_value_errors_under_each_seam_s_base():
 )
 def test_a_json_parse_failure_never_echoes_the_rejected_value(tmp_path, table, env, raw, error):
     with pytest.raises(error, match="parse failed") as err:
-        table.prepare("json", raw, env(tmp_path, "o.toml"), source="o.toml")
+        table.prepare(name="json", raw=raw, env=env(tmp_path, "o.toml"), source="o.toml")
     assert "hunter2-secret" not in str(err.value)
 
 
@@ -196,6 +196,6 @@ def test_a_json_path_that_cannot_anchor_never_echoes_it(tmp_path, table, env, er
     """The built-in model's own validator names the rule, never the value it refused."""
     raw = {"path": "~nosuchuser_xyz/hunter2-secret"}
     with pytest.raises(error, match="parse failed: path: ") as err:
-        table.prepare("json", raw, env(tmp_path, "o.toml"), source="o.toml")
+        table.prepare(name="json", raw=raw, env=env(tmp_path, "o.toml"), source="o.toml")
     assert "hunter2-secret" not in str(err.value)
     assert "nosuchuser_xyz" not in str(err.value)

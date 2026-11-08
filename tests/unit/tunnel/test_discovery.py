@@ -37,7 +37,7 @@ def _ps_line(
     tunnel: Tunnel = TUNNEL,
 ) -> str:
     token = encode_sentinel(
-        tunnel, direction=direction, role=role, hop_index=hop, carrier_port=carrier
+        tunnel=tunnel, direction=direction, role=role, hop_index=hop, carrier_port=carrier
     )
     return f"  {pid} {etime} {token} UDP4-LISTEN:5000,fork ..."
 

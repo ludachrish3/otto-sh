@@ -52,7 +52,7 @@ def bed_parent() -> UnixHost:
     """
     return UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -85,7 +85,7 @@ def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
     try:
         yield UnixHost(
             ip="127.0.0.1",
-            element=Element("loopback"),
+            element=Element(name="loopback"),
             creds=[Cred(login=getpass.getuser(), password="unused-pubkey-auth")],
             board="seed",
             is_virtual=True,

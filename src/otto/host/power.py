@@ -237,12 +237,12 @@ class _CommandPowerController(PowerController):
     @override
     async def on(self, host: "Host") -> Result:
         cmd_result = await self._exec(self.config.on_cmd, host)
-        return Result(cmd_result.status, msg=cmd_result.value)
+        return Result(status=cmd_result.status, msg=cmd_result.value)
 
     @override
     async def off(self, host: "Host") -> Result:
         cmd_result = await self._exec(self.config.off_cmd, host)
-        return Result(cmd_result.status, msg=cmd_result.value)
+        return Result(status=cmd_result.status, msg=cmd_result.value)
 
     @override
     async def status(self, host: "Host") -> PowerState | None:
@@ -288,10 +288,10 @@ POWER_CONTROLLERS: "BackendRegistry[PowerEnv, PowerController, None]" = BackendR
 """Every power controller, by the ``type`` a host's ``power_control`` names."""
 
 POWER_CONTROLLERS.register(
-    "command",
-    configured_backend(
-        config=Ref("otto.host.power:CommandPowerConfig"),
-        factory=Ref("otto.host.power:_command_power"),
+    name="command",
+    entry=configured_backend(
+        config=Ref(target="otto.host.power:CommandPowerConfig"),
+        factory=Ref(target="otto.host.power:_command_power"),
         metadata=None,
     ),
 )
@@ -323,14 +323,14 @@ def register_power_controller(
         otto.registry.DuplicateRegistration: If *type_name* is taken and *overwrite* is false.
     """
     POWER_CONTROLLERS.register(
-        type_name,
-        configured_backend(config=config, factory=factory, metadata=None),
+        name=type_name,
+        entry=configured_backend(config=config, factory=factory, metadata=None),
         overwrite=overwrite,
     )
 
 
 def build_power_controller(
-    type_name: str, config: "Mapping[str, object]", *, host_id: str
+    *, type_name: str, config: "Mapping[str, object]", host_id: str
 ) -> PowerController:
     """Prepare and build the controller registered under *type_name* for host *host_id*.
 
@@ -342,13 +342,16 @@ def build_power_controller(
             :class:`PowerController`.
     """
     return POWER_CONTROLLERS.build(
-        POWER_CONTROLLERS.prepare(
-            type_name, config, PowerEnv(host_id), source=f"power_control of host {host_id!r}"
+        prepared=POWER_CONTROLLERS.prepare(
+            name=type_name,
+            raw=config,
+            env=PowerEnv(host_id),
+            source=f"power_control of host {host_id!r}",
         )
     )
 
 
-def power_control_from_spec(value: object, *, host_id: str) -> PowerController | None:
+def power_control_from_spec(*, value: object, host_id: str) -> PowerController | None:
     """Coerce a lab-data value into a :class:`PowerController` instance for host *host_id*.
 
     Accepts ``None`` / an existing instance (pass-through), a ``str`` (a
@@ -363,7 +366,7 @@ def power_control_from_spec(value: object, *, host_id: str) -> PowerController |
     if value is None or isinstance(value, PowerController):
         return value
     if isinstance(value, str):
-        return build_power_controller(value, {}, host_id=host_id)
+        return build_power_controller(type_name=value, config={}, host_id=host_id)
     if isinstance(value, dict):
         table = dict(value)
         if "type" not in table:
@@ -372,5 +375,5 @@ def power_control_from_spec(value: object, *, host_id: str) -> PowerController |
                 f"(registered: {', '.join(sorted(POWER_CONTROLLERS.names()))})"
             )
         type_name = table.pop("type")
-        return build_power_controller(type_name, table, host_id=host_id)
+        return build_power_controller(type_name=type_name, config=table, host_id=host_id)
     raise ValueError(f"cannot build a PowerController from {value!r}")

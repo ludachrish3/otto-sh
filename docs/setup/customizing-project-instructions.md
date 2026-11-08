@@ -103,7 +103,7 @@ class BedActions(ProjectActions):  # one registered class per project -- the sam
     async def deploy(self, opts: DeployOpts) -> Result:
         """Deploy this project's build."""
         ...  # your work, opts.build in hand
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 ```
 
 `otto run deploy` now exists, walks every project that has a `deploy` body in

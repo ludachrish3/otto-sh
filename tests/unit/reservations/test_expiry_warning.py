@@ -34,7 +34,7 @@ class _Rows(ReservationBackendBase):
         super().__init__(username="alice")
         self.rows = rows
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return self.rows
 
     def backend_name(self):
@@ -44,7 +44,10 @@ class _Rows(ReservationBackendBase):
 def _announce(rows, needed, *, now):
     """Announce what a report built over *rows* and the *needed* resources says is expiring."""
     lab = Lab(name="lab1", resources=set(needed))
-    announce_expiring(build_report(lab, "alice", _Rows(rows), host_ids=[], now=now), now=now)
+    announce_expiring(
+        report=build_report(lab=lab, username="alice", backend=_Rows(rows), host_ids=[], now=now),
+        now=now,
+    )
 
 
 def _rows(**kw):
@@ -213,7 +216,7 @@ def test_announce_expiring_logs_one_warning_per_expiring_booking(caplog):
 
     report = _report(Reservation(user="alice", resource="rack1", end=NOW + timedelta(minutes=2)))
     with caplog.at_level("WARNING"):
-        announce_expiring(report, now=NOW)
+        announce_expiring(report=report, now=NOW)
     assert len(caplog.records) == 1
     assert "'rack1'" in caplog.text
     assert "expires in 2 minute(s)" in caplog.text
@@ -224,8 +227,8 @@ def test_announce_expiring_announces_a_report_once(caplog):
 
     report = _report(Reservation(user="alice", resource="rack1", end=NOW + timedelta(minutes=2)))
     with caplog.at_level("WARNING"):
-        announce_expiring(report, now=NOW)
-        announce_expiring(report, now=NOW)
+        announce_expiring(report=report, now=NOW)
+        announce_expiring(report=report, now=NOW)
     assert len(caplog.records) == 1
 
 
@@ -233,5 +236,5 @@ def test_announce_expiring_with_nothing_expiring_logs_nothing(caplog):
     from otto.reservations.check import announce_expiring
 
     with caplog.at_level("WARNING"):
-        announce_expiring(_report(), now=NOW)
+        announce_expiring(report=_report(), now=NOW)
     assert caplog.text == ""

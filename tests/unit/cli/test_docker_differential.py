@@ -38,8 +38,9 @@ ROWS = [
     (
         ["build", "--parent", "test3"],
         "otto.docker.build_verbs.build_on",
-        ("test3",),
+        (),
         {
+            "parent": "test3",
             "project": None,
             "images": None,
             "tags": None,
@@ -53,8 +54,9 @@ ROWS = [
     (
         ["build", "--parent", "test3", "--project", "r1", "api", "db"],
         "otto.docker.build_verbs.build_on",
-        ("test3",),
+        (),
         {
+            "parent": "test3",
             "project": "r1",
             "images": ["api", "db"],
             "tags": None,
@@ -165,15 +167,15 @@ ROWS = [
     (
         ["logs", "web-1"],
         "otto.docker.observe.container_logs",
-        ("web-1",),
-        {"parent": None, "tail": None, "since": None, "timestamps": False},
+        (),
+        {"container": "web-1", "parent": None, "tail": None, "since": None, "timestamps": False},
         ObserveReport([]),
     ),
     (
         ["compose", "ps", "integration", "-a", "--parent", "test3", "--provide", "db=r2"],
         "otto.docker.observe.compose_ps",
-        ("integration",),
-        {"all": True, "parent": "test3", "provide": {"db": "r2"}},
+        (),
+        {"use_case": "integration", "all": True, "parent": "test3", "provide": {"db": "r2"}},
         ObserveReport([]),
     ),
     (
@@ -193,8 +195,10 @@ ROWS = [
             "-t",
         ],
         "otto.docker.observe.compose_logs",
-        ("integration", ["api"]),
+        (),
         {
+            "use_case": "integration",
+            "services": ["api"],
             "parent": "test3",
             "provide": {"db": "r2"},
             "tail": "5",
@@ -236,15 +240,15 @@ ROWS = [
     (
         ["image", "rm", "api"],
         "otto.docker.image_verbs.remove_images",
-        (["api"],),
-        {"force": False, "no_prune": False, "parent": None},
+        (),
+        {"images": ["api"], "force": False, "no_prune": False, "parent": None},
         ObserveReport([]),
     ),
     (
         ["image", "rm", "api", "db:1", "-f", "--no-prune", "--parent", "alt2"],
         "otto.docker.image_verbs.remove_images",
-        (["api", "db:1"],),
-        {"force": True, "no_prune": True, "parent": "alt2"},
+        (),
+        {"images": ["api", "db:1"], "force": True, "no_prune": True, "parent": "alt2"},
         ObserveReport([]),
     ),
     (

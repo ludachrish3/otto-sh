@@ -137,7 +137,7 @@ def _parse_region(annotation: Any, region: str | None) -> Any:
         if isinstance(element, type) and issubclass(element, Parsed):
             return parse_all(element, region)
     elif isinstance(inner, type) and issubclass(inner, Parsed):
-        return parse_one(inner, region)
+        return parse_one(inner, text=region)
     return region
 
 
@@ -163,7 +163,7 @@ def _from_match(model: type[Parsed], match: re.Match[str]) -> Parsed:
         raise ParseMismatch(f"{model.__name__}: matched but validation failed: {exc}") from exc
 
 
-def parse_one(model: type[Parsed], text: str) -> Parsed:
+def parse_one(model: type[Parsed], *, text: str) -> Parsed:
     """Search ``text`` with ``model.pattern`` and build a single instance.
 
     Raises :class:`ParseMismatch` (naming the pattern) if nothing matches.
@@ -179,7 +179,7 @@ def parse_all(model: type[Parsed], text: str) -> list[Parsed]:
     return [_from_match(model, match) for match in model.pattern.finditer(text)]
 
 
-def apply_parse(spec: Any, text: str) -> Any:
+def apply_parse(spec: Any, *, text: str) -> Any:
     """Apply a ``parse=`` spec to ``text`` and return the parsed value.
 
     ``spec`` is a :class:`Parsed` subclass (single :func:`parse_one`), a
@@ -187,7 +187,7 @@ def apply_parse(spec: Any, text: str) -> Any:
     escape hatch — its exceptions are wrapped in :class:`ParseMismatch`.
     """
     if isinstance(spec, type) and issubclass(spec, Parsed):
-        return parse_one(spec, text)
+        return parse_one(spec, text=text)
     if get_origin(spec) is list:
         (element,) = get_args(spec)
         if isinstance(element, type) and issubclass(element, Parsed):
@@ -285,7 +285,7 @@ class AppShell:
     becomes the default for every :meth:`cmd` in that session), and per-command
     via ``cmd(timeout=)`` (wins over both)."""
 
-    def __init__(self, session: "HostSession", timeout: float | None = None) -> None:
+    def __init__(self, *, session: "HostSession", timeout: float | None = None) -> None:
         self._session = session
         # This session's effective default prompt-wait: the per-session
         # override if one was given at attach() time, else the class default.
@@ -347,7 +347,7 @@ class AppShell:
            :meth:`~otto.host.host.BaseHost.app_shell` is unaffected: it owns and
            closes the session for you.
         """
-        shell = cls(session, timeout=timeout)
+        shell = cls(session=session, timeout=timeout)
         await shell._enter()
         try:
             yield shell
@@ -435,7 +435,7 @@ class AppShell:
         await self._session.send(text + "\n")
         wait = timeout if timeout is not None else self._timeout
         try:
-            out = await self._session.expect(self.prompt, wait)
+            out = await self._session.expect(self.prompt, timeout=wait)
         except (TimeoutError, asyncio.TimeoutError) as exc:
             self._broken = True
             raise AppShellTimeoutError(
@@ -444,12 +444,14 @@ class AppShell:
             ) from exc
         body = self._strip_output(text, out)
         if parse is None:
-            return ShellResult(Status.Success, value=body, command=text, output=body)
+            return ShellResult(status=Status.Success, value=body, command=text, output=body)
         try:
-            value = apply_parse(parse, body)
+            value = apply_parse(parse, text=body)
         except ParseMismatch as exc:
-            return ShellResult(Status.Failed, value=None, msg=str(exc), command=text, output=body)
-        return ShellResult(Status.Success, value=value, command=text, output=body)
+            return ShellResult(
+                status=Status.Failed, value=None, msg=str(exc), command=text, output=body
+            )
+        return ShellResult(status=Status.Success, value=value, command=text, output=body)
 
     def _strip_output(self, text: str, out: str) -> str:
         """Reduce a raw ``expect`` capture to the command's output.

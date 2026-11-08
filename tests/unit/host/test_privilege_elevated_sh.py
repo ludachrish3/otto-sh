@@ -35,11 +35,13 @@ class _RunHost:
 
     async def run(self, cmd, **kwargs):
         self.run_calls.append((cmd, kwargs))
-        return Results.collect([CommandResult(Status.Success, value="", command=cmd, retcode=0)])
+        return Results.collect(
+            items=[CommandResult(status=Status.Success, value="", command=cmd, retcode=0)]
+        )
 
     async def exec(self, cmd, **kwargs):
         self.exec_calls.append(cmd)
-        return CommandResult(Status.Error, value="Permission denied", command=cmd, retcode=1)
+        return CommandResult(status=Status.Error, value="Permission denied", command=cmd, retcode=1)
 
 
 @pytest.mark.asyncio
@@ -101,14 +103,18 @@ async def test_every_elevated_coverage_caller_goes_through_the_core(monkeypatch)
         seen.append((host, script, kwargs))
         value = framed(script, "")
         return Results.collect(
-            [CommandResult(Status.Success, value=value, command=f"sh -c {script}", retcode=0)]
+            items=[
+                CommandResult(
+                    status=Status.Success, value=value, command=f"sh -c {script}", retcode=0
+                )
+            ]
         )
 
     monkeypatch.setattr(privilege, "run_sh_elevated", _recorder)
     host = _RunHost()
 
     docker = _docker_product()
-    assert (await docker.reset_coverage(host)).is_ok
+    assert (await docker.reset_coverage(host=host)).is_ok
     assert (await _kmod_product()._run_sudo(host, "echo 1 > /x")).is_ok
     await cov_sweep.remove_coverage(host, [docker])
 

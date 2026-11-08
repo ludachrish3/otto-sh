@@ -58,7 +58,7 @@ class TestFeatureSelection:
     async def test_unknown_feature_is_a_value_error_listing_the_valid_ones(self) -> None:
         lab, test1, *_ = bed()
         with pytest.raises(ValueError, match="'bogus'") as info:
-            await check_link(lab, "edge", features=["delay", "bogus"])
+            await check_link(lab=lab, ident="edge", features=["delay", "bogus"])
         for name in FEATURES:
             assert name in str(info.value)
         assert test1.commands == []
@@ -66,7 +66,7 @@ class TestFeatureSelection:
     @pytest.mark.asyncio
     async def test_read_back_always_runs_even_when_narrowed(self) -> None:
         lab, *_ = bed()
-        report = await check_link(lab, "edge", features=["delay"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["delay"], from_host="test1")
         assert report.features == ["read-back", "delay"]
         assert [r.feature for r in report.hosts[0].sandbox] == ["read-back", "delay"]
 
@@ -74,7 +74,7 @@ class TestFeatureSelection:
     async def test_features_come_back_in_canonical_order(self) -> None:
         lab, *_ = bed()
         report = await check_link(
-            lab, "edge", features=["side", "delay", "loss"], from_host="test1"
+            lab=lab, ident="edge", features=["side", "delay", "loss"], from_host="test1"
         )
         assert report.features == ["read-back", "delay", "loss", "side"]
 
@@ -83,7 +83,7 @@ class TestRefusalAndDryRun:
     @pytest.mark.asyncio
     async def test_refused_link_is_the_result(self) -> None:
         lab, test1, test2, test3 = bed()
-        report = await check_link(lab, "bare")
+        report = await check_link(lab=lab, ident="bare")
         assert report.refusal is not None
         assert "no named interface" in report.refusal
         assert report.refusal_hint is not None
@@ -96,7 +96,7 @@ class TestRefusalAndDryRun:
     async def test_dry_run_contacts_nothing_and_plans_everything(self) -> None:
         lab, test1, test2, test3 = bed()
         with active_context(dry_run=True):
-            report = await check_link(lab, "edge", live=True)
+            report = await check_link(lab=lab, ident="edge", live=True)
         assert test1.commands + test2.commands + test3.commands == []
         assert report.hosts == []
         plan = report.dry_run_plan
@@ -139,14 +139,14 @@ class TestRefusalAndDryRun:
     async def test_dry_run_names_no_listeners_when_no_row_needs_them(self) -> None:
         lab, *_ = bed()
         with active_context(dry_run=True):
-            report = await check_link(lab, "edge", live=True, features=["delay"])
+            report = await check_link(lab=lab, ident="edge", live=True, features=["delay"])
         assert not any("listeners" in line for line in report.dry_run_plan)
 
     @pytest.mark.asyncio
     async def test_dry_run_in_path_says_placement_is_resolved_at_run_time(self) -> None:
         lab, test1, test2, test3 = bed()
         with active_context(dry_run=True):
-            report = await check_link(lab, "dataplane")
+            report = await check_link(lab=lab, ident="dataplane")
         assert test1.commands + test2.commands + test3.commands == []
         assert report.dry_run_plan[0] == (
             "placement on middlebox test3: resolved from its live address table at run time"
@@ -162,7 +162,7 @@ class TestPlacement:
     @pytest.mark.asyncio
     async def test_in_path_groups_both_directions_into_one_sandbox(self) -> None:
         lab, test1, test2, test3 = bed()
-        report = await check_link(lab, "dataplane", features=["read-back"])
+        report = await check_link(lab=lab, ident="dataplane", features=["read-back"])
         assert [h.host_id for h in report.hosts] == ["test3"]
         assert [(p.netdev, p.direction.value) for p in report.hosts[0].placements] == [
             ("eth1.200", "a->b"),
@@ -174,7 +174,7 @@ class TestPlacement:
     @pytest.mark.asyncio
     async def test_from_narrows_to_one_host(self) -> None:
         lab, test1, *_ = bed()
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test2")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test2")
         assert [h.host_id for h in report.hosts] == ["test2"]
         assert test1.commands == []
 
@@ -184,7 +184,7 @@ class TestSkips:
     async def test_an_elevation_that_fails_skips_every_sandbox_row(self) -> None:
         said = "sudo: 3 incorrect password attempts"
         lab, test1, *_ = bed(elevation=(False, said))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = report.hosts[0].sandbox
         assert [r.feature for r in rows] == FEATURES
         assert {r.verdict for r in rows} == {Verdict.SKIPPED}
@@ -203,7 +203,7 @@ class TestSkips:
     async def test_a_sudo_that_asks_for_a_password_still_runs_the_sandbox(self) -> None:
         """No ``sudo -n``: a password sudo otto answers from the lab's credentials is root."""
         lab, test1, *_ = bed(elevation=(True, "[sudo] password for vagrant: \n0\n"))
-        report = await check_link(lab, "edge", features=["delay"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["delay"], from_host="test1")
         assert _verdicts(report) == {"read-back": Verdict.PASS, "delay": Verdict.PASS}
         assert "id -u" in test1.sudo_commands, "asked through otto's elevation"
         assert not any("sudo -n" in c for c in test1.commands)
@@ -213,21 +213,21 @@ class TestSkips:
     @pytest.mark.asyncio
     async def test_no_netns_skips_every_sandbox_row(self) -> None:
         lab, *_ = bed(fingerprint=MODERN.replace("netns=1", "netns=0"))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         assert {r.verdict for r in report.hosts[0].sandbox} == {Verdict.SKIPPED}
         assert {r.hint for r in report.hosts[0].sandbox} == {"needs ip netns support on test1"}
 
     @pytest.mark.asyncio
     async def test_no_tc_skips_every_sandbox_row(self) -> None:
         lab, *_ = bed(fingerprint=MODERN.replace("tool:tc=1", "tool:tc=0"))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         assert {r.hint for r in report.hosts[0].sandbox} == {"tc not found on test1"}
 
     @pytest.mark.asyncio
     async def test_sandbox_setup_failure_skips_with_its_output(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("ip link add", "RTNETLINK answers: Operation not permitted", ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = report.hosts[0].sandbox
         assert {r.verdict for r in rows} == {Verdict.SKIPPED}
         assert {r.output for r in rows} == {"RTNETLINK answers: Operation not permitted"}
@@ -240,13 +240,13 @@ class TestSkips:
     async def test_a_down_host_is_a_host_named_error(self) -> None:
         lab, *_ = bed(fail_all=True)
         with pytest.raises(CheckHostUnreachableError, match="'test1'"):
-            await check_link(lab, "edge")
+            await check_link(lab=lab, ident="edge")
 
     @pytest.mark.asyncio
     async def test_an_old_leftover_sandbox_is_swept_and_reported(self) -> None:
         stale = _stale("otto-check-abc123", age_s=SWEEP_MIN_AGE_S + 60)
         lab, test1, *_ = bed(stale=f"{stale}user-ns\n")
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         said = (
             "swept leftover sandbox otto-check-abc123 on test1 "
             f"(earlier or concurrent run, created {(SWEEP_MIN_AGE_S + 60) // 60} min ago)"
@@ -259,7 +259,7 @@ class TestSkips:
     @pytest.mark.asyncio
     async def test_a_young_leftover_sandbox_is_left_and_the_check_still_runs(self) -> None:
         lab, test1, *_ = bed(stale=_stale("otto-check-abc123", age_s=40))
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         assert report.hosts[0].swept == [
             "left otto-check-abc123 namespace on test1 (created 40 s ago — may be a running check)"
         ]
@@ -269,7 +269,7 @@ class TestSkips:
     @pytest.mark.asyncio
     async def test_a_leftover_sandbox_whose_age_the_host_cannot_give_is_swept(self) -> None:
         lab, test1, *_ = bed(stale="otto-check-abc123 (id: 0)\n@now 9000\n")
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         assert report.hosts[0].swept == [
             (
                 "swept leftover sandbox otto-check-abc123 on test1 (earlier or concurrent run, "
@@ -291,7 +291,7 @@ class TestNoTwoSandboxesShareA30:
         test1.routes["198.18.0.0/30"] = young.veth
         draws = iter(["008000", "a1b2c3"])  # 0x8000 picks block 0 too: the young one's
         monkeypatch.setattr(sandbox, "_draw_token", lambda: next(draws))
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         assert "ip netns add otto-check-a1b2c3" in test1.commands
         assert not any("otto-check-008000" in c for c in test1.commands)
         assert _verdicts(report) == {"read-back": Verdict.PASS}
@@ -305,7 +305,9 @@ class TestNoTwoSandboxesShareA30:
         pin_sandbox(monkeypatch)
         lab, test1, *_ = bed()
         test1.routes["198.18.0.0/30"] = "ock5ec0nd"
-        report = await check_link(lab, "edge", features=["read-back", "delay"], from_host="test1")
+        report = await check_link(
+            lab=lab, ident="edge", features=["read-back", "delay"], from_host="test1"
+        )
         rows = report.hosts[0].sandbox
         assert {r.verdict for r in rows} == {Verdict.FAIL}
         clash = (
@@ -337,10 +339,10 @@ class TestTwoChecksAtOnceOnOneHost:
 
         async def once_the_first_has_its_namespace() -> LinkCheckReport:
             await test1.signalled.wait()
-            return await check_link(lab, "edge", from_host="test1")
+            return await check_link(lab=lab, ident="edge", from_host="test1")
 
         first, second = await asyncio.gather(
-            check_link(lab, "edge", from_host="test1"), once_the_first_has_its_namespace()
+            check_link(lab=lab, ident="edge", from_host="test1"), once_the_first_has_its_namespace()
         )
 
         commands = test1.commands
@@ -378,7 +380,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_happy_path_all_pass(self) -> None:
         lab, test1, test2, _ = bed()
-        report = await check_link(lab, "edge")
+        report = await check_link(lab=lab, ident="edge")
         assert [h.host_id for h in report.hosts] == ["test1", "test2"]
         for index in range(2):
             assert _verdicts(report, index) == dict.fromkeys(FEATURES, Verdict.PASS), _rows(
@@ -393,7 +395,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_every_result_carries_the_commands_and_output(self) -> None:
         lab, *_ = bed()
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for row in rows.values():
             assert row.commands, row.feature
@@ -406,7 +408,7 @@ class TestSandboxRows:
     async def test_rejected_apply_is_unsupported_with_stderr(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("netem rate", "Error: Specified qdisc kind is unknown.", ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rate = _rows(report)["rate"]
         assert rate.verdict is Verdict.UNSUPPORTED
         assert rate.output == "Error: Specified qdisc kind is unknown."
@@ -419,7 +421,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_noisy_control_marks_measured_rows_unmeasured(self) -> None:
         lab, *_ = bed(noisy=True)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in FEATURES[1:-1]:  # every row but read-back and expire
             assert rows[name].verdict is Verdict.UNMEASURED, name
@@ -433,7 +435,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_missing_probe_tool_is_unmeasured_missing_tool(self) -> None:
         lab, test1, *_ = bed(fingerprint=MODERN.replace("tool:socat=1", "tool:socat=0"))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in ("rate", "port range", "side"):
             assert rows[name].verdict is Verdict.UNMEASURED
@@ -462,7 +464,7 @@ class TestSandboxRows:
         )
         lab, test1, *_ = bed(fingerprint=fingerprint)
         report = await check_link(
-            lab, "edge", features=["rate", "port range", "side"], from_host="test1"
+            lab=lab, ident="edge", features=["rate", "port range", "side"], from_host="test1"
         )
         assert _verdicts(report) == dict.fromkeys(
             ["read-back", "rate", "port range", "side"], Verdict.PASS
@@ -482,7 +484,7 @@ class TestSandboxRows:
             "Connection refused\n1000.000000 1000.000300\n",
             ok=False,
         )
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in ("rate", "port range", "side"):
             assert rows[name].verdict is Verdict.SKIPPED, name
@@ -497,7 +499,7 @@ class TestSandboxRows:
         pin_sandbox(monkeypatch)
         lab, test1, *_ = bed()
         test1.answer(f"TCP:{NS_IP}:5211,", " \n")
-        report = await check_link(lab, "edge", features=["port range"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["port range"], from_host="test1")
         row = _rows(report)["port range"]
         assert row.verdict is Verdict.UNMEASURED
         assert row.reason is UnmeasuredReason.NO_CLOCK
@@ -505,7 +507,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_every_row_clears_the_device_after_itself(self) -> None:
         lab, test1, *_ = bed()
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         veth = next(c for c in test1.commands if c.startswith("ip link add ")).split()[3]
         clear = f"tc qdisc del dev {veth} root"
         root_apply = f"tc qdisc replace dev {veth} root "
@@ -522,7 +524,7 @@ class TestSandboxRows:
     async def test_read_back_names_the_shape_that_did_not_read_back(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("tc filter show", "")  # the scoped tree reads back with no filters
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         row = _rows(report)["read-back"]
         assert row.verdict is Verdict.FAIL
         assert row.detail is not None
@@ -536,7 +538,7 @@ class TestSandboxRows:
         lab, test1, *_ = bed()
         # the timer launches but never clears
         test1.answer("sleep 3 &&", "Running as unit: run-u42.service")
-        report = await check_link(lab, "edge", features=["expire"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["expire"], from_host="test1")
         row = _rows(report)["expire"]
         assert row.verdict is Verdict.FAIL
         launch = next(c for c in test1.commands if "sleep 3 &&" in c)
@@ -547,7 +549,7 @@ class TestSandboxRows:
     @pytest.mark.asyncio
     async def test_expire_without_bash_is_skipped_with_the_refusal(self) -> None:
         lab, *_ = bed(has_bash=False)
-        report = await check_link(lab, "edge", features=["expire"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["expire"], from_host="test1")
         row = _rows(report)["expire"]
         assert row.verdict is Verdict.SKIPPED
         assert row.hint
@@ -562,7 +564,7 @@ class TestEvidence:
 
         monkeypatch.setattr(check, "judge_readback", judged)
         lab, *_ = bed()
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         detail = _rows(report)["read-back"].detail
         assert detail is not None
         assert "the judge's own words" in detail
@@ -577,7 +579,7 @@ class TestEvidence:
         lab, test1, *_ = bed(fingerprint=fingerprint)
         refused = "ConnectionRefusedError: [Errno 111] Connection refused"
         test1.answer(timed_connect_command("python3", NS_IP, 5211), refused, ok=False)
-        report = await check_link(lab, "edge", features=["port range"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["port range"], from_host="test1")
         row = _rows(report)["port range"]
         assert row.verdict is Verdict.FAIL
         assert row.output is not None
@@ -586,7 +588,7 @@ class TestEvidence:
     @pytest.mark.asyncio
     async def test_no_ping_is_missing_tool_for_every_measured_row(self) -> None:
         lab, test1, *_ = bed(fingerprint=MODERN.replace("tool:ping=1", "tool:ping=0"))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in FEATURES[1:-1]:  # every row but read-back and expire
             assert rows[name].verdict is Verdict.UNMEASURED, name
@@ -601,7 +603,7 @@ class TestSections:
     @pytest.mark.asyncio
     async def test_sections_heading_columns_and_legend(self) -> None:
         lab, *_ = bed()
-        report = await check_link(lab, "edge", features=["delay"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["delay"], from_host="test1")
         [section] = link_sections(report)
         assert section.heading == (
             "test1  eth1.100 10.10.201.11  (a->b)   "
@@ -625,7 +627,7 @@ class TestSections:
     @pytest.mark.asyncio
     async def test_a_host_with_both_placements_lists_each(self) -> None:
         lab, *_ = bed()
-        report = await check_link(lab, "dataplane", features=["read-back"])
+        report = await check_link(lab=lab, ident="dataplane", features=["read-back"])
         [section] = link_sections(report)
         assert section.heading.startswith(
             "test3  eth1.200 10.10.202.13 (a->b), eth1.100 10.10.201.13 (b->a)   iproute2 6.1.0"
@@ -636,7 +638,7 @@ class TestSections:
     async def test_the_heading_shows_the_netdev_address_not_the_management_one(self) -> None:
         lab, test1, *_ = bed()
         assert test1.ip != EDGE.a.ip, "the premise: management and netdev addresses differ"
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         assert report.hosts[0].addresses == {"eth1.100": EDGE.a.ip}
         [section] = link_sections(report)
         assert f"eth1.100 {EDGE.a.ip}  (a->b)" in section.heading
@@ -647,7 +649,9 @@ class TestSections:
         lab, *_ = bed()
         unaddressed = Link(a=dataclasses.replace(EDGE.a, ip=""), b=EDGE.b, name="noaddr")
         lab.links.append(unaddressed)
-        report = await check_link(lab, "noaddr", features=["read-back"], from_host="test1")
+        report = await check_link(
+            lab=lab, ident="noaddr", features=["read-back"], from_host="test1"
+        )
         assert report.hosts[0].addresses == {}
         [section] = link_sections(report)
         assert section.heading.startswith("test1  eth1.100  (a->b)   iproute2")
@@ -670,7 +674,7 @@ class TestRowsNotAborts:
         lab, test1, *_ = bed()
         stalled = "echoed 65536 of 262144 bytes\n1000.000000 1015.200000\n"
         test1.answer("head -c 262144", stalled, ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rate = _rows(report)["rate"]
         assert rate.verdict is Verdict.FAIL
         assert rate.detail == f"probe did not finish within {PROBE_TIMEOUT_S} s"
@@ -683,7 +687,7 @@ class TestRowsNotAborts:
     async def test_a_probe_that_fails_fast_is_not_called_a_stall(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("head -c 262144", "echoed 0 of 262144 bytes\n1000.0 1000.2\n", ok=False)
-        report = await check_link(lab, "edge", features=["rate"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["rate"], from_host="test1")
         assert _rows(report)["rate"].detail == "the timed probe did not complete"
 
     @pytest.mark.asyncio
@@ -691,7 +695,7 @@ class TestRowsNotAborts:
         lab, test1, *_ = bed()
         said = 'Cannot find device "ock1"'
         test1.answer("tc qdisc show", said, ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in ("read-back", "expire"):
             assert rows[name].verdict is Verdict.FAIL, name
@@ -708,7 +712,7 @@ class TestRowsNotAborts:
         lab, _, _, test3 = bed()
         said = "RTNETLINK answers: Operation not permitted"
         test3.rules.insert(0, ("ip -o addr show", False, said))
-        report = await check_link(lab, "dataplane", live=live)
+        report = await check_link(lab=lab, ident="dataplane", live=live)
         [host] = report.hosts
         assert host.host_id == "test3"
         rows = [*host.sandbox, *host.live]
@@ -735,7 +739,7 @@ class TestReadinessTrustsOnlyOttosEcho:
         lab, test1, *_ = bed(fingerprint=PYTHON3)
         foreign = "echo answered b'S', not x\n3.1\n"
         test1.answer(timed_connect_command("python3", NS_IP, 5299, within=1), foreign, ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in ("rate", "port range", "side"):
             assert rows[name].verdict is Verdict.SKIPPED, name
@@ -750,7 +754,7 @@ class TestAScopedRejectIsPortRangesToReport:
     async def test_read_back_passes_on_the_whole_tree_and_says_why_it_stopped(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("tc filter add", "RTNETLINK answers: Operation not supported", ok=False)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         read_back = rows["read-back"]
         assert read_back.verdict is Verdict.PASS
@@ -775,7 +779,7 @@ class TestReadBackKeepsBothFindings:
         monkeypatch.setattr(check, "judge_readback", judged)
         lab, test1, *_ = bed()
         test1.answer("tc filter add", "RTNETLINK answers: Operation not supported", ok=False)
-        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["read-back"], from_host="test1")
         row = _rows(report)["read-back"]
         assert row.verdict is Verdict.FAIL
         assert row.detail is not None
@@ -788,7 +792,7 @@ class TestElevationPromptNobodyAnswers:
     @pytest.mark.asyncio
     async def test_every_sandbox_row_is_skipped_and_the_run_completes(self) -> None:
         lab, test1, *_ = bed(elevation_hangs=True)
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = report.hosts[0].sandbox
         assert [r.feature for r in rows] == FEATURES
         assert {r.verdict for r in rows} == {Verdict.SKIPPED}
@@ -805,7 +809,9 @@ class TestNetemModule:
     async def test_a_missing_module_names_itself_on_every_rejected_row(self) -> None:
         lab, test1, *_ = bed(fingerprint=MODERN.replace("netem=1", "netem=0"))
         test1.answer(" netem ", "Error: Specified qdisc kind is unknown.", ok=False)
-        report = await check_link(lab, "edge", features=["delay", "loss"], from_host="test1")
+        report = await check_link(
+            lab=lab, ident="edge", features=["delay", "loss"], from_host="test1"
+        )
         rows = report.hosts[0].sandbox
         assert {r.verdict for r in rows} == {Verdict.UNSUPPORTED}
         assert {r.hint for r in rows} == {NETEM_MISSING_HINT}
@@ -817,7 +823,7 @@ class TestNetemModule:
     async def test_a_module_otto_cannot_see_is_hinted_as_unknown(self) -> None:
         lab, test1, *_ = bed(fingerprint=MODERN.replace("netem=1", "netem=?"))
         test1.answer("netem rate", "Error: Specified qdisc kind is unknown.", ok=False)
-        report = await check_link(lab, "edge", features=["rate"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["rate"], from_host="test1")
         assert _rows(report)["rate"].hint == NETEM_UNKNOWN_HINT
         [section] = link_sections(report)
         assert section.heading.endswith(" · sch_netem ?")
@@ -826,7 +832,7 @@ class TestNetemModule:
     async def test_a_present_module_adds_no_hint(self) -> None:
         lab, test1, *_ = bed()
         test1.answer("netem rate", "Error: Specified qdisc kind is unknown.", ok=False)
-        report = await check_link(lab, "edge", features=["rate"], from_host="test1")
+        report = await check_link(lab=lab, ident="edge", features=["rate"], from_host="test1")
         assert _rows(report)["rate"].hint is None
         [section] = link_sections(report)
         assert "sch_netem" not in section.heading
@@ -837,7 +843,7 @@ class TestSharedHint:
     async def test_eleven_rows_skipped_for_one_cause_print_it_once(self) -> None:
         said = "sudo: a password is required"
         lab, *_ = bed(elevation=(False, said))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         [hint] = {r.hint for r in report.hosts[0].sandbox}
         assert len(report.hosts[0].sandbox) == 11
         text = _render(report)
@@ -852,7 +858,7 @@ class TestBash:
         self, fingerprint: str
     ) -> None:
         lab, test1, *_ = bed(fingerprint=fingerprint.replace("tool:bash=1", "tool:bash=0"))
-        report = await check_link(lab, "edge", from_host="test1")
+        report = await check_link(lab=lab, ident="edge", from_host="test1")
         rows = _rows(report)
         for name in ("rate", "port range", "side", "expire"):
             assert rows[name].verdict is Verdict.UNMEASURED, name

@@ -243,7 +243,7 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TRANSFER_BACKENDS:
         known = ", ".join(sorted(TRANSFER_BACKENDS.names()))
         raise ValueError(f"transfer {v!r} is not a registered transfer backend. Known: {known}")
-    families = TRANSFER_BACKENDS.peek(v).metadata.host_families
+    families = TRANSFER_BACKENDS.peek(name=v).metadata.host_families
     if family not in families:
         fam = ", ".join(sorted(families))
         raise ValueError(f"transfer {v!r} is not valid on {host_label} (it serves: {fam}).")
@@ -255,7 +255,7 @@ def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TERM_BACKENDS:
         known = ", ".join(sorted(TERM_BACKENDS.names()))
         raise ValueError(f"term {v!r} is not a registered term backend. Known: {known}")
-    families = TERM_BACKENDS.peek(v).metadata.host_families
+    families = TERM_BACKENDS.peek(name=v).metadata.host_families
     if family not in families:
         fam = ", ".join(sorted(families))
         raise ValueError(f"term {v!r} is not valid on {host_label} (it serves: {fam}).")
@@ -407,7 +407,7 @@ def _to_snmp(value: "SnmpOptionsSpec | None") -> object:
 
 
 def _to_command_frame(value: str | None) -> object:
-    return Omit if value is None else build_command_frame(value)
+    return Omit if value is None else build_command_frame(type_name=value)
 
 
 def _to_filesystem(value: str | None) -> object:
@@ -422,7 +422,7 @@ def _build_power(value: object, build: HostBuild) -> object:
     """Build the controller from the record's parse; ``None`` stays ``None``."""
     if value is None or build.power is None:
         return None
-    return POWER_CONTROLLERS.build(build.power)
+    return POWER_CONTROLLERS.build(prepared=build.power)
 
 
 def _menu(name: str) -> "Callable[[HostBuild], object]":
@@ -785,7 +785,7 @@ class HostSpec(OttoModel):
                 protocol = None
                 try:
                     for protocol in self._pick_protocols(c, vocabulary):
-                        resolve_chain(runtime, c.login, protocol)
+                        resolve_chain(runtime, target_login=c.login, protocol=protocol)
                 except LoginProxyError as e:
                     over = "" if protocol is None else f" over {protocol!r}"
                     raise ValueError(
@@ -826,7 +826,7 @@ class HostSpec(OttoModel):
                 f"landing_frame {self.landing_frame!r} requires session_setup: a landing "
                 f"dialect with nothing to transition out of it is a contradiction"
             )
-        landing = build_command_frame(self.landing_frame)  # frames are stateless values
+        landing = build_command_frame(type_name=self.landing_frame)  # frames are stateless values
         if any(c.proxy is not None for c in self.creds) and not isinstance(landing, BashFrame):
             raise ValueError(
                 f"landing_frame {self.landing_frame!r} with a proxied cred: login-proxy hops "
@@ -882,9 +882,9 @@ class HostSpec(OttoModel):
                 name, raw = value.type, dict(value.model_extra or {})
             try:
                 power = POWER_CONTROLLERS.prepare(
-                    name,
-                    raw,
-                    PowerEnv(host_id=ctx.host_id),
+                    name=name,
+                    raw=raw,
+                    env=PowerEnv(host_id=ctx.host_id),
                     source=f"power_control of host {ctx.host_id!r}",
                 )
             except PowerConstructionError as exc:
@@ -1065,19 +1065,19 @@ class UnixHostSpec(HostSpec):
 
     # optional: a loginless host needs none, and an inventory record or creds store may hold none
     creds: list[CredSpec] = Field(default_factory=list)
-    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+    valid_terms: Annotated[list[str], Resolve(fn=_menu("valid_terms"))] = Field(
         default_factory=lambda: ["ssh", "telnet"]
     )
-    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+    valid_transfers: Annotated[list[str], Resolve(fn=_menu("valid_transfers"))] = Field(
         default_factory=lambda: ["scp", "sftp", "ftp", "nc"]
     )
-    valid_impairers: Annotated[list[str], Resolve(_menu("valid_impairers"))] = Field(
+    valid_impairers: Annotated[list[str], Resolve(fn=_menu("valid_impairers"))] = Field(
         default_factory=lambda: list(_STOCK_UNIX_IMPAIRERS)
     )
     # optional active pins; resolved at to_host
-    term: Annotated[str | None, Resolve(_selection("term"))] = None
-    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
-    impairer: Annotated[str | None, Resolve(_selection("impairer"))] = None
+    term: Annotated[str | None, Resolve(fn=_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(fn=_selection("transfer"))] = None
+    impairer: Annotated[str | None, Resolve(fn=_selection("impairer"))] = None
     docker_capable: bool = False
     shell_history: bool = False
     init_timeout: StrictFloat | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -1167,7 +1167,7 @@ class UnixHostSpec(HostSpec):
         )
         menu = [] if stock else self.valid_impairers
         for name in menu:
-            families = build_impairer(name).host_families
+            families = build_impairer(name=name).host_families
             if self._host_family not in families:
                 raise ValueError(
                     f"impairer {name!r} is not valid on a unix host "
@@ -1222,14 +1222,14 @@ class EmbeddedHostSpec(HostSpec):
     """
 
     os_type: str = "embedded"
-    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+    valid_terms: Annotated[list[str], Resolve(fn=_menu("valid_terms"))] = Field(
         default_factory=lambda: ["telnet"]
     )
-    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+    valid_transfers: Annotated[list[str], Resolve(fn=_menu("valid_transfers"))] = Field(
         default_factory=lambda: ["console"]
     )
-    term: Annotated[str | None, Resolve(_selection("term"))] = None
-    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
+    term: Annotated[str | None, Resolve(fn=_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(fn=_selection("transfer"))] = None
     filesystem: Annotated[str | None, Convert(_value_only(_to_filesystem))] = None
     loader: Annotated[str | None, Convert(_value_only(_to_loader))] = None
 

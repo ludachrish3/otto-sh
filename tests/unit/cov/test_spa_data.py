@@ -91,7 +91,7 @@ class TestIndexPayload:
     def test_zero_line_file_still_appears_in_tree(self, tmp_path):
         src = _write(tmp_path, "empty.c", "")
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(src)  # no lines added
+        store.get_or_create_file(path=src)  # no lines added
         payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "empty.c")
         assert node is not None
@@ -111,13 +111,13 @@ class TestTreeRollupAndCtxLines:
         store = CoverageStore(tier_order=["system"])
         run_r1 = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
 
-        fr_x = store.get_or_create_file(x)
+        fr_x = store.get_or_create_file(path=x)
         for lineno in (1, 2):
             lr = fr_x.get_or_create_line(lineno)
             lr.hits.add("system", 1)
             lr.run_hits[run_r1] = 1
 
-        fr_y = store.get_or_create_file(y)
+        fr_y = store.get_or_create_file(path=y)
         lr_hit = fr_y.get_or_create_line(1)
         lr_hit.hits.add("system", 1)
         lr_hit.run_hits[run_r1] = 1
@@ -147,7 +147,7 @@ class TestTreeRollupAndCtxLines:
         store = CoverageStore(tier_order=["bench", "manual"])
         r_manual = store.add_run(tier="manual", source="manual", host="h1", product="app")
         r_bench = store.add_run(tier="bench", source="run", host="h1", product="app")
-        lr = store.get_or_create_file(src).get_or_create_line(1)
+        lr = store.get_or_create_file(path=src).get_or_create_line(1)
         lr.hits.add("manual", 1)
         lr.hits.add("bench", 1)
         lr.run_hits = {r_manual: 1, r_bench: 1}
@@ -167,7 +167,7 @@ class TestProductDimension:
         r_app = store.add_run(tier="e2e", source="run", board="h1", host="h1", product="app")
         r_agent = store.add_run(tier="e2e", source="run", board="h1", host="h1", product="agent")
         r_unit = store.add_run(tier="unit", source="tracefile")  # unnamed
-        fr = store.get_or_create_file(tmp_path / "a.c")
+        fr = store.get_or_create_file(path=tmp_path / "a.c")
         l1 = fr.get_or_create_line(1)
         l1.hits.add("e2e", 1)
         l1.run_hits = {r_app: 1, r_agent: 1}
@@ -200,7 +200,7 @@ class TestProductDimension:
         reach the file node)."""
         store = self._store(tmp_path)
         r_app = next(r.id for r in store.runs if r.product == "app")
-        nested = store.get_or_create_file(tmp_path / "sub" / "b.c")
+        nested = store.get_or_create_file(path=tmp_path / "sub" / "b.c")
         line = nested.get_or_create_line(1)
         line.hits.add("e2e", 1)
         line.run_hits = {r_app: 1}
@@ -234,7 +234,7 @@ class TestRunContrib:
         run_id = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
         other_run = store.add_run(tier="system", source="run", board="r2", host="r2", product="app")
 
-        fr_x = store.get_or_create_file(x)
+        fr_x = store.get_or_create_file(path=x)
         l1 = fr_x.get_or_create_line(1)
         l1.hits.add("system", 1)
         l1.run_hits[run_id] = 1
@@ -242,7 +242,7 @@ class TestRunContrib:
         l2.state = "stale"
         l2.stale_runs.append(run_id)
 
-        fr_y = store.get_or_create_file(y)
+        fr_y = store.get_or_create_file(path=y)
         l3 = fr_y.get_or_create_line(1)
         l3.hits.add("system", 1)
         l3.run_hits[run_id] = 1
@@ -261,7 +261,7 @@ class TestDisplayPathPrefixStripAndFallback:
     def test_prefix_strips_matching_path(self, tmp_path):
         src = _write(tmp_path, "product/main.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(src)
+        store.get_or_create_file(path=src)
         payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "main.c")
         assert node is not None
@@ -271,7 +271,7 @@ class TestDisplayPathPrefixStripAndFallback:
         inside_dir = tmp_path / "proj"
         src = _write(tmp_path, "elsewhere/b.c", "int b;\n")
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(src)
+        store.get_or_create_file(path=src)
         payload = build_index_payload(store, report_title="P", prefix=inside_dir, stamp="S")
         node = _find_file(payload["tree"], "b.c")
         assert node is not None
@@ -282,7 +282,7 @@ class TestOutOfRangeLines:
     def test_emit_chunks_handles_line_past_eof_without_crash(self, tmp_path):
         src = _write(tmp_path, "f.c", "a;\nb;\nc;\n")
         store = CoverageStore(tier_order=["system"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
         fr.get_or_create_line(999).state = "stale"
 
         out_dir = tmp_path / "report"
@@ -307,7 +307,7 @@ class TestEmitChunks:
     def test_index_js_is_classic_assignment(self, tmp_path):
         src = _write(tmp_path, "f.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(src)
+        store.get_or_create_file(path=src)
         out_dir = tmp_path / "report"
         emit_chunks(
             store,
@@ -327,7 +327,7 @@ class TestEmitChunks:
         store = CoverageStore(tier_order=["system", "manual"])
         run_a = store.add_run(tier="system", source="run", board="r1", host="r1", product="app")
         run_b = store.add_run(tier="manual", source="manual", board="r2", host="r2", product="app")
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
 
         lr1 = fr.get_or_create_line(1)
         lr1.hits.add("system", 3)
@@ -376,7 +376,7 @@ class TestEmitChunks:
         """
         src = _write(tmp_path, "f.c", "int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
         store = CoverageStore(tier_order=["system"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
         fr.get_or_create_line(1).hits.add("system", 1)
         fr.excluded_lines = {3}
 
@@ -411,7 +411,7 @@ class TestEmitChunks:
 def _ticket_store(tmp_path):
     """Two lines owned by PROJ-1, one of them hit."""
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     first = record.get_or_create_line(1)
     first.ticket = ["PROJ-1"]
     first.hits.add("unit", 1)
@@ -457,7 +457,7 @@ def test_ticket_chunks_are_emitted_per_ticket(tmp_path):
 
 def test_no_tickets_emits_empty_list_and_no_chunk_dir(tmp_path):
     store = CoverageStore(tier_order=["unit"])
-    store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
+    store.get_or_create_file(path=tmp_path / "a.c").get_or_create_line(1)
     out = tmp_path / "report"
     out.mkdir()
     payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
@@ -480,7 +480,7 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
     assert '"ticket": ["PROJ-1"]' in text
 
     plain = CoverageStore(tier_order=["unit"])
-    plain.get_or_create_file(tmp_path / "b.c").get_or_create_line(1)
+    plain.get_or_create_file(path=tmp_path / "b.c").get_or_create_line(1)
     out2 = tmp_path / "report2"
     out2.mkdir()
     emit_chunks(plain, out2, report_title="P", prefix=tmp_path, stamp="S")
@@ -497,7 +497,7 @@ def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
     1); the deduped truth is owned=2, covered=1 — line 1 counted once.
     """
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     shared = record.get_or_create_line(1)
     shared.ticket = ["PROJ-1", "PROJ-2"]
     shared.hits.add("unit", 1)
@@ -525,7 +525,7 @@ def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
 
 def test_tickets_totals_is_zero_when_no_tickets(tmp_path):
     store = CoverageStore(tier_order=["unit"])
-    store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
+    store.get_or_create_file(path=tmp_path / "a.c").get_or_create_line(1)
     payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
     assert payload["tickets_totals"] == {
         "owned": 0,
@@ -543,7 +543,7 @@ def test_sentinel_ticket_ids_flow_through_summaries_and_get_their_own_chunk(tmp_
     appear in the index rollup and get its own per-ticket chunk exactly
     like any real ticket id."""
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     record.get_or_create_line(1).ticket = ["(no ticket)"]
     record.get_or_create_line(2).ticket = ["(uncommitted)"]
     store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
@@ -568,7 +568,7 @@ def test_tickets_totals_counts_a_sentinel_owned_line_once(tmp_path):
     sentinel-owned line — it is still exactly one attributed line, counted
     once, never once per (nonexistent) additional owner."""
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(tmp_path / "a.c")
+    record = store.get_or_create_file(path=tmp_path / "a.c")
     line = record.get_or_create_line(1)
     line.ticket = ["(no ticket)"]
     line.hits.add("unit", 1)
@@ -612,13 +612,13 @@ def _two_file_two_tier_ticket_store(tmp_path):
     against a rollup wrongly copied onto every file.
     """
     store = CoverageStore(tier_order=["unit", "system"])
-    a = store.get_or_create_file(tmp_path / "a.c")
+    a = store.get_or_create_file(path=tmp_path / "a.c")
     a_hit = a.get_or_create_line(1)
     a_hit.ticket = ["PROJ-1"]
     a_hit.hits.add("unit", 1)
     a_missing = a.get_or_create_line(2)
     a_missing.ticket = ["PROJ-1"]
-    b = store.get_or_create_file(tmp_path / "b.c")
+    b = store.get_or_create_file(path=tmp_path / "b.c")
     b_hit = b.get_or_create_line(1)
     b_hit.ticket = ["PROJ-1"]
     b_hit.hits.add("system", 1)
@@ -662,7 +662,7 @@ class TestOverrideProvenance:
         out = tmp_path / "report"
         out.mkdir()
         store = CoverageStore(tier_order=["bench"])
-        fr = store.get_or_create_file(tmp_path / "a.c")
+        fr = store.get_or_create_file(path=tmp_path / "a.c")
         asserted_line = fr.get_or_create_line(1)
         asserted_line.hits.add("bench", 1)
         asserted_line.asserted = {"bench": [0]}
@@ -702,7 +702,7 @@ class TestOverrideProvenance:
     def test_stats_roll_up_asserted_per_tier(self, tmp_path):
         src = _write(tmp_path, "a.c", "int a;\nint b;\nint c;\n")
         store = CoverageStore(tier_order=["bench"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
         for lineno in (1, 2):
             lr = fr.get_or_create_line(lineno)
             lr.hits.add("bench", 1)
@@ -721,7 +721,7 @@ class TestOverrideProvenance:
         hitting tier is asserted counts."""
         src = _write(tmp_path, "a.c", "int a;\nint b;\n")
         store = CoverageStore(tier_order=["bench", "unit"])
-        fr = store.get_or_create_file(src)
+        fr = store.get_or_create_file(path=src)
 
         mixed = fr.get_or_create_line(1)
         mixed.hits.add("bench", 1)  # real hit, unasserted
@@ -745,7 +745,7 @@ class TestOverrideProvenance:
 
     def test_ticket_summary_and_totals_carry_asserted(self, tmp_path):
         store = CoverageStore(tier_order=["bench"])
-        record = store.get_or_create_file(tmp_path / "a.c")
+        record = store.get_or_create_file(path=tmp_path / "a.c")
         asserted_line = record.get_or_create_line(1)
         asserted_line.ticket = ["PROJ-1"]
         asserted_line.hits.add("bench", 1)
@@ -768,7 +768,7 @@ class TestOverrideProvenance:
         the same dedup contract `per_tier`/`owned`/`covered` already have,
         now pinned for `asserted` specifically."""
         store = CoverageStore(tier_order=["bench"])
-        record = store.get_or_create_file(tmp_path / "a.c")
+        record = store.get_or_create_file(path=tmp_path / "a.c")
         shared = record.get_or_create_line(1)
         shared.ticket = ["PROJ-1", "PROJ-2"]
         shared.hits.add("bench", 1)
@@ -809,7 +809,7 @@ class TestTreeOrder:
     def test_iter_tree_files_walks_dirs_before_files_in_sorted_order(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
         for rel in ("z.c", "b/y.c", "b/a/x.c", "a/w.c"):
-            store.get_or_create_file(_write(tmp_path, rel, "int v;\n"))
+            store.get_or_create_file(path=_write(tmp_path, rel, "int v;\n"))
         payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         assert [f["path"] for f in iter_tree_files(payload["tree"])] == [
             "a/w.c",
@@ -822,9 +822,9 @@ class TestTreeOrder:
 class TestSearchAndSymbolsPayloads:
     def test_search_payload_follows_tree_order_and_carries_states(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
-        second = store.get_or_create_file(_write(tmp_path, "b.c", "int b;\nint c;\n"))
+        second = store.get_or_create_file(path=_write(tmp_path, "b.c", "int b;\nint c;\n"))
         second.get_or_create_line(1).hits.add("system", 1)
-        first = store.get_or_create_file(_write(tmp_path, "a.c", "int a;\n"))
+        first = store.get_or_create_file(path=_write(tmp_path, "a.c", "int a;\n"))
         payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         records = {mangle_path(fr.path): fr for fr in store.files()}
         sources = {chunk: fr.path.read_text() for chunk, fr in records.items()}
@@ -840,8 +840,8 @@ class TestSearchAndSymbolsPayloads:
 
     def test_symbols_payload_sorted_by_name_path_line(self, tmp_path):
         store = CoverageStore(tier_order=["unit"])
-        fa = store.get_or_create_file(_write(tmp_path, "a.c", ""))
-        fb = store.get_or_create_file(_write(tmp_path, "b.c", ""))
+        fa = store.get_or_create_file(path=_write(tmp_path, "a.c", ""))
+        fb = store.get_or_create_file(path=_write(tmp_path, "b.c", ""))
         fb.get_or_create_function("init", start_line=5, end_line=9).hits.add("unit", 2)
         fa.get_or_create_function("init", start_line=7)
         fa.get_or_create_function("alpha", start_line=1)
@@ -864,7 +864,7 @@ class TestSearchAndSymbolsPayloads:
         self, tmp_path, monkeypatch, caplog
     ):
         store = CoverageStore(tier_order=["system"])
-        store.get_or_create_file(_write(tmp_path, "a.c", "int a;\n"))
+        store.get_or_create_file(path=_write(tmp_path, "a.c", "int a;\n"))
         out = tmp_path / "report"
         monkeypatch.setattr(spa_data, "SEARCH_CHUNK_WARN_BYTES", 10)
         with caplog.at_level("WARNING", logger="otto.coverage.renderer.spa_data"):

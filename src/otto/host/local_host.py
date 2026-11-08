@@ -87,7 +87,7 @@ class LocalFileTransfer(BaseFileTransfer):
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            return {src: Result(Status.Error, msg=str(e)) for src in src_files}
+            return {src: Result(status=Status.Error, msg=str(e)) for src in src_files}
 
         async def _copy_one(src: Path) -> Result:
             dest = dest_dir / src.name
@@ -101,18 +101,20 @@ class LocalFileTransfer(BaseFileTransfer):
                     size = dest.stat().st_size
                     progress_factory()(str(src), str(dest), size, size)
             except OSError as e:
-                return Result(Status.Error, msg=str(e))
-            return Result(Status.Success, value=dest)
+                return Result(status=Status.Error, msg=str(e))
+            return Result(status=Status.Success, value=dest)
 
-        return await self.dispatch_per_file(src_files, _copy_one, concurrent=concurrent)
+        return await self.dispatch_per_file(
+            src_files, transfer_one=_copy_one, concurrent=concurrent
+        )
 
     @override
     async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
@@ -122,14 +124,14 @@ class LocalFileTransfer(BaseFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
 
     @override
-    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], *, mode: int) -> Result:
         """Chmod the copied files directly, off the event loop.
 
         ``Path.chmod`` is a blocking syscall; the whole batch runs in one
@@ -143,8 +145,8 @@ class LocalFileTransfer(BaseFileTransfer):
         try:
             await asyncio.to_thread(_chmod_all)
         except OSError as e:
-            return Result(Status.Error, msg=str(e))
-        return Result(Status.Success)
+            return Result(status=Status.Error, msg=str(e))
+        return Result(status=Status.Success)
 
 
 logger = logging.getLogger(__name__)
@@ -396,9 +398,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         src_files: Annotated[
             list[Path] | Path,
-            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+            Arg(elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        *,
         user: Annotated[
             str | None,
             Opt(
@@ -433,9 +436,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         return await self._live_file_transfer().get_files(
-            src_files,
-            dest_dir,
-            show_progress,
+            src_files=src_files,
+            dest_dir=dest_dir,
+            show_progress=show_progress,
             concurrent=concurrent,
         )
 
@@ -444,9 +447,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def put(
         self,
         src_files: Annotated[
-            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+            list[Path] | Path, Arg(elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        *,
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
@@ -492,10 +496,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         return await self._live_file_transfer().put_files(
-            src_files,
-            dest_dir,
-            show_progress,
-            mode,
+            src_files=src_files,
+            dest_dir=dest_dir,
+            show_progress=show_progress,
+            mode=mode,
             concurrent=concurrent,
         )
 
@@ -549,20 +553,20 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         if is_dry_run():
             names = ", ".join(str(p) for p in paths)
             self._log_command(f"[DRY RUN] mkdir -p: {names}")
-            return Result(Status.NotRun, msg=f"[DRY RUN] mkdir -p: {names}")
+            return Result(status=Status.NotRun, msg=f"[DRY RUN] mkdir -p: {names}")
         try:
             for p in paths:
                 p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return Result(Status.Error, msg=f"{exc.filename}: {exc.strerror}")
-        return Result(Status.Success)
+            return Result(status=Status.Error, msg=f"{exc.filename}: {exc.strerror}")
+        return Result(status=Status.Success)
 
     ####################
     #  Power / reachability
     ####################
 
     @override
-    async def is_reachable(self, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
         """Return ``True`` — the local machine is always reachable."""
         return True
 

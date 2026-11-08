@@ -32,6 +32,7 @@ class LabRepository(Protocol):
     def load_lab(
         self,
         name: str,
+        *,
         preferences: dict[str, dict[str, Any]] | None = None,
         inventory: "Inventory | None" = None,
     ) -> "Lab":
@@ -95,7 +96,7 @@ class LoginSummary:
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class HostSummary:
     """Identity and addressing for one host, without constructing it.
 
@@ -152,7 +153,7 @@ class HostSummary:
     that host, and nothing else changes."""
 
 
-def logins_of_creds(creds: "Iterable[Any]") -> list[LoginSummary]:
+def logins_of_creds(*, creds: "Iterable[Any]") -> list[LoginSummary]:
     """Summarise cred entries (``Cred`` or ``CredSpec``) to login identities, record order.
 
     Reads the three public identity fields every cred shape carries and
@@ -218,7 +219,7 @@ class SupportsHostSummaries(Protocol):
     profile merge and validation the host factory applies.
     """
 
-    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
+    def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Every host this backend knows, across every lab.
 
         *inventory* is the process inventory referenced entries resolve

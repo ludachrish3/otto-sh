@@ -22,10 +22,10 @@ class _DummyShellProduct(ShellProduct):
     """ShellProduct with the abstract halves stubbed so it can instantiate."""
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -57,19 +57,19 @@ def test_product_is_unowned_until_ingest_stamps_it():
 
 
 def test_gcov_prefix_strip_counts_build_root_components():
-    assert gcov_prefix_strip(PurePosixPath("/home/dev/proj")) == 3
-    assert gcov_prefix_strip(PurePosixPath("/builds/ci/proj")) == 3
-    assert gcov_prefix_strip(PurePosixPath("/")) == 0
+    assert gcov_prefix_strip(build_root=PurePosixPath("/home/dev/proj")) == 3
+    assert gcov_prefix_strip(build_root=PurePosixPath("/builds/ci/proj")) == 3
+    assert gcov_prefix_strip(build_root=PurePosixPath("/")) == 0
 
 
 def test_gcov_prefix_strip_refuses_relative():
     with pytest.raises(ValueError, match="absolute"):
-        gcov_prefix_strip(PurePosixPath("build"))
+        gcov_prefix_strip(build_root=PurePosixPath("build"))
 
 
 def test_gcov_prefix_strip_refuses_dotdot():
     with pytest.raises(ValueError, match=r"must not contain '\.\.'"):
-        gcov_prefix_strip(PurePosixPath("/home/dev/proj/../other"))
+        gcov_prefix_strip(build_root=PurePosixPath("/home/dev/proj/../other"))
 
 
 def test_code_product_without_build_root_raises():
@@ -104,7 +104,7 @@ async def test_shellproduct_stage_delegates_to_host_put():
     p = _DummyShellProduct(artifact=Path("/builds/app.bin"), stage_dir=Path("/opt"))
     host = AsyncMock()
     host.default_dest_dir = Path()
-    put_result = Result(Status.Success, value={})
+    put_result = Result(status=Status.Success, value={})
     host.put.return_value = put_result
     result = await p.stage(host)
     # Returned unchanged — the transfer's own per-file mapping reaches the
@@ -202,11 +202,11 @@ def test_the_lab_load_key_stands_in_for_an_undiscovered_home():
     from otto.host.product import LOGIN_HOME
 
     p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
-    assert p.stage_key(SimpleNamespace(id="h1", default_dest_dir=Path())) == LOGIN_HOME
-    assert p.stage_key(SimpleNamespace(id="h1", default_dest_dir=Path("/srv"))) == "/srv"
+    assert p.stage_key(host=SimpleNamespace(id="h1", default_dest_dir=Path())) == LOGIN_HOME
+    assert p.stage_key(host=SimpleNamespace(id="h1", default_dest_dir=Path("/srv"))) == "/srv"
     # ...and keys on the real path once the host has been asked.
     known = SimpleNamespace(id="h1", default_dest_dir=Path(), cached_login_home=Path("/home/t"))
-    assert p.stage_key(known) == "/home/t"
+    assert p.stage_key(host=known) == "/home/t"
 
 
 def test_shellproduct_stage_dir_defaults_to_empty():
@@ -220,13 +220,13 @@ def test_a_shell_product_stages_an_artifact_but_a_bare_product_does_not():
         name = "bare"
 
         async def stage(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def install(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def uninstall(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def is_installed(self, host):
             return True
@@ -244,14 +244,14 @@ def test_every_host_has_empty_products_by_default():
     assert (
         UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         ).products
         == []
     )
     assert (
-        ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET).products
+        ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET).products
         == []
     )
 
@@ -278,21 +278,23 @@ class _FakeProduct(Product):
     async def stage(self, host):
         self.calls.append("stage")
         return (
-            Result(Status.Error, msg="boom") if self.fail_on == "stage" else Result(Status.Success)
+            Result(status=Status.Error, msg="boom")
+            if self.fail_on == "stage"
+            else Result(status=Status.Success)
         )
 
     async def install(self, host):
         self.calls.append("install")
         if self.fail_on != "install":
-            return Result(Status.Success)
-        return self.result if self.result is not None else Result(Status.Error, msg="boom")
+            return Result(status=Status.Success)
+        return self.result if self.result is not None else Result(status=Status.Error, msg="boom")
 
     async def uninstall(self, host):
         self.calls.append("uninstall")
         return (
-            Result(Status.Error, msg="boom")
+            Result(status=Status.Error, msg="boom")
             if self.fail_on == "uninstall"
-            else Result(Status.Success)
+            else Result(status=Status.Success)
         )
 
     async def is_installed(self, host):
@@ -394,10 +396,10 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
 
     class _StageOnlyProduct(ShellProduct):
         async def install(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def uninstall(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def is_installed(self, host):
             return False
@@ -428,7 +430,7 @@ async def test_install_propagates_the_products_result_whole():
     code, instead of being flattened to the Status's own value.
     """
     failing = CommandResult(
-        Status.Error, value="tar: bad header", command="tar xzf app.tgz", retcode=7
+        status=Status.Error, value="tar: bad header", command="tar xzf app.tgz", retcode=7
     )
     p = _FakeProduct("a", fail_on="install", result=failing)
 
@@ -471,13 +473,13 @@ def test_abc_defaults_are_immutable_and_unknown():
         name = "bare"
 
         async def stage(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def install(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def uninstall(self, host):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def is_installed(self, host):
             return True
@@ -607,13 +609,15 @@ class _ExecHost:
 
     async def exec(self, cmd, **kwargs):
         self.exec_calls.append((cmd, kwargs))
-        return CommandResult(self._status, value=framed(cmd, ""), command=cmd, retcode=0)
+        return CommandResult(status=self._status, value=framed(cmd, ""), command=cmd, retcode=0)
 
 
 @pytest.mark.asyncio
 async def test_prepare_coverage_default_touches_nothing_and_succeeds():
     host = _ExecHost()
-    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").prepare_coverage(host)
+    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").prepare_coverage(
+        host=host
+    )
     assert result.is_ok
     assert host.exec_calls == []
 
@@ -622,7 +626,7 @@ async def test_prepare_coverage_default_touches_nothing_and_succeeds():
 async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_dir():
     host = _ExecHost()
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/opt/My App/cov")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.is_ok
     assert host.exec_calls == [
         (
@@ -642,7 +646,7 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
 @pytest.mark.asyncio
 async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
     host = _ExecHost()
-    await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
+    await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host=host)
     assert [cmd for cmd, _ in host.exec_calls] == [
         "! test -d /tmp/app || find /tmp/app -name '*.gcda' -type f -exec rm -f {} \\;",
         f"{CHECK_PREFIX}LC_ALL=C find /tmp/app -name '*.gcda' -type f -print 2>&1",
@@ -652,7 +656,7 @@ async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
 @pytest.mark.asyncio
 async def test_reset_coverage_default_returns_the_hosts_failure():
     host = _ExecHost(status=Status.Error)
-    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
+    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host=host)
     assert not result.is_ok
 
 
@@ -660,7 +664,7 @@ async def test_reset_coverage_default_returns_the_hosts_failure():
 async def test_reset_coverage_refuses_a_malformed_name_before_any_command():
     host = _ExecHost()
     with pytest.raises(ValueError, match="product name"):
-        await _DummyShellProduct(artifact=Path("/b/app"), name="a/b").reset_coverage(host)
+        await _DummyShellProduct(artifact=Path("/b/app"), name="a/b").reset_coverage(host=host)
     assert host.exec_calls == []
 
 
@@ -680,15 +684,15 @@ class _RunHost:
         else:
             retcode = 0 if self._status.is_ok else 1
             value = framed(cmd, self._output)
-            entry = CommandResult(self._status, value=value, command=cmd, retcode=retcode)
-        return Results.collect([entry])
+            entry = CommandResult(status=self._status, value=value, command=cmd, retcode=retcode)
+        return Results.collect(items=[entry])
 
 
 @pytest.mark.asyncio
 async def test_root_owned_reset_deletes_under_sudo():
     host = _RunHost()
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.is_ok
     delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
     check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
@@ -706,7 +710,7 @@ async def test_root_owned_reset_refuses_a_malformed_name_before_any_command():
     host = _RunHost()
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="a/b", cov_dir="/var/cov/app")
     with pytest.raises(ValueError, match="product name"):
-        await p.reset_coverage(host)
+        await p.reset_coverage(host=host)
     assert host.run_calls == []
 
 
@@ -714,7 +718,7 @@ async def test_root_owned_reset_refuses_a_malformed_name_before_any_command():
 async def test_root_owned_reset_failure_includes_the_commands_output():
     host = _RunHost(status=Status.Error, output="permission denied")
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert not result.is_ok
     # The consumer prefixes `<host>/<product>: `; the reason never repeats the name.
     assert result.msg == "deleting .gcda under /var/cov/app failed: permission denied"
@@ -724,7 +728,7 @@ async def test_root_owned_reset_failure_includes_the_commands_output():
 async def test_root_owned_reset_propagates_a_dry_run_decline():
     host = _RunHost(status=Status.NotRun)
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.NotRun
 
 
@@ -748,7 +752,7 @@ async def test_reset_coverage_default_treats_a_missing_cov_dir_as_cleared(tmp_pa
     host = ShellHost()
     absent = tmp_path / "never-created"
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(absent))
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.Success, result
     assert not absent.exists()
 
@@ -759,7 +763,7 @@ async def test_reset_coverage_default_fails_when_find_fails_on_a_present_cov_dir
     present = tmp_path / "cov"
     present.mkdir()
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.Error
     # The plain path answers with the same adapter message as the elevated one.
     assert result.msg.startswith(f"deleting .gcda under {present} failed")
@@ -771,7 +775,7 @@ async def test_root_owned_reset_treats_a_missing_cov_dir_as_cleared(tmp_path):
     host = ShellHost()
     absent = tmp_path / "never-created"
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(absent))
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.Success, result.msg
 
 
@@ -781,7 +785,7 @@ async def test_root_owned_reset_fails_when_find_fails_on_a_present_cov_dir(tmp_p
     present = tmp_path / "cov"
     present.mkdir()
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
-    result = await p.reset_coverage(host)
+    result = await p.reset_coverage(host=host)
     assert result.status is Status.Error
     assert "permission denied" in result.msg
 
@@ -802,7 +806,7 @@ async def test_root_owned_reset_runs_the_whole_guarded_line_elevated(tmp_path):
     present.mkdir()
     (present / "a.gcda").write_bytes(b"")
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
-    result = await p.reset_coverage(ShellHost(bin_dir=bin_dir))
+    result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Success, result.msg
     assert not (present / "a.gcda").exists()
 
@@ -821,7 +825,7 @@ async def _reset(product, host, path):
         product = _RootOwnedShellProduct(
             artifact=product.artifact, name=product.name, cov_dir=product.cov_dir
         )
-    return await product.reset_coverage(host)
+    return await product.reset_coverage(host=host)
 
 
 _PATHS = ["plain", "elevated"]
@@ -839,13 +843,13 @@ class _CheckHost:
         self.calls.append(cmd)
         rc, out = self._check if "-print" in cmd else (0, "")
         status = Status.Success if rc == 0 else Status.Failed
-        return CommandResult(status, value=framed(cmd, out), command=cmd, retcode=rc)
+        return CommandResult(status=status, value=framed(cmd, out), command=cmd, retcode=rc)
 
     async def exec(self, cmd, **kwargs):
         return self._answer(cmd)
 
     async def run(self, cmd, **kwargs):
-        return Results.collect([self._answer(cmd)])
+        return Results.collect(items=[self._answer(cmd)])
 
 
 def _find_failing_only_the_check(tmp_path: Path, message: str) -> Path:
@@ -897,7 +901,7 @@ async def test_reset_check_fails_on_an_inaccessible_ancestor_plain(tmp_path):
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     parent.chmod(0)
     try:
-        result = await p.reset_coverage(ShellHost())
+        result = await p.reset_coverage(host=ShellHost())
     finally:
         parent.chmod(0o755)
     assert result.status is Status.Error, result
@@ -916,7 +920,7 @@ async def test_reset_check_fails_on_an_inaccessible_ancestor_elevated(tmp_path):
     (cov / "a.gcda").write_bytes(b"")
     bin_dir = _find_failing_only_the_check(tmp_path, f"find: '{parent}': Permission denied")
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
-    result = await p.reset_coverage(ShellHost(bin_dir=bin_dir))
+    result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Error, result
     assert result.msg.startswith(f"checking .gcda under {cov} failed: ")
     assert "Permission denied" in result.msg
@@ -970,7 +974,7 @@ async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_pa
     cov.mkdir()
     (cov / "a.gcda").write_bytes(b"")
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
-    result = await p.reset_coverage(ShellHost(bin_dir=bin_dir))
+    result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Success, result.msg
     calls = log.read_text().splitlines()
     assert len(calls) == 2
@@ -1044,7 +1048,7 @@ async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
         absent = str(tmp_path / "absent" / name)
         rc, out = await sh(gcda_check_cmd(absent))
         status = Status.Success if rc == 0 else Status.Failed
-        cmd = CommandResult(status, value=out, command="find", retcode=rc)
+        cmd = CommandResult(status=status, value=out, command="find", retcode=rc)
         assert classify_gcda_check(absent, cmd) == "absent", (name, rc, out)
 
 
@@ -1058,12 +1062,12 @@ async def test_product_get_debug_logs_hauls_globs_into_dest(tmp_path):
 
         async def get(self, paths, dest):
             calls.append((paths, dest))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
     p = _DummyShellProduct(
         artifact=Path("/x"), name="app", debug_log_globs=["/var/log/app/*.log", "/etc/app.conf"]
     )
-    result = await p.get_debug_logs(_Host(), tmp_path)
+    result = await p.get_debug_logs(host=_Host(), dest=tmp_path)
     assert result.is_ok
     assert calls == [
         ([Path("/var/log/app/a.log"), Path("/var/log/app/b.log"), Path("/etc/app.conf")], tmp_path)
@@ -1074,10 +1078,10 @@ async def test_product_get_debug_logs_hauls_globs_into_dest(tmp_path):
 async def test_product_get_debug_logs_glob_without_support_fails_loud(tmp_path):
     class _NoGlob:
         async def get(self, paths, dest):
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
     p = _DummyShellProduct(artifact=Path("/x"), name="app", debug_log_globs=["/logs/*.txt"])
-    result = await p.get_debug_logs(_NoGlob(), tmp_path)
+    result = await p.get_debug_logs(host=_NoGlob(), dest=tmp_path)
     assert not result.is_ok
     assert "glob" in result.msg
     assert "app" in result.msg
@@ -1090,4 +1094,4 @@ async def test_product_get_debug_logs_no_globs_is_success_without_a_get(tmp_path
             raise AssertionError("get must not run for an empty list")
 
     p = _DummyShellProduct(artifact=Path("/x"), name="app")
-    assert (await p.get_debug_logs(_Host(), tmp_path)).is_ok
+    assert (await p.get_debug_logs(host=_Host(), dest=tmp_path)).is_ok

@@ -37,14 +37,14 @@ def test_factory_stamps_the_ref_before_providers_run():
 
     register_product_provider(provider)
     host = create_host_from_dict(
-        dict(_ENTRY), inventory_ref=InventoryRef(key="k", backend="b"), element=Element("dut")
+        dict(_ENTRY), inventory_ref=InventoryRef(key="k", backend="b"), element=Element(name="dut")
     )
     assert host.inventory_ref == InventoryRef(key="k", backend="b")
     assert seen[0].key == "k"
 
 
 def test_inline_host_carries_an_empty_ref():
-    host = create_host_from_dict(dict(_ENTRY), element=Element("dut"))
+    host = create_host_from_dict(dict(_ENTRY), element=Element(name="dut"))
     assert host.inventory_ref == InventoryRef()
     assert host.inventory_ref.referenced is False
 
@@ -52,7 +52,7 @@ def test_inline_host_carries_an_empty_ref():
 def test_a_null_inventory_key_is_not_a_reference():
     """R7: ``"inventory": None`` (the field's own default) references nothing —
     schema-legal round-tripping must not trip the unresolved-reference guard."""
-    host = create_host_from_dict({**_ENTRY, "inventory": None}, element=Element("dut"))
+    host = create_host_from_dict({**_ENTRY, "inventory": None}, element=Element(name="dut"))
     assert host.inventory_ref == InventoryRef()
 
 
@@ -61,10 +61,13 @@ def test_a_null_inventory_key_is_not_a_reference():
 # through one call shape.
 _ENTRY_POINTS = [
     pytest.param(
-        partial(create_host_from_dict, element=Element("dut")), id="create_host_from_dict"
+        partial(create_host_from_dict, element=Element(name="dut")), id="create_host_from_dict"
     ),
-    pytest.param(lambda d: host_identity(d, Element("dut")), id="host_identity"),
-    pytest.param(partial(validate_host_dict, element=Element("dut")), id="validate_host_dict"),
+    pytest.param(lambda d: host_identity(d, element=Element(name="dut")), id="host_identity"),
+    pytest.param(
+        lambda d: validate_host_dict(host_data=d, element=Element(name="dut")),
+        id="validate_host_dict",
+    ),
 ]
 
 

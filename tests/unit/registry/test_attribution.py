@@ -28,12 +28,12 @@ def _from_module(module: str, fn, *args, **kwargs):
 @registration_boundary
 def register_widget(name: str, value: object) -> None:
     """A marked wrapper, as every ``register_*`` wrapper is."""
-    TABLE.register(name, Rec(value))
+    TABLE.register(name=name, entry=Rec(value))
 
 
 def unmarked_register_widget(name: str, value: object) -> None:
     """The same wrapper without the mark."""
-    TABLE.register(name, Rec(value))
+    TABLE.register(name=name, entry=Rec(value))
 
 
 def widget(name: str):
@@ -41,32 +41,32 @@ def widget(name: str):
 
     @registration_boundary
     def register(cls: type) -> type:
-        TABLE.register(name, Rec(cls))
+        TABLE.register(name=name, entry=Rec(cls))
         return cls
 
     return register
 
 
 def test_a_direct_register_credits_its_immediate_caller():
-    _from_module("pkg.init", TABLE.register, "w", Rec(1))
-    assert TABLE.origin("w") == "pkg.init"
+    _from_module("pkg.init", TABLE.register, name="w", entry=Rec(1))
+    assert TABLE.origin(name="w") == "pkg.init"
 
 
 def test_a_marked_wrapper_is_transparent():
     """Mutation: drop the marker (the unmarked twin below shows what that credits)."""
     _from_module("pkg.init", register_widget, "w", 1)
-    assert TABLE.origin("w") == "pkg.init"
+    assert TABLE.origin(name="w") == "pkg.init"
 
 
 def test_an_unmarked_wrapper_is_credited_itself():
     _from_module("pkg.init", unmarked_register_widget, "w", 1)
-    assert TABLE.origin("w") == __name__
+    assert TABLE.origin(name="w") == __name__
 
 
 def test_a_marked_decorator_credits_the_decorated_module():
     code = compile("@widget('w')\nclass Decorated:\n    pass\n", "<pkg.init>", "exec")
     exec(code, {"__name__": "pkg.init", "widget": widget})  # noqa: S102
-    assert TABLE.origin("w") == "pkg.init"
+    assert TABLE.origin(name="w") == "pkg.init"
 
 
 def test_a_helper_wrapping_a_wrapper_is_credited():
@@ -77,7 +77,7 @@ def test_a_helper_wrapping_a_wrapper_is_credited():
         scope,
     )
     _from_module("pkg.init", scope["helper"], "w", 1)
-    assert TABLE.origin("w") == "helpers.reg"
+    assert TABLE.origin(name="w") == "helpers.reg"
 
 
 def test_otto_builtins_imported_first_by_a_test_are_otto_s():
@@ -87,19 +87,21 @@ def test_otto_builtins_imported_first_by_a_test_are_otto_s():
     module.Rec = Rec
     with reg.loading_test_files():
         exec(  # noqa: S102
-            compile("TABLE.register('builtin', Rec(1))\n", "<otto.fake_builtins>", "exec"),
+            compile(
+                "TABLE.register(name='builtin', entry=Rec(1))\n", "<otto.fake_builtins>", "exec"
+            ),
             module.__dict__,
         )
-    assert TABLE.origin("builtin") == "otto.fake_builtins"
+    assert TABLE.origin(name="builtin") == "otto.fake_builtins"
     assert "otto.fake_builtins" not in sys.modules
 
 
 def test_the_project_comes_from_the_registering_project_marker():
     with reg.registering_project("a"):
-        TABLE.register("inside", Rec(1))
-    TABLE.register("outside", Rec(2))
-    assert TABLE.project("inside") == "a"
-    assert TABLE.project("outside") is None
+        TABLE.register(name="inside", entry=Rec(1))
+    TABLE.register(name="outside", entry=Rec(2))
+    assert TABLE.project(name="inside") == "a"
+    assert TABLE.project(name="outside") is None
 
 
 def test_registry_defined_in_is_the_constructing_module():

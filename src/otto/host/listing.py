@@ -287,7 +287,7 @@ def _artifact_cell(item: Any, project_roots: dict[str, Path]) -> str:
 def _stage_cell(item: Any, host: Any) -> str:
     if not getattr(item, "stages_artifact", False) or not hasattr(item, "stage_key"):
         return ""
-    key = item.stage_key(host)
+    key = item.stage_key(host=host)
     return LOGIN_HOME_CELL if key == LOGIN_HOME else key
 
 

@@ -19,8 +19,8 @@ class _Userland:
         self.shell_dialect = dialect
         self.timeout_style = "none"
 
-    def has_applet(self, name: str) -> str:
-        assert name == "nc"
+    def has_applet(self, *, applet: str) -> str:
+        assert applet == "nc"
         return "present"
 
 

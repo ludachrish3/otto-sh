@@ -20,7 +20,7 @@ class _Backend:
     def backend_name(self):
         return "case"
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return []
 
 
@@ -100,7 +100,10 @@ def test_the_construction_error_is_a_value_error_under_the_backend_error():
 def test_a_json_parse_failure_never_echoes_the_rejected_value(tmp_path):
     with pytest.raises(ReservationConstructionError, match="parse failed") as err:
         RESERVATION_BACKENDS.prepare(
-            "json", {"path": "x", "token": "hunter2-secret"}, _env(tmp_path), source="o.toml"
+            name="json",
+            raw={"path": "x", "token": "hunter2-secret"},
+            env=_env(tmp_path),
+            source="o.toml",
         )
     assert "hunter2-secret" not in str(err.value)
 
@@ -136,15 +139,15 @@ def test_a_callable_object_is_a_factory_the_freeze_walk_never_opens(factory, tmp
     Mutation: let the walk recurse into a dataclass or model before it stops at callables.
     """
     register_reservation_backend("case-functor", config=_CaseConfig, factory=factory)
-    prepared = RESERVATION_BACKENDS.prepare("case-functor", {}, _env(tmp_path))
-    assert isinstance(RESERVATION_BACKENDS.build(prepared), _Backend)
-    assert RESERVATION_BACKENDS.peek("case-functor").factory is factory
+    prepared = RESERVATION_BACKENDS.prepare(name="case-functor", raw={}, env=_env(tmp_path))
+    assert isinstance(RESERVATION_BACKENDS.build(prepared=prepared), _Backend)
+    assert RESERVATION_BACKENDS.peek(name="case-functor").factory is factory
 
 
 def test_a_json_path_that_cannot_anchor_never_echoes_it(tmp_path):
     """The built-in model's own validator names the rule, never the value it refused."""
     raw = {"path": "~nosuchuser_xyz/hunter2-secret"}
     with pytest.raises(ReservationConstructionError, match="parse failed: path: ") as err:
-        RESERVATION_BACKENDS.prepare("json", raw, _env(tmp_path), source="o.toml")
+        RESERVATION_BACKENDS.prepare(name="json", raw=raw, env=_env(tmp_path), source="o.toml")
     assert "hunter2-secret" not in str(err.value)
     assert "nosuchuser_xyz" not in str(err.value)

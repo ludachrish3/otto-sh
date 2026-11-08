@@ -135,8 +135,8 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         """Transfer files off the embedded target — one at a time (single console).
@@ -150,22 +150,22 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         a failure is its own entry.
         """
         if not self._filesystem.supports_transfer:
-            return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
+            return {src: Result(status=Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
 
         async def _get_one(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
             return await self._console_get_one(src, dest_dir, handler)
 
-        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
     @override
     async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: TransferProgressFactory | None,
         *,
+        progress_factory: TransferProgressFactory | None,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
         """Transfer local files onto the embedded target — one at a time.
@@ -178,14 +178,14 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         attempted; a failure is its own entry.
         """
         if not self._filesystem.supports_transfer:
-            return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
+            return {src: Result(status=Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
 
         async def _put_one(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
             return await self._console_put_one(src, dest_dir, handler)
 
-        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)
 
     # ------------------------------------------------------------------
     # console backend — get
@@ -212,7 +212,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
 
         if not result.status.is_ok:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     f"{read_cmd} failed (retcode={_label_errno(result.retcode)}): "
                     f"{result.value.strip()}"
@@ -222,13 +222,13 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         try:
             data = self._decode_hexdump(result.value)
         except ValueError as e:
-            return Result(Status.Error, msg=f"{read_cmd}: {e}")
+            return Result(status=Status.Error, msg=f"{read_cmd}: {e}")
 
         dest = dest_dir / src.name
         dest.write_bytes(data)
         if progress_handler is not None:
             progress_handler(src_path, dest.as_posix(), len(data), len(data))
-        return Result(Status.Success, value=dest)
+        return Result(status=Status.Success, value=dest)
 
     # ------------------------------------------------------------------
     # console backend — put
@@ -272,19 +272,19 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         # via the underlying `fs_open(... O_CREAT | O_WRITE)`.
         if not data:
             result = await self._exec_cmd(
-                self._filesystem.write_command(dest_path, 0, ""),
+                self._filesystem.write_command(dest_path, offset=0, hexbytes=""),
                 timeout=_WRITE_TIMEOUT,
             )
             check = self._check_write(result, dest_path, 0)
             if check.is_ok and progress_handler is not None:
                 progress_handler(src_str, dest_path, 0, 0)
-            return check if not check.is_ok else Result(Status.Success, value=dest)
+            return check if not check.is_ok else Result(status=Status.Success, value=dest)
 
         for offset in range(0, total, _WRITE_CHUNK):
             chunk = data[offset : offset + _WRITE_CHUNK]
             hexbytes = " ".join(f"{b:02x}" for b in chunk)
             result = await self._exec_cmd(
-                self._filesystem.write_command(dest_path, offset, hexbytes),
+                self._filesystem.write_command(dest_path, offset=offset, hexbytes=hexbytes),
                 timeout=_WRITE_TIMEOUT,
             )
             check = self._check_write(result, dest_path, offset)
@@ -298,7 +298,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 return check
             if progress_handler is not None:
                 progress_handler(src_str, dest_path, offset + len(chunk), total)
-        return Result(Status.Success, value=dest)
+        return Result(status=Status.Success, value=dest)
 
     async def _cleanup_partial(self, dest_path: str) -> None:
         """Best-effort removal of a half-written destination file after a mid-transfer failure.
@@ -323,14 +323,14 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         """Classify an ``fs write`` result into a transfer :class:`~otto.result.Result`."""
         if not result.status.is_ok:
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     f"fs write {dest_path} at offset {offset} failed "
                     f"(retcode={_label_errno(result.retcode)}): "
                     f"{result.value.strip()}"
                 ),
             )
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -391,7 +391,7 @@ class LinkState:
         return bool(self.read_errors)
 
 
-def find_link(lab: Any, ident: str) -> Link:
+def find_link(*, lab: Any, ident: str) -> Link:
     """Resolve *ident* (a link id or its ``name``) against ``lab.static_links()``.
 
     Resolving is NOT the same as being actionable, and the gap is wide: every
@@ -494,7 +494,7 @@ def _impairer_for(host: Any) -> LinkImpairer:
     name = getattr(host, "impairer", None)
     if not name:
         raise ValueError(f"host {host.id!r} has no impairer support")
-    return build_impairer(name)()
+    return build_impairer(name=name)()
 
 
 def resolve_directions(link: Link, from_host: str | None) -> frozenset[FlowDirection]:
@@ -680,12 +680,12 @@ async def _read_state(host: Any, impairer: LinkImpairer, netdev: str) -> ScopedS
     report ``clean`` or ``whole`` (their read contract predates selectors).
     """
     if impairer.supports_selectors:
-        qdisc_cmd, filter_cmd = impairer.scoped_read_commands(netdev)
+        qdisc_cmd, filter_cmd = impairer.scoped_read_commands(netdev=netdev)
         qdisc_out = (await _exec(host, qdisc_cmd)).value
         filter_out = (await _exec(host, filter_cmd)).value
-        return impairer.parse_scoped(qdisc_out, filter_out)
+        return impairer.parse_scoped(qdisc_output=qdisc_out, filter_output=filter_out)
     params = impairer.parse_read((await _exec(host, impairer.read_command(netdev))).value)
-    return ScopedState.whole_link(params) if params is not None else ScopedState.clean()
+    return ScopedState.whole_link(params=params) if params is not None else ScopedState.clean()
 
 
 def _ensure_not_foreign(host: Any, netdev: str, state: ScopedState) -> None:
@@ -713,7 +713,7 @@ async def _apply_or_clear(
     if merged.is_empty():
         await _root_run(host, impairer.clear_command(netdev))
     else:
-        await _root_run(host, impairer.apply_command(netdev, merged))
+        await _root_run(host, impairer.apply_command(netdev, params=merged))
 
 
 async def _cancel_timers(
@@ -961,9 +961,11 @@ async def _launch_selector_timer(
     """
     sentinel = encode_impair_sentinel_v3(link.id, placement.netdev, selector)
     clear_seq = " && ".join(
-        impairer.scoped_clear_selector_commands(placement.netdev, band, selector)
+        impairer.scoped_clear_selector_commands(
+            netdev=placement.netdev, band=band, selector=selector
+        )
     )
-    filter_show = impairer.scoped_read_commands(placement.netdev)[1]
+    filter_show = impairer.scoped_read_commands(netdev=placement.netdev)[1]
     root_del = impairer.clear_command(placement.netdev)
     script = (
         f'sleep {int(expire)} && {clear_seq} && if [ -z "$({filter_show})" ]; then {root_del}; fi'
@@ -994,7 +996,7 @@ def _verify_scoped(
     ok = (
         (observed.kind == "scoped" or (observed.kind == "clean" and not expected))
         and set(observed_map) == set(expected)
-        and all(equivalent(observed_map[sel], expected[sel]) for sel in expected)
+        and all(equivalent(a=observed_map[sel], b=expected[sel]) for sel in expected)
     )
     if not ok:
         exp_text = ", ".join(f"{s.describe()} [{p.describe()}]" for s, p in expected.items()) or (
@@ -1034,15 +1036,17 @@ async def _apply_selector(
         if len(state.selectors) == 1:
             await _root_run(host, impairer.clear_command(netdev))
         else:
-            for cmd in impairer.scoped_clear_selector_commands(netdev, prior[0], selector):
+            for cmd in impairer.scoped_clear_selector_commands(
+                netdev=netdev, band=prior[0], selector=selector
+            ):
                 await _root_run(host, cmd)
         return None
     band = prior[0] if prior is not None else _assign_band(link.id, host, netdev, state)
     if state.kind == "clean":
-        await _root_run(host, impairer.scoped_root_command(netdev))
-    await _root_run(host, impairer.scoped_band_command(netdev, band, merged))
+        await _root_run(host, impairer.scoped_root_command(netdev=netdev))
+    await _root_run(host, impairer.scoped_band_command(netdev=netdev, band=band, params=merged))
     if prior is None:
-        for cmd in impairer.scoped_filter_commands(netdev, band, selector):
+        for cmd in impairer.scoped_filter_commands(netdev=netdev, band=band, selector=selector):
             await _root_run(host, cmd)
     return band
 
@@ -1055,15 +1059,15 @@ async def _restore_state(
 ) -> None:
     """Rebuild *netdev* to exactly *state* (clean / whole params / full scoped mapping)."""
     if state.kind == "whole" and state.whole is not None:
-        await _root_run(host, impairer.apply_command(netdev, state.whole))
+        await _root_run(host, impairer.apply_command(netdev, params=state.whole))
         return
     await _root_run(host, impairer.clear_command(netdev))
     if state.kind != "scoped":
         return
-    await _root_run(host, impairer.scoped_root_command(netdev))
+    await _root_run(host, impairer.scoped_root_command(netdev=netdev))
     for selector, (band, params) in state.selectors.items():
-        await _root_run(host, impairer.scoped_band_command(netdev, band, params))
-        for cmd in impairer.scoped_filter_commands(netdev, band, selector):
+        await _root_run(host, impairer.scoped_band_command(netdev=netdev, band=band, params=params))
+        for cmd in impairer.scoped_filter_commands(netdev=netdev, band=band, selector=selector):
             await _root_run(host, cmd)
 
 
@@ -1241,7 +1245,7 @@ def _plan_one_placement(
     out as a truncated ``tc qdisc replace … root netem`` that no run emits.
     """
     where = f"{placement.direction.value} on {placement.host_id}/{placement.netdev}"
-    as_if_clean = params.merged_over(ImpairmentParams())
+    as_if_clean = params.merged_over(base=ImpairmentParams())
     try:
         as_if_clean.validate()
     except ValueError as e:
@@ -1257,7 +1261,7 @@ def _plan_one_placement(
     elif as_if_clean.is_empty():
         lines = [f"{where}: {impairer.clear_command(placement.netdev)}"]
     else:
-        lines = [f"{where}: {impairer.apply_command(placement.netdev, as_if_clean)}"]
+        lines = [f"{where}: {impairer.apply_command(placement.netdev, params=as_if_clean)}"]
     if expire is not None:
         lines.append(f"{where}: launch an expire timer that clears it after {expire}s")
     return lines
@@ -1396,9 +1400,9 @@ def _plan_repair(lab: Any, link: Link, *, selector: Selector | None) -> DryRunPl
 
 async def impair_link(
     lab: "Lab",
+    *,
     ident: str,
     params: ImpairmentParams,
-    *,
     from_host: str | None = None,
     expire: int | None = None,
     selector: Selector | None = None,
@@ -1455,7 +1459,7 @@ async def impair_link(
     otherwise raise — because the preview needs this call's whole intent and a
     command string does not carry it.
     """
-    link = find_link(lab, ident)
+    link = find_link(lab=lab, ident=ident)
     _ensure_endpoints_are_loaded(lab, link)
     directions = resolve_directions(link, from_host)
     if is_dry_run():
@@ -1489,7 +1493,7 @@ async def impair_link(
             if selector is not None:
                 prior_entry = state.selectors.get(selector)
                 base = prior_entry[1] if prior_entry is not None else ImpairmentParams()
-                merged = params.merged_over(base)
+                merged = params.merged_over(base=base)
                 merged.validate()
                 band = await _apply_selector(
                     host, link, placement, impairer, state, selector, merged
@@ -1504,7 +1508,7 @@ async def impair_link(
                 applied.append(AppliedPlacement(placement, merged, selector))
                 continue
             base = state.whole if state.whole is not None else ImpairmentParams()
-            merged = params.merged_over(base)
+            merged = params.merged_over(base=base)
             merged.validate()
             await _apply_or_clear(host, impairer, placement.netdev, merged)
             observed_state = await _read_state(host, impairer, placement.netdev)
@@ -1514,7 +1518,7 @@ async def impair_link(
             # impairment differently than `expected`; compare by MEANING.
             observed_params = observed if observed is not None else ImpairmentParams()
             expected_params = expected if expected is not None else ImpairmentParams()
-            if not equivalent(observed_params, expected_params):
+            if not equivalent(a=observed_params, b=expected_params):
                 _raise_verify_mismatch(host, placement, expected, observed)
             if expire is not None:
                 await _launch_timer(host, link, placement, impairer, expire)
@@ -1537,7 +1541,7 @@ async def impair_link(
     return ImpairReport(link.id, applied)
 
 
-async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = None) -> RepairReport:
+async def repair_link(lab: "Lab", *, ident: str, selector: Selector | None = None) -> RepairReport:
     """Clear link *ident*'s impairment state and cancel its timers.
 
     Bare (``selector=None``): clears EVERYTHING per placement that has any
@@ -1564,7 +1568,7 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
     repair that cannot see one end must still clear the other — otherwise the
     end it CAN reach is stranded by the end it cannot.
     """
-    link = find_link(lab, ident)
+    link = find_link(lab=lab, ident=ident)
     directions = resolve_directions(link, None)
     if is_dry_run():
         return RepairReport(link.id, plan=_plan_repair(lab, link, selector=selector))
@@ -1611,7 +1615,7 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
             await _root_run(host, impairer.clear_command(placement.netdev))
         else:
             for cmd in impairer.scoped_clear_selector_commands(
-                placement.netdev, entry[0], selector
+                netdev=placement.netdev, band=entry[0], selector=selector
             ):
                 await _root_run(host, cmd)
         still = await _read_state(host, impairer, placement.netdev)
@@ -1635,7 +1639,7 @@ def describe_out_of_scope(report: RepairReport) -> str:
     )
 
 
-async def repair_all(lab: "Lab") -> RepairAllReport:
+async def repair_all(*, lab: "Lab") -> RepairAllReport:
     """Repair every static link in *lab*; never raises.
 
     A link that structurally can't be impaired (:class:`ValueError` — neither
@@ -1665,7 +1669,7 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
     report = RepairAllReport(dry_run=is_dry_run())
     for link in lab.static_links():
         try:
-            outcome = await repair_link(lab, link.id)
+            outcome = await repair_link(lab, ident=link.id)
         except ValueError as e:  # noqa: PERF203 — per-item resilience
             report.skipped.append(f"{link.id}: {e}")
         except RuntimeError as e:
@@ -1726,7 +1730,7 @@ async def read_link_state(lab: Any, link: Link) -> LinkState:
     second ``is_dry_run()`` here is what keeps that arm LIVE — a hand-written
     short-circuit would make it a branch nothing ever takes.
     """
-    refusal = impairment_refusal(link, _BOTH)
+    refusal = impairment_refusal(link=link, directions=_BOTH)
     if refusal is not None:
         return LinkState(link, {}, impairable=False, refusal=refusal)
     try:

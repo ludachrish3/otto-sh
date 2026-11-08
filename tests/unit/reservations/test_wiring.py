@@ -21,7 +21,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
 
     monkeypatch.setattr(factory, "build_backend", _spy)
     gate = build_reservation_gate(
-        [_project({"backend": "none"}, tmp_path)],
+        projects=[_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -33,7 +33,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
 
 def test_no_skip_builds_backend(tmp_path):
     gate = build_reservation_gate(
-        [_project({"backend": "none"}, tmp_path)],
+        projects=[_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
@@ -44,7 +44,7 @@ def test_no_skip_builds_backend(tmp_path):
 
 def test_factory_builds_on_demand(tmp_path):
     gate = build_reservation_gate(
-        [_project({"backend": "none"}, tmp_path)],
+        projects=[_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -59,7 +59,7 @@ def test_factory_passes_resolved_username(tmp_path):
     leave every other test in this file green.
     """
     gate = build_reservation_gate(
-        [_project({"backend": "none"}, tmp_path)],
+        projects=[_project({"backend": "none"}, tmp_path)],
         holder="bob",
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -74,7 +74,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
     monkeypatch.setattr(factory, "build_backend", _boom)
     with pytest.raises(ReservationBackendError):
         build_reservation_gate(
-            [_project({"backend": "x"}, tmp_path)],
+            projects=[_project({"backend": "x"}, tmp_path)],
             holder=None,
             skip_reservation_check=False,
             cwd_fallback=tmp_path,
@@ -83,7 +83,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
 
 def test_holder_sets_identity(tmp_path):
     gate = build_reservation_gate(
-        [_project({"backend": "none"}, tmp_path)],
+        projects=[_project({"backend": "none"}, tmp_path)],
         holder="bob",
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
@@ -139,7 +139,7 @@ class TestAPresentTableMustNameItsBackend:
 def test_gate_from_settings_builds_no_backend_under_skip(tmp_path):
     from otto.reservations import gate_from_settings
 
-    gate = gate_from_settings({}, tmp_path, holder="bob", skip_reservation_check=True)
+    gate = gate_from_settings({}, project_root=tmp_path, holder="bob", skip_reservation_check=True)
     assert gate.backend is None
     assert gate.skip_check is True
     assert gate.identity.username == "bob"
@@ -149,6 +149,6 @@ def test_gate_from_settings_builds_no_backend_under_skip(tmp_path):
 def test_gate_from_settings_builds_the_backend_for_the_resolved_user(tmp_path):
     from otto.reservations import gate_from_settings, is_null_backend
 
-    gate = gate_from_settings({}, tmp_path, holder="bob", skip_reservation_check=False)
-    assert is_null_backend(gate.backend)  # no `backend` key resolves to "none"
+    gate = gate_from_settings({}, project_root=tmp_path, holder="bob", skip_reservation_check=False)
+    assert is_null_backend(backend=gate.backend)  # no `backend` key resolves to "none"
     assert gate.backend.username == "bob"

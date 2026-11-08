@@ -148,7 +148,7 @@ class TestCoverageProduct:
         """
         await _compile_product()
 
-        cls._hosts = list(all_hosts(_REAL_HOSTS))
+        cls._hosts = list(all_hosts(pattern=_REAL_HOSTS))
 
         install_results = await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
         failed = {h: r for h, r in install_results.items() if isinstance(r, BaseException)}

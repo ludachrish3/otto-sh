@@ -161,24 +161,28 @@ class TestBaseFileTransferProgressWiring:
         class Spy(BaseFileTransfer):
             async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 captured["put_factory"] = progress_factory
-                return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
+                return {
+                    s: Result(status=Status.Success, value=dest_dir / s.name) for s in src_files
+                }
 
             async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 captured["get_factory"] = progress_factory
-                return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
+                return {
+                    s: Result(status=Status.Success, value=dest_dir / s.name) for s in src_files
+                }
 
         return Spy(name="spy"), captured
 
     @pytest.mark.asyncio
     async def test_show_progress_true_passes_a_factory(self):
         spy, captured = self._spy_subclass()
-        await spy.put_files([Path("/a/foo")], Path("/dest"), show_progress=True)
+        await spy.put_files(src_files=[Path("/a/foo")], dest_dir=Path("/dest"), show_progress=True)
         assert callable(captured["put_factory"])
 
     @pytest.mark.asyncio
     async def test_show_progress_false_passes_none(self):
         spy, captured = self._spy_subclass()
-        await spy.put_files([Path("/a/foo")], Path("/dest"), show_progress=False)
+        await spy.put_files(src_files=[Path("/a/foo")], dest_dir=Path("/dest"), show_progress=False)
         assert captured["put_factory"] is None
 
     @pytest.mark.asyncio
@@ -188,8 +192,8 @@ class TestBaseFileTransferProgressWiring:
         spy, captured = self._spy_subclass()
         spy._max_filename_len = 5
         result = await spy.put_files(
-            [Path("/a/long_filename.bin")],
-            Path("/dest"),
+            src_files=[Path("/a/long_filename.bin")],
+            dest_dir=Path("/dest"),
         )
         assert result.status == Status.Error
         assert "put_factory" not in captured
@@ -204,7 +208,7 @@ class TestBaseFileTransferProgressWiring:
         spy._max_filename_len = 5
         short = Path("/a/ok.bin")
         long = Path("/a/long_filename.bin")
-        result = await spy.put_files([short, long], Path("/dest"))
+        result = await spy.put_files(src_files=[short, long], dest_dir=Path("/dest"))
         assert result.status == Status.Error
         assert set(result.value.keys()) == {short, long}
         assert not result.value[short].is_ok
@@ -218,7 +222,7 @@ class TestBaseFileTransferProgressWiring:
         spy._max_filename_len = 5
         short = Path("/a/ok.bin")
         long = Path("/a/long_filename.bin")
-        result = await spy.get_files([short, long], Path("/dest"))
+        result = await spy.get_files(src_files=[short, long], dest_dir=Path("/dest"))
         assert result.status == Status.Error
         assert set(result.value.keys()) == {short, long}
         assert not result.value[short].is_ok

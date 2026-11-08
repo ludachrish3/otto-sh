@@ -36,7 +36,7 @@ _CONTAINERD_STORE = ["driver-type", "io.containerd.snapshotter.v1"]
 
 
 def _test3() -> UnixHost:
-    host = next(iter(all_hosts(_HOST)))
+    host = next(iter(all_hosts(pattern=_HOST)))
     assert isinstance(host, UnixHost), host
     return host
 

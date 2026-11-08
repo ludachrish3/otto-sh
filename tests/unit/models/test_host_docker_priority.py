@@ -16,7 +16,7 @@ def test_docker_priority_defaults_to_zero_and_forwards_to_the_host():
     spec = UnixHostSpec.model_validate({**BASE, "docker_capable": True})
     assert spec.docker_priority == 0
     host = build_host(
-        {**BASE, "docker_capable": True, "docker_priority": 10}, element=Element("server")
+        {**BASE, "docker_capable": True, "docker_priority": 10}, element=Element(name="server")
     )
     assert host.docker_priority == 10
     assert host.docker_capable is True
@@ -31,7 +31,7 @@ def test_a_priority_on_a_host_that_is_not_docker_capable_is_refused():
     with pytest.raises(
         HostValidationError, match="docker_priority on 'dut1', which is not docker_capable"
     ):
-        validate_host_dict({**BASE, "docker_priority": 3}, element=Element("server"))
+        validate_host_dict(host_data={**BASE, "docker_priority": 3}, element=Element(name="server"))
 
 
 def test_an_explicit_zero_on_a_host_that_is_not_docker_capable_is_refused_too():
@@ -39,7 +39,7 @@ def test_an_explicit_zero_on_a_host_that_is_not_docker_capable_is_refused_too():
     with pytest.raises(
         HostValidationError, match="docker_priority on 'dut1', which is not docker_capable"
     ):
-        validate_host_dict({**BASE, "docker_priority": 0}, element=Element("server"))
+        validate_host_dict(host_data={**BASE, "docker_priority": 0}, element=Element(name="server"))
 
 
 def test_a_bool_is_not_a_priority():
@@ -65,6 +65,6 @@ def test_the_identity_carries_the_priority_the_spec_declares():
     from otto.host.factory import host_identity
 
     identity = host_identity(
-        {**BASE, "docker_capable": True, "docker_priority": 7}, element=Element("server")
+        {**BASE, "docker_capable": True, "docker_priority": 7}, element=Element(name="server")
     )
     assert identity.docker_priority == 7

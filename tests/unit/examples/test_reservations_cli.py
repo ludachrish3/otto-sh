@@ -24,7 +24,7 @@ class _UnbuildableBackend(ReservationBackendBase):
     def __init__(self, **kwargs):
         raise ReservationBackendError("scheduler down")
 
-    def fetch_reservations(self, username, start=None, end=None) -> list[Reservation]:
+    def fetch_reservations(self, username, *, start=None, end=None) -> list[Reservation]:
         return []
 
     def backend_name(self) -> str:
@@ -34,7 +34,7 @@ class _UnbuildableBackend(ReservationBackendBase):
 class _BrokenBackend(ReservationBackendBase):
     """A backend whose queries always fail; no scheduler is contacted."""
 
-    def fetch_reservations(self, username, start=None, end=None) -> list[Reservation]:
+    def fetch_reservations(self, username, *, start=None, end=None) -> list[Reservation]:
         raise ReservationBackendError("network down")
 
     def backend_name(self) -> str:
@@ -84,7 +84,7 @@ def test_an_unavailable_backend_exits_1_and_names_the_break_glass(capsys):
 def test_check_renders_every_row_then_the_verdict(capsys):
     lab = Lab(name="demo", resources={"lab-a", "shared"})
     code = translate(
-        lambda: check_report(_gate(ExampleReservationBackend(username="alice"), "alice"), lab)
+        lambda: check_report(_gate(ExampleReservationBackend(username="alice"), "alice"), lab=lab)
     )
     out = capsys.readouterr().out
     assert code == 0
@@ -96,7 +96,7 @@ def test_check_renders_every_row_then_the_verdict(capsys):
 def test_check_names_the_missing_row_and_exits_1(capsys):
     lab = Lab(name="demo", resources={"lab-a"})
     code = translate(
-        lambda: check_report(_gate(ExampleReservationBackend(username="carol"), "carol"), lab)
+        lambda: check_report(_gate(ExampleReservationBackend(username="carol"), "carol"), lab=lab)
     )
     out = capsys.readouterr().out
     assert code == 1

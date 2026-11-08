@@ -27,7 +27,7 @@ class _SpyBackend:
     def backend_name(self):
         return "spy"
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return []
 
 
@@ -35,7 +35,7 @@ def test_replaces_names_every_built_in_reservation_backend():
     builtins = {
         ("otto.reservations.registry:RESERVATION_BACKENDS", name)
         for name in RESERVATION_BACKENDS.names()
-        if RESERVATION_BACKENDS.origin(name).startswith("otto.")
+        if RESERVATION_BACKENDS.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -50,5 +50,7 @@ def test_replaces_names_every_built_in_reservation_backend():
 def test_a_replaced_backend_is_what_the_gate_builds(tmp_path, name, table):
     spy = _SpyBackend()
     register_reservation_backend(name, config=_Config, factory=lambda c: spy, overwrite=True)
-    gate = gate_from_settings(table, tmp_path, holder="me", skip_reservation_check=False)
+    gate = gate_from_settings(
+        table, project_root=tmp_path, holder="me", skip_reservation_check=False
+    )
     assert gate.backend is spy

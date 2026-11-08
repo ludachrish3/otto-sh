@@ -85,7 +85,7 @@ def scaffold_candidates(
     _check_names(requested)
     if inline_hosts and "lab" not in requested:
         requested.append("lab")
-    present = set(detect_areas(root))
+    present = set(detect_areas(root=root))
     chosen: list[str] = []
     for name in AREA_NAMES:
         if name in requested:
@@ -115,7 +115,7 @@ def _prerequisites(areas: list[str], present: set[str]) -> list[str]:
     return [name for name in AREA_NAMES if name in needed - set(areas) - present]
 
 
-def scaffold_prerequisites(root: Path, areas: list[str]) -> list[str]:
+def scaffold_prerequisites(*, root: Path, areas: list[str]) -> list[str]:
     """Return the missing areas *areas* cannot be written without, not already in *areas*.
 
     Settings for any area (it is the project marker); instructions for tests
@@ -127,7 +127,7 @@ def scaffold_prerequisites(root: Path, areas: list[str]) -> list[str]:
         InitInputError: a name in *areas* is not an area (``field="areas"``).
     """
     _check_names(areas)
-    return _prerequisites(areas, set(detect_areas(root)) if areas else set())
+    return _prerequisites(areas, set(detect_areas(root=root)) if areas else set())
 
 
 def _prerequisite_notice(name: str, areas: list[str]) -> str:
@@ -142,7 +142,7 @@ def _prerequisite_notice(name: str, areas: list[str]) -> str:
     return f"the {name} area is a prerequisite of what you asked for — scaffolding it."
 
 
-def scaffold(config: InitConfig, areas: list[str]) -> ScaffoldReport:
+def scaffold(config: InitConfig, *, areas: list[str]) -> ScaffoldReport:
     """Scaffold *areas* plus their prerequisites, in :data:`AREA_NAMES` order; never prints.
 
     Every file goes through :func:`~otto.init.write_policy.write_file`:
@@ -154,7 +154,7 @@ def scaffold(config: InitConfig, areas: list[str]) -> ScaffoldReport:
     """
     _check_names(areas)
     root = config.root
-    present_before = set(detect_areas(root))
+    present_before = set(detect_areas(root=root))
     prerequisites = _prerequisites(areas, present_before)
     ordered = [name for name in AREA_NAMES if name in {*areas, *prerequisites}]
     notices = [_prerequisite_notice(name, areas) for name in prerequisites]

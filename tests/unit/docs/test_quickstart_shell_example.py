@@ -124,7 +124,7 @@ def _dut_answering(result: CommandResult) -> SimpleNamespace:
 async def test_the_e2e_helper_refuses_a_tool_that_failed(monkeypatch):
     tools = _tools_module()
     failed = CommandResult(
-        Status.Failed, value="boom", command="/tmp/quickstart/shout x", retcode=2
+        status=Status.Failed, value="boom", command="/tmp/quickstart/shout x", retcode=2
     )
     monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(failed))
     with pytest.raises(tools.ToolFailedError, match=r"/tmp/quickstart/shout x.*exit code 2"):
@@ -135,7 +135,7 @@ async def test_the_e2e_helper_refuses_a_tool_that_failed(monkeypatch):
 async def test_the_e2e_helper_says_a_tool_timed_out(monkeypatch):
     tools = _tools_module()
     timed_out = CommandResult(
-        Status.Error,
+        status=Status.Error,
         value="Command timed out after 5s",
         command="/tmp/quickstart/shout x",
         retcode=-1,
@@ -154,7 +154,9 @@ async def test_the_e2e_helper_says_a_tool_timed_out(monkeypatch):
 async def test_the_e2e_helper_says_a_killed_tool_did_not_finish(monkeypatch):
     """A signal kill or a lost session also leaves retcode -1, with no timeout."""
     tools = _tools_module()
-    killed = CommandResult(Status.Failed, value="", command="/tmp/quickstart/shout x", retcode=-1)
+    killed = CommandResult(
+        status=Status.Failed, value="", command="/tmp/quickstart/shout x", retcode=-1
+    )
     monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(killed))
     with pytest.raises(tools.ToolFailedError) as raised:
         await tools.run_tool("shout", "x")
@@ -167,7 +169,7 @@ async def test_the_e2e_helper_says_a_killed_tool_did_not_finish(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_e2e_helper_names_a_product_dut_does_not_have(monkeypatch):
     tools = _tools_module()
-    ok = CommandResult(Status.Success, value="", command="", retcode=0)
+    ok = CommandResult(status=Status.Success, value="", command="", retcode=0)
     monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(ok))
     with pytest.raises(LookupError, match=r"'nope'.*dut"):
         await tools.run_tool("nope", "x")
@@ -176,7 +178,9 @@ async def test_the_e2e_helper_names_a_product_dut_does_not_have(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_e2e_helper_returns_what_a_tool_printed(monkeypatch):
     tools = _tools_module()
-    ok = CommandResult(Status.Success, value="X", command="/tmp/quickstart/shout x", retcode=0)
+    ok = CommandResult(
+        status=Status.Success, value="X", command="/tmp/quickstart/shout x", retcode=0
+    )
     dut = _dut_answering(ok)
     monkeypatch.setattr(tools, "get_host", lambda _name: dut)
     assert await tools.run_tool("shout", "x") == "X"

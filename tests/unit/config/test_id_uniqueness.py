@@ -9,7 +9,7 @@ from otto.labs.loader import Lab
 
 
 def _mk(element, ip="10.0.0.1", element_id=None):
-    return UnixHost(ip=ip, creds=[], element=Element(element, id=element_id))
+    return UnixHost(ip=ip, creds=[], element=Element(name=element, id=element_id))
 
 
 def test_add_host_rejects_duplicate():
@@ -60,13 +60,13 @@ def test_merge_error_names_pre_merge_lab_not_already_merged_name():
 def test_distinct_slug_collision_detected():
     # Two different raw elements that slug to the same id collide.
     a = Lab(name="a")
-    a.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("Lab X Server")))
+    a.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element(name="Lab X Server")))
     with pytest.raises(
         LabRepositoryError,
         match=r"host id 'lab-x-server' in lab 'a': element 'Lab X Server' \(10\.0\.0\.1\) "
         r"collides with element 'lab-x-server' \(10\.0\.0\.2\)",
     ):
-        a.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element("lab-x-server")))
+        a.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element(name="lab-x-server")))
 
 
 def test_lab_has_no_handle_resolution():

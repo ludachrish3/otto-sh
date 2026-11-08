@@ -168,7 +168,7 @@ def hop_dial_script(
     if userland is None or userland.shell_dialect == "bash":
         body = HOP_DIAL_BASH.format(r=_reader_timeout(t), n=_BANNER_BYTES)
         return f"timeout {t} {bash_script(body, ip, str(port))} 2>&1; echo OTTO_RC=$?"
-    if userland.has_applet("nc") == "present":
+    if userland.has_applet(applet="nc") == "present":
         prefix = _TIMEOUT_PREFIX.get(userland.timeout_style, "").format(t=t)
         return HOP_DIAL_NC.format(prefix=prefix, t=t, ip=shell_operand(ip), port=port)
     return None

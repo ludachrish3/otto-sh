@@ -143,9 +143,9 @@ class _HostProxyIO:
         await self._host.send(text, log=log)  # ty: ignore[unresolved-attribute]
 
     async def expect(
-        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+        self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
-        return await self._host.expect(pattern, timeout)  # ty: ignore[unresolved-attribute]
+        return await self._host.expect(pattern, timeout=timeout)  # ty: ignore[unresolved-attribute]
 
 
 class PosixPrivilege(UserlandHost):
@@ -446,7 +446,7 @@ class PosixPrivilege(UserlandHost):
             self._log_command,  # ty: ignore[unresolved-attribute]
         )
 
-    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
+    async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` the persistent (default) session to *user* (default root).
 
         Performs the real switch (recursively hopping through any ``via``
@@ -481,7 +481,7 @@ class PosixPrivilege(UserlandHost):
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
+        self, *, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> AsyncGenerator["PosixPrivilege", None]:
         """Run a block as *user*, returning to the original user on exit.
 

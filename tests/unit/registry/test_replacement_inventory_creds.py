@@ -58,11 +58,11 @@ def test_replaces_names_every_built_in_inventory_and_creds_backend():
     builtins = {
         ("otto.inventory.registry:INVENTORY_BACKENDS", name)
         for name in INVENTORY_BACKENDS.names()
-        if INVENTORY_BACKENDS.origin(name).startswith("otto.")
+        if INVENTORY_BACKENDS.origin(name=name).startswith("otto.")
     } | {
         ("otto.creds.registry:CREDS_BACKENDS", name)
         for name in CREDS_BACKENDS.names()
-        if CREDS_BACKENDS.origin(name).startswith("otto.")
+        if CREDS_BACKENDS.origin(name=name).startswith("otto.")
     }
     assert set(REPLACES) == builtins
 
@@ -76,12 +76,12 @@ def test_replaces_names_every_built_in_inventory_and_creds_backend():
 )
 def test_a_replaced_inventory_backend_is_what_build_inventory_builds(tmp_path, name, table):
     spy = _SpyInventory()
-    snapshot = INVENTORY_BACKENDS.peek(name).metadata.snapshot_cache
+    snapshot = INVENTORY_BACKENDS.peek(name=name).metadata.snapshot_cache
     register_inventory_backend(
         name, config=_Config, factory=lambda c: spy, snapshot_cache=snapshot, overwrite=True
     )
     project = fake_project("r", root=tmp_path, settings={"inventory": table})
-    assert build_inventory([project]) is spy
+    assert build_inventory(projects=[project]) is spy
 
 
 def test_a_replaced_creds_store_is_what_build_inventory_overlays(tmp_path):
@@ -95,6 +95,6 @@ def test_a_replaced_creds_store_is_what_build_inventory_overlays(tmp_path):
             "creds": {"backend": "json", "path": "creds.json"},
         },
     )
-    inventory = build_inventory([project])
+    inventory = build_inventory(projects=[project])
     assert isinstance(inventory, CredsOverlay)
     assert inventory.store is store

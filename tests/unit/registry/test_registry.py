@@ -27,8 +27,8 @@ def _from_module(module: str, fn, *args, **kwargs):
 class TestRegisterAndGet:
     def test_round_trip_and_order(self):
         r = _make()
-        r.register("ssh", Backend("SSH"))
-        r.register("telnet", Backend("TELNET"))
+        r.register(name="ssh", entry=Backend("SSH"))
+        r.register(name="telnet", entry=Backend("TELNET"))
         assert r.get("ssh") == Backend("SSH")
         assert r.names() == ["ssh", "telnet"]  # registration order, not sorted
         assert "ssh" in r
@@ -37,43 +37,43 @@ class TestRegisterAndGet:
 
     def test_duplicate_raises_naming_both_origins(self):
         r = _make()
-        _from_module("project_a.init", r.register, "ssh", Backend("A"))
+        _from_module("project_a.init", r.register, name="ssh", entry=Backend("A"))
         with pytest.raises(
             DuplicateRegistration, match=r"already registered by 'project_a.init'"
         ) as ei:
-            _from_module("project_b.init", r.register, "ssh", Backend("B"))
+            _from_module("project_b.init", r.register, name="ssh", entry=Backend("B"))
         assert "project_b.init" in str(ei.value)
 
     def test_default_collision_message_mentions_overwrite(self):
         r = _make()
-        r.register("ssh", Backend("A"))
+        r.register(name="ssh", entry=Backend("A"))
         with pytest.raises(ValueError, match=r"Pass overwrite=True to replace it deliberately\."):
-            r.register("ssh", Backend("B"))
+            r.register(name="ssh", entry=Backend("B"))
 
     def test_overwrite_replaces(self):
         r = _make()
-        r.register("json", Backend("OLD"))
-        r.register("json", Backend("NEW"), overwrite=True)
+        r.register(name="json", entry=Backend("OLD"))
+        r.register(name="json", entry=Backend("NEW"), overwrite=True)
         assert r.get("json") == Backend("NEW")
 
     def test_origin_is_the_calling_module(self):
         r = _make()
-        r.register("ssh", Backend("A"))
-        assert r.origin("ssh") == __name__
+        r.register(name="ssh", entry=Backend("A"))
+        assert r.origin(name="ssh") == __name__
 
     def test_unregister(self):
         r = _make()
-        r.register("ssh", Backend("A"))
-        r.unregister("ssh")
+        r.register(name="ssh", entry=Backend("A"))
+        r.unregister(name="ssh")
         assert "ssh" not in r
         with pytest.raises(ValueError, match="Unknown term backend"):
-            r.unregister("ssh")
+            r.unregister(name="ssh")
 
 
 class TestErrors:
     def test_unknown_lists_names_hint_and_suggestion(self):
         r = _make()
-        r.register("telnet", Backend("T"))
+        r.register(name="telnet", entry=Backend("T"))
         with pytest.raises(ValueError, match="Unknown term backend") as ei:
             r.get("tellnet")
         msg = str(ei.value)
@@ -84,7 +84,7 @@ class TestErrors:
 
     def test_unknown_without_close_match_has_no_suggestion(self):
         r = _make()
-        r.register("telnet", Backend("T"))
+        r.register(name="telnet", entry=Backend("T"))
         assert "Did you mean" not in _get_error(r, "zzz")
 
     def test_empty_registry_says_none(self):

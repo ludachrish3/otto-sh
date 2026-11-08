@@ -171,7 +171,7 @@ class TestEmptySelection:
         from otto.config.scope import EmptySelectionError
 
         run_live.side_effect = EmptySelectionError(
-            r".*\.r1\.api", 3, excluded_by=["include_containers"], matched_size=1
+            r".*\.r1\.api", base_size=3, excluded_by=["include_containers"], matched_size=1
         )
         result = _invoke(["--live", "--hosts", r".*\.r1\.api"])
         assert result.exit_code == 1, result.output

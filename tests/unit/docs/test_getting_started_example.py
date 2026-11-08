@@ -181,7 +181,7 @@ def twin_inventory():
     project = Project(root=TWIN)
     assert project.inventory_settings and project.creds_settings  # noqa: PT018
     return build_inventory_from_declarations(
-        [
+        declarations=[
             InventoryDeclaration(
                 origin="example",
                 anchor_dir=TWIN,
@@ -320,11 +320,11 @@ def test_the_versions_fragment_is_a_working_provider() -> None:
                 "element": type("E", (), {"metadata": {"agent_versions": ["1.2", "1.3"]}})(),
             },
         )()
-        token = context.set_variant("field")
+        token = context.set_variant(value="field")
         try:
             built = versions.agents_for(host)
         finally:
-            context.reset_variant(token)
+            context.reset_variant(token=token)
         assert [p.name for p in built] == ["agent-1.2", "agent-1.3"]
         assert all(str(p.artifact).endswith("-field") for p in built)
         assert all(p.artifact.is_absolute() for p in built)
@@ -364,7 +364,9 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
 
         async def run(self, cmd):
             ran.append(cmd)
-            return Results.collect([CommandResult(Status.Success, value="", command=cmd)])
+            return Results.collect(
+                items=[CommandResult(status=Status.Success, value="", command=cmd)]
+            )
 
     FakeHost.element = element
     host = FakeHost()
@@ -373,7 +375,7 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
     assert result.is_ok
     expected = (
         "chmod +x /opt/agent/agent && GCOV_PREFIX=/var/cov/agent "
-        f"GCOV_PREFIX_STRIP={gcov_prefix_strip(PurePosixPath(EXAMPLE))} "
+        f"GCOV_PREFIX_STRIP={gcov_prefix_strip(build_root=PurePosixPath(EXAMPLE))} "
         f"/opt/agent/agent --install --role {role}"
     )
     assert ran == [expected]

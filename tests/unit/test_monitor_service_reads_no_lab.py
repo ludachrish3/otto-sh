@@ -271,7 +271,8 @@ def test_counted_as_tach_counts(text: str) -> None:
         (
             "import importlib\n"
             "def hosts():\n"
-            "    return importlib.import_module('otto.monitor.live').select_monitor_hosts(None)\n"
+            "    live = importlib.import_module('otto.monitor.live')\n"
+            "    return live.select_monitor_hosts(pattern=None)\n"
         ),
         "RUN = Ref('otto.monitor.live:run_live')\n",
         "LAB = Ref(target='otto.lab.fleet:get_lab')\n",

@@ -75,7 +75,7 @@ import json
 from pathlib import Path
 import otto
 try:
-    otto.run_tests(["no_such_test"], output_dir=Path({out!r}))
+    otto.run_tests(names=["no_such_test"], output_dir=Path({out!r}))
 except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 else:

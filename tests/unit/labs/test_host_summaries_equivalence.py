@@ -63,7 +63,7 @@ def profile_defaulting_identity():
     try:
         yield "_equiv_profile"
     finally:
-        OS_PROFILES.unregister("_equiv_profile")
+        OS_PROFILES.unregister(name="_equiv_profile")
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ def profile_defaulting_ip():
     try:
         yield "_equiv_ip_profile"
     finally:
-        OS_PROFILES.unregister("_equiv_ip_profile")
+        OS_PROFILES.unregister(name="_equiv_ip_profile")
 
 
 def _write_lab(tmp_path: Path, hosts: list[dict]) -> _JsonFileLabRepository:

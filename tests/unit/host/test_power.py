@@ -31,7 +31,7 @@ def _target_with_controller(runner):
 
     target = UnixHost(
         ip="10.0.0.9",
-        element=Element("vm"),
+        element=Element(name="vm"),
         creds=[Cred(login="u", password="p")],
         name="vm1",
         log=LogMode.QUIET,
@@ -215,18 +215,20 @@ async def test_cycle_default_is_off_then_on():
 
 def test_registry_builtin_and_unknown():
     assert "command" in POWER_CONTROLLERS
-    built = build_power_controller("command", {"on_cmd": "o", "off_cmd": "f"}, host_id="h")
+    built = build_power_controller(
+        type_name="command", config={"on_cmd": "o", "off_cmd": "f"}, host_id="h"
+    )
     assert isinstance(built, _CommandPowerController)
     with pytest.raises(
         PowerConstructionError,
         match=r"configured in power_control of host 'h'\): lookup failed: Unknown power controller",
     ):
-        build_power_controller("nope", {}, host_id="h")
+        build_power_controller(type_name="nope", config={}, host_id="h")
 
 
 def test_power_control_from_spec_dict_builds_command_controller():
     pc = power_control_from_spec(
-        {"type": "command", "on_cmd": "o", "off_cmd": "f", "controller": "hyp"}, host_id="h"
+        value={"type": "command", "on_cmd": "o", "off_cmd": "f", "controller": "hyp"}, host_id="h"
     )
     assert isinstance(pc, _CommandPowerController)
     assert pc.config.on_cmd == "o"
@@ -235,13 +237,13 @@ def test_power_control_from_spec_dict_builds_command_controller():
 
 def test_a_bare_type_name_builds_from_an_empty_table():
     with pytest.raises(PowerConstructionError, match=r"parse failed.*on_cmd"):
-        power_control_from_spec("command", host_id="h")
+        power_control_from_spec(value="command", host_id="h")
 
 
 def test_power_control_from_spec_passthrough_and_none():
     pc = _CommandPowerController(CommandPowerConfig(on_cmd="o", off_cmd="f"))
-    assert power_control_from_spec(pc, host_id="h") is pc
-    assert power_control_from_spec(None, host_id="h") is None
+    assert power_control_from_spec(value=pc, host_id="h") is pc
+    assert power_control_from_spec(value=None, host_id="h") is None
 
 
 def test_a_command_controller_compares_and_shows_by_its_config():
@@ -260,7 +262,7 @@ def test_unix_power_control_coerced_from_dict():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
         power_control={"type": "command", "on_cmd": "o", "off_cmd": "f"},
@@ -273,7 +275,7 @@ def test_hosts_default_power_control_none():
     from otto.host.local_host import LocalHost
 
     assert LocalHost().power_control is None
-    zephyr = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    zephyr = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     assert zephyr.power_control is None
 
 
@@ -285,12 +287,12 @@ class _FakeController(PowerController):
     async def on(self, host):
         self.calls.append("on")
         self.state = PowerState.ON
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def off(self, host):
         self.calls.append("off")
         self.state = PowerState.OFF
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def status(self, host):
         return self.state
@@ -353,12 +355,12 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = Results.collect([])
+        mock_run.return_value = Results.collect(items=[])
         result = await host.reboot()
     mock_run.assert_awaited_once_with("reboot", sudo=True, timeout=10.0)
     assert result.status is Status.Success
@@ -368,9 +370,9 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
 async def test_zephyr_soft_reboot_issues_kernel_reboot():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET)
     with patch.object(ZephyrHost, "run", new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = Results.collect([])
+        mock_run.return_value = Results.collect(items=[])
         result = await host.reboot()
     mock_run.assert_awaited_once_with("kernel reboot cold", timeout=10.0)
     assert result.status is Status.Success
@@ -417,7 +419,7 @@ async def test_unix_shutdown_issues_shutdown_sudo():
 
     host = _busybox_host(await _userland_declaring(shutdown=APPLET_PRESENT))
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = Results.collect([])
+        mock_run.return_value = Results.collect(items=[])
         result = await host.shutdown()
     mock_run.assert_awaited_once_with("shutdown -h now", sudo=True, timeout=10.0)
     assert result.status is Status.Success
@@ -436,7 +438,7 @@ async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
@@ -479,9 +481,8 @@ async def test_probe_less_remote_subclass_fails_with_a_named_error():
             pass
 
     # RemoteHost declares the shared remote fields itself now, so even a
-    # hand-rolled subclass takes its constructor: ``ip`` positional, the rest
-    # keyword-only.
-    host = ProbeLess("10.0.0.1", element=Element("lab"))
+    # hand-rolled subclass takes its constructor, every field keyword-only.
+    host = ProbeLess(ip="10.0.0.1", element=Element(name="lab"))
     result = await host.verify_connection()
     assert result.status is Status.Error
     assert "ProbeLess" in result.value
@@ -630,7 +631,7 @@ def _busybox_host(userland: Userland) -> UnixHost:
     """A UnixHost wired to *userland*, so nothing builds one against a real device."""
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
@@ -722,8 +723,8 @@ class TestShutdownPicksTheSpellingTheDeviceHas:
         # absent AND unsettled, which is the shape the gate is about.
         userland = Userland(UserlandOptions(), _no_device)
         await userland.resolve()
-        assert userland.has_applet("shutdown") == APPLET_ABSENT
-        assert not userland.is_settled(applet_capability("shutdown"))
+        assert userland.has_applet(applet="shutdown") == APPLET_ABSENT
+        assert not userland.is_settled(name=applet_capability("shutdown"))
         assert shutdown_command(userland) == GNU_SHUTDOWN
 
     def test_the_two_spellings_are_named_once_each(self):
@@ -745,7 +746,7 @@ class TestShutdownEmitsTheChosenCommand:
             await _userland_declaring(shutdown=APPLET_ABSENT, poweroff=APPLET_PRESENT)
         )
         with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = Results.collect([])
+            mock_run.return_value = Results.collect(items=[])
             result = await host.shutdown()
         mock_run.assert_awaited_once_with("poweroff", sudo=True, timeout=10.0)
         assert result.status is Status.Success
@@ -754,7 +755,7 @@ class TestShutdownEmitsTheChosenCommand:
     async def test_a_gnu_host_is_sent_what_it_always_was(self):
         host = _busybox_host(await _userland_declaring(shutdown=APPLET_PRESENT))
         with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = Results.collect([])
+            mock_run.return_value = Results.collect(items=[])
             result = await host.shutdown()
         mock_run.assert_awaited_once_with("shutdown -h now", sudo=True, timeout=10.0)
         assert result.status is Status.Success
@@ -789,7 +790,7 @@ class TestShutdownReportsWhatTheDeviceAnswered:
         host = _busybox_host(await _userland_declaring(shutdown=APPLET_PRESENT))
         with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = Results.collect(
-                [
+                items=[
                     _fake_command_result(
                         "shutdown -h now", "sudo: a password is required", Status.Failed, 1
                     )
@@ -812,7 +813,7 @@ class TestShutdownReportsWhatTheDeviceAnswered:
         host = _busybox_host(await _userland_declaring(shutdown=APPLET_PRESENT))
         with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = Results.collect(
-                [_fake_command_result("shutdown -h now", "EOF", Status.Error, -1)]
+                items=[_fake_command_result("shutdown -h now", "EOF", Status.Error, -1)]
             )
             result = await host.shutdown()
         assert result.status is Status.Success

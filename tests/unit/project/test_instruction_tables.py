@@ -59,7 +59,7 @@ def test_the_views_have_no_mutation_method():
 def test_a_project_instruction_s_entry_has_no_project_and_the_first_declarer_s_module():
     with registering_project("a"):
         register_project_actions(_actions("A"))
-    assert INSTRUCTIONS.project("smoke") is None
+    assert INSTRUCTIONS.project(name="smoke") is None
     assert INSTRUCTIONS.get("smoke").module == __name__
 
 
@@ -213,7 +213,9 @@ def test_two_bodies_for_one_owner_and_name_are_refused():
         register_project_actions(single)
     (body,) = PROJECT_ACTIONS.get("a").bodies
     with registering_project("a"), pytest.raises(ProjectInstructionError, match="twice"):
-        PROJECT_ACTIONS.register("a", ProjectActionsEntry(single, (body, body)), overwrite=True)
+        PROJECT_ACTIONS.register(
+            name="a", entry=ProjectActionsEntry(single, (body, body)), overwrite=True
+        )
 
 
 def test_one_class_registered_by_two_projects_is_refused_naming_both():
@@ -368,11 +370,11 @@ async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_proj
 
     with registering_project("acme"):
         instruction(name="tables-blink")(tables_blink)
-    assert INSTRUCTIONS.project("tables-blink") == "acme"
+    assert INSTRUCTIONS.project(name="tables-blink") == "acme"
     ctx = OttoContext(lab=Lab(name="t"), exclude_projects=("acme",))
     ctx.scopes = {}
     with pytest.raises(InstructionInactiveError):
-        await run_instruction(ctx, "tables-blink")
+        await run_instruction(ctx, name="tables-blink")
     assert ran == []
 
 
@@ -386,8 +388,8 @@ def test_actions_for_returns_the_registered_class():
     with registering_project("a"):
         register_project_actions(cls)
     ctx = OttoContext(lab=Lab(name="t"))
-    assert type(actions_for(fake_project("a"), ctx)) is cls
-    assert type(actions_for(fake_project("other"), ctx)) is ProjectActions
+    assert type(actions_for(project=fake_project("a"), ctx=ctx)) is cls
+    assert type(actions_for(project=fake_project("other"), ctx=ctx)) is ProjectActions
 
 
 def test_a_registry_check_imports_nothing_from_the_project_layer_in_a_fresh_process():
@@ -405,7 +407,7 @@ def test_a_registry_check_imports_nothing_from_the_project_layer_in_a_fresh_proc
         "with registering_project('acme'):\n"
         "    instruction()(deploy)\n"
         "assert 'otto.project.actions' not in sys.modules, 'the check imported the project layer'\n"
-        "print(STANDALONE_INSTRUCTIONS.project('deploy'))\n"
+        "print(STANDALONE_INSTRUCTIONS.project(name='deploy'))\n"
     )
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=120

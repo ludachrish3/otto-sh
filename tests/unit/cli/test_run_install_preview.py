@@ -49,7 +49,7 @@ def test_dry_run_install_prints_the_plan_then_the_standard_block(run_cli):
         dry = run_cli(["run", "install"], dry_run=True)
     assert dry.exit_code == 0, dry.output
     planned.assert_called_once()
-    assert planned.call_args.args[0] == "install"
+    assert planned.call_args.kwargs["name"] == "install"
     out = dry.output
     assert "    stage    agent  PUT build/agent.tar.gz -> /opt/stage" in out
     # Verbatim: no markup read, no emoji, no hard wrap of a long line.
@@ -65,7 +65,7 @@ def test_the_other_previewed_verbs_plan_under_their_own_name(run_cli, name):
     with patch("otto.project.plan.plan_instruction", side_effect=_canned) as planned:
         dry = run_cli(["run", name], dry_run=True)
     assert dry.exit_code == 0, dry.output
-    assert planned.call_args.args[0] == name
+    assert planned.call_args.kwargs["name"] == name
 
 
 def test_dry_run_status_keeps_the_seam_default(run_cli):

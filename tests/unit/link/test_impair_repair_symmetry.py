@@ -84,7 +84,7 @@ class TestImpairRefusesAnIncompleteView:
 
         with pytest.raises(ValueError, match="does not contain") as excinfo:
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
+                lab, ident="bb1350-wire", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
 
         assert "bb1350-qemu" in str(excinfo.value), "the refusal must name the host it cannot see"
@@ -107,7 +107,7 @@ class TestImpairRefusesAnIncompleteView:
 
         with pytest.raises(ValueError, match="hop transit") as excinfo:
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
+                lab, ident="bb1350-wire", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
 
         assert "does not contain" not in str(excinfo.value)
@@ -129,7 +129,7 @@ class TestImpairRefusesAnIncompleteView:
 
         with active_context(dry_run=True), pytest.raises(ValueError, match="does not contain"):
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
+                lab, ident="bb1350-wire", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
         assert test1.commands == []
 
@@ -154,7 +154,7 @@ class TestImpairRefusesAnIncompleteView:
         assert BUILTIN_LOCAL_HOST_ID not in lab.hosts, "precondition: the lab omits `local`"
 
         with pytest.raises(ValueError, match="local host as an endpoint"):
-            await impair_link(lab, "to-local", ImpairmentParams(delay_ms=50.0))
+            await impair_link(lab, ident="to-local", params=ImpairmentParams(delay_ms=50.0))
 
 
 class TestRepairIsNotGatedByTheLockoutRefusals:
@@ -173,7 +173,7 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
         lab, test1, _ = _bed(see_the_guest=True)
         test1.qdisc_texts = [IMPAIRED, ""]  # impaired, then clean on the verify re-read
 
-        report = await repair_link(lab, "bb1350-wire")
+        report = await repair_link(lab, ident="bb1350-wire")
 
         assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
@@ -197,9 +197,11 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
 
         # Positive control: creating it here is still refused.
         with pytest.raises(ValueError, match="management interface"):
-            await impair_link(lab, "mgmt-wire", ImpairmentParams(delay_ms=50.0), from_host="test1")
+            await impair_link(
+                lab, ident="mgmt-wire", params=ImpairmentParams(delay_ms=50.0), from_host="test1"
+            )
 
-        report = await repair_link(lab, "mgmt-wire")
+        report = await repair_link(lab, ident="mgmt-wire")
         assert "tc qdisc del dev eth1 root" in test1.sudo_commands
         assert [p.netdev for p in report.cleared] == ["eth1"]
 
@@ -216,7 +218,7 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
         test1.qdisc_texts = [IMPAIRED, ""]
         guest.qdisc_texts = [""]
 
-        await repair_link(lab, "bb1350-wire")
+        await repair_link(lab, ident="bb1350-wire")
 
         assert "ip -o addr show" not in test1.commands, test1.commands
         assert "ip -o addr show" not in guest.commands, guest.commands
@@ -233,7 +235,7 @@ class TestRepairReachesWhatItCan:
         lab, test1, _ = _bed(see_the_guest=False)
         test1.qdisc_texts = [IMPAIRED, ""]
 
-        report = await repair_link(lab, "bb1350-wire")
+        report = await repair_link(lab, ident="bb1350-wire")
 
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
         assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
@@ -251,7 +253,7 @@ class TestRepairReachesWhatItCan:
         lab, test1, _ = _bed(see_the_guest=False)
         test1.qdisc_texts = [IMPAIRED, ""]
 
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
 
         assert sweep.failures == [], sweep.failures
         assert len(sweep.out_of_scope) == 1, sweep.out_of_scope
@@ -277,7 +279,7 @@ class TestRepairReachesWhatItCan:
         lab, test1, _ = _bed(see_the_guest=True, link=half_named)
         test1.qdisc_texts = [IMPAIRED, ""]
 
-        report = await repair_link(lab, "half-named")
+        report = await repair_link(lab, ident="half-named")
 
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
         # Not reported unreachable: a bare endpoint could never have been
@@ -292,7 +294,7 @@ class TestRepairReachesWhatItCan:
         bare = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="bb1350-qemu"), name="bare")
         lab, test1, _ = _bed(see_the_guest=True, link=bare)
 
-        sweep = await repair_all(lab)
+        sweep = await repair_all(lab=lab)
 
         assert sweep.repaired == []
         assert sweep.failures == []

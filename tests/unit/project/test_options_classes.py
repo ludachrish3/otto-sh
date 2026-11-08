@@ -65,3 +65,26 @@ def test_every_field_expands_to_a_typer_option() -> None:
 )
 def test_combine_install_states(states, expected) -> None:
     assert combine_install_states(states) is expected
+
+
+def test_options_refuses_an_explicit_kw_only_false():
+    """Options records are keyword-only (spec §6.1); a contradicting kwarg is refused."""
+    from otto.params import OptionsRegistrationError, options
+
+    with pytest.raises(OptionsRegistrationError, match="kw_only"):
+
+        @options(kw_only=False)
+        class _Opts:
+            x: int = 0
+
+
+def test_options_records_are_keyword_only():
+    from otto.params import options
+
+    @options(kw_only=True)
+    class _Opts:
+        x: int = 0
+
+    assert _Opts(x=1).x == 1
+    with pytest.raises(ValueError, match="positional"):  # pydantic's ValidationError
+        _Opts(1)  # ty: ignore[too-many-positional-arguments] — the refusal under test

@@ -167,7 +167,7 @@ def test_an_enumeration_that_raises_is_dropped_for_the_project(tmp_path, monkeyp
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     project = _project(tmp_path, {}, hosts=[])
 
-    def _explodes(_projects, *, profiles):
+    def _explodes(*, projects, profiles):
         raise RuntimeError("backend on fire")
 
     monkeypatch.setattr("otto.labs.sources.build_lab_sources", _explodes)
@@ -491,7 +491,9 @@ def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monke
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     project = _project(tmp_path, {}, hosts=[])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
-    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _projects: unfingerprinted)
+    monkeypatch.setattr(
+        "otto.inventory.config.build_inventory", lambda *, projects: unfingerprinted
+    )
 
     described = cc.describe_inventory([project])
 

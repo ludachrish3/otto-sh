@@ -74,7 +74,7 @@ def test_an_omitted_parent_on_a_one_host_lab_builds_there(lab_one_parent):
         result = _invoke("build")
     assert result.exit_code == 0, result.output
     # The library resolves the default, never the CLI.
-    assert build.await_args.args == (None,)
+    assert build.await_args.kwargs["parent"] is None
 
 
 def test_a_given_parent_reaches_the_library_verbatim(lab_one_parent):
@@ -86,7 +86,7 @@ def test_a_given_parent_reaches_the_library_verbatim(lab_one_parent):
     ):
         result = _invoke("build", "--parent", "test3")
     assert result.exit_code == 0, result.output
-    assert build.await_args.args == ("test3",)
+    assert build.await_args.kwargs["parent"] == "test3"
 
 
 def test_the_old_flag_is_gone(lab_one_parent):

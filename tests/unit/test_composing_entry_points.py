@@ -46,7 +46,7 @@ except Exception as exc:
 _RUN_TESTS = """
 from otto.suite import run_tests
 try:
-    run_tests(["no_such_test"], output_dir=Path({out!r}))
+    run_tests(names=["no_such_test"], output_dir=Path({out!r}))
 except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 """
@@ -70,7 +70,7 @@ except Exception as exc:
 _GET = """
 from otto.coverage import get_coverage
 try:
-    asyncio.run(get_coverage(Path({out!r})))
+    asyncio.run(get_coverage(output_dir=Path({out!r})))
 except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 """

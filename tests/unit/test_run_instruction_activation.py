@@ -33,27 +33,27 @@ def ran() -> "list[str]":
 
     with registering_project("acme"):
         STANDALONE_INSTRUCTIONS.register(
-            "blink", InstructionEntry(name="blink", handler=blink, module="m")
+            name="blink", entry=InstructionEntry(name="blink", handler=blink, module="m")
         )
     return calls
 
 
 async def test_an_excluded_projects_instruction_is_refused_and_never_runs(ran):
     with pytest.raises(InstructionInactiveError) as exc:
-        await run_instruction(_ctx(exclude=("acme",)), "blink")
+        await run_instruction(_ctx(exclude=("acme",)), name="blink")
     assert exc.value.reason == "excluded"
     assert ran == []
 
 
 async def test_the_same_instruction_runs_when_its_project_is_active(ran):
-    assert await run_instruction(_ctx(), "blink") == "blinked"
+    assert await run_instruction(_ctx(), name="blink") == "blinked"
     assert ran == ["blink"]
 
 
 async def test_a_refused_call_leaves_the_active_context_as_it_was(ran):
     before = try_get_context()
     with pytest.raises(InstructionInactiveError):
-        await run_instruction(_ctx(exclude=("acme",)), "blink")
+        await run_instruction(_ctx(exclude=("acme",)), name="blink")
     assert try_get_context() is before
 
 
@@ -65,5 +65,5 @@ async def test_the_refusal_comes_before_option_validation(ran):
         pass
 
     with pytest.raises(InstructionInactiveError):
-        await run_instruction(_ctx(exclude=("acme",)), "blink", [Stray()])
+        await run_instruction(_ctx(exclude=("acme",)), name="blink", opts=[Stray()])
     assert ran == []

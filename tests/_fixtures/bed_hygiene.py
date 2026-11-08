@@ -216,7 +216,7 @@ async def snapshot_host(host) -> HygieneSnapshot:
     impair_raw = await _out(IMPAIR_PS_COMMAND)
     qdiscs = {}
     for dev in netdevs_listed(await _out(_NETDEV_PROBE)):
-        qdisc_cmd, filter_cmd = _IMPAIRER.scoped_read_commands(dev)
+        qdisc_cmd, filter_cmd = _IMPAIRER.scoped_read_commands(netdev=dev)
         qdiscs[dev] = QdiscReads(await _out(qdisc_cmd), await _out(filter_cmd))
     return HygieneSnapshot(
         tunnel_procs=frozenset(

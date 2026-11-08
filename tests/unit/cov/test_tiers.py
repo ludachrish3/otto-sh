@@ -71,7 +71,7 @@ def test_explicit_color_wins() -> None:
 
 def test_resolve_default_is_sole_e2e() -> None:
     tiers = load_tiers({}, root=ROOT)
-    assert resolve_get_tier(tiers, None).name == "system"
+    assert resolve_get_tier(tiers=tiers, name=None).name == "system"
 
 
 def test_resolve_ambiguous_e2e_raises() -> None:
@@ -82,13 +82,13 @@ def test_resolve_ambiguous_e2e_raises() -> None:
         }
     }
     with pytest.raises(CoverageInputError, match=r"sys_a.*sys_b|sys_b.*sys_a") as exc:
-        resolve_get_tier(load_tiers(cov, root=ROOT), None)
+        resolve_get_tier(tiers=load_tiers(cov, root=ROOT), name=None)
     assert exc.value.field == "tier"
 
 
 def test_resolve_unknown_name_raises() -> None:
     with pytest.raises(CoverageInputError, match="nope") as exc:
-        resolve_get_tier(load_tiers({}, root=ROOT), "nope")
+        resolve_get_tier(tiers=load_tiers({}, root=ROOT), name="nope")
     assert exc.value.field == "tier"
 
 
@@ -100,7 +100,7 @@ def test_ambiguous_get_tier_names_the_library_remedy() -> None:
         }
     }
     with pytest.raises(CoverageInputError, match="name one of them"):
-        resolve_get_tier(load_tiers(cov, root=ROOT), None)
+        resolve_get_tier(tiers=load_tiers(cov, root=ROOT), name=None)
 
 
 def test_product_dirs_are_carried_through_verbatim() -> None:

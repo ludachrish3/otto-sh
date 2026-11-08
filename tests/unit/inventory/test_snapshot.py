@@ -22,7 +22,7 @@ def _rec(**kw):
 
 def test_document_is_sorted_unstated_free_and_creds_free():
     doc = records_to_document(
-        {
+        records={
             "b": _rec(site="x", creds=[{"login": "u", "password": "p"}]),
             "a": _rec(shelf=2),
         }
@@ -41,12 +41,12 @@ def test_a_stated_default_survives_the_round_trip():
     what :func:`otto.inventory.resolve_host_entry` and the conformance suite
     read to decide what an inventory supplied.
     """
-    doc = records_to_document({"stated": _rec(is_virtual=False), "silent": _rec()})
+    doc = records_to_document(records={"stated": _rec(is_virtual=False), "silent": _rec()})
     assert doc == {
         "silent": {"ip": "10.0.0.1"},
         "stated": {"ip": "10.0.0.1", "is_virtual": False},
     }
-    back = document_to_records(doc, source="mem", supplies=FILLABLE_INVENTORY_FIELDS)
+    back = document_to_records(data=doc, source="mem", supplies=FILLABLE_INVENTORY_FIELDS)
     assert "is_virtual" in back["stated"].model_fields_set
     assert "is_virtual" not in back["silent"].model_fields_set
 
@@ -58,8 +58,8 @@ def test_round_trip_and_hash(tmp_path):
             extra={"a": 1},
         )
     }
-    doc = records_to_document(records)
-    back = document_to_records(doc, source="mem", supplies=FILLABLE_INVENTORY_FIELDS)
+    doc = records_to_document(records=records)
+    back = document_to_records(data=doc, source="mem", supplies=FILLABLE_INVENTORY_FIELDS)
     assert back == records
     assert document_hash(doc) == document_hash(json.loads(json.dumps(doc)))
     assert document_hash(doc) != document_hash({**doc, "k": {**doc["k"], "shelf": 1}})
@@ -96,7 +96,7 @@ def test_diff_renders_a_quoted_string_readably_and_a_number_as_json():
     """
     left = {"k": _rec(os_name='say "hi"', shelf=2)}
     right = {"k": _rec(os_name="plain", shelf=3)}
-    assert diff_records(left, right) == [
+    assert diff_records(left=left, right=right) == [
         RecordDifference(key="k", field="os_name", left='say "hi"', right="plain"),
         RecordDifference(key="k", field="shelf", left="2", right="3"),
     ]
@@ -108,10 +108,10 @@ def test_diff_escapes_the_whitespace_controls_that_would_break_a_row():
     Targeted, though: a site or rack name in the operator's own script must
     come through intact, which ``encode("unicode_escape")`` would not manage.
     """
-    assert diff_records({"k": _rec(site="a\nb\tc")}, {"k": _rec(site="plain")}) == [
+    assert diff_records(left={"k": _rec(site="a\nb\tc")}, right={"k": _rec(site="plain")}) == [
         RecordDifference(key="k", field="site", left="a\\nb\\tc", right="plain")
     ]
-    assert diff_records({"k": _rec(site="lab-é")}, {"k": _rec(site="plain")}) == [
+    assert diff_records(left={"k": _rec(site="lab-é")}, right={"k": _rec(site="plain")}) == [
         RecordDifference(key="k", field="site", left="lab-é", right="plain")
     ]
 
@@ -126,18 +126,18 @@ def test_the_document_is_written_private_to_the_owner(tmp_path):
 def test_diff_reports_missing_keys_and_changed_fields_never_creds():
     left = {"only-left": _rec(), "both": _rec(site="a", creds=[{"login": "u", "password": "p"}])}
     right = {"only-right": _rec(), "both": _rec(site="b", shelf=1)}
-    assert diff_records(left, right) == [
+    assert diff_records(left=left, right=right) == [
         RecordDifference(key="both", field="shelf", left=None, right="1"),
         RecordDifference(key="both", field="site", left="a", right="b"),
         RecordDifference(key="only-left", field=None, left="present", right=None),
         RecordDifference(key="only-right", field=None, left=None, right="present"),
     ]
-    assert diff_records(left, left) == []
+    assert diff_records(left=left, right=left) == []
 
 
 def test_diff_renders_a_structured_field_as_canonical_json():
     left = {"k": _rec(extra={"b": 2, "a": 1})}
     right = {"k": _rec(extra={"a": 1})}
-    assert diff_records(left, right) == [
+    assert diff_records(left=left, right=right) == [
         RecordDifference(key="k", field="extra", left='{"a": 1, "b": 2}', right='{"a": 1}')
     ]

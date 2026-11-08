@@ -167,7 +167,7 @@ def _one_pass(root: Path) -> Pass:
     store_path = report_dir / "store.json"
     return Pass(
         cov_dir=layout.cov_dir(get_dir),
-        store=CoverageStore.load(store_path),
+        store=CoverageStore.load(path=store_path),
         store_json=json.loads(store_path.read_text()),
         get_output=" ".join((got.stdout + got.stderr).split()),
         report_output=" ".join((reported.stdout + reported.stderr).split()),

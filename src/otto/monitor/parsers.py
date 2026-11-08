@@ -718,13 +718,15 @@ def register_host_parsers(
 
     Hosts with no registered parsers automatically fall back to DEFAULT_PARSERS.
     """
-    frozen: "FrozenMap[str, MetricParser]" = FrozenMap(dict(parsers))
+    frozen: "FrozenMap[str, MetricParser]" = FrozenMap(mapping=dict(parsers))
     if isinstance(host_id, re.Pattern):
         HOST_PATTERN_PARSERS.register(
-            pattern_key(host_id), PatternParsersEntry(host_id, frozen), overwrite=overwrite
+            name=pattern_key(host_id),
+            entry=PatternParsersEntry(host_id, frozen),
+            overwrite=overwrite,
         )
         return
-    HOST_PARSERS.register(host_id, HostParsersEntry(frozen), overwrite=overwrite)
+    HOST_PARSERS.register(name=host_id, entry=HostParsersEntry(frozen), overwrite=overwrite)
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ from .parsers import MetricParser, get_host_parsers
 from .snmp import SnmpClient, SnmpSource, SnmpVersion, expand_oid_bundles
 
 
-def unmonitorable_reason(host: RemoteHost, *, has_snmp: bool | None = None) -> str | None:
+def unmonitorable_reason(*, host: RemoteHost, has_snmp: bool | None = None) -> str | None:
     """Why otto cannot sample *host*, or ``None`` when it can.
 
     The one decision every monitor producer selects with, and the reason
@@ -46,9 +46,9 @@ def unmonitorable_reason(host: RemoteHost, *, has_snmp: bool | None = None) -> s
     return UNMONITORABLE_REASON
 
 
-def is_monitorable(host: RemoteHost) -> bool:
+def is_monitorable(*, host: RemoteHost) -> bool:
     """Whether otto can sample *host*: :func:`unmonitorable_reason` names no reason."""
-    return unmonitorable_reason(host) is None
+    return unmonitorable_reason(host=host) is None
 
 
 @final
@@ -65,12 +65,12 @@ class MonitorSelection:
     dropped: dict[str, str]
 
 
-def partition_monitorable(hosts: Sequence[RemoteHost]) -> MonitorSelection:
+def partition_monitorable(*, hosts: Sequence[RemoteHost]) -> MonitorSelection:
     """Split *hosts* into those otto can sample (order kept) and those it drops, with why."""
     kept: list[RemoteHost] = []
     dropped: dict[str, str] = {}
     for host in hosts:
-        reason = unmonitorable_reason(host)
+        reason = unmonitorable_reason(host=host)
         if reason is None:
             kept.append(host)
         else:
@@ -79,8 +79,8 @@ def partition_monitorable(hosts: Sequence[RemoteHost]) -> MonitorSelection:
 
 
 def build_monitor_collector(
-    hosts: Sequence[RemoteHost],
     *,
+    hosts: Sequence[RemoteHost],
     parsers: list[MetricParser] | None = None,
     db: MetricDB | None = None,
     tunnel_source: Callable[[], Awaitable[list[TunnelRecord]]] | None = None,
@@ -121,7 +121,7 @@ def build_monitor_collector(
         snmp = host.snmp
         if snmp is not None:
             client = SnmpClient(
-                address=host.address_for(snmp.address or host.ip),
+                address=host.address_for(name_or_literal=snmp.address or host.ip),
                 port=snmp.port,
                 community=snmp.community,
                 version=cast("SnmpVersion", snmp.version),

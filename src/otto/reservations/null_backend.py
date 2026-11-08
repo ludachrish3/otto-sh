@@ -37,6 +37,7 @@ class NullReservationBackend(ReservationBackendBase):
     def fetch_reservations(
         self,
         username: str,
+        *,
         start: "datetime | None" = None,
         end: "datetime | None" = None,
     ) -> "list[Reservation]":
@@ -60,7 +61,7 @@ def _none_reservations(
     return NullReservationBackend(username=c.env.username)
 
 
-def is_null_backend(backend: "ReservationBackend") -> bool:
+def is_null_backend(*, backend: "ReservationBackend") -> bool:
     """Whether *backend* is the no-op ``"none"`` backend, which is never queried.
 
     It reserves nothing, so asking it what a user holds is not a question with

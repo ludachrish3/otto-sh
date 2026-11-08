@@ -121,7 +121,7 @@ class EmbeddedProduct(ShellProduct):
     @override
     async def stage(self, host: "Host") -> Result:
         """No-op success — an extension has no staging step; the load is the transfer."""
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -133,16 +133,16 @@ class EmbeddedProduct(ShellProduct):
         that cannot carry this product is refused without touching it.
         """
         loader = self._loader(host)
-        result = await host.load(self.artifact, self.name)  # ty: ignore[unresolved-attribute]
+        result = await host.load(self.artifact, name=self.name)  # ty: ignore[unresolved-attribute]
         if not result.is_ok:
             return result
         for fn in self.call_after_load:
             call = await host.exec(loader.call_command(self.name, fn), timeout=_CALL_TIMEOUT)
             if call.status is not Status.Success:
                 return Result(
-                    Status.Error, msg=f"{self.name}: {fn} failed after load: {call.value}"
+                    status=Status.Error, msg=f"{self.name}: {fn} failed after load: {call.value}"
                 )
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     async def uninstall(self, host: "Host") -> Result:
@@ -223,22 +223,24 @@ class EmbeddedProduct(ShellProduct):
         loader = self._loader(host)
         call = await host.exec(loader.call_command(self.name, self.reset_fn), timeout=_CALL_TIMEOUT)
         if call.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         output = call.value or ""
         if loader.reports_not_loaded(output, self.name):
-            return Result(Status.Success, msg="not loaded, so there are no counters to clear")
+            return Result(
+                status=Status.Success, msg="not loaded, so there are no counters to clear"
+            )
         said = output.strip()
         if call.status is not Status.Success:
             detail = f": {said}" if said else " and the board printed nothing"
             return Result(
-                Status.Error, msg=f"reset_fn {self.reset_fn!r} failed{detail}. {_RESET_FIX}"
+                status=Status.Error, msg=f"reset_fn {self.reset_fn!r} failed{detail}. {_RESET_FIX}"
             )
         if not _reset_confirmed(output):
             printed = (
                 f"no {_RESET_CONFIRMATION!r} line in {said!r}" if said else "it printed nothing"
             )
             return Result(
-                Status.Error,
+                status=Status.Error,
                 msg=(
                     f"reset_fn {self.reset_fn!r} failed: the board did not confirm the reset "
                     f"({printed}). Either the extension does not export {self.reset_fn!r} "
@@ -246,7 +248,7 @@ class EmbeddedProduct(ShellProduct):
                     "embedded-gcov was built without GCOV_OPT_PRINT_STATUS. " + _RESET_FIX
                 ),
             )
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def _embedded_kind(entry: DeclaredEntry, host: "Host") -> EmbeddedProduct:

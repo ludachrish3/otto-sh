@@ -30,21 +30,21 @@ _CONSOLE_ONLY_CREDS = [{"login": "c", "password": "p", "protocols": ["console"]}
 _EITHER = {"ip": "10.0.0.9", "name": "cons1", "valid_terms": ["console", "ssh"]}
 _FRAMELESS = {"ip": "192.0.2.9", "os_type": "embedded"}
 _ROUTES = {
-    "doctor": lambda d: validate_host_dict(d, element=Element("e")),
-    "identity": lambda d: host_identity(d, Element("e")),
-    "construction": lambda d: create_host_from_dict(d, element=Element("e")),
+    "doctor": lambda d: validate_host_dict(host_data=d, element=Element(name="e")),
+    "identity": lambda d: host_identity(d, element=Element(name="e")),
+    "construction": lambda d: create_host_from_dict(d, element=Element(name="e")),
 }
 
 
 def test_a_console_menu_with_no_server_passes_the_doctor_through_its_ssh_witness():
-    validate_host_dict({**_EITHER, "creds": _SSH_CREDS}, element=Element("e"))
+    validate_host_dict(host_data={**_EITHER, "creds": _SSH_CREDS}, element=Element(name="e"))
 
 
 def test_the_same_entry_loads_without_preferences_only_if_the_resolver_s_pick_passes():
     with pytest.raises(
         HostValidationError, match=r"term 'console' requires console_options\.server"
     ):
-        create_host_from_dict({**_EITHER, "creds": _SSH_CREDS}, element=Element("e"))
+        create_host_from_dict({**_EITHER, "creds": _SSH_CREDS}, element=Element(name="e"))
 
 
 def test_the_same_entry_loads_under_an_ssh_preference_and_fails_under_console():
@@ -58,7 +58,9 @@ def test_no_single_term_passes_both_checks_so_the_doctor_refuses():
     with pytest.raises(
         HostValidationError, match=r"host 'e': term 'console' requires console_options\.server"
     ):
-        validate_host_dict({**_EITHER, "creds": _CONSOLE_ONLY_CREDS}, element=Element("e"))
+        validate_host_dict(
+            host_data={**_EITHER, "creds": _CONSOLE_ONLY_CREDS}, element=Element(name="e")
+        )
 
 
 @pytest.mark.parametrize("route", _ROUTES.values(), ids=_ROUTES.keys())
@@ -129,29 +131,39 @@ def test_model_validate_alone_now_accepts_what_only_context_refuses():
 
 
 def test_an_omitted_frame_passes_for_zephyr_and_fails_for_embedded():
-    validate_host_dict({"ip": "192.0.2.1", "os_type": "zephyr"}, element=Element("z"))
+    validate_host_dict(
+        host_data={"ip": "192.0.2.1", "os_type": "zephyr"}, element=Element(name="z")
+    )
     with pytest.raises(
         HostValidationError,
         match=r"host 'z': os_type 'embedded' builds a EmbeddedHost, "
         r"which supplies no command_frame",
     ):
-        validate_host_dict({"ip": "192.0.2.1", "os_type": "embedded"}, element=Element("z"))
+        validate_host_dict(
+            host_data={"ip": "192.0.2.1", "os_type": "embedded"}, element=Element(name="z")
+        )
 
 
 def test_a_data_profile_frame_satisfies_the_embedded_frame_rule():
     """Review Focus 2."""
     framed = OsProfile(
-        "rtos", "embedded", ProfileFields(FrozenMap.freeze_json({"command_frame": "zephyr"}))
+        "rtos",
+        "embedded",
+        ProfileFields(defaults=FrozenMap.freeze_json(value={"command_frame": "zephyr"})),
     )
     bare = OsProfile("rtos-bare", "embedded", ProfileFields())
     data = ProfileContext(
-        profiles=FrozenMap({"rtos": framed, "rtos-bare": bare}),
-        owners=FrozenMap({"rtos": "r", "rtos-bare": "r"}),
+        profiles=FrozenMap(mapping={"rtos": framed, "rtos-bare": bare}),
+        owners=FrozenMap(mapping={"rtos": "r", "rtos-bare": "r"}),
     )
-    validate_host_dict({"ip": "192.0.2.1", "os_type": "rtos"}, element=Element("z"), profiles=data)
+    validate_host_dict(
+        host_data={"ip": "192.0.2.1", "os_type": "rtos"}, element=Element(name="z"), profiles=data
+    )
     with pytest.raises(HostValidationError, match="supplies no command_frame"):
         validate_host_dict(
-            {"ip": "192.0.2.1", "os_type": "rtos-bare"}, element=Element("z"), profiles=data
+            host_data={"ip": "192.0.2.1", "os_type": "rtos-bare"},
+            element=Element(name="z"),
+            profiles=data,
         )
 
 
@@ -180,12 +192,15 @@ class _Dockerish(UnixHost):
 def test_docker_priority_reads_the_class_s_declared_docker_capable():
     register_host_class("t-dockerish", _Dockerish)
     entry = {"ip": "10.0.0.1", "docker_priority": 5}
-    assert host_identity({**entry, "os_type": "t-dockerish"}, Element("e")).docker_capable is True
-    validate_host_dict({**entry, "os_type": "t-dockerish"}, element=Element("e"))
+    assert (
+        host_identity({**entry, "os_type": "t-dockerish"}, element=Element(name="e")).docker_capable
+        is True
+    )
+    validate_host_dict(host_data={**entry, "os_type": "t-dockerish"}, element=Element(name="e"))
     with pytest.raises(
         HostValidationError, match=r"docker_priority on .* which is not docker_capable"
     ):
-        validate_host_dict(dict(entry), element=Element("e"))
+        validate_host_dict(host_data=dict(entry), element=Element(name="e"))
 
 
 class _EmbeddedOnly(LinkImpairer):
@@ -199,9 +214,9 @@ def test_an_impairer_of_the_wrong_family_fails_in_both_modes():
     with pytest.raises(
         HostValidationError, match=r"impairer 't-embedded-only' is not valid on a unix host"
     ):
-        validate_host_dict(dict(entry), element=Element("e"))
+        validate_host_dict(host_data=dict(entry), element=Element(name="e"))
     with pytest.raises(HostValidationError, match=r"impairer 't-embedded-only' is not valid"):
-        create_host_from_dict(dict(entry), element=Element("e"))
+        create_host_from_dict(dict(entry), element=Element(name="e"))
 
 
 @pytest.mark.parametrize("route", _ROUTES.values(), ids=_ROUTES.keys())
@@ -216,7 +231,9 @@ def test_a_replaced_stock_impairer_is_checked_under_the_omitted_menu(route):
 
 def test_an_explicit_stock_impairer_menu_still_validates():
     """An entry's own ["netem"] is checked like any menu: netem serves unix hosts."""
-    validate_host_dict({"ip": "1.1.1.1", "valid_impairers": ["netem"]}, element=Element("e"))
+    validate_host_dict(
+        host_data={"ip": "1.1.1.1", "valid_impairers": ["netem"]}, element=Element(name="e")
+    )
 
 
 class _EmbeddedOnlyDefaultSpec(UnixHostSpec):
@@ -257,5 +274,7 @@ class _LeakyHost(UnixHost):
 def test_a_contextual_validation_error_never_echoes_its_input():
     register_host_class("t-leaky", _LeakyHost, spec=_LeakySpec)
     with pytest.raises(HostValidationError, match=r"^host 'e': ") as exc:
-        validate_host_dict({"ip": "10.0.0.1", "os_type": "t-leaky"}, element=Element("e"))
+        validate_host_dict(
+            host_data={"ip": "10.0.0.1", "os_type": "t-leaky"}, element=Element(name="e")
+        )
     assert "s3cret" not in str(exc.value)

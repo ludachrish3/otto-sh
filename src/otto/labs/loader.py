@@ -90,7 +90,7 @@ def split_lab_names(value: str) -> list[str]:
 
 
 @final
-@dataclass
+@dataclass(kw_only=True)
 class Lab:
     """Container for a named lab environment and its registered hosts.
 
@@ -120,8 +120,7 @@ class Lab:
     display string assembled by ``__add__``, and re-parsing it would make
     every reader re-implement (and eventually disagree about) the merge.
 
-    Declared last so positional construction (``Lab("name", resources, hosts,
-    links)``) keeps working; leave it unset and ``__post_init__`` seeds it.
+    Leave it unset and ``__post_init__`` seeds it.
     """
 
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -279,9 +278,9 @@ def _json_source(search_paths: list[Path]) -> "LabRepository":
     from .sources import LabSourceEnv
 
     prepared = LAB_REPOSITORIES.prepare(
-        "json",
-        {"paths": [str(p) for p in search_paths]},
-        LabSourceEnv(
+        name="json",
+        raw={"paths": [str(p) for p in search_paths]},
+        env=LabSourceEnv(
             project_root=Path.cwd(),
             label="json",
             origin="load_lab(search_paths=)",
@@ -289,11 +288,12 @@ def _json_source(search_paths: list[Path]) -> "LabRepository":
         ),
         source="load_lab(search_paths=)",
     )
-    return LAB_REPOSITORIES.build(prepared)
+    return LAB_REPOSITORIES.build(prepared=prepared)
 
 
 def load_lab(
     labnames: str | list[str],
+    *,
     search_paths: list[Path] | None = None,
     preferences: dict[str, dict[str, Any]] | None = None,
     repository: "LabRepository | None" = None,

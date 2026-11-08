@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from ..run_context import OttoContext
 
 
-def check_dependencies(ctx: "OttoContext") -> list[str]:
+def check_dependencies(*, ctx: "OttoContext") -> list[str]:
     """Refuse when an ACTIVE project declares a Python requirement this environment lacks.
 
     Runs once *ctx* exists with its scopes populated (it is passed explicitly,
@@ -43,5 +43,5 @@ def check_dependencies(ctx: "OttoContext") -> list[str]:
             "— continuing without it"
         )
     if blocking:
-        raise DependencyRefusedError(blocking, warnings)
+        raise DependencyRefusedError(blocking, warnings=warnings)
     return warnings

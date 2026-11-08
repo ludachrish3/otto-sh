@@ -15,7 +15,7 @@ class _Good:
 
     def lookup(self, key):
         if key != "k":
-            raise InventoryKeyError(key, self.label)
+            raise InventoryKeyError(key, label=self.label)
         return InventoryRecord(ip="10.0.0.1")
 
     def list_keys(self):
@@ -33,7 +33,7 @@ def test_record_outside_supplies_fails():
     class Leaky(_Good):
         def lookup(self, key):
             if key != "k":
-                raise InventoryKeyError(key, self.label)
+                raise InventoryKeyError(key, label=self.label)
             return InventoryRecord(ip="10.0.0.1", site="x")  # site is not supplied
 
     with pytest.raises(AssertionError, match=r"outside supplies.*site"):
@@ -55,7 +55,7 @@ def test_lookup_must_be_idempotent():
 
         def lookup(self, key):
             if key != "k":
-                raise InventoryKeyError(key, self.label)
+                raise InventoryKeyError(key, label=self.label)
             self.n += 1
             return InventoryRecord(ip=f"10.0.0.{self.n}")
 
@@ -93,7 +93,7 @@ def test_expected_key_resolves_but_is_missing_from_list_keys_fails():
     class Hidden(_Good):
         def lookup(self, key):
             if key not in ("k", "zz"):
-                raise InventoryKeyError(key, self.label)
+                raise InventoryKeyError(key, label=self.label)
             return InventoryRecord(ip="10.0.0.9")
 
     with pytest.raises(AssertionError, match=r"expected key 'zz' to appear in list_keys\(\)"):
@@ -118,7 +118,7 @@ def test_unsorted_list_keys_fails():
     class Unsorted(_Good):
         def lookup(self, key):
             if key not in ("a", "b"):
-                raise InventoryKeyError(key, self.label)
+                raise InventoryKeyError(key, label=self.label)
             return InventoryRecord(ip="10.0.0.1")
 
         def list_keys(self):
@@ -144,7 +144,7 @@ def test_fingerprint_raising_is_reported_not_escaped():
     class Broken(_Good):
         def lookup(self, key):
             if key != "k":
-                raise InventoryKeyError(key, self.label)
+                raise InventoryKeyError(key, label=self.label)
             return InventoryRecord(ip="10.0.0.1", site="x")
 
         def fingerprint(self):

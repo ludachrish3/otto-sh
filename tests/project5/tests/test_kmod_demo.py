@@ -165,7 +165,7 @@ class TestKmodDemo:
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _modules(cls):
-        cls._hosts = list(all_hosts(_HOSTS))
+        cls._hosts = list(all_hosts(pattern=_HOSTS))
         failed = {
             h: r
             for h, r in (await do_for_all_hosts(_install, pattern=_HOSTS)).items()

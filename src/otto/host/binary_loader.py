@@ -177,7 +177,9 @@ LOADER_CLASSES: "Registry[ClassEntry[BinaryLoader]]" = Registry(
     check_resolved=lambda name, entry: _check_loader_class(name, resolved(entry.cls)),
 )
 """The binary-loader classes lab data can name, keyed by loader name."""
-LOADER_CLASSES.register("llext-hex", ClassEntry(Ref("otto.host.binary_loader:LlextHexLoader")))
+LOADER_CLASSES.register(
+    name="llext-hex", entry=ClassEntry(cls=Ref(target="otto.host.binary_loader:LlextHexLoader"))
+)
 
 
 @registration_boundary
@@ -201,7 +203,7 @@ def register_binary_loader(
     ValueError
         If *type_name* doesn't match ``cls.type_name``.
     """
-    LOADER_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
+    LOADER_CLASSES.register(name=type_name, entry=ClassEntry(cls=cls), overwrite=overwrite)
 
 
 def build_binary_loader(type_name: str) -> BinaryLoader:

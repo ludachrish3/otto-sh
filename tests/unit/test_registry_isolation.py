@@ -59,7 +59,7 @@ def test_dropped_entry_origin_module_is_evicted() -> None:
     # registering as an import side effect.
     before = frozenset(sys.modules)
     sys.modules["fake_ext_isolation_regression"] = types.ModuleType("fake_ext_isolation_regression")
-    _from_module("fake_ext_isolation_regression", reg.register, "added", Thing(object()))
+    _from_module("fake_ext_isolation_regression", reg.register, name="added", entry=Thing(object()))
 
     _restore_tables([(reg, snapshot)], before)
 
@@ -81,7 +81,9 @@ def test_origin_module_loaded_before_the_test_is_not_evicted() -> None:
     sys.modules["fake_preloaded_test_module"] = types.ModuleType("fake_preloaded_test_module")
     before = frozenset(sys.modules)
     try:
-        _from_module("fake_preloaded_test_module", reg.register, "added", Thing(object()))
+        _from_module(
+            "fake_preloaded_test_module", reg.register, name="added", entry=Thing(object())
+        )
 
         _restore_tables([(reg, snapshot)], before)
 
@@ -97,7 +99,7 @@ def test_core_otto_origin_module_is_not_evicted() -> None:
     assert "otto.errors" in sys.modules  # imported by otto.registry at module top
 
     before = frozenset(sys.modules) - {"otto.errors"}  # pretend it was imported now
-    _from_module("otto.errors", reg.register, "added", Thing(object()))
+    _from_module("otto.errors", reg.register, name="added", entry=Thing(object()))
 
     _restore_tables([(reg, snapshot)], before)
 
@@ -107,27 +109,27 @@ def test_core_otto_origin_module_is_not_evicted() -> None:
 
 def test_snapshot_entries_are_preserved() -> None:
     reg = _things()
-    _from_module("builtin_origin", reg.register, "builtin", Thing("keep"))
+    _from_module("builtin_origin", reg.register, name="builtin", entry=Thing("keep"))
     snapshot = _snapshot(reg)
 
     before = frozenset(sys.modules)
     sys.modules["fake_ext_isolation_regression2"] = types.ModuleType(
         "fake_ext_isolation_regression2"
     )
-    _from_module("fake_ext_isolation_regression2", reg.register, "added", Thing("drop"))
+    _from_module("fake_ext_isolation_regression2", reg.register, name="added", entry=Thing("drop"))
 
     _restore_tables([(reg, snapshot)], before)
 
     assert reg.names() == ["builtin"]  # added dropped, snapshot restored
     assert reg.get("builtin") == Thing("keep")
-    assert reg.origin("builtin") == "builtin_origin"
+    assert reg.origin(name="builtin") == "builtin_origin"
     assert "fake_ext_isolation_regression2" not in sys.modules
 
 
 def test_an_entry_the_test_replaced_is_restored_and_its_origin_evicted() -> None:
     """An overwrite counts as an addition: the old entry comes back, the new origin goes."""
     reg = _things()
-    _from_module("builtin_origin", reg.register, "builtin", Thing("keep"))
+    _from_module("builtin_origin", reg.register, name="builtin", entry=Thing("keep"))
     snapshot = _snapshot(reg)
 
     before = frozenset(sys.modules)
@@ -135,13 +137,17 @@ def test_an_entry_the_test_replaced_is_restored_and_its_origin_evicted() -> None
         "fake_ext_isolation_regression3"
     )
     _from_module(
-        "fake_ext_isolation_regression3", reg.register, "builtin", Thing("new"), overwrite=True
+        "fake_ext_isolation_regression3",
+        reg.register,
+        name="builtin",
+        entry=Thing("new"),
+        overwrite=True,
     )
 
     _restore_tables([(reg, snapshot)], before)
 
     assert reg.get("builtin") == Thing("keep")
-    assert reg.origin("builtin") == "builtin_origin"
+    assert reg.origin(name="builtin") == "builtin_origin"
     assert "fake_ext_isolation_regression3" not in sys.modules
 
 
@@ -161,11 +167,11 @@ def test_a_provider_subscribed_during_a_test_is_dropped_by_the_restore() -> None
     from otto.host.product import PRODUCT_PROVIDERS
 
     for subscription in (PRODUCT_PROVIDERS, DEV_TOOL_PROVIDERS):
-        pre_existing = subscription.subscribe(lambda host: [])
+        pre_existing = subscription.subscribe(value=lambda host: [])
         try:
             before = [s.value for s in subscription.items()]
             snapshots = _snapshot_tables()
-            subscription.subscribe(lambda host: [])
+            subscription.subscribe(value=lambda host: [])
             assert len(subscription) == len(before) + 1  # the hostile condition is real
 
             _restore_tables(snapshots, frozenset(sys.modules))
@@ -197,11 +203,11 @@ def test_a_registry_that_first_appeared_mid_test_is_not_left_polluted() -> None:
     """
     reg = Registry("late", entry=Thing, register_hint="register_late()")
     snapshots = _every_table_but(reg)
-    _from_module("otto._fake_late_pkg", reg.register, "from_import", Thing(object()))
+    _from_module("otto._fake_late_pkg", reg.register, name="from_import", entry=Thing(object()))
     _late_module("otto._fake_late_pkg", reg)
     before = frozenset(sys.modules) - {"otto._fake_late_pkg"}
     try:
-        reg.register("from_test", Thing(object()))
+        reg.register(name="from_test", entry=Thing(object()))
 
         _restore_tables(snapshots, before)
 
@@ -222,7 +228,7 @@ def test_a_late_registrys_own_import_time_entries_survive() -> None:
     reg = Registry("late", entry=Thing, register_hint="register_late()")
     snapshots = _every_table_but(reg)
     for name in ("install", "uninstall"):
-        _from_module("otto._fake_late_defaults", reg.register, name, Thing(object()))
+        _from_module("otto._fake_late_defaults", reg.register, name=name, entry=Thing(object()))
     _late_module("otto._fake_late_defaults", reg)
     before = frozenset(sys.modules) - {"otto._fake_late_defaults"}
     try:
@@ -248,7 +254,7 @@ def test_a_late_registrys_extension_origin_is_evicted_so_reimport_re_registers()
     sys.modules["custom_frames_ext"] = ext
     before = frozenset(sys.modules) - {"otto._fake_late_ext_home", "custom_frames_ext"}
     try:
-        _from_module("custom_frames_ext", reg.register, "zephyr_ish", Thing(object()))
+        _from_module("custom_frames_ext", reg.register, name="zephyr_ish", entry=Thing(object()))
 
         _restore_tables(snapshots, before)
 
@@ -339,7 +345,7 @@ def test_host_classes_present_before_the_test_survive_the_restore() -> None:
 
         _guard_restore(state)
 
-        assert os_profile.HOST_CLASSES.peek("preexistingos").spec is _PreExistingSpec
+        assert os_profile.HOST_CLASSES.peek(name="preexistingos").spec is _PreExistingSpec
         assert "addedbythetestos" not in os_profile.HOST_CLASSES.names()
         # Read through build_host_spec: the built-in's entry may hold the Ref it
         # was registered with, which the restore puts back exactly as it found it.

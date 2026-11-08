@@ -174,8 +174,10 @@ def test_a_pair_given_by_reference_is_refused_at_its_first_get(cls_name, message
     spec = "WidgetSpec" if cls_name == "ContradictoryHost" else None
     register_host_class(
         "t-ref",
-        Ref(f"{__name__}:{cls_name}"),
-        spec=Ref(f"{__name__}:{spec}") if spec else Ref("otto.host.specs:UnixHostSpec"),
+        Ref(target=f"{__name__}:{cls_name}"),
+        spec=Ref(target=f"{__name__}:{spec}")
+        if spec
+        else Ref(target="otto.host.specs:UnixHostSpec"),
     )
     with pytest.raises(ValueError, match=message):
         HOST_CLASSES.get("t-ref")
@@ -189,12 +191,12 @@ def test_assert_host_registrable_reports_the_coverage_gap():
 
 def test_a_profile_default_naming_products_is_refused():
     with pytest.raises(ValueError, match=r"\['products'\]"):
-        register_os_profile("t-products", "unix", {"products": []})
+        register_os_profile("t-products", "unix", defaults={"products": []})
 
 
 def test_a_profile_default_naming_inventory_is_refused():
     with pytest.raises(ValueError, match=r"\['inventory'\]"):
-        register_os_profile("t-inventory", "unix", {"inventory": "k"})
+        register_os_profile("t-inventory", "unix", defaults={"inventory": "k"})
 
 
 def test_a_host_class_s_own_profile_uses_the_same_vocabulary():
@@ -203,5 +205,5 @@ def test_a_host_class_s_own_profile_uses_the_same_vocabulary():
             "t-ownprofile",
             WidgetHost,
             spec=WidgetSpec,
-            profile=ProfileFields(FrozenMap.freeze_json({"products": []})),
+            profile=ProfileFields(defaults=FrozenMap.freeze_json(value={"products": []})),
         )

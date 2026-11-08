@@ -116,7 +116,7 @@ def _console_guard(request: pytest.FixtureRequest) -> None:
 def noop_hook() -> Iterator[str]:
     register_session_setup(_NOOP_HOOK, _noop_setup, overwrite=True)
     yield _NOOP_HOOK
-    SESSION_SETUPS.unregister(_NOOP_HOOK)
+    SESSION_SETUPS.unregister(name=_NOOP_HOOK)
 
 
 def _empty_output_lines(records: list[logging.LogRecord], host: Host) -> int:

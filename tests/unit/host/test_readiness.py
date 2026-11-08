@@ -15,12 +15,12 @@ _UNIX = {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}
 
 
 def _ready(entry=_UNIX, **kw):
-    hc = host_context(dict(entry), element=Element("lab"), **kw)
+    hc = host_context(dict(entry), element=Element(name="lab"), **kw)
     return hc, hc.spec.validate_in(hc.context)
 
 
 def test_host_context_returns_the_spec_and_its_context():
-    hc = host_context(dict(_UNIX), element=Element("lab"))
+    hc = host_context(dict(_UNIX), element=Element(name="lab"))
     assert isinstance(hc.spec, UnixHostSpec)
     assert hc.context.host_id == "lab"
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -52,7 +52,7 @@ def test_a_record_from_another_spec_class_is_refused():
 
 def test_a_probe_record_cannot_build():
     """No-preference mode (what validate_host_dict and host_identity run) issues a probe record."""
-    hc = host_context(dict(_UNIX), element=Element("lab"))
+    hc = host_context(dict(_UNIX), element=Element(name="lab"))
     probe = hc.spec.validate_in(dataclasses.replace(hc.context, preferences=None))
     assert probe.selections is None
     with pytest.raises(
@@ -109,7 +109,7 @@ def test_mutating_the_callers_preferences_after_validation_does_not_change_the_b
     leaves the alias broken by the rest. The assertion pins all four together.
     """
     prefs = {".*": {"term": ["telnet"], "telnet_options": {"port": 2323}}}
-    hc = host_context(dict(_UNIX), element=Element("lab"), preferences=prefs)
+    hc = host_context(dict(_UNIX), element=Element(name="lab"), preferences=prefs)
     ready = hc.spec.validate_in(hc.context)
     prefs[".*"]["term"][0] = "ssh"  # the nested selection list, in place
     prefs[".*"]["term"].append("telnet")
@@ -134,13 +134,13 @@ def test_a_context_resolved_for_a_base_spec_is_refused():
     class Sub(UnixHostSpec):
         pass
 
-    hc = host_context(dict(_UNIX), element=Element("lab"))
+    hc = host_context(dict(_UNIX), element=Element(name="lab"))
     with pytest.raises(HostValidationError, match=r"resolved for UnixHostSpec, not Sub"):
         Sub.model_validate(dict(_UNIX)).validate_in(hc.context)
 
 
 def test_a_context_whose_host_id_disagrees_is_refused():
-    hc = host_context({**_UNIX, "board": "cpu", "slot": 1}, element=Element("lab"))
+    hc = host_context({**_UNIX, "board": "cpu", "slot": 1}, element=Element(name="lab"))
     with pytest.raises(HostValidationError, match=r"the context names host 'lab'"):
         hc.spec.validate_in(dataclasses.replace(hc.context, host_id="lab"))
 
@@ -148,7 +148,9 @@ def test_a_context_whose_host_id_disagrees_is_refused():
 def test_a_direct_build_keeps_its_data_profile_prompts():
     """host_context has no factory scope around it; the stock builder scopes itself."""
     alpha = OsProfile("alpha", "unix", ProfileFields(login_prompt="alpha-login: "))
-    data = ProfileContext(profiles=FrozenMap({"alpha": alpha}), owners=FrozenMap({"alpha": "r"}))
+    data = ProfileContext(
+        profiles=FrozenMap(mapping={"alpha": alpha}), owners=FrozenMap(mapping={"alpha": "r"})
+    )
     host = build_host({**_UNIX, "os_type": "alpha"}, profiles=data)
     assert host._profile_fields is not None
     assert host._profile_fields.login_prompt == "alpha-login: "

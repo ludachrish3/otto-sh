@@ -70,7 +70,9 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
 
     report1 = tmp_path / "r1"
     store = await run_coverage_report(
-        [], report1, ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root))
+        [],
+        output_dir=report1,
+        inputs=ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root)),
     )
     (frec,) = [f for f in store.files() if f.path.name == "f.c"]
     assert frec.lines[2].hits.for_tier("manual") == 4
@@ -82,7 +84,9 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
 
     report2 = tmp_path / "r2"
     store2 = await run_coverage_report(
-        [], report2, ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root))
+        [],
+        output_dir=report2,
+        inputs=ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root)),
     )
     (frec2,) = [f for f in store2.files() if f.path.name == "f.c"]
     assert frec2.lines[2].hits.for_tier("manual") == 0
@@ -130,7 +134,9 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
 
     report = tmp_path / "r"
     store = await run_coverage_report(
-        [], report, ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root))
+        [],
+        output_dir=report,
+        inputs=ReportInputs(project_root=root, tier_configs=load_tiers(COV, root=root)),
     )
 
     by_ticket = {c.ticket: c for c in store.runs}
@@ -144,7 +150,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     assert fr.lines[1].run_hits == {}
 
     # store.json round-trip preserves the run table + per-line run data.
-    reloaded = CoverageStore.load(report / "store.json")
+    reloaded = CoverageStore.load(path=report / "store.json")
     (fr2,) = [f for f in reloaded.files() if f.path.name == "f.c"]
     assert fr2.lines[2].run_hits == {t1: 1, t22: 3}
     assert reloaded.runs[t1].label == "b1/app"

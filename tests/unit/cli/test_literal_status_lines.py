@@ -76,7 +76,7 @@ def _cov_clean(status_name=None):
         from otto.result import Result
         from otto.utils import Status
 
-        products = {} if status_name is None else {"p": Result(Status[status_name])}
+        products = {} if status_name is None else {"p": Result(status=Status[status_name])}
         _render_clean_report(CleanReport(hosts={HOSTILE_ID: products}))
 
     return render
@@ -97,7 +97,7 @@ def _built_entry():
     from otto.result import CommandResult
     from otto.utils import Status
 
-    ok = CommandResult(Status.Success, value="built", retcode=0)
+    ok = CommandResult(status=Status.Success, value="built", retcode=0)
     return ProjectBuild(
         HOSTILE_ID, HOSTILE_ID, "built", {"api": ImageBuild("api", ["api:1"], "sha1", ok)}
     )
@@ -156,7 +156,7 @@ def _displacements():
 def _not_run_error():
     from otto.result import CommandNotRunError
 
-    return CommandNotRunError(HOSTILE_ID, HOSTILE_ID)
+    return CommandNotRunError(HOSTILE_ID, host=HOSTILE_ID)
 
 
 def _docker_dry_run_decline():
@@ -260,7 +260,7 @@ def _skipped_result():
     from otto.result import Result
     from otto.utils import Status
 
-    _render_ok_result(Result(Status.Skipped, msg=HOSTILE_ID), None)
+    _render_ok_result(Result(status=Status.Skipped, msg=HOSTILE_ID), None)
 
 
 def _cases():

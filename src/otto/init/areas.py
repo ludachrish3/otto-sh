@@ -299,7 +299,7 @@ AREA_NAMES: list[str] = list(_DETECT)
 """Every area, in the order the doctor reports and the scaffolder writes them."""
 
 
-def detect_areas(root: Path) -> list[str]:
+def detect_areas(*, root: Path) -> list[str]:
     """Return the areas present in *root*, in :data:`AREA_NAMES` order."""
     return [name for name, detect in _DETECT.items() if detect(root)]
 

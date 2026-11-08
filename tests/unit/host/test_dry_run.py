@@ -171,7 +171,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -189,7 +189,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -204,7 +204,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -220,7 +220,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -232,7 +232,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -247,7 +247,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -266,7 +266,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -284,7 +284,7 @@ def _dry_run_host() -> UnixHost:
     """A host whose ``exec`` a dry run answers synthetically. Build inside the context."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -324,7 +324,9 @@ class TestDryRunMeasuresNothing:
             userland = _dry_run_host()._userland()
             await userland.resolve()
 
-            settled = [n for n in userland_module._UNASKABLE_DEFAULTS if userland.is_settled(n)]
+            settled = [
+                n for n in userland_module._UNASKABLE_DEFAULTS if userland.is_settled(name=n)
+            ]
             assert settled == [], (
                 f"a dry run settled {settled} without reaching any device, so those values "
                 "are guesses recorded as measurements"
@@ -487,7 +489,10 @@ def _local(log: LogMode = LogMode.NORMAL) -> LocalHost:
 
 def _unix(log: LogMode = LogMode.NORMAL) -> UnixHost:
     return UnixHost(
-        ip="10.0.0.1", element=Element("box"), creds=[Cred(login="user", password="pass")], log=log
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="user", password="pass")],
+        log=log,
     )
 
 
@@ -507,7 +512,7 @@ def _docker(log: LogMode = LogMode.NORMAL) -> DockerContainerHost:
 def _embedded() -> EmbeddedHost:
     return EmbeddedHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=LogMode.QUIET,
         command_frame=ZephyrFrame(),
     )
@@ -676,7 +681,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
 
         with active_context(dry_run=True):
             host = _unix()
-            result = await host.write_file("/etc/otto-creds", _BODY)
+            result = await host.write_file("/etc/otto-creds", data=_BODY)
             await host.exec("uname -a")  # positive control
         management._state.listener.stop()  # flush the queue
 
@@ -724,7 +729,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
 
         with active_context(dry_run=True):
             host = _unix()
-            declined = await host.write_file("/etc/otto-creds", _BODY)
+            declined = await host.write_file("/etc/otto-creds", data=_BODY)
 
         assert declined.status is Status.NotRun
         assert declined.is_ok is False, (
@@ -739,7 +744,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
         # `is_ok` still means what it says. Without this, a `write_file` that
         # had stopped working entirely would satisfy every assertion above.
         wrote = tmp_path / "real.txt"
-        real = await _local().write_file(wrote, _BODY)
+        real = await _local().write_file(wrote, data=_BODY)
         assert real.is_ok is True, real.msg
         assert wrote.read_text() == _BODY
 
@@ -755,7 +760,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
         from otto.cli.invoke import render_leaf_value
 
         with active_context(dry_run=True):
-            declined = await _unix().write_file("/etc/otto-creds", _BODY)
+            declined = await _unix().write_file("/etc/otto-creds", data=_BODY)
         capsys.readouterr()  # drop the host logger's own line
 
         render_leaf_value(declined)
@@ -768,7 +773,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
 
         # POSITIVE CONTROL, same renderer: a genuinely ok write prints no
         # decline, so the branch above cannot be announcing unconditionally.
-        render_leaf_value(Result(Status.Success))
+        render_leaf_value(Result(status=Status.Success))
         assert "[DRY RUN]" not in capsys.readouterr().out
 
     @pytest.mark.asyncio
@@ -780,7 +785,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
 
         with active_context(dry_run=True):
             host = _unix()
-            await host.write_file("/etc/otto-creds", _BODY, append=True)
+            await host.write_file("/etc/otto-creds", data=_BODY, append=True)
             await host.exec("uname -a")  # positive control
         management._state.listener.stop()
 
@@ -801,7 +806,7 @@ def _zephyr_with_fs(log: LogMode = LogMode.QUIET):
 
     return ZephyrHost(
         ip="192.0.2.1",
-        element=Element("zephyr37_fat"),
+        element=Element(name="zephyr37_fat"),
         log=log,
         filesystem=build_filesystem("fat-ram"),
     )
@@ -946,7 +951,10 @@ class TestNotRunIsNotData:
         assert "uptime" in str(exc.value)
         assert "box" in str(exc.value)
         # positive control: an ordinary CommandResult's value is a plain read
-        assert CommandResult(Status.Success, value="ok", command="true", retcode=0).value == "ok"
+        assert (
+            CommandResult(status=Status.Success, value="ok", command="true", retcode=0).value
+            == "ok"
+        )
 
     def test_a_smuggled_value_argument_is_dropped_not_returned(self):
         # The frozen-dataclass __init__ assigns `value` through
@@ -999,7 +1007,9 @@ class TestNotRunIsStillAnObjectYouCanHandle:
         with pytest.raises(CommandNotRunError):
             _ = nr.value
         # positive control, same seam: a real result still renders its payload
-        assert "'ok'" in repr(CommandResult(Status.Success, value="ok", command="true", retcode=0))
+        assert "'ok'" in repr(
+            CommandResult(status=Status.Success, value="ok", command="true", retcode=0)
+        )
 
     def test_equality_is_safe_and_never_equates_a_decline_with_an_answer(self):
         nr = self._nr()
@@ -1009,7 +1019,7 @@ class TestNotRunIsStillAnObjectYouCanHandle:
         # THE ONE THAT MATTERS: `assert result == expected` must not accept a
         # decline in place of an answer, however well the other fields match.
         answered = CommandResult(
-            Status.NotRun, value="14:02:11 up 3 days", command="uptime", retcode=-1
+            status=Status.NotRun, value="14:02:11 up 3 days", command="uptime", retcode=-1
         )
         assert nr != answered
         assert answered != nr  # and the reflected comparison agrees
@@ -1053,7 +1063,9 @@ class TestNotRunIsStillAnObjectYouCanHandle:
         assert nr.host_name == "box"
         # positive control, same seam: the rest of the family already did this
         with pytest.raises(FrozenInstanceError):
-            CommandResult(Status.Success, value="ok", command="true", retcode=0).command = "x"
+            CommandResult(
+                status=Status.Success, value="ok", command="true", retcode=0
+            ).command = "x"
 
     def test_serialising_or_copying_the_measurement_still_raises(self):
         """``asdict`` and ``replace`` READ the payload, so they stay poisoned.
@@ -1072,7 +1084,7 @@ class TestNotRunIsStillAnObjectYouCanHandle:
         with pytest.raises(CommandNotRunError):
             dataclasses.replace(nr, retcode=2)
         # positive control, same seam: both are ordinary on a real result
-        cr = CommandResult(Status.Success, value="ok", command="true", retcode=0)
+        cr = CommandResult(status=Status.Success, value="ok", command="true", retcode=0)
         assert dataclasses.asdict(cr)["value"] == "ok"
         assert dataclasses.replace(cr, command="false").command == "false"
 
@@ -1177,7 +1189,7 @@ class TestThePrimitiveDeclinesInsteadOfAnswering:
         # This is the half that must not move -- Skipped.is_ok is load-bearing
         # for test steps and trailing transfer entries everywhere.
         genuine = Results.collect(
-            [CommandResult(Status.Skipped, value="", command="c", retcode=-1)]
+            items=[CommandResult(status=Status.Skipped, value="", command="c", retcode=-1)]
         )
         assert genuine.status is Status.Success  # no non-ok entry to inherit from
         assert genuine.is_ok is True
@@ -1204,7 +1216,7 @@ class TestThePrimitiveDeclinesInsteadOfAnswering:
         # still ok, so a trailing run of real skips never fails an aggregate.
         assert (
             aggregate_transfer(
-                {src: Result(Status.Skipped, msg="not attempted (earlier failure)")}
+                per_file={src: Result(status=Status.Skipped, msg="not attempted (earlier failure)")}
             ).is_ok
             is True
         )
@@ -1238,7 +1250,7 @@ class TestThePrimitiveDeclinesInsteadOfAnswering:
 
     @pytest.mark.asyncio
     async def test_a_dry_run_does_not_answer_which_modules_are_loaded(self):
-        # `_loaded_modules` short-circuited to `Result(Status.Skipped,
+        # `_loaded_modules` short-circuited to `Result(status=Status.Skipped,
         # value=[])`: an EMPTY MODULE LIST fabricated for a machine that was
         # never contacted, so "is module X loaded?" was answered "no". Same
         # defect class as the userland probes and `link list` reporting every
@@ -1259,7 +1271,9 @@ class TestThePrimitiveDeclinesInsteadOfAnswering:
         # module list of `[]` under `Status.Error` -- the documented shape for
         # "asked and could not tell", which is a different answer from "never
         # asked" and must stay distinguishable from it.
-        failed = CommandResult(Status.Failed, value="cat: no such file", command="c", retcode=1)
+        failed = CommandResult(
+            status=Status.Failed, value="cat: no such file", command="c", retcode=1
+        )
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(UnixHost, "exec", lambda self, *a, **kw: _async(failed))
             read_failure = await _unix()._loaded_modules()
@@ -1309,15 +1323,15 @@ class _RecordingPowerController(PowerController):
 
     async def on(self, host) -> Result:
         self.calls.append("on")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def off(self, host) -> Result:
         self.calls.append("off")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def cycle(self, host) -> Result:
         self.calls.append("cycle")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def status(self, host) -> "PowerState | None":
         self.calls.append("status")
@@ -1342,7 +1356,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
       `rebuild_connections()` -- tearing down every cached transport for a host
       that is still up. A dry run with a real side effect;
     * `shutdown` branched only on `Status.Failed`, so the folded `NotRun` fell
-      straight through to `Result(Status.Success)`: a FABRICATED POWER-OFF, and
+      straight through to `Result(status=Status.Success)`: a FABRICATED POWER-OFF, and
       `shutdown` has no wait behind it for anything downstream to notice;
     * the `wait=True` phases really dial (`is_reachable` ->
       `verify_connection`), so a dry run also burned the whole down/up deadline
@@ -1412,7 +1426,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
 
         async def recording_soft_reboot() -> Result:
             issued.append("reboot")
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         host._soft_reboot = recording_soft_reboot
         host.rebuild_connections = lambda: rebuilds.append("rebuild")
@@ -1454,7 +1468,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
         host = _unix()
 
         async def recording_soft_reboot() -> Result:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         async def recording_is_reachable(timeout: float = 10.0) -> bool:
             dials.append("dial")
@@ -1615,7 +1629,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
 
         async def recording_run(cmd, **kwargs):
             issued.append(cmd)
-            return Results.collect([])
+            return Results.collect(items=[])
 
         host.run = recording_run
 
@@ -1626,7 +1640,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
         assert declined.status is Status.NotRun
         assert declined.is_ok is False, (
             "a dry run reported a power-off that never happened; the folded "
-            "NotRun used to fall straight through to Result(Status.Success)"
+            "NotRun used to fall straight through to Result(status=Status.Success)"
         )
         assert "[DRY RUN] SHUTDOWN" in declined.msg
         assert host.name in declined.msg
@@ -1672,7 +1686,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
 
         # POSITIVE CONTROL, same renderer: an ok result prints no decline, so
         # the branch above cannot be announcing unconditionally.
-        render_leaf_value(Result(Status.Success))
+        render_leaf_value(Result(status=Status.Success))
         assert "[DRY RUN]" not in capsys.readouterr().out
 
 
@@ -1741,7 +1755,7 @@ class _RecordingShellSession(ShellSession):
         write_progress=None,
     ) -> CommandResult:
         self.ran.append(cmd)
-        return CommandResult(Status.Success, value=self._output, command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value=self._output, command=cmd, retcode=0)
 
     async def send(self, text: str) -> None:
         self.sent.append(text)
@@ -1778,7 +1792,7 @@ async def _live_session(host) -> "tuple[HostSession, _RecordingShellSession]":
         creds=[],
         host_id=host.id,
     )
-    return await mgr.open_session("worker"), transport
+    return await mgr.open_session(name="worker"), transport
 
 
 class TestADryRunOpensNoSessionOnAnyHost:
@@ -1872,7 +1886,9 @@ class TestADryRunOpensNoSessionOnAnyHost:
         async def recording_exec(cmd: str, timeout: float = 30.0, log=LogMode.NORMAL):
             probes.append(cmd)
             # The stack is up: the probe answers with a container id.
-            return CommandResult(Status.Success, value="abc123def456\n", command=cmd, retcode=0)
+            return CommandResult(
+                status=Status.Success, value="abc123def456\n", command=cmd, retcode=0
+            )
 
         parent.exec = recording_exec
         host = DockerContainerHost(
@@ -1989,7 +2005,7 @@ class TestADryRunOpensNoSessionOnAnyHost:
         )
 
         # POSITIVE CONTROL, same host, same spy, no dry run.
-        await host.login("mysql")
+        await host.login(user="mysql")
         assert logins == ["mysql"], "login bridged no terminal even WITHOUT --dry-run"
 
 
@@ -2126,9 +2142,9 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
             session = await host.open_session("mon")
             before = session.current_user
             with pytest.raises(CommandNotRunError):
-                await session.switch_user("root")
+                await session.switch_user(user="root")
             with pytest.raises(CommandNotRunError):
-                async with session.as_user("root"):
+                async with session.as_user(user="root"):
                     pass  # pragma: no cover -- entering must raise
             assert session.current_user == before, "a decline stamped a user it never became"
 
@@ -2154,7 +2170,7 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
         # `_login_user()` -- with only the transport swapped, so the comparison
         # below is between two handles on one host and not two fixtures.
         host._session_mgr._session_factory = _RecordingShellSession
-        live = await host._session_mgr.open_session("live")
+        live = await host._session_mgr.open_session(name="live")
 
         with active_context(dry_run=True):
             declined = await host.open_session("mon")
@@ -2193,9 +2209,9 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
         with pytest.raises(CommandNotRunError):
             await transport.open_transport()
         with pytest.raises(CommandNotRunError):
-            await transport.write_transport("echo hi\n")
+            await transport.write_transport(data="echo hi\n")
         with pytest.raises(CommandNotRunError):
-            await transport.read_transport_until(re.compile("READY"))
+            await transport.read_transport_until(pattern=re.compile("READY"))
         # ...except close, which must stay quiet so a `finally` cannot explode.
         assert await transport.close() is None
 
@@ -2329,9 +2345,9 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
 
         with active_context(dry_run=True), _two_sided_sinks() as (console, _verbose):
             with pytest.raises(CommandNotRunError) as exc:
-                await session.switch_user("root")
+                await session.switch_user(user="root")
             with pytest.raises(CommandNotRunError):
-                async with session.as_user("root"):
+                async with session.as_user(user="root"):
                     pass  # pragma: no cover -- entering must raise
 
         assert transport.sent == [], f"a dry run typed an su into a live session: {transport.sent}"
@@ -2343,7 +2359,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
 
         # POSITIVE CONTROL, same session, same transport: the su IS typed and
         # the session really does become root.
-        await session.switch_user("root")
+        await session.switch_user(user="root")
         assert transport.sent[0] == "su - root\n", "no su was typed even WITHOUT --dry-run"
         assert session.current_user == "root"
 
@@ -2374,9 +2390,9 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
 
         with active_context(dry_run=True), _two_sided_sinks() as (console, _verbose):
             with pytest.raises(CommandNotRunError) as exc:
-                await host.switch_user("root")
+                await host.switch_user(user="root")
             with pytest.raises(CommandNotRunError):
-                async with host.as_user("root"):
+                async with host.as_user(user="root"):
                     pass  # pragma: no cover -- entering must raise
 
         assert "switch_user('root')" in str(exc.value)
@@ -2393,7 +2409,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
 
         # POSITIVE CONTROL, same host, same transport, no dry run: the su IS
         # typed and the host really does track the new user.
-        await host.switch_user("root")
+        await host.switch_user(user="root")
         assert transport.sent[0] == "su - root\n", "no su was typed even WITHOUT --dry-run"
         assert host._session_mgr.current_user == "root"
 
@@ -2408,10 +2424,12 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         """
         from otto.host.embedded_host import ZephyrHost
 
-        embedded = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
+        embedded = ZephyrHost(
+            ip="192.0.2.1", element=Element(name="zephyr37_fat"), log=LogMode.QUIET
+        )
         try:
             embedded._session_mgr._session_factory = _RecordingShellSession
-            session = await embedded._session_mgr.open_session("probe")
+            session = await embedded._session_mgr.open_session(name="probe")
 
             with active_context(dry_run=True), pytest.raises(CommandNotRunError) as exc:
                 await session.expect("READY")

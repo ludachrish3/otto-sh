@@ -21,9 +21,9 @@ def _stated(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_creds(
+    *,
     lower: list[dict[str, Any]],
     higher: list[dict[str, Any]],
-    *,
     key: "str | None" = None,
     lower_name: str = "lower",
     higher_name: str = "higher",
@@ -162,7 +162,11 @@ class CredsOverlay:
         lower = [_dump_for_merge(c) for c in supplied]
         higher = [_dump_for_merge(c) for c in record.creds]
         merged = merge_creds(
-            lower, higher, key=key, lower_name="creds store", higher_name="inventory record"
+            lower=lower,
+            higher=higher,
+            key=key,
+            lower_name="creds store",
+            higher_name="inventory record",
         )
         creds = [_revalidate_merged_cred(c, key=key, label=self.store.label) for c in merged]
         return record.model_copy(update={"creds": creds})

@@ -271,7 +271,7 @@ def _refuse_contradictory_switches(
     from .invoke import report_project_selection_error
 
     try:
-        check_project_overlap(include or [], exclude or [])
+        check_project_overlap(include=include or [], exclude=exclude or [])
     except ProjectSelectionError as e:
         report_project_selection_error(e)
 

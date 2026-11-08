@@ -41,7 +41,7 @@ def _host(**extra):
     extra.setdefault("creds", list(_CREDS))
     return UnixHost(
         ip="127.0.0.1",
-        element=Element("u1"),
+        element=Element(name="u1"),
         name="u1",
         valid_terms=["ssh", "telnet"],
         valid_transfers=["scp", "ftp"],
@@ -82,7 +82,7 @@ def test_a_named_login_moves_its_cred_to_the_front():
     """Mutation: append instead of prepend and default_login keeps picking admin."""
     copy = host_copy_on_port(_host(), "ftp", 21, login="ftpuser")
     assert [c.login for c in copy.creds] == ["ftpuser", "admin"]
-    assert copy.connections.login_target_for("ftp") == "ftpuser"
+    assert copy.connections.login_target_for(protocol="ftp") == "ftpuser"
 
 
 def test_an_unknown_login_is_refused_by_name():

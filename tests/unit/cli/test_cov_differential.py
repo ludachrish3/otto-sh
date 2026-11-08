@@ -59,8 +59,9 @@ ROWS = [
     (
         ["get", "--output", "/o"],
         "otto.coverage.get.get_coverage",
-        (Path("/o"),),
+        (),
         {
+            "output_dir": Path("/o"),
             "tier": None,
             "ticket": None,
             "note": None,
@@ -88,8 +89,9 @@ ROWS = [
             "--clean",
         ],
         "otto.coverage.get.get_coverage",
-        (Path("/o"),),
+        (),
         {
+            "output_dir": Path("/o"),
             "tier": "manual",
             "ticket": "J-1",
             "note": "n",
@@ -117,8 +119,10 @@ ROWS = [
             "--overwrite-dir",
         ],
         "otto.coverage.reporter.run_coverage_report",
-        ([Path("/o/run/cov")], Path("/o/out").resolve(), ReportInputs()),
+        ([Path("/o/run/cov")],),
         {
+            "output_dir": Path("/o/out").resolve(),
+            "inputs": ReportInputs(),
             "report_title": "P",
             "tier_specs": [("a", Path("x.info")), ("b", None)],
             "prefix": Path("X"),

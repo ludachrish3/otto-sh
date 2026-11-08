@@ -251,11 +251,11 @@ def register_transfer_backend(
     """
     _validate_transfer_backend(name, cls)
     TRANSFER_BACKENDS.register(
-        name, class_backend(cls=cls, metadata=_declared(cls)), overwrite=overwrite
+        name=name, entry=class_backend(cls=cls, metadata=_declared(cls)), overwrite=overwrite
     )
 
 
-def build_transfer_backend(name: str, ctx: TransferContext) -> BaseFileTransfer:
+def build_transfer_backend(*, name: str, ctx: TransferContext) -> BaseFileTransfer:
     """Build the transfer backend registered under *name* for *ctx*.
 
     Raises:
@@ -267,7 +267,7 @@ def build_transfer_backend(name: str, ctx: TransferContext) -> BaseFileTransfer:
             the stage and the module that registered the backend; the cause
             is chained.
     """
-    return TRANSFER_BACKENDS.build(TRANSFER_BACKENDS.prepare(name, {}, ctx))
+    return TRANSFER_BACKENDS.build(prepared=TRANSFER_BACKENDS.prepare(name=name, raw={}, env=ctx))
 
 
 _CONNECTION_PROTOCOL = {"scp": "ssh", "sftp": "ssh", "ftp": "ftp"}
@@ -359,7 +359,9 @@ def _register_builtin_backends() -> None:
             ),
         ),
     ]:
-        TRANSFER_BACKENDS.register(name, class_backend(cls=Ref(target), metadata=metadata))
+        TRANSFER_BACKENDS.register(
+            name=name, entry=class_backend(cls=Ref(target=target), metadata=metadata)
+        )
 
 
 _register_builtin_backends()

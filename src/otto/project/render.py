@@ -14,10 +14,10 @@ if TYPE_CHECKING:
     from .state import CleanlinessReport, ProjectScopeSummary, ProjectStatus
 
 STATE_ANSWERS: "dict[InstallState, Result]" = {
-    InstallState.INSTALLED: Result(Status.Success, value="lab is installed"),
-    InstallState.UNINSTALLED: Result(Status.Failed, msg="lab is uninstalled"),
+    InstallState.INSTALLED: Result(status=Status.Success, value="lab is installed"),
+    InstallState.UNINSTALLED: Result(status=Status.Failed, msg="lab is uninstalled"),
     InstallState.PARTIAL: Result(
-        Status.Error,
+        status=Status.Error,
         msg="lab is partially installed; otto run install --ensure recovers it",
     ),
 }

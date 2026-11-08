@@ -118,7 +118,9 @@ def _observe_report(host_ids):
             HostOutput(
                 host_id=h,
                 command="docker x",
-                result=CommandResult(Status.Success, value="ok\n", command="docker x", retcode=0),
+                result=CommandResult(
+                    status=Status.Success, value="ok\n", command="docker x", retcode=0
+                ),
             )
             for h in host_ids
         ]
@@ -187,7 +189,7 @@ def _report_with_a_failed_host(ok_host, failed_host):
             host_id=failed_host,
             command="docker x",
             result=CommandResult(
-                Status.Failed, value="unreachable", command="docker x", retcode=255
+                status=Status.Failed, value="unreachable", command="docker x", retcode=255
             ),
         )
     )
@@ -255,8 +257,10 @@ def test_a_failed_render_still_records_and_still_exits_1(argv, seam, kind):
 def test_compose_down_does_not_probe_a_host_whose_teardown_failed():
     from otto.docker.reports import TeardownReport
 
-    ok = CommandResult(Status.Success, value="", command="docker compose down", retcode=0)
-    bad = CommandResult(Status.Failed, value="gone", command="docker compose down", retcode=255)
+    ok = CommandResult(status=Status.Success, value="", command="docker compose down", retcode=0)
+    bad = CommandResult(
+        status=Status.Failed, value="gone", command="docker compose down", retcode=255
+    )
     report = TeardownReport(hosts={"test3": [ok], "alt2": [bad]}, use_case="integration")
     with (
         patch("otto.docker.deployment.teardown", AsyncMock(return_value=report)),
@@ -272,8 +276,8 @@ def test_compose_down_does_not_probe_a_host_whose_teardown_failed():
 def _two_host_build_report():
     from otto.docker.reports import BuildReport, ImageBuild, ProjectBuild
 
-    ok = CommandResult(Status.Success, value="", command="docker build", retcode=0)
-    bad = CommandResult(Status.Failed, value="boom", command="docker build", retcode=1)
+    ok = CommandResult(status=Status.Success, value="", command="docker build", retcode=0)
+    bad = CommandResult(status=Status.Failed, value="boom", command="docker build", retcode=1)
     return BuildReport(
         projects=[
             ProjectBuild(
@@ -364,7 +368,9 @@ def test_a_declined_verb_records_nothing():
     with (
         patch(
             "otto.docker.observe.list_images",
-            AsyncMock(side_effect=CommandNotRunError("list_images", "test3", "docker images")),
+            AsyncMock(
+                side_effect=CommandNotRunError("list_images", host="test3", detail="docker images")
+            ),
         ),
         patch("otto.host.host.is_dry_run", return_value=True),
         patch.object(docker_cli, "_record_observed", AsyncMock()) as record,

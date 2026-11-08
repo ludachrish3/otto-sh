@@ -189,21 +189,24 @@ class _SandboxCtx(ProbeCtx):
 
 
 async def _apply_whole(ctx: _SandboxCtx, params: ImpairmentParams) -> None:
-    await rows.apply(ctx, ctx.imp.apply_command(ctx.dev, params))
+    await rows.apply(ctx, ctx.imp.apply_command(ctx.dev, params=params))
 
 
 async def _apply_scoped(ctx: _SandboxCtx, params: ImpairmentParams, selector: Selector) -> None:
     await rows.apply(
         ctx,
-        ctx.imp.scoped_root_command(ctx.dev),
-        ctx.imp.scoped_band_command(ctx.dev, FIRST_SELECTOR_BAND, params),
-        *ctx.imp.scoped_filter_commands(ctx.dev, FIRST_SELECTOR_BAND, selector),
+        ctx.imp.scoped_root_command(netdev=ctx.dev),
+        ctx.imp.scoped_band_command(netdev=ctx.dev, band=FIRST_SELECTOR_BAND, params=params),
+        *ctx.imp.scoped_filter_commands(
+            netdev=ctx.dev, band=FIRST_SELECTOR_BAND, selector=selector
+        ),
     )
 
 
 async def _read(ctx: _SandboxCtx) -> ScopedState:
     """Read the veth's tree back; a read the host fails is the row's ``fail``, not an abort."""
-    return ctx.imp.parse_scoped(*await rows.read(ctx, ctx.imp.scoped_read_commands(ctx.dev)))
+    qdisc_output, filter_output = await rows.read(ctx, ctx.imp.scoped_read_commands(netdev=ctx.dev))
+    return ctx.imp.parse_scoped(qdisc_output=qdisc_output, filter_output=filter_output)
 
 
 async def _impaired_ping(
@@ -216,7 +219,7 @@ async def _impaired_ping(
 async def _run_read_back(ctx: _SandboxCtx) -> FeatureResult:
     params = ImpairmentParams(delay_ms=_DELAY_MS)
     await _apply_whole(ctx, params)
-    whole = judge_readback(ScopedState.whole_link(params), await _read(ctx))
+    whole = judge_readback(ScopedState.whole_link(params=params), await _read(ctx))
     await rows.root(ctx, ctx.imp.clear_command(ctx.dev))
     refused = await rows.rejection(_apply_scoped(ctx, params, rows.RANGE_SELECTOR))
     if refused is not None:
@@ -231,7 +234,9 @@ async def _run_read_back(ctx: _SandboxCtx) -> FeatureResult:
             commands=list(ctx.ran),
             output="\n".join(ctx.said) or refused.value,
         )
-    expected = ScopedState.from_selectors({rows.RANGE_SELECTOR: (FIRST_SELECTOR_BAND, params)})
+    expected = ScopedState.from_selectors(
+        selectors={rows.RANGE_SELECTOR: (FIRST_SELECTOR_BAND, params)}
+    )
     scoped = judge_readback(expected, await _read(ctx))
     failed = [
         (name, r) for name, r in [("whole-link", whole), ("port-scoped", scoped)] if r.verdict.fails
@@ -552,9 +557,9 @@ def _dry_run_plan(
 
 
 async def check_link(
+    *,
     lab: "Lab",
     ident: str,
-    *,
     live: bool = False,
     features: list[str] | None = None,
     from_host: str | None = None,
@@ -581,13 +586,13 @@ async def check_link(
             host did not answer ``impair`` or ``repair``.
     """
     wanted = requested_features(features)
-    link = find_link(lab, ident)
+    link = find_link(lab=lab, ident=ident)
     directions = resolve_directions(link, from_host)
 
     def report(hosts: list[LinkCheckHost], **kw: Any) -> LinkCheckReport:
         return LinkCheckReport(link.id, link.name, live, wanted, hosts, **kw)
 
-    refusal = impairment_refusal(link, directions)
+    refusal = impairment_refusal(link=link, directions=directions)
     if refusal is not None:
         return report([], refusal=refusal, refusal_hint=REFUSAL_HINT)
     if is_dry_run():
@@ -718,9 +723,11 @@ def _row_worst_s(feature: str) -> float:
     """
     k = COMMAND_ALLOWANCE_S
     imp, sb = NetEmImpairer(), new_sandbox("000000")
-    filters = imp.scoped_filter_commands(sb.veth, FIRST_SELECTOR_BAND, rows.RANGE_SELECTOR)
+    filters = imp.scoped_filter_commands(
+        netdev=sb.veth, band=FIRST_SELECTOR_BAND, selector=rows.RANGE_SELECTOR
+    )
     scoped = (2 + len(filters)) * k  # the root, the band, then its filters
-    read = len(imp.scoped_read_commands(sb.veth)) * k
+    read = len(imp.scoped_read_commands(netdev=sb.veth)) * k
     cost = {
         "read-back": k + read + k + scoped + read,
         "delay": k + rows.ping_worst_s(rows.DELAY_PING),

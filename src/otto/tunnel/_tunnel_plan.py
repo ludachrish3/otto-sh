@@ -73,7 +73,7 @@ def validate(
     if dest is not None:
         planned_dest = planned_hop(lab, dest)
         ensure_dest_outside_chain(dest[0], {host_id for host_id, _ in hosts})
-    carrier_obj = build_carrier(carrier)()
+    carrier_obj = build_carrier(name=carrier)()
     for protocol in protocols:
         if protocol not in carrier_obj.supported_protocols:
             supported = ", ".join(sorted(carrier_obj.supported_protocols))

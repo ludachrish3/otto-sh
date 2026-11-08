@@ -268,7 +268,7 @@ do:
   create an import cycle.
 - **Never let one project act for another.** No default `ProjectActions` body
   spells `owner=`; the instance gets it from the project view `actions_for`
-  builds (`ctx.for_project(project.name)`). That is why constructing one by hand
+  builds (`ctx.for_project(name=project.name)`). That is why constructing one by hand
   with a plain `OttoContext` raises `TypeError`: the object would walk the
   whole union *and* call every host verb with `owner=None`, which the host
   layer reads as **every** owner's products, so its `cleanup()` would

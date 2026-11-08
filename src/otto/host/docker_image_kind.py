@@ -151,8 +151,10 @@ class DockerImageProduct(ShellProduct):
         decline is checked and returned first, before anything touches ``.value``.
         """
         if result.status is Status.NotRun:
-            return Result(Status.NotRun)
-        return Result(Status.Error, msg=f"{what} failed on {host.id}: {result.value.strip()}")
+            return Result(status=Status.NotRun)
+        return Result(
+            status=Status.Error, msg=f"{what} failed on {host.id}: {result.value.strip()}"
+        )
 
     @override
     def instrumented(self) -> bool | None:
@@ -236,9 +238,9 @@ class DockerImageProduct(ShellProduct):
         directory — the same one ``install``'s ``docker load -i`` names.
         """
         if not self.is_tarball:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         directory = await self.resolved_stage_dir(host)
-        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        made = await ensure_stage_dir(host=host, directory=directory, who=f"product {self.name!r}")
         if not made.is_ok:
             return made
         return await host.put(self.artifact, directory)
@@ -247,9 +249,11 @@ class DockerImageProduct(ShellProduct):
     async def install(self, host: "Host") -> Result:
         probe = await host.exec("command -v docker", timeout=30)
         if probe.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         if not probe.status.is_ok:
-            return Result(Status.Error, msg=f"{self.name}: docker is not on {host.id}'s PATH")
+            return Result(
+                status=Status.Error, msg=f"{self.name}: docker is not on {host.id}'s PATH"
+            )
         if self.is_tarball:
             staged = await self._staged_tarball(host)  # where stage() put it
             loaded = await host.exec(self._load_command(staged), timeout=_LOAD_TIMEOUT)
@@ -263,7 +267,7 @@ class DockerImageProduct(ShellProduct):
             self.loaded_ref = _loaded_reference(loaded.value)
             if self.loaded_ref is None:
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=f"{self.name}: docker load reported no image on {host.id}: "
                     f"{loaded.value.strip()}",
                 )
@@ -276,10 +280,10 @@ class DockerImageProduct(ShellProduct):
         else:
             present = await image_id_of(host, self.image)
             if present.result.status is Status.NotRun:
-                return Result(Status.NotRun)
+                return Result(status=Status.NotRun)
             if present.id is None:
                 return Result(
-                    Status.Error,
+                    status=Status.Error,
                     msg=f"{self.name}: image {self.image} is not present on {host.id}; load it "
                     "there or set `pull = true` on the entry",
                 )
@@ -290,7 +294,7 @@ class DockerImageProduct(ShellProduct):
         run = await host.exec(self._run_command(shlex.quote(ref)), timeout=120)
         if not run.status.is_ok:
             return self._error_from(host, f"{self.name}: docker run", run)
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _remove_stopped(self, host: "Host") -> Result | None:
         """Remove a stopped or never-started container of the name; ``None`` lets run follow.
@@ -301,7 +305,7 @@ class DockerImageProduct(ShellProduct):
         """
         removed = await host.exec(self._rm_command(force=False), timeout=120)
         if removed.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         if removed.status.is_ok:
             logger.info(
                 f"{host.id}: {self.name}: removed stopped container {self.container_name} "
@@ -325,12 +329,12 @@ class DockerImageProduct(ShellProduct):
             # has no image to resolve; docker rm -f below is then a no-op.
             inspected = await inspect_container(host, self.container_name)
             if inspected.declined:
-                return Result(Status.NotRun)
+                return Result(status=Status.NotRun)
             if inspected.state is not None and inspected.state.image_ref:
                 image_to_remove = inspected.state.image_ref
         removed = await host.exec(self._rm_command(force=True), timeout=120)
         if removed.status is Status.NotRun:
-            return Result(Status.NotRun)
+            return Result(status=Status.NotRun)
         # Idempotent: a container that was never installed (or already removed
         # by a prior, failed run) is not an uninstall failure.
         if not removed.status.is_ok and not missing(removed, "container"):
@@ -344,7 +348,7 @@ class DockerImageProduct(ShellProduct):
             if not gone.status.is_ok:
                 return self._error_from(host, f"{self.name}: {remove}", gone)
             self.loaded_ref = None
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     @override
     def plan(self, host: "Host") -> ProductPlan:
@@ -368,14 +372,16 @@ class DockerImageProduct(ShellProduct):
                 "the image to remove, read from the container (docker container inspect "
                 f"{self.container_name}); no running container means no `docker image rm`"
             )
-            where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+            where = planned_stage_dir(
+                stage_dir=self.stage_dir, host=host, who=f"product {self.name!r}"
+            )
             if where.refusal is not None:
                 # The refusal is the install's: uninstall needs no stage dir.
                 return ProductPlan(uninstall=uninstall, unchecked=[where.refusal, image_gap])
             if where.unchecked is not None:
                 plan.unchecked.insert(0, where.unchecked)
             staged = str(PurePosixPath(where.directory) / self.artifact.name)
-            plan.stage = stage_lines(host, self.artifact, where.directory)
+            plan.stage = stage_lines(host=host, local=self.artifact, directory=where.directory)
             plan.install = [
                 self._load_command(staged),
                 self._cleanup_command(staged),
@@ -412,7 +418,7 @@ class DockerImageProduct(ShellProduct):
         return inspected.state is not None and inspected.state.running
 
     @override
-    async def get_debug_logs(self, host: "Host", dest: Path) -> Result:
+    async def get_debug_logs(self, host: "Host", *, dest: Path) -> Result:
         """Haul the declared globs, plus ``docker logs`` as ``container.log``.
 
         A container that is already gone (an earlier uninstall removed it) has
@@ -420,7 +426,7 @@ class DockerImageProduct(ShellProduct):
         second cleanup succeeds like the first. Any other ``docker logs``
         failure is reported.
         """
-        hauled = await super().get_debug_logs(host, dest)
+        hauled = await super().get_debug_logs(host, dest=dest)
         logs = await host.exec(f"docker logs {shlex.quote(self.container_name)} 2>&1", timeout=60)
         if not logs.status.is_ok and missing(logs, "container"):
             host_id = getattr(host, "id", "?")

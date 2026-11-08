@@ -60,8 +60,8 @@ async def _report(project: Path, out: Path):
     tier_configs = load_tiers(COV, root=project)
     return await run_coverage_report(
         [],
-        out,
-        ReportInputs(
+        output_dir=out,
+        inputs=ReportInputs(
             project_root=project,
             tier_configs=tier_configs,
             ticket_spec=SPEC,
@@ -184,8 +184,8 @@ async def test_absent_file_and_key_is_identical(tmp_path):
     s1 = await _report(project, tmp_path / "r1")  # no override file exists
     s2 = await run_coverage_report(  # overrides never resolved at all
         [],
-        tmp_path / "r2",
-        ReportInputs(
+        output_dir=tmp_path / "r2",
+        inputs=ReportInputs(
             project_root=project, tier_configs=load_tiers(COV, root=project), ticket_spec=SPEC
         ),
     )

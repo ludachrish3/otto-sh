@@ -98,7 +98,7 @@ def test_a_first_run_adds_nothing_to_any_directory_of_the_project(project, tmp_p
     before = _listings(project.root)
     stats = {d: _stat(d) for d in [tests, tests / "sub"]}
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert project.ran_tests() == ["test_a1"]
     assert _listings(project.root) == before, "no __pycache__, no .pytest_cache"
@@ -118,7 +118,7 @@ def test_a_run_after_a_collect_only_seed_leaves_the_table_current(project, tmp_p
     project.next_run()
     before = _listings(project.root)
 
-    assert run_tests(["test_b1"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["test_b1"], output_dir=tmp_path / "out").exit_code == 0
 
     assert project.imported() == ["test_a", "test_b", "test_c"], "a whole-tree session"
     assert _listings(project.root) == before
@@ -128,7 +128,7 @@ def test_a_run_after_a_collect_only_seed_leaves_the_table_current(project, tmp_p
 
 
 def test_a_runs_rewritten_bytecode_lands_under_the_workspace_prefix(project, tmp_path):
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     test_a = project.root / "tests" / "test_a.py"
     assert _rewritten(_prefix(), test_a).is_file()
@@ -154,7 +154,7 @@ def test_a_prefix_the_user_set_is_honoured(project, tmp_path, monkeypatch):
     mine = tmp_path / "my-pycache"
     monkeypatch.setattr(sys, "pycache_prefix", str(mine))
 
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     test_a = project.root / "tests" / "test_a.py"
     assert _rewritten(mine, test_a).is_file()
@@ -164,7 +164,7 @@ def test_a_prefix_the_user_set_is_honoured(project, tmp_path, monkeypatch):
 
 
 def test_a_run_keeps_pytests_cache_in_the_workspace(project, tmp_path):
-    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+    assert run_tests(names=["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert (workspace_home() / PYTEST_CACHE_DIRNAME / "v" / "randomly_seed").is_file()
     assert not list(project.root.rglob(".pytest_cache"))
@@ -180,7 +180,7 @@ def test_a_session_that_raises_takes_its_prefix_away(project, tmp_path, monkeypa
     monkeypatch.setattr(pytest, "main", exploding_main)
 
     with pytest.raises(RuntimeError, match="pytest blew up"):
-        run_tests(["TestA"], output_dir=tmp_path / "out")
+        run_tests(names=["TestA"], output_dir=tmp_path / "out")
 
     assert seen == [str(_prefix())]
     assert sys.pycache_prefix is None

@@ -126,8 +126,12 @@ def _make_backend(
 
 async def _run(backend: Any, direction: str, src_files: list[Path], dest_dir: Path, **kwargs: Any):
     if direction == "put":
-        return await backend.put_files(src_files, dest_dir, show_progress=False, **kwargs)
-    return await backend.get_files(src_files, dest_dir, show_progress=False, **kwargs)
+        return await backend.put_files(
+            src_files=src_files, dest_dir=dest_dir, show_progress=False, **kwargs
+        )
+    return await backend.get_files(
+        src_files=src_files, dest_dir=dest_dir, show_progress=False, **kwargs
+    )
 
 
 @pytest.mark.asyncio

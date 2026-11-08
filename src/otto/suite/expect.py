@@ -256,7 +256,7 @@ class ExpectCollector:
             logged.
     """
 
-    def __init__(self, logger: logging.Logger | None = None) -> None:
+    def __init__(self, *, logger: logging.Logger | None = None) -> None:
         self.failures: list[str] = []
         """Recorded failure reports for the current run."""
 
@@ -265,6 +265,7 @@ class ExpectCollector:
     def expect(
         self,
         condition: object,
+        *,
         msg: str | None = None,
         _stack_offset: int = 1,
     ) -> None:
@@ -300,7 +301,7 @@ class ExpectCollector:
 
                 collector = ExpectCollector()
                 x = 42
-                collector.expect(x == 99, "math is broken")
+                collector.expect(x == 99, msg="math is broken")
                 assert len(collector.failures) == 1
                 assert "Values: x = 42" in collector.failures[0]
 
@@ -355,8 +356,8 @@ class ExpectCollector:
                 log_msg += f"\n  Message: {escape(msg)}"
             self.logger.warning(log_msg, extra={"markup": True, "emoji": False})
 
-    def __call__(self, condition: object, msg: str | None = None) -> None:
-        """``expect(condition, msg)`` — the form the ``expect`` fixture hands a test.
+    def __call__(self, condition: object, *, msg: str | None = None) -> None:
+        """``expect(condition, msg=msg)`` — the form the ``expect`` fixture hands a test.
 
         Identical to :meth:`expect`, with the call source and values taken
         one frame further up so the report points at the test, not here.
@@ -369,16 +370,16 @@ class ExpectCollector:
             >>> from otto.suite.expect import ExpectCollector
             >>> collector = ExpectCollector()
             >>> x = 42
-            >>> collector(x == 99, "math is broken")
+            >>> collector(x == 99, msg="math is broken")
             >>> report = collector.failures[0]
             >>> print(report.splitlines()[1])  # the caller's line, not __call__'s
-              collector(x == 99, "math is broken")
+              collector(x == 99, msg="math is broken")
             >>> "Message: math is broken" in report
             True
             >>> print(report.splitlines()[-1])
               Values: x = 42
         """
-        self.expect(condition, msg, _stack_offset=2)
+        self.expect(condition, msg=msg, _stack_offset=2)
 
     def reset(self) -> None:
         """Clear all recorded failures."""
@@ -412,4 +413,4 @@ def expect(
         msg: Optional human-friendly message.
         collector: The :class:`ExpectCollector` that will record any failure.
     """
-    collector.expect(condition, msg, _stack_offset=2)
+    collector.expect(condition, msg=msg, _stack_offset=2)

@@ -768,7 +768,7 @@ class CoverageStore:
             )
         return counts
 
-    def get_or_create_file(self, path: Path) -> FileRecord:
+    def get_or_create_file(self, *, path: Path) -> FileRecord:
         """Return the :class:`FileRecord` for *path*, creating it if absent.
 
         Resolves *path* to its canonical form when the file exists on disk,
@@ -780,14 +780,14 @@ class CoverageStore:
             self._files[canonical] = FileRecord(path=canonical)
         return self._files[canonical]
 
-    def merge_file(self, record: FileRecord) -> None:
+    def merge_file(self, *, record: FileRecord) -> None:
         """Merge *record* into the store, accumulating data for an existing path or inserting it."""
         if record.path in self._files:
             self._files[record.path].merge(record)
         else:
             self._files[record.path] = record
 
-    def remove_file(self, path: Path) -> None:
+    def remove_file(self, *, path: Path) -> None:
         """Drop a file record entirely (exclusion spec: ``kind = "path"``)."""
         self._files.pop(path, None)
 
@@ -802,7 +802,7 @@ class CoverageStore:
     def _all_branches(self) -> list[BranchHits]:
         return [b for f in self._files.values() for lr in f.lines.values() for b in lr.branches]
 
-    def overall_pct(self, tier: str | None = None) -> float:
+    def overall_pct(self, *, tier: str | None = None) -> float:
         """Overall line coverage percentage across all files."""
         all_lines = sum(len(f.lines) for f in self._files.values())
         if all_lines == 0:
@@ -813,7 +813,7 @@ class CoverageStore:
         )
         return (hit / all_lines) * 100
 
-    def overall_branch_pct(self, tier: str | None = None, conservative: bool = True) -> float:
+    def overall_branch_pct(self, *, tier: str | None = None, conservative: bool = True) -> float:
         """Overall branch coverage percentage across all files."""
         all_branches = self._all_branches()
         if not all_branches:
@@ -827,7 +827,7 @@ class CoverageStore:
         hit = sum(1 for b in candidates if b.is_hit_for(tier))
         return (hit / len(candidates)) * 100
 
-    def save(self, path: Path) -> None:
+    def save(self, *, path: Path) -> None:
         """Serialise the store to JSON."""
         data = {
             "format": STORE_FORMAT_VERSION,
@@ -844,7 +844,7 @@ class CoverageStore:
         path.write_text(json.dumps(data, indent=2))
 
     @classmethod
-    def load(cls, path: Path) -> "CoverageStore":
+    def load(cls, *, path: Path) -> "CoverageStore":
         """Deserialise a store from JSON.
 
         Raises:
@@ -938,5 +938,5 @@ class CoverageStore:
                 fn.hits = LineHits(counts=dict(fnd.get("hits") or {}))
                 for tier in fn.hits.counts:
                     store.register_tier(tier)
-            store.merge_file(record)
+            store.merge_file(record=record)
         return store

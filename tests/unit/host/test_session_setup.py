@@ -26,7 +26,7 @@ def registered():
     try:
         yield "t1-noop"
     finally:
-        SESSION_SETUPS.unregister("t1-noop")
+        SESSION_SETUPS.unregister(name="t1-noop")
 
 
 def test_register_then_get_returns_the_callable(registered):
@@ -142,4 +142,4 @@ async def test_a_console_refusal_at_frame_entry_reaches_the_caller_unchanged():
         # generic "left no shell" diagnosis.
         assert "left no shell" not in str(exc_info.value)
     finally:
-        SESSION_SETUPS.unregister("t1-console-refused")
+        SESSION_SETUPS.unregister(name="t1-console-refused")

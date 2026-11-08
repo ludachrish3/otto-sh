@@ -312,7 +312,7 @@ def list_markers_callback(value: bool) -> None:
         else:
             # otto's own are pytest-registered too; its panel shows them once.
             markers = [m for m in table.markers if m not in OTTO_MARKERS]
-        panels.append(project.get_markers_panel(markers))
+        panels.append(project.get_markers_panel(markers=markers))
     panels.append(_builtin_markers_panel())
     _render_panels(panels)
     raise typer.Exit(code)
@@ -734,7 +734,7 @@ def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") 
     run_options = ctx.meta[RUN_OPTIONS_KEY]
     otto_ctx = get_context()
     try:
-        otto_ctx.bind_verb_options("test", verb_kwargs)
+        otto_ctx.bind_verb_options(verb="test", kwargs=verb_kwargs)
         instances = [otto_ctx.options(origin.cls) for origin in verb_option_classes("test")]
     except OptionsValidationError as e:
         raise usage_error_from(e) from e
@@ -763,7 +763,7 @@ def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") 
 
     try:
         result = run_tests(
-            names, run_options=run_options, options=instances, output_dir=otto_ctx.output_dir
+            names=names, run_options=run_options, options=instances, output_dir=otto_ctx.output_dir
         )
     except (OptionsValidationError, DestinationError) as e:
         raise usage_error_from(e, flags=RUN_FLAGS) from e

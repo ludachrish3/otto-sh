@@ -76,5 +76,5 @@ def test_run_tests_builds_its_context_before_it_selects_projects(monkeypatch, tm
     )
     # A name, since with neither a name nor markers run_tests raises ValueError first.
     with pytest.raises(suite_run.NoTestsMatchedError):
-        suite_run.run_tests(["test_x"], output_dir=tmp_path)
+        suite_run.run_tests(names=["test_x"], output_dir=tmp_path)
     assert order[0] == "context"

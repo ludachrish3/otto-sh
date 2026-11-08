@@ -117,8 +117,8 @@ def register_reservation_backend(
         otto.registry.DuplicateRegistration: If *name* is taken and *overwrite* is false.
     """
     RESERVATION_BACKENDS.register(
-        name,
-        configured_backend(config=config, factory=factory, metadata=None),
+        name=name,
+        entry=configured_backend(config=config, factory=factory, metadata=None),
         overwrite=overwrite,
     )
 
@@ -126,18 +126,18 @@ def register_reservation_backend(
 def _register_builtins() -> None:
     """Register the built-in reservation backends by reference."""
     RESERVATION_BACKENDS.register(
-        "none",
-        configured_backend(
-            config=Ref("otto.reservations.null_backend:NoneReservationConfig"),
-            factory=Ref("otto.reservations.null_backend:_none_reservations"),
+        name="none",
+        entry=configured_backend(
+            config=Ref(target="otto.reservations.null_backend:NoneReservationConfig"),
+            factory=Ref(target="otto.reservations.null_backend:_none_reservations"),
             metadata=None,
         ),
     )
     RESERVATION_BACKENDS.register(
-        "json",
-        configured_backend(
-            config=Ref("otto.reservations.json_backend:JsonReservationConfig"),
-            factory=Ref("otto.reservations.json_backend:_json_reservations"),
+        name="json",
+        entry=configured_backend(
+            config=Ref(target="otto.reservations.json_backend:JsonReservationConfig"),
+            factory=Ref(target="otto.reservations.json_backend:_json_reservations"),
             metadata=None,
         ),
     )

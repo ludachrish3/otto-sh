@@ -167,7 +167,7 @@ def parse_process_discovery(ps_output: str) -> list[Observation]:
     """Reconstruct observations from :data:`DISCOVERY_PS_COMMAND` output."""
     out: list[Observation] = []
     for proc in parse_ps_output(ps_output, SENTINEL_PREFIX):
-        parsed = parse_sentinel(proc.token)
+        parsed = parse_sentinel(token=proc.token)
         if parsed is None:
             continue
         out.append(Observation(pid=proc.pid, age_seconds=proc.age_seconds, parsed=parsed))

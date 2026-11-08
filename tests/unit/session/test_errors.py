@@ -36,8 +36,8 @@ def test_project_load_error_lists_every_fatal_error_and_keeps_the_demotions():
     from otto.bootstrap import BootstrapError
     from otto.session import ProjectLoadError
 
-    a = BootstrapError("/r/a", "a_init", ImportError("x"))
-    b = BootstrapError("/r/b", "b_init", ImportError("y"))
+    a = BootstrapError("/r/a", source="a_init", cause=ImportError("x"))
+    b = BootstrapError("/r/b", source="b_init", cause=ImportError("y"))
     err = ProjectLoadError([a, b], demoted=[])
     assert err.errors == [a, b]
     assert err.demoted == []
@@ -96,7 +96,7 @@ def test_instruction_inactive_error_message_names_fields_not_flags():
     from otto.session import InstructionInactiveError
 
     err = InstructionInactiveError(
-        "blink", "Acme_Project", project="acme-project", reason="excluded"
+        "blink", owner="Acme_Project", project="acme-project", reason="excluded"
     )
     assert "exclude_projects" in str(err)
     assert "include_projects" in str(err)

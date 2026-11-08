@@ -117,7 +117,7 @@ async def up_stack(parent: Host, command: str, *, project: str) -> CommandResult
     return result
 
 
-def get_user_compose_project(project_name: str, suffix: str | None = None) -> str:
+def get_user_compose_project(*, project_name: str, suffix: str | None = None) -> str:
     """Return a compose project name unique enough to coexist with other runs.
 
     Format: ``otto-<project>-<suffix>``. *suffix* defaults to the OS username,
@@ -189,7 +189,7 @@ def _project_parent_host(lab: "Lab", parent: str | None) -> UnixHost:
     # Function-scope: observe imports this module.
     from .observe import docker_parent
 
-    return docker_parent(lab, parent)
+    return docker_parent(lab=lab, parent=parent)
 
 
 def compose_command(
@@ -319,9 +319,9 @@ async def _resolve_container_id(
 
 
 async def compose_up(
+    *,
     project: Project,
     lab: "Lab",
-    *,
     parent: str | None = None,
     project_name: str | None = None,
     build: bool = False,
@@ -359,7 +359,7 @@ async def compose_up(
         )
 
     parent_host = _project_parent_host(lab, parent)
-    proj = project_name or get_user_compose_project(project.name)
+    proj = project_name or get_user_compose_project(project_name=project.name)
 
     if build and settings.images:
         # A missing Dockerfile or context is settled from configuration: refused
@@ -376,8 +376,8 @@ async def compose_up(
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_up({project.name}: {proj})",
-            parent_host.id,
-            "No image was built, no file was staged, no container was started "
+            host=parent_host.id,
+            detail="No image was built, no file was staged, no container was started "
             "and no host was registered.",
         )
 
@@ -385,7 +385,7 @@ async def compose_up(
         # Late import to avoid a circular `compose <-> build` import.
         from .build import build_images
 
-        results = await build_images(project, parent_host)
+        results = await build_images(project=project, parent=parent_host)
         for name, built in results.items():
             if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
@@ -711,9 +711,9 @@ async def _up_and_register(
 
 
 async def compose_down(
+    *,
     project: Project,
     lab: "Lab",
-    *,
     parent: str | None = None,
     project_name: str | None = None,
     stop_timeout: int = 1,
@@ -749,16 +749,16 @@ async def compose_down(
     """
     settings = project.docker_settings
     if not settings.composes:
-        return CommandResult(Status.Skipped, value="", command="", retcode=-1)
+        return CommandResult(status=Status.Skipped, value="", command="", retcode=-1)
 
     parent_host = _project_parent_host(lab, parent)
-    proj = project_name or get_user_compose_project(project.name)
+    proj = project_name or get_user_compose_project(project_name=project.name)
 
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_down({project.name}: {proj})",
-            parent_host.id,
-            "No container was stopped and no host was unregistered from the lab.",
+            host=parent_host.id,
+            detail="No container was stopped and no host was unregistered from the lab.",
         )
 
     from .staging import stage_compose_files
@@ -786,7 +786,7 @@ async def compose_down(
         logger.error(  # noqa: TRY400 — see above
             f"[docker] cannot stage compose files to tear {proj} down: {e}"
         )
-        return CommandResult(Status.Failed, value=str(e), command="", retcode=1)
+        return CommandResult(status=Status.Failed, value=str(e), command="", retcode=1)
     # Through the files just staged, so only what they declare goes; then the
     # hosts that came from this stack are unregistered (the use-case teardown
     # sweeps `<parent>.<usecase>.` instead).
@@ -849,8 +849,8 @@ async def compose_down_project(
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_down_project({compose_project})",
-            parent.id,
-            "No container was stopped and no host was unregistered from the lab.",
+            host=parent.id,
+            detail="No container was stopped and no host was unregistered from the lab.",
         )
 
     timeout_args = ["--timeout", str(int(stop_timeout))]
@@ -923,9 +923,9 @@ async def unregister_container_hosts(
 
 @contextlib.asynccontextmanager
 async def composed(
+    *,
     project: Project,
     lab: "Lab",
-    *,
     parent: str | None = None,
     project_name: str | None = None,
     own: bool = False,
@@ -951,13 +951,13 @@ async def composed(
             was never brought up.
     """
     parent_host = _project_parent_host(lab, parent)
-    proj = project_name or get_user_compose_project(project.name)
+    proj = project_name or get_user_compose_project(project_name=project.name)
 
     if is_dry_run():
         raise CommandNotRunError(
             f"composed({project.name}: {proj})",
-            parent_host.id,
-            "No stack was brought up, so none was torn down either.",
+            host=parent_host.id,
+            detail="No stack was brought up, so none was torn down either.",
         )
 
     # Only consulted when `own` is False (see the gate in the finally below),
@@ -974,7 +974,9 @@ async def composed(
             )
         was_up = probed
 
-    hosts = await compose_up(project, lab, parent=parent, project_name=proj, build=build)
+    hosts = await compose_up(
+        project=project, lab=lab, parent=parent, project_name=proj, build=build
+    )
     try:
         yield hosts
     finally:
@@ -990,7 +992,7 @@ async def composed(
             from ..lifecycle import compensate
 
             await compensate(
-                compose_down(project, lab, parent=parent, project_name=proj),
+                compose_down(project=project, lab=lab, parent=parent, project_name=proj),
                 what=f"docker compose down {proj}",
             )
 
@@ -1009,7 +1011,7 @@ def _default_parent_or_none(lab: "Lab") -> UnixHost | None:
     from .observe import DockerVerbError, default_docker_parent
 
     try:
-        return default_docker_parent(lab)
+        return default_docker_parent(lab=lab)
     except DockerVerbError:
         return None
 
@@ -1074,7 +1076,7 @@ def register_declared_container_hosts(lab: "Lab", projects: list[Project]) -> in
                     container_id="",
                     project=project.name,
                     service=service,
-                    compose_project=get_user_compose_project(project.name),
+                    compose_project=get_user_compose_project(project_name=project.name),
                     user=users.get(service),
                 )
                 # Same rule as compose_up's registration: the container
@@ -1201,7 +1203,7 @@ def project_staging_keys(project: Project, lab_name: str) -> "list[StagingKey]":
     settings = project.docker_settings
     keys: list[StagingKey] = []
     if settings.composes:
-        keys.append(StagingKey(get_user_compose_project(project.name), stack=True))
+        keys.append(StagingKey(get_user_compose_project(project_name=project.name), stack=True))
     keys += [
         StagingKey(use_case_project(lab_name, use_case), stack=True)
         for use_case in declared_use_case_names([project])
@@ -1266,8 +1268,8 @@ async def staging_to_remove(host: Host, project: Project) -> StagingSurvey:
     if is_dry_run():
         raise CommandNotRunError(
             f"staging_to_remove({project.name})",
-            host.id,
-            "Nothing was listed, so what cleanup would remove is unknown.",
+            host=host.id,
+            detail="Nothing was listed, so what cleanup would remove is unknown.",
         )
     root = parent_staging_root(host)
     listed = await host.exec(present_roots_command(root, [k.key for k in keys]))
@@ -1323,13 +1325,15 @@ async def remove_project_staging(host: Host, project: Project) -> Result:
     from .staging import STAGING_KEPT, STAGING_UNREADABLE, cleanup_outcome, cleanup_project
 
     if not staging_keys_on(host, project):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
     if is_dry_run():
-        return Result(Status.NotRun, msg=f"{host.id}: dry run, no docker staging was removed")
+        return Result(
+            status=Status.NotRun, msg=f"{host.id}: dry run, no docker staging was removed"
+        )
     try:
         survey = await staging_to_remove(host, project)
     except Exception as e:  # noqa: BLE001 -- best-effort: reported in the result, like a failed rm
-        return Result(Status.Failed, msg=f"{host.id}: {e}")
+        return Result(status=Status.Failed, msg=f"{host.id}: {e}")
     kept = list(survey.kept)
     unreadable = list(survey.unreadable)
     failed: list[str] = []
@@ -1354,12 +1358,12 @@ async def remove_project_staging(host: Host, project: Project) -> Result:
         )
     if failed:
         return Result(
-            Status.Failed,
+            status=Status.Failed,
             msg=f"{host.id}: could not remove the docker staging of {'; '.join(failed)}",
         )
     held = [*kept, *(f"{k} (containers could not be listed)" for k in unreadable)]
     if held:
         return Result(
-            Status.Skipped, msg=f"{host.id}: kept the docker staging of {', '.join(held)}"
+            status=Status.Skipped, msg=f"{host.id}: kept the docker staging of {', '.join(held)}"
         )
-    return Result(Status.Success)
+    return Result(status=Status.Success)

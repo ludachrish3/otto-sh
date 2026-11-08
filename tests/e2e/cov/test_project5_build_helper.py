@@ -392,7 +392,7 @@ def _lab_hosts(overlay: Path, lab: str, monkeypatch, tmp_path) -> set[str]:
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     # OTTOPATH order: project5 first, so the overlay's source is read last.
-    hosts = set(build_lab(load_projects([PROJECT5, overlay]), [lab]).hosts)
+    hosts = set(build_lab(load_projects([PROJECT5, overlay]), labs=[lab]).hosts)
     # The built-in `local` host is injected into every lab and is never part of
     # the fleet `otto run install` walks (otto.fleet.all_hosts).
     return hosts - {"local"}
@@ -565,7 +565,7 @@ def serve_build(tmp_path_factory) -> "tuple[Path, int]":
     )
     # Every component of the build directory, as otto counts a declared
     # build_root (project5's products declare docker/build).
-    return build / "product", gcov_prefix_strip(PurePosixPath(build))
+    return build / "product", gcov_prefix_strip(build_root=PurePosixPath(build))
 
 
 def _serve(build: "tuple[Path, int]", cov: Path, **env: str) -> "subprocess.Popen[bytes]":

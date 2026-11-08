@@ -150,7 +150,9 @@ def _resolve_one(
             else:
                 reason = f"no project named {dep.name!r} in OTTOPATH"
             errors.append(
-                DependencyError(project.root, f"dependency {dep.raw!r} is not satisfied: {reason}")
+                DependencyError(
+                    project.root, message=f"dependency {dep.raw!r} is not satisfied: {reason}"
+                )
             )
         return "missing", None
     provider_idx = candidates[0]
@@ -166,7 +168,7 @@ def _resolve_one(
         errors.append(
             DependencyError(
                 project.root,
-                f"dependency {dep.raw!r} is not satisfied: found {dep.name} {version}",
+                message=f"dependency {dep.raw!r} is not satisfied: found {dep.name} {version}",
             )
         )
     else:
@@ -208,7 +210,7 @@ def _check_combined_satisfiability(
             errors.append(
                 DependencyError(
                     projects[i].root,
-                    f"no possible version of {dep.name!r} satisfies all required "
+                    message=f"no possible version of {dep.name!r} satisfies all required "
                     f"constraints: {detail}",
                 )
             )
@@ -308,7 +310,7 @@ def _propagate_skips(
             errors.append(
                 DependencyError(
                     projects[dependent].root,
-                    f"skipped: required dependency {projects[current].name!r} "
+                    message=f"skipped: required dependency {projects[current].name!r} "
                     f"(project root {projects[current].root}) was skipped — "
                     f"root cause: {skip_reason[current]}",
                 )
@@ -350,14 +352,16 @@ def _skip_required_cycles(
         path = " -> ".join(projects[i].name for i in [*cycle, cycle[0]])
         for i in cycle:
             skip_reason[i] = f"required dependency cycle: {path}"
-            errors.append(DependencyError(projects[i].root, f"required dependency cycle: {path}"))
+            errors.append(
+                DependencyError(projects[i].root, message=f"required dependency cycle: {path}")
+            )
     for i in leftover:
         if i not in in_cycle:
             skip_reason[i] = "downstream of a required dependency cycle"
             errors.append(
                 DependencyError(
                     projects[i].root,
-                    "skipped: a required dependency is part of a dependency cycle "
+                    message="skipped: a required dependency is part of a dependency cycle "
                     "(see cycle errors above)",
                 )
             )

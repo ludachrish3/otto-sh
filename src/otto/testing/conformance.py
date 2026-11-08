@@ -134,21 +134,21 @@ def assert_lab_repository_conforms(
 
     c.expect(
         isinstance(repository, LabRepository),
-        "LabRepository: must satisfy the runtime_checkable LabRepository protocol",
+        msg="LabRepository: must satisfy the runtime_checkable LabRepository protocol",
     )
     c.expect(
         callable(getattr(repository, "load_lab", None)),
-        "LabRepository: load_lab must be callable",
+        msg="LabRepository: load_lab must be callable",
     )
     c.expect(
         callable(getattr(repository, "list_labs", None)),
-        "LabRepository: list_labs must be callable",
+        msg="LabRepository: list_labs must be callable",
     )
     if callable(getattr(repository, "load_lab", None)):
         params = inspect.signature(repository.load_lab).parameters
         c.expect(
             "inventory" in params,
-            "LabRepository: load_lab must accept an inventory= keyword "
+            msg="LabRepository: load_lab must accept an inventory= keyword "
             "(spec 2026-08-28 host-inventory §6)",
         )
 
@@ -156,13 +156,16 @@ def assert_lab_repository_conforms(
     names_ok = isinstance(names, list)
     c.expect(
         names_ok,
-        f"LabRepository: list_labs() must return a list, got {type(names).__name__}",
+        msg=f"LabRepository: list_labs() must return a list, got {type(names).__name__}",
     )
     if names_ok:
         for n in names:
             c.expect(
                 isinstance(n, str),
-                f"LabRepository: list_labs() entries must be str, got {type(n).__name__} ({n!r})",
+                msg=(
+                    f"LabRepository: list_labs() entries must be str, "
+                    f"got {type(n).__name__} ({n!r})"
+                ),
             )
 
         for n in names:
@@ -171,23 +174,25 @@ def assert_lab_repository_conforms(
             try:
                 lab = repository.load_lab(n)
             except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
-                c.expect(False, f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}")
+                c.expect(
+                    False, msg=f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}"
+                )
                 continue
             is_lab = isinstance(lab, Lab)
             c.expect(
                 is_lab,
-                f"LabRepository: load_lab({n!r}) must return a Lab, got {type(lab).__name__}",
+                msg=f"LabRepository: load_lab({n!r}) must return a Lab, got {type(lab).__name__}",
             )
             if is_lab:
                 for host_id, host in lab.hosts.items():
                     c.expect(
                         isinstance(host, RemoteHost),
-                        f"LabRepository: lab {n!r} host {host_id!r} must be a "
+                        msg=f"LabRepository: lab {n!r} host {host_id!r} must be a "
                         f"RemoteHost, got {type(host).__name__}",
                     )
                     c.expect(
                         host_id == getattr(host, "id", None),
-                        f"LabRepository: lab {n!r} host key {host_id!r} must equal "
+                        msg=f"LabRepository: lab {n!r} host key {host_id!r} must equal "
                         f"host.id {getattr(host, 'id', None)!r}",
                     )
                 try:
@@ -195,13 +200,13 @@ def assert_lab_repository_conforms(
                 except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                     c.expect(
                         False,
-                        f"LabRepository: load_lab({n!r}) idempotency re-call raised "
+                        msg=f"LabRepository: load_lab({n!r}) idempotency re-call raised "
                         f"{type(e).__name__}: {e}",
                     )
                 else:
                     c.expect(
                         sorted(lab.hosts) == sorted(lab2.hosts) and lab.resources == lab2.resources,
-                        f"LabRepository: load_lab({n!r}) must be idempotent "
+                        msg=f"LabRepository: load_lab({n!r}) must be idempotent "
                         f"(two calls must yield equivalent labs)",
                     )
 
@@ -210,7 +215,7 @@ def assert_lab_repository_conforms(
         repository.load_lab(_NO_SUCH_LAB)
         c.expect(
             False,
-            f"LabRepository: load_lab({_NO_SUCH_LAB!r}) must raise LabNotFoundError "
+            msg=f"LabRepository: load_lab({_NO_SUCH_LAB!r}) must raise LabNotFoundError "
             f"for an unknown lab, but it returned normally",
         )
     except LabNotFoundError:
@@ -218,19 +223,20 @@ def assert_lab_repository_conforms(
     except Exception as e:  # noqa: BLE001 — conformance check, distinguishes unexpected exception from LabNotFoundError
         c.expect(
             False,
-            f"LabRepository: an unknown lab must raise LabNotFoundError, got "
+            msg=f"LabRepository: an unknown lab must raise LabNotFoundError, got "
             f"{type(e).__name__}: {e}",
         )
 
     if expected_labs is not None:
         listed = set(names) if names_ok else set()
         for n in expected_labs:
-            c.expect(n in listed, f"LabRepository: expected lab {n!r} to appear in list_labs()")
+            c.expect(n in listed, msg=f"LabRepository: expected lab {n!r} to appear in list_labs()")
             try:
                 repository.load_lab(n)
             except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(
-                    False, f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}"
+                    False,
+                    msg=f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}",
                 )
 
     # Optional capability: only checked when the backend advertises it (the
@@ -240,7 +246,7 @@ def assert_lab_repository_conforms(
     if expect_host_summaries and not isinstance(repository, SupportsHostSummaries):
         c.expect(
             False,
-            "SupportsHostSummaries: expect_host_summaries=True, but the repository does not "
+            msg="SupportsHostSummaries: expect_host_summaries=True, but the repository does not "
             "implement list_host_summaries() — completion would fall back to loading every "
             "lab instead of the fast path this caller asserts it has",
         )
@@ -286,7 +292,7 @@ def _expect_host_summaries_conform(
     params = inspect.signature(repository.list_host_summaries).parameters
     c.expect(
         "inventory" in params,
-        "SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
+        msg="SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
         "(spec 2026-08-28 host-inventory §6; production calls it that way)",
     )
     if "inventory" not in params:
@@ -295,14 +301,15 @@ def _expect_host_summaries_conform(
         summaries = repository.list_host_summaries(inventory=None)
     except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
         c.expect(
-            False, f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}"
+            False,
+            msg=f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}",
         )
         return
 
     if not isinstance(summaries, list):
         c.expect(
             False,
-            f"SupportsHostSummaries: must return a list, got {type(summaries).__name__}",
+            msg=f"SupportsHostSummaries: must return a list, got {type(summaries).__name__}",
         )
         return
 
@@ -311,16 +318,16 @@ def _expect_host_summaries_conform(
         if not isinstance(s, HostSummary):
             c.expect(
                 False,
-                f"SupportsHostSummaries: entries must be HostSummary, got {type(s).__name__}",
+                msg=f"SupportsHostSummaries: entries must be HostSummary, got {type(s).__name__}",
             )
             continue
         c.expect(
             bool(s.id) and isinstance(s.id, str),
-            f"SupportsHostSummaries: every summary needs a non-empty str id, got {s.id!r}",
+            msg=f"SupportsHostSummaries: every summary needs a non-empty str id, got {s.id!r}",
         )
         c.expect(
             s.id not in seen,
-            f"SupportsHostSummaries: duplicate id {s.id!r} — hosts in several labs "
+            msg=f"SupportsHostSummaries: duplicate id {s.id!r} — hosts in several labs "
             f"must merge into one summary with both labs",
         )
         seen.add(s.id)
@@ -350,7 +357,7 @@ def _expect_host_summaries_conform(
     undispatchable = sorted(comparable - set(constructed))
     c.expect(
         not undispatchable,
-        f"SupportsHostSummaries: ids {undispatchable} are offered by list_host_summaries() "
+        msg=f"SupportsHostSummaries: ids {undispatchable} are offered by list_host_summaries() "
         f"but no load_lab() produces them — completion would offer ids that cannot dispatch",
     )
 
@@ -363,7 +370,7 @@ def _expect_host_summaries_conform(
     unsummarized = sorted(set(constructed) - seen)
     c.expect(
         not unsummarized,
-        f"SupportsHostSummaries: load_lab() produces {unsummarized} but "
+        msg=f"SupportsHostSummaries: load_lab() produces {unsummarized} but "
         f"list_host_summaries() omits them — completion would silently stop offering them",
     )
 
@@ -392,7 +399,7 @@ def _expect_host_summaries_conform(
             (
                 "logins",
                 list(summary.logins),
-                logins_of_creds(getattr(host, "creds", None) or []),
+                logins_of_creds(creds=getattr(host, "creds", None) or []),
             ),
         ):
             hint = {
@@ -404,14 +411,14 @@ def _expect_host_summaries_conform(
             }.get(field, "")
             c.expect(
                 summarized == built,
-                f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
+                msg=f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
                 f"summary but {built!r} on the constructed host" + hint,
             )
         produced_in = labs_of.get(summary.id, set())
         claimed = set(summary.labs)
         c.expect(
             claimed >= produced_in,
-            f"SupportsHostSummaries: {summary.id!r}.labs is {sorted(claimed)} but "
+            msg=f"SupportsHostSummaries: {summary.id!r}.labs is {sorted(claimed)} but "
             f"load_lab() produced it for {sorted(produced_in)} — "
             f"--lab-scoped completion would drop it",
         )
@@ -423,7 +430,7 @@ def _expect_host_summaries_conform(
         overclaimed = sorted((claimed & loaded) - produced_in)
         c.expect(
             not overclaimed,
-            f"SupportsHostSummaries: {summary.id!r}.labs claims {overclaimed} but "
+            msg=f"SupportsHostSummaries: {summary.id!r}.labs claims {overclaimed} but "
             f"load_lab() does not produce it there — `otto host -l <lab> <TAB>` would "
             f"offer an id that cannot dispatch",
         )
@@ -452,7 +459,7 @@ def _expect_reservation_rows(c: ExpectCollector, label: str, rows: object) -> li
     if not isinstance(rows, list):
         c.expect(
             False,
-            f"ReservationBackend: {label} must return a list of Reservation, got "
+            msg=f"ReservationBackend: {label} must return a list of Reservation, got "
             f"{type(rows).__name__}",
         )
         return []
@@ -461,27 +468,30 @@ def _expect_reservation_rows(c: ExpectCollector, label: str, rows: object) -> li
         if not isinstance(r, Reservation):
             c.expect(
                 False,
-                f"ReservationBackend: {label} entries must be Reservation, got {type(r).__name__}",
+                msg=(
+                    f"ReservationBackend: {label} entries must be Reservation, "
+                    f"got {type(r).__name__}"
+                ),
             )
             continue
         c.expect(
             isinstance(r.user, str) and r.user != "",
-            f"ReservationBackend: {label} user must be a non-empty str, got {r.user!r}",
+            msg=f"ReservationBackend: {label} user must be a non-empty str, got {r.user!r}",
         )
         c.expect(
             isinstance(r.resource, str) and r.resource != "",
-            f"ReservationBackend: {label} resource must be a non-empty str, got {r.resource!r}",
+            msg=f"ReservationBackend: {label} resource must be a non-empty str, got {r.resource!r}",
         )
         aware = all(b is None or b.tzinfo is not None for b in (r.start, r.end))
         c.expect(
             aware,
-            f"ReservationBackend: {label} start/end must be timezone-aware when set "
+            msg=f"ReservationBackend: {label} start/end must be timezone-aware when set "
             f"({r.resource!r}: start={r.start!r}, end={r.end!r})",
         )
         if aware and r.start is not None and r.end is not None:
             c.expect(
                 r.start <= r.end,
-                f"ReservationBackend: {label} start <= end required "
+                msg=f"ReservationBackend: {label} start <= end required "
                 f"({r.resource!r}: {r.start} > {r.end})",
             )
         good.append(r)
@@ -507,7 +517,7 @@ def _expect_rows_belong_to(
     for r in rows:
         c.expect(
             r.user == user,
-            f"ReservationBackend: {label} must return only rows for {user!r}, "
+            msg=f"ReservationBackend: {label} must return only rows for {user!r}, "
             f"got a row held by {r.user!r} ({r.resource!r})",
         )
 
@@ -554,7 +564,7 @@ def _expect_overlap_semantics(
     dropped = sorted(wide - {r.resource for r in narrow_rows})
     c.expect(
         not dropped,
-        f"ReservationBackend: fetch_reservations() must match bookings overlapping "
+        msg=f"ReservationBackend: fetch_reservations() must match bookings overlapping "
         f"[start, end], not bookings contained in it — {dropped!r} came back unbounded "
         f"but not for a window bracketing now, so a booking overlapping that window was "
         f"dropped; that reading is what makes otto's gate fail open",
@@ -620,7 +630,7 @@ def _expect_no_lapsed_rows(
             continue
         c.expect(
             False,
-            f"ReservationBackend: {label} must return only bookings still active — "
+            msg=f"ReservationBackend: {label} must return only bookings still active — "
             f"{r.resource!r} ended at {r.end.isoformat()}, before the instant asked about "
             f"({asked_at.isoformat()}), so a lapsed booking came back; an unbounded call "
             f"means 'active at this instant', not 'every booking that ever existed', and "
@@ -661,7 +671,7 @@ def _expect_holder_agreement(
             if resource in held:
                 c.expect(
                     user in named,
-                    f"SupportsResourceHolders: holders({resource!r}) must include a row for "
+                    msg=f"SupportsResourceHolders: holders({resource!r}) must include a row for "
                     f"{user!r}, who holds it per fetch_reservations; got {sorted(named)!r}",
                 )
         for r in rows:
@@ -670,7 +680,7 @@ def _expect_holder_agreement(
             )
             c.expect(
                 resource in {b.resource for b in back},
-                f"SupportsResourceHolders: holders({resource!r}) names {r.user!r} as a holder, "
+                msg=f"SupportsResourceHolders: holders({resource!r}) names {r.user!r} as a holder, "
                 f"but fetch_reservations({r.user!r}) does not return {resource!r}",
             )
 
@@ -737,22 +747,22 @@ def assert_reservation_backend_conforms(
 
     c.expect(
         isinstance(backend, ReservationBackend),
-        "ReservationBackend: must satisfy the runtime_checkable ReservationBackend protocol",
+        msg="ReservationBackend: must satisfy the runtime_checkable ReservationBackend protocol",
     )
     fetch_ok = callable(getattr(backend, "fetch_reservations", None))
-    c.expect(fetch_ok, "ReservationBackend: fetch_reservations must be callable")
+    c.expect(fetch_ok, msg="ReservationBackend: fetch_reservations must be callable")
     name_ok = callable(getattr(backend, "backend_name", None))
-    c.expect(name_ok, "ReservationBackend: backend_name must be callable")
+    c.expect(name_ok, msg="ReservationBackend: backend_name must be callable")
 
     name = backend.backend_name() if name_ok else ""
     c.expect(
         isinstance(name, str) and name != "",
-        f"ReservationBackend: backend_name() must return a non-empty str, got {name!r}",
+        msg=f"ReservationBackend: backend_name() must return a non-empty str, got {name!r}",
     )
     if name_ok:
         c.expect(
             name == backend.backend_name(),
-            "ReservationBackend: backend_name() must be stable across calls",
+            msg="ReservationBackend: backend_name() must be stable across calls",
         )
 
     # The `reservations` member is absent from the Protocol on purpose —
@@ -768,7 +778,7 @@ def assert_reservation_backend_conforms(
         # list_usernames. It must never escape as anything but a recorded rule.
         c.expect(
             identity is None,
-            f"ReservationBackend: reservations must not raise for a backend whose "
+            msg=f"ReservationBackend: reservations must not raise for a backend whose "
             f"username is {identity!r}, but it raised: {exc}",
         )
         if identity is None:
@@ -780,7 +790,7 @@ def assert_reservation_backend_conforms(
         if cached is _MISSING:
             c.expect(
                 False,
-                "ReservationBackend: must expose a `reservations` member holding the "
+                msg="ReservationBackend: must expose a `reservations` member holding the "
                 "invoking user's active rows; inherit ReservationBackendBase, which "
                 "provides it, or supply it yourself",
             )
@@ -814,7 +824,7 @@ def assert_reservation_backend_conforms(
         for resource in known_resources:
             c.expect(
                 resource in held,
-                f"ReservationBackend: {label} must include known-held resource "
+                msg=f"ReservationBackend: {label} must include known-held resource "
                 f"{resource!r}, got {sorted(held)!r}",
             )
 
@@ -824,7 +834,7 @@ def assert_reservation_backend_conforms(
     if expect_holders and not isinstance(backend, SupportsResourceHolders):
         c.expect(
             False,
-            "SupportsResourceHolders: expect_holders=True, but the backend does not implement "
+            msg="SupportsResourceHolders: expect_holders=True, but the backend does not implement "
             "holders() — otto would print 'held by: unknown' in every refusal naming a "
             "resource this backend guards",
         )
@@ -839,14 +849,14 @@ def assert_reservation_backend_conforms(
         u_ok = isinstance(usernames, list)
         c.expect(
             u_ok,
-            f"SupportsUsernameCompletion: list_usernames() must return a list, got "
+            msg=f"SupportsUsernameCompletion: list_usernames() must return a list, got "
             f"{type(usernames).__name__}",
         )
         if u_ok:
             for u in usernames:
                 c.expect(
                     isinstance(u, str),
-                    f"SupportsUsernameCompletion: list_usernames() entries must be "
+                    msg=f"SupportsUsernameCompletion: list_usernames() entries must be "
                     f"str, got {type(u).__name__}",
                 )
 
@@ -880,52 +890,54 @@ def assert_inventory_conforms(
     c = ExpectCollector()
     c.expect(
         isinstance(inventory, Inventory),
-        "Inventory: must satisfy the runtime_checkable Inventory protocol",
+        msg="Inventory: must satisfy the runtime_checkable Inventory protocol",
     )
     label = getattr(inventory, "label", None)
     c.expect(
         isinstance(label, str) and bool(label),
-        f"Inventory: label must be a non-empty str, got {label!r}",
+        msg=f"Inventory: label must be a non-empty str, got {label!r}",
     )
     supplies = getattr(inventory, "supplies", None)
     supplies_ok = isinstance(supplies, frozenset)
-    c.expect(supplies_ok, f"Inventory: supplies must be a frozenset, got {type(supplies).__name__}")
+    c.expect(
+        supplies_ok, msg=f"Inventory: supplies must be a frozenset, got {type(supplies).__name__}"
+    )
     allowed = FILLABLE_INVENTORY_FIELDS | INVENTORY_KEY_FIELDS
     if supplies_ok:
-        c.expect("ip" in supplies, "Inventory: supplies must contain 'ip'")
+        c.expect("ip" in supplies, msg="Inventory: supplies must contain 'ip'")
         c.expect(
             supplies <= allowed,
-            f"Inventory: supplies names non-record fields: {sorted(supplies - allowed)}",
+            msg=f"Inventory: supplies names non-record fields: {sorted(supplies - allowed)}",
         )
     try:
         keys = inventory.list_keys() if callable(getattr(inventory, "list_keys", None)) else None
     except Exception as e:  # noqa: BLE001 — conformance check
-        c.expect(False, f"Inventory: list_keys() raised {type(e).__name__}: {e}")
+        c.expect(False, msg=f"Inventory: list_keys() raised {type(e).__name__}: {e}")
         keys = None
     keys_ok = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
-    c.expect(keys_ok, f"Inventory: list_keys() must return list[str], got {keys!r}")
+    c.expect(keys_ok, msg=f"Inventory: list_keys() must return list[str], got {keys!r}")
     if keys_ok:
-        c.expect(keys == sorted(keys), "Inventory: list_keys() must be sorted")
+        c.expect(keys == sorted(keys), msg="Inventory: list_keys() must be sorted")
     if expected_keys is not None:
         listed = set(keys) if keys_ok else set()
         for key in expected_keys:
             c.expect(
                 key in listed,
-                f"Inventory: expected key {key!r} to appear in list_keys()",
+                msg=f"Inventory: expected key {key!r} to appear in list_keys()",
             )
     probe = _PROBE_CREDS_KEY
     try:
         inventory.lookup(probe)
         c.expect(
             False,
-            "Inventory: lookup(unknown key) must raise InventoryKeyError, returned a record",
+            msg="Inventory: lookup(unknown key) must raise InventoryKeyError, returned a record",
         )
     except InventoryKeyError:
         pass
     except Exception as e:  # noqa: BLE001 — conformance check, report the wrong type
         c.expect(
             False,
-            f"Inventory: lookup(unknown key) must raise InventoryKeyError, "
+            msg=f"Inventory: lookup(unknown key) must raise InventoryKeyError, "
             f"raised {type(e).__name__}",
         )
     for key in [*(keys if keys_ok else []), *(expected_keys or [])]:
@@ -934,38 +946,39 @@ def assert_inventory_conforms(
             second = inventory.lookup(key)
         except Exception as e:  # noqa: BLE001 — conformance check
             c.expect(
-                False, f"Inventory: expected key {key!r} did not resolve: {type(e).__name__}: {e}"
+                False,
+                msg=f"Inventory: expected key {key!r} did not resolve: {type(e).__name__}: {e}",
             )
             continue
         c.expect(
             isinstance(first, InventoryRecord),
-            f"Inventory: lookup({key!r}) must return an InventoryRecord",
+            msg=f"Inventory: lookup({key!r}) must return an InventoryRecord",
         )
         c.expect(
             first == second,
-            f"Inventory: lookup({key!r}) must be idempotent (equal record on a second call)",
+            msg=f"Inventory: lookup({key!r}) must be idempotent (equal record on a second call)",
         )
         if isinstance(first, InventoryRecord) and supplies_ok:
             stated = set(first.model_fields_set) - SUPPLIES_EXEMPT_FIELDS
             leaked = sorted(stated - supplies)
             c.expect(
                 not leaked,
-                f"Inventory: lookup({key!r}) returned fields outside supplies: {leaked}",
+                msg=f"Inventory: lookup({key!r}) returned fields outside supplies: {leaked}",
             )
     try:
         fp = inventory.fingerprint() if callable(getattr(inventory, "fingerprint", None)) else 0
         c.expect(
             fp is None or isinstance(fp, str),
-            f"Inventory: fingerprint() must be str | None, got {type(fp).__name__}",
+            msg=f"Inventory: fingerprint() must be str | None, got {type(fp).__name__}",
         )
     except Exception as e:  # noqa: BLE001 — conformance check
-        c.expect(False, f"Inventory: fingerprint() raised {type(e).__name__}: {e}")
+        c.expect(False, msg=f"Inventory: fingerprint() raised {type(e).__name__}: {e}")
     if repository is not None and lab is not None:
         try:
             repository.load_lab(lab)
             c.expect(
                 False,
-                f"Inventory: lab {lab!r} loaded WITHOUT the inventory — its entries do not "
+                msg=f"Inventory: lab {lab!r} loaded WITHOUT the inventory — its entries do not "
                 "reference it, or the backend ignores inventory=",
             )
         except Exception:  # noqa: BLE001, S110 — the failure is the expected outcome
@@ -979,13 +992,13 @@ def assert_inventory_conforms(
             ]
             c.expect(
                 bool(referenced),
-                f"Inventory: lab {lab!r} loaded with the inventory but no host carries a "
+                msg=f"Inventory: lab {lab!r} loaded with the inventory but no host carries a "
                 "referenced inventory_ref",
             )
         except Exception as e:  # noqa: BLE001 — conformance check
             c.expect(
                 False,
-                f"Inventory: lab {lab!r} failed to load WITH the inventory: "
+                msg=f"Inventory: lab {lab!r} failed to load WITH the inventory: "
                 f"{type(e).__name__}: {e}",
             )
     c.raise_if_failures()
@@ -1010,42 +1023,44 @@ def assert_creds_store_conforms(
     c = ExpectCollector()
     c.expect(
         isinstance(store, CredsStore),
-        "CredsStore: must satisfy the runtime_checkable CredsStore protocol",
+        msg="CredsStore: must satisfy the runtime_checkable CredsStore protocol",
     )
     label = getattr(store, "label", None)
     c.expect(
         isinstance(label, str) and bool(label),
-        f"CredsStore: label must be a non-empty str, got {label!r}",
+        msg=f"CredsStore: label must be a non-empty str, got {label!r}",
     )
     try:
         fp = store.fingerprint() if callable(getattr(store, "fingerprint", None)) else None
         c.expect(
             fp is None or isinstance(fp, str),
-            f"CredsStore: fingerprint() must be str or None, got {fp!r}",
+            msg=f"CredsStore: fingerprint() must be str or None, got {fp!r}",
         )
     except Exception as e:  # noqa: BLE001 — conformance check
-        c.expect(False, f"CredsStore: fingerprint() raised {type(e).__name__}: {e}")
+        c.expect(False, msg=f"CredsStore: fingerprint() raised {type(e).__name__}: {e}")
     try:
         probe = store.lookup(_PROBE_CREDS_KEY)
-        c.expect(probe == [], f"CredsStore: lookup(unknown key) must return [], got {probe!r}")
+        c.expect(probe == [], msg=f"CredsStore: lookup(unknown key) must return [], got {probe!r}")
     except Exception as e:  # noqa: BLE001 — conformance check, report the wrong behaviour
         c.expect(
-            False, f"CredsStore: lookup(unknown key) must return [], raised {type(e).__name__}"
+            False, msg=f"CredsStore: lookup(unknown key) must return [], raised {type(e).__name__}"
         )
     keys: list[str] | None = None
     try:
         keys = store.list_keys() if callable(getattr(store, "list_keys", None)) else None
     except Exception as e:  # noqa: BLE001 — conformance check
-        c.expect(False, f"CredsStore: list_keys() raised {type(e).__name__}: {e}")
+        c.expect(False, msg=f"CredsStore: list_keys() raised {type(e).__name__}: {e}")
     if keys is not None:
         keys_ok = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
-        c.expect(keys_ok, f"CredsStore: list_keys() must return list[str] or None, got {keys!r}")
+        c.expect(
+            keys_ok, msg=f"CredsStore: list_keys() must return list[str] or None, got {keys!r}"
+        )
         if keys_ok:
-            c.expect(keys == sorted(keys), "CredsStore: list_keys() must be sorted")
+            c.expect(keys == sorted(keys), msg="CredsStore: list_keys() must be sorted")
             if known_key is not None:
                 c.expect(
                     known_key in keys,
-                    f"CredsStore: known_key {known_key!r} must appear in list_keys()",
+                    msg=f"CredsStore: known_key {known_key!r} must appear in list_keys()",
                 )
     to_resolve = [
         *(keys if isinstance(keys, list) else []),
@@ -1056,18 +1071,20 @@ def assert_creds_store_conforms(
             first = store.lookup(key)
             second = store.lookup(key)
         except Exception as e:  # noqa: BLE001 — conformance check
-            c.expect(False, f"CredsStore: lookup({key!r}) raised {type(e).__name__}: {e}")
+            c.expect(False, msg=f"CredsStore: lookup({key!r}) raised {type(e).__name__}: {e}")
             continue
         entries_ok = isinstance(first, list) and all(isinstance(e, CredSpec) for e in first)
-        c.expect(entries_ok, f"CredsStore: lookup({key!r}) must return list[CredSpec]")
+        c.expect(entries_ok, msg=f"CredsStore: lookup({key!r}) must return list[CredSpec]")
         if not entries_ok:
             continue
         if key == known_key:
-            c.expect(bool(first), f"CredsStore: known_key {known_key!r} resolved to no entries")
+            c.expect(bool(first), msg=f"CredsStore: known_key {known_key!r} resolved to no entries")
         elif not first:
-            c.expect(False, f"CredsStore: list_keys() names {key!r} but lookup({key!r}) is empty")
-        c.expect(first == second, f"CredsStore: lookup({key!r}) must be idempotent")
+            c.expect(
+                False, msg=f"CredsStore: list_keys() names {key!r} but lookup({key!r}) is empty"
+            )
+        c.expect(first == second, msg=f"CredsStore: lookup({key!r}) must be idempotent")
         identities = [e.identity for e in first]
         for identity in sorted({x for x in identities if identities.count(x) > 1}):
-            c.expect(False, f"CredsStore: lookup({key!r}) repeats identity {identity!r}")
+            c.expect(False, msg=f"CredsStore: lookup({key!r}) repeats identity {identity!r}")
     c.raise_if_failures()

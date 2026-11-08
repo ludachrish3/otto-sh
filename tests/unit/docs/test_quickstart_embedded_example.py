@@ -332,7 +332,7 @@ class _Loader:
 @pytest.mark.asyncio
 async def test_the_helper_asks_the_loader_for_the_command_and_returns_the_output(monkeypatch):
     helper = _helper()
-    ok = CommandResult(Status.Success, value="op=1\n", command="", retcode=0)
+    ok = CommandResult(status=Status.Success, value="op=1\n", command="", retcode=0)
     dut, calls = _dut(ok, _Loader())
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     assert await helper.call_fn("ext", "op_a") == "op=1\n"
@@ -342,7 +342,7 @@ async def test_the_helper_asks_the_loader_for_the_command_and_returns_the_output
 @pytest.mark.asyncio
 async def test_the_helper_names_an_extension_that_is_not_resident(monkeypatch):
     helper = _helper()
-    gone = CommandResult(Status.Failed, value="No such extension ext", command="", retcode=1)
+    gone = CommandResult(status=Status.Failed, value="No such extension ext", command="", retcode=1)
     dut, _ = _dut(gone, _Loader())
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     with pytest.raises(helper.CallError, match="extension ext is not loaded"):
@@ -352,7 +352,7 @@ async def test_the_helper_names_an_extension_that_is_not_resident(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_helper_refuses_a_failed_call_and_a_host_with_no_loader(monkeypatch):
     helper = _helper()
-    bad = CommandResult(Status.Failed, value="boom", command="", retcode=1)
+    bad = CommandResult(status=Status.Failed, value="boom", command="", retcode=1)
     dut, _ = _dut(bad, _Loader())
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     with pytest.raises(helper.CallError, match="op_a failed on dut: 'boom'"):

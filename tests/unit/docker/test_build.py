@@ -21,14 +21,14 @@ from otto.utils import Status
 
 
 def _ok(out: str = "", command: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command=command, retcode=0)
+    return CommandResult(status=Status.Success, value=out, command=command, retcode=0)
 
 
 def _fail(out: str = "boom", command: str = "") -> CommandResult:
     # `command` is carried so the fake matches what a real exec produces —
     # otherwise a test cannot tell "returned the result whole" from "rebuilt
     # a summary", which is exactly the property _build_one now promises.
-    return CommandResult(Status.Failed, value=out, command=command, retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command=command, retcode=1)
 
 
 ROOT = staging_root("vagrant")
@@ -38,12 +38,12 @@ ROOT = staging_root("vagrant")
 def _mock_parent():
     parent = UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
     parent.exec = AsyncMock(return_value=_ok())
-    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    parent.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     return parent
 
 
@@ -419,7 +419,7 @@ async def test_build_images_stages_under_the_suffixed_stack_key(tmp_path, monkey
     _daemon(parent, listing="api:latest cbd8571d4b6e\n")
     project = fake_project("project1", docker_settings=DockerSettings(images=(_img(tmp_path),)))
 
-    await build_images(project, parent)
+    await build_images(project=project, parent=parent)
 
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any(c.endswith(f" {ROOT}/otto-project1-u/build/api") for c in cmds), cmds

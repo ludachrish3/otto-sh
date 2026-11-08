@@ -1,7 +1,6 @@
 """Signature-driven CLI parameter synthesis."""
 
 import inspect
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, get_args
 
@@ -66,7 +65,7 @@ def test_no_default_scalar_is_positional_argument():
 
 
 def test_bool_default_wrapped_in_typer_option():
-    async def f(self, hard: bool = False): ...
+    async def f(self, *, hard: bool = False): ...
 
     b = build_cli_binding(f)
     p = _by_name(b, "hard")
@@ -84,15 +83,15 @@ def test_scalar_union_normalizes_to_str():
     assert base is str or p.annotation is str
 
 
-def test_arg_marker_forces_positional_for_defaulted_scalar():
+def test_a_defaulted_positional_scalar_stays_an_argument():
     async def f(self, path: Annotated["str | Path", Arg()] = "."): ...
 
     b = build_cli_binding(f)
     assert _has_typer(_by_name(b, "path"), typer.models.ArgumentInfo)
 
 
-def test_variadic_arg_becomes_list_positional():
-    async def f(self, cmds: Annotated[str | Sequence[str], Arg(variadic=True, elem_type=str)]): ...
+def test_a_positional_list_union_becomes_the_list_argument():
+    async def f(self, cmds: Annotated[str | list[str], Arg(elem_type=str)]): ...
 
     b = build_cli_binding(f)
     p = _by_name(b, "cmds")
@@ -110,15 +109,15 @@ def test_exclude_marker_drops_param_and_records_default():
     assert b.excluded == {"log": True}
 
 
-def test_opt_marker_forces_option():
-    async def f(self, timeout: Annotated[float | None, Opt(help="t")] = None): ...
+def test_opt_marker_on_a_keyword_only_parameter_is_an_option():
+    async def f(self, *, timeout: Annotated[float | None, Opt(help="t")] = None): ...
 
     b = build_cli_binding(f)
     assert _has_typer(_by_name(b, "timeout"), typer.models.OptionInfo)
 
 
 def test_list_option_uses_str_with_converter():
-    async def f(self, tags: list[str] = []):  # noqa: B006 — function never called; type must stay list[str] for synthesizer
+    async def f(self, *, tags: list[str] = []):  # noqa: B006 — function never called; type must stay list[str] for synthesizer
         ...
 
     b = build_cli_binding(f)
@@ -127,19 +126,8 @@ def test_list_option_uses_str_with_converter():
     assert b.converters["tags"]("a,b") == ["a", "b"]
 
 
-def test_two_variadics_is_error():
-    async def f(
-        self,
-        a: Annotated[list, Arg(variadic=True, elem_type=str)],
-        b: Annotated[list, Arg(variadic=True, elem_type=str)],
-    ): ...
-
-    with pytest.raises(ValueError, match="variadic"):
-        build_cli_binding(f)
-
-
 def test_opt_name_renames_the_flag():
-    async def verb(self, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"):
+    async def verb(self, *, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"):
         """Verb."""
 
     binding = build_cli_binding(verb)
@@ -149,7 +137,7 @@ def test_opt_name_renames_the_flag():
 
 
 def test_opt_name_renames_the_flag_for_list_option():
-    async def verb(self, tags: Annotated[list[str], Opt(name="--tag", help="Tags.")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
+    async def verb(self, *, tags: Annotated[list[str], Opt(name="--tag", help="Tags.")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
         """Verb."""
 
     binding = build_cli_binding(verb)
@@ -181,7 +169,7 @@ def _autocompletion_of(param):
 def test_remote_path_marker_attaches_completer_to_variadic_arg():
     async def verb(
         self,
-        src_files: Annotated[list[Path], Arg(variadic=True, elem_type=Path, remote_path="any")],
+        src_files: Annotated[list[Path], Arg(elem_type=Path, remote_path="any")],
         dest_dir: Path,
     ):
         """Verb."""
@@ -202,7 +190,7 @@ def test_remote_path_marker_attaches_completer_to_scalar_arg():
 
 
 def test_remote_path_marker_attaches_completer_to_opt():
-    async def verb(self, target: Annotated[str, Opt(remote_path="any")] = "/tmp"):
+    async def verb(self, *, target: Annotated[str, Opt(remote_path="any")] = "/tmp"):
         """Verb."""
 
     binding = build_cli_binding(verb)
@@ -233,17 +221,17 @@ def test_remote_path_kind_reaches_the_completer(monkeypatch, kind):
 
 
 def test_remote_path_on_a_comma_list_option_is_rejected():
-    async def verb(self, paths: Annotated[list[str], Opt(remote_path="any")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
+    async def verb(self, *, paths: Annotated[list[str], Opt(remote_path="any")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
         """Verb."""
 
     with pytest.raises(ValueError, match="remote_path is not supported") as excinfo:
         build_cli_binding(verb)
     # The message must carry the remedy, not just the refusal.
-    assert "Arg(variadic=True, remote_path=...)" in str(excinfo.value)
+    assert "positional list parameter with Arg(remote_path=...)" in str(excinfo.value)
 
 
 def test_unmarked_params_get_no_completer():
-    async def verb(self, dest_dir: Path, flag: bool = False):
+    async def verb(self, dest_dir: Path, *, flag: bool = False):
         """Verb."""
 
     binding = build_cli_binding(verb)
@@ -260,8 +248,9 @@ def test_markers_without_remote_path_get_no_completer():
 
     async def verb(
         self,
-        src_files: Annotated[list[Path], Arg(variadic=True, elem_type=Path, help="Files.")],
+        src_files: Annotated[list[Path], Arg(elem_type=Path, help="Files.")],
         src: Annotated[str, Arg(name="SOURCE")],
+        *,
         dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp",
     ):
         """Verb."""
@@ -273,7 +262,7 @@ def test_markers_without_remote_path_get_no_completer():
 
 
 def test_opt_short_adds_a_short_alias_beside_the_synthesized_long_flag():
-    async def verb(self, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
+    async def verb(self, *, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
         return recursive
 
     binding = build_cli_binding(verb)
@@ -296,7 +285,7 @@ def test_opt_short_on_bool_keeps_the_auto_generated_negative():
     string typer was given).
     """
 
-    async def verb(self, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
+    async def verb(self, *, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
         return recursive
 
     binding = build_cli_binding(verb)
@@ -324,7 +313,7 @@ def test_a_default_true_bool_option_renders_with_its_off_switch():
     with no way to say no at all.
     """
 
-    async def verb(self, concurrent: Annotated[bool, Opt(help="Fan out.")] = True):
+    async def verb(self, *, concurrent: Annotated[bool, Opt(help="Fan out.")] = True):
         return concurrent
 
     binding = build_cli_binding(verb)
@@ -338,7 +327,7 @@ def test_a_default_true_bool_option_renders_with_its_off_switch():
 
 
 def test_opt_short_with_explicit_name_keeps_both():
-    async def verb(self, dest_dir: Annotated[str, Opt(name="--dest", short="-d")] = "/tmp"):
+    async def verb(self, *, dest_dir: Annotated[str, Opt(name="--dest", short="-d")] = "/tmp"):
         return dest_dir
 
     binding = build_cli_binding(verb)
@@ -355,7 +344,7 @@ def test_opt_without_name_or_short_gets_no_explicit_decls():
     list here would rename every option in the CLI that never asked for one.
     """
 
-    async def verb(self, dest_dir: Annotated[str, Opt(help="Target.")] = "/tmp"):
+    async def verb(self, *, dest_dir: Annotated[str, Opt(help="Target.")] = "/tmp"):
         return dest_dir
 
     binding = build_cli_binding(verb)
@@ -367,7 +356,7 @@ def test_opt_without_name_or_short_gets_no_explicit_decls():
 def test_host_user_marker_attaches_the_login_completer():
     from otto.cli.completers import host_user_completer
 
-    async def verb(self, user: Annotated[str | None, Opt(host_user="direct")] = None):
+    async def verb(self, *, user: Annotated[str | None, Opt(host_user="direct")] = None):
         """Verb."""
 
     completer = _autocompletion_of(_by_name(build_cli_binding(verb), "user"))
@@ -375,8 +364,222 @@ def test_host_user_marker_attaches_the_login_completer():
 
 
 def test_host_user_on_a_comma_list_option_is_rejected():
-    async def verb(self, users: Annotated[list[str], Opt(host_user="any")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
+    async def verb(self, *, users: Annotated[list[str], Opt(host_user="any")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
         """Verb."""
 
     with pytest.raises(ValueError, match="host_user is not supported"):
         build_cli_binding(verb)
+
+
+# --- The parameter KIND decides argument versus option (spec §6.6) ---------
+
+
+def _shape(binding):
+    """``name:ARG`` / ``name:VARG`` / ``name:--opt`` / ``name:--opt!`` per CLI parameter."""
+    out = []
+    for p in binding.params:
+        info = next(
+            m
+            for m in p.annotation.__metadata__
+            if isinstance(m, typer.models.ArgumentInfo | typer.models.OptionInfo)
+        )
+        base = get_args(p.annotation)[0]
+        if isinstance(info, typer.models.ArgumentInfo):
+            tag = "VARG" if getattr(base, "__origin__", None) is list else "ARG"
+        else:
+            tag = "--opt!" if p.default is inspect.Parameter.empty else "--opt"
+        out.append(f"{p.name}:{tag}")
+    return out
+
+
+def test_positional_parameters_become_arguments_in_order():
+    async def verb(self, first: str, second: int = 3, *, flag: bool = False): ...
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["first:ARG", "second:ARG", "flag:--opt"]
+    assert _by_name(binding, "second").default == 3
+
+
+def test_keyword_only_without_default_is_a_required_option():
+    async def verb(self, path: str, *, data: str, force: bool): ...
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["path:ARG", "data:--opt!", "force:--opt!"]
+    app = typer.Typer()
+
+    def body(**kw):
+        return kw
+
+    body.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+        [p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params]
+    )
+    app.command()(body)
+    from typer.testing import CliRunner
+
+    missing = CliRunner().invoke(app, ["p", "--force"])
+    assert missing.exit_code == 2
+    assert "--data" in missing.output
+    no_flag = CliRunner().invoke(app, ["p", "--data", "x"])
+    assert no_flag.exit_code == 2
+    assert "--force" in no_flag.output
+    ok = CliRunner().invoke(app, ["p", "--data", "x", "--no-force"])
+    assert ok.exit_code == 0, ok.output
+
+
+def test_keyword_only_with_default_is_an_option():
+    async def verb(self, *, timeout: float = 5.0, tags: list[str] = []): ...  # noqa: B006 — never called
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["timeout:--opt", "tags:--opt"]
+    assert _by_name(binding, "timeout").default == 5.0
+    assert "tags" in binding.converters
+
+
+def test_a_positional_union_list_is_the_variadic_argument():
+    async def verb(self, src_files: list[Path] | Path, dest_dir: Path): ...
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["src_files:VARG", "dest_dir:ARG"]
+    assert get_args(_by_name(binding, "src_files").annotation)[0] == list[Path]
+
+
+def test_a_defaulted_positional_list_is_the_variadic_argument_with_its_default():
+    async def verb(self, dest_dir: Path, files: list[Path] = []): ...  # noqa: B006 — never called
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["dest_dir:ARG", "files:VARG"]
+    assert _by_name(binding, "files").default == []
+
+
+def test_an_optional_positional_list_is_the_variadic_argument():
+    async def verb(self, files: list[Path] | None = None): ...
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["files:VARG"]
+    assert get_args(_by_name(binding, "files").annotation)[0] == list[Path]
+    assert _by_name(binding, "files").default is None
+
+
+def test_two_variadics_are_refused():
+    async def verb(self, a: list[str], b: list[str] | str): ...
+
+    with pytest.raises(ValueError, match="at most one positional list-typed parameter"):
+        build_cli_binding(verb)
+
+
+@pytest.mark.parametrize(
+    ("marker", "spelling"),
+    [
+        pytest.param("arg", "keyword-only", id="Arg-on-keyword-only"),
+        pytest.param("opt", "positional", id="Opt-on-positional"),
+    ],
+)
+def test_a_marker_contradicting_the_signature_is_refused(marker, spelling):
+    if marker == "arg":
+
+        async def verb(self, *, name: Annotated[str, Arg(help="n")]): ...
+
+    else:
+
+        async def verb(self, name: Annotated[str, Opt(help="n")]): ...
+
+    with pytest.raises(ValueError, match="marker contradicts the signature") as excinfo:
+        build_cli_binding(verb)
+    assert spelling in str(excinfo.value)
+    assert "'name'" in str(excinfo.value)
+
+
+def test_po_and_var_positional_are_refused():
+    async def po(self, path: str, /): ...
+
+    async def star(self, *paths: str): ...
+
+    with pytest.raises(
+        ValueError, match="positional-only parameters cannot be dispatched by keyword"
+    ):
+        build_cli_binding(po)
+    with pytest.raises(ValueError, match=r"\*args on an exposed verb"):
+        build_cli_binding(star)
+
+
+def test_var_keyword_is_not_exposed():
+    async def verb(self, path: str, **extra: str): ...
+
+    assert _shape(build_cli_binding(verb)) == ["path:ARG"]
+
+
+def test_exclude_is_untouched():
+    async def verb(
+        self,
+        path: str,
+        *,
+        quiet: Annotated[bool, Exclude] = True,
+        hidden: Annotated[int, Exclude] = 3,
+    ): ...
+
+    binding = build_cli_binding(verb)
+    assert _shape(binding) == ["path:ARG"]
+    assert binding.excluded == {"quiet": True, "hidden": 3}
+
+
+def test_put_keeps_sources_then_destination():
+    from otto.host import UnixHost
+
+    binding = build_cli_binding(UnixHost.put)
+    assert _shape(binding)[:2] == ["src_files:VARG", "dest_dir:ARG"]
+    assert all(s.endswith(("--opt", "--opt!")) for s in _shape(binding)[2:])
+
+
+def test_the_arg_record_has_no_variadic_field():
+    import dataclasses
+
+    assert "variadic" not in {f.name for f in dataclasses.fields(Arg)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw", "tags", "env"),
+    [
+        (None, ["default"], {}),  # omitted: the declared default
+        ("a,b", ["a", "b"], {}),
+        ("", [], {}),
+        ("k=v", ["default"], {"k": "v"}),
+    ],
+)
+async def test_a_collection_option_reaches_the_verb_with_its_declared_default(raw, tags, env):
+    """Spec §6.6: an omitted list/dict option is the parameter's own default, not ``None``.
+
+    Driven through :func:`otto.cli.expose.make_method_command`, the dispatch every
+    exposed host verb runs. ``raw`` goes to ``env`` in the last row, so ``tags``
+    there is omitted too.
+    """
+    from typing import ClassVar
+    from unittest.mock import AsyncMock
+
+    from otto.cli.expose import make_method_command
+    from otto.utils import cli_exposed
+
+    default_tags = ["default"]
+    seen: dict = {}
+
+    class _Host:
+        id = "h1"
+        close = AsyncMock()
+
+        async def tag(self, *, tags: list[str] = default_tags, env: dict[str, str] = {}):  # noqa: B006 — the defaults under test
+            seen.update(tags=tags, env=env)
+
+    class _Ctx:
+        obj = _Host()
+        meta: ClassVar[dict] = {}
+
+    @cli_exposed
+    async def tag(self, *, tags: list[str] = default_tags, env: dict[str, str] = {}): ...  # noqa: B006 — never called
+
+    cmd = make_method_command("tag", tag)
+    if env:
+        await cmd(_Ctx(), tags=None, env=raw)
+    else:
+        await cmd(_Ctx(), tags=raw, env=None)
+    assert seen == {"tags": tags, "env": env}
+    assert seen["tags"] is not default_tags  # a copy: the verb may mutate it

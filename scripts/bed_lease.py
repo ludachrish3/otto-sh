@@ -217,7 +217,7 @@ def cell_resources(lab_file: Path, names: list[str]) -> list[str]:
         raise UsageError(
             f"cannot load labs {'+'.join(names)} from {lab_file.parent}: {exc}"
         ) from exc
-    return sorted(required_resources(lab))
+    return sorted(required_resources(lab=lab))
 
 
 def username() -> str:

@@ -47,7 +47,7 @@ database) does it on ``"default"`` and only *enters* on the others."""
 
 
 @final
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SetupContext:
     """Everything a hook may need besides the session itself.
 
@@ -126,7 +126,7 @@ def register_session_setup(
     TypeError
         If *fn* is not callable.
     """
-    SESSION_SETUPS.register(name, SessionSetupEntry(fn), overwrite=overwrite)
+    SESSION_SETUPS.register(name=name, entry=SessionSetupEntry(fn), overwrite=overwrite)
 
 
 def session_setup_from_spec(value: Any) -> SessionSetup | None:
@@ -196,7 +196,7 @@ async def apply_session_setup(
             f"{ctx.host_id}: session setup {setup.name!r} failed: {exc}"
         ) from exc
     try:
-        await session.enter_frame(target_frame)
+        await session.enter_frame(frame=target_frame)
     except (SessionSetupError, ConsoleError):
         # A ConsoleError here is a NAMED refusal (e.g. "login refused for
         # 'root'"), raised by TelnetSession._fail_init -> _refused_login ->

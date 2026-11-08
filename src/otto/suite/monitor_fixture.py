@@ -61,8 +61,8 @@ class MonitorHandle:
 
     async def start(
         self,
-        hosts: "list[RemoteHost] | None" = None,
         *,
+        hosts: "list[RemoteHost] | None" = None,
         targets: "list[MonitorTarget] | None" = None,
         interval: "timedelta | float" = timedelta(seconds=5),
         parsers: "list[MetricParser] | None" = None,
@@ -95,7 +95,7 @@ class MonitorHandle:
         if self._started:
             raise RuntimeError("monitor already started: call stop() before starting it again")
         session = MonitorSession.build(
-            hosts,
+            hosts=hosts,
             targets=targets,
             parsers=parsers,
             interval=interval,
@@ -145,6 +145,7 @@ class MonitorHandle:
     def event(
         self,
         label: str,
+        *,
         color: str = DEFAULT_EVENT_COLOR,
         dash: str = DEFAULT_EVENT_DASH,
     ) -> Coroutine[Any, Any, None]:

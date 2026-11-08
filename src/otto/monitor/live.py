@@ -37,7 +37,7 @@ class LiveReport:
     end: datetime
 
 
-def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[RemoteHost]":
+def select_monitor_hosts(*, pattern: "str | re.Pattern[str] | None") -> "list[RemoteHost]":
     """Select the hosts to monitor from the active lab.
 
     Hosts otto cannot sample are dropped and named, with their reason, in
@@ -63,7 +63,7 @@ def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[Remot
     # Materialized inside the call: all_hosts is a generator and raises its
     # empty-selection refusal at the first next().
     walked = list(all_hosts(pattern=pattern))
-    selection = partition_monitorable(walked)
+    selection = partition_monitorable(hosts=walked)
     if not selection.hosts:
         raise NoMonitorableHostsError([h.id for h in walked])
     if selection.dropped:
@@ -153,15 +153,15 @@ async def run_live(
     from .tls import resolve_monitor_tls
 
     try:
-        validate_interval(interval)
+        validate_interval(seconds=interval)
     except ValueError as exc:
         raise MonitorInputError(str(exc), field="interval") from exc
     _enforce_driving_project_scope()
-    selected = select_monitor_hosts(hosts)
-    tls = resolve_monitor_tls(current_projects())
+    selected = select_monitor_hosts(pattern=hosts)
+    tls = resolve_monitor_tls(projects=current_projects())
     active_lab = get_lab()
     session = MonitorSession.build(
-        selected,
+        hosts=selected,
         interval=interval,
         db_path=db,
         label=label,

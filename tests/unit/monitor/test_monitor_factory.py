@@ -24,9 +24,9 @@ class TestBuildMonitorCollector:
                 "command_frame": "zephyr",
                 "snmp": {"port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         target = collector._targets[0]
 
         assert target.snmp is not None
@@ -43,9 +43,9 @@ class TestBuildMonitorCollector:
                 "command_frame": "zephyr",
                 "snmp": {"address": "10.10.200.14", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         # the relay endpoint, not the host's telnet ip
         assert collector._targets[0].snmp.client.address == "10.10.200.14"
 
@@ -59,9 +59,9 @@ class TestBuildMonitorCollector:
                 "interfaces": {"mgmt": "10.9.9.9", "data": "192.168.5.5"},
                 "snmp": {"address": "mgmt", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         assert collector._targets[0].snmp.client.address == "10.9.9.9"
 
     def test_snmp_address_literal_passes_through(self):
@@ -74,9 +74,9 @@ class TestBuildMonitorCollector:
                 "interfaces": {"mgmt": "10.9.9.9"},
                 "snmp": {"address": "203.0.113.5", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         assert collector._targets[0].snmp.client.address == "203.0.113.5"
 
     def test_snmp_address_defaults_to_host_ip(self):
@@ -89,9 +89,9 @@ class TestBuildMonitorCollector:
                 "interfaces": {"mgmt": "10.9.9.9"},
                 "snmp": {"port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         assert collector._targets[0].snmp.client.address == "192.0.2.1"
 
     def test_host_without_snmp_is_shell_target(self):
@@ -100,9 +100,9 @@ class TestBuildMonitorCollector:
                 "ip": "10.10.200.11",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("alt1"),
+            element=Element(name="alt1"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         target = collector._targets[0]
 
         assert target.snmp is None
@@ -123,9 +123,9 @@ class TestBuildMonitorCollector:
                     "version": "2c",
                 },
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
-        collector = build_monitor_collector([host])
+        collector = build_monitor_collector(hosts=[host])
         assert collector._targets[0].snmp.oids == list(CORE_OIDS)
 
 
@@ -146,7 +146,7 @@ def test_factory_defaults_to_no_tunnel_source() -> None:
 def _unix(name: str = "box") -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="a", password="b")],
         log=LogMode.NORMAL,
     )
@@ -156,45 +156,45 @@ def _embedded(name: str, *, snmp: bool) -> "object":
     spec = {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"}
     if snmp:
         spec["snmp"] = {"oids": ["1.3.6.1.2.1.1.3.0"]}
-    return create_host_from_dict(spec, element=Element(name))
+    return create_host_from_dict(spec, element=Element(name=name))
 
 
 class TestMonitorable:
     def test_unix_host_is_monitorable(self):
-        assert is_monitorable(_unix())
+        assert is_monitorable(host=_unix())
 
     def test_snmp_only_host_is_monitorable(self):
-        assert is_monitorable(_embedded("z1", snmp=True))
+        assert is_monitorable(host=_embedded("z1", snmp=True))
 
     def test_host_offering_neither_is_not(self):
-        assert not is_monitorable(_embedded("z2", snmp=False))
+        assert not is_monitorable(host=_embedded("z2", snmp=False))
 
     def test_partition_keeps_order_and_names_the_dropped(self):
         a, b, c = _unix("a"), _embedded("b", snmp=False), _embedded("c", snmp=True)
-        assert partition_monitorable([a, b, c]) == MonitorSelection(
+        assert partition_monitorable(hosts=[a, b, c]) == MonitorSelection(
             [a, c], {"b": UNMONITORABLE_REASON}
         )
 
 
 def test_building_a_collector_leaves_the_hosts_log_mode_alone():
     host = _unix()
-    build_monitor_collector([host])
+    build_monitor_collector(hosts=[host])
     assert host.log is LogMode.NORMAL
 
 
 def test_explicit_parsers_replace_the_registered_set_for_shell_hosts():
-    collector = build_monitor_collector([_unix()], parsers=[LoadParser()])
+    collector = build_monitor_collector(hosts=[_unix()], parsers=[LoadParser()])
     assert list(collector._targets[0].parsers) == [LoadParser().command]
 
 
 def test_explicit_parsers_do_not_touch_snmp_targets():
-    collector = build_monitor_collector([_embedded("z", snmp=True)], parsers=[LoadParser()])
+    collector = build_monitor_collector(hosts=[_embedded("z", snmp=True)], parsers=[LoadParser()])
     assert collector._targets[0].parsers == {}
 
 
 def test_explicit_parsers_are_copied_per_host_because_parsers_keep_state():
     mine = LoadParser()
-    collector = build_monitor_collector([_unix("a"), _unix("b")], parsers=[mine])
+    collector = build_monitor_collector(hosts=[_unix("a"), _unix("b")], parsers=[mine])
     first, second = (next(iter(t.parsers.values())) for t in collector._targets)
     assert first is not second
     assert first is not mine

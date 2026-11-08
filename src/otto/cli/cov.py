@@ -325,8 +325,8 @@ def report(
         store = run_command(
             run_coverage_report(
                 cov_dirs,
-                report_dir,
-                inputs,
+                output_dir=report_dir,
+                inputs=inputs,
                 report_title=report_title,
                 tier_specs=tier_specs,
                 prefix=prefix,
@@ -519,7 +519,7 @@ def get(
     try:
         got = run_command(
             get_coverage(
-                output_dir,
+                output_dir=output_dir,
                 tier=tier,
                 ticket=ticket,
                 note=note,

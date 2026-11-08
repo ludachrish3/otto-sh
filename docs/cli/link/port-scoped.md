@@ -93,8 +93,8 @@ state anyway) is untouched.
 A selector's *scope* is its (protocol, side) pair — port-range width is
 never part of it. Two selectors whose port ranges intersect may coexist only
 if one's scope is **strictly narrower** than the other's — a narrower
-protocol, a narrower side, or both. `Selector(5201)` (both protocols, either
-side) and `Selector(5201, "tcp")` compose this way: the second is strictly narrower,
+protocol, a narrower side, or both. `Selector(port=5201)` (both protocols, either
+side) and `Selector(port=5201, proto="tcp")` compose this way: the second is strictly narrower,
 so it carves tcp traffic on 5201 out of the first's broader match. An
 overlap where neither selector is narrower is refused rather than left to
 whichever was applied first:

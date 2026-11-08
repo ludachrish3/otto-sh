@@ -53,7 +53,7 @@ def example_class():
     namespace: dict = {}
     exec(compile(_example_source(), str(_PAGE), "exec"), namespace)  # noqa: S102
     assert "xmodem" in table, "the example's registration call did not run"
-    assert table.peek("xmodem").cls is namespace["XmodemTransfer"]
+    assert table.peek(name="xmodem").cls is namespace["XmodemTransfer"]
     return namespace["XmodemTransfer"]
 
 
@@ -79,7 +79,9 @@ def test_the_example_backend_transfers_a_batch(example_class, tmp_path):
     dest_dir = tmp_path / "remote"
 
     result = asyncio.run(
-        example_class(name="mote").put_files(src_files, dest_dir, show_progress=False)
+        example_class(name="mote").put_files(
+            src_files=src_files, dest_dir=dest_dir, show_progress=False
+        )
     )
 
     assert result.status is Status.Success, result.msg

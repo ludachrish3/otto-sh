@@ -43,7 +43,7 @@ def test_a_repeated_source_adds_up_on_both_paths(tmp_path: Path) -> None:
     lines, _ = parse_info(info)[str(src)]
     store = CoverageStore()
     LCOVLoader(store).load(info, "unit")
-    record = store.get_or_create_file(src)
+    record = store.get_or_create_file(path=src)
 
     assert lines == {1: 5, 2: 1}
     assert record.lines[1].hits.for_tier("unit") == 5
@@ -56,7 +56,7 @@ def test_a_repeated_branch_is_reachable_if_either_record_reached_it(tmp_path: Pa
     _, branches = parse_info(info)[str(src)]
     store = CoverageStore()
     LCOVLoader(store).load(info, "unit")
-    stored = {(b.block, b.branch): b for b in store.get_or_create_file(src).lines[3].branches}
+    stored = {(b.block, b.branch): b for b in store.get_or_create_file(path=src).lines[3].branches}
 
     # (block 0, branch 0): reached twice then never — still reached, 2 times.
     # (block 0, branch 1): never then 4 — reached, 4 times.

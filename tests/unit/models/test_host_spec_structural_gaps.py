@@ -58,7 +58,7 @@ def test_a_power_table_without_a_string_type_is_refused(value):
 )
 def test_an_empty_registry_is_named_as_none(spec_cls, base, field, value, registry):
     for name in registry.names():
-        registry.unregister(name)
+        registry.unregister(name=name)
     with pytest.raises(ValidationError, match=r"'nope' is not a registered .*\. Known: <none>"):
         spec_cls.model_validate({**base, field: value})
 

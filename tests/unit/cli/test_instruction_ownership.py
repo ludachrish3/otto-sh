@@ -85,7 +85,7 @@ def _install_entry(name: str, owner: str) -> None:
     """Register standalone *name* from *owner*'s init import, so *owner* owns it."""
     with registering_project(owner):
         STANDALONE_INSTRUCTIONS.register(
-            name, InstructionEntry(name=name, handler=_noop, module="m")
+            name=name, entry=InstructionEntry(name=name, handler=_noop, module="m")
         )
 
 
@@ -212,7 +212,7 @@ class TestOwner:
             @instruction()
             async def probe_owner() -> None: ...
 
-        assert INSTRUCTIONS.project("probe-owner") == "project9"
+        assert INSTRUCTIONS.project(name="probe-owner") == "project9"
 
     def test_first_party_registration_records_none(self) -> None:
         from otto.cli.run import instruction
@@ -220,16 +220,16 @@ class TestOwner:
         @instruction()
         async def probe_first_party() -> None: ...
 
-        assert INSTRUCTIONS.project("probe-first-party") is None
+        assert INSTRUCTIONS.project(name="probe-first-party") is None
 
     def test_a_hand_built_entry_is_owned_by_the_project_that_registers_it(self) -> None:
         """Ownership is the registration's, not a field a hand-built entry can omit."""
         _install_entry("hand", "project3")
-        assert INSTRUCTIONS.project("hand") == "project3"
+        assert INSTRUCTIONS.project(name="hand") == "project3"
 
     def test_a_project_instruction_has_no_owner(self) -> None:
         """Otto's six derive with no owner: a body per project, not one owning project."""
-        assert INSTRUCTIONS.project("install") is None
+        assert INSTRUCTIONS.project(name="install") is None
 
     def test_a_registration_here_does_not_leak(self) -> None:
         """The root conftest's ``_isolate_registries`` is what cleans up after these.

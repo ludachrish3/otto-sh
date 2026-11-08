@@ -79,7 +79,7 @@ async def test_bash_streams_each_line_live(bash_session: FrameMockSession):
     feed_task = asyncio.create_task(
         s.feed_after_write(f"{s._begin_marker}\nline1\nline2\n{s._end_marker_prefix}0__\n")
     )
-    result = await s.run_cmd("seq 1 2")
+    result = await s.run_cmd(cmd="seq 1 2")
     await feed_task
 
     assert result.value == "line1\nline2"
@@ -100,7 +100,7 @@ async def test_zephyr_buffers_and_emits_parsed_output_once(zephyr_session: Frame
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
     )
-    result = await s.run_cmd("llext unload cov_ext")
+    result = await s.run_cmd(cmd="llext unload cov_ext")
     await feed_task
 
     assert result.value == "Unloaded extension cov_ext"
@@ -119,7 +119,7 @@ async def test_zephyr_no_output_emits_nothing(zephyr_session: FrameMockSession):
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
     )
-    result = await s.run_cmd("fs mount fat /RAM:")
+    result = await s.run_cmd(cmd="fs mount fat /RAM:")
     await feed_task
 
     assert result.value == ""
@@ -134,7 +134,7 @@ async def test_on_output_argument_overrides_default_sink(bash_session: FrameMock
     feed_task = asyncio.create_task(
         s.feed_after_write(f"{s._begin_marker}\nhi\n{s._end_marker_prefix}0__\n")
     )
-    await s.run_cmd("echo hi", on_output=sink.append)
+    await s.run_cmd(cmd="echo hi", on_output=sink.append)
     await feed_task
 
     assert sink == ["hi"]
@@ -158,7 +158,7 @@ class TestWriteProgress:
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 
-        await s.write_transport("0123456789")  # 10 bytes, chunk 4 -> 3 writes
+        await s.write_transport(data="0123456789")  # 10 bytes, chunk 4 -> 3 writes
 
         assert b"".join(writes) == b"0123456789"
         assert progress == [(4, 10), (8, 10), (10, 10)]
@@ -172,7 +172,7 @@ class TestWriteProgress:
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 
-        await s.write_transport("abcd")
+        await s.write_transport(data="abcd")
 
         assert progress == [(4, 4)]
 
@@ -200,7 +200,7 @@ class TestWriteProgress:
                 f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
             )
         )
-        await s.run_cmd("noop", write_progress=cb)
+        await s.run_cmd(cmd="noop", write_progress=cb)
         await feed_task
 
         assert seen == [cb]  # set during the framed write

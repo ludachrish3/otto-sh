@@ -41,8 +41,8 @@ class _PeakTrackingHost:
         await asyncio.sleep(0.01)
         self._in_flight -= 1
         return Result(
-            Status.Success,
-            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            status=Status.Success,
+            value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
         )
 
 
@@ -189,8 +189,11 @@ async def test_a_per_file_failure_is_that_files_entry_and_other_levels_still_lan
         calls.append(kw)
         if any(f.name == "a.txt" for f in files):
             return Result(
-                Status.Error,
-                value={f: Result(Status.Error, msg="boom", value=dest_dir / f.name) for f in files},
+                status=Status.Error,
+                value={
+                    f: Result(status=Status.Error, msg="boom", value=dest_dir / f.name)
+                    for f in files
+                },
                 msg="boom",
             )
         return await real_get(files, dest_dir, **kw)

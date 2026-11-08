@@ -27,7 +27,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 
     type_name = "zephyr-inline"
 
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         """Disable shell echo, then emit the readiness probe.
 
         Unlike 3.7+, the Zephyr 2.7 telnet shell echoes input by default. Left
@@ -41,7 +41,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         """
         return f"{prefix}shell echo off\r{m.ready}\n"
 
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         """Bracket ``cmd`` with the BEGIN/END sentinels; no ``retval`` line.
 
         Three CR-separated lines — every command self-reports its code via
@@ -63,7 +63,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         """
         return max((i for i, ln in enumerate(lines) if m.begin in ln), default=-1)
 
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Return the command's exit code.
 
         The last ``retCode = <n>`` line after the BEGIN marker. The rejected
@@ -71,7 +71,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         is the real command's. ``-1`` if none is found (e.g. an unpatched 2.7
         build — a clear signal the firmware patch is missing).
         """
-        lines = self.region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m=m)
         begin = self._begin_line(lines, m)
         for ln in reversed(lines[begin + 1 :]):
             match = _RETCODE_RE.search(ln)
@@ -82,6 +82,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
     def parse_output(
         self,
         buffer: str,
+        *,
         cmd: str,  # noqa: ARG002 -- override signature; the AST guard forbids a rename
         m: SessionMarkers,
     ) -> str:
@@ -102,7 +103,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         the first line the shell prints after BEGIN's code, so this never reads
         or hard-codes the prompt text.
         """
-        lines = self.region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m=m)
         begin = self._begin_line(lines, m)
         rc_idx = [i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])]
         if len(rc_idx) < 2:  # noqa: PLR2004 -- arity check; the AST guard forbids a named constant

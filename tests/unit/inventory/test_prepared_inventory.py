@@ -20,7 +20,7 @@ from otto.models.settings import InventoryConfigSpec
 
 def _compile(table: dict, tmp_path: Path, *, origin: str = "o.toml"):
     return compile_inventory(
-        InventoryConfigSpec.model_validate(table), anchor_dir=tmp_path, origin=origin
+        cfg=InventoryConfigSpec.model_validate(table), anchor_dir=tmp_path, origin=origin
     )
 
 
@@ -45,13 +45,13 @@ def test_two_projects_naming_one_json_file_from_their_own_roots_are_the_same(tmp
     (tmp_path / "b").mkdir()
     a = _compile({"backend": "json", "path": "inv.json"}, tmp_path / "a")  # relative
     b = _compile({"backend": "json", "path": str(tmp_path / "a" / "inv.json")}, tmp_path / "b")
-    assert a.same_as(b)  # anchoring, not resolution: both are <tmp>/a/inv.json
+    assert a.same_as(other=b)  # anchoring, not resolution: both are <tmp>/a/inv.json
 
 
 def test_cache_ttl_still_separates_otherwise_equal_tables(tmp_path):
     a = _compile({"backend": "json", "path": "x.json", "cache_ttl": "0"}, tmp_path)
     b = _compile({"backend": "json", "path": "x.json", "cache_ttl": "7d"}, tmp_path)
-    assert not a.same_as(b)
+    assert not a.same_as(other=b)
 
 
 def test_an_unknown_json_key_is_a_parse_error_naming_backend_and_origin(tmp_path):
@@ -66,7 +66,7 @@ def test_snapshot_caching_reads_metadata_not_the_name(tmp_path):
     register_inventory_backend(
         "json", config=Cfg, factory=lambda c: _Remote(), snapshot_cache=True, overwrite=True
     )
-    inv = construct_inventory(_compile({"backend": "json", "cache_ttl": "7d"}, tmp_path))
+    inv = construct_inventory(compiled=_compile({"backend": "json", "cache_ttl": "7d"}, tmp_path))
     assert type(inv).__name__ == "SnapshotCache"
 
 
@@ -82,7 +82,7 @@ def test_a_factory_s_type_error_names_origin_and_backend(tmp_path):
         InventoryConstructionError,
         match=r"'boom' \(registered by .*; configured in o\.toml\): construction failed.*urll",
     ):
-        construct_inventory(_compile({"backend": "boom"}, tmp_path))
+        construct_inventory(compiled=_compile({"backend": "boom"}, tmp_path))
 
 
 def _slug(compiled) -> str:
@@ -97,7 +97,7 @@ def _slug(compiled) -> str:
 def test_the_snapshot_slug_and_same_as_share_their_inputs(tmp_path):
     zero = _compile({"backend": "netbox", "url": "https://nb", "cache_ttl": "0"}, tmp_path)
     week = _compile({"backend": "netbox", "url": "https://nb", "cache_ttl": "7d"}, tmp_path)
-    assert not zero.same_as(week)
+    assert not zero.same_as(other=week)
     assert _slug(zero) != _slug(week)
 
     (tmp_path / "a").mkdir()
@@ -106,7 +106,7 @@ def test_the_snapshot_slug_and_same_as_share_their_inputs(tmp_path):
     absolute = _compile(
         {"backend": "json", "path": str(tmp_path / "a" / "inv.json")}, tmp_path / "b"
     )
-    assert rel.same_as(absolute)
+    assert rel.same_as(other=absolute)
     assert _slug(rel) == _slug(absolute)
 
 
@@ -135,16 +135,23 @@ def test_snapshot_identity_ignores_provenance(tmp_path, monkeypatch):
         tmp_path / "b",
         origin=str(tmp_path / "b.toml"),
     )
-    assert a.same_as(b)
-    assert construct_inventory(a).snapshot_path == construct_inventory(b).snapshot_path
+    assert a.same_as(other=b)
+    assert (
+        construct_inventory(compiled=a).snapshot_path
+        == construct_inventory(compiled=b).snapshot_path
+    )
 
 
 def test_one_netbox_declared_from_two_projects_shares_one_snapshot(tmp_path, monkeypatch):
     """The snapshot otto opens is keyed without the declaring project or its settings file."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = {"backend": "netbox", "url": "https://nb", "cache_ttl": "7d"}
-    a = construct_inventory(_compile(table, tmp_path / "a", origin=str(tmp_path / "a.toml")))
-    b = construct_inventory(_compile(table, tmp_path / "b", origin=str(tmp_path / "b.toml")))
+    a = construct_inventory(
+        compiled=_compile(table, tmp_path / "a", origin=str(tmp_path / "a.toml"))
+    )
+    b = construct_inventory(
+        compiled=_compile(table, tmp_path / "b", origin=str(tmp_path / "b.toml"))
+    )
     assert type(a).__name__ == "SnapshotCache"
     assert a.snapshot_path == b.snapshot_path
 
@@ -157,7 +164,7 @@ from otto.inventory.cache import snapshot_slug_material
 from otto.models.settings import InventoryConfigSpec
 
 compiled = compile_inventory(
-    InventoryConfigSpec.model_validate(
+    cfg=InventoryConfigSpec.model_validate(
         {"backend": "netbox", "url": "https://nb/", "filter": {"site": "a"}, "cache_ttl": "7d"}
     ),
     anchor_dir=Path(sys.argv[1]),
@@ -203,10 +210,12 @@ def test_every_built_in_passes_the_result_check(tmp_path):
         {"backend": "netbox", "url": "https://nb", "cache_ttl": "0"},
     ):
         compiled = _compile(table, tmp_path)
-        _check_inventory_result(table["backend"], INVENTORY_BACKENDS.build(compiled.prepared))
+        _check_inventory_result(
+            table["backend"], INVENTORY_BACKENDS.build(prepared=compiled.prepared)
+        )
     store = construct_creds_store(
-        compile_creds_table(
-            {"backend": "json", "path": "creds.json"}, anchor_dir=tmp_path, origin="o.toml"
+        compiled=compile_creds_table(
+            table={"backend": "json", "path": "creds.json"}, anchor_dir=tmp_path, origin="o.toml"
         )
     )
     _check_creds_result("json", store)
@@ -262,7 +271,7 @@ def test_an_inventory_result_missing_any_protocol_member_is_a_result_error(tmp_p
     )
     compiled = _compile({"backend": "partial"}, tmp_path)
     with pytest.raises(InventoryConstructionError, match=rf"result failed.*\b{member}\b"):
-        construct_inventory(compiled)
+        construct_inventory(compiled=compiled)
 
 
 def test_the_env_carries_the_anchor_and_the_origin(tmp_path):
@@ -301,7 +310,7 @@ def test_a_direct_registration_without_inventory_metadata_is_refused():
 
     with pytest.raises(TypeError, match="not an InventoryMetadata"):
         INVENTORY_BACKENDS.register(
-            "no-metadata",
-            configured_backend(config=Cfg, factory=lambda c: _Remote(), metadata=None),
+            name="no-metadata",
+            entry=configured_backend(config=Cfg, factory=lambda c: _Remote(), metadata=None),
         )
     assert "no-metadata" not in INVENTORY_BACKENDS

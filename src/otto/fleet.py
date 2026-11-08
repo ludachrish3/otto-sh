@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 def all_hosts(
-    pattern: re.Pattern[str] | None = None,
     *,
+    pattern: re.Pattern[str] | None = None,
     include_containers: bool = False,
     include_local: bool = False,
     **overrides: "Unpack[HostOverrides]",
@@ -99,12 +99,12 @@ def all_hosts(
 
             import re
 
-            matched = list(all_hosts(re.compile(r"test2.*")))
+            matched = list(all_hosts(pattern=re.compile(r"test2.*")))
     """
     from .run_context import get_context
 
     yield from get_context().all_hosts(
-        pattern,
+        pattern=pattern,
         include_containers=include_containers,
         include_local=include_local,
         **overrides,
@@ -169,10 +169,10 @@ async def do_for_all_hosts(
 
 async def run_on_all_hosts(
     cmds: list[str] | str,
+    *,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     timeout: float = DEFAULT_COMMAND_TIMEOUT,
-    *,
     include_containers: bool = False,
     **overrides: "Unpack[HostOverrides]",
 ) -> "dict[str, Results | BaseException]":
@@ -291,8 +291,8 @@ names what was passed, so a caller can tell a typo from a project it forgot."""
 
 def fleet_of_interest(
     lab: "Lab",
-    projects: "list[Project]",
     *,
+    projects: "list[Project]",
     owner: str | None = None,
     exclude_projects: list[str] | None = None,
     include_containers: bool = False,
@@ -369,9 +369,9 @@ def fleet_of_interest(
     ...     root="/projects/sensors",
     ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
     ... )
-    >>> fleet_of_interest(lab, [sensors])
+    >>> fleet_of_interest(lab, projects=[sensors])
     ['sensor-1']
-    >>> fleet_of_interest(lab, [])  # nothing declared: the whole lab
+    >>> fleet_of_interest(lab, projects=[])  # nothing declared: the whole lab
     ['sensor-1', 'gw-1']
     """
     # function-scope: keeps this module import-light
@@ -392,7 +392,9 @@ def fleet_of_interest(
         # projects. This caller handed them over.
         raise ProjectScopeError(
             "",  # no project, so no settings.toml to send the reader to
-            _UNKNOWN_QUERY_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
+            message=_UNKNOWN_QUERY_OWNER.format(
+                owner=owner, known=", ".join(sorted(scopes)) or "(none)"
+            ),
         )
     admissible = scoped_ids(
         lab.hosts, scopes, owner, exclude_projects=tuple(exclude_projects or ())

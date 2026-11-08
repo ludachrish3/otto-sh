@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from ..run_context import OttoContext
 
 
-def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext") -> None:
+def check_instruction_active(*, name: str, owner: "str | None", ctx: "OttoContext") -> None:
     """Refuse instruction *name* when its owning project is inactive in *ctx*.
 
     *owner* is ``INSTRUCTIONS.project(name)``, the project whose init import
@@ -27,14 +27,14 @@ def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext")
 
     project = normalize_name(owner)
     if switched_off(owner, ctx):
-        raise InstructionInactiveError(name, owner, project=project, reason="excluded")
+        raise InstructionInactiveError(name, owner=owner, project=project, reason="excluded")
     # Not switched off, yet inactive: `active()` reaches that verdict only by
     # finding an unusable ProjectScope under the project's declared name, so the
     # lookup cannot miss.
     scope = scopes_of(ctx)[owner]
     raise InstructionInactiveError(
         name,
-        owner,
+        owner=owner,
         project=project,
         reason="out_of_lab_scope" if scope.excluded else "host_starved",
         loaded_labs=list(scope.loaded_labs),

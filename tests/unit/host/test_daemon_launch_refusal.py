@@ -232,7 +232,7 @@ class TestThroughAHostBuiltFromLabData:
                 "ip": "192.0.2.1",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("bb1"),
+            element=Element(name="bb1"),
         )
         assert host.has_bash is False
         with pytest.raises(UnsupportedOnUserlandError, match="bb1"):
@@ -248,7 +248,7 @@ class TestThroughAHostBuiltFromLabData:
                 "ip": "192.0.2.2",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("gnu1"),
+            element=Element(name="gnu1"),
         )
         assert host.has_bash is True
         assert refuse_if_launch_wrapper_needs_bash(host) is None
@@ -269,7 +269,7 @@ class TestThroughAHostBuiltFromLabData:
                 "has_bash": False,
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("dash1"),
+            element=Element(name="dash1"),
         )
         with pytest.raises(UnsupportedOnUserlandError, match="dash1"):
             refuse_if_launch_wrapper_needs_bash(host)

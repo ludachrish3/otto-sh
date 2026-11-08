@@ -2373,7 +2373,7 @@ tree, so no elapsed — or `red`), when it was written, and the lane.
 
 A registry's built-in entries are registered in the module that defines the
 registry, as a {class}`~otto.registry.Ref` naming the implementation
-(`Ref("otto.host.transfer.nc:NcFileTransfer")`), never by the implementation
+(`Ref(target="otto.host.transfer.nc:NcFileTransfer")`), never by the implementation
 module registering itself on import. Listing the registry then imports
 nothing, and a lookup imports only the entry it names. The mechanism and its
 guards are on {doc}`architecture/subsystems/registries`.

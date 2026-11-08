@@ -118,7 +118,7 @@ def _inventory(code: int = 1) -> "Inventory":
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = build_inventory(get_projects())
+        inventory = build_inventory(projects=get_projects())
     except InventoryError as e:
         from rich.text import Text
 
@@ -163,7 +163,7 @@ def _stale_row(inventory: "Inventory") -> None:
     """
     from ..inventory.cache import snapshot_cache_of
 
-    cache = snapshot_cache_of(inventory)
+    cache = snapshot_cache_of(inventory=inventory)
     if cache is not None and cache.stale_notice is not None:
         _row(cache.stale_notice)
 
@@ -347,7 +347,7 @@ def export(
         fail(f"{path} exists; pass --force to overwrite it", soft_wrap=True)
     from ..inventory.snapshot import records_to_document, write_document_atomically
 
-    doc = records_to_document(_records(inventory))
+    doc = records_to_document(records=_records(inventory))
     # The same writer the snapshot cache uses: write-then-rename, so a reader
     # never sees a half-written document, and mode 0600 — a stage-1 document
     # carries no credentials but does describe a whole estate.
@@ -387,7 +387,7 @@ def _document_records(path: Path) -> "dict[str, InventoryRecord]":
         # `supplies`: an older export may hold a field this deployment no
         # longer supplies, and the diff is how you SEE that rather than a
         # parse error that hides it.
-        return document_to_records(data, source=str(path), supplies=FILLABLE_INVENTORY_FIELDS)
+        return document_to_records(data=data, source=str(path), supplies=FILLABLE_INVENTORY_FIELDS)
     except InventoryError as e:
         fail(e, _CANNOT_ANSWER, soft_wrap=True)
 
@@ -441,7 +441,7 @@ def diff(
         left_label, left = inventory.label, _records(inventory, _CANNOT_ANSWER)
         right_label, right = str(path), _document_records(path)
 
-    differences = diff_records(left, right)
+    differences = diff_records(left=left, right=right)
     if not differences:
         _row(f"no differences between {left_label} and {right_label}")
         return
@@ -475,7 +475,7 @@ def refresh() -> None:
     from ..inventory.errors import InventoryError
 
     inventory = _inventory()
-    cache = snapshot_cache_of(inventory)
+    cache = snapshot_cache_of(inventory=inventory)
     if cache is None:
         # An error, not a cheerful no-op: the operator asked for a fetch and
         # did not get one, and `otto inventory refresh && <next step>` must

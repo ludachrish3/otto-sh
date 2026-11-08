@@ -19,7 +19,7 @@ from otto.host.command_frame import BashFrame, SessionMarkers
 from tests.unit.host.test_session import MockSession
 from tests.unit.host.test_terminal_mapping import identity_reply, lossy_reply, onlcr_reply
 
-M = SessionMarkers.for_session("cafef00d")
+M = SessionMarkers.for_session(session_id="cafef00d")
 
 # (shell command, what the program writes, its exit status). The command text
 # is documentation only here; the real-host test runs the same table.
@@ -60,14 +60,14 @@ class TestParseOutput:
     @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
     def test_exact(self, cmd: str, out: str, rc: int):
         buf = f"{M.begin}\n{out}{M.end_prefix}{rc}__\n"
-        assert BashFrame().parse_output(buf, cmd, M) == _expected(out)
-        assert BashFrame().extract_retcode(buf, M) == rc
+        assert BashFrame().parse_output(buf, cmd=cmd, m=M) == _expected(out)
+        assert BashFrame().extract_retcode(buf, m=M) == rc
 
     @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
     def test_the_echoed_command_is_still_skipped(self, cmd: str, out: str, rc: int):
-        echoed = BashFrame().frame(cmd, M)
+        echoed = BashFrame().frame(cmd, m=M)
         buf = f"{echoed}{M.begin}\n{out}{M.end_prefix}{rc}__\n"
-        assert BashFrame().parse_output(buf, cmd, M) == _expected(out)
+        assert BashFrame().parse_output(buf, cmd=cmd, m=M) == _expected(out)
 
 
 async def _measured(reply) -> MockSession:
@@ -82,7 +82,7 @@ async def _measured(reply) -> MockSession:
 
 async def _run(s: MockSession, cmd: str, raw: str):
     feed = asyncio.create_task(s.feed_after_write(raw))
-    result = await s.run_cmd(cmd)
+    result = await s.run_cmd(cmd=cmd)
     await feed
     return result
 
@@ -92,16 +92,16 @@ class TestAnUnfoldedCrlfBuffer:
 
     def test_begins_crlf_means_the_trailing_crlf_is_the_one_removed(self):
         buf = f"{M.begin}\r\na\r\nb\r\n{M.end_prefix}0__\r\n"
-        assert BashFrame().parse_output(buf, "cmd", M) == "a\r\nb"
+        assert BashFrame().parse_output(buf, cmd="cmd", m=M) == "a\r\nb"
 
     def test_a_trailing_lone_lf_is_not_trimmed_after_a_crlf_begin(self):
         # BEGIN said this stream's line ending is CRLF, so a bare LF at the end is data.
         buf = f"{M.begin}\r\na\n{M.end_prefix}0__\r\n"
-        assert BashFrame().parse_output(buf, "cmd", M) == "a\n"
+        assert BashFrame().parse_output(buf, cmd="cmd", m=M) == "a\n"
 
     def test_a_program_cr_at_the_end_survives_on_an_lf_stream(self):
         buf = f"{M.begin}\nprogress\r{M.end_prefix}0__\n"
-        assert BashFrame().parse_output(buf, "cmd", M) == "progress\r"
+        assert BashFrame().parse_output(buf, cmd="cmd", m=M) == "progress\r"
 
 
 class TestThroughTheSession:

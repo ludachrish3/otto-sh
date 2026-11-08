@@ -30,11 +30,11 @@ backend. The commands build theirs from settings:
 >>> def gate_for(user):
 ...     backend = ExampleReservationBackend(username=user)
 ...     return ReservationGate(backend=backend, identity=resolve_username(user))
->>> translate(lambda: check_report(gate_for("alice"), demo))
+>>> translate(lambda: check_report(gate_for("alice"), lab=demo))
 lab-a  lab demo  held
 OK
 0
->>> translate(lambda: check_report(gate_for("carol"), demo))
+>>> translate(lambda: check_report(gate_for("carol"), lab=demo))
 lab-a  lab demo  missing
 User 'carol' does not hold all resources required by lab 'demo'. Missing:
   lab-a  lab demo  (held by: alice)
@@ -93,12 +93,12 @@ def translate(action: Callable[[], int]) -> int:
 
 def run_gate(gate: ReservationGate, lab: Lab) -> int:
     """Evaluate *gate* for *lab* and print the outcome; a refusal raises for :func:`translate`."""
-    outcome = gate.evaluate(lab)
+    outcome = gate.evaluate(lab=lab)
     typer.echo(outcome.warning or "OK")
     return 0
 
 
-def check_report(gate: ReservationGate, lab: Lab) -> int:
+def check_report(gate: ReservationGate, *, lab: Lab) -> int:
     """Print *gate*'s report for *lab*, one line per requirement, then the verdict."""
     report = gate.report(lab)
     for row in report.rows:
@@ -117,7 +117,7 @@ def _options(ctx: typer.Context) -> _Options:
 def _gate(opts: _Options) -> ReservationGate:
     return gate_from_settings(
         {"backend": opts.backend},
-        Path.cwd(),
+        project_root=Path.cwd(),
         holder=opts.holder,
         skip_reservation_check=opts.skip,
     )
@@ -164,7 +164,7 @@ def gate(ctx: typer.Context) -> None:
 def check(ctx: typer.Context) -> None:
     """Report every required resource and whether you hold it."""
     opts = _options(ctx)
-    raise typer.Exit(translate(lambda: check_report(_gate(opts), _lab(opts))))
+    raise typer.Exit(translate(lambda: check_report(_gate(opts), lab=_lab(opts))))
 
 
 if __name__ == "__main__":

@@ -32,10 +32,10 @@ pytestmark = pytest.mark.asyncio
 
 class _Shell(ShellProduct):
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return False
@@ -51,9 +51,9 @@ class _ScpLikeHost(LocalHost):
 
     def __init__(self) -> None:
         super().__init__()
-        self.load = AsyncMock(return_value=Result(Status.Success))
-        self.unload = AsyncMock(return_value=Result(Status.Success))
-        self.lsmod = AsyncMock(return_value=Result(Status.Success, value=[]))
+        self.load = AsyncMock(return_value=Result(status=Status.Success))
+        self.unload = AsyncMock(return_value=Result(status=Status.Success))
+        self.lsmod = AsyncMock(return_value=Result(status=Status.Success, value=[]))
 
     async def put(self, src_files, dest_dir, *args, **kwargs):
         src = src_files[0] if isinstance(src_files, list) else src_files
@@ -61,8 +61,8 @@ class _ScpLikeHost(LocalHost):
         try:
             shutil.copy(src, dest)
         except OSError as e:
-            return Result(Status.Error, msg=str(e))
-        return Result(Status.Success, value={src: Result(Status.Success, value=dest)})
+            return Result(status=Status.Error, msg=str(e))
+        return Result(status=Status.Success, value={src: Result(status=Status.Success, value=dest)})
 
 
 def _entry(kind: str, seam: str, **params) -> DeclaredEntry:

@@ -48,7 +48,7 @@ _ELEMENT_KEYS = ("element", "element_id")
 
 def element_of(flat: dict[str, Any]) -> Element:
     """The element a flat v1-style host dict names (see :func:`flat_hosts`)."""
-    return Element(flat["element"], id=flat.get("element_id"))
+    return Element(name=flat["element"], id=flat.get("element_id"))
 
 
 def entry_of(flat: dict[str, Any]) -> dict[str, Any]:
@@ -290,7 +290,7 @@ def json_lab_sources(
         PendingLabSource(
             backend="json",
             label=f"{name}/json#1",
-            raw=FrozenMap.freeze_json({"paths": [str(p) for p in paths]}),
+            raw=FrozenMap.freeze_json(value={"paths": [str(p) for p in paths]}),
             origin=str(root / ".otto" / "settings.toml"),
             project_root=root,
         )

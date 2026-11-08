@@ -31,7 +31,7 @@ async def _deploy_no_opts() -> None:
 
 def _registered(entry: InstructionEntry) -> InstructionEntry:
     """Register *entry*: the app reads its owner from the table it is served from."""
-    STANDALONE_INSTRUCTIONS.register(entry.name, entry)
+    STANDALONE_INSTRUCTIONS.register(name=entry.name, entry=entry)
     return entry
 
 

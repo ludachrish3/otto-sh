@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 def parse_inventory_document(
-    data: object, *, source: str, supplies: frozenset[str]
+    *, data: object, source: str, supplies: frozenset[str]
 ) -> dict[str, InventoryRecord]:
     """``{key: record}`` from a parsed stage-1 document.
 
@@ -75,7 +75,9 @@ class JsonInventory(JsonFileSource):
     def _load(self) -> dict[str, InventoryRecord]:
         if self._records is None:
             self._records = parse_inventory_document(
-                self.read_document(InventoryError), source=str(self.path), supplies=self.supplies
+                data=self.read_document(refuse=InventoryError),
+                source=str(self.path),
+                supplies=self.supplies,
             )
         return self._records
 
@@ -85,7 +87,7 @@ class JsonInventory(JsonFileSource):
         try:
             return records[key]
         except KeyError:
-            raise InventoryKeyError(key, self.label) from None
+            raise InventoryKeyError(key, label=self.label) from None
 
     def list_keys(self) -> list[str]:
         """Every key in the file, sorted; parses the file on the first call."""

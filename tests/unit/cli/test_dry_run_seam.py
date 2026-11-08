@@ -62,8 +62,8 @@ class TestRegistrationFlagThreading:
             # positive control: the same call without the kwarg stays safe
             assert CLI_COMMANDS.get("_seam_default").dry_run_preview is False
         finally:
-            CLI_COMMANDS.unregister("_seam_optin")
-            CLI_COMMANDS.unregister("_seam_default")
+            CLI_COMMANDS.unregister(name="_seam_optin")
+            CLI_COMMANDS.unregister(name="_seam_default")
 
     def test_cli_command_decorator_threads_the_flag(self) -> None:
         from otto.cli.registry import CLI_COMMANDS
@@ -74,7 +74,7 @@ class TestRegistrationFlagThreading:
         try:
             assert CLI_COMMANDS.get("_seam_deco").dry_run_preview is True
         finally:
-            CLI_COMMANDS.unregister("_seam_deco")
+            CLI_COMMANDS.unregister(name="_seam_deco")
 
     def test_cli_exposed_stamps_the_flag_and_defaults_false(self) -> None:
         @cli_exposed(dry_run_preview=True)
@@ -422,7 +422,7 @@ class SpyHost:
     @cli_exposed
     async def probe(self, deep: bool = False) -> Result:
         self.awaited.append("probe")
-        return Result(Status.Success, value="probed", msg="")
+        return Result(status=Status.Success, value="probed", msg="")
 
     @cli_exposed(name="preview-verb", dry_run_preview=True)
     async def preview_verb(self) -> Result:
@@ -592,11 +592,13 @@ class TestRendererHandlesADecline:
         # POSITIVE CONTROL, same renderer: a real failure still exits with its
         # own code, so the branch above cannot have swallowed failures wholesale.
         with pytest.raises(typer.Exit) as exc:
-            render_leaf_value(CommandResult(Status.Failed, value="", command="false", retcode=3))
+            render_leaf_value(
+                CommandResult(status=Status.Failed, value="", command="false", retcode=3)
+            )
         assert exc.value.exit_code == 3
 
     def test_a_declines_message_is_what_gets_printed(self, capsys: Any) -> None:
-        render_leaf_value(Result(Status.NotRun, msg="[DRY RUN] WRITE: 38 bytes -> /tmp/x"))
+        render_leaf_value(Result(status=Status.NotRun, msg="[DRY RUN] WRITE: 38 bytes -> /tmp/x"))
         assert "[DRY RUN] WRITE: 38 bytes -> /tmp/x" in capsys.readouterr().out
 
     def test_a_msgless_decline_makes_no_claim_about_device_contact(self, capsys: Any) -> None:
@@ -718,7 +720,7 @@ def _dialable_host(element: str = "dut1", ip: str = "198.51.100.1") -> Any:
     from otto.host.login_proxy import Cred
     from otto.host.unix_host import UnixHost
 
-    return UnixHost(ip=ip, creds=[Cred(login="root", password="x")], element=Element(element))
+    return UnixHost(ip=ip, creds=[Cred(login="root", password="x")], element=Element(name=element))
 
 
 def _lab_with(*hosts: Any) -> Any:

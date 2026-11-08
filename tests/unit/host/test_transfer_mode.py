@@ -31,7 +31,7 @@ from otto.utils import Status
     ],
 )
 def test_string_modes_are_always_octal(raw, expected):
-    result = parse_file_mode(raw)
+    result = parse_file_mode(value=raw)
     assert result.is_ok, result.msg
     assert result.value == expected
 
@@ -39,57 +39,57 @@ def test_string_modes_are_always_octal(raw, expected):
 def test_bare_755_is_octal_not_decimal():
     # The whole point: "755" read base-10 would be 0o1363, which is NOT what
     # anyone means by a mode of 755.
-    parsed = parse_file_mode("755").value
+    parsed = parse_file_mode(value="755").value
     assert parsed == 0o755
     assert parsed != 755
 
 
 def test_int_mode_passes_through_untouched():
     # Python API: mode=0o755 is already a mode; never re-read as base-8.
-    result = parse_file_mode(0o755)
+    result = parse_file_mode(value=0o755)
     assert result.is_ok
     assert result.value == 0o755
 
 
 def test_none_is_ok_and_means_no_mode():
-    result = parse_file_mode(None)
+    result = parse_file_mode(value=None)
     assert result.is_ok
     assert result.value is None
 
 
 @pytest.mark.parametrize("raw", ["789", "rwx", "", "0x1ff", "u+x", "7 5 5"])
 def test_non_octal_strings_are_rejected(raw):
-    result = parse_file_mode(raw)
+    result = parse_file_mode(value=raw)
     assert result.status is Status.Error
     assert repr(raw) in result.msg
 
 
 def test_negative_mode_rejected():
-    result = parse_file_mode(-1)
+    result = parse_file_mode(value=-1)
     assert result.status is Status.Error
     assert "negative" in result.msg
 
 
 @pytest.mark.parametrize("raw", ["77777", 0o10000])
 def test_out_of_range_mode_rejected(raw):
-    result = parse_file_mode(raw)
+    result = parse_file_mode(value=raw)
     assert result.status is Status.Error
     assert "out of range" in result.msg
 
 
 def test_bool_is_not_a_mode():
     # bool subclasses int; True would silently become 0o1 without a guard.
-    result = parse_file_mode(True)
+    result = parse_file_mode(value=True)
     assert result.status is Status.Error
 
 
 def test_chmod_command_is_octal_without_prefix_and_batched():
-    cmd = chmod_command(0o755, [Path("/opt/a"), Path("/opt/b")])
+    cmd = chmod_command(mode=0o755, paths=[Path("/opt/a"), Path("/opt/b")])
     assert cmd == "chmod 755 -- /opt/a /opt/b"
 
 
 def test_chmod_command_quotes_hostile_paths():
-    cmd = chmod_command(0o644, [Path("/opt/my file"), Path("/opt/it's")])
+    cmd = chmod_command(mode=0o644, paths=[Path("/opt/my file"), Path("/opt/it's")])
     assert "'/opt/my file'" in cmd
     assert cmd.count("chmod") == 1
     # A bare shell would split these; quoting must survive.
@@ -105,7 +105,7 @@ def test_chmod_command_never_passes_a_path_chmod_reads_as_options():
     assert str(dest) == "-rf"
     assert shlex.quote(str(dest)) == "-rf"
 
-    cmd = chmod_command(0o600, [dest])
+    cmd = chmod_command(mode=0o600, paths=[dest])
     argv = shlex.split(cmd)
     assert argv == ["chmod", "600", "--", "./-rf"]
 
@@ -125,14 +125,14 @@ class _FakeBackend(BaseFileTransfer):
         self.apply_mode_calls: list[tuple[list[Path], int]] = []
         # `or` would be wrong here: Result.__bool__ follows is_ok, so a failing
         # chmod_result is falsy and would be silently replaced by Success.
-        self._chmod_result = Result(Status.Success) if chmod_result is None else chmod_result
+        self._chmod_result = Result(status=Status.Success) if chmod_result is None else chmod_result
         self._outcomes = outcomes
 
     async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         self.run_put_calls += 1
         if self._outcomes is not None:
             return dict(self._outcomes)
-        return {src: Result(Status.Success, value=dest_dir / src.name) for src in src_files}
+        return {src: Result(status=Status.Success, value=dest_dir / src.name) for src in src_files}
 
     async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
@@ -146,7 +146,9 @@ class _FakeBackend(BaseFileTransfer):
 async def test_unsupported_backend_fails_before_any_bytes_move():
     # The point of the pre-flight check: assert run_put was never reached.
     backend = _FakeBackend(name="zephyr1", supports_mode=False)
-    result = await backend.put_files([Path("a.bin")], Path("/RAM:"), False, mode="755")
+    result = await backend.put_files(
+        src_files=[Path("a.bin")], dest_dir=Path("/RAM:"), show_progress=False, mode="755"
+    )
     assert not result.is_ok
     assert backend.run_put_calls == 0
     assert "zephyr1" in result.msg
@@ -157,7 +159,9 @@ async def test_unsupported_backend_fails_before_any_bytes_move():
 @pytest.mark.asyncio
 async def test_bad_octal_fails_before_any_bytes_move():
     backend = _FakeBackend(supports_mode=True)
-    result = await backend.put_files([Path("a.bin")], Path("/opt"), False, mode="789")
+    result = await backend.put_files(
+        src_files=[Path("a.bin")], dest_dir=Path("/opt"), show_progress=False, mode="789"
+    )
     assert not result.is_ok
     assert backend.run_put_calls == 0
     assert "789" in result.msg
@@ -166,7 +170,9 @@ async def test_bad_octal_fails_before_any_bytes_move():
 @pytest.mark.asyncio
 async def test_no_mode_never_calls_apply_mode():
     backend = _FakeBackend(supports_mode=True)
-    result = await backend.put_files([Path("a.bin")], Path("/opt"), False)
+    result = await backend.put_files(
+        src_files=[Path("a.bin")], dest_dir=Path("/opt"), show_progress=False
+    )
     assert result.is_ok
     assert backend.apply_mode_calls == []
 
@@ -177,12 +183,17 @@ async def test_apply_mode_receives_only_landed_dest_paths():
     backend = _FakeBackend(
         supports_mode=True,
         outcomes={
-            src_ok: Result(Status.Success, value=Path("/opt/ok.bin")),
-            src_bad: Result(Status.Error, msg="connection reset"),
-            src_skip: Result(Status.Skipped, msg="not attempted"),
+            src_ok: Result(status=Status.Success, value=Path("/opt/ok.bin")),
+            src_bad: Result(status=Status.Error, msg="connection reset"),
+            src_skip: Result(status=Status.Skipped, msg="not attempted"),
         },
     )
-    await backend.put_files([src_ok, src_bad, src_skip], Path("/opt"), False, mode="755")
+    await backend.put_files(
+        src_files=[src_ok, src_bad, src_skip],
+        dest_dir=Path("/opt"),
+        show_progress=False,
+        mode="755",
+    )
     assert backend.apply_mode_calls == [([Path("/opt/ok.bin")], 0o755)]
 
 
@@ -191,9 +202,11 @@ async def test_apply_mode_skipped_entirely_when_nothing_landed():
     src = Path("bad.bin")
     backend = _FakeBackend(
         supports_mode=True,
-        outcomes={src: Result(Status.Error, msg="connection reset")},
+        outcomes={src: Result(status=Status.Error, msg="connection reset")},
     )
-    result = await backend.put_files([src], Path("/opt"), False, mode="755")
+    result = await backend.put_files(
+        src_files=[src], dest_dir=Path("/opt"), show_progress=False, mode="755"
+    )
     assert backend.apply_mode_calls == []
     assert not result.is_ok
     assert "connection reset" in result.msg
@@ -204,9 +217,11 @@ async def test_chmod_failure_downgrades_but_keeps_dest_path():
     src = Path("a.bin")
     backend = _FakeBackend(
         supports_mode=True,
-        chmod_result=Result(Status.Error, msg="chmod: Operation not permitted"),
+        chmod_result=Result(status=Status.Error, msg="chmod: Operation not permitted"),
     )
-    result = await backend.put_files([src], Path("/opt"), False, mode="755")
+    result = await backend.put_files(
+        src_files=[src], dest_dir=Path("/opt"), show_progress=False, mode="755"
+    )
     assert not result.is_ok
     entry = result.value[src]
     assert entry.status is Status.Error
@@ -223,7 +238,9 @@ async def test_supports_mode_without_apply_mode_raises():
 
     backend = _Broken(supports_mode=True)
     with pytest.raises(NotImplementedError, match="apply_mode"):
-        await backend.put_files([Path("a.bin")], Path("/opt"), False, mode="755")
+        await backend.put_files(
+            src_files=[Path("a.bin")], dest_dir=Path("/opt"), show_progress=False, mode="755"
+        )
 
 
 def test_default_backend_does_not_support_mode():
@@ -264,10 +281,10 @@ def test_every_unix_backend_supports_mode():
 @pytest.mark.asyncio
 async def test_unix_apply_mode_issues_exactly_one_batched_chmod():
     exec_cmd = AsyncMock(
-        return_value=CommandResult(Status.Success, value="", command="", retcode=0)
+        return_value=CommandResult(status=Status.Success, value="", command="", retcode=0)
     )
     backend = _unix_backend(exec_cmd)
-    result = await backend.apply_mode([Path("/opt/a"), Path("/opt/b"), Path("/opt/c")], 0o755)
+    result = await backend.apply_mode([Path("/opt/a"), Path("/opt/b"), Path("/opt/c")], mode=0o755)
     assert result.is_ok
     # Batching is the contract, not just the outcome: N files, ONE exec.
     assert exec_cmd.await_count == 1
@@ -278,14 +295,14 @@ async def test_unix_apply_mode_issues_exactly_one_batched_chmod():
 async def test_unix_apply_mode_reports_chmod_failure():
     exec_cmd = AsyncMock(
         return_value=CommandResult(
-            Status.Failed,
+            status=Status.Failed,
             value="chmod: Operation not permitted",
             command="chmod",
             retcode=1,
         )
     )
     backend = _unix_backend(exec_cmd)
-    result = await backend.apply_mode([Path("/opt/a")], 0o755)
+    result = await backend.apply_mode([Path("/opt/a")], mode=0o755)
     assert not result.is_ok
     assert "Operation not permitted" in result.msg
 
@@ -306,7 +323,9 @@ async def test_local_transfer_really_chmods(tmp_path):
     src.chmod(0o600)
 
     backend = LocalFileTransfer(name="local")
-    result = await backend.put_files([src], dest_dir, False, mode="755")
+    result = await backend.put_files(
+        src_files=[src], dest_dir=dest_dir, show_progress=False, mode="755"
+    )
 
     assert result.is_ok, result.msg
     assert (dest_dir / "app.bin").stat().st_mode & 0o7777 == 0o755
@@ -323,7 +342,7 @@ async def test_local_transfer_without_mode_leaves_copy2_permissions(tmp_path):
     src.chmod(0o600)
 
     backend = LocalFileTransfer(name="local")
-    assert (await backend.put_files([src], dest_dir, False)).is_ok
+    assert (await backend.put_files(src_files=[src], dest_dir=dest_dir, show_progress=False)).is_ok
     # shutil.copy2 preserves the source mode; no mode means we do not touch it.
     assert (dest_dir / "app.bin").stat().st_mode & 0o7777 == 0o600
 
@@ -333,7 +352,9 @@ async def test_embedded_transfer_refuses_mode_loudly():
     from otto.host.transfer.console import ConsoleFileTransfer
 
     backend = ConsoleFileTransfer(name="zephyr1", exec_cmd=AsyncMock())
-    result = await backend.put_files([Path("app.bin")], Path("/RAM:"), False, mode="755")
+    result = await backend.put_files(
+        src_files=[Path("app.bin")], dest_dir=Path("/RAM:"), show_progress=False, mode="755"
+    )
 
     assert not result.is_ok
     assert "zephyr1" in result.msg
@@ -388,18 +409,20 @@ async def test_docker_put_chmods_inside_the_container(monkeypatch):
 
     async def fake_parent_exec(cmd, *a, **kw):
         parent_execs.append(cmd)
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     async def fake_parent_put(files, stage, *a, **kw):
         staged_put_kwargs["args"] = a
         staged_put_kwargs["kwargs"] = kw
-        return aggregate_transfer({f: Result(Status.Success, value=stage / f.name) for f in files})
+        return aggregate_transfer(
+            per_file={f: Result(status=Status.Success, value=stage / f.name) for f in files}
+        )
 
     container_execs: list[str] = []
 
     async def fake_exec(cmd, *a, **kw):
         container_execs.append(cmd)
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     parent = type(
         "P",

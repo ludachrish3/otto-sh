@@ -35,7 +35,7 @@ POLICY = ("open_session", "send", "_expect_one", "_get_tree", "_put_tree", "_as_
 def _unix() -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )

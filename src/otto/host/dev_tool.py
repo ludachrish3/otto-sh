@@ -140,7 +140,7 @@ class DevTool(ABC):
         against a recording host to keep the description equal to the deed.
         """
         del host  # the base describes the class, not the host
-        return unplanned(self)
+        return unplanned(obj=self)
 
 
 DevToolProvider = Callable[["Host"], Iterable[DevTool] | None]
@@ -189,7 +189,7 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     A returned instance must accept ``kind``, ``origin`` and ``owner``
     attribute assignment: ingest stamps all three on it.
     """
-    DEV_TOOL_PROVIDERS.subscribe(provider)
+    DEV_TOOL_PROVIDERS.subscribe(value=provider)
 
 
 DEV_TOOL_KINDS: "Registry[KindEntry[DevTool]]" = Registry(
@@ -210,8 +210,8 @@ kind module is imported until a declared entry names it.
 
 DEV_TOOL_KIND_BUILDER: "KindBuilder[DevTool]" = KindBuilder(
     DEV_TOOL_KINDS,
-    class_factory=Ref("otto.host.shell_kind:class_entry"),
-    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+    class_factory=Ref(target="otto.host.shell_kind:class_entry"),
+    class_resolver=Ref(target="otto.host.shell_kind:resolve_class"),
 )
 """Builds the ``[[dev_tools]]`` entries a host matches, from :data:`DEV_TOOL_KINDS`."""
 
@@ -241,7 +241,7 @@ def register_dev_tool_kind(
     TypeError
         If *factory* is not callable.
     """
-    DEV_TOOL_KINDS.register(name, KindEntry(factory), overwrite=overwrite)
+    DEV_TOOL_KINDS.register(name=name, entry=KindEntry(factory), overwrite=overwrite)
 
 
 def apply_declared_dev_tools(host: "Host") -> None:
@@ -345,7 +345,7 @@ def _register_builtin_kinds() -> None:
         ("kmod", "otto.host.kmod_tool_kind", "_kmod_tool_kind"),
         ("kmodcov", "otto.host.kmod_tool_kind", "_kmodcov_tool_kind"),
     ]:
-        DEV_TOOL_KINDS.register(kind, KindEntry(Ref(f"{module}:{factory}")))
+        DEV_TOOL_KINDS.register(name=kind, entry=KindEntry(Ref(target=f"{module}:{factory}")))
 
 
 _register_builtin_kinds()

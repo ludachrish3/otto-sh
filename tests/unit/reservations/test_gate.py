@@ -53,7 +53,7 @@ class _FakeBackend(ReservationBackendBase):
         self.ends = dict(ends or {})  # resource -> datetime, for the expiry warning
         self.fetches = 0
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         self.fetches += 1
         return [
             Reservation(user=username, resource=r, end=self.ends.get(r))
@@ -355,9 +355,9 @@ def test_the_builtin_local_host_is_left_out_of_the_derived_set_but_kept_when_nam
     with pytest.raises(MissingReservationError, match="runner-slot"):
         gate.evaluate(host_ids=["local"])
     with pytest.raises(MissingReservationError, match="runner-slot"):
-        gate.evaluate(lab, host_ids=["h1", "local"])
+        gate.evaluate(lab=lab, host_ids=["h1", "local"])
     with pytest.raises(MissingReservationError, match="runner-slot"):
-        gate.evaluate(lab)
+        gate.evaluate(lab=lab)
 
     skipped = ReservationGate(
         skip_check=True, identity=ResolvedIdentity(username="alice", source="$USER")
@@ -386,7 +386,7 @@ def test_a_derived_read_with_no_run_installed_refuses_as_get_context_does():
         with pytest.raises(RuntimeError) as evaluated:
             gate.evaluate()
         with pytest.raises(RuntimeError) as checked:
-            gate.check_hosts(lab, [lab.hosts["h1"]])
+            gate.check_hosts(lab=lab, hosts=[lab.hosts["h1"]])
     assert type(evaluated.value) is RuntimeError
     assert type(checked.value) is RuntimeError
     assert str(evaluated.value) == str(checked.value) == str(expected.value)
@@ -516,7 +516,7 @@ class _ExplodingNullBackend(NullReservationBackend):
     now-reachable fetch into a loud failure instead of a quiet no-op.
     """
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         raise AssertionError("the null backend was queried; the is_null_backend guard is missing")
 
 
@@ -562,7 +562,7 @@ def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog):
     from otto.reservations import ReservationBackendError
 
     class _ExplodingBackend(ReservationBackendBase):
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             raise ReservationBackendError("scheduler is down")
 
         def backend_name(self):
@@ -593,7 +593,7 @@ class TestGateReportAndHosts:
         gate = ReservationGate(
             backend=backend, identity=ResolvedIdentity(username="alice", source="$USER")
         )
-        outcome = gate.evaluate(_lab_declaring("rack1"))
+        outcome = gate.evaluate(lab=_lab_declaring("rack1"))
         assert outcome.checked is True
         assert outcome.report is not None
         assert outcome.report.covered
@@ -625,7 +625,7 @@ class TestGateReportAndHosts:
             caplog.at_level(logging.WARNING, logger="otto"),
             pytest.raises(MissingReservationError),
         ):
-            gate.evaluate(_lab_declaring("rack1", "rack2"))
+            gate.evaluate(lab=_lab_declaring("rack1", "rack2"))
         assert "expires" not in caplog.text.lower()
 
     def test_report_under_skip_builds_the_backend_lazily(self):
@@ -672,7 +672,7 @@ class TestGateReportAndHosts:
         lab.resources = {"rack1"}  # a real requirement, so a stray query would reach the backend
         install_scoped_context(lab, [_h_in_project(tmp_path)])
         gate, backend = self._gate({})
-        assert gate.check_hosts(lab, [lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
+        assert gate.check_hosts(lab=lab, hosts=[lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
         assert backend.fetches == 0
 
     def test_a_check_hosts_refusal_is_never_trailed_by_an_expiry_nudge(self, tmp_path, caplog):
@@ -695,7 +695,7 @@ class TestGateReportAndHosts:
             caplog.at_level(logging.WARNING, logger="otto"),
             pytest.raises(MissingReservationError),
         ):
-            gate.check_hosts(lab, [lab.hosts["h-out"]])
+            gate.check_hosts(lab=lab, hosts=[lab.hosts["h-out"]])
         assert "expires" not in caplog.text.lower()
 
     def test_report_without_a_backend_or_a_factory_raises(self):
@@ -710,7 +710,7 @@ class TestGateReportAndHosts:
         install_scoped_context(lab, [_h_in_project(tmp_path)])
         gate, backend = self._gate({})
         with pytest.raises(MissingReservationError) as exc:
-            gate.check_hosts(lab, [lab.hosts["h-a"], lab.hosts["h-b"]])
+            gate.check_hosts(lab=lab, hosts=[lab.hosts["h-a"], lab.hosts["h-b"]])
         assert [m.resource for m in exc.value.report.missing] == ["slot-a", "slot-b"]
         assert backend.fetches == 1
 
@@ -721,7 +721,7 @@ class TestGateReportAndHosts:
         lab = add_builtin_local(Lab(name="test_lab"), resources={"x"})
         install_scoped_context(lab, [])
         gate, _ = self._gate({})
-        assert gate.check_hosts(lab, [lab.hosts["local"]]) is None
+        assert gate.check_hosts(lab=lab, hosts=[lab.hosts["local"]]) is None
 
         # A lab's OWN `local` is an ordinary host: a fleet that declares nothing in
         # play leaves it outside the fleet, and its slot is checked.
@@ -731,7 +731,7 @@ class TestGateReportAndHosts:
             own, [_project(tmp_path, "r1", labs=["a"], hosts=["nothing-matches"])]
         )
         with pytest.raises(MissingReservationError):
-            gate.check_hosts(own, [own.hosts["local"]])
+            gate.check_hosts(lab=own, hosts=[own.hosts["local"]])
 
     def test_check_hosts_is_a_no_op_under_skip(self):
         lab = fleet_lab(("h-a", "a"))
@@ -742,7 +742,7 @@ class TestGateReportAndHosts:
             identity=ResolvedIdentity(username="alice", source="$USER"),
             skip_check=True,
         )
-        assert gate.check_hosts(lab, [lab.hosts["h-a"]]) is None
+        assert gate.check_hosts(lab=lab, hosts=[lab.hosts["h-a"]]) is None
 
     def test_one_expiring_lab_booking_is_announced_once_across_both_checks(self, tmp_path, caplog):
         import logging
@@ -764,5 +764,5 @@ class TestGateReportAndHosts:
         )
         with caplog.at_level(logging.WARNING, logger="otto"):
             gate.evaluate()
-            gate.check_hosts(lab, [lab.hosts["h-out"]])
+            gate.check_hosts(lab=lab, hosts=[lab.hosts["h-out"]])
         assert sum("'rack1'" in r.message for r in caplog.records) == 1

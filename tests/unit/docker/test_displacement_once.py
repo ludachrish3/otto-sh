@@ -162,7 +162,7 @@ def test_compose_build_shows_a_displacement_once(tmp_path, caplog):
                 "built",
                 {
                     "api": ImageBuild(
-                        "api", ["api:latest"], "abc123abc123", CommandResult(Status.Success)
+                        "api", ["api:latest"], "abc123abc123", CommandResult(status=Status.Success)
                     )
                 },
             )
@@ -202,7 +202,9 @@ def test_use_cases_shows_a_displacement_once(caplog):
     winner = _uc_project("b", _uc(provides="edge", priority=10))
     loser = _uc_project("a", _uc(provides="edge", priority=5))
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
     with (
         caplog.at_level(logging.INFO),
         patch("otto.declared.get_projects", return_value=[winner, loser]),
@@ -257,7 +259,7 @@ def test_the_live_build_report_renders_through_describe(tmp_path, caplog, sentin
                 "built",
                 {
                     "api": ImageBuild(
-                        "api", ["api:latest"], "abc123abc123", CommandResult(Status.Success)
+                        "api", ["api:latest"], "abc123abc123", CommandResult(status=Status.Success)
                     )
                 },
             )
@@ -283,7 +285,9 @@ def test_use_cases_renders_through_describe(sentinel):
     winner = _uc_project("b", _uc(provides="edge", priority=10))
     loser = _uc_project("a", _uc(provides="edge", priority=5))
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    lab.add_host(
+        UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
+    )
     with (
         patch("otto.declared.get_projects", return_value=[winner, loser]),
         patch("otto.fleet.get_lab", return_value=lab),

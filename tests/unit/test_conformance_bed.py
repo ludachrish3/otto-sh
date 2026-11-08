@@ -691,7 +691,7 @@ def test_a_cell_builds_even_when_the_out_of_tree_frame_was_evicted():
     """
     had_frame = "zephyr-inline" in FRAME_CLASSES
     if had_frame:
-        FRAME_CLASSES.unregister("zephyr-inline")
+        FRAME_CLASSES.unregister(name="zephyr-inline")
     try:
         host = build_bed_host(Cell("zephyr27_fat", "telnet", "console"))
     finally:
@@ -1819,7 +1819,7 @@ def test_the_domain_is_read_off_the_filesystem_not_the_element_name(monkeypatch)
     # arguments now, and patching one alone would leave the other reading the
     # committed file for a name that is not in it.
     monkeypatch.setattr(_bed, "host_data", lambda element, tech=BED_TECH: entries[element])
-    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(element))
+    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(name=element))
 
     assert bed_scratch_dir("a-name-that-says-nothing") is None
     assert str(bed_scratch_dir("zephyr99_nofs_llext")) == "/RAM:"
@@ -1835,7 +1835,7 @@ def test_a_host_that_declares_its_own_landing_directory_is_honoured(monkeypatch)
     entry = dict(host_data("test1", BED_TECH))
     entry["default_dest_dir"] = "/var/tmp/otto-scratch"
     monkeypatch.setattr(_bed, "host_data", lambda element, tech=BED_TECH: entry)
-    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(element))
+    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(name=element))
 
     answer = bed_scratch_dir("declares-its-own")
     assert str(answer) == "/var/tmp/otto-scratch"
@@ -2362,7 +2362,7 @@ class _ScriptedHost:
         entries = [self._answer(one, timeout) for one in commands]
         if self._lie == "stops_after_the_failure":
             entries = self._truncate_at_the_failure(entries)
-        return Results.collect(entries)
+        return Results.collect(items=entries)
 
     @staticmethod
     def _truncate_at_the_failure(entries: "list[CommandResult]") -> "list[CommandResult]":
@@ -2377,10 +2377,10 @@ class _ScriptedHost:
         words = self._words
         if command == words.long_running_command and timeout is not None:
             if self._lie == "never_times_out":
-                return CommandResult(Status.Success, value="", command=command, retcode=0)
+                return CommandResult(status=Status.Success, value="", command=command, retcode=0)
             self._timed_out = True
             return CommandResult(
-                Status.Error,
+                status=Status.Error,
                 value=f"Command timed out after {timeout}s; partial output discarded",
                 command=command,
                 retcode=-1,
@@ -2388,7 +2388,7 @@ class _ScriptedHost:
             )
         if self._lie == "wedges_the_session" and self._timed_out:
             return CommandResult(
-                Status.Failed, value="", command=command, retcode=1, msg="session is gone"
+                status=Status.Failed, value="", command=command, retcode=1, msg="session is gone"
             )
         return self._ordinary(command)
 
@@ -2409,10 +2409,10 @@ class _ScriptedHost:
         value = self._output_for(command)
         status = Status.Success if retcode == 0 else Status.Failed
         if self._lie == "always_reports_success":
-            return CommandResult(Status.Success, value=value, command=command, retcode=0)
+            return CommandResult(status=Status.Success, value=value, command=command, retcode=0)
         if self._lie == "collapses_failure_codes" and retcode != 0:
             retcode = 1
-        return CommandResult(status, value=value, command=command, retcode=retcode)
+        return CommandResult(status=status, value=value, command=command, retcode=retcode)
 
     def _output_for(self, command: str) -> str:
         words = self._words

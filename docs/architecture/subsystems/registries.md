@@ -12,7 +12,7 @@ everywhere:
 - **Did-you-mean lookups.** An unknown name fails with the closest registered
   match, the full list of known names, and the exact `register_*` call that
   would add a custom one.
-- **Attribution and introspection.** `names()`, `items()`, and `origin(name)`
+- **Attribution and introspection.** `names()`, `items()`, and `origin(name=name)`
   make `--list-*` flags and debugging cheap.
 
 Domain modules keep their own public `register_*` / `build_*` wrapper
@@ -44,7 +44,7 @@ records hold tuples and {class}`~otto.registry.FrozenMap`s instead
 field (a factory function, a partial, an object with `__call__`) is behaviour,
 not data: the check never looks inside it. A
 {class}`~otto.registry.Ref` lives only in a record field, never on its own:
-`ClassEntry(Ref("my_plugin.frames:FishFrame"))` is a registration, a bare
+`ClassEntry(cls=Ref(target="my_plugin.frames:FishFrame"))` is a registration, a bare
 `Ref` is refused. A registry whose records may hold a `Ref` declares a
 `check_resolved` hook; a registry without one refuses a record holding a
 `Ref`, so no lazy field goes unchecked. At a record's first `get()`, each
@@ -195,12 +195,12 @@ reference:
 from otto.host.command_frame import register_command_frame
 from otto.registry import Ref
 
-register_command_frame("fish", Ref("my_plugin.frames:FishFrame"))
+register_command_frame("fish", Ref(target="my_plugin.frames:FishFrame"))
 ```
 
 The import runs, and the check with it, the first time lab data builds a
-`fish` frame. The raw path needs the record: `FRAME_CLASSES.register("fish",
-ClassEntry(Ref("my_plugin.frames:FishFrame")))`. A name that is already
+`fish` frame. The raw path needs the record: `FRAME_CLASSES.register(name="fish",
+entry=ClassEntry(cls=Ref(target="my_plugin.frames:FishFrame")))`. A name that is already
 registered (such as the built-in `ash`) raises unless you pass
 `overwrite=True`. See {class}`otto.registry.Ref` and
 {meth}`otto.registry.Registry.get` for the full contract.
@@ -211,7 +211,7 @@ Every built-in entry is registered in the module that **defines its
 registry** (the built-in CLI commands in `otto.cli.builtin_commands`), with
 a {class}`~otto.registry.Ref` naming the object's real home in its record
 (`TRANSFER_BACKENDS`' entry under `nc` is a class backend whose
-class is `Ref("otto.host.transfer.nc:NcFileTransfer")`). Importing a registry
+class is `Ref(target="otto.host.transfer.nc:NcFileTransfer")`). Importing a registry
 therefore lists all of its built-ins without importing one implementation,
 and a lookup imports only the entry it names:
 `otto host --help` pays for no transfer backend, and building an `scp`
@@ -310,7 +310,7 @@ cover them, and nothing here claims otherwise:
 `OPTIONS` ({mod}`otto.params`) holds the options classes registered for a
 verb. Its entry is an `OptionsEntry`: the class, or a `Ref` to it, together
 with the verbs it serves, so the verbs are known without importing the class;
-the project that registered it is the engine's (`OPTIONS.project(key)`). That is
+the project that registered it is the engine's (`OPTIONS.project(name=key)`). That is
 what lets `otto host` and every other command stay free of options modules
 registered by string.
 

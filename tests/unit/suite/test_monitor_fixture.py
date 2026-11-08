@@ -28,7 +28,7 @@ pytest_plugins = ["pytester"]
 def _unix(name: str = "box") -> UnixHost:
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="a", password="b")],
         log=LogMode.NORMAL,
     )
@@ -40,7 +40,7 @@ def _embedded(name: str, *, snmp: bool):
     spec = {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"}
     if snmp:
         spec["snmp"] = {"oids": ["1.3.6.1.2.1.1.3.0"]}
-    return create_host_from_dict(spec, element=Element(name))
+    return create_host_from_dict(spec, element=Element(name=name))
 
 
 def _embedded_with_snmp():
@@ -61,7 +61,7 @@ _INNER_HOST = (
     "from otto.host.unix_host import UnixHost\n"
     "def _host(monkeypatch):\n"
     "    monkeypatch.setattr('otto.fleet.get_lab', lambda: SimpleNamespace(links=[]))\n"
-    "    h = UnixHost(ip='10.0.0.1', element=Element('box'),\n"
+    "    h = UnixHost(ip='10.0.0.1', element=Element(name='box'),\n"
     "                 creds=[Cred(login='a', password='b')])\n"
     "    h.run = AsyncMock(return_value=None)\n"
     "    return h\n"
@@ -324,7 +324,7 @@ def _make_unconnected_host(host_id: str = "router1") -> UnixHost:
     ``tests/unit/suite/test_plugin.py``'s identical helper).
     """
     return UnixHost(
-        ip="10.0.0.1", element=Element(host_id), creds=[Cred(login="admin", password="secret")]
+        ip="10.0.0.1", element=Element(name=host_id), creds=[Cred(login="admin", password="secret")]
     )
 
 

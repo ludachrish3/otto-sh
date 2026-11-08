@@ -36,7 +36,7 @@ from tests._fixtures.fake_project import fake_project
 def _unix(name: str) -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="a", password="b")],
         log=LogMode.NORMAL,
     )
@@ -46,7 +46,7 @@ def _console(name: str, *, snmp: bool = False):
     spec = {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"}
     if snmp:
         spec["snmp"] = {"oids": ["1.3.6.1.2.1.1.3.0"]}
-    return create_host_from_dict(spec, element=Element(name))
+    return create_host_from_dict(spec, element=Element(name=name))
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def lab(monkeypatch):
     def all_hosts(pattern=None):
         picked = [h for h in hosts if pattern is None or pattern.fullmatch(h.id)]
         if pattern is not None and not picked:
-            raise EmptySelectionError(pattern.pattern, len(hosts))
+            raise EmptySelectionError(pattern.pattern, base_size=len(hosts))
         return iter(picked)
 
     monkeypatch.setattr("otto.fleet.all_hosts", all_hosts)
@@ -85,44 +85,44 @@ def served():
 
 class TestSelect:
     def test_keeps_unix_and_snmp_hosts(self, lab):
-        assert [h.id for h in select_monitor_hosts(None)] == ["web1", "s1"]
+        assert [h.id for h in select_monitor_hosts(pattern=None)] == ["web1", "s1"]
 
     def test_an_empty_string_means_no_filter(self, lab):
-        assert [h.id for h in select_monitor_hosts("")] == ["web1", "s1"]
+        assert [h.id for h in select_monitor_hosts(pattern="")] == ["web1", "s1"]
 
     def test_a_compiled_pattern_is_used_as_is(self, lab):
-        assert [h.id for h in select_monitor_hosts(re.compile("s.*"))] == ["s1"]
+        assert [h.id for h in select_monitor_hosts(pattern=re.compile("s.*"))] == ["s1"]
 
     def test_a_bad_regex_names_the_hosts_field(self, lab):
         with pytest.raises(MonitorInputError, match="not a valid regex") as e:
-            select_monitor_hosts("(")
+            select_monitor_hosts(pattern="(")
         assert e.value.field == "hosts"
 
     def test_an_unmatched_pattern_is_the_selection_error(self, lab):
         with pytest.raises(EmptySelectionError):
-            select_monitor_hosts("nothing")
+            select_monitor_hosts(pattern="nothing")
 
     def test_a_selection_of_only_consoles_names_them(self, lab):
         with pytest.raises(NoMonitorableHostsError) as e:
-            select_monitor_hosts("z.*")
+            select_monitor_hosts(pattern="z.*")
         assert e.value.walked == ["z1"]
 
     def test_a_dropped_host_is_named_with_its_reason_once(self, lab, caplog):
         with caplog.at_level(logging.INFO, logger="otto.monitor.live"):
-            assert [h.id for h in select_monitor_hosts(None)] == ["web1", "s1"]
+            assert [h.id for h in select_monitor_hosts(pattern=None)] == ["web1", "s1"]
         lines = [r.getMessage() for r in caplog.records if "not monitoring" in r.getMessage()]
         assert lines == [f"not monitoring 1 of 3 selected host(s): z1 ({UNMONITORABLE_REASON})"]
 
     def test_nothing_dropped_logs_nothing(self, lab, caplog):
         with caplog.at_level(logging.INFO, logger="otto.monitor.live"):
-            select_monitor_hosts("web1")
+            select_monitor_hosts(pattern="web1")
         assert not [r for r in caplog.records if "not monitoring" in r.getMessage()]
 
     def test_the_reason_is_the_predicate(self):
-        assert unmonitorable_reason(_console("z1")) == UNMONITORABLE_REASON
-        assert unmonitorable_reason(_console("s1", snmp=True)) is None
-        assert unmonitorable_reason(_unix("web1")) is None
-        assert unmonitorable_reason(_console("z1"), has_snmp=True) is None
+        assert unmonitorable_reason(host=_console("z1")) == UNMONITORABLE_REASON
+        assert unmonitorable_reason(host=_console("s1", snmp=True)) is None
+        assert unmonitorable_reason(host=_unix("web1")) is None
+        assert unmonitorable_reason(host=_console("z1"), has_snmp=True) is None
 
 
 class TestRunLiveRefusesBeforeAnyFile:

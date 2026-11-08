@@ -14,7 +14,7 @@ def test_unsupported_suffix_is_refused_naming_the_suffix(tmp_path):
     src = tmp_path / "x.csv"
     src.write_text("a,b")
     with pytest.raises(ReviewSourceError, match=r"suffix '\.csv'") as e:
-        load_review_document(src)
+        load_review_document(path=src)
     assert e.value.field == "source"
 
 
@@ -22,20 +22,20 @@ def test_invalid_json_export_is_refused(tmp_path):
     src = tmp_path / "x.json"
     src.write_text('{"format": 99}')
     with pytest.raises(ReviewSourceError, match="not a valid format:1 monitor export"):
-        load_review_document(src)
+        load_review_document(path=src)
 
 
 def test_valid_json_export_loads(tmp_path):
     src = tmp_path / "x.json"
     src.write_text('{"format": 1, "sessions": []}')
-    assert load_review_document(src).sessions == []
+    assert load_review_document(path=src).sessions == []
 
 
 def test_unsupported_db_is_refused(tmp_path):
     src = tmp_path / "x.db"
     src.write_bytes(b"garbage")
     with pytest.raises(ReviewSourceError, match="not a monitor database"):
-        load_review_document(src)
+        load_review_document(path=src)
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_serve_review_resolves_tls_from_the_given_projects_before_serving(
         patch("otto.monitor.server.MonitorServer") as server_cls,
         pytest.raises(MonitorTlsError),
     ):
-        await serve_review(src, projects=[bad])
+        await serve_review(path=src, projects=[bad])
     server_cls.assert_not_called()
 
 
@@ -59,7 +59,7 @@ async def test_serve_review_serves_a_db_with_its_archive_path(tmp_path):
         patch("otto.monitor.review.load_review_document", return_value=MagicMock()),
         patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls,
     ):
-        await serve_review(src, projects=[])
+        await serve_review(path=src, projects=[])
     kwargs = server_cls.call_args.kwargs
     assert (kwargs["mode"], kwargs["source_name"], kwargs["archive_path"]) == (
         "review",
@@ -76,7 +76,7 @@ async def test_serve_review_keeps_a_json_source_read_only(tmp_path):
     src.write_text('{"format": 1, "sessions": []}')
     server = MagicMock(serve=AsyncMock())
     with patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls:
-        await serve_review(src, projects=[])
+        await serve_review(path=src, projects=[])
     assert server_cls.call_args.kwargs["archive_path"] is None
 
 
@@ -88,6 +88,6 @@ async def test_serve_review_hands_the_server_the_declared_cert_and_key(tmp_path,
     project = fake_project("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
     server = MagicMock(serve=AsyncMock())
     with patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls:
-        await serve_review(src, projects=[project])
+        await serve_review(path=src, projects=[project])
     kwargs = server_cls.call_args.kwargs
     assert (kwargs["tls_cert"], kwargs["tls_key"]) == (cert, key)

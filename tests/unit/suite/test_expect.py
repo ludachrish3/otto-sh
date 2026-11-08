@@ -15,13 +15,13 @@ class TestExpectCollector:
     def test_passing_expect_records_nothing(self):
         c = ExpectCollector()
         c.expect(True)
-        c.expect(True, "should not record")
+        c.expect(True, msg="should not record")
         assert c.failures == []
 
     def test_failing_expect_records_report(self):
         c = ExpectCollector()
         x = 42
-        c.expect(x == 99, "math is broken")
+        c.expect(x == 99, msg="math is broken")
         assert len(c.failures) == 1
         report = c.failures[0]
         assert "math is broken" in report
@@ -29,23 +29,23 @@ class TestExpectCollector:
 
     def test_multiple_failures_accumulate_in_order(self):
         c = ExpectCollector()
-        c.expect(False, "first")
-        c.expect(False, "second")
+        c.expect(False, msg="first")
+        c.expect(False, msg="second")
         assert len(c.failures) == 2
         assert "first" in c.failures[0]
         assert "second" in c.failures[1]
 
     def test_reset_clears_failures(self):
         c = ExpectCollector()
-        c.expect(False, "boom")
+        c.expect(False, msg="boom")
         assert c.failures
         c.reset()
         assert c.failures == []
 
     def test_raise_if_failures_raises_with_aggregate_report(self):
         c = ExpectCollector()
-        c.expect(False, "alpha")
-        c.expect(False, "beta")
+        c.expect(False, msg="alpha")
+        c.expect(False, msg="beta")
         with pytest.raises(AssertionError) as exc:
             c.raise_if_failures()
         msg = str(exc.value)
@@ -62,7 +62,7 @@ class TestExpectCollector:
         logger = logging.getLogger("otto.test.expect")
         c = ExpectCollector(logger=logger)
         with caplog.at_level(logging.WARNING, logger="otto.test.expect"):
-            c.expect(False, "logged failure")
+            c.expect(False, msg="logged failure")
         assert any("logged failure" in r.message for r in caplog.records)
 
     def test_a_failure_line_keeps_its_colon_words_literal(self, caplog):
@@ -73,7 +73,7 @@ class TestExpectCollector:
         c = ExpectCollector(logger=logger)
         passwd = "daemon"
         with caplog.at_level(logging.WARNING, logger="otto.test.expect"):
-            c.expect(passwd.startswith("root:x:0:0"), "see :warning: [red]")
+            c.expect(passwd.startswith("root:x:0:0"), msg="see :warning: [red]")
         (record,) = [r for r in caplog.records if "EXPECT FAILED" in r.message]
         rendered = RichFormatter(fmt="{message}").format(record)
         assert "root:x:0:0" in rendered
@@ -113,7 +113,7 @@ def ctx_with_planted_password():
     lab.add_host(
         UnixHost(
             ip="10.10.200.11",
-            element=Element("router1"),
+            element=Element(name="router1"),
             creds=[Cred(login="admin", password=PLANTED)],
             log=LogMode.QUIET,
         )
@@ -142,7 +142,7 @@ class TestValuesShowOnlyWhatTheCallReads:
         c = ExpectCollector()
         res = _result(retcode=1, value="x")
         other = 5
-        c.expect(res.retcode == 0, "ping failed")
+        c.expect(res.retcode == 0, msg="ping failed")
         r = c.failures[0]
         assert "Values: res = <CommandResult" in r, r
         assert "other" not in r, r
@@ -227,7 +227,7 @@ class TestValuesShowOnlyWhatTheCallReads:
 
         proxy = Proxy()
         c = ExpectCollector()
-        c.expect(proxy is None, "proxy check")
+        c.expect(proxy is None, msg="proxy check")
         (r,) = c.failures
         assert "Message: proxy check" in r, r
         assert "c.expect(proxy is None" in r, r
@@ -243,7 +243,7 @@ class TestValuesShowOnlyWhatTheCallReads:
         monkeypatch.setattr(expect_mod.ast, "parse", boom)
         value = 3
         c = ExpectCollector()
-        c.expect(value == 4, "parser down")
+        c.expect(value == 4, msg="parser down")
         (r,) = c.failures
         assert "Message: parser down" in r, r
         assert "c.expect(value == 4" in r, r
@@ -304,12 +304,12 @@ class TestValuesShowOnlyWhatTheCallReads:
         c = ExpectCollector()
         c.expect(
             alpha == beta,
-            f"{gamma}",
+            msg=f"{gamma}",
         )
         r = c.failures[0]
         assert _values(r) == "alpha = 1, beta = 2, gamma = 'g'", r
         # the call's lines, all of them, dedented and indented two spaces
-        assert '\n  c.expect(\n      alpha == beta,\n      f"{gamma}",\n  )\n' in r, r
+        assert '\n  c.expect(\n      alpha == beta,\n      msg=f"{gamma}",\n  )\n' in r, r
 
     def test_values_cap_100_chars(self):
         big = "a" * 10_000
@@ -338,7 +338,7 @@ class TestValuesShowOnlyWhatTheCallReads:
         """A wrapper's ``_stack_offset=2`` reports the wrapper's CALLER and the names it reads."""
 
         def check(collector, value):
-            collector.expect(value == 1, "helper says no", _stack_offset=2)
+            collector.expect(value == 1, msg="helper says no", _stack_offset=2)
 
         c = ExpectCollector()
         reading = 3
@@ -382,7 +382,7 @@ class TestValuesShowOnlyWhatTheCallReads:
         with caplog.at_level(logging.WARNING, logger="otto.test.expect"):
             c.expect(
                 first == second,
-                "spread out",
+                msg="spread out",
             )
         (record,) = [r for r in caplog.records if "EXPECT FAILED" in r.message]
         assert "first == second," in record.message, record.message
@@ -427,12 +427,12 @@ class TestOttoSummaries:
 def test_call_records_like_expect_and_points_at_the_caller() -> None:
     collector = ExpectCollector()
     answer = 41
-    collector(answer == 42, "off by one")
+    collector(answer == 42, msg="off by one")
     assert len(collector.failures) == 1
     report = collector.failures[0]
     assert "Message: off by one" in report
     assert "Values: answer = 41" in report, report  # the CALLER's names, not __call__'s
-    assert 'collector(answer == 42, "off by one")' in report
+    assert 'collector(answer == 42, msg="off by one")' in report
 
 
 def test_call_with_a_truthy_condition_records_nothing() -> None:
@@ -493,7 +493,7 @@ def test_a_hard_assert_in_the_body_wins(pytester, otto_plugins) -> None:
     """The body's own AssertionError is the failure; the soft one was already logged."""
     body = """\
 async def test_hard(expect):
-    expect(False, "soft failure recorded")
+    expect(False, msg="soft failure recorded")
     raise AssertionError("hard failure wins")
 """
     result = run_inner(pytester, otto_plugins, test_hard=body)
@@ -512,10 +512,10 @@ import pathlib
 async def test_mixed(expect):
     val = 42
     expect(True)
-    expect(val == 99, "hostname missing from config")
+    expect(val == 99, msg="hostname missing from config")
     expect(True)
-    expect(False, "two")
-    expect(False, "three")
+    expect(False, msg="two")
+    expect(False, msg="three")
     pathlib.Path(__file__).with_name("failures.json").write_text(json.dumps(expect.failures))
 """
     run_inner(pytester, otto_plugins, test_mix=body).assert_outcomes(failed=1)
@@ -535,7 +535,7 @@ def test_failures_reset_between_tests(pytester, otto_plugins) -> None:
 import pathlib
 
 async def test_first(expect):
-    expect(False, "only mine")
+    expect(False, msg="only mine")
 
 async def test_second(expect):
     pathlib.Path(__file__).with_name("count").write_text(str(len(expect.failures)))
@@ -548,7 +548,7 @@ def test_a_method_of_a_plain_class_may_use_expect(pytester, otto_plugins) -> Non
     body = """\
 class TestPlain:
     async def test_soft(self, expect):
-        expect(False, "class soft failure")
+        expect(False, msg="class soft failure")
 """
     result, reports = _run_recording(pytester, otto_plugins, test_plain_class=body)
     result.assert_outcomes(failed=1)
@@ -570,7 +570,7 @@ COUNTER = pathlib.Path(__file__).with_name("attempts")
 async def test_flaky_soft(expect):
     attempts = int(COUNTER.read_text()) if COUNTER.exists() else 0
     COUNTER.write_text(str(attempts + 1))
-    expect(attempts >= 1, "first attempt is soft-red")
+    expect(attempts >= 1, msg="first attempt is soft-red")
 """
     result, reports = _run_recording(pytester, otto_plugins, test_retry_expect=body)
     assert (pytester.path / "attempts").read_text() == "2"

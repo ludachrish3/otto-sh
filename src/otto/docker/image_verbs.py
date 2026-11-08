@@ -33,8 +33,8 @@ def image_prune_command(
 
 
 async def remove_images(
-    images: "Sequence[str]",
     *,
+    images: "Sequence[str]",
     force: bool = False,
     no_prune: bool = False,
     parent: "str | None" = None,
@@ -68,7 +68,7 @@ async def remove_images(
 
     if not images:
         raise DockerVerbError("name at least one image to remove", field="images")
-    parents = docker_parents(require_run().lab, parent)
+    parents = docker_parents(lab=require_run().lab, parent=parent)
     command = image_rm_command(images, force=force, no_prune=no_prune)
     decline_dry_run("remove_images", parents, command, "No image was removed.")
     return await run_on(parents, command, asked="remove_images")
@@ -114,7 +114,7 @@ async def prune_images(
             "image prune needs -f: docker would ask for confirmation, and otto never prompts",
             field="force",
         )
-    parents = docker_parents(require_run().lab, parent)
+    parents = docker_parents(lab=require_run().lab, parent=parent)
     command = image_prune_command(all=all, filters=filters)
     decline_dry_run("prune_images", parents, command, "No image was removed.")
     return await run_on(parents, command, asked="prune_images")

@@ -257,7 +257,7 @@ def _dut(*results: CommandResult) -> "tuple[SimpleNamespace, list[tuple[str, boo
 
 
 def _ok(value: str) -> CommandResult:
-    return CommandResult(Status.Success, value=value, command="", retcode=0)
+    return CommandResult(status=Status.Success, value=value, command="", retcode=0)
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ async def test_the_helper_writes_the_line_as_one_argument_under_sudo(monkeypatch
 @pytest.mark.asyncio
 async def test_the_helper_refuses_a_failed_write_and_never_reads(monkeypatch):
     helper = _helper()
-    failed = CommandResult(Status.Failed, value="Permission denied", command="", retcode=1)
+    failed = CommandResult(status=Status.Failed, value="Permission denied", command="", retcode=1)
     dut, calls = _dut(failed)
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     with pytest.raises(helper.ModuleCallError, match=r"'one'.*Permission denied"):

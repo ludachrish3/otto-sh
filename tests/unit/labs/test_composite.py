@@ -190,7 +190,7 @@ def test_links_merge_keyed_by_id_later_wins() -> None:
                 create_host_from_dict(
                     {"ip": "10.0.0.1", "creds": _CREDS},
                     lab_name=name,
-                    element=Element(self._element),
+                    element=Element(name=self._element),
                 )
             )
             lab.links = list(self._links)
@@ -226,7 +226,7 @@ def test_preferences_forwarded_verbatim_to_every_source() -> None:
                 create_host_from_dict(
                     {"ip": "10.0.0.1", "creds": _CREDS},
                     lab_name=name,
-                    element=Element(self._element),
+                    element=Element(name=self._element),
                 )
             )
             return lab
@@ -431,7 +431,7 @@ class _MembersOnly:
         lab = Lab(name=name)
         lab.add_host(
             create_host_from_dict(
-                {"ip": "10.0.0.1", "creds": _CREDS}, lab_name=name, element=Element("x")
+                {"ip": "10.0.0.1", "creds": _CREDS}, lab_name=name, element=Element(name="x")
             )
         )
         return lab
@@ -558,7 +558,7 @@ def test_summaries_survive_a_backend_pattern_that_is_not_a_regex() -> None:
         def load_lab(self, name, preferences=None, inventory=None):
             raise LabNotFoundError(name)
 
-        def list_host_summaries(self, inventory=None):
+        def list_host_summaries(self, *, inventory=None):
             return [HostSummary(id="h", labs=["site"], lab_patterns=["site(["])]
 
     comp = CompositeLabRepository([LabSource(label="bad", repository=BadPattern())])

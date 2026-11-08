@@ -31,11 +31,13 @@ def _result(projects, errors):
 
 
 def _skip(project):
-    return DependencyError(project.root, f"{project.name} requires ghost")
+    return DependencyError(project.root, message=f"{project.name} requires ghost")
 
 
 def test_an_error_no_project_owns_is_fatal(tmp_path):
-    unowned = BootstrapError(tmp_path / "broken", ".otto/settings.toml", ValueError("bad toml"))
+    unowned = BootstrapError(
+        tmp_path / "broken", source=".otto/settings.toml", cause=ValueError("bad toml")
+    )
     verdicts = classify_load_errors(_result([], [unowned]), [], include=[], exclude=[])
     assert verdicts.fatal == [unowned]
     assert verdicts.demoted == []
@@ -102,7 +104,9 @@ def test_check_projects_asks_the_classifier(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.session.projects.classify_load_errors", _spy)
     project = _project(tmp_path, "my-project")
     check_projects(
-        _result([project], [_skip(project)]), [], ProjectSelection(exclude=["my-project"])
+        result=_result([project], [_skip(project)]),
+        labs=[],
+        selection=ProjectSelection(exclude=["my-project"]),
     )
     assert seen == [{"include": [], "exclude": ["my-project"]}]
 
@@ -129,7 +133,7 @@ def _resolved(*projects):
 
 
 def _init_failure(project):
-    return BootstrapError(project.root, f"{project.name}_init", RuntimeError("boom"))
+    return BootstrapError(project.root, source=f"{project.name}_init", cause=RuntimeError("boom"))
 
 
 def test_an_excluded_project_an_active_project_requires_is_fatal(tmp_path):
@@ -200,7 +204,9 @@ def test_check_projects_refuses_when_an_active_project_requires_the_broken_one(t
     a, b = _resolved(_dep_project(tmp_path, "a", required=["b"]), _dep_project(tmp_path, "b"))
     err = _init_failure(b)
     with pytest.raises(ProjectLoadError) as info:
-        check_projects(_result([a, b], [err]), [], ProjectSelection(exclude=["b"]))
+        check_projects(
+            result=_result([a, b], [err]), labs=[], selection=ProjectSelection(exclude=["b"])
+        )
     assert info.value.errors == [err]
 
 
@@ -263,7 +269,11 @@ def test_the_refusal_names_who_requires_the_inactive_project(tmp_path):
     )
     err = _init_failure(c)
     with pytest.raises(ProjectLoadError) as info:
-        check_projects(_result([a, b, c], [err]), [], ProjectSelection(exclude=["b", "c"]))
+        check_projects(
+            result=_result([a, b, c], [err]),
+            labs=[],
+            selection=ProjectSelection(exclude=["b", "c"]),
+        )
     (required,) = info.value.required
     assert required.required_by == ["a"]
     assert required.message == (

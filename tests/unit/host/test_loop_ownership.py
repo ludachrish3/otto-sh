@@ -101,7 +101,7 @@ def test_a_session_owned_host_used_from_a_narrower_loop_says_why():
     LOOP_LABELS[owner] = "the session's loop"
     LOOP_LABELS[caller] = "TestPinned's loop"
     try:
-        text = str(HostLoopError("dut1", owner, caller))
+        text = str(HostLoopError("dut1", owner=owner, caller=caller))
     finally:
         owner.close()
         caller.close()
@@ -119,7 +119,7 @@ def test_a_host_owned_by_a_narrower_loop_gets_no_session_hint():
     LOOP_LABELS[owner] = "TestRouter's loop"
     LOOP_LABELS[caller] = "the session's loop"
     try:
-        text = str(HostLoopError("dut1", owner, caller))
+        text = str(HostLoopError("dut1", owner=owner, caller=caller))
     finally:
         owner.close()
         caller.close()
@@ -132,7 +132,7 @@ def test_an_unlabelled_caller_gets_no_session_hint():
     LOOP_LABELS[owner] = "the session's loop"
 
     async def use_from_a_plain_loop() -> str:
-        return str(HostLoopError("dut1", owner, asyncio.get_running_loop()))
+        return str(HostLoopError("dut1", owner=owner, caller=asyncio.get_running_loop()))
 
     try:
         text = asyncio.run(use_from_a_plain_loop())
@@ -149,7 +149,7 @@ def test_a_caller_that_is_another_sessions_loop_gets_no_session_hint():
     LOOP_LABELS[owner] = "the session's loop"
     LOOP_LABELS[caller] = "the session's loop"
     try:
-        text = str(HostLoopError("dut1", owner, caller))
+        text = str(HostLoopError("dut1", owner=owner, caller=caller))
     finally:
         owner.close()
         caller.close()
@@ -160,7 +160,7 @@ def test_the_error_is_otto_and_runtime_rooted_and_names_an_unlabelled_loop_by_id
     loop = asyncio.new_event_loop()
     try:
         assert loop_label(loop) == f"event loop {id(loop):#x}"
-        err = HostLoopError("dut1", loop, loop)
+        err = HostLoopError("dut1", owner=loop, caller=loop)
         assert isinstance(err, RuntimeError)
         assert f"{id(loop):#x}" in str(err)
     finally:
@@ -631,7 +631,7 @@ def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(c
         return _ClosableConn()
 
     async def exec_on(self, conn, cmd, timeout=0.0, log=None):
-        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     monkeypatch.setattr(connections, "connect_and_describe", connect)
     monkeypatch.setattr(SessionManager, "exec_on", exec_on)

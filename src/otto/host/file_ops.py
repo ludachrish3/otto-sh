@@ -137,7 +137,7 @@ async def refuse_if_base64_is_absent(
     if userland is None:
         return
     await userland.resolve()
-    if not userland.is_settled("base64_flag") or userland.base64_flag != "absent":
+    if not userland.is_settled(name="base64_flag") or userland.base64_flag != "absent":
         return
     refuse_if_gapped("file-ops-base64", host=host, attempted=attempted)
 
@@ -182,7 +182,12 @@ class PosixFileOps(UserlandHost):
         output_dir=False,
         help_="List entry names in path (`ls -1`); `--all` includes dotfiles (`-A`).",
     )
-    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
+    async def ls(
+        self,
+        path: "Annotated[str | Path, Arg()]" = ".",
+        *,
+        all: bool = False,  # noqa: A002 — CLI-exposed param name, maps to --all flag
+    ) -> list[str]:
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles).
 
         Raises:
@@ -238,11 +243,11 @@ class PosixFileOps(UserlandHost):
             "`--no-parents` drops the `-p`."
         )
     )
-    async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:
+    async def mkdir(self, path: "str | Path", *, parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
         result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
         """Enumerate the tree at *path* on the host in one exec of the host's own ``sh``.
@@ -280,27 +285,29 @@ class PosixFileOps(UserlandHost):
         directory exists, rather than half-landing a tree.
         """
         if not paths:
-            return Result(Status.Success)
+            return Result(status=Status.Success)
         cmd = "mkdir -p " + " ".join(self._q(p) for p in paths)
         result = await self.exec(cmd, user=user)  # ty: ignore[unresolved-attribute]
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Remove path (`rm`); `--recursive` adds `-r`, `--force` adds `-f`.")
-    async def rm(self, path: "str | Path", recursive: bool = False, force: bool = False) -> Result:
+    async def rm(
+        self, path: "str | Path", *, recursive: bool = False, force: bool = False
+    ) -> Result:
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
         result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Copy src to dst on the host (`cp`); `--recursive` adds `-r`.")
-    async def cp(self, src: "str | Path", dst: "str | Path", recursive: bool = False) -> Result:
+    async def cp(self, src: "str | Path", dst: "str | Path", *, recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
         result = await self.exec(  # ty: ignore[unresolved-attribute]
             f"cp {opt}{self._q(src)} {self._q(dst)}"
         )
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Move or rename src to dst on the host (`mv`).")
     async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
@@ -308,7 +315,7 @@ class PosixFileOps(UserlandHost):
         result = await self.exec(  # ty: ignore[unresolved-attribute]
             f"mv {self._q(src)} {self._q(dst)}"
         )
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)
 
     @cli_exposed(output_dir=False, help_="Print the text contents of path.")
     async def read_file(self, path: "str | Path") -> str:
@@ -394,7 +401,7 @@ class PosixFileOps(UserlandHost):
         dry_run_preview=True,
         help_="Write data to path, replacing the file; `--append` adds to the end instead.",
     )
-    async def write_file(self, path: "str | Path", data: str, append: bool = False) -> Result:
+    async def write_file(self, path: "str | Path", *, data: str, append: bool = False) -> Result:
         """Write *data* to *path* (overwrite, or append).
 
         The payload is base64-encoded on the wire, so arbitrary content
@@ -460,9 +467,9 @@ class PosixFileOps(UserlandHost):
             action = "APPEND" if append else "WRITE"
             banner = f"[DRY RUN] {action}: {len(body)} bytes -> {path}"
             self._log_command(banner)  # ty: ignore[unresolved-attribute]
-            return Result(Status.NotRun, msg=banner)
+            return Result(status=Status.NotRun, msg=banner)
         encoded = base64.b64encode(body).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
         result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
-        return Result(result.status, msg=result.value)
+        return Result(status=result.status, msg=result.value)

@@ -130,7 +130,7 @@ register_parsers(
     [
         RegexLogEventParser(
             "tail -n 200 /var/log/syslog",
-            SYSLOG_PATTERN,
+            pattern=SYSLOG_PATTERN,
             tab="syslog",
             tab_label="Syslog",
         ),

@@ -129,13 +129,13 @@ class _FakeHost:
 
     async def get_debug_logs(self, dest=None):
         del dest
-        return self._record("get_debug_logs", Result(Status.Success))
+        return self._record("get_debug_logs", Result(status=Status.Success))
 
     async def install_toolchain_tools(self):
-        return self._record("install_toolchain_tools", Result(Status.Success))
+        return self._record("install_toolchain_tools", Result(status=Status.Success))
 
     async def remove_toolchain_tools(self):
-        return self._record("remove_toolchain_tools", Result(Status.Success))
+        return self._record("remove_toolchain_tools", Result(status=Status.Success))
 
     async def toolchain_tools_absent(self):
         return self._record("toolchain_tools_absent", self.toolchain_absent)
@@ -254,10 +254,10 @@ def _recording_actions(
             events.append((self.project.name, verb))
             flags.append((self.project.name, verb, kwargs))
             if failing == (self.project.name, verb):
-                return Result(Status.Failed, msg=f"{verb} refused")
+                return Result(status=Status.Failed, msg=f"{verb} refused")
             if declining == (self.project.name, verb):
-                return Result(Status.Skipped, msg=f"{verb} kept something")
-            return Result(Status.Success)
+                return Result(status=Status.Skipped, msg=f"{verb} kept something")
+            return Result(status=Status.Success)
 
         async def install(self, opts):
             del opts
@@ -548,7 +548,7 @@ async def test_uninstall_does_not_mutate_the_cached_project_order(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_forwards_get_product_logs_to_every_project(monkeypatch):
     lab = _wire(monkeypatch, projects=["base", "app"])
-    await project.uninstall(UninstallOptions(product_logs=False))
+    await project.uninstall(opts=UninstallOptions(product_logs=False))
     assert [f[2] for f in lab.flags] == [{"product_logs": False}] * 2
 
 
@@ -572,7 +572,7 @@ async def test_debug_sweep_runs_once_per_host_after_all_uninstalls(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_get_debug_logs_false_skips_the_sweep(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    await project.uninstall(UninstallOptions(debug_logs=False))
+    await project.uninstall(opts=UninstallOptions(debug_logs=False))
     assert "get_debug_logs" not in _verbs(lab.events)
 
 
@@ -581,7 +581,7 @@ async def test_uninstall_reports_a_failed_debug_sweep(monkeypatch):
     # Kills: firing the sweep and dropping its answer — a lost log set is the
     # frustration this whole surface exists to prevent.
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    lab.hosts[0].script("get_debug_logs", Result(Status.Failed, msg="transfer refused"))
+    lab.hosts[0].script("get_debug_logs", Result(status=Status.Failed, msg="transfer refused"))
     result = await project.uninstall()
     assert not result.is_ok
     assert "h0" in result.msg
@@ -655,7 +655,7 @@ async def test_cleanup_removes_the_toolchain_even_when_a_project_failed(monkeypa
 @pytest.mark.asyncio
 async def test_cleanup_reports_a_failed_toolchain_removal(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    lab.hosts[0].script("remove_toolchain_tools", Result(Status.Failed, msg="read-only fs"))
+    lab.hosts[0].script("remove_toolchain_tools", Result(status=Status.Failed, msg="read-only fs"))
     result = await project.cleanup()
     assert not result.is_ok
     assert "h0" in result.msg
@@ -667,7 +667,7 @@ async def test_cleanup_get_debug_logs_false_still_removes_the_toolchain(monkeypa
     # Kills: hanging the host-global removal off the debug-log flag — two
     # unrelated host-global steps that happen to sit next to each other.
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    assert (await project.cleanup(CleanupOptions(debug_logs=False))).is_ok
+    assert (await project.cleanup(opts=CleanupOptions(debug_logs=False))).is_ok
     assert _verbs(lab.events) == [
         "cleanup",
         "remove_toolchain_tools",
@@ -679,7 +679,7 @@ async def test_cleanup_get_debug_logs_false_still_removes_the_toolchain(monkeypa
 @pytest.mark.asyncio
 async def test_cleanup_forwards_get_product_logs(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"])
-    await project.cleanup(CleanupOptions(product_logs=False))
+    await project.cleanup(opts=CleanupOptions(product_logs=False))
     assert lab.flags == [("app", "cleanup", {"product_logs": False})]
 
 
@@ -908,7 +908,7 @@ async def test_cleanup_reports_a_host_the_tunnel_reap_could_not_reach(monkeypatc
 @pytest.mark.asyncio
 async def test_cleanup_no_reset_impairments_skips_only_that_step(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    assert (await project.cleanup(CleanupOptions(reset_impairments=False))).is_ok
+    assert (await project.cleanup(opts=CleanupOptions(reset_impairments=False))).is_ok
     assert "repair_all" not in _verbs(lab.events)
     assert ("lab", "remove_all_tunnels") in lab.events
 
@@ -916,7 +916,7 @@ async def test_cleanup_no_reset_impairments_skips_only_that_step(monkeypatch):
 @pytest.mark.asyncio
 async def test_cleanup_no_remove_tunnels_skips_only_that_step(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    assert (await project.cleanup(CleanupOptions(remove_tunnels=False))).is_ok
+    assert (await project.cleanup(opts=CleanupOptions(remove_tunnels=False))).is_ok
     assert "remove_all_tunnels" not in _verbs(lab.events)
     assert ("lab", "repair_all") in lab.events
 
@@ -1000,7 +1000,7 @@ async def test_cleanup_dry_run_preview_of_the_tunnel_reap_is_not_a_reap(monkeypa
         hosts=0,
         reap=RemovedReport([], {}, [], [], plan=DryRunPlan(["scan 0 has_bash host(s)"], ["what"])),
     )
-    result = await project.cleanup(CleanupOptions(reset_impairments=False))
+    result = await project.cleanup(opts=CleanupOptions(reset_impairments=False))
     assert result.status is Status.NotRun
     assert "dry run" in result.msg
 
@@ -1028,14 +1028,14 @@ async def test_get_logs_is_best_effort_across_projects(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_logs_debug_false_skips_the_sweep(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    assert (await project.get_logs(GetLogsOptions(debug_logs=False))).is_ok
+    assert (await project.get_logs(opts=GetLogsOptions(debug_logs=False))).is_ok
     assert _verbs(lab.events) == ["get_logs"]
 
 
 @pytest.mark.asyncio
 async def test_get_logs_forwards_require_product_logs(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"])
-    await project.get_logs(GetLogsOptions(require_product_logs=True))
+    await project.get_logs(opts=GetLogsOptions(require_product_logs=True))
     assert lab.flags == [("app", "get_logs", {"product_logs": True, "require_product_logs": True})]
 
 
@@ -1044,7 +1044,9 @@ async def test_get_logs_require_product_logs_with_product_false_is_refused(monke
     # Kills: leaning on the per-project refusal, which never fires in a lab with
     # no projects — the requirement would be parsed and silently unenforceable.
     lab = _wire(monkeypatch, projects=[], hosts=1)
-    result = await project.get_logs(GetLogsOptions(product_logs=False, require_product_logs=True))
+    result = await project.get_logs(
+        opts=GetLogsOptions(product_logs=False, require_product_logs=True)
+    )
     assert not result.is_ok
     assert "require_product_logs" in result.msg
     assert lab.events == []  # nothing ran, including the debug sweep
@@ -1081,7 +1083,7 @@ async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
     # host, shared by every owner), so if the orchestrator does not sweep,
     # ``install_tools(toolchain=True)`` is a silent end-to-end no-op.
     lab = _wire(monkeypatch, projects=["app"], hosts=2)
-    assert (await project.install_tools(InstallToolsOptions(toolchain=True))).is_ok
+    assert (await project.install_tools(opts=InstallToolsOptions(toolchain=True))).is_ok
     assert _verbs(lab.events) == [
         "install_tools",
         "install_toolchain_tools",
@@ -1092,7 +1094,7 @@ async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
 @pytest.mark.asyncio
 async def test_install_tools_dev_false_toolchain_true_still_sweeps(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    assert (await project.install_tools(InstallToolsOptions(dev=False, toolchain=True))).is_ok
+    assert (await project.install_tools(opts=InstallToolsOptions(dev=False, toolchain=True))).is_ok
     # --toolchain reaches the project's own options instance — a subclass with
     # toolchain work of its own has somewhere to hang it — while the
     # host-global sweep below stays the orchestrator's, performed once.
@@ -1103,8 +1105,8 @@ async def test_install_tools_dev_false_toolchain_true_still_sweeps(monkeypatch):
 @pytest.mark.asyncio
 async def test_install_tools_reports_a_failed_toolchain_sweep(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    lab.hosts[0].script("install_toolchain_tools", Result(Status.Failed, msg="no space"))
-    result = await project.install_tools(InstallToolsOptions(toolchain=True))
+    lab.hosts[0].script("install_toolchain_tools", Result(status=Status.Failed, msg="no space"))
+    result = await project.install_tools(opts=InstallToolsOptions(toolchain=True))
     assert not result.is_ok
     assert "h0" in result.msg
     assert "no space" in result.msg
@@ -1115,7 +1117,7 @@ async def test_install_tools_failed_dev_walk_never_starts_the_toolchain(monkeypa
     # Fail-fast, mirroring the host verb: the toolchain is not placed on top of
     # tooling that is known to be missing.
     lab = _wire(monkeypatch, projects=["app"], hosts=1, failing=("app", "install_tools"))
-    result = await project.install_tools(InstallToolsOptions(toolchain=True))
+    result = await project.install_tools(opts=InstallToolsOptions(toolchain=True))
     assert not result.is_ok
     assert "install_toolchain_tools" not in _verbs(lab.events)
 
@@ -1145,7 +1147,7 @@ async def test_uninstall_tools_default_leaves_the_toolchain_alone(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_tools_toolchain_removes_it_once_per_host(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=2)
-    assert (await project.uninstall_tools(UninstallToolsOptions(toolchain=True))).is_ok
+    assert (await project.uninstall_tools(opts=UninstallToolsOptions(toolchain=True))).is_ok
     assert _verbs(lab.events) == [
         "uninstall_tools",
         "remove_toolchain_tools",
@@ -1158,7 +1160,7 @@ async def test_uninstall_tools_removes_the_toolchain_even_after_a_failed_dev_wal
     # Removal is best-effort end to end, unlike install-tools: a dev tool that
     # will not unload is no reason to leave the toolchain behind.
     lab = _wire(monkeypatch, projects=["app"], hosts=1, failing=("app", "uninstall_tools"))
-    result = await project.uninstall_tools(UninstallToolsOptions(toolchain=True))
+    result = await project.uninstall_tools(opts=UninstallToolsOptions(toolchain=True))
     assert ("h0", "remove_toolchain_tools") in lab.events
     assert not result.is_ok
     assert "app" in result.msg
@@ -1167,8 +1169,8 @@ async def test_uninstall_tools_removes_the_toolchain_even_after_a_failed_dev_wal
 @pytest.mark.asyncio
 async def test_uninstall_tools_reports_a_failed_toolchain_removal(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    lab.hosts[0].script("remove_toolchain_tools", Result(Status.Failed, msg="read-only fs"))
-    result = await project.uninstall_tools(UninstallToolsOptions(toolchain=True))
+    lab.hosts[0].script("remove_toolchain_tools", Result(status=Status.Failed, msg="read-only fs"))
+    result = await project.uninstall_tools(opts=UninstallToolsOptions(toolchain=True))
     assert not result.is_ok
     assert "h0" in result.msg
     assert "read-only fs" in result.msg
@@ -1407,7 +1409,7 @@ async def test_is_clean_is_false_while_a_link_carries_a_port_scoped_impairment(m
         monkeypatch,
         projects=["app"],
         hosts=1,
-        states=[_state(scoped={Selector(5201, "tcp"): ImpairmentParams(loss_pct=2.0)})],
+        states=[_state(scoped={Selector(port=5201, proto="tcp"): ImpairmentParams(loss_pct=2.0)})],
     )
     assert await project.is_clean() is False
 
@@ -1491,7 +1493,7 @@ async def test_is_clean_surfaces_a_hosts_refusal_instead_of_answering(monkeypatc
     # as "not clean" would send a converge into a cleanup nobody can run, and a
     # transport failure read the same way is a fact nobody established.
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
-    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", "h0"))
+    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", host="h0"))
     with pytest.raises(CommandNotRunError):
         await project.is_clean()
 
@@ -1593,7 +1595,7 @@ async def test_cleanliness_marks_what_it_could_not_read_instead_of_refusing(monk
         states=[_state(), _unread_state("edge", unreachable=True)],
         discovery=TunnelDiscovery([], ["h9"]),
     )
-    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", "h0"))
+    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", host="h0"))
 
     report = await project.cleanliness()
     rows = _rows(report)
@@ -1620,7 +1622,7 @@ async def test_cleanliness_marks_a_project_whose_own_probe_failed(monkeypatch):
     # the first project it asked.
     class _Raising(ProjectActions):
         async def is_clean(self):
-            raise CommandNotRunError("test -e /opt/acme", "h0")
+            raise CommandNotRunError("test -e /opt/acme", host="h0")
 
     _register_actions("app", _Raising)
     _wire_lab(monkeypatch, ["app"], _FakeCtx([_FakeHost("h0", [])]))
@@ -1746,7 +1748,7 @@ async def test_is_clean_answers_dirty_with_one_host_tooled_and_another_unreachab
     # host that is provably still carrying a toolchain. An answer in hand is
     # not discarded for a probe that fell short.
     lab = _wire(monkeypatch, projects=["app"], hosts=2)
-    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", "h0"))
+    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", host="h0"))
     lab.hosts[1].toolchain_absent = False
 
     assert await project.is_clean() is False
@@ -1791,7 +1793,7 @@ async def test_ensure_installed_already_installed_is_a_skip_not_a_fresh_install(
 @pytest.mark.asyncio
 async def test_ensure_installed_recover_partial_false_skips_the_uninstall(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], state=InstallState.PARTIAL)
-    await project.ensure_installed(InstallOptions(recover_partial=False))
+    await project.ensure_installed(opts=InstallOptions(recover_partial=False))
     assert _verbs(lab.events) == ["install"]
 
 
@@ -1806,12 +1808,12 @@ class _LifecycleItem(_FakeItem):
     async def stage(self, host):
         del host
         self.calls.append("stage")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def install(self, host):
         del host
         self.calls.append("install")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 @pytest.mark.asyncio
@@ -1822,7 +1824,7 @@ async def test_ensure_without_recovery_installs_only_the_missing_product(monkeyp
     host = LocalHost()
     host.products = [done, missing]
     _wire_lab(monkeypatch, ["app"], _FakeCtx([host]))
-    result = await project.ensure_installed(InstallOptions(recover_partial=False))
+    result = await project.ensure_installed(opts=InstallOptions(recover_partial=False))
     assert result.is_ok, result.msg
     assert done.calls == []
     assert missing.calls == ["stage", "install"]
@@ -1868,19 +1870,19 @@ async def test_ensure_clean_cleans_only_a_dirty_lab(monkeypatch):
 
 
 _DECLINING_VERBS = [
-    ("uninstall", "uninstall", lambda on: project.uninstall(UninstallOptions(debug_logs=on))),
-    ("get-logs", "get_logs", lambda on: project.get_logs(GetLogsOptions(debug_logs=on))),
+    ("uninstall", "uninstall", lambda on: project.uninstall(opts=UninstallOptions(debug_logs=on))),
+    ("get-logs", "get_logs", lambda on: project.get_logs(opts=GetLogsOptions(debug_logs=on))),
     (
         "install-tools",
         "install_tools",
-        lambda on: project.install_tools(InstallToolsOptions(toolchain=on)),
+        lambda on: project.install_tools(opts=InstallToolsOptions(toolchain=on)),
     ),
     (
         "uninstall-tools",
         "uninstall_tools",
-        lambda on: project.uninstall_tools(UninstallToolsOptions(toolchain=on)),
+        lambda on: project.uninstall_tools(opts=UninstallToolsOptions(toolchain=on)),
     ),
-    ("cleanup", "cleanup", lambda on: project.cleanup(CleanupOptions(debug_logs=on))),
+    ("cleanup", "cleanup", lambda on: project.cleanup(opts=CleanupOptions(debug_logs=on))),
 ]
 """Every lab verb that walks projects, and the unrelated flag that adds a host-global step."""
 
@@ -1941,7 +1943,7 @@ async def test_ensure_clean_cleans_a_lab_dirty_only_in_docker_staging(monkeypatc
     async def _cleanup_project(host, key, *, stack):
         del stack
         removed.append((host.id, key))
-        return Result(Status.Success, value="")  # a removed tree prints nothing
+        return Result(status=Status.Success, value="")  # a removed tree prints nothing
 
     monkeypatch.setattr(compose_mod, "staging_keys_on", lambda h, p: [StagingKey("stack-a", True)])
     monkeypatch.setattr(compose_mod, "staging_to_remove", _survey)
@@ -1978,22 +1980,22 @@ class _CoverageHost(_FakeHost):
     async def install(self, owner=None):
         for product in self.products:
             product.installed = True
-        return self._record("install", Result(Status.Success))
+        return self._record("install", Result(status=Status.Success))
 
     async def uninstall(self, get_product_logs=True, get_debug_logs=True, owner=None):
         for product in self.products:
             product.installed = False
-        return self._record("uninstall", Result(Status.Success))
+        return self._record("uninstall", Result(status=Status.Success))
 
     async def uninstall_dev_tools(self, owner=None):
-        return self._record("uninstall_dev_tools", Result(Status.Success))
+        return self._record("uninstall_dev_tools", Result(status=Status.Success))
 
     async def get_product_logs(self, dest=None, owner=None):
-        return self._record("get_product_logs", Result(Status.Success))
+        return self._record("get_product_logs", Result(status=Status.Success))
 
     async def remove_coverage_dirs(self, owner=None):
         self.swept_clean = True
-        return self._record("remove_coverage_dirs", Result(Status.Success))
+        return self._record("remove_coverage_dirs", Result(status=Status.Success))
 
     async def coverage_dirs_clean(self, owner=None):
         return self._record("coverage_dirs_clean", self.swept_clean)
@@ -2004,7 +2006,7 @@ def _wire_coverage_lab(monkeypatch, products, *, swept_clean=False):
     host = _CoverageHost("h0", events, products, swept_clean=swept_clean)
     monkeypatch.setattr(
         "otto.project.actions._dispatch_remove_docker_staging",
-        AsyncMock(return_value=Result(Status.Success)),
+        AsyncMock(return_value=Result(status=Status.Success)),
     )
     monkeypatch.setattr("otto.project.actions._docker_staging_left", AsyncMock(return_value=False))
     _wire_lab(monkeypatch, ["app"], _FakeCtx([host]))
@@ -2057,11 +2059,11 @@ async def test_partial_recovery_keeps_cov_dir(monkeypatch):
 async def test_install_ensure_flag_delegates_to_the_converge(monkeypatch):
     # The CLI's ``install --ensure`` is this argument, not a second code path.
     lab = _wire(monkeypatch, projects=["app"], state=InstallState.PARTIAL)
-    await project.install(InstallOptions(ensure=True))
+    await project.install(opts=InstallOptions(ensure=True))
     assert _verbs(lab.events) == ["uninstall", "install"]
 
     lab = _wire(monkeypatch, projects=["app"], state=InstallState.PARTIAL)
-    await project.install(InstallOptions(ensure=True, recover_partial=False))
+    await project.install(opts=InstallOptions(ensure=True, recover_partial=False))
     assert _verbs(lab.events) == ["install"]
 
     # …and without it, install is the plain walk: no status is consulted, so a
@@ -3463,7 +3465,7 @@ class TestPerProjectOptions:
                 @instruction(options=AInstall)
                 async def install(self, opts: AInstall):
                     seen["a"] = opts
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         with registering_project("b"):
 
@@ -3471,7 +3473,7 @@ class TestPerProjectOptions:
             class B(ProjectActions):
                 async def install(self, opts):
                     seen["b"] = opts
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         two_project_lab(A=A, B=B)
 
@@ -3504,7 +3506,7 @@ class TestPerProjectOptions:
                 @instruction(walk="reverse")
                 async def deploy(self):
                     order.append("a")
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         with registering_project("b"):
 
@@ -3513,7 +3515,7 @@ class TestPerProjectOptions:
                 @instruction()
                 async def deploy(self):
                     order.append("b")
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         two_project_lab(A=A, B=B)
 
@@ -3538,7 +3540,7 @@ class TestPerProjectOptions:
                 async def install(self, opts):
                     del opts
                     ran.append("a")
-                    return Result(Status.Failed, msg="boom")
+                    return Result(status=Status.Failed, msg="boom")
 
         with registering_project("b"):
 
@@ -3547,7 +3549,7 @@ class TestPerProjectOptions:
                 async def install(self, opts):
                     del opts
                     ran.append("b")
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         two_project_lab(A=A, B=B)
 
@@ -3574,7 +3576,7 @@ class TestPerProjectOptions:
                 async def uninstall(self, opts):
                     del opts
                     ran.append("a")
-                    return Result(Status.Success)
+                    return Result(status=Status.Success)
 
         with registering_project("b"):
 
@@ -3583,7 +3585,7 @@ class TestPerProjectOptions:
                 async def uninstall(self, opts):
                     del opts
                     ran.append("b")
-                    return Result(Status.Failed, msg="stuck")
+                    return Result(status=Status.Failed, msg="stuck")
 
         two_project_lab(A=A, B=B)
 
@@ -3647,9 +3649,9 @@ class TestPerProjectOptions:
 
         seen: "list[OptionsSource]" = []
 
-        async def _recorder(source):
-            seen.append(source)
-            return Result(Status.Success)
+        async def _recorder(*, opts):
+            seen.append(opts)
+            return Result(status=Status.Success)
 
         monkeypatch.setattr(orchestrator, "install", _recorder)
 

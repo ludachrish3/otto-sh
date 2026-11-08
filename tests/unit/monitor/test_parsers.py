@@ -575,7 +575,7 @@ class TestHostParserRegistry:
             yield
         finally:
             for host_id in set(parsers_mod.HOST_PARSERS.names()) - before:
-                parsers_mod.HOST_PARSERS.unregister(host_id)
+                parsers_mod.HOST_PARSERS.unregister(name=host_id)
 
     def test_unregistered_host_falls_back_to_default_parsers(self):
         # get_host_parsers deep-copies its result (see test below), so compare
@@ -616,9 +616,9 @@ class TestHostPatternRegistry:
             yield
         finally:
             for host_id in set(parsers_mod.HOST_PARSERS.names()) - host_before:
-                parsers_mod.HOST_PARSERS.unregister(host_id)
+                parsers_mod.HOST_PARSERS.unregister(name=host_id)
             for pattern_str in set(parsers_mod.HOST_PATTERN_PARSERS.names()) - pattern_before:
-                parsers_mod.HOST_PATTERN_PARSERS.unregister(pattern_str)
+                parsers_mod.HOST_PATTERN_PARSERS.unregister(name=pattern_str)
 
     def _parsers(self) -> dict[str, MetricParser]:
         return {_UptimeParser.command: _UptimeParser()}
@@ -726,9 +726,9 @@ class TestProjectParserRegistry:
             yield
         finally:
             for host_id in set(parsers_mod.HOST_PARSERS.names()) - host_before:
-                parsers_mod.HOST_PARSERS.unregister(host_id)
+                parsers_mod.HOST_PARSERS.unregister(name=host_id)
             for command in set(parsers_mod.PROJECT_PARSERS.names()) - project_before:
-                parsers_mod.PROJECT_PARSERS.unregister(command)
+                parsers_mod.PROJECT_PARSERS.unregister(name=command)
 
     def test_register_parsers_extends_defaults_for_all_hosts(self):
         register_parsers([_UptimeParser()])

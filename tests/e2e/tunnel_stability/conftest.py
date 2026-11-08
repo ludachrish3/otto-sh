@@ -49,7 +49,7 @@ async def reap_tunnels(tunnel_lab):
     yield created
     for tunnel_id in created:
         with teardown_step(f"tunnel_stability reap {tunnel_id}", "remove_tunnel"):
-            await remove_tunnel(tunnel_lab, tunnel_id)
+            await remove_tunnel(tunnel_lab, tunnel_id=tunnel_id)
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -26,7 +26,7 @@ def build_host(
         preferences = {".*": dict(selections)}
     hc = host_context(
         entry,
-        element=element if element is not None else Element("lab"),
+        element=element if element is not None else Element(name="lab"),
         profiles=profiles,
         preferences=preferences,
     )

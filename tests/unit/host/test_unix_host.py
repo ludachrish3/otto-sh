@@ -58,7 +58,7 @@ def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -68,7 +68,7 @@ def host() -> UnixHost:
 def unix_host_ssh() -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -81,7 +81,7 @@ def console_unix_host(monkeypatch) -> UnixHost:
 
     h = UnixHost(
         ip="10.0.0.2",
-        element=Element("test2"),
+        element=Element(name="test2"),
         creds=[Cred(login="test", password="Password1")],
         log=LogMode.QUIET,
         valid_terms=["console"],
@@ -128,7 +128,7 @@ class TestIdAndNameGeneration:
     async def test_id_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("Alt1"),
+            element=Element(name="Alt1"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -139,7 +139,7 @@ class TestIdAndNameGeneration:
     async def test_id_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("Alt1"),
+            element=Element(name="Alt1"),
             board="Qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
@@ -151,7 +151,7 @@ class TestIdAndNameGeneration:
     async def test_id_with_board_and_slot(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("Alt1"),
+            element=Element(name="Alt1"),
             board="Qemu",
             slot=0,
             creds=[Cred(login="u", password="p")],
@@ -164,7 +164,7 @@ class TestIdAndNameGeneration:
     async def test_name_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("alt1"),
+            element=Element(name="alt1"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -175,7 +175,7 @@ class TestIdAndNameGeneration:
     async def test_name_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("alt1"),
+            element=Element(name="alt1"),
             board="qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
@@ -187,7 +187,7 @@ class TestIdAndNameGeneration:
     async def test_name_override(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("alt1"),
+            element=Element(name="alt1"),
             creds=[Cred(login="u", password="p")],
             name="custom",
             log=LogMode.QUIET,
@@ -211,7 +211,7 @@ class TestCreds:
     async def test_returns_first_pair_from_multiple_creds(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[
                 Cred(login="vagrant", password="vagrant"),
                 Cred(login="test", password="Password1"),
@@ -228,8 +228,8 @@ class TestCreds:
             Cred(login="admin", password="unix-pw"),
             Cred(login="admin", password="tn-pw", protocols=["telnet"]),
         ]
-        host = UnixHost(ip="10.0.0.1", element=Element("lab"), creds=creds, term="telnet")
-        assert host.cred("admin").password == SecretStr("tn-pw")
+        host = UnixHost(ip="10.0.0.1", element=Element(name="lab"), creds=creds, term="telnet")
+        assert host.cred(login="admin").password == SecretStr("tn-pw")
         assert host._sudo_password() == SecretStr("tn-pw")
         assert host.default_cred is not None
         assert host.default_cred.login == "admin"
@@ -266,7 +266,7 @@ class TestUserland:
         extra.setdefault("ssh_options", SshOptions(port=1))
         return UnixHost(
             ip="127.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
             **extra,
@@ -417,7 +417,7 @@ class TestClose:
     async def test_close_when_not_connected_is_safe(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -427,7 +427,7 @@ class TestClose:
     async def test_close_disconnects_ssh(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -458,7 +458,7 @@ class TestClose:
 
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -488,7 +488,7 @@ class TestClose:
         teardown chain robustness)."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -508,7 +508,7 @@ class TestClose:
         async def scenario(points: ChaosPoints) -> None:
             h = UnixHost(
                 ip="10.0.0.1",
-                element=Element("box"),
+                element=Element(name="box"),
                 creds=[Cred(login="u", password="p")],
                 log=LogMode.QUIET,
             )
@@ -639,7 +639,8 @@ class TestCommandExecution:
         await host.run("sudo ls", expects=expects)
         host._session_mgr._session.run_cmd.assert_called_once()
         args, kwargs = host._session_mgr._session.run_cmd.call_args
-        assert args == ("sudo ls",)
+        assert args == ()
+        assert kwargs["cmd"] == "sudo ls"
         assert kwargs["expects"] == expects
         # Single-command form: the default passes straight through unchanged.
         assert kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
@@ -654,7 +655,8 @@ class TestCommandExecution:
         await host.run("sleep 1", timeout=30.0)
         host._session_mgr._session.run_cmd.assert_called_once()
         args, kwargs = host._session_mgr._session.run_cmd.call_args
-        assert args == ("sleep 1",)
+        assert args == ()
+        assert kwargs["cmd"] == "sleep 1"
         assert kwargs["expects"] is None
         assert kwargs["timeout"] == 30.0
         assert kwargs["write_progress"] is None
@@ -665,7 +667,7 @@ class TestCommandExecution:
     async def test_telnet_connection_failure_propagates(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -748,7 +750,7 @@ class TestExec:
         login-target connection the pooled/plain path uses."""
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="postgres", password="pw")],
             log=LogMode.QUIET,
         )
@@ -787,7 +789,7 @@ class TestExec:
         switched pooled shell — the same path a proxy-only user takes on ssh."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="telnet",
             log=LogMode.QUIET,
@@ -806,7 +808,7 @@ class TestExec:
     async def test_exec_user_with_a_direct_cred_on_ssh_authenticates(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="ssh",
             log=LogMode.QUIET,
@@ -818,7 +820,7 @@ class TestExec:
         )
         h._session_mgr.exec = AsyncMock()
         await h.exec("id", user="root")
-        h._connections.ssh_as.assert_awaited_once_with("root")
+        h._connections.ssh_as.assert_awaited_once_with(user="root")
         h._session_mgr.exec_on.assert_awaited_once()
         h._session_mgr.exec.assert_not_awaited()
 
@@ -826,7 +828,7 @@ class TestExec:
     async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="root", proxy="su", via="user")],
             term="ssh",
             log=LogMode.QUIET,
@@ -844,7 +846,7 @@ class TestExec:
         """A direct cred can authenticate on a raw channel — but not answer a prompt."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="ssh",
             log=LogMode.QUIET,
@@ -861,7 +863,7 @@ class TestExec:
     async def test_exec_telnet_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -892,7 +894,8 @@ class TestExec:
         mock_client.connect.assert_called_once()
         mock_session.run_cmd.assert_called_once()
         args, kwargs = mock_session.run_cmd.call_args
-        assert args == ("echo hello",)
+        assert args == ()
+        assert kwargs["cmd"] == "echo hello"
         assert kwargs["expects"] is None
         assert kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
         assert kwargs["redact"] is False
@@ -917,7 +920,7 @@ class TestExec:
         """
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("test2"),
+            element=Element(name="test2"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1001,7 +1004,7 @@ class TestExec:
 
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
@@ -1016,7 +1019,7 @@ class TestExec:
         # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
         await h.exec("base64 /bin/ls", log=LogMode.QUIET)
         h._session_mgr.exec.assert_awaited_once_with(
-            "base64 /bin/ls",
+            cmd="base64 /bin/ls",
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
             expects=None,
@@ -1036,7 +1039,7 @@ def ftp_host() -> UnixHost:
     ride a per-user SSH connection (it authenticates separately)."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         transfer="ftp",
         log=LogMode.QUIET,
@@ -1097,7 +1100,7 @@ class TestPutGetUser:
             captured["user"] = user
             captured["conns"] = ft._connections
             captured["ft"] = ft
-            ft.put_files = AsyncMock(return_value=Result(Status.Success, value={}))
+            ft.put_files = AsyncMock(return_value=Result(status=Status.Success, value={}))
             return ft
 
         monkeypatch.setattr(host, "_build_file_transfer", spy_build)
@@ -1123,7 +1126,7 @@ class TestPutGetUser:
             captured["user"] = user
             captured["conns"] = ft._connections
             captured["ft"] = ft
-            ft.get_files = AsyncMock(return_value=Result(Status.Success, value={}))
+            ft.get_files = AsyncMock(return_value=Result(status=Status.Success, value={}))
             return ft
 
         monkeypatch.setattr(host, "_build_file_transfer", spy_build)
@@ -1138,7 +1141,9 @@ class TestPutGetUser:
     @pytest.mark.asyncio
     async def test_put_without_user_uses_the_shared_backend(self, host: UnixHost, tmp_path: Path):
         """The `user=None` path must not build (or cache) anything new."""
-        host._file_transfer.put_files = AsyncMock(return_value=Result(Status.Success, value={}))
+        host._file_transfer.put_files = AsyncMock(
+            return_value=Result(status=Status.Success, value={})
+        )
         src = tmp_path / "a.bin"
         src.write_bytes(b"x")
 
@@ -1228,7 +1233,7 @@ class TestPutGetUser:
         proxy-only users do."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="telnet",
             transfer="nc",
@@ -1250,7 +1255,7 @@ class TestConsoleTermTransfers:
 
         return UnixHost(
             ip="10.0.0.2",
-            element=Element("test2"),
+            element=Element(name="test2"),
             creds=[Cred(login="test", password="pw"), Cred(login="root", password="rootpw")],
             term="console",
             valid_terms=["ssh", "console"],
@@ -1629,7 +1634,7 @@ class TestNotConnectedFileTransfer:
     async def test_sftp_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1650,7 +1655,7 @@ class TestNotConnectedFileTransfer:
     async def test_sftp_put_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1671,7 +1676,7 @@ class TestNotConnectedFileTransfer:
     async def test_ftp_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1692,7 +1697,7 @@ class TestNotConnectedFileTransfer:
     async def test_ftp_put_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1713,7 +1718,7 @@ class TestNotConnectedFileTransfer:
     async def test_nc_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1749,7 +1754,7 @@ class TestNotConnectedFileTransfer:
     async def test_nc_put_raises(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1806,7 +1811,7 @@ class TestSshFileTransfer:
     async def test_sftp_get_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1824,7 +1829,7 @@ class TestSshFileTransfer:
     async def test_sftp_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1844,7 +1849,7 @@ class TestSshFileTransfer:
     async def test_ftp_get_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1865,7 +1870,7 @@ class TestSshFileTransfer:
     async def test_ftp_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1893,7 +1898,7 @@ class TestNcFileTransfer:
     async def test_nc_get_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1959,7 +1964,7 @@ class TestNcFileTransfer:
     async def test_nc_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -2026,7 +2031,7 @@ class TestNcFileTransfer:
         as it was."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.NORMAL,
@@ -2088,7 +2093,7 @@ class TestNcFileTransfer:
         must both run with the host's commands quiet (``_effective_log``)."""
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.NORMAL,
@@ -2201,7 +2206,7 @@ class TestOpenSession:
     async def test_telnet_returns_remote_session(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2220,7 +2225,7 @@ class TestOpenSession:
     async def test_telnet_connects_new_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2238,7 +2243,7 @@ class TestOpenSession:
     async def test_telnet_session_owns_its_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2269,7 +2274,7 @@ class TestOpenSession:
         # failures took. The host's deadline must reach them.
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2320,7 +2325,7 @@ class TestOpenSession:
     async def test_multiple_telnet_sessions_each_create_own_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2347,7 +2352,7 @@ class TestOpenSession:
     async def test_multiple_telnet_sessions_each_own_separate_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2378,14 +2383,14 @@ class TestOpenSession:
         """An SSH host and a Telnet host can hold independent named sessions simultaneously."""
         ssh_host = UnixHost(
             ip="10.0.0.1",
-            element=Element("ssh-box"),
+            element=Element(name="ssh-box"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
         )
         telnet_host = UnixHost(
             ip="10.0.0.2",
-            element=Element("tel-box"),
+            element=Element(name="tel-box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -2441,7 +2446,7 @@ class TestOpenSession:
     async def test_unknown_term_raises_value_error(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -2539,14 +2544,14 @@ class TestHostSessionProxy:
     async def test_expect_delegates_and_returns_output(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         result = await session.expect(r"\$")
-        shell.expect.assert_called_once_with(r"\$", DEFAULT_COMMAND_TIMEOUT)
+        shell.expect.assert_called_once_with(r"\$", timeout=DEFAULT_COMMAND_TIMEOUT)
         assert result == "some output"
 
     @pytest.mark.asyncio
     async def test_expect_forwards_timeout(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.expect(r"\$", timeout=5.0)
-        shell.expect.assert_called_once_with(r"\$", 5.0)
+        shell.expect.assert_called_once_with(r"\$", timeout=5.0)
 
     def test_alive_true_when_session_alive(self, host: UnixHost):
         session, _ = self._make_remote_session(host, alive=True)
@@ -2652,7 +2657,7 @@ async def test_host_current_user_reads_default_session():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
     )
@@ -2672,7 +2677,7 @@ async def test_unix_switch_user_updates_host_current_user():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         log=LogMode.QUIET,
     )
@@ -2684,7 +2689,7 @@ async def test_unix_switch_user_updates_host_current_user():
     # password, which the engine now refuses rather than answering twice.
     drive(transport, user="admin")
     host._session_mgr._session = transport
-    await host.switch_user("root")
+    await host.switch_user(user="root")
     assert host.current_user == "root"
 
 
@@ -2698,7 +2703,7 @@ def _unix_host(*, term="ssh"):
 
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
         term=term,
@@ -2713,7 +2718,7 @@ async def test_run_user_switches_for_the_call_and_restores():
     # way `PosixPrivilege.as_user` does, which is what makes the RESTORE
     # assertion at the end mean anything at all.
     h._session_mgr = _real_session_mgr()
-    await h._session_mgr.run_cmd("whoami")  # default session opens as admin
+    await h._session_mgr.run_cmd(cmd="whoami")  # default session opens as admin
     assert h.current_user == "admin"
     entered: list[str] = []
 
@@ -2826,7 +2831,9 @@ async def test_lsmod_returns_loaded_module_names():
     from unittest.mock import AsyncMock
 
     host = _unix_host()
-    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["ext4", "nvme"]))
+    host._loaded_modules = AsyncMock(
+        return_value=Result(status=Status.Success, value=["ext4", "nvme"])
+    )
     assert (await host.lsmod()).value == ["ext4", "nvme"]
 
 
@@ -2834,7 +2841,7 @@ def _run_result(cmd, output, status, retcode):
     from otto.result import CommandResult, Results
 
     return Results.collect(
-        [CommandResult(command=cmd, value=output, status=status, retcode=retcode)]
+        items=[CommandResult(command=cmd, value=output, status=status, retcode=retcode)]
     )
 
 
@@ -2850,9 +2857,9 @@ async def test_load_stages_then_insmod_sudo_for_nonroot(tmp_path):
     host._session_mgr.current_user = "admin"  # non-root
     ko = tmp_path / "my-mod.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod /tmp/my-mod.ko", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     result = await host.load(ko)
     assert result.status is Status.Success
     assert result.msg == ""
@@ -2874,9 +2881,9 @@ async def test_load_no_sudo_when_current_user_root(tmp_path):
     host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod /tmp/m.ko", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     await host.load(ko)
     assert host.run.await_args.kwargs["sudo"] is False
 
@@ -2893,9 +2900,9 @@ async def test_load_appends_insmod_params_verbatim(tmp_path):
     host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "demo.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod ...", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     await host.load(ko, params="  cov_dir=/tmp/demo debug=1 ")
     assert host.run.await_args.args[0] == "insmod /tmp/demo.ko cov_dir=/tmp/demo debug=1"
 
@@ -2917,9 +2924,9 @@ async def test_load_stages_and_insmods_under_the_hosts_transfer_default(tmp_path
     host._session_mgr.current_user = "admin"
     ko = tmp_path / "my-mod.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     assert (await host.load(ko)).status is Status.Success
     assert host.put.await_args.args[1] == Path("/srv/stage")
     assert host.run.await_args.args[0] == "insmod /srv/stage/my-mod.ko"
@@ -2939,9 +2946,9 @@ async def test_load_dest_dir_override_moves_put_insmod_and_cleanup_together(tmp_
     host._session_mgr.current_user = "admin"
     ko = tmp_path / "my-mod.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     assert (await host.load(ko, dest_dir=Path("/opt/mods"))).status is Status.Success
     assert host.put.await_args.args[1] == Path("/opt/mods")
     assert host.run.await_args.args[0] == "insmod /opt/mods/my-mod.ko"
@@ -2960,7 +2967,7 @@ async def test_load_put_failure_short_circuits(tmp_path):
     host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Error, value={}, msg="scp failed"))
+    host.put = AsyncMock(return_value=Result(status=Status.Error, value={}, msg="scp failed"))
     host.run = AsyncMock()
     result = await host.load(ko)
     assert result.status is Status.Error
@@ -2980,11 +2987,11 @@ async def test_load_error_message_uses_normalized_name(tmp_path):
     host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "foo-bar.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(
         return_value=_run_result("insmod ...", "Invalid module format", Status.Error, 1)
     )
-    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
     result = await host.load(ko)
     assert result.status is Status.Error
     assert "foo_bar" in result.msg
@@ -2998,7 +3005,7 @@ async def test_unload_idempotent_when_not_resident():
     from otto.utils import Status
 
     host = _unix_host()
-    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["ext4"]))
+    host._loaded_modules = AsyncMock(return_value=Result(status=Status.Success, value=["ext4"]))
     host.run = AsyncMock()
     result = await host.unload("my_mod")
     assert result.status is Status.Success
@@ -3015,7 +3022,7 @@ async def test_unload_rmmod_with_sudo_when_resident():
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
-    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["my_mod"]))
+    host._loaded_modules = AsyncMock(return_value=Result(status=Status.Success, value=["my_mod"]))
     host.run = AsyncMock(return_value=_run_result("rmmod my_mod", "", Status.Success, 0))
     result = await host.unload("my-mod")  # dash normalized to my_mod
     assert result.status is Status.Success
@@ -3032,7 +3039,7 @@ async def test_unload_error_maps_rmmod_failure():
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
-    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["my_mod"]))
+    host._loaded_modules = AsyncMock(return_value=Result(status=Status.Success, value=["my_mod"]))
     host.run = AsyncMock(
         return_value=_run_result("rmmod my_mod", "Module my_mod is in use", Status.Error, 1)
     )
@@ -3045,7 +3052,7 @@ async def test_unload_error_maps_rmmod_failure():
 async def test_lsmod_dry_run_declines_rather_than_reporting_no_modules():
     """Dry-run refuses to answer, instead of answering "nothing is loaded".
 
-    It used to return ``Result(Status.Skipped, value=[])`` -- ok, and an empty
+    It used to return ``Result(status=Status.Skipped, value=[])`` -- ok, and an empty
     module list, so a caller asking "is module X loaded?" was told **no** by a
     machine that was never contacted. See
     ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` section 4;
@@ -3086,10 +3093,12 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
     host._loaded_modules = AsyncMock(
-        return_value=Result(Status.Success, value=[])
+        return_value=Result(status=Status.Success, value=[])
     )  # would short-circuit if consulted
     declined = Results.collect(
-        [NotRunResult(status=Status.NotRun, command="rmmod foo", retcode=-1, host_name=host.name)]
+        items=[
+            NotRunResult(status=Status.NotRun, command="rmmod foo", retcode=-1, host_name=host.name)
+        ]
     )
     host.run = AsyncMock(return_value=declined)
     with active_context(dry_run=True), pytest.raises(CommandNotRunError) as exc:
@@ -3111,7 +3120,7 @@ class TestSshExecTimeout:
     async def test_ssh_exec_stalling_command_times_out(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("stalled"),
+            element=Element(name="stalled"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -3176,7 +3185,7 @@ class TestSshExecKillEscalation:
 
         h = UnixHost(
             ip="10.0.0.1",
-            element=Element("stalled"),
+            element=Element(name="stalled"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -3256,7 +3265,7 @@ class TestSshExecCancelReap:
     def _rigged_host(element: str):
         return UnixHost(
             ip="10.0.0.1",
-            element=Element(element),
+            element=Element(name=element),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -3467,7 +3476,7 @@ def telnet_host(monkeypatch) -> UnixHost:
     monkeypatch.setattr("otto.host.unix_host.run_telnet_login", AsyncMock())
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         term="telnet",
         log=LogMode.QUIET,
@@ -3524,18 +3533,19 @@ class TestRecursiveTransfer:
 
         async def fake_mkdir_all(paths, *, user=None):
             mkdirs.append(list(paths))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         monkeypatch.setattr(host, "_mkdir_all", fake_mkdir_all)
         puts: list[tuple[list[Path], Path]] = []
 
         # `_transfer_for(None)` answers the CACHED `_file_transfer` built at
         # init, so the per-level puts are observed on that object directly.
-        async def put_files(files, dest_dir, show_progress, mode, *, concurrent=True):
+        async def put_files(*, src_files, dest_dir, show_progress, mode, concurrent=True):
+            files = src_files
             puts.append((list(files), dest_dir))
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
         monkeypatch.setattr(host._file_transfer, "put_files", put_files)
@@ -3568,7 +3578,9 @@ class TestRecursiveTransfer:
         def spy_build(user=None):
             ft = real_build(user=user)
             ft.put_files = AsyncMock(
-                return_value=Result(Status.Success, value={tree / "a.txt": Result(Status.Success)})
+                return_value=Result(
+                    status=Status.Success, value={tree / "a.txt": Result(status=Status.Success)}
+                )
             )
             return ft
 
@@ -3602,11 +3614,12 @@ class TestRecursiveTransfer:
         monkeypatch.setattr(host, "_walk_remote", fake_walk)
         gets: list[tuple[list[Path], Path]] = []
 
-        async def get_files(files, dest_dir, show_progress, *, concurrent=True):
+        async def get_files(*, src_files, dest_dir, show_progress, concurrent=True):
+            files = src_files
             gets.append((list(files), dest_dir))
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
         monkeypatch.setattr(host._file_transfer, "get_files", get_files)
@@ -3628,7 +3641,7 @@ class TestRecursiveTransfer:
     ):
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("box"),
+            element=Element(name="box"),
             creds=[Cred(login="user", password="pass")],
             default_dest_dir=Path("/srv"),
             log=LogMode.QUIET,
@@ -3640,14 +3653,15 @@ class TestRecursiveTransfer:
 
         async def fake_mkdir_all(paths, *, user=None):
             mkdirs.append(list(paths))
-            return Result(Status.Success)
+            return Result(status=Status.Success)
 
         monkeypatch.setattr(host, "_mkdir_all", fake_mkdir_all)
 
-        async def put_files(files, dest_dir, show_progress, mode, *, concurrent=True):
+        async def put_files(*, src_files, dest_dir, show_progress, mode, concurrent=True):
+            files = src_files
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
         monkeypatch.setattr(host._file_transfer, "put_files", put_files)
@@ -3668,11 +3682,12 @@ class TestConcurrentPassThrough:
         src.write_text("a")
         seen: dict[str, object] = {}
 
-        async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+        async def put_files(*, src_files, dest_dir, show_progress, mode, concurrent):
+            files = src_files
             seen["concurrent"] = concurrent
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
         monkeypatch.setattr(host._file_transfer, "put_files", put_files)
@@ -3687,11 +3702,12 @@ class TestConcurrentPassThrough:
     ):
         seen: dict[str, object] = {}
 
-        async def get_files(files, dest_dir, show_progress, *, concurrent):
+        async def get_files(*, src_files, dest_dir, show_progress, concurrent):
+            files = src_files
             seen["concurrent"] = concurrent
             return Result(
-                Status.Success,
-                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+                status=Status.Success,
+                value={f: Result(status=Status.Success, value=dest_dir / f.name) for f in files},
             )
 
         monkeypatch.setattr(host._file_transfer, "get_files", get_files)
@@ -3717,7 +3733,7 @@ async def test_the_transfer_context_carries_the_sftp_options(monkeypatch: pytest
     monkeypatch.setattr(uh, "build_transfer_backend", lambda name, ctx: _Recorder.create(ctx))
     host = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         transfer="sftp",
         sftp_options=SftpOptions(max_concurrent_transfers=2),
@@ -3743,12 +3759,12 @@ def _home_probe_host(home="/home/vagrant"):
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"  # non-root: the insmod is sudo'd
     host.exec = AsyncMock(
-        return_value=CommandResult(Status.Success, value=home, command="printf", retcode=0)
+        return_value=CommandResult(status=Status.Success, value=home, command="printf", retcode=0)
     )
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=Result(Status.Success))
-    host.lsmod = AsyncMock(return_value=Result(Status.Success, value=[]))
+    host.rm = AsyncMock(return_value=Result(status=Status.Success))
+    host.lsmod = AsyncMock(return_value=Result(status=Status.Success, value=[]))
     return host
 
 
@@ -3790,7 +3806,7 @@ async def test_a_failed_login_home_probe_is_refused():
 
     host = _home_probe_host()
     host.exec = AsyncMock(
-        return_value=CommandResult(Status.Error, value="", command="printf", retcode=1)
+        return_value=CommandResult(status=Status.Error, value="", command="printf", retcode=1)
     )
     with pytest.raises(HostCommandError, match="home directory"):
         await host.login_home()
@@ -3904,7 +3920,7 @@ def _recording_stub_factory(seen: list[tuple[str, str]]):
     class _Recording(_StubExecSession):
         async def run_cmd(self, cmd, **kw):
             seen.append((cmd, self.current_user))
-            return await super().run_cmd(cmd, **kw)
+            return await super().run_cmd(cmd=cmd, **kw)
 
     return _Recording
 
@@ -3922,7 +3938,7 @@ async def test_exec_runs_as_the_ambient_user_of_the_switched_default_session(mon
     monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)
     h = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="pw"), Cred(login="root", password="rootpw")],
         term="telnet",
         log=LogMode.QUIET,
@@ -3932,7 +3948,7 @@ async def test_exec_runs_as_the_ambient_user_of_the_switched_default_session(mon
     mgr._session_factory = _recording_stub_factory(seen)
     h._session_mgr = mgr
 
-    await mgr.run_cmd("whoami")  # opens the default session; baseline = admin
+    await mgr.run_cmd(cmd="whoami")  # opens the default session; baseline = admin
     assert seen == [("whoami", "admin")]
     mgr._set_current_user("root")  # what PosixPrivilege.as_user records after a real su
 
@@ -3950,7 +3966,7 @@ async def test_exec_without_an_ambient_user_runs_as_the_login_user(monkeypatch):
     monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)
     h = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="admin", password="pw"), Cred(login="root", password="rootpw")],
         term="telnet",
         log=LogMode.QUIET,
@@ -3960,7 +3976,7 @@ async def test_exec_without_an_ambient_user_runs_as_the_login_user(monkeypatch):
     mgr._session_factory = _recording_stub_factory(seen)
     h._session_mgr = mgr
 
-    await mgr.run_cmd("whoami")
+    await mgr.run_cmd(cmd="whoami")
     result = await h.exec("id")
 
     assert result.value == "OUT"
@@ -3984,7 +4000,7 @@ async def test_login_force_is_refused_on_a_telnet_term():
     before any client is built or dialled."""
     h = UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="user", password="pass")],
         term="telnet",
         log=LogMode.QUIET,
@@ -4216,7 +4232,7 @@ def _loginless_console_host(monkeypatch, creds) -> UnixHost:
 
     h = UnixHost(
         ip="10.0.0.2",
-        element=Element("test2"),
+        element=Element(name="test2"),
         creds=creds,
         log=LogMode.QUIET,
         valid_terms=["console"],
@@ -4424,7 +4440,7 @@ async def test_logout_with_the_real_client_resets_a_logged_in_line_without_the_p
 
     h = UnixHost(
         ip="10.0.0.2",
-        element=Element("test2"),
+        element=Element(name="test2"),
         creds=[Cred(login="test", password="Password1")],
         log=LogMode.QUIET,
         valid_terms=["console"],
@@ -4559,10 +4575,10 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
 
     async def soft_reboot():
         device.up = False
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
-    async def is_reachable(timeout: float = 10.0) -> bool:
-        reachable = await real_is_reachable(timeout)
+    async def is_reachable(*, timeout: float = 10.0) -> bool:
+        reachable = await real_is_reachable(timeout=timeout)
         polls.append(reachable)
         if len(polls) == 2:  # booted: the login prompt is back from the next dial on
             device.up = True

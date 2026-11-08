@@ -13,7 +13,7 @@ from tests._fixtures.host_build import build_host
 
 _CREDS = [{"login": "admin", "password": "pw"}]
 _PROXIED = [*_CREDS, {"login": "mysql", "proxy": "su", "via": "admin"}]
-_E = Element("e")
+_E = Element(name="e")
 
 
 async def _hook(session, ctx) -> None:
@@ -24,7 +24,7 @@ async def _hook(session, ctx) -> None:
 def _registered():
     register_session_setup("t6-hook", _hook, overwrite=True)
     yield
-    SESSION_SETUPS.unregister("t6-hook")
+    SESSION_SETUPS.unregister(name="t6-hook")
 
 
 def test_name_form_reaches_the_unix_host_and_its_manager():
@@ -91,7 +91,7 @@ def test_embedded_accepts_a_raw_landing():
         "session_setup": "t6-hook",
         "landing_frame": "raw",
     }
-    host = build_host(entry, element=Element("dut"))
+    host = build_host(entry, element=Element(name="dut"))
     assert isinstance(host, EmbeddedHost)
     assert isinstance(host.landing_frame, RawFrame)
     assert isinstance(host._session_mgr._landing_frame, RawFrame)
@@ -156,4 +156,4 @@ def test_a_profile_can_default_both_fields_for_a_fleet():
         assert own.session_setup == SessionSetup(name="t6-hook")
         assert isinstance(own.landing_frame, BashFrame)
     finally:
-        OS_PROFILES.unregister("t6-fleet")
+        OS_PROFILES.unregister(name="t6-fleet")

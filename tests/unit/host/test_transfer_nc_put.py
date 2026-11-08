@@ -643,7 +643,7 @@ class TestReapNcListener:
         ) as mock_connect:
             await ft._reap_nc_listener(9000)
 
-        ft._connections.forward_port.assert_awaited_once_with(9000)
+        ft._connections.forward_port.assert_awaited_once_with(dest_port=9000)
         call_args = mock_connect.await_args
         assert call_args[0][0] == "localhost"
         assert call_args[0][1] == 15000
@@ -913,7 +913,7 @@ class TestNcPutStallBound:
         src = tmp_path / "payload.bin"
         src.write_bytes(b"x" * 1024)
 
-        async def parked_forward(port: int) -> int:
+        async def parked_forward(*, dest_port: int) -> int:
             await asyncio.Event().wait()
             raise AssertionError("unreachable")  # pragma: no cover
 

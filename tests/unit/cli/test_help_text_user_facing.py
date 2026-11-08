@@ -176,7 +176,7 @@ def test_walk_flags_a_planted_built_in_with_rst_help():
         offenders = _offenders(_walk_built_in_commands())
         assert any(o.startswith("otto zz-planted [help]") for o in offenders), offenders
     finally:
-        CLI_COMMANDS.unregister("zz-planted")
+        CLI_COMMANDS.unregister(name="zz-planted")
     assert "zz-planted" not in CLI_COMMANDS
 
 

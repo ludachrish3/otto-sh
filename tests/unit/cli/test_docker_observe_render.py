@@ -15,7 +15,9 @@ from tests._fixtures.dispatch import DispatchRunner
 def _out(host: str, text: str, *, ok: bool = True, command: str = "docker ps") -> HostOutput:
     status = Status.Success if ok else Status.Failed
     return HostOutput(
-        host, command, CommandResult(status, value=text, command=command, retcode=0 if ok else 1)
+        host,
+        command,
+        CommandResult(status=status, value=text, command=command, retcode=0 if ok else 1),
     )
 
 
@@ -53,7 +55,7 @@ def test_a_failed_logs_exits_with_dockers_own_code_and_a_fan_out_still_exits_1(c
         "test3",
         "docker logs x",
         CommandResult(
-            Status.Failed, value="Error: No such container: x\n", command="x", retcode=125
+            status=Status.Failed, value="Error: No such container: x\n", command="x", retcode=125
         ),
     )
     with pytest.raises(typer.Exit) as exc:
@@ -96,26 +98,42 @@ def test_a_header_is_printed_even_for_one_host(capsys):
         (
             ["compose", "ps", "integration"],
             "otto.docker.observe.compose_ps",
-            ("integration",),
-            {"all": False, "parent": None, "provide": {}},
+            (),
+            {"use_case": "integration", "all": False, "parent": None, "provide": {}},
         ),
         (
             ["compose", "ps", "integration", "-a", "--parent", "test3"],
             "otto.docker.observe.compose_ps",
-            ("integration",),
-            {"all": True, "parent": "test3", "provide": {}},
+            (),
+            {"use_case": "integration", "all": True, "parent": "test3", "provide": {}},
         ),
         (
             ["compose", "logs", "integration"],
             "otto.docker.observe.compose_logs",
-            ("integration", []),
-            {"parent": None, "provide": {}, "tail": None, "since": None, "timestamps": False},
+            (),
+            {
+                "use_case": "integration",
+                "services": [],
+                "parent": None,
+                "provide": {},
+                "tail": None,
+                "since": None,
+                "timestamps": False,
+            },
         ),
         (
             ["compose", "logs", "integration", "api", "db", "--tail", "20", "--since", "5m", "-t"],
             "otto.docker.observe.compose_logs",
-            ("integration", ["api", "db"]),
-            {"parent": None, "provide": {}, "tail": "20", "since": "5m", "timestamps": True},
+            (),
+            {
+                "use_case": "integration",
+                "services": ["api", "db"],
+                "parent": None,
+                "provide": {},
+                "tail": "20",
+                "since": "5m",
+                "timestamps": True,
+            },
         ),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,
@@ -138,13 +156,25 @@ def test_the_observe_verbs_hand_the_library_their_flags_and_print_its_report(
     [
         (
             ["logs", "test3.integration.web"],
-            ("test3.integration.web",),
-            {"parent": None, "tail": None, "since": None, "timestamps": False},
+            (),
+            {
+                "container": "test3.integration.web",
+                "parent": None,
+                "tail": None,
+                "since": None,
+                "timestamps": False,
+            },
         ),
         (
             ["logs", "web-1", "--parent", "test3", "--tail", "9", "-t"],
-            ("web-1",),
-            {"parent": "test3", "tail": "9", "since": None, "timestamps": True},
+            (),
+            {
+                "container": "web-1",
+                "parent": "test3",
+                "tail": "9",
+                "since": None,
+                "timestamps": True,
+            },
         ),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,
@@ -178,15 +208,16 @@ def test_logs_follow_resolves_then_follows_and_never_prints_a_one_shot_report():
             spec_name="docker",
         )
     assert result.exit_code == 0, result.output
-    assert resolve.await_args.args == ("x",)
+    assert resolve.await_args.args == ()
     assert resolve.await_args.kwargs == {
+        "container": "x",
         "parent": "test3",
         "tail": "9",
         "since": None,
         "timestamps": False,
         "follow": True,
     }
-    follow.assert_awaited_once_with([target])
+    follow.assert_awaited_once_with(targets=[target])
     once.assert_not_awaited()
 
 
@@ -215,15 +246,17 @@ def test_compose_logs_follow_resolves_then_follows_and_never_prints_a_one_shot_r
             spec_name="docker",
         )
     assert result.exit_code == 0, result.output
-    assert resolve.call_args.args == ("integration", ["api"])
+    assert resolve.call_args.args == ()
     assert resolve.call_args.kwargs == {
+        "use_case": "integration",
+        "services": ["api"],
         "parent": "test3",
         "provide": {},
         "tail": "5",
         "since": None,
         "timestamps": False,
     }
-    follow.assert_awaited_once_with(targets)
+    follow.assert_awaited_once_with(targets=targets)
     once.assert_not_awaited()
 
 

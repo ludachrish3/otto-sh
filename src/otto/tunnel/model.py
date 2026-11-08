@@ -71,7 +71,7 @@ class TunnelHop:
     (containers: always ``None`` — they have no modeled interfaces)."""
 
 
-def make_tunnel_id(path: tuple[TunnelHop, ...], protocol: str, service_port: int) -> str:
+def make_tunnel_id(*, path: tuple[TunnelHop, ...], protocol: str, service_port: int) -> str:
     """Deterministic id: ``tun-<12 hex>-<service_port>`` (spec §4).
 
     The hash covers the **ordered** chain + protocol; the service port is a
@@ -111,7 +111,11 @@ class Tunnel:
             raise ValueError(f"a tunnel path needs at least {min_hosts} hosts")
         if not self.id:
             object.__setattr__(
-                self, "id", make_tunnel_id(self.path, self.protocol, self.service_port)
+                self,
+                "id",
+                make_tunnel_id(
+                    path=self.path, protocol=self.protocol, service_port=self.service_port
+                ),
             )
 
     def expected_processes(self) -> set[ProcKey]:

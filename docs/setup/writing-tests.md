@@ -212,7 +212,7 @@ in its signature. They work the same in a test class and in a test function.
   test that never names them leaves nothing behind. Where they sit under the
   run's output directory is in
   [Where a run's files go](../cli/test/index.md#where-a-runs-files-go).
-- `expect`: non-fatal assertions. `expect(cond, "why")` records a failure
+- `expect`: non-fatal assertions. `expect(cond, msg="why")` records a failure
   and keeps the test running; the test fails at the end with every failure
   listed, in the call phase like any other failure. A hard `assert` in the
   body still wins. See the
@@ -319,7 +319,7 @@ class TestRouter:
 
     async def test_uplink(self, dut, expect, test_dir) -> None:
         result = (await dut.run("show uplink")).only
-        expect("up" in result.value, "uplink down")
+        expect("up" in result.value, msg="uplink down")
         (test_dir / "uplink.txt").write_text(result.value)
 
     @pytest.mark.ensure("clean", "installed")

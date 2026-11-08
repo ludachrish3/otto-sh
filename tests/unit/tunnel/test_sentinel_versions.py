@@ -100,7 +100,11 @@ def test_every_declared_write_version_is_also_read():
 @pytest.mark.parametrize("version", model.TUNNEL_SENTINEL_WRITE_VERSIONS)
 def test_the_tunnel_writer_emits_each_declared_version_byte_for_byte(version):
     token = encode_sentinel(
-        SAMPLE_TUNNEL, direction=Direction.FWD, role=Role.INGRESS, hop_index=0, carrier_port=49152
+        tunnel=SAMPLE_TUNNEL,
+        direction=Direction.FWD,
+        role=Role.INGRESS,
+        hop_index=0,
+        carrier_port=49152,
     )
     assert token.startswith(f"otto-tunnel:{version}:")
     assert token in (TUNNEL / f"{version}.txt").read_text().split()
@@ -119,7 +123,7 @@ _WRITE_UNDER = {
         "from otto.tunnel.sentinel import encode_sentinel\n"
         "path = (TunnelHop('rack1-a'), TunnelHop('rack1-b'))\n"
         "tunnel = Tunnel(protocol='tcp', service_port=5000, path=path)\n"
-        "print(encode_sentinel(tunnel, direction=Direction.FWD, role=Role.INGRESS,"
+        "print(encode_sentinel(tunnel=tunnel, direction=Direction.FWD, role=Role.INGRESS,"
         " hop_index=0, carrier_port=49152))\n"
     ),
     "CHECK_ECHO_WRITE_VERSIONS": (

@@ -144,7 +144,7 @@ def test_axes_for_recovers_when_registry_isolation_has_dropped_the_frame(monkeyp
     from otto.host.command_frame import FRAME_CLASSES
 
     axes_for("zephyr27_fat")  # register + import
-    FRAME_CLASSES.unregister("zephyr-inline")  # what the teardown drops
+    FRAME_CLASSES.unregister(name="zephyr-inline")  # what the teardown drops
     monkeypatch.delitem(sys.modules, "custom_hosts", raising=False)  # what the teardown evicts
     assert "custom_hosts.zephyr_inline" in sys.modules, (
         "premise gone: the teardown no longer leaves a dangling submodule, "

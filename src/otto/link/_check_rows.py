@@ -64,8 +64,8 @@ IN_RANGE_PORT = 5205
 OUT_OF_RANGE_PORT = 5211
 RATE_PORT = 5299
 LISTEN_PORTS = [IN_RANGE_PORT, OUT_OF_RANGE_PORT, RATE_PORT]
-RANGE_SELECTOR = Selector(5200, "tcp", end=5210, side="dst")
-SIDE_SELECTOR = Selector(IN_RANGE_PORT, "tcp", side="src")
+RANGE_SELECTOR = Selector(port=5200, proto="tcp", end=5210, side="dst")
+SIDE_SELECTOR = Selector(port=IN_RANGE_PORT, proto="tcp", side="src")
 CONNECT_SAMPLES = 3
 """Connects per measurement in the connect-differential rows; their median is the reading."""
 _READY_INTERVAL_S = 0.5

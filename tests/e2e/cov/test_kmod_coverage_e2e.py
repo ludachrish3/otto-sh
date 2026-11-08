@@ -93,7 +93,7 @@ def coverage_run(built_modules, tmp_path_factory):
     (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     cov_dir = layout.cov_dir(log_dir)
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    store = CoverageStore.load(report_dir / "store.json")
+    store = CoverageStore.load(path=report_dir / "store.json")
     return store, cov_dir, log_dir
 
 
@@ -107,7 +107,7 @@ def reload_run(built_modules, tmp_path_factory):
     _run_otto(["test", "--cov", "--cov-clean", "TestKmodReload"], xdir=xdir, timeout=900)
     (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    return CoverageStore.load(report_dir / "store.json"), layout.cov_dir(log_dir)
+    return CoverageStore.load(path=report_dir / "store.json"), layout.cov_dir(log_dir)
 
 
 @pytest.mark.integration

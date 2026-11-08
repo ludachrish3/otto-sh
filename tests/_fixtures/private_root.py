@@ -79,7 +79,7 @@ class ParentPaths:
             self.paths.setdefault(Path(shlex.split(made[1])[0]), f"directory {self.uid} 700")
         lines = [str(self.uid)]
         lines += [self.paths.get(Path(p), "missing") for p in shlex.split(probed[1])]
-        return CommandResult(Status.Success, value="\n".join(lines) + "\n", command=command)
+        return CommandResult(status=Status.Success, value="\n".join(lines) + "\n", command=command)
 
 
 @pytest.fixture

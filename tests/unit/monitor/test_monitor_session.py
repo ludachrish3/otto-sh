@@ -24,7 +24,7 @@ from otto.monitor.snmp import SnmpSource
 def _unix(name: str = "box") -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element(name),
+        element=Element(name=name),
         creds=[Cred(login="a", password="b")],
         log=LogMode.NORMAL,
     )
@@ -33,7 +33,7 @@ def _unix(name: str = "box") -> UnixHost:
 def _console(name: str = "z") -> object:
     return create_host_from_dict(
         {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"},
-        element=Element(name),
+        element=Element(name=name),
     )
 
 
@@ -47,7 +47,7 @@ class TestBuildRefuses:
         host = _unix()
         with pytest.raises(MonitorInputError, match="exactly one of hosts or targets"):
             MonitorSession.build(
-                [host],
+                hosts=[host],
                 targets=[MonitorTarget(host=host, parsers={})],
                 interval=5,
                 owns_hosts=True,
@@ -55,17 +55,17 @@ class TestBuildRefuses:
 
     def test_no_hosts(self):
         with pytest.raises(MonitorInputError, match="no hosts to monitor") as e:
-            MonitorSession.build([], interval=5, owns_hosts=True)
+            MonitorSession.build(hosts=[], interval=5, owns_hosts=True)
         assert e.value.field == "hosts"
 
     def test_interval_below_the_floor(self):
         with pytest.raises(MonitorInputError, match=r"at least 1\.0s") as e:
-            MonitorSession.build([_unix()], interval=0.5, owns_hosts=True)
+            MonitorSession.build(hosts=[_unix()], interval=0.5, owns_hosts=True)
         assert e.value.field == "interval"
 
     def test_a_host_that_cannot_be_sampled_is_named(self):
         with pytest.raises(MonitorInputError, match="cannot monitor z") as e:
-            MonitorSession.build([_unix(), _console("z")], interval=5, owns_hosts=True)
+            MonitorSession.build(hosts=[_unix(), _console("z")], interval=5, owns_hosts=True)
         assert e.value.field == "hosts"
 
     def test_a_shell_target_on_a_console_host_is_named(self):
@@ -76,7 +76,7 @@ class TestBuildRefuses:
 
     def test_the_refusal_names_the_reason_and_the_remedy(self):
         with pytest.raises(MonitorInputError) as e:
-            MonitorSession.build([_unix(), _console("z")], interval=5, owns_hosts=True)
+            MonitorSession.build(hosts=[_unix(), _console("z")], interval=5, owns_hosts=True)
         assert str(e.value) == f"cannot monitor z ({UNMONITORABLE_REASON}): {UNMONITORABLE_REMEDY}"
 
 
@@ -90,13 +90,13 @@ def test_an_snmp_target_on_a_console_host_is_accepted():
 
 def test_build_does_no_io(tmp_path):
     db = tmp_path / "m.db"
-    MonitorSession.build([_unix()], interval=5, db_path=db, owns_hosts=True)
+    MonitorSession.build(hosts=[_unix()], interval=5, db_path=db, owns_hosts=True)
     assert not db.exists()
 
 
 def test_build_stamps_identity_and_snapshots_the_hosts():
     session = MonitorSession.build(
-        [_unix("a")], interval=timedelta(seconds=2), label="L", note="N", owns_hosts=True
+        hosts=[_unix("a")], interval=timedelta(seconds=2), label="L", note="N", owns_hosts=True
     )
     assert (session.frame.label, session.frame.note) == ("L", "N")
     assert [h.id for h in session.lab.hosts] == ["a"]
@@ -105,15 +105,15 @@ def test_build_stamps_identity_and_snapshots_the_hosts():
 
 @pytest.mark.asyncio
 async def test_spawn_before_open_fails_loud():
-    session = MonitorSession.build([_unix()], interval=5, owns_hosts=True)
+    session = MonitorSession.build(hosts=[_unix()], interval=5, owns_hosts=True)
     with pytest.raises(RuntimeError, match="before open"):
         session.spawn()
 
 
 @pytest.mark.asyncio
 async def test_owned_hosts_are_closed_borrowed_hosts_are_not():
-    owned = MonitorSession.build([_unix("a")], interval=5, owns_hosts=True)
-    borrowed = MonitorSession.build([_unix("b")], interval=5, owns_hosts=False)
+    owned = MonitorSession.build(hosts=[_unix("a")], interval=5, owns_hosts=True)
+    borrowed = MonitorSession.build(hosts=[_unix("b")], interval=5, owns_hosts=False)
     for s in (owned, borrowed):
         s.collector.close = AsyncMock()  # type: ignore[method-assign]
         s.collector.close_db = AsyncMock()  # type: ignore[method-assign]
@@ -127,7 +127,7 @@ async def test_owned_hosts_are_closed_borrowed_hosts_are_not():
 
 @pytest.mark.asyncio
 async def test_finish_is_idempotent_and_safe_without_open():
-    session = MonitorSession.build([_unix()], interval=5, owns_hosts=False)
+    session = MonitorSession.build(hosts=[_unix()], interval=5, owns_hosts=False)
     session.collector.close_db = AsyncMock()  # type: ignore[method-assign]
     await session.finish()
     await session.finish()
@@ -138,7 +138,7 @@ async def test_finish_is_idempotent_and_safe_without_open():
 @pytest.mark.asyncio
 async def test_finish_writes_the_json_export(tmp_path):
     out = tmp_path / "nested" / "monitor.json"
-    session = MonitorSession.build([_unix()], interval=5, export_path=out, owns_hosts=False)
+    session = MonitorSession.build(hosts=[_unix()], interval=5, export_path=out, owns_hosts=False)
     async with session:
         pass
     doc = json.loads(out.read_text())
@@ -150,7 +150,7 @@ async def test_finish_writes_the_json_export(tmp_path):
 @pytest.mark.asyncio
 async def test_archive_carries_the_interval_and_is_stamped_on_finish(tmp_path):
     db = tmp_path / "m.db"
-    session = MonitorSession.build([_unix()], interval=3, db_path=db, owns_hosts=False)
+    session = MonitorSession.build(hosts=[_unix()], interval=3, db_path=db, owns_hosts=False)
     async with session:
         assert db.exists()
     sess = build_db_export(str(db)).sessions[0]
@@ -160,19 +160,21 @@ async def test_archive_carries_the_interval_and_is_stamped_on_finish(tmp_path):
 
 @pytest.mark.asyncio
 async def test_spawned_task_runs_the_collector_at_the_session_interval():
-    session = MonitorSession.build([_unix()], interval=2, owns_hosts=False)
+    session = MonitorSession.build(hosts=[_unix()], interval=2, owns_hosts=False)
     session.collector.run = AsyncMock()  # type: ignore[method-assign]
     async with session:
         task = session.spawn()
         await task
-    session.collector.run.assert_awaited_once_with(timedelta(seconds=2))
+    session.collector.run.assert_awaited_once_with(interval=timedelta(seconds=2))
 
 
 def test_build_keeps_only_declared_links_inside_the_session():
     a, b = _unix("a"), _unix("b")
     inside = Link(a=LinkEndpoint(host="a"), b=LinkEndpoint(host="b"), name="inside")
     outside = Link(a=LinkEndpoint(host="a"), b=LinkEndpoint(host="ghost"), name="outside")
-    session = MonitorSession.build([a, b], interval=5, declared=[inside, outside], owns_hosts=False)
+    session = MonitorSession.build(
+        hosts=[a, b], interval=5, declared=[inside, outside], owns_hosts=False
+    )
     ids = [link.id for link in session.lab.links]
     assert inside.id in ids
     assert outside.id not in ids
@@ -181,7 +183,7 @@ def test_build_keeps_only_declared_links_inside_the_session():
 @pytest.mark.asyncio
 async def test_open_is_idempotent(tmp_path):
     session = MonitorSession.build(
-        [_unix()], interval=5, db_path=tmp_path / "m.db", owns_hosts=False
+        hosts=[_unix()], interval=5, db_path=tmp_path / "m.db", owns_hosts=False
     )
     async with session:
         await session.open()
@@ -192,7 +194,7 @@ async def test_finish_after_a_failed_open_still_stamps_exports_and_closes(tmp_pa
     db = tmp_path / "m.db"
     out = tmp_path / "monitor.json"
     session = MonitorSession.build(
-        [_unix()], interval=5, db_path=db, export_path=out, owns_hosts=False
+        hosts=[_unix()], interval=5, db_path=db, export_path=out, owns_hosts=False
     )
     fd = Path(f"{db}.lock").open("w")  # noqa: SIM115 — held for the test's duration
     try:
@@ -212,7 +214,7 @@ async def test_a_failing_export_still_closes_and_propagates(tmp_path, owns):
     blocker = tmp_path / "file"
     blocker.write_text("x")
     session = MonitorSession.build(
-        [_unix()], interval=5, export_path=blocker / "monitor.json", owns_hosts=owns
+        hosts=[_unix()], interval=5, export_path=blocker / "monitor.json", owns_hosts=owns
     )
     session.collector.close = AsyncMock()  # type: ignore[method-assign]
     session.collector.close_db = AsyncMock()  # type: ignore[method-assign]
@@ -228,7 +230,7 @@ async def test_a_collection_task_that_dies_says_so_at_once(caplog):
     """The live server keeps serving after collection dies; before #672 nothing said why."""
     import asyncio
 
-    session = MonitorSession.build([_unix()], interval=2, owns_hosts=False)
+    session = MonitorSession.build(hosts=[_unix()], interval=2, owns_hosts=False)
     session.collector.run = AsyncMock(side_effect=RuntimeError("disk full"))  # type: ignore[method-assign]
     async with session:
         task = session.spawn()

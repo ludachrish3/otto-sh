@@ -47,7 +47,7 @@ def test_an_unregistered_backend_is_unknown_not_unfiled(tmp_path):
     (state,) = prepared_lab_sources(project)
     assert not state.is_known()
     with pytest.raises(LabSourceConstructionError, match="lookup") as err:
-        build_lab_sources([project])
+        build_lab_sources(projects=[project])
     assert isinstance(err.value, LabRepositoryError)
 
 
@@ -77,7 +77,7 @@ def test_preparation_is_cached_per_revision(tmp_path, monkeypatch):
     # a registry change (a replaced backend) must prepare again, against the new entry
     from otto.labs.registry import LAB_REPOSITORIES, register_lab_repository
 
-    entry = LAB_REPOSITORIES.peek("json")
+    entry = LAB_REPOSITORIES.peek(name="json")
     register_lab_repository("json", config=entry.config, factory=entry.factory, overwrite=True)
     (state,) = prepared_lab_sources(project)
     assert calls == [1, 1]
@@ -131,7 +131,7 @@ def test_preparation_and_build_refuse_during_an_init_import(tmp_path):
         with pytest.raises(LabRepositoryError, match="init import"):
             prepared_lab_sources(project)
         with pytest.raises(LabRepositoryError, match="init import"):
-            build_lab_sources([project])
+            build_lab_sources(projects=[project])
 
 
 def test_otto_session_build_lab_refuses_during_an_init_import(tmp_path):
@@ -140,7 +140,7 @@ def test_otto_session_build_lab_refuses_during_an_init_import(tmp_path):
     write_lab_json(tmp_path / "lab_data" / "lab.json", [])
     project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     with registering_project("r"), pytest.raises(LabBuildError, match="init import"):
-        build_lab([project], ["lab"])
+        build_lab([project], labs=["lab"])
 
 
 def test_load_lab_fallback_builds_through_the_registry(tmp_path):
@@ -151,7 +151,7 @@ def test_load_lab_fallback_builds_through_the_registry(tmp_path):
 
     write_lab_json(tmp_path / "lab_data" / "lab.json", [])
     built: list[object] = []
-    entry = LAB_REPOSITORIES.peek("json")
+    entry = LAB_REPOSITORIES.peek(name="json")
 
     def spy(c):
         repository = _JsonFileLabRepository(search_paths=list(c.config.paths))

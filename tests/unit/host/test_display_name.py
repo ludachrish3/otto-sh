@@ -6,7 +6,9 @@ from otto.labs.loader import Lab
 
 
 def _mk(element, board=None, slot=None, name="", ip="10.0.0.1"):
-    return UnixHost(ip=ip, creds=[], element=Element(element), board=board, slot=slot, name=name)
+    return UnixHost(
+        ip=ip, creds=[], element=Element(name=element), board=board, slot=slot, name=name
+    )
 
 
 def test_unique_element_original_case():

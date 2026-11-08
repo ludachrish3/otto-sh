@@ -42,7 +42,7 @@ together with the hop(s) to apply afterwards (outermost/first-run first):
 
 >>> from otto.host.login_proxy import resolve_chain
 >>> creds = [admin, appuser]
->>> direct, hops = resolve_chain(creds, "appuser")
+>>> direct, hops = resolve_chain(creds, target_login="appuser")
 >>> direct.login
 'admin'
 >>> [hop.login for hop in hops]

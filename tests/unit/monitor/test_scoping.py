@@ -37,8 +37,10 @@ def _make_host(name: str, host_id: str) -> MagicMock:
 
     async def _run(cmds, timeout=None, log=None):
         return Results.collect(
-            [
-                CommandResult(Status.Success, value=_CANNED.get(cmd, ""), command=cmd, retcode=0)
+            items=[
+                CommandResult(
+                    status=Status.Success, value=_CANNED.get(cmd, ""), command=cmd, retcode=0
+                )
                 for cmd in cmds
             ]
         )
@@ -64,7 +66,7 @@ class TestPerHostScoping:
         try:
             host_a = _make_host("scope_a", "scoping-host-a")
             host_b = _make_host("scope_b", "scoping-host-b")
-            collector = build_monitor_collector([host_a, host_b])
+            collector = build_monitor_collector(hosts=[host_a, host_b])
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     collector.run(
@@ -81,4 +83,4 @@ class TestPerHostScoping:
             meta = collector.get_meta_model()
             assert any(m.chart == "Uptime" for m in meta.metrics)  # the meta model grew the chart
         finally:
-            HOST_PARSERS.unregister("scoping-host-a")
+            HOST_PARSERS.unregister(name="scoping-host-a")

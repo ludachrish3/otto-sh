@@ -47,7 +47,9 @@ class _Local:
         self.cmds = []
         # Result.__bool__ is is_ok, so `result or ...` would swallow a failure.
         self.result = (
-            result if result is not None else CommandResult(Status.Success, value="", retcode=0)
+            result
+            if result is not None
+            else CommandResult(status=Status.Success, value="", retcode=0)
         )
 
     async def exec(self, cmd, timeout=300, log=None, **kw):
@@ -109,7 +111,7 @@ async def test_tmp_notes_are_staged_under_the_object_name(tmp_path):
 async def test_failure_is_short_and_typed(tmp_path):
     pair, _ = _pair(tmp_path)
     out = "\n".join(["noise"] * 100 + ["geninfo: ERROR: boom"])
-    local = _Local(CommandResult(Status.Failed, value=out, retcode=1))
+    local = _Local(CommandResult(status=Status.Failed, value=out, retcode=1))
     with pytest.raises(CaptureFailedError) as e:
         await LcovMerger(local).capture_pairs([pair], tmp_path / "stage", tmp_path / "out.info")
     lines = str(e.value).splitlines()
@@ -140,7 +142,9 @@ async def test_capture_dir_refuses_gcda_without_notes(tmp_path):
 @pytest.mark.asyncio
 async def test_lcov_stamp_mismatch_output_is_a_data_mismatch(tmp_path):
     pair, _ = _pair(tmp_path)
-    local = _Local(CommandResult(Status.Failed, value="geninfo: ERROR: stamp mismatch", retcode=1))
+    local = _Local(
+        CommandResult(status=Status.Failed, value="geninfo: ERROR: stamp mismatch", retcode=1)
+    )
     with pytest.raises(CoverageDataMismatchError):
         await LcovMerger(local).capture_pairs([pair], tmp_path / "s", tmp_path / "o.info")
 
@@ -149,7 +153,7 @@ async def test_lcov_stamp_mismatch_output_is_a_data_mismatch(tmp_path):
 async def test_lcov_incompatible_version_output_is_a_tool_version_error(tmp_path):
     pair, _ = _pair(tmp_path)
     out = "geninfo: ERROR: Incompatible GCC/GCOV version"
-    local = _Local(CommandResult(Status.Failed, value=out, retcode=1))
+    local = _Local(CommandResult(status=Status.Failed, value=out, retcode=1))
     with pytest.raises(CoverageToolVersionError):
         await LcovMerger(local).capture_pairs([pair], tmp_path / "s", tmp_path / "o.info")
 
@@ -161,7 +165,7 @@ async def test_failure_message_names_the_verbose_log(tmp_path, monkeypatch):
     log = tmp_path / "verbose.log"
     monkeypatch.setattr(management, "verbose_log_path", lambda: log)
     pair, _ = _pair(tmp_path)
-    local = _Local(CommandResult(Status.Failed, value="geninfo: ERROR: boom", retcode=1))
+    local = _Local(CommandResult(status=Status.Failed, value="geninfo: ERROR: boom", retcode=1))
     with pytest.raises(CaptureFailedError) as e:
         await LcovMerger(local).capture_pairs([pair], tmp_path / "s", tmp_path / "o.info")
     assert f"full lcov output: {log}" in str(e.value)

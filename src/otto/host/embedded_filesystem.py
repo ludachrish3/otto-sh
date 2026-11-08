@@ -103,7 +103,7 @@ class EmbeddedFileSystem(ABC):
         """Render the shell command that reads *path* as a hexdump."""
         return f"fs read {path}"
 
-    def write_command(self, path: str, offset: int, hexbytes: str) -> str:
+    def write_command(self, path: str, *, offset: int, hexbytes: str) -> str:
         """Render the chunked-write command for *path*.
 
         *hexbytes* is the already-space-separated lower-case hex of the
@@ -118,7 +118,7 @@ class EmbeddedFileSystem(ABC):
         """Render the command that removes *path*."""
         return f"fs rm {path}"
 
-    def trunc_command(self, path: str, length: int) -> str:
+    def trunc_command(self, path: str, *, length: int) -> str:
         """Render the command that truncates *path* to *length* bytes."""
         return f"fs trunc {path} {length}"
 
@@ -236,7 +236,7 @@ def register_filesystem(
         If *type_name* doesn't match ``cls.type_name`` (a likely-bug mismatch —
         the registry key and the class constant should agree).
     """
-    FILESYSTEM_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
+    FILESYSTEM_CLASSES.register(name=type_name, entry=ClassEntry(cls=cls), overwrite=overwrite)
 
 
 def build_filesystem(type_name: str) -> EmbeddedFileSystem:
@@ -261,7 +261,7 @@ def _register_builtin_filesystems() -> None:
         ("fat-ram", "otto.host.embedded_filesystem:FatRamFileSystem"),
         ("littlefs", "otto.host.embedded_filesystem:LittleFsFileSystem"),
     ]:
-        FILESYSTEM_CLASSES.register(name, ClassEntry(Ref(target)))
+        FILESYSTEM_CLASSES.register(name=name, entry=ClassEntry(cls=Ref(target=target)))
 
 
 _register_builtin_filesystems()

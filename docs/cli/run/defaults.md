@@ -434,8 +434,8 @@ the library that owns it rather than issuing `tc` or `kill` itself:
 
 | Step | Call | Scope |
 | ---- | ---- | ----- |
-| `--reset-impairments` | `otto.link.manage.repair_all(lab)` | every static link in the lab — only the impairable ones can carry otto's netem |
-| `--remove-tunnels` | `otto.tunnel.manage.remove_all_tunnels(lab)` | every otto tunnel, found by scanning |
+| `--reset-impairments` | `otto.link.manage.repair_all(lab=lab)` | every static link in the lab — only the impairable ones can carry otto's netem |
+| `--remove-tunnels` | `otto.tunnel.manage.remove_all_tunnels(lab=lab)` | every otto tunnel, found by scanning |
 
 Two consequences worth knowing before you rely on either.
 

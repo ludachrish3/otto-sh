@@ -60,8 +60,8 @@ def _resolve_tester(name: str | None, email: str | None, root: Path) -> dict[str
 
 
 async def get_coverage(
-    output_dir: Path | None = None,
     *,
+    output_dir: Path | None = None,
     tier: str | None = None,
     ticket: str | None = None,
     note: str | None = None,
@@ -147,7 +147,7 @@ async def get_coverage(
         # cannot be followed by a caller of get_coverage either.
         raise NoCoverageHostsError(e.cli_message(walker="coverage")) from e
 
-    resolved = resolve_get_tier(load_tiers(cov_config, root=cov_project.root), tier)
+    resolved = resolve_get_tier(tiers=load_tiers(cov_config, root=cov_project.root), name=tier)
     if resolved.kind == "manual" and not ticket:
         raise CoverageInputError(
             f"tier {resolved.name!r} is a manual-kind tier and requires a ticket", field="ticket"
@@ -182,7 +182,7 @@ async def get_coverage(
             for path in e.result.written:
                 write_manual_capture(Capture.load(path), cov_project.root)
         if clean and e.result.captured:
-            e.clean = await collect.clean_coverage(projects, pairs=e.result.captured)
+            e.clean = await collect.clean_coverage(projects=projects, pairs=e.result.captured)
         raise
     if not result.captures_written:
         searched = ", ".join(key.label for key in sorted(result.product_dirs))
@@ -198,7 +198,9 @@ async def get_coverage(
 
     clean_report = None
     if clean:
-        clean_report = await collect.clean_coverage(projects, pairs=result.produce.captured)
+        clean_report = await collect.clean_coverage(
+            projects=projects, pairs=result.produce.captured
+        )
 
     return GetReport(
         cov_dir=cov_dir,

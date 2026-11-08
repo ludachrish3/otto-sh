@@ -61,8 +61,8 @@ def _mock_parent():
     parent.name = "conformance-parent"
     parent.term = "ssh"
     parent.exec = AsyncMock(return_value=None)
-    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
-    parent.get = AsyncMock(return_value=Result(Status.Success, value={}))
+    parent.put = AsyncMock(return_value=Result(status=Status.Success, value={}))
+    parent.get = AsyncMock(return_value=Result(status=Status.Success, value={}))
     return parent
 
 
@@ -73,7 +73,7 @@ def _unix(term: str = "ssh") -> UnixHost:
     """
     return UnixHost(
         ip="192.0.2.1",
-        element=Element("conformance-unix"),
+        element=Element(name="conformance-unix"),
         creds=[Cred(login="u", password="p")],
         term=term,
         log=LogMode.QUIET,
@@ -91,7 +91,7 @@ def _embedded(cls: "type[ZephyrHost]" = ZephyrHost) -> ZephyrHost:
     arguments, so there is a single spelling of "an embedded host that never
     connects".
     """
-    return cls(ip="192.0.2.2", element=Element("conformance-embedded"), log=LogMode.QUIET)
+    return cls(ip="192.0.2.2", element=Element(name="conformance-embedded"), log=LogMode.QUIET)
 
 
 def _container() -> DockerContainerHost:
@@ -552,14 +552,14 @@ class _AddsAField(RemoteHost):
 class _AddsAFieldSpec(HostSpec):
     """The boundary spec that declares ``_AddsAField``'s fields: RemoteHost's menus plus its own."""
 
-    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+    valid_terms: Annotated[list[str], Resolve(fn=_menu("valid_terms"))] = Field(
         default_factory=lambda: ["ssh"]
     )
-    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+    valid_transfers: Annotated[list[str], Resolve(fn=_menu("valid_transfers"))] = Field(
         default_factory=lambda: ["scp"]
     )
-    term: Annotated[str | None, Resolve(_selection("term"))] = None
-    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
+    term: Annotated[str | None, Resolve(fn=_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(fn=_selection("transfer"))] = None
     widget: str = "sprocket"
 
 
@@ -567,10 +567,10 @@ def _registry_snapshot() -> "list[object]":
     """Everything ``register_host_class`` writes, read through the registries' own API."""
     return [
         HOST_CLASSES.items(),
-        [(name, HOST_CLASSES.origin(name)) for name in HOST_CLASSES.names()],
+        [(name, HOST_CLASSES.origin(name=name)) for name in HOST_CLASSES.names()],
         registered_host_specs(),
         OS_PROFILES.items(),
-        [(name, OS_PROFILES.origin(name)) for name in OS_PROFILES.names()],
+        [(name, OS_PROFILES.origin(name=name)) for name in OS_PROFILES.names()],
     ]
 
 
@@ -684,7 +684,7 @@ class TestTheTransferBackendRules:
 
     def test_a_backend_missing_a_keyword_the_host_passes_is_refused(self):
         class NoMode(_Conforming):
-            async def put_files(self, src_files, dest_dir, show_progress=True, concurrent=True):
+            async def put_files(self, *, src_files, dest_dir, show_progress=True, concurrent=True):
                 return None
 
         with pytest.raises(
@@ -741,7 +741,7 @@ class TestTheTransferBackendRules:
             supports_mode = True
 
             async def apply_mode(self, dest_paths, mode):
-                return Result(Status.Success)
+                return Result(status=Status.Success)
 
         assert_transfer_backend_conforms(AppliesModes)
 
@@ -750,7 +750,7 @@ class TestTheTransferBackendRules:
             supports_mode = True
 
             def apply_mode(self, dest_paths, mode):
-                return Result(Status.Success)
+                return Result(status=Status.Success)
 
         with pytest.raises(
             AssertionError, match=r"BaseFileTransfer\.apply_mode: must be an async def"
@@ -762,7 +762,7 @@ class TestTheTransferBackendRules:
 
         class UnusedApply(_Conforming):
             async def apply_mode(self, dest_paths, mode):
-                return Result(Status.Success)
+                return Result(status=Status.Success)
 
         assert not UnusedApply.supports_mode
         assert_transfer_backend_conforms(UnusedApply)

@@ -41,11 +41,11 @@ class _ParsesFine(MetricParser):
 
 
 def _failed(cmd: str, retcode: int, output: str) -> CommandResult:
-    return CommandResult(Status.Error, value=output, command=cmd, retcode=retcode)
+    return CommandResult(status=Status.Error, value=output, command=cmd, retcode=retcode)
 
 
 def _ok(cmd: str, output: str = "42\n") -> CommandResult:
-    return CommandResult(Status.Success, value=output, command=cmd, retcode=0)
+    return CommandResult(status=Status.Success, value=output, command=cmd, retcode=0)
 
 
 @pytest.fixture
@@ -214,7 +214,7 @@ class TestSilentParserWarning:
         """When CommandResult.value is None (command never ran), the failure
         warning should not contain the literal string 'None'."""
         parsers = {"ss -s": _NeverParses()}
-        never_ran = CommandResult(Status.Error, value=None, command="ss -s", retcode=-1)
+        never_ran = CommandResult(status=Status.Error, value=None, command="ss -s", retcode=-1)
         with caplog.at_level("WARNING", logger="otto"):
             await _tick(collector, parsers, [never_ran])
         failure_warnings = [r for r in caplog.records if "failed on test1" in r.message]
@@ -289,7 +289,7 @@ class TestSnmpRatePlumbing:
         before = set(snmp.SNMP_METRICS.names())
         yield
         for oid in set(snmp.SNMP_METRICS.names()) - before:
-            snmp.SNMP_METRICS.unregister(oid)
+            snmp.SNMP_METRICS.unregister(name=oid)
 
     @pytest.mark.asyncio
     async def test_counter_rate_uses_per_target_tracker_across_ticks(

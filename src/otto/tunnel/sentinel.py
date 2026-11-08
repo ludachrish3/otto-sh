@@ -79,7 +79,7 @@ def _decode_path(segment: str) -> tuple[TunnelHop, ...] | None:
 
 
 def encode_sentinel(
-    tunnel: Tunnel, *, direction: Direction, role: Role, hop_index: int, carrier_port: int
+    *, tunnel: Tunnel, direction: Direction, role: Role, hop_index: int, carrier_port: int
 ) -> str:
     """Return the wire token for one process of *tunnel*."""
     payload = (
@@ -133,7 +133,7 @@ _DECODERS: "dict[str, tuple[int, Callable[[list[str]], ParsedSentinel | None]]]"
 """Each readable version's payload segment count and decoder; keys equal the declared reads."""
 
 
-def parse_sentinel(token: str) -> ParsedSentinel | None:
+def parse_sentinel(*, token: str) -> ParsedSentinel | None:
     """Parse one wire token; ``None`` for non-otto / undeclared-version / malformed."""
     for version in TUNNEL_SENTINEL_READ_VERSIONS:
         segments, decode = _DECODERS[version]

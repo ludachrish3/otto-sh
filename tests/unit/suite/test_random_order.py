@@ -40,7 +40,7 @@ class TestRunnerArgv:
     def test_default_is_random_on_a_seed_the_run_draws(self, tmp_path, captured_argv, caplog):
         """The run draws one seed and passes it to every session, so ``--seed N`` reproduces it."""
         with caplog.at_level(logging.INFO, logger="otto.suite.run"):
-            run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
+            run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path)
         (argv,) = captured_argv
         assert "no:randomly" not in argv
         [seed_arg] = [a for a in argv if a.startswith("--randomly-seed=")]
@@ -50,14 +50,16 @@ class TestRunnerArgv:
 
     def test_no_random_unregisters_the_plugin(self, tmp_path, captured_argv):
         run_tests(
-            [DOUBLE_TEST_NAME], output_dir=tmp_path, run_options=RunOptions(random_order=False)
+            names=[DOUBLE_TEST_NAME],
+            output_dir=tmp_path,
+            run_options=RunOptions(random_order=False),
         )
         (argv,) = captured_argv
         assert argv[argv.index("no:randomly") - 1] == "-p"
         assert not any(a.startswith("--randomly-seed") for a in argv)
 
     def test_seed_is_forwarded(self, tmp_path, captured_argv):
-        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path, run_options=RunOptions(seed=1234))
+        run_tests(names=[DOUBLE_TEST_NAME], output_dir=tmp_path, run_options=RunOptions(seed=1234))
         (argv,) = captured_argv
         assert "--randomly-seed=1234" in argv
         assert "no:randomly" not in argv

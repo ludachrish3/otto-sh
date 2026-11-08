@@ -180,7 +180,7 @@ def docker_lab(docker_parent) -> Lab:
 @pytest.fixture(scope="module")
 def built_image(docker_parent, docker_project):
     """Ensure the project1 ``api`` image is built once for this module."""
-    results = _run(build_images(docker_project, docker_parent))
+    results = _run(build_images(project=docker_project, parent=docker_parent))
     assert results["project1-api"].is_ok, results
     return results
 
@@ -188,7 +188,9 @@ def built_image(docker_parent, docker_project):
 async def _teardown(project: Project, lab: Lab, parent: UnixHost, compose_project: str) -> None:
     """compose down, then clean the staging tree — staging must not survive
     into the hygiene bracket's after-snapshot."""
-    down = await compose_down(project, lab, parent=parent.id, project_name=compose_project)
+    down = await compose_down(
+        project=project, lab=lab, parent=parent.id, project_name=compose_project
+    )
     # compose_down logs-and-returns on failure rather than raising (see its
     # docstring) — check the status explicitly so a failed teardown surfaces
     # as a named assertion here instead of silently leaving a stack for the
@@ -204,7 +206,11 @@ def api_host(docker_parent, docker_project, docker_lab, built_image):
     proj = fresh_project()
     hosts = _run(
         compose_up(
-            docker_project, docker_lab, parent=docker_parent.id, project_name=proj, build=False
+            project=docker_project,
+            lab=docker_lab,
+            parent=docker_parent.id,
+            project_name=proj,
+            build=False,
         )
     )
     api = hosts["api"]
@@ -458,8 +464,8 @@ def test_composed_pileup_leaves_zero_accumulation(
 
     async def one_flow(entered: dict[str, bool]) -> None:
         async with composed(
-            docker_project,
-            docker_lab,
+            project=docker_project,
+            lab=docker_lab,
             parent=docker_parent.id,
             project_name=proj,
             own=True,
@@ -495,7 +501,7 @@ def test_composed_pileup_leaves_zero_accumulation(
             # legitimately strands a half-up stack (composed()'s finally never
             # armed); down must reconcile any half-state, idempotently.
             down = await compose_down(
-                docker_project, docker_lab, parent=docker_parent.id, project_name=proj
+                project=docker_project, lab=docker_lab, parent=docker_parent.id, project_name=proj
             )
             # compose_down logs-and-returns on failure rather than raising --
             # if the daemon itself died mid-pileup (it runs right after the

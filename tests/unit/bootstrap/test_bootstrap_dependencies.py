@@ -174,10 +174,13 @@ def test_a_broken_excluded_project_an_active_project_requires_refuses_the_run(
     result = bs.bootstrap()
     (err,) = result.errors
     with pytest.raises(ProjectLoadError) as info:
-        check_projects(result, [], ProjectSelection(exclude=["b"]))
+        check_projects(result=result, labs=[], selection=ProjectSelection(exclude=["b"]))
     assert info.value.errors == [err]
     assert info.value.demoted == []
     # Excluding a as well leaves nothing active that needs b: demoted again.
     assert [
-        d.name for d in check_projects(result, [], ProjectSelection(exclude=["a", "b"])).demoted
+        d.name
+        for d in check_projects(
+            result=result, labs=[], selection=ProjectSelection(exclude=["a", "b"])
+        ).demoted
     ] == ["b"]

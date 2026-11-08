@@ -4,7 +4,7 @@ This module holds the pytest-driving core behind ``otto test``: the
 run-options record, the inner pytest session, the stability report, and the
 :func:`prepare_run` preflight plus the coverage post-run hook. :func:`run_tests`
 runs tests by name and/or marker as a plain library call —
-``run_tests(["TestDevice"], output_dir=...)`` — returning a
+``run_tests(names=["TestDevice"], output_dir=...)`` — returning a
 :class:`SuiteRunResult` instead of raising ``typer.Exit``.
 
 The CLI (``otto.cli.test``) keeps a thin adapter over :func:`run_tests` and
@@ -70,7 +70,7 @@ def _lexical_path(path: Path) -> Path:
 
 
 @final
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class RunOptions:
     """Shared test-run options: markers/iterations/stability/coverage/monitor.
 
@@ -184,7 +184,7 @@ class RunOptions:
         from ..utils import validate_interval
 
         try:
-            validate_interval(self.monitor_interval)
+            validate_interval(seconds=self.monitor_interval)
         except ValueError as exc:
             from ..params import OptionsValidationError
 
@@ -609,7 +609,7 @@ async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> "Cl
     from ..coverage.collect import clean_coverage
     from ..coverage.errors import CoverageCleanError
 
-    report = await clean_coverage(projects, record_presence=True)
+    report = await clean_coverage(projects=projects, record_presence=True)
     if not report.ok:
         raise CoverageCleanError(report)
     _log_clean_summary(report, "before the run")
@@ -762,8 +762,8 @@ async def _post_run_coverage(
             inputs = resolve_report_inputs(projects)
             store = await run_coverage_report(
                 [cov_dir],
-                report_dir,
-                inputs,
+                output_dir=report_dir,
+                inputs=inputs,
                 report_title=opts.report_title,
                 overwrite=opts.overwrite_cov_report_dir,
             )
@@ -1706,8 +1706,8 @@ def _read_known(projects: "list[Project]", home: Path) -> list[_Known]:
 
 
 def run_tests(
-    names: list[str] | None = None,
     *,
+    names: list[str] | None = None,
     run_options: RunOptions = _DEFAULT_RUN_OPTIONS,
     options: list[object] | None = None,
     output_dir: Path | None = None,
@@ -1814,7 +1814,7 @@ def run_tests(
         # Bound first: every test (and the `ensure` converge) reads the
         # options off this context, and a bad value fails before any
         # collection or host work.
-        session_ctx.bind_verb_options("test", flat)
+        session_ctx.bind_verb_options(verb="test", kwargs=flat)
         if not searched:
             raise NoTestsMatchedError("No tests matched the selection.")
 

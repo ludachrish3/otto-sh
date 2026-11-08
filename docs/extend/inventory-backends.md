@@ -239,8 +239,8 @@ def test_the_lab_resolves_through_the_inventory(tmp_path):
 ## Migration note for custom lab repositories
 
 The {doc}`lab-source backend <lab-source-backends>` protocol gained an
-argument: `load_lab(name, preferences=None, inventory=None)`, and
-`list_host_summaries(inventory=None)` alongside it. A backend that builds hosts
+argument: `load_lab(name, *, preferences=None, inventory=None)`, and
+`list_host_summaries(*, inventory=None)` alongside it. A backend that builds hosts
 through otto's factory only has to forward it; a backend that builds them
 itself must resolve `inventory` references, or entries that reference the
 inventory will never get their addresses.

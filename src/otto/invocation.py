@@ -79,7 +79,7 @@ class CoverageCollection:
 
 
 @final
-@dataclass
+@dataclass(kw_only=True)
 class RunPolicy:
     """What this run does, read live by every host when it acts.
 
@@ -247,7 +247,7 @@ class ActiveRun(Protocol):
         ...
 
     def admissible_ids(
-        self, owner: "str | None" = None, *, require_nonempty: bool = True
+        self, *, owner: "str | None" = None, require_nonempty: bool = True
     ) -> "set[str]":
         """Return the host ids the run's fleet walks may reach (``OttoContext.admissible_ids``)."""
         ...

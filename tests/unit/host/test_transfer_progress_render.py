@@ -63,7 +63,7 @@ def _render(stream: list[ProgressEvent]) -> "tuple[Progress, str]":
     """
     console = Console(record=True, width=100, height=25, force_terminal=True, color_system=None)
     progress = Progress(*make_transfer_progress().columns, console=console, auto_refresh=False)
-    handler = make_rich_progress_handler(progress, "host-a")
+    handler = make_rich_progress_handler(progress=progress, host_name="host-a")
     for e in stream:
         handler(e.src, e.dst, e.done, e.total)
     console.print(progress.get_renderable())
@@ -161,7 +161,7 @@ def test_a_file_name_renders_with_its_brackets_and_emoji_codes_kept():
 def test_a_bracketed_host_name_renders_and_keeps_its_brackets():
     console = Console(record=True, width=100, height=25, force_terminal=True, color_system=None)
     progress = Progress(*make_transfer_progress().columns, console=console, auto_refresh=False)
-    handler = make_rich_progress_handler(progress, "[x]")
+    handler = make_rich_progress_handler(progress=progress, host_name="[x]")
     for e in events_for(src="/remote/a.bin", total=8192, granularity=8192):
         handler(e.src, e.dst, e.done, e.total)
     console.print(progress.get_renderable())

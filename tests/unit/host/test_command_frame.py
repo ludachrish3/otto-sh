@@ -37,12 +37,12 @@ from otto.host.session import ready_pattern
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
 from tests._fixtures.fake_shell import probe_marker
 
-M = SessionMarkers.for_session("cafef00d")
+M = SessionMarkers.for_session(session_id="cafef00d")
 
 
 class TestSessionMarkers:
     def test_for_session_derives_all_four_tokens(self):
-        m = SessionMarkers.for_session("abc123")
+        m = SessionMarkers.for_session(session_id="abc123")
         assert m.begin == "__OTTO_abc123_BEGIN__"
         assert m.end_prefix == "__OTTO_abc123_END__"
         assert m.ready == "__OTTO_abc123_READY__"
@@ -66,7 +66,7 @@ class TestBashFrame:
         )
 
     def test_the_split_ignores_underscores_in_the_id(self):
-        m = SessionMarkers.for_session("a_b")
+        m = SessionMarkers.for_session(session_id="a_b")
         assert whole_line_echo(m.ready, READY_SUFFIX).startswith("__otto_probe=READY__; ")
         assert "echo __OTTO_a_b_$__otto_probe;" in whole_line_echo(m.ready, READY_SUFFIX)
         with pytest.raises(ValueError, match="does not end in"):
@@ -90,19 +90,19 @@ class TestBashFrame:
 
     def test_the_history_prefix_rides_after_the_anchor(self):
         quiet = self.frame.quiet_history()
-        line = self.frame.handshake(M, quiet)
+        line = self.frame.handshake(M, prefix=quiet)
         assert line.startswith("__otto_probe=")
         assert line.index(quiet) < line.index("stty -echo")
 
     def test_the_double_reads_what_the_shell_prints(self):  # pins probe_marker to the product
-        assert probe_marker(self.frame.handshake(M, self.frame.quiet_history())) == M.ready
+        assert probe_marker(self.frame.handshake(M, prefix=self.frame.quiet_history())) == M.ready
         assert probe_marker(_identity_probe(M, "")) == M.recover
 
     def test_the_typed_handshake_never_carries_ready_whole(self):
         assert M.ready not in self.frame.handshake(M)
 
     def test_frame_brackets_command_and_bakes_retcode_into_end(self):
-        assert self.frame.frame("ls /tmp", M) == (
+        assert self.frame.frame("ls /tmp", m=M) == (
             f'echo "{M.begin}"; {{ ls /tmp\n}}; echo "{M.end_prefix}$?__"\n'
         )
 
@@ -116,21 +116,21 @@ class TestBashFrame:
 
     def test_extract_retcode_reads_end_marker_digits(self):
         buf = f"{M.begin}\nhi\n{M.end_prefix}0__\n"
-        assert self.frame.extract_retcode(buf, M) == 0
+        assert self.frame.extract_retcode(buf, m=M) == 0
         buf_fail = f"{M.begin}\nboom\n{M.end_prefix}127__\n"
-        assert self.frame.extract_retcode(buf_fail, M) == 127
+        assert self.frame.extract_retcode(buf_fail, m=M) == 127
 
     def test_extract_retcode_missing_marker_is_minus_one(self):
-        assert self.frame.extract_retcode("no markers here", M) == -1
+        assert self.frame.extract_retcode("no markers here", m=M) == -1
 
     def test_marks_begin_on_own_line_or_suffix(self):
-        assert self.frame.marks_begin(f"{M.begin}\r\n", M)
-        assert self.frame.marks_begin(f"$ {M.begin}", M)  # prompt prefix
-        assert not self.frame.marks_begin("unrelated output", M)
+        assert self.frame.marks_begin(f"{M.begin}\r\n", m=M)
+        assert self.frame.marks_begin(f"$ {M.begin}", m=M)  # prompt prefix
+        assert not self.frame.marks_begin("unrelated output", m=M)
 
     def test_parse_output_slices_between_markers(self):
         buf = f"{M.begin}\nline one\nline two\n{M.end_prefix}0__\n"
-        assert self.frame.parse_output(buf, "cmd", M) == "line one\nline two"
+        assert self.frame.parse_output(buf, cmd="cmd", m=M) == "line one\nline two"
 
     def test_parse_output_uses_last_begin_marker(self):
         # Echoed wrapped command means the marker appears twice; rfind wins.
@@ -138,7 +138,7 @@ class TestBashFrame:
             f'echo "{M.begin}"; cmd\n'  # echoed command line (false marker)
             f"{M.begin}\nreal output\n{M.end_prefix}0__\n"
         )
-        assert self.frame.parse_output(buf, "cmd", M) == "real output"
+        assert self.frame.parse_output(buf, cmd="cmd", m=M) == "real output"
 
     def test_streams_output_live_is_true(self):
         # Bash with echo off emits a clean line-by-line stream, so it streams live.
@@ -183,7 +183,7 @@ class TestAshFrame:
             '`ash` must be registered, or `command_frame: "ash"` in lab data '
             "fails HostSpec validation"
         )
-        assert isinstance(build_command_frame("ash"), AshFrame)
+        assert isinstance(build_command_frame(type_name="ash"), AshFrame)
 
     def test_the_registry_key_and_the_class_constant_agree(self):
         """`register_command_frame` raises when they disagree; assert the
@@ -199,10 +199,10 @@ class TestAshFrame:
         to agree today fails the moment BashFrame changes, which is the
         drift worth catching.
         """
-        markers = SessionMarkers.for_session("cafef00d")
+        markers = SessionMarkers.for_session(session_id="cafef00d")
         ash, bash = AshFrame(), BashFrame()
 
-        assert ash.frame("cmd", markers) == bash.frame("cmd", markers)
+        assert ash.frame("cmd", m=markers) == bash.frame("cmd", m=markers)
         assert ash.handshake(markers) == bash.handshake(markers)
         assert ash.recover(markers) == bash.recover(markers)
         assert ash.quiet_history() == bash.quiet_history()
@@ -224,8 +224,8 @@ class TestAshFrame:
         """
         assert AshFrame is not BashFrame
         assert issubclass(AshFrame, BashFrame)
-        assert type(build_command_frame("ash")) is AshFrame
-        assert type(build_command_frame("bash")) is BashFrame
+        assert type(build_command_frame(type_name="ash")) is AshFrame
+        assert type(build_command_frame(type_name="bash")) is BashFrame
 
     def test_ash_overrides_nothing_but_type_name(self):
         """The docstring's central claim — "the override set is EMPTY" —
@@ -272,10 +272,10 @@ class TestZephyrFrame:
 
     def test_handshake_is_bare_ready_marker(self):
         assert self.frame.handshake(M) == f"{M.ready}\n"
-        assert self.frame.handshake(M, "") == f"{M.ready}\n"
+        assert self.frame.handshake(M, prefix="") == f"{M.ready}\n"
 
     def test_frame_is_four_cr_separated_lines_with_retval(self):
-        assert self.frame.frame("kernel version", M) == (
+        assert self.frame.frame("kernel version", m=M) == (
             f"{M.begin}\rkernel version\rretval\r{M.end_prefix}\r"
         )
 
@@ -283,8 +283,8 @@ class TestZephyrFrame:
         assert self.frame.end_pattern(M).pattern == re.escape(M.end_prefix)
 
     def test_marks_begin_is_substring(self):
-        assert self.frame.marks_begin(f"{M.begin}: command not found", M)
-        assert not self.frame.marks_begin("nope", M)
+        assert self.frame.marks_begin(f"{M.begin}: command not found", m=M)
+        assert not self.frame.marks_begin("nope", m=M)
 
     def test_streams_output_live_is_false(self):
         # The Zephyr stream interleaves prompts + a `retval` line, so it must be
@@ -299,7 +299,7 @@ class TestZephyrFrame:
             f"\r\n-8\r\n~$ "
             f"\r\n{M.end_prefix}: command not found\r\n~$ "
         )
-        assert self.frame.extract_retcode(buf, M) == -8
+        assert self.frame.extract_retcode(buf, m=M) == -8
 
     def test_parse_output_drops_bracketing_prompts(self):
         buf = (
@@ -308,7 +308,7 @@ class TestZephyrFrame:
             f"\r\n0\r\n~$ "
             f"\r\n{M.end_prefix}: command not found\r\n~$ "
         )
-        assert self.frame.parse_output(buf, "version", M) == "Zephyr version 3.7.2"
+        assert self.frame.parse_output(buf, cmd="version", m=M) == "Zephyr version 3.7.2"
 
 
 class TestZephyrSerialFrame:
@@ -325,10 +325,10 @@ class TestZephyrSerialFrame:
 
     def test_handshake_disables_echo_then_prints_ready(self):
         assert self.frame.handshake(M) == f"shell echo off\r{M.ready}\n"
-        assert self.frame.handshake(M, "") == f"shell echo off\r{M.ready}\n"
+        assert self.frame.handshake(M, prefix="") == f"shell echo off\r{M.ready}\n"
 
     def test_inherits_retval_framing_from_zephyr(self):
-        assert self.frame.frame("kernel version", M) == (
+        assert self.frame.frame("kernel version", m=M) == (
             f"{M.begin}\rkernel version\rretval\r{M.end_prefix}\r"
         )
 
@@ -339,7 +339,7 @@ class TestZephyrSerialFrame:
             f"\r\n0\r\n~$ "
             f"\r\n{M.end_prefix}: command not found\r\n~$ "
         )
-        assert self.frame.extract_retcode(buf, M) == 0
+        assert self.frame.extract_retcode(buf, m=M) == 0
 
     def test_inherits_buffered_streaming(self):
         assert ZephyrSerialFrame.streams_output_live is False
@@ -441,10 +441,10 @@ class TestQuietHistory:
         class ThirdParty(CommandFrame):
             type_name = "third-party-quiet-test"
 
-            def handshake(self, m, prefix=""):
+            def handshake(self, m, *, prefix=""):
                 return ""
 
-            def frame(self, cmd, m):
+            def frame(self, cmd, *, m):
                 return ""
 
             def recover(self, m):
@@ -453,13 +453,13 @@ class TestQuietHistory:
             def end_pattern(self, m):
                 return re.compile("x")
 
-            def marks_begin(self, data, m):
+            def marks_begin(self, data, *, m):
                 return False
 
-            def parse_output(self, buffer, cmd, m):
+            def parse_output(self, buffer, *, cmd, m):
                 return ""
 
-            def extract_retcode(self, buffer, m):
+            def extract_retcode(self, buffer, *, m):
                 return -1
 
         assert ThirdParty().quiet_history() == ""
@@ -485,20 +485,20 @@ class TestHistoryPrefix:
 
 class TestRegistry:
     def test_stock_frames_resolve_by_name(self):
-        assert isinstance(build_command_frame("bash"), BashFrame)
-        assert isinstance(build_command_frame("zephyr"), ZephyrFrame)
-        assert isinstance(build_command_frame("zephyr-serial"), ZephyrSerialFrame)
+        assert isinstance(build_command_frame(type_name="bash"), BashFrame)
+        assert isinstance(build_command_frame(type_name="zephyr"), ZephyrFrame)
+        assert isinstance(build_command_frame(type_name="zephyr-serial"), ZephyrSerialFrame)
 
     def test_unknown_frame_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown command frame"):
-            build_command_frame("does-not-exist")
+            build_command_frame(type_name="does-not-exist")
 
     def test_register_then_build(self):
         class CustomFrame(ZephyrFrame):
             type_name = "custom-frame-test"
 
         register_command_frame("custom-frame-test", CustomFrame)
-        assert isinstance(build_command_frame("custom-frame-test"), CustomFrame)
+        assert isinstance(build_command_frame(type_name="custom-frame-test"), CustomFrame)
 
     def test_register_rejects_name_mismatch(self):
         class Mismatch(ZephyrFrame):
@@ -508,7 +508,7 @@ class TestRegistry:
             register_command_frame("wrong-name", Mismatch)
 
     def test_is_a_command_frame(self):
-        assert isinstance(build_command_frame("bash"), CommandFrame)
+        assert isinstance(build_command_frame(type_name="bash"), CommandFrame)
 
 
 def test_builtins_are_registered_and_build():
@@ -517,7 +517,7 @@ def test_builtins_are_registered_and_build():
     # _register_builtin_frames() registers each built-in by reference; building
     # one resolves it through the registry's validator, as a third party's is.
     assert set(cf.FRAME_CLASSES.names()) >= {"bash", "zephyr", "zephyr-serial"}
-    assert cf.build_command_frame("bash").type_name == "bash"
+    assert cf.build_command_frame(type_name="bash").type_name == "bash"
 
 
 class TestRestoreInteractive:
@@ -544,12 +544,12 @@ class TestRawFrame:
     frame = RawFrame()
 
     def test_registered_under_raw(self):
-        assert isinstance(build_command_frame("raw"), RawFrame)
+        assert isinstance(build_command_frame(type_name="raw"), RawFrame)
         assert RawFrame.type_name == "raw"
 
     def test_handshake_is_empty(self):
         assert self.frame.handshake(M) == ""
-        assert self.frame.handshake(M, "") == ""
+        assert self.frame.handshake(M, prefix="") == ""
 
     def test_quiet_history_is_empty_and_restore_is_none(self):
         assert self.frame.quiet_history() == ""
@@ -558,7 +558,7 @@ class TestRawFrame:
 
     def test_frame_and_recover_refuse(self):
         with pytest.raises(RawLandingError, match="enter_frame"):
-            self.frame.frame("ls", M)
+            self.frame.frame("ls", m=M)
         with pytest.raises(RawLandingError, match="enter_frame"):
             self.frame.recover(M)
 
@@ -569,11 +569,11 @@ class TestRawFrame:
         # pass the line above (bash's pattern also fails on plain text) but
         # fail this one.
         assert self.frame.end_pattern(M).search(f"{M.end_prefix}0__") is None
-        assert self.frame.marks_begin(M.begin, M) is False
-        assert self.frame.parse_output("x", "ls", M) == ""
-        assert self.frame.extract_retcode("x", M) == -1
+        assert self.frame.marks_begin(M.begin, m=M) is False
+        assert self.frame.parse_output("x", cmd="ls", m=M) == ""
+        assert self.frame.extract_retcode("x", m=M) == -1
         # Same hostile case for the retcode side: a buffer that DOES carry a
         # well-formed end marker still yields -1, because RawFrame's
         # end_pattern never matches anything for it to find.
-        assert self.frame.extract_retcode(f"{M.end_prefix}7__", M) == -1
+        assert self.frame.extract_retcode(f"{M.end_prefix}7__", m=M) == -1
         assert self.frame.streams_output_live is False

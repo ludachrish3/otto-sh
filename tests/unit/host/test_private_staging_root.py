@@ -40,7 +40,7 @@ TMP = Path("/tmp")
 def _parent(creds: "list[Cred] | None" = None, **kw) -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element=Element("test3"),
+        element=Element(name="test3"),
         creds=creds if creds is not None else [Cred(login="alice", password="pw")],
         docker_capable=True,
         **kw,
@@ -221,7 +221,9 @@ async def test_a_root_that_could_not_be_created_is_refused():
     async def _read_only_tmp(command, *_a, **_kw):
         shell.commands.append(command)
         return CommandResult(
-            Status.Success, value=f"{SESSION_UID}\ndirectory 0 1777\nmissing\n", command=command
+            status=Status.Success,
+            value=f"{SESSION_UID}\ndirectory 0 1777\nmissing\n",
+            command=command,
         )
 
     parent = _parent()
@@ -238,7 +240,7 @@ async def test_a_root_that_could_not_be_created_is_refused():
 async def test_an_answer_otto_cannot_read_is_refused_never_trusted(answer):
     parent = _parent()
     parent.exec = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandResult(Status.Success, value=answer, command="")
+        return_value=CommandResult(status=Status.Success, value=answer, command="")
     )
     with pytest.raises(StagingRefusedError, match="could not read the type, owner and mode"):
         await ensure_private_root(parent)
@@ -248,7 +250,9 @@ async def test_an_answer_otto_cannot_read_is_refused_never_trusted(answer):
 async def test_a_probe_that_never_completed_is_an_unreachable_parent():
     parent = _parent()
     parent.exec = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandResult(Status.Failed, value="", command="", retcode=-1, timed_out=True)
+        return_value=CommandResult(
+            status=Status.Failed, value="", command="", retcode=-1, timed_out=True
+        )
     )
     with pytest.raises(HostUnreachableError):
         await ensure_private_root(parent)
@@ -304,11 +308,13 @@ async def test_a_container_put_stages_under_the_private_root(tmp_path):
     async def _exec(command, *a, **kw):
         if command.startswith(("mkdir -m 0700", "id -u")):
             return await shell.exec(command)
-        return CommandResult(Status.Success, value="", command=command)
+        return CommandResult(status=Status.Success, value="", command=command)
 
     async def _put(files, dest, *a, **kw):
         staged_to.append(dest)
-        return Result(Status.Success, value={f: Result(Status.Success) for f in files})
+        return Result(
+            status=Status.Success, value={f: Result(status=Status.Success) for f in files}
+        )
 
     parent.exec = AsyncMock(side_effect=_exec)  # type: ignore[method-assign]
     parent.put = AsyncMock(side_effect=_put)  # type: ignore[method-assign]

@@ -118,7 +118,7 @@ def test_context_get_host_and_all_hosts_resolve_from_lab():
     # Filter to only test1 and test2 — not test3. The trailing `.*` is
     # load-bearing: ids are FULLMATCHED (D6), so a bare alternation of the
     # element names selects nothing (and now raises).
-    ids = {h.id for h in ctx.all_hosts(re.compile("(test1|test2).*"))}
+    ids = {h.id for h in ctx.all_hosts(pattern=re.compile("(test1|test2).*"))}
     assert ids
     assert all("test1" in i or "test2" in i for i in ids)
     # "test3" should not appear in the filtered result
@@ -211,7 +211,7 @@ def test_for_project_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
     """
     lab = _lab_with("test1")
     ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=True))
-    view = ctx.for_project("acme")
+    view = ctx.for_project(name="acme")
 
     assert view.lab is ctx.lab
     assert view.dry_run is True
@@ -361,7 +361,7 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
     )
     (sut / "lab").mkdir()
     shutil.copy(fixture / "lab.json", sut / "lab" / "lab.json")
-    _install_result(monkeypatch, projects=[Project(sut)])
+    _install_result(monkeypatch, projects=[Project(root=sut)])
     home = tmp_path / "home"
     home.mkdir()
     settings = home / "settings.toml"
@@ -612,7 +612,9 @@ def test_cov_detection_over_a_local_only_selector_names_no_membership_keyword(
     from otto.config.scope import EmptySelectionError
 
     def _hidden(_self, pattern=None, **_kw):
-        raise EmptySelectionError(pattern.pattern, 4, excluded_by=["include_local"], matched_size=1)
+        raise EmptySelectionError(
+            pattern.pattern, base_size=4, excluded_by=["include_local"], matched_size=1
+        )
 
     monkeypatch.setattr(OttoContext, "all_hosts", _hidden)
     cov_detection["projects"] = [_CovProject({"hosts": "local"})]
@@ -647,7 +649,7 @@ def test_cov_detection_with_unreachable_projects_is_false(monkeypatch):
 def test_cov_reads_through_a_project_view(cov_detection):
     """The project-scoped view delegates live, so instructions' self.ctx sees it too."""
     ctx = OttoContext(lab=_lab_with("test1"))
-    assert ctx.for_project("acme").cov is True
+    assert ctx.for_project(name="acme").cov is True
 
 
 # --- open_context makes the CLI's decisions -------------------------------------
@@ -701,7 +703,7 @@ def installed_projects(monkeypatch):
         sut = make_project(root, name=root.name, extra=extra)
         for rel, hosts in labfiles.items():
             write_lab_json(root / rel, hosts)
-        project = Project(sut)
+        project = Project(root=sut)
         _install_result(monkeypatch, projects=[project])
         return project
 
@@ -722,7 +724,7 @@ def _broken_project(name: str, *, lab_patterns: "list[str] | None" = None):
     )
     root = Path(f"/projects/{name}")
     project = fake_project(name, root=root, project_scope=scope)
-    return project, bs.DependencyError(str(root), "dependency 'y' is not satisfied")
+    return project, bs.DependencyError(str(root), message="dependency 'y' is not satisfied")
 
 
 @pytest.mark.asyncio
@@ -748,7 +750,7 @@ async def test_open_context_builds_the_lab_build_lab_builds(
         '[host_preferences.".*".ssh_options]\nport = 2222\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    expected = build_lab([project], ["merged"])
+    expected = build_lab([project], labs=["merged"])
     async with otto.open_context(lab="merged") as ctx:
         assert set(ctx.lab.hosts) == set(expected.hosts)
         assert "alt1" in ctx.lab.hosts  # the project's [[lab.sources]] record
@@ -784,9 +786,9 @@ async def test_a_list_of_labs_is_split_like_repeated_lab_flags(monkeypatch):
     real_check_projects = projects.check_projects
     seen: "dict[str, list[str]]" = {}
 
-    def _check_projects(result, labs, selection):
+    def _check_projects(*, result, labs, selection):
         seen["gate"] = list(labs)
-        return real_check_projects(result, labs, selection)
+        return real_check_projects(result=result, labs=labs, selection=selection)
 
     def _build_lab(projects, labs):
         seen["build"] = list(labs)
@@ -982,13 +984,13 @@ async def test_the_variant_restores_the_previous_value_not_the_default(monkeypat
     from otto.context import reset_variant, set_variant, variant
 
     _install_result(monkeypatch)
-    token = set_variant("field")
+    token = set_variant(value="field")
     try:
         async with otto.open_context(lab=_lab_with("test1"), variant="debug"):
             assert variant() == "debug"
         assert variant() == "field"
     finally:
-        reset_variant(token)
+        reset_variant(token=token)
 
 
 @pytest.mark.asyncio
@@ -997,13 +999,13 @@ async def test_no_variant_keeps_the_one_already_set(monkeypatch):
     from otto.context import reset_variant, set_variant, variant
 
     _install_result(monkeypatch)
-    token = set_variant("field")
+    token = set_variant(value="field")
     try:
         async with otto.open_context(lab=_lab_with("test1")):
             assert variant() == "field"
         assert variant() == "field"
     finally:
-        reset_variant(token)
+        reset_variant(token=token)
 
 
 @pytest.mark.asyncio

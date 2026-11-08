@@ -164,7 +164,7 @@ async def proxied_host(request):
         ip = host_data(element)["ip"]
         host = create_host_from_dict(
             _mysql_host_dict(ip, element, login="mysql", transfer=transfer),
-            element=Element(element),
+            element=Element(name=element),
         )
         try:
             yield host
@@ -194,7 +194,7 @@ async def test_proxied_command_roundtrip(leased_host: tuple[str, str]) -> None:
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(name=element)
     )
     try:
         whoami = (await host.run("whoami")).only
@@ -224,13 +224,13 @@ async def test_proxied_as_user_roundtrip(leased_host: tuple[str, str]) -> None:
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element), element=Element(element)
+        _mysql_host_dict(ip, element), element=Element(name=element)
     )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
-        async with host.as_user("mysql"):
+        async with host.as_user(user="mysql"):
             during = (await host.run("whoami")).only.value
             assert during == "mysql"
 
@@ -328,7 +328,7 @@ async def test_proxied_exec_fanout(leased_host: tuple[str, str]) -> None:
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(name=element)
     )
     try:
         N = 8  # noqa: N806 — single-letter math dimension
@@ -394,11 +394,11 @@ async def test_su_prompt_is_answered_when_it_appears(leased_host: tuple[str, str
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        {"ip": ip, "creds": [dict(c) for c in _PROMPTED_CREDS]}, element=Element(element)
+        {"ip": ip, "creds": [dict(c) for c in _PROMPTED_CREDS]}, element=Element(name=element)
     )
     try:
         started = time.monotonic()
-        async with host.as_user("test"):
+        async with host.as_user(user="test"):
             elapsed = time.monotonic() - started
             assert elapsed < _SWITCH_BUDGET_S, f"prompted switch took {elapsed:.1f}s"
             assert (await host.run("whoami")).only.value == "test"
@@ -424,11 +424,11 @@ async def test_su_password_does_not_stall_when_no_prompt_appears(
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        {"ip": ip, "creds": [dict(c) for c in _UNPROMPTED_CREDS]}, element=Element(element)
+        {"ip": ip, "creds": [dict(c) for c in _UNPROMPTED_CREDS]}, element=Element(name=element)
     )
     try:
         started = time.monotonic()
-        async with host.as_user("test"):
+        async with host.as_user(user="test"):
             elapsed = time.monotonic() - started
             assert elapsed < _SWITCH_BUDGET_S, (
                 f"unprompted switch took {elapsed:.1f}s — a configured password stalled "

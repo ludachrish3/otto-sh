@@ -38,11 +38,11 @@ class PyReplFrame(CommandFrame):
     type_name = "pyrepl"
     streams_output_live = False
 
-    def handshake(self, m: SessionMarkers, prefix: str = "") -> str:
+    def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         """Silence the prompts, define the helper, then emit the readiness token."""
         return f"{prefix}import sys; sys.ps1 = ''; sys.ps2 = ''\n{_HELPER}print({m.ready!r})\n"
 
-    def frame(self, cmd: str, m: SessionMarkers) -> str:
+    def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         """Hand ``cmd`` to the helper as one REPL line, with the sentinels to print."""
         return f"__otto({cmd!r}, {m.begin!r}, {m.end_prefix!r})\n"
 
@@ -59,7 +59,7 @@ class PyReplFrame(CommandFrame):
         """Match the helper's closing line, capturing the exit code it carries."""
         return re.compile(re.escape(m.end_prefix) + r"(\d+)__")
 
-    def marks_begin(self, data: str, m: SessionMarkers) -> bool:
+    def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
         """Report whether ``data`` is the chunk carrying the BEGIN sentinel."""
         stripped = data.rstrip("\r\n")
         return stripped == m.begin or stripped.endswith(m.begin)
@@ -67,6 +67,7 @@ class PyReplFrame(CommandFrame):
     def parse_output(
         self,
         buffer: str,
+        *,
         cmd: str,  # noqa: ARG002 -- the base class names it; the override must match
         m: SessionMarkers,
     ) -> str:
@@ -79,7 +80,7 @@ class PyReplFrame(CommandFrame):
         end = end_match.start() if end_match else len(buffer)
         return buffer[start:end].rstrip("\r\n").replace("\r", "")
 
-    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
+    def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Return the code the helper printed, or ``-1`` when the line never closed."""
         match = self.end_pattern(m).search(buffer)
         return int(match.group(1)) if match else -1

@@ -147,7 +147,7 @@ def _read(userland, name: str) -> str:
     skipped.
     """
     applet = _APPLET_BY_FIELD.get(name)
-    return userland.has_applet(applet) if applet is not None else getattr(userland, name)
+    return userland.has_applet(applet=applet) if applet is not None else getattr(userland, name)
 
 
 def _answers(userland) -> dict[str, str]:
@@ -165,7 +165,7 @@ def _answers(userland) -> dict[str, str]:
 
 
 def _ok(value: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=value, retcode=0)
+    return CommandResult(status=Status.Success, value=value, retcode=0)
 
 
 # `shell_dialect` is the one resolved field the lab-data spec types as a bare
@@ -420,13 +420,13 @@ class _Runner:
                 else self._applet_stdout
             )
             return CommandResult(
-                Status.Success if self._applet_retcode == 0 else Status.Error,
+                status=Status.Success if self._applet_retcode == 0 else Status.Error,
                 value=out,
                 retcode=self._applet_retcode,
             )
         if cmd in self._works:
             return _ok()
-        return CommandResult(Status.Error, value="", retcode=self._fail_retcode)
+        return CommandResult(status=Status.Error, value="", retcode=self._fail_retcode)
 
 
 @pytest.mark.asyncio
@@ -490,7 +490,7 @@ async def test_a_declared_applet_is_never_asked_about(applet):
     await userland.resolve()
 
     assert userland.as_lab_json()[applet_capability(applet)] == APPLET_ABSENT
-    assert userland.has_applet(applet) == APPLET_ABSENT
+    assert userland.has_applet(applet=applet) == APPLET_ABSENT
     assert len(runner.calls) == len(baseline.calls), (
         f"declaring one applet changed the ROUND COUNT ({len(baseline.calls)} -> "
         f"{len(runner.calls)}); the whole point of the batch is that it is one "
@@ -808,21 +808,21 @@ async def test_is_settled_separates_a_measurement_from_an_assumption(field_name)
     """
     answered = Userland(UserlandOptions(), _Runner())
     await answered.resolve()
-    assert answered.is_settled(field_name), (
+    assert answered.is_settled(name=field_name), (
         f"{field_name} was answered by the device (a NO is still an answer) and must "
         f"count as settled, or a refusal keyed on it can never fire"
     )
 
     unasked = Userland(UserlandOptions(), _Runner(unreachable=_EVERY_PROBE_IN_ORDER))
     await unasked.resolve()
-    assert not unasked.is_settled(field_name), (
+    assert not unasked.is_settled(name=field_name), (
         f"{field_name} was never asked, so calling it settled would let a refused "
         f"probe round become a verdict about the device"
     )
 
     declared = Userland(UserlandOptions(**{field_name: "DECLARED"}), _Runner())
     await declared.resolve()
-    assert declared.is_settled(field_name), "a declaration is settled by definition"
+    assert declared.is_settled(name=field_name), "a declaration is settled by definition"
 
 
 def test_is_settled_refuses_a_name_it_does_not_resolve():
@@ -834,12 +834,15 @@ def test_is_settled_refuses_a_name_it_does_not_resolve():
     """
     userland = Userland(UserlandOptions(), _Runner())
     with pytest.raises(ValueError, match="is not a userland capability"):
-        userland.is_settled("base64flag")
+        userland.is_settled(name="base64flag")
 
 
 def test_is_settled_is_false_before_anything_is_resolved():
     """Honest rather than a special case: nothing has been settled yet."""
-    assert Userland(UserlandOptions(base64_flag="-d"), _Runner()).is_settled("base64_flag") is False
+    assert (
+        Userland(UserlandOptions(base64_flag="-d"), _Runner()).is_settled(name="base64_flag")
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -1619,7 +1622,7 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
     # not invite anyone to make them permanent.
     assert userland.stat_size == "stat"
     assert userland.shell_dialect == "bash"
-    assert userland.has_applet("scp") == APPLET_PRESENT
+    assert userland.has_applet(applet="scp") == APPLET_PRESENT
     _assert_debug_only(caplog)
 
 
@@ -1826,7 +1829,7 @@ def test_the_applet_bridge_rejects_a_name_nothing_probes():
 
     userland = Userland(UserlandOptions(), _Runner())
     with pytest.raises(ValueError, match="is not an applet this module probes"):
-        userland.has_applet("scpp")
+        userland.has_applet(applet="scpp")
 
 
 @pytest.mark.asyncio
@@ -1891,11 +1894,11 @@ async def test_the_batch_asks_about_every_applet_and_reports_each_one():
     assert runner.calls[-1] == _P_APPLETS, (
         f"the applet batch was {runner.calls[-1]!r}, not the measured spelling"
     )
-    assert {a: userland.has_applet(a) for a in PROBED_APPLETS} == {
+    assert {a: userland.has_applet(applet=a) for a in PROBED_APPLETS} == {
         a: APPLET_PRESENT if a in present else APPLET_ABSENT for a in PROBED_APPLETS
     }
     for applet in PROBED_APPLETS:
-        assert userland.is_settled(applet_capability(applet)), (
+        assert userland.is_settled(name=applet_capability(applet)), (
             f"{applet} was answered by the device and must count as settled"
         )
 
@@ -1944,10 +1947,10 @@ async def test_a_batch_that_did_not_measure_the_device_leaves_it_unasked(shape, 
 
     for applet in PROBED_APPLETS:
         name = applet_capability(applet)
-        assert userland.has_applet(applet) == _UNASKABLE[name], (
+        assert userland.has_applet(applet=applet) == _UNASKABLE[name], (
             f"the {shape} batch was read as an answer for {applet}"
         )
-        assert not userland.is_settled(name), (
+        assert not userland.is_settled(name=name), (
             f"the {shape} batch settled {applet}, so a refused probe round became "
             f"a verdict about the device"
         )
@@ -1972,7 +1975,7 @@ async def test_an_untrusted_batch_is_asked_again_once_the_cooldown_expires(monke
     userland = Userland(UserlandOptions(), runner)
 
     await userland.resolve()
-    assert userland.has_applet("scp") == APPLET_PRESENT
+    assert userland.has_applet(applet="scp") == APPLET_PRESENT
     during = len(runner.calls)
 
     runner.applet_control = True
@@ -1982,9 +1985,9 @@ async def test_an_untrusted_batch_is_asked_again_once_the_cooldown_expires(monke
     assert runner.calls[during:] == [_P_APPLETS], (
         f"the retry issued {runner.calls[during:]}; only the batch was unsettled"
     )
-    assert userland.has_applet("scp") == APPLET_ABSENT
-    assert userland.has_applet("base64") == APPLET_PRESENT
-    assert userland.is_settled(applet_capability("scp"))
+    assert userland.has_applet(applet="scp") == APPLET_ABSENT
+    assert userland.has_applet(applet="base64") == APPLET_PRESENT
+    assert userland.is_settled(name=applet_capability("scp"))
 
 
 @pytest.mark.asyncio

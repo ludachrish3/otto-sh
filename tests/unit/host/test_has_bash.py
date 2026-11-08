@@ -35,13 +35,13 @@ class TestHasBashPerClassDefault:
 
     def test_unix_host_default_true(self):
         host = UnixHost(
-            ip="10.0.0.1", element=Element("box"), creds=[Cred(login="u", password="p")]
+            ip="10.0.0.1", element=Element(name="box"), creds=[Cred(login="u", password="p")]
         )
         assert host.has_bash is True
 
     def test_embedded_host_default_false(self):
         host = EmbeddedHost(
-            ip="192.0.2.1", element=Element("zephyr37_fat"), command_frame=ZephyrFrame()
+            ip="192.0.2.1", element=Element(name="zephyr37_fat"), command_frame=ZephyrFrame()
         )
         assert host.has_bash is False
 
@@ -68,7 +68,7 @@ class TestHasBashFromLabData:
                 "ip": "10.10.200.11",
                 "creds": [{"login": "v", "password": "v"}],
             },
-            element=Element("alt1"),
+            element=Element(name="alt1"),
         )
         assert host.has_bash is True
 
@@ -79,7 +79,7 @@ class TestHasBashFromLabData:
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
         assert host.has_bash is False
 
@@ -90,7 +90,7 @@ class TestHasBashFromLabData:
                 "creds": [{"login": "v", "password": "v"}],
                 "has_bash": False,
             },
-            element=Element("alt1"),
+            element=Element(name="alt1"),
         )
         assert host.has_bash is False
 
@@ -102,6 +102,6 @@ class TestHasBashFromLabData:
                 "command_frame": "zephyr",
                 "has_bash": True,
             },
-            element=Element("zephyr37_fat"),
+            element=Element(name="zephyr37_fat"),
         )
         assert host.has_bash is True

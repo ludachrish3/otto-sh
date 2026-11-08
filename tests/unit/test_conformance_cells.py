@@ -123,7 +123,7 @@ def test_a_menu_entry_the_venue_cannot_serve_is_excluded_not_offered() -> None:
     dropped, and the servable pairs must survive.
     """
     monkeyed = SimpleNamespace(
-        element=Element("loopback"),
+        element=Element(name="loopback"),
         valid_terms=["ssh", "telnet"],
         valid_transfers=["sftp", "console", "scp"],
     )
@@ -142,7 +142,7 @@ def test_loopback_cells_are_read_off_the_built_host_not_hardcoded() -> None:
     must follow it.
     """
     monkeyed = SimpleNamespace(
-        element=Element("loopback"), valid_terms=["ssh"], valid_transfers=["nc"]
+        element=Element(name="loopback"), valid_terms=["ssh"], valid_transfers=["nc"]
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_cells, "create_host_from_dict", lambda data, **kw: monkeyed)

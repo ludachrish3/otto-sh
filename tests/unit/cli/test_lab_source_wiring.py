@@ -39,7 +39,7 @@ def _project(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[
     sut = make_project(root, name=name, extra=sources_toml)
     for rel, hosts in labfiles.items():
         _lab_json(root / rel, hosts)
-    return Project(sut)
+    return Project(root=sut)
 
 
 def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> 
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    repository = build_lab_sources([project])
+    repository = build_lab_sources(projects=[project])
     assert isinstance(repository, CompositeLabRepository)
     assert [s.label for s in repository.sources] == ["r1/json#1"]
     assert isinstance(repository.sources[0].repository, _JsonFileLabRepository)
@@ -83,7 +83,7 @@ def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> Non
     lab_file.write_text(json.dumps(doc))
 
     with pytest.raises(LabRepositoryError, match=r"declared.*no element"):
-        build_lab_sources([project]).load_lab("ghost")
+        build_lab_sources(projects=[project]).load_lab("ghost")
 
 
 def test_two_projects_all_sources_live(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_two_projects_all_sources_live(tmp_path: Path) -> None:
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {"lab/lab.json": [_host("test2", "10.0.0.2")]},
     )
-    repository = build_lab_sources([r1, r2])
+    repository = build_lab_sources(projects=[r1, r2])
     assert isinstance(repository, CompositeLabRepository)
     assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "test2", "local"}
 
@@ -118,7 +118,7 @@ def test_later_project_overrides_earlier_with_warning(tmp_path: Path, caplog) ->
         {"lab/lab.json": [_host("alt1", "10.9.9.9")]},
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
-        lab = build_lab_sources([r1, r2]).load_lab("merged")
+        lab = build_lab_sources(projects=[r1, r2]).load_lab("merged")
     assert lab.hosts["alt1"].ip == "10.9.9.9"
     # The ELEMENT warning specifically. Both projects also DECLARE `merged`, so a
     # labs-entry warning naming the same two labels is emitted too — an
@@ -164,7 +164,7 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
             '[[lab.sources]]\nbackend = "dict-wiring-test"\nnames = ["from-custom"]\n',
             {},
         )
-        repository = build_lab_sources([project])
+        repository = build_lab_sources(projects=[project])
         # The composite wraps it (R15); the CONSTRUCTED backend is what the
         # registered factory built from the entry's parsed options.
         built = repository.sources[0].repository
@@ -172,7 +172,7 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
         assert built.project_root == project.root
         assert repository.list_labs() == ["from-custom"]
     finally:
-        LAB_REPOSITORIES.unregister("dict-wiring-test")
+        LAB_REPOSITORIES.unregister(name="dict-wiring-test")
 
 
 def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
@@ -200,14 +200,14 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {},
     )
-    entry = LAB_REPOSITORIES.peek("json")
+    entry = LAB_REPOSITORIES.peek(name="json")
     register_lab_repository(
         "json",
         config=entry.config,
         factory=lambda c: ReplacementJsonRepository(search_paths=list(c.config.paths)),
         overwrite=True,
     )
-    repository = build_lab_sources([project])
+    repository = build_lab_sources(projects=[project])
     built = repository.sources[0].repository  # the composite wraps it (R15)
     assert isinstance(built, ReplacementJsonRepository)
     assert built.search_paths == [project.root / "lab"]
@@ -216,12 +216,12 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
 def test_unknown_backend_raises(tmp_path: Path) -> None:
     project = _project(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
     with pytest.raises(LabRepositoryError, match="Unknown lab repository backend"):
-        build_lab_sources([project])
+        build_lab_sources(projects=[project])
 
 
 def test_no_sources_anywhere_fails_loud_on_demand(tmp_path: Path) -> None:
-    project = Project(make_project(tmp_path / "bare", name="bare"))
-    repository = build_lab_sources([project])
+    project = Project(root=make_project(tmp_path / "bare", name="bare"))
+    repository = build_lab_sources(projects=[project])
     assert repository.list_labs() == []
     with pytest.raises(LabNotFoundError, match=r"\[\[lab\.sources\]\]"):
         repository.load_lab("anything")

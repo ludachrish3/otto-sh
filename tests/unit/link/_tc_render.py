@@ -40,7 +40,7 @@ def render_scoped_tree(mapping: dict[Selector, tuple[int, ImpairmentParams]]) ->
     cmds = [
         cmd
         for selector, (band, _params) in mapping.items()
-        for cmd in imp.scoped_filter_commands("eth1.100", band, selector)
+        for cmd in imp.scoped_filter_commands(netdev="eth1.100", band=band, selector=selector)
     ]
     return ScopedTree(qdisc, filter_show_text(cmds))
 

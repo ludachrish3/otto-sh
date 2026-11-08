@@ -222,7 +222,7 @@ def _who(copy: "UnixHost", protocol: str, *, login: str | None) -> str:
     cred = (
         cred_for(copy.creds, login, protocol)
         if login is not None
-        else copy.connections.transport_cred_for(protocol)
+        else copy.connections.transport_cred_for(protocol=protocol)
     )
     if cred is None:
         return "login ''"

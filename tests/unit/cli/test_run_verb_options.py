@@ -197,7 +197,7 @@ def test_a_project_instruction_binds_the_run_flags(run_cli, monkeypatch):
     register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
-    async def _install(source):
+    async def _install(*, opts):
         seen["lab_env"] = get_context().options(ProjectOptions).lab_env
 
     monkeypatch.setattr(orchestrator, "install", _install)

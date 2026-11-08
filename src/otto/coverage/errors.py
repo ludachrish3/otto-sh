@@ -72,12 +72,12 @@ class CoverageNotInstrumentedError(CoverageConfigError):
     ``rich.table``, so importing the producing module here for real would
     widen exactly the edge the import budget exists to keep narrow.
 
-    Only *message* reaches ``BaseException.args``, so an unpickled copy reads
-    identically and carries ``report = None`` — the structure is a
-    same-process rendering aid, not part of the error's identity.
+    Only *message* reaches ``BaseException.args``; a pickled copy carries
+    ``report`` too, as every :class:`~otto.errors.OttoError` carries its
+    attributes.
     """
 
-    def __init__(self, message: str, report: "InstrumentationReport | None" = None) -> None:
+    def __init__(self, message: str, *, report: "InstrumentationReport | None" = None) -> None:
         """Record *report* (the per-product verdicts, or ``None``) beside *message*."""
         super().__init__(message)
         self.report = report
@@ -206,7 +206,7 @@ class CoverageCaptureError(OttoError, RuntimeError):
     says so in its own entry, and is left out of that sentence.
     """
 
-    def __init__(self, result: "ProduceResult", clean: "CleanReport | None" = None) -> None:
+    def __init__(self, result: "ProduceResult", *, clean: "CleanReport | None" = None) -> None:
         """Frame each failed product's short failure as one message."""
         blocks = []
         for p in result.failed:
@@ -252,7 +252,7 @@ class PairingError(OttoError, ValueError):
     match), ``no-notes`` (no notes file matches).
     """
 
-    def __init__(self, kind: str, message: str) -> None:
+    def __init__(self, kind: str, *, message: str) -> None:
         """Record *kind* beside *message*."""
         super().__init__(message)
         self.kind = kind

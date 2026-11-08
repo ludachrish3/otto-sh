@@ -431,7 +431,7 @@ class TestEmbeddedCounterReset:
             assert raw.status is Status.Success, f"{host.id}: {call} -> {raw.status}"
             assert raw.value == "", f"{host.id}: {call} printed {raw.value!r}"
 
-            result = await missing.reset_coverage(host)
+            result = await missing.reset_coverage(host=host)
 
             assert result.status is Status.Error, f"{host.id}: reset reported {result.status}"
             assert "reset_fn 'no_such_fn' failed" in result.msg
@@ -457,7 +457,7 @@ class TestEmbeddedCounterReset:
                 f"{host.id}: {call} -> {raw.status} {raw.value!r}"
             )
 
-            result = await absent.reset_coverage(host)
+            result = await absent.reset_coverage(host=host)
 
             assert result.status is Status.Success, f"{host.id}: {result.status} {result.msg}"
             assert result.msg == "not loaded, so there are no counters to clear"

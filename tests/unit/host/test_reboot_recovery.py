@@ -23,7 +23,7 @@ from otto.utils import Status
 def _unix_host() -> UnixHost:
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("box"),
+        element=Element(name="box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
@@ -61,7 +61,7 @@ async def test_reboot_rebuilds_connections_before_waiting(monkeypatch):
 
     def side_effect():
         order.append("issue")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     monkeypatch.setattr(h, "_soft_reboot", AsyncMock(side_effect=side_effect))
     monkeypatch.setattr(h, "rebuild_connections", lambda: order.append("rebuild"))
@@ -81,7 +81,7 @@ async def test_reboot_wait_does_not_trust_the_cached_connection(monkeypatch):
     dial seam that refuses every fresh attempt, reboot(wait=True) must FAIL —
     today it vacuously succeeds because verify_connection() reads the cache."""
     h = _unix_host()
-    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(Status.Success)))
+    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
     h._connections._ssh_conn = MagicMock()  # the dead cached connection
     monkeypatch.setattr(
         connections_mod, "ssh_connect", AsyncMock(side_effect=ConnectionRefusedError("booting"))
@@ -104,7 +104,7 @@ def _reboot_ready_local(monkeypatch) -> LocalHost:
     """A LocalHost whose _soft_reboot is a recorder — drives BaseHost.reboot's
     orchestration without any real family behavior."""
     h = LocalHost()
-    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(Status.Success)))
+    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
     return h
 
 
@@ -171,7 +171,7 @@ async def test_unix_recovery_survives_accept_then_stall(monkeypatch):
     Recovery must retry the command probe until it answers — two stalled
     probes then a clean round-trip is a recovery, not a failure."""
     h = _unix_host()
-    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(Status.Success)))
+    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
     _scripted_reachable(monkeypatch, h, [True, False, True])
     monkeypatch.setattr(h, "exec", AsyncMock(side_effect=[_timed_out(), _timed_out(), _ok()]))
     result = await h.reboot(wait=True, timeout=5.0, down_timeout=5.0, poll_interval=0)
@@ -190,7 +190,7 @@ async def test_unix_recovery_fails_when_shell_never_answers(monkeypatch):
     live waits before the shared deadline expires, and the asserted failure
     phase could flip under scheduler load."""
     h = _unix_host()
-    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(Status.Success)))
+    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
 
     async def immediately_true(self, timeout, interval=2.0):
         return True
@@ -219,7 +219,7 @@ async def test_unix_recovery_probe_tolerates_raising_exec(monkeypatch):
     """A probe that RAISES (connection reset mid-handshake) is 'not booted
     yet', never an error: the loop retries and later succeeds."""
     h = _unix_host()
-    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(Status.Success)))
+    monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
     _scripted_reachable(monkeypatch, h, [True, False, True])
     monkeypatch.setattr(h, "exec", AsyncMock(side_effect=[ConnectionResetError("reset"), _ok()]))
     result = await h.reboot(wait=True, timeout=5.0, down_timeout=5.0, poll_interval=0)

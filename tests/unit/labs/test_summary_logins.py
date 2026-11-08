@@ -62,7 +62,7 @@ def test_composite_carries_logins_across_sources(tmp_path):
     project = _project(
         tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}]
     )
-    composite = build_lab_sources([project])
+    composite = build_lab_sources(projects=[project])
     got = {s.id: s.logins for s in composite.list_host_summaries()}
     assert got == {"u1": EXPECTED}
 
@@ -76,14 +76,16 @@ def test_load_lab_fallback_records_the_built_hosts_logins():
         def load_lab(self, name, preferences=None, inventory=None):
             lab = Lab(name=name)
             lab.add_host(
-                create_host_from_dict({"ip": "1.1.1.1", "creds": _CREDS}, element=Element("u1"))
+                create_host_from_dict(
+                    {"ip": "1.1.1.1", "creds": _CREDS}, element=Element(name="u1")
+                )
             )
             return lab
 
         def list_labs(self):
             return ["only"]
 
-    summaries = {s.id: s for s in host_summaries(_MinimalRepository())}
+    summaries = {s.id: s for s in host_summaries(repository=_MinimalRepository())}
     assert summaries["u1"].logins == EXPECTED
 
 
@@ -101,7 +103,7 @@ def test_a_host_without_creds_summarises_to_no_logins():
         def list_labs(self):
             return ["only"]
 
-    assert {s.id: s.logins for s in host_summaries(_LocalOnly())} == {"local": []}
+    assert {s.id: s.logins for s in host_summaries(repository=_LocalOnly())} == {"local": []}
 
 
 def test_logins_of_host_data_reads_only_identity_fields():

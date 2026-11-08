@@ -34,7 +34,7 @@ class TestDestDecision:
     @pytest.mark.asyncio
     async def test_a_has_bash_false_dest_is_never_fingerprinted(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
-        report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         assert the_bed.hosts["d"].commands == []
         assert report.dest_proof == "split"
         assert report.destination is not None
@@ -49,7 +49,7 @@ class TestDestDecision:
         the_bed = _dest_bed(monkeypatch, missing=["socat"], serves=[PORT])
         d = the_bed.hosts["d"]
         leftover = d.plant(echo_sentinel(EchoTag("0ld0ld", "-", "tcp", "segment", "d")))
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert report.dest_proof == "split"
         # Fingerprinted once, and nothing else: never swept, never given an echo.
         [fingerprint] = d.commands
@@ -66,7 +66,7 @@ class TestDestDecision:
     @pytest.mark.asyncio
     async def test_a_dest_with_socat_but_no_bash_is_a_split_proof(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch, missing=["bash"], serves=[PORT])
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert report.dest_proof == "split"
         assert len(the_bed.hosts["d"].commands) == 1
 
@@ -76,7 +76,7 @@ class TestDestFullProof:
     async def test_dest_with_socat_is_payload_verified_end_to_end(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch)
         a, b, d = (the_bed.hosts[h] for h in "abd")
-        report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         assert report.dest_proof == "full"
         assert report.proven == "whole path payload-verified to d (tcp, udp)"
         assert report.ok
@@ -124,7 +124,7 @@ class TestDestFullProof:
     async def test_a_dead_leg_into_the_dest_names_its_hop_pair(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch)
         the_bed.dead.add(("b", "d"))
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         row = _rows(report)["segment b → d"]
         assert row.verdict is Verdict.FAIL
         assert row.detail == f"b → d: no echo from 10.0.0.3:{SCRATCH}"
@@ -137,12 +137,12 @@ class TestDestFullProof:
         the_bed = _dest_bed(monkeypatch)
         d = the_bed.hosts["d"]
         old = d.plant(echo_sentinel(EchoTag("0ld0ld", "-", "tcp", "segment", "d")), age_s=OLD_S)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert old in d.kills
         assert report.destination is not None
         assert report.destination.swept == [f"swept otto-check echo segment on d ({OLD_NOTE})"]
         d.unkillable = True
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         teardown = _rows(report)["teardown"]
         assert teardown.verdict is Verdict.FAIL
         assert "survived on d" in (teardown.detail or "")
@@ -152,7 +152,7 @@ class TestDestFullProof:
         the_bed = _dest_bed(monkeypatch)
         tid = _throwaway_id("tcp", hops="ab")
         the_bed.remove_survivors[tid] = [("b", 777)]
-        await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         left = _check_procs_left(the_bed)
         assert sorted(left) == ["a", "d"]
         assert all(tid in token for tokens in left.values() for token in tokens)
@@ -165,13 +165,13 @@ class TestDestFullProof:
         """The real tunnel binds --port on the first and last hop; the dest's is its service."""
         the_bed = _dest_bed(monkeypatch, **dest)
         the_bed.hosts["d"].held["tcp"] = [f"LISTEN 0 128 0.0.0.0:{PORT} 0.0.0.0:*"]
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         row = _rows(report)["service port"]
         assert row.verdict is Verdict.PASS
         assert [line.split(":")[0] for line in (row.output or "").splitlines()] == ["a", "b"]
         # A holder on the last hop still fails it, dest or not.
         the_bed.hosts["b"].held["tcp"] = [f"LISTEN 0 128 0.0.0.0:{PORT} 0.0.0.0:*"]
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert _rows(report)["service port"].verdict is Verdict.FAIL
 
 
@@ -180,7 +180,7 @@ class TestDestSplitProof:
     async def test_dest_without_socat_splits_the_proof(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
         a, b, d = (the_bed.hosts[h] for h in "abd")
-        report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         assert report.proven == (
             "hop chain: payload-verified; last segment to d: TCP handshake only; UDP not measured"
         )
@@ -218,7 +218,7 @@ class TestDestSplitProof:
         self, monkeypatch
     ) -> None:
         the_bed = _dest_bed(monkeypatch, has_bash=False)  # nothing listens on --port
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         row = _rows(report)[LAST_SEGMENT]
         assert row.verdict is Verdict.FAIL
         assert row.detail == f"b → d: no TCP handshake with 10.0.0.3:{PORT}"
@@ -241,7 +241,7 @@ class TestDestSplitProof:
         self, monkeypatch, protocol, said
     ) -> None:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol=protocol, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol=protocol, dest=DEST)
         assert report.proven == f"hop chain: payload-verified; {said}"
 
     @pytest.mark.asyncio
@@ -249,7 +249,7 @@ class TestDestSplitProof:
         self, monkeypatch
     ) -> None:
         the_bed = bed("a", "b", "d", b={"missing": ["socat"]}, d=EMBEDDED).install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         row = _rows(report)[LAST_SEGMENT]
         assert list(_rows(report))[-1] == LAST_SEGMENT
         assert row.verdict is Verdict.UNMEASURED
@@ -265,7 +265,7 @@ class TestDestDryRun:
     async def test_a_has_bash_false_dest_plans_the_split_proof(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
         with active_context(dry_run=True):
-            report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+            report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         text = "\n".join(report.dry_run_plan)
         assert "has_bash=False" in text
         assert "split proof" in text
@@ -279,7 +279,7 @@ class TestDestDryRun:
     async def test_a_dest_with_bash_plans_a_decision_by_its_fingerprint(self, monkeypatch) -> None:
         the_bed = _dest_bed(monkeypatch)
         with active_context(dry_run=True):
-            report = await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+            report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         text = "\n".join(report.dry_run_plan)
         assert "would fingerprint d" in text
         assert "decided by" in text
@@ -296,7 +296,7 @@ class TestAnUnreachableDestIsNeverAVerdict:
         the_bed = _dest_bed(monkeypatch)
         the_bed.hosts["d"].fail_all = True
         with pytest.raises(CheckHostUnreachableError, match="'d'"):
-            await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+            await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         assert the_bed.adds == []
 
     @pytest.mark.asyncio
@@ -312,7 +312,7 @@ class TestAnUnreachableDestIsNeverAVerdict:
 
         monkeypatch.setattr("otto.tunnel.check.remove_tunnel", remove)
         with pytest.raises(CheckHostUnreachableError, match="'d'"):
-            await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+            await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert the_bed.hosts["a"].alive() == []
         assert the_bed.hosts["b"].alive() == []
 
@@ -323,7 +323,7 @@ class TestAnUnreachableDestIsNeverAVerdict:
         the_bed = _dest_bed(monkeypatch)
         the_bed.hosts["d"].raise_on = ":fwd-echo:"
         with pytest.raises(CheckHostUnreachableError, match="'d'"):
-            await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+            await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert the_bed.adds == []
         assert _check_procs_left(the_bed) == {}
 
@@ -332,7 +332,7 @@ class TestAnUnreachableDestIsNeverAVerdict:
         the_bed = _dest_bed(monkeypatch, **EMBEDDED)
         the_bed.hosts["b"].raise_on = HANDSHAKE_MARK
         with pytest.raises(CheckHostUnreachableError, match="'b'"):
-            await check_tunnel(the_bed, AB, port=PORT, protocol="tcp", dest=DEST)
+            await check_tunnel(lab=the_bed, hosts=AB, port=PORT, protocol="tcp", dest=DEST)
         assert _check_procs_left(the_bed) == {}
         assert the_bed.hosts["d"].commands == []
 
@@ -341,7 +341,7 @@ class TestTheLastSegmentWhenAHopMissesATool:
     @pytest.mark.asyncio
     async def test_a_tool_missing_off_the_last_hop_still_shakes_hands(self, monkeypatch) -> None:
         the_bed = bed("a", "b", "d", a={"missing": ["socat"]}, d=EMBEDDED).install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         tcp = _rows(report, "tcp")
         assert list(tcp)[-1] == LAST_SEGMENT
         assert tcp[LAST_SEGMENT].verdict is Verdict.PASS
@@ -365,7 +365,7 @@ class TestTheLastSegmentWhenAHopMissesATool:
         self, monkeypatch
     ) -> None:
         the_bed = bed("a", "b", "d", b={"missing": ["socat"]}, d=EMBEDDED).install(monkeypatch)
-        report = await check_tunnel(the_bed, AB, port=PORT, dest=DEST)
+        report = await check_tunnel(lab=the_bed, hosts=AB, port=PORT, dest=DEST)
         tcp = _rows(report, "tcp")[LAST_SEGMENT]
         assert tcp.verdict is Verdict.UNMEASURED
         assert tcp.reason is UnmeasuredReason.MISSING_TOOL

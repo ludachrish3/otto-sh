@@ -239,7 +239,7 @@ def cached_host_class_for_id(host_id: str) -> type | None:
         return None
     from ..host.os_profile import get_host_class
 
-    return get_host_class(name)
+    return get_host_class(name=name)
 
 
 def exposed_cli_names(cls: type | None) -> set[str]:

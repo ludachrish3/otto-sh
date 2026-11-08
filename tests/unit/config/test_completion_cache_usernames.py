@@ -24,7 +24,7 @@ def test_collect_usernames_from_capable_backend(tmp_path):
     from otto.reservations import NoneReservationConfig, register_reservation_backend
 
     class UCBackend:
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             return []
 
         def backend_name(self):

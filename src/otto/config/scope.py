@@ -74,7 +74,7 @@ if TYPE_CHECKING:
 class BootstrapError(OttoError):
     """One user file failed to load during bootstrap registration."""
 
-    def __init__(self, root: Any, source: str, cause: BaseException) -> None:
+    def __init__(self, root: Any, *, source: str, cause: BaseException) -> None:
         """Frame *cause* as ``project root <root>: failed to load <source>``."""
         super().__init__(f"project root {root}: failed to load {source}: {cause!r}")
         self.root = root
@@ -85,7 +85,7 @@ class BootstrapError(OttoError):
 class DependencyError(BootstrapError):
     """A project's declared dependencies cannot be satisfied (or a dependency was skipped)."""
 
-    def __init__(self, root: Any, message: str) -> None:
+    def __init__(self, root: Any, *, message: str) -> None:
         """Frame *message* as ``project root <root>: <message>``."""
         Exception.__init__(self, f"project root {root}: {message}")
         self.root = root
@@ -102,7 +102,7 @@ class ProjectScopeError(BootstrapError):
     so the ``project root <root>:`` prefix its siblings add would say it twice.
     """
 
-    def __init__(self, root: Any, message: str) -> None:
+    def __init__(self, root: Any, *, message: str) -> None:
         """Carry *message* unframed; keep *root* on the exception for callers."""
         Exception.__init__(self, message)
         self.root = root
@@ -180,8 +180,8 @@ class EmptySelectionError(OttoError, ValueError):
     def __init__(
         self,
         pattern: str,
-        base_size: int,
         *,
+        base_size: int,
         excluded_by: "list[str] | None" = None,
         matched_size: int = 0,
     ) -> None:
@@ -854,7 +854,7 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_project_nam
     # empty, which is a lab problem and not this check's to diagnose.
     if scope is None or not unusable_scope(scope):
         return
-    raise ProjectScopeError(scope.root, _unusable_scope_message(scope))
+    raise ProjectScopeError(scope.root, message=_unusable_scope_message(scope))
 
 
 def scoped_ids(
@@ -910,7 +910,7 @@ def scoped_ids(
         scopes: :func:`resolve_scopes`' output for this run.
         owner: ``Project.name`` whose universe bounds this walk, or ``None`` for
             the union. The project-scoped context view (spec §7,
-            ``ctx.for_project(project)``) is what supplies a name; a plain context
+            ``ctx.for_project(name=project)``) is what supplies a name; a plain context
             always passes ``None``.
         exclude_projects: The run's ``--exclude-projects`` names, as typed;
             compared normalized, the way :func:`active` compares them. Read by
@@ -964,7 +964,7 @@ def scoped_ids(
         # the widening, not a degraded mode.
         raise ProjectScopeError(
             "",  # no project, so no settings.toml to send the reader to
-            _UNKNOWN_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
+            message=_UNKNOWN_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
         )
     declared = [scope for scope in scopes.values() if scope.declared]
     if not declared:
@@ -1084,7 +1084,7 @@ def require_nonempty_fleet(
     if owner is not None:
         owned = scopes.get(owner)
         if owned is not None and owned.declared:
-            raise ProjectScopeError(owned.root, _unusable_scope_message(owned))
+            raise ProjectScopeError(owned.root, message=_unusable_scope_message(owned))
     # Only the plain-context union reads the switch, as in :func:`scoped_ids`:
     # an UNDECLARED owner fell through to here because its base set was the
     # whole lab, so its empty walk says the lab is empty, whatever -E said.
@@ -1100,7 +1100,7 @@ def require_nonempty_fleet(
         if any(scope.universe for scope in switched):
             raise ProjectScopeError(
                 "",  # the cause is a switch on this command line, not a settings.toml
-                _EXCLUDED_FLEET.format(
+                message=_EXCLUDED_FLEET.format(
                     projects=", ".join(scope.project_name for scope in switched)
                 ),
             )
@@ -1109,7 +1109,7 @@ def require_nonempty_fleet(
         contributing = contributing or declared
     raise ProjectScopeError(
         contributing[0].root,
-        _EMPTY_FLEET.format(
+        message=_EMPTY_FLEET.format(
             loaded=", ".join(contributing[0].loaded_labs) or "(none)",
             projects=", ".join(
                 f"{scope.project_name} (lab_patterns: {', '.join(scope.lab_patterns) or '(none)'})"

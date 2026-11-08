@@ -42,7 +42,11 @@ def _test_cov_defaults(run):
         asyncio.run(
             run_module._post_run_coverage([], run, RunOptions(cov=True, cov_report=True), None)
         )
-    return collect.await_args.args[0], report.await_args.args[0], report.await_args.args[1]
+    return (
+        collect.await_args.args[0],
+        report.await_args.args[0],
+        report.await_args.kwargs["output_dir"],
+    )
 
 
 def _cov_report_defaults(run):
@@ -55,7 +59,7 @@ def _cov_report_defaults(run):
     finally:
         reset_context(token)
     assert result.exit_code == 0, result.output
-    return report.call_args.args[0], report.call_args.args[1]
+    return report.call_args.args[0], report.call_args.kwargs["output_dir"]
 
 
 def test_both_entry_points_default_to_the_layouts_cov_and_report_dirs(tmp_path):

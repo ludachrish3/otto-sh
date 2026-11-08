@@ -7,9 +7,9 @@ from otto.coverage.reports import CleanReport, FailedReset, GetReport
 from otto.result import Result
 from otto.utils import Status
 
-OK = Result(Status.Success)
-BAD = Result(Status.Error, msg="find: '/opt/app/cov': Permission denied")
-DECLINED = Result(Status.NotRun)
+OK = Result(status=Status.Success)
+BAD = Result(status=Status.Error, msg="find: '/opt/app/cov': Permission denied")
+DECLINED = Result(status=Status.NotRun)
 
 
 def test_a_clean_report_with_every_reset_ok_is_ok():
@@ -34,12 +34,14 @@ def test_a_declined_reset_is_neither_cleared_nor_failed():
 
 
 def test_reason_falls_back_to_value_then_status():
-    assert FailedReset("h", "p", Result(Status.Error, value="rc 1")).reason == "rc 1"
-    assert FailedReset("h", "p", Result(Status.Error)).reason == "Error"
+    assert FailedReset("h", "p", Result(status=Status.Error, value="rc 1")).reason == "rc 1"
+    assert FailedReset("h", "p", Result(status=Status.Error)).reason == "Error"
 
 
 def test_a_clean_error_names_every_failure():
-    report = CleanReport(hosts={"t1": {"lib": BAD}, "z": {"ext": Result(Status.Error, msg="x")}})
+    report = CleanReport(
+        hosts={"t1": {"lib": BAD}, "z": {"ext": Result(status=Status.Error, msg="x")}}
+    )
     assert str(CoverageCleanError(report)) == (
         "could not clear coverage counters: t1/lib: find: '/opt/app/cov': "
         "Permission denied; z/ext: x"

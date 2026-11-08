@@ -25,7 +25,7 @@ def _parent() -> MagicMock:
     parent = MagicMock()
     parent.id = "test3"
     parent.exec = AsyncMock(
-        return_value=CommandResult(Status.Success, value="", command="x", retcode=0)
+        return_value=CommandResult(status=Status.Success, value="", command="x", retcode=0)
     )
     parent.put = AsyncMock()
     return parent
@@ -42,7 +42,7 @@ async def test_a_missing_dockerfile_is_one_config_error_naming_image_key_and_pat
     parent = _parent()
 
     with pytest.raises(DockerImageConfigError) as caught:
-        await build_images(_project(image), parent)
+        await build_images(project=_project(image), parent=parent)
 
     message = str(caught.value)
     assert "\n" not in message
@@ -61,7 +61,7 @@ async def test_a_missing_context_is_one_config_error_naming_the_context_key(tmp_
     image = DockerImage(name="stack", dockerfile=tmp_path / "Dockerfile", context=missing)
 
     with pytest.raises(DockerImageConfigError) as caught:
-        await build_images(_project(image), _parent())
+        await build_images(project=_project(image), parent=_parent())
 
     message = str(caught.value)
     assert "\n" not in message
@@ -77,7 +77,7 @@ async def test_a_context_that_is_a_file_but_not_an_archive_is_refused(tmp_path):
     image = DockerImage(name="stack", dockerfile=tmp_path / "Dockerfile", context=not_a_dir)
 
     with pytest.raises(DockerImageConfigError, match="not a directory"):
-        await build_images(_project(image), _parent())
+        await build_images(project=_project(image), parent=_parent())
 
 
 async def test_an_archive_context_is_not_asked_for_a_dockerfile_on_disk(tmp_path):
@@ -90,7 +90,7 @@ async def test_an_archive_context_is_not_asked_for_a_dockerfile_on_disk(tmp_path
     )
     # The archive itself must exist ...
     with pytest.raises(DockerImageConfigError, match="context"):
-        await build_images(_project(image), _parent())
+        await build_images(project=_project(image), parent=_parent())
     # ... and once it does, the missing on-disk Dockerfile is not a refusal.
     archive.write_bytes(b"")
     from otto.docker.build import check_declared_paths
@@ -111,4 +111,6 @@ async def test_only_the_selected_images_are_checked(tmp_path):
     with pytest.raises(DockerImageConfigError):
         check_declared_paths("mix", broken)
     # Selecting no image of a project with a broken entry is not this build's problem.
-    assert await build_images(_project(broken, fine), _parent(), image_names=[]) == {}
+    assert (
+        await build_images(project=_project(broken, fine), parent=_parent(), image_names=[]) == {}
+    )

@@ -43,7 +43,7 @@ class TestSweep:
         user_pids = [p.pid for h in (a, c) for p in h.alive("otto-tunnel")]
         assert len(user_pids) == 2
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert the_bed.removes == [old.id, _throwaway_id("tcp")]
         assert user.id in the_bed.tunnels
@@ -73,7 +73,7 @@ class TestSweepByAge:
         the_bed.tunnels[theirs.id] = theirs
         pid = c.plant(echo_sentinel(EchoTag("y0ung0", theirs.id, "tcp", "fwd-echo", "c")), age_s=40)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid in c.procs
         assert pid not in c.kills
@@ -91,7 +91,7 @@ class TestSweepByAge:
         pid = a.plant(
             echo_sentinel(EchoTag("y0ung0", "-", "udp", "segment", "a")), age_s=SWEEP_MIN_AGE_S
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert pid in a.procs
         said = f"started {SWEEP_MIN_AGE_S // 60} min ago — may be a running check"
         assert report.hops[0].swept == [f"left otto-check echo segment on a ({said})"]
@@ -104,7 +104,7 @@ class TestSweepByAge:
         the_bed.tunnels[old.id] = old
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", old.id, "tcp", "fwd-echo", "c")), etime="?")
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid in c.kills
         assert the_bed.removes == [old.id, _throwaway_id("tcp")]
@@ -131,7 +131,7 @@ class TestSweepByAge:
             echo_sentinel(EchoTag("y0ung0", theirs.id, "tcp", "rev-echo", "a")), age_s=9
         )
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert theirs.id in the_bed.tunnels
         assert old in c.kills
@@ -160,7 +160,7 @@ class TestSweepByAge:
         )
         young = a.plant(echo_sentinel(EchoTag("5tr4dl", "-", "tcp", "segment", "a")), age_s=9)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert theirs.id not in the_bed.tunnels
         assert old in c.kills
@@ -177,7 +177,7 @@ class TestSweepByAge:
         unknown = c.plant(echo_sentinel(EchoTag("5tr4dl", "-", "tcp", "segment", "c")), etime="?")
         young = a.plant(echo_sentinel(EchoTag("5tr4dl", "-", "tcp", "segment", "a")), age_s=9)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert unknown in c.kills
         assert young in a.kills
@@ -201,7 +201,7 @@ class TestSweepByAge:
             return added
 
         monkeypatch.setattr(check, "add_tunnel", add)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         [said] = swept
         assert said["a"] == [
@@ -223,7 +223,7 @@ class TestTeardown:
         a = the_bed.hosts["a"]
         a.raise_on = "head -c 1400"
         with pytest.raises(CheckHostUnreachableError, match="'a'"):
-            await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert the_bed.removes == [_throwaway_id("tcp")]
         assert _check_procs_left(the_bed) == {}
         # After the probe that raised: this run's echoes killed, then every hop re-scanned.
@@ -236,7 +236,7 @@ class TestTeardown:
     @pytest.mark.asyncio
     async def test_a_surviving_echo_fails_teardown_by_name(self, monkeypatch) -> None:
         the_bed = bed(c={"unkillable": True}).install(monkeypatch)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         row = _rows(report)["teardown"]
         assert row.verdict is Verdict.FAIL
         survivors = list(the_bed.hosts["c"].alive())
@@ -255,7 +255,7 @@ class TestSweepReportsWhatRemovalDid:
         the_bed.hosts["c"].plant(
             echo_sentinel(EchoTag("0ld0ld", gone, "tcp", "fwd-echo", "c")), age_s=OLD_S
         )
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert report.hops[2].swept == [
             (
                 f"swept otto-check echo fwd-echo on c ({OLD_NOTE}); "
@@ -271,7 +271,7 @@ class TestSweepReportsWhatRemovalDid:
         the_bed.remove_survivors[old.id] = [("c", 4242)]
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", old.id, "tcp", "fwd-echo", "c")), age_s=OLD_S)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert pid in c.procs  # still there for the next sweep to retry
         assert pid not in c.kills
         assert report.hops[2].swept == [
@@ -291,7 +291,7 @@ class TestSweepReportsWhatRemovalDid:
         the_bed.remove_unreachable[old.id] = ["zz"]
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", old.id, "tcp", "fwd-echo", "c")), age_s=OLD_S)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert pid in c.kills
         assert pid not in c.procs
         assert report.hops[2].swept == [
@@ -306,7 +306,7 @@ class TestSweepReportsWhatRemovalDid:
         the_bed.remove_unreachable[old.id] = ["zz", "b"]
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", old.id, "tcp", "fwd-echo", "c")), age_s=OLD_S)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert pid in c.procs
         assert pid not in c.kills
         assert report.hops[2].swept == [
@@ -332,7 +332,7 @@ class TestUnreachableIsNeverAVerdict:
         the_bed = bed().install(monkeypatch)
         the_bed.add_error = error
         with pytest.raises(CheckHostUnreachableError, match=says) as info:
-            await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert "a → b → c" in str(info.value)
         assert the_bed.removes == [_throwaway_id("tcp")]
         assert _check_procs_left(the_bed) == {}
@@ -353,7 +353,7 @@ class TestUnreachableIsNeverAVerdict:
 
         monkeypatch.setattr("otto.tunnel.check.resolve_chain", resolve)
         with pytest.raises(CheckHostUnreachableError, match="'p'"):
-            await check_tunnel(the_bed, ABC, port=PORT)
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT)
         assert all(h.commands == [] for h in the_bed.hosts.values())
 
     @pytest.mark.asyncio
@@ -369,7 +369,7 @@ class TestUnreachableIsNeverAVerdict:
 
         monkeypatch.setattr("otto.tunnel.check.remove_tunnel", remove)
         with pytest.raises(CheckHostUnreachableError, match="'b'"):
-            await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+            await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert the_bed.hosts["a"].alive() == []
         assert the_bed.hosts["c"].alive() == []
 
@@ -388,7 +388,7 @@ class TestCleanupContracts:
             return await real_add(lab, hosts, **kw)
 
         monkeypatch.setattr("otto.tunnel.check.add_tunnel", add)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         [pid] = other
         assert pid in b.procs
         assert pid not in b.kills
@@ -401,7 +401,7 @@ class TestCleanupContracts:
         the_bed = bed().install(monkeypatch)
         tid = _throwaway_id("tcp")
         the_bed.remove_survivors[tid] = [("b", 777)]
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         teardown = _rows(report)["teardown"]
         assert teardown.verdict is Verdict.FAIL
         assert "tunnel process pid 777 survived on b" in (teardown.detail or "")
@@ -415,7 +415,7 @@ class TestCleanupContracts:
     async def test_an_echo_that_never_started_builds_and_removes_nothing(self, monkeypatch) -> None:
         the_bed = bed().install(monkeypatch)
         the_bed.hosts["c"].answer(":fwd-echo:", "bind: address in use", ok=False)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         build = _rows(report)["build"]
         assert build.verdict is Verdict.FAIL
         assert build.detail == "could not start the fwd-echo echo on c"
@@ -438,7 +438,9 @@ class TestCleanupContracts:
             return await real_remove(lab, tunnel_id)
 
         monkeypatch.setattr("otto.tunnel.check.remove_tunnel", remove)
-        task.append(asyncio.create_task(check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")))
+        task.append(
+            asyncio.create_task(check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp"))
+        )
         await a.entered.wait()
         task[0].cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -501,7 +503,7 @@ class TestAConcurrentSweepIsNamed:
 
         monkeypatch.setattr(check, "add_tunnel", add)
         monkeypatch.setattr(check, "remove_tunnel", remove)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         # The second run really did remove this run's tunnel and both its echoes.
         [said] = swept
@@ -532,7 +534,7 @@ class TestAConcurrentSweepIsNamed:
             return await real_remove(lab, tunnel_id)
 
         monkeypatch.setattr(check, "remove_tunnel", remove)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert _rows(report)["teardown"].detail == (
             f"tunnel {_throwaway_id('tcp')} was gone before teardown — removed mid-run, most "
             "likely by another check's sweep on these hosts, and the payload rows above are "
@@ -558,7 +560,7 @@ class TestAConcurrentSweepIsNamed:
             return await real_remove(lab, tunnel_id)
 
         monkeypatch.setattr(check, "remove_tunnel", remove)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert the_bed.tunnels == {}
         assert _rows(report)["teardown"].detail == (
             "the fwd-echo on c was gone before teardown — it exited, or another check's "
@@ -584,7 +586,11 @@ class TestAConcurrentSweepIsNamed:
 
         monkeypatch.setattr(check, "remove_tunnel", remove)
         report = await check_tunnel(
-            the_bed, [("a", None), ("b", None)], port=PORT, protocol="tcp", dest=("d", None)
+            lab=the_bed,
+            hosts=[("a", None), ("b", None)],
+            port=PORT,
+            protocol="tcp",
+            dest=("d", None),
         )
         assert _rows(report)["teardown"].detail == (
             "the fwd-echo on d was gone before teardown — it exited, or another check's "
@@ -599,7 +605,7 @@ class TestAConcurrentSweepIsNamed:
         """``add_tunnel`` refusing means there never was a tunnel to find at teardown."""
         the_bed = bed().install(monkeypatch)
         the_bed.add_error = ValueError("port 61000 is taken on b")
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert _rows(report)["teardown"].verdict is Verdict.PASS
         assert report.proven == "hop chain: not proven — see the failing rows"
 
@@ -629,7 +635,7 @@ class TestAScratchPortCollision:
             port=61000,
         )
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         rows = _rows(report)
         assert rows[row].verdict is Verdict.FAIL
@@ -651,7 +657,7 @@ class TestAScratchPortCollision:
         c.answer("ss -H", "sh: ss: not found", ok=False)
         c.answer(":fwd-echo:", "")  # the launch returns, and nothing keeps running
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         teardown = _rows(report)["teardown"]
         assert teardown.verdict is Verdict.PASS, teardown.detail
@@ -673,7 +679,7 @@ class TestASweepKillThatDoesNotTake:
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", "-", "udp", "segment", "c")), age_s=OLD_S)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid in c.kills
         assert pid in c.procs
@@ -688,7 +694,7 @@ class TestASweepKillThatDoesNotTake:
         gone = _throwaway_id("tcp", 61500)
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", gone, "tcp", "fwd-echo", "c")), age_s=OLD_S)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid in c.procs
         assert report.hops[2].swept == [
@@ -712,7 +718,7 @@ class TestASweepKillThatDoesNotTake:
             return said
 
         monkeypatch.setattr(check, "_sweep", sweep)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert seen == {"a": 1, "b": 1, "c": 2}
         assert report.hops[2].swept == [f"swept otto-check echo segment on c ({OLD_NOTE})"]
@@ -728,7 +734,7 @@ class TestAHopWhosePsCannotList:
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", "-", "udp", "segment", "c")), age_s=OLD_S)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert report.hops[2].swept == ["could not list processes on c; sweep skipped"]
         assert pid not in c.kills
@@ -740,7 +746,7 @@ class TestAHopWhosePsCannotList:
     ) -> None:
         the_bed = bed(c={"ps_fails": True}).install(monkeypatch)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         row = _rows(report)["segment b → c"]
         assert row.verdict is Verdict.FAIL
@@ -764,7 +770,7 @@ class TestAHopWhosePsCannotList:
             return await real_remove(lab, tunnel_id)
 
         monkeypatch.setattr(check, "remove_tunnel", remove)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         teardown = _rows(report)["teardown"]
         assert teardown.verdict is Verdict.FAIL
@@ -788,7 +794,7 @@ class TestAHopWhosePsCannotList:
             return real(cmd)
 
         c._process = process
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid in c.kills
         assert report.hops[2].swept == [
@@ -814,7 +820,7 @@ class TestEchoesGoneAloneMayHaveExited:
             return await real_remove(lab, tunnel_id)
 
         monkeypatch.setattr(check, "remove_tunnel", remove)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
         assert _rows(report)["teardown"].detail == (
             "the rev-echo on a and the fwd-echo on c were gone before teardown — they exited, "
             "or another check's sweep took them, and the payload rows above are not evidence"
@@ -854,7 +860,7 @@ class TestTheOwnershipScanIsOneSample:
             return client(cmd)
 
         c._process, c._client = launch, probe
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         rows = _rows(report)
         assert rows["build"].verdict is Verdict.PASS
@@ -879,7 +885,7 @@ class TestAKilledEchoGetsTimeToExit:
         c = the_bed.hosts["c"]
         pid = c.plant(echo_sentinel(EchoTag("0ld0ld", "-", "udp", "segment", "c")), age_s=OLD_S)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert pid not in c.procs
         assert report.hops[2].swept == [f"swept otto-check echo segment on c ({OLD_NOTE})"]
@@ -888,7 +894,7 @@ class TestAKilledEchoGetsTimeToExit:
     async def test_this_run_s_echoes_slow_to_exit_pass_the_teardown(self, monkeypatch) -> None:
         the_bed = bed(c={"slow_exit_scans": 1}, a={"slow_exit_scans": 1}).install(monkeypatch)
 
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         teardown = _rows(report)["teardown"]
         assert teardown.verdict is Verdict.PASS, teardown.detail
@@ -912,7 +918,7 @@ class TestAKilledEchoGetsTimeToExit:
             return said
 
         monkeypatch.setattr(check, "_sweep", sweep)
-        report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
+        report = await check_tunnel(lab=the_bed, hosts=ABC, port=PORT, protocol="tcp")
 
         assert report.hops[2].swept == [
             (

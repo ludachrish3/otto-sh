@@ -175,7 +175,7 @@ def _slot_host(fixture_id: str, host_id: str, resource: str):
 
     host = make_host(fixture_id)
     host.id = host_id
-    host.element = Element("chassis", resources=frozenset({"chassis-1"}))
+    host.element = Element(name="chassis", resources=frozenset({"chassis-1"}))
     host.resources = frozenset({resource})
     return host
 
@@ -615,7 +615,7 @@ class _ExpiringBackend(ReservationBackendBase):
     def backend_name(self) -> str:
         return "fake"
 
-    def fetch_reservations(self, username, start=None, end=None):
+    def fetch_reservations(self, username, *, start=None, end=None):
         return [Reservation(user=username, resource="r1", end=self._end)]
 
     def holders(self, resource: str) -> "list[Reservation]":
@@ -693,7 +693,7 @@ def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, caplog):
         def backend_name(self):
             return "fake"
 
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             raise ReservationBackendError("scheduler is down")
 
     identity = ResolvedIdentity(username="alice", source="$USER")
@@ -723,7 +723,7 @@ def test_check_does_not_warn_under_the_null_backend(capsys, caplog):
     class _ExplodingNullBackend(NullReservationBackend):
         """Null-shaped to ``is_null_backend``'s ``isinstance``, fatal to query."""
 
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             raise AssertionError(
                 "the null backend was queried; the is_null_backend guard is missing"
             )

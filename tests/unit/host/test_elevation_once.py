@@ -44,7 +44,7 @@ def _host(creds: list[Cred], userland: Userland | None = None) -> UnixHost:
         def _userland(self) -> Userland | None:
             return userland
 
-    return _Host(ip="10.0.0.1", element=Element("box"), creds=creds, log=LogMode.QUIET)
+    return _Host(ip="10.0.0.1", element=Element(name="box"), creds=creds, log=LogMode.QUIET)
 
 
 async def _su_host(creds: list[Cred]) -> UnixHost:
@@ -70,7 +70,7 @@ async def _run_elevated(
 ) -> CommandResult:
     elevated = host._elevate(cmd)
     return await session.run_cmd(
-        elevated.command,
+        cmd=elevated.command,
         expects=elevated.expects,
         timeout=_TIMEOUT,
         redact=redact,
@@ -201,7 +201,7 @@ async def test_wrong_password_fails_fast(host):
     assert shell.writes_of(PLANTED) == 1
     assert "\x03" in shell.writes, "the refused command was not interrupted"
     assert session.alive
-    assert (await session.run_cmd("echo ok", timeout=_TIMEOUT)).value == "ok"
+    assert (await session.run_cmd(cmd="echo ok", timeout=_TIMEOUT)).value == "ok"
 
 
 @pytest.mark.asyncio
@@ -231,7 +231,7 @@ async def test_cancel_during_recovery_leaves_no_wedged_session(host):
     assert session._needs_recovery
 
     shell.wedged = False
-    assert (await session.run_cmd("echo ok", timeout=_TIMEOUT)).value == "ok"
+    assert (await session.run_cmd(cmd="echo ok", timeout=_TIMEOUT)).value == "ok"
     assert shell.writes_of(PLANTED) == 1
 
 
@@ -252,7 +252,7 @@ async def test_su_with_a_wrong_password_fails_once_and_keeps_the_session(su_host
     result = await _run_elevated(su_host, session, "id -u")
     assert result.status == Status.Failed
     assert shell.writes_of(PLANTED) == 1
-    assert (await session.run_cmd("echo ok", timeout=_TIMEOUT)).value == "ok"
+    assert (await session.run_cmd(cmd="echo ok", timeout=_TIMEOUT)).value == "ok"
 
 
 @pytest.mark.asyncio
@@ -285,7 +285,7 @@ async def test_begin_is_detected_on_a_chunk_an_expect_answered(host):
     elevated = host._elevate("id -u")
     begin_pair = (re.escape(session._markers.begin), "")  # answers with nothing on the wire
     result = await session.run_cmd(
-        elevated.command, expects=[*elevated.expects, begin_pair], timeout=2.0
+        cmd=elevated.command, expects=[*elevated.expects, begin_pair], timeout=2.0
     )
     assert result.status == Status.Success, result
     assert shell.writes_of(PLANTED) == 1
@@ -310,7 +310,7 @@ async def test_root_session_running_su_never_answers():
 
     shell = ElevationShell(user="root", password=PLANTED, outputs={"cat banner": "Password:\n"})
     session = ElevationSession(shell)
-    result = await session.run_cmd(elevated.command, expects=elevated.expects, timeout=_TIMEOUT)
+    result = await session.run_cmd(cmd=elevated.command, expects=elevated.expects, timeout=_TIMEOUT)
     assert result.status == Status.Success, result
     assert result.value == "Password:"
     assert shell.writes_of(PLANTED) == 0
@@ -339,7 +339,9 @@ async def test_expect_match_line_logs_only_the_length(pair, host, caplog):
         result = await _run_elevated(host, session, "id")
     else:
         response = f"{PLANTED}\n" if pair == "caller_plain" else SecretStr(PLANTED)
-        result = await session.run_cmd("ask", expects=[("Password:", response)], timeout=_TIMEOUT)
+        result = await session.run_cmd(
+            cmd="ask", expects=[("Password:", response)], timeout=_TIMEOUT
+        )
     assert result.status == Status.Success, result
     assert "expect matched" in caplog.text
     assert f"response=<{len(response)} chars>" in caplog.text

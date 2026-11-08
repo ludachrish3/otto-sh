@@ -89,7 +89,7 @@ class _FailingProbeHost(ShellHost):
     async def exec(self, cmd, **kwargs):
         if "otto-cov-presence" in cmd:
             self.calls.append(("exec", cmd))
-            return CommandResult(Status.Error, value="boom", command=cmd, retcode=2)
+            return CommandResult(status=Status.Error, value="boom", command=cmd, retcode=2)
         return await super().exec(cmd, **kwargs)
 
 
@@ -169,7 +169,9 @@ async def test_the_post_fetch_reset_neither_probes_nor_replaces_the_evidence(tmp
     fetcher = MagicMock()
     fetcher.fetch_all = AsyncMock(return_value={key: cov_dir / "test1" / "app"})
     captured = ProduceResult([ProductCapture(key, cov_dir / "test1" / "app" / "c.json", None)])
-    clean = AsyncMock(return_value=CleanReport(hosts={"test1": {"app": Result(Status.Success)}}))
+    clean = AsyncMock(
+        return_value=CleanReport(hosts={"test1": {"app": Result(status=Status.Success)}})
+    )
     with (
         patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
         patch("otto.fleet.all_hosts", return_value=[host]),

@@ -176,7 +176,7 @@ class _Host(UnixHost):
 
 
 def _host(device: _Device, host_id: str = "bb-1") -> _Host:
-    host = _Host(ip="10.0.0.9", element=Element(host_id), creds=[], log=LogMode.QUIET)
+    host = _Host(ip="10.0.0.9", element=Element(name=host_id), creds=[], log=LogMode.QUIET)
     host.device = device
     return host
 
@@ -233,7 +233,7 @@ class TestTheHardCodedCodecIsWhyThisGuardExists:
     async def test_the_write_command_is_a_fixed_base64_dash_d(self) -> None:
         device = _Device(has_base64=True)
         host = _host(device)
-        result = await host.write_file(_PATH, "new\n")
+        result = await host.write_file(_PATH, data="new\n")
         assert result.status is Status.Success
         assert device.files[_PATH] == "new\n"
         (sent,) = _file_ops_commands(device)
@@ -263,7 +263,7 @@ class TestTheGuardKeysOnASettledAbsence:
         userland = Userland(UserlandOptions(), _runner_for(device))
         with pytest.raises(UnsupportedOnUserlandError):
             await refuse_if_base64_is_absent(userland)
-        assert userland.is_settled("base64_flag"), (
+        assert userland.is_settled(name="base64_flag"), (
             "the device answered both decode probes, so this row has to be a "
             "measurement — otherwise the refusal above came from the assumed default"
         )
@@ -290,7 +290,7 @@ class TestTheGuardKeysOnASettledAbsence:
         userland = Userland(UserlandOptions(), _runner_for(device))
         await refuse_if_base64_is_absent(userland)
         assert userland.base64_flag == "absent", "this row cannot discriminate anything"
-        assert not userland.is_settled("base64_flag")
+        assert not userland.is_settled(name="base64_flag")
 
     @pytest.mark.asyncio
     async def test_a_host_with_no_resolver_at_all_is_not_refused(self) -> None:
@@ -440,7 +440,7 @@ class TestWriteFileArrivesAtTheGuard:
         device = _Device(has_base64=False)
         host = _host(device)
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await host.write_file(_PATH, "replacement\n")
+            await host.write_file(_PATH, data="replacement\n")
         assert "write_file" in str(excinfo.value)
         assert _file_ops_commands(device) == []
         assert device.files[_PATH] == "device-hostname\n", (
@@ -461,7 +461,7 @@ class TestWriteFileArrivesAtTheGuard:
         _downgraded(monkeypatch)
         device = _Device(has_base64=False)
         host = _host(device)
-        result = await host.write_file(_PATH, "replacement\n")
+        result = await host.write_file(_PATH, data="replacement\n")
         assert result.status is not Status.Success
         assert "base64: not found" in result.msg
         assert device.files[_PATH] == "", (
@@ -475,7 +475,7 @@ class TestWriteFileArrivesAtTheGuard:
         device = _Device(has_base64=False)
         host = _host(device)
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await host.write_file(_PATH, "more\n", append=True)
+            await host.write_file(_PATH, data="more\n", append=True)
         assert "append=True" in str(excinfo.value), (
             "the operator has to be able to tell which call was refused"
         )
@@ -485,7 +485,7 @@ class TestWriteFileArrivesAtTheGuard:
     async def test_a_device_with_base64_writes_normally(self) -> None:
         device = _Device(has_base64=True)
         host = _host(device)
-        assert (await host.write_file(_PATH, "replacement\n")).status is Status.Success
+        assert (await host.write_file(_PATH, data="replacement\n")).status is Status.Success
         assert device.files[_PATH] == "replacement\n"
 
 
@@ -527,7 +527,7 @@ class TestTheFamiliesWithNoResolver:
         host = LocalHost()
         assert host._userland() is None
         target = tmp_path / "note.txt"
-        assert (await host.write_file(target, "hello\n")).status is Status.Success
+        assert (await host.write_file(target, data="hello\n")).status is Status.Success
         assert await host.read_file(target) == "hello\n"
 
 
@@ -686,7 +686,7 @@ class TestWhyTheseTwoPathsAreStillOpen:
         await wired._prepare_elevation()
         assert wired.has_bash is True, "the class declares bash, and it is right: run() uses it"
         assert wired.userland.shell_dialect == "ash"
-        assert wired.userland.is_settled("shell_dialect"), (
+        assert wired.userland.is_settled(name="shell_dialect"), (
             "a MEASURED contradiction, not an unasked default — an assumed value would be "
             "`bash` and there would be nothing to report"
         )

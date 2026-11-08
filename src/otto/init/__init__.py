@@ -16,7 +16,7 @@ prints; ``otto init`` renders their reports.
     from otto.init import InitConfig, check_project, scaffold, scaffold_candidates
 
     config = InitConfig.for_project(Path("."), name="acme")
-    report = scaffold(config, scaffold_candidates(config.root, all_areas=True))
+    report = scaffold(config, areas=scaffold_candidates(config.root, all_areas=True))
     doctor = check_project(config.root)
     assert doctor.ok, [v.problems for v in doctor.verdicts]
 

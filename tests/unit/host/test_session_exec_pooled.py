@@ -84,7 +84,7 @@ class TestPooledExec:
     @pytest.mark.asyncio
     async def test_plain_pooled_exec_returns_the_session(self):
         mgr = _mgr(factory=None, term="telnet")
-        result = await mgr.exec("id")
+        result = await mgr.exec(cmd="id")
         assert result.value == "OUT"
         assert len(mgr._exec_pool) == 1
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["id"]
@@ -100,11 +100,11 @@ class TestPooledExec:
         class _RecordingExpects(_StubExecSession):
             async def run_cmd(self, cmd, expects=None, **kw):
                 seen.append(expects)
-                return await super().run_cmd(cmd, expects=expects, **kw)
+                return await super().run_cmd(cmd=cmd, expects=expects, **kw)
 
         mgr = _mgr(factory=None, term="telnet")
         mgr._session_factory = _RecordingExpects
-        await mgr.exec("sudo -S id", expects=[("assword", "pw\n")], needs_shell=True)
+        await mgr.exec(cmd="sudo -S id", expects=[("assword", "pw\n")], needs_shell=True)
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
         assert seen == [[("assword", "pw\n")]]
 
@@ -117,10 +117,10 @@ class TestPooledExec:
         class _Switching(_StubExecSession):
             async def run_cmd(self, cmd, **kw):
                 seen.append((cmd, self.current_user))
-                return await super().run_cmd(cmd, **kw)
+                return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Switching
-        result = await mgr.exec("id", user="root")
+        result = await mgr.exec(cmd="id", user="root")
         assert result.value == "OUT"
         # The identity half is the point: the command ran INSIDE the switch,
         # not before it and not after the undo.
@@ -156,7 +156,7 @@ class TestPooledExec:
         monkeypatch.setattr(session_mod.HostSession, "close", _spy_close)
 
         with caplog.at_level(logging.WARNING, logger="otto.host.session"):
-            result = await mgr.exec("id", user="root")
+            result = await mgr.exec(cmd="id", user="root")
         assert result.value == "OUT", "the command ran; its result is not the undo's to lose"
         assert mgr._exec_pool == [], "a session that could not switch back is never pooled"
         assert closed == ["__exec_pool_1__"]
@@ -180,7 +180,7 @@ class TestPooledExec:
 
         monkeypatch.setattr(session_mod, "perform_switch", _broken_switch)
         with pytest.raises(LoginProxyError):
-            await mgr.exec("id", user="root")
+            await mgr.exec(cmd="id", user="root")
         assert mgr._exec_pool == []
 
     @pytest.mark.asyncio
@@ -193,9 +193,9 @@ class TestPooledExec:
             raise RuntimeError("undo exploded")
 
         monkeypatch.setattr(session_mod, "run_undo", _broken_undo)
-        await mgr.exec("id", user="root")  # the undo fails; the result still comes back
+        await mgr.exec(cmd="id", user="root")  # the undo fails; the result still comes back
         monkeypatch.undo()
-        await mgr.exec("id")
+        await mgr.exec(cmd="id")
         assert mgr._exec_pool_count == 2
         assert [s.name for s in mgr._exec_pool] == ["__exec_pool_2__"]
 
@@ -206,10 +206,10 @@ class TestPooledExec:
         class _Dies(_StubExecSession):
             async def run_cmd(self, cmd, **kw):
                 self._alive = False  # whatever `alive` reads — see ShellSession.alive
-                return await super().run_cmd(cmd, **kw)
+                return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Dies
-        await mgr.exec("id")
+        await mgr.exec(cmd="id")
         assert mgr._exec_pool == []
 
 
@@ -227,7 +227,7 @@ class TestAmbientUser:
             login_target="alice",
             credentials=("alice", _PW),
         )
-        await mgr.run_cmd("id")  # opens the default session as the login user
+        await mgr.run_cmd(cmd="id")  # opens the default session as the login user
         assert mgr.current_user == "alice"
         assert mgr.ambient_user is None
 
@@ -241,7 +241,7 @@ class TestAmbientUser:
             login_target="mysql",
             credentials=("alice", _PW),
         )
-        await mgr.run_cmd("id")
+        await mgr.run_cmd(cmd="id")
         assert mgr.current_user == "mysql", "proxy hops replayed at open"
         assert mgr.ambient_user is None, "the login target is what the session opened as"
 
@@ -253,7 +253,7 @@ class TestAmbientUser:
             login_target="alice",
             credentials=("alice", _PW),
         )
-        await mgr.run_cmd("id")
+        await mgr.run_cmd(cmd="id")
         mgr._set_current_user("root")  # what PosixPrivilege.as_user records after a switch
         assert mgr.ambient_user == "root"
         mgr._set_current_user("alice")
@@ -267,7 +267,7 @@ class TestAmbientUser:
             login_target="alice",
             credentials=("alice", _PW),
         )
-        await mgr.run_cmd("id")
+        await mgr.run_cmd(cmd="id")
         await mgr.close_all()
         assert mgr.ambient_user is None
 
@@ -295,10 +295,10 @@ class TestTheSshRowPromotesOffTheRawChannel:
         class _Switching(_StubExecSession):
             async def run_cmd(self, cmd, **kw):
                 seen.append((cmd, self.current_user))
-                return await super().run_cmd(cmd, **kw)
+                return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Switching
-        result = await mgr.exec("id", user="root")
+        result = await mgr.exec(cmd="id", user="root")
 
         assert result.value == "OUT"
         # INSIDE the switch: the raw route would have run it as the login user.
@@ -316,10 +316,10 @@ class TestTheSshRowPromotesOffTheRawChannel:
         class _RecordingExpects(_StubExecSession):
             async def run_cmd(self, cmd, expects=None, **kw):
                 seen.append(expects)
-                return await super().run_cmd(cmd, expects=expects, **kw)
+                return await super().run_cmd(cmd=cmd, expects=expects, **kw)
 
         mgr._session_factory = _RecordingExpects
-        result = await mgr.exec("sudo -S id", expects=[("assword", "pw\n")])
+        result = await mgr.exec(cmd="sudo -S id", expects=[("assword", "pw\n")])
 
         assert result.value == "OUT"
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
@@ -339,7 +339,7 @@ class TestTheSshRowPromotesOffTheRawChannel:
             return CommandResult(status=Status.Success, value="RAW", command=cmd, retcode=0)
 
         monkeypatch.setattr(mgr, "exec_on", _fake_exec_on)
-        result = await mgr.exec("id")
+        result = await mgr.exec(cmd="id")
 
         assert result.value == "RAW"
         assert ran == ["id"]
@@ -391,7 +391,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         mgr, _console = self._console_mgr()
         ran = self._spy_default(mgr, monkeypatch)
 
-        result = await mgr.exec("id -un", timeout=5.0)
+        result = await mgr.exec(cmd="id -un", timeout=5.0)
 
         assert ran == [("id -un", None, 5.0)]
         assert result.value == "out"
@@ -404,7 +404,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         ran = self._spy_default(mgr, monkeypatch)
         expects = [("Password:", "pw")]
 
-        await mgr.exec("sudo -S true", expects=expects, needs_shell=True)
+        await mgr.exec(cmd="sudo -S true", expects=expects, needs_shell=True)
 
         assert [(cmd, exp) for cmd, exp, _t in ran] == [("sudo -S true", expects)]
         assert mgr._exec_pool_count == 0
@@ -418,7 +418,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         ran = self._spy_default(mgr, monkeypatch)
 
         with pytest.raises(ConsoleError, match=r"^test2: console is single-client.*'test'.*'root'"):
-            await mgr.exec("id -un", user="root")
+            await mgr.exec(cmd="id -un", user="root")
 
         assert ran == []
         console.assert_not_awaited()
@@ -428,7 +428,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         mgr, _console = self._console_mgr()
         ran = self._spy_default(mgr, monkeypatch)
 
-        await mgr.exec("id -un", user="test")
+        await mgr.exec(cmd="id -un", user="test")
 
         assert [cmd for cmd, _e, _t in ran] == ["id -un"]
 

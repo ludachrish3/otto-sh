@@ -134,7 +134,7 @@ class CompiledInventory:
     creds: "CompiledCreds | None" = None
     """The ``[creds]`` table the inventory's creds come from, if one is declared."""
 
-    def same_as(self, other: "CompiledInventory") -> bool:
+    def same_as(self, *, other: "CompiledInventory") -> bool:
         """Return whether this is the same inventory as *other*.
 
         Backend, normalized configuration AND ``cache_ttl`` must agree — every
@@ -158,7 +158,7 @@ class CompiledInventory:
 
 
 def compile_inventory(
-    cfg: "InventoryConfigSpec", *, anchor_dir: Path, origin: str
+    *, cfg: "InventoryConfigSpec", anchor_dir: Path, origin: str
 ) -> CompiledInventory:
     """Prepare the table's backend keys with the selected backend's configuration model.
 
@@ -177,9 +177,9 @@ def compile_inventory(
             registered, or its keys do not parse.
     """
     prepared = INVENTORY_BACKENDS.prepare(
-        cfg.backend,
-        dict(cfg.model_extra or {}),
-        InventoryEnv(anchor_dir, origin),
+        name=cfg.backend,
+        raw=dict(cfg.model_extra or {}),
+        env=InventoryEnv(anchor_dir, origin),
         source=origin,
     )
     return CompiledInventory(
@@ -249,7 +249,7 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
     )
 
 
-def construct_inventory(compiled: CompiledInventory) -> Inventory:
+def construct_inventory(*, compiled: CompiledInventory) -> Inventory:
     """Build the backend, then the core wrappers (the snapshot cache, then creds).
 
     The backend's registered factory builds it from the prepared
@@ -267,7 +267,7 @@ def construct_inventory(compiled: CompiledInventory) -> Inventory:
     around the overlay would be caching exactly that; the doctor also reads
     ``isinstance(inventory, CredsOverlay)`` to report the creds store's mode.
     """
-    inventory = _maybe_cached(INVENTORY_BACKENDS.build(compiled.prepared), compiled)
+    inventory = _maybe_cached(INVENTORY_BACKENDS.build(prepared=compiled.prepared), compiled)
     if compiled.creds is not None:
         # Function-local, both: otto.inventory is on the bootstrap path and
         # otto.creds is only needed once a store is actually declared.
@@ -275,7 +275,7 @@ def construct_inventory(compiled: CompiledInventory) -> Inventory:
         from ..creds.errors import CredsConstructionError, CredsError
 
         try:
-            store = construct_creds_store(compiled.creds)
+            store = construct_creds_store(compiled=compiled.creds)
         except CredsConstructionError as e:
             # Still a construction error (and a ValueError) to its catcher;
             # the creds error rides along as the cause.
@@ -293,7 +293,7 @@ def _compile_declaration(decl: InventoryDeclaration) -> CompiledInventory:
         cfg = InventoryConfigSpec.model_validate(decl.table)
     except ValidationError as e:
         raise InventoryError(f"{decl.origin}: [inventory] {e}") from e
-    return compile_inventory(cfg, anchor_dir=decl.anchor_dir, origin=decl.origin)
+    return compile_inventory(cfg=cfg, anchor_dir=decl.anchor_dir, origin=decl.origin)
 
 
 def _resolve_creds(
@@ -324,12 +324,12 @@ def _resolve_creds(
 
     try:
         compiled = [
-            compile_creds_table(dict(d.creds_table), anchor_dir=d.anchor_dir, origin=d.origin)
+            compile_creds_table(table=dict(d.creds_table), anchor_dir=d.anchor_dir, origin=d.origin)
             for d in declarations
             if d.creds_table
         ]
         for other in compiled[1:]:
-            if not other.same_as(compiled[0]):
+            if not other.same_as(other=compiled[0]):
                 raise InventoryError(
                     f"two active projects declare different [creds] tables: {compiled[0].origin} "
                     f"and {other.origin}; a process has exactly one creds store"
@@ -340,7 +340,7 @@ def _resolve_creds(
             from ..config.user_settings import user_settings_path  # deferred: see module docstring
 
             path = user_settings_file if user_settings_file is not None else user_settings_path()
-            return compile_creds(user_settings.creds, anchor_dir=path.parent, origin=str(path))
+            return compile_creds(cfg=user_settings.creds, anchor_dir=path.parent, origin=str(path))
     except CredsConstructionError as e:
         raise InventoryConstructionError(str(e)) from e
     except CredsError as e:
@@ -349,8 +349,8 @@ def _resolve_creds(
 
 
 def build_inventory_from_declarations(
-    declarations: list[InventoryDeclaration],
     *,
+    declarations: list[InventoryDeclaration],
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None" = None,
 ) -> "Inventory | None":
@@ -364,7 +364,7 @@ def build_inventory_from_declarations(
     """
     compiled = [_compile_declaration(d) for d in declarations if d.table]
     for other in compiled[1:]:
-        if not other.same_as(compiled[0]):
+        if not other.same_as(other=compiled[0]):
             raise InventoryError(
                 f"two active projects declare different [inventory] tables: {compiled[0].origin} "
                 f"and {other.origin}; a process has exactly one inventory"
@@ -373,15 +373,15 @@ def build_inventory_from_declarations(
         declarations, user_settings=user_settings, user_settings_file=user_settings_file
     )
     if compiled:
-        return construct_inventory(dataclasses.replace(compiled[0], creds=creds))
+        return construct_inventory(compiled=dataclasses.replace(compiled[0], creds=creds))
     if user_settings is not None and user_settings.inventory is not None:
         from ..config.user_settings import user_settings_path  # deferred: see module docstring
 
         path = user_settings_file if user_settings_file is not None else user_settings_path()
         return construct_inventory(
-            dataclasses.replace(
+            compiled=dataclasses.replace(
                 compile_inventory(
-                    user_settings.inventory, anchor_dir=path.parent, origin=str(path)
+                    cfg=user_settings.inventory, anchor_dir=path.parent, origin=str(path)
                 ),
                 creds=creds,
             )
@@ -395,7 +395,7 @@ def build_inventory_from_declarations(
 
 
 def build_inventory(
-    projects: "Sequence[Project]", *, user_settings_path: "Path | None" = None
+    *, projects: "Sequence[Project]", user_settings_path: "Path | None" = None
 ) -> "Inventory | None":
     """Resolve the process inventory from the active projects and the user file (spec §8).
 
@@ -424,9 +424,9 @@ def build_inventory(
         if project.inventory_settings or project.creds_settings
     ]
     try:
-        user = load_user_settings(user_settings_path)
+        user = load_user_settings(path=user_settings_path)
     except ValueError as e:
         raise InventoryError(str(e)) from e
     return build_inventory_from_declarations(
-        declarations, user_settings=user, user_settings_file=user_settings_path
+        declarations=declarations, user_settings=user, user_settings_file=user_settings_path
     )

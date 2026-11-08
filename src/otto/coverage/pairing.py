@@ -140,7 +140,8 @@ def pair_product(
             if len(listed) > 1:
                 raise PairingError(
                     "merged-on-device",
-                    f"{label}: {gcda} matches several objects ({', '.join(map(str, listed))}): "
+                    message=f"{label}: {gcda} matches several objects "
+                    f"({', '.join(map(str, listed))}): "
                     "the device wrote their counters to one file; lower GCOV_PREFIX_STRIP "
                     "(a declared product's comes from its build_root: set build_root to the "
                     "directory the build ran in)",
@@ -180,7 +181,7 @@ def _search(gcda: Path, target: PurePosixPath, index: GcnoIndex, label: str) -> 
         tried = "; ".join(decisions) or f"no notes file named {target.name}.gcno"
         raise PairingError(
             "no-notes",
-            f"{label}: no notes file for {gcda} under {index.root} ({tried}); "
+            message=f"{label}: no notes file for {gcda} under {index.root} ({tried}); "
             "keep the build tree that produced the product",
         )
     tails = {g: _common_tail(_notes_stem(g), target.parts) for g in fitting}
@@ -199,7 +200,7 @@ def _search(gcda: Path, target: PurePosixPath, index: GcnoIndex, label: str) -> 
         return top[0]
     raise PairingError(
         "several-trees",
-        f"{label}: these build trees each hold notes that match {gcda}, and otto cannot tell "
-        f"which built it: {', '.join(map(str, top))}; remove the stale tree. "
+        message=f"{label}: these build trees each hold notes that match {gcda}, "
+        f"and otto cannot tell which built it: {', '.join(map(str, top))}; remove the stale tree. "
         f"Also considered: {'; '.join(decisions) or 'nothing else'}",
     )

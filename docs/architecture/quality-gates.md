@@ -96,7 +96,7 @@ fixtures through it and fails if tach counts one the test skips, or skips one
 the test says it counts.
 
 tach reads `import` statements only, and otto also imports by string: a
-package facade's lazy table, a registry's `Ref("pkg.module:attr")`, a CLI
+package facade's lazy table, a registry's `Ref(target="pkg.module:attr")`, a CLI
 command's `register_cli_command` loader, and `importlib.import_module`.
 `tests/unit/test_dynamic_import_audit.py` parses `src/otto` for every such
 string, and refuses a spelling it cannot read (an aliased import, `Ref` passed

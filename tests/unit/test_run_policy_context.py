@@ -29,7 +29,7 @@ def test_with_no_policy_the_readers_see_the_defaults_and_suppression_still_appli
 
 
 def test_the_manual_pattern_runs_under_the_variant_set_before_the_context():
-    variant_binding = context.set_variant("field")
+    variant_binding = context.set_variant(value="field")
     try:
         binding = set_context(OttoContext(lab=Lab(name="rig")))
         try:
@@ -37,7 +37,7 @@ def test_the_manual_pattern_runs_under_the_variant_set_before_the_context():
         finally:
             reset_context(binding)
     finally:
-        context.reset_variant(variant_binding)
+        context.reset_variant(token=variant_binding)
     assert context.variant() == "debug"
 
 
@@ -46,7 +46,7 @@ def test_the_manual_pattern_with_a_policy_runs_under_the_variant_that_policy_car
     carried, expected
 ):
     """``policy=`` is used as given: the variant ``set_variant`` chose is not copied onto it."""
-    variant_binding = context.set_variant("field")
+    variant_binding = context.set_variant(value="field")
     try:
         policy = RunPolicy(dry_run=True, **carried)
         binding = set_context(OttoContext(lab=Lab(name="rig"), policy=policy))
@@ -55,20 +55,20 @@ def test_the_manual_pattern_with_a_policy_runs_under_the_variant_that_policy_car
         finally:
             reset_context(binding)
     finally:
-        context.reset_variant(variant_binding)
+        context.reset_variant(token=variant_binding)
 
 
 def test_the_library_run_tests_sentinel_inherits_the_variant(tmp_path):
     from otto.suite.run import _session_context
 
-    variant_binding = context.set_variant("field")
+    variant_binding = context.set_variant(value="field")
     try:
         with _session_context(tmp_path) as ctx:
             assert ctx.lab.name == LIBRARY_LAB_NAME
             assert context.variant() == "field"
             assert ctx.policy.output_dir == tmp_path
     finally:
-        context.reset_variant(variant_binding)
+        context.reset_variant(token=variant_binding)
 
 
 @pytest.mark.parametrize(
@@ -103,18 +103,18 @@ def test_policy_is_the_only_setter_and_the_flags_read_it_live():
 
 def test_a_context_built_before_set_variant_keeps_the_variant_it_copied():
     ctx = OttoContext(lab=Lab(name="rig"))
-    variant_binding = context.set_variant("field")
+    variant_binding = context.set_variant(value="field")
     try:
         assert ctx.policy.variant == "debug"
     finally:
-        context.reset_variant(variant_binding)
+        context.reset_variant(token=variant_binding)
 
 
 def test_set_variant_refusal_names_the_nested_open_context():  # Review Focus 2
     binding = set_context(OttoContext(lab=Lab(name="rig")))
     try:
         with pytest.raises(RuntimeError, match=r"open_context\(variant="):
-            context.set_variant("field")
+            context.set_variant(value="field")
     finally:
         reset_context(binding)
 
@@ -123,7 +123,7 @@ def test_set_variant_validates_before_it_refuses():
     binding = set_context(OttoContext(lab=Lab(name="rig")))
     try:
         with pytest.raises(ValueError, match="variant must be"):
-            context.set_variant("release")  # type: ignore[arg-type]
+            context.set_variant(value="release")  # type: ignore[arg-type]
     finally:
         reset_context(binding)
 

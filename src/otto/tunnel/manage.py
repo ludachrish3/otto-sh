@@ -323,7 +323,13 @@ def _process_plan(
             Direction.FWD,
             Role.EGRESS,
             p_fwd,
-            carrier.egress_args(proto, svc, deliver_fwd, p_fwd, idle_timeout=idle_timeout),
+            carrier.egress_args(
+                proto,
+                service_port=svc,
+                deliver_ip=deliver_fwd,
+                carrier_port=p_fwd,
+                idle_timeout=idle_timeout,
+            ),
         )
     )
     plan.extend(
@@ -333,7 +339,9 @@ def _process_plan(
                 Direction.FWD,
                 Role.RELAY,
                 p_fwd,
-                carrier.relay_args(proto, p_fwd, ips[i + 1], idle_timeout=idle_timeout),
+                carrier.relay_args(
+                    proto, carrier_port=p_fwd, next_ip=ips[i + 1], idle_timeout=idle_timeout
+                ),
             )
             for i in range(last - 1, 0, -1)
         ]
@@ -344,7 +352,14 @@ def _process_plan(
             Direction.FWD,
             Role.INGRESS,
             p_fwd,
-            carrier.ingress_args(proto, svc, ips[0], ips[1], p_fwd, idle_timeout=idle_timeout),
+            carrier.ingress_args(
+                proto,
+                service_port=svc,
+                bind_ip=ips[0],
+                next_ip=ips[1],
+                carrier_port=p_fwd,
+                idle_timeout=idle_timeout,
+            ),
         )
     )
     # REV: egress at 0, relays 1..last-1, ingress at `last`.
@@ -354,7 +369,13 @@ def _process_plan(
             Direction.REV,
             Role.EGRESS,
             p_rev,
-            carrier.egress_args(proto, svc, _LOOPBACK, p_rev, idle_timeout=idle_timeout),
+            carrier.egress_args(
+                proto,
+                service_port=svc,
+                deliver_ip=_LOOPBACK,
+                carrier_port=p_rev,
+                idle_timeout=idle_timeout,
+            ),
         )
     )
     plan.extend(
@@ -364,7 +385,9 @@ def _process_plan(
                 Direction.REV,
                 Role.RELAY,
                 p_rev,
-                carrier.relay_args(proto, p_rev, ips[i - 1], idle_timeout=idle_timeout),
+                carrier.relay_args(
+                    proto, carrier_port=p_rev, next_ip=ips[i - 1], idle_timeout=idle_timeout
+                ),
             )
             for i in range(1, last)
         ]
@@ -376,7 +399,12 @@ def _process_plan(
             Role.INGRESS,
             p_rev,
             carrier.ingress_args(
-                proto, svc, ips[last], ips[last - 1], p_rev, idle_timeout=idle_timeout
+                proto,
+                service_port=svc,
+                bind_ip=ips[last],
+                next_ip=ips[last - 1],
+                carrier_port=p_rev,
+                idle_timeout=idle_timeout,
             ),
         )
     )
@@ -921,7 +949,7 @@ def _plan_add(
 def _sentinel_for(tunnel: Tunnel, proc: "_ProcSpec") -> str:
     """Build the argv[0] tag for one plan entry — one home for the real and planned launches."""
     return encode_sentinel(
-        tunnel,
+        tunnel=tunnel,
         direction=proc.direction,
         role=proc.role,
         hop_index=proc.hop_index,
@@ -946,8 +974,8 @@ def ensure_dest_outside_chain(dest_host: str, chain_host_ids: set[str]) -> None:
 
 async def add_tunnel(
     lab: "Lab",
-    hosts: list[EndpointSpec],
     *,
+    hosts: list[EndpointSpec],
     port: int,
     protocol: str = "tcp",
     dest: EndpointSpec | None = None,
@@ -978,7 +1006,7 @@ async def add_tunnel(
     protocol check, which are pure and refuse identically either way.
     """
     protocol = protocol.lower()
-    carrier_obj = build_carrier(carrier)()
+    carrier_obj = build_carrier(name=carrier)()
     if protocol not in carrier_obj.supported_protocols:
         supported = ", ".join(sorted(carrier_obj.supported_protocols))
         raise ValueError(
@@ -1198,7 +1226,7 @@ def _plan_remove(lab: "Lab", *, tunnel_id: str | None) -> RemovedReport:
     )
 
 
-async def remove_tunnel(lab: "Lab", tunnel_id: str) -> RemovedReport:
+async def remove_tunnel(lab: "Lab", *, tunnel_id: str) -> RemovedReport:
     """Reap one tunnel by id, then verify its processes are actually gone.
 
     Under ``--dry-run`` this returns a plan and kills nothing — see
@@ -1209,7 +1237,7 @@ async def remove_tunnel(lab: "Lab", tunnel_id: str) -> RemovedReport:
     return await _reap(lab, lambda t: t.id == tunnel_id)
 
 
-async def remove_all_tunnels(lab: "Lab") -> RemovedReport:
+async def remove_all_tunnels(*, lab: "Lab") -> RemovedReport:
     """Reap every otto tunnel (owner-agnostic), with the same verify pass.
 
     Under ``--dry-run`` this returns a plan and kills nothing. The

@@ -55,7 +55,7 @@ _PARSER = _CaseParser("case-cmd")
 def test_host_parsers_raw_case():
     conformance.assert_raw_registry(
         HOST_PARSERS,
-        make=lambda i: ("case-host", HostParsersEntry(FrozenMap({f"c{i}": _PARSER}))),
+        make=lambda i: ("case-host", HostParsersEntry(FrozenMap(mapping={f"c{i}": _PARSER}))),
     )
 
 
@@ -65,7 +65,7 @@ def test_host_pattern_parsers_raw_case():
         HOST_PATTERN_PARSERS,
         make=lambda i: (
             pattern_key(pattern),
-            PatternParsersEntry(pattern, FrozenMap({f"c{i}": _PARSER})),
+            PatternParsersEntry(pattern, FrozenMap(mapping={f"c{i}": _PARSER})),
         ),
         invalid=("0:x", PatternParsersEntry(re.compile("y"), FrozenMap())),
     )
@@ -91,7 +91,7 @@ def test_register_host_parsers_wrapper_case_for_an_exact_id():
     conformance.assert_wrapper_matches_raw(
         HOST_PARSERS,
         via_wrapper=functools.partial(register_host_parsers, "case-host", {"c": _PARSER}),
-        record_for=lambda: HostParsersEntry(FrozenMap({"c": _PARSER})),
+        record_for=lambda: HostParsersEntry(FrozenMap(mapping={"c": _PARSER})),
     )
 
 
@@ -100,7 +100,7 @@ def test_register_host_parsers_wrapper_case_for_a_pattern():
     conformance.assert_wrapper_matches_raw(
         HOST_PATTERN_PARSERS,
         via_wrapper=functools.partial(register_host_parsers, pattern, {"c": _PARSER}),
-        record_for=lambda: PatternParsersEntry(pattern, FrozenMap({"c": _PARSER})),
+        record_for=lambda: PatternParsersEntry(pattern, FrozenMap(mapping={"c": _PARSER})),
     )
 
 

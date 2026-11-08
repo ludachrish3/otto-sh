@@ -79,7 +79,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         dry = click_ctx is not None and dry_run_requested(click_ctx)
         ctx = get_context()
         try:
-            ctx.bind_verb_options("run", kw)
+            ctx.bind_verb_options(verb="run", kwargs=kw)
             # Validates every applicable body's own options class up front --
             # the SAME per-project walk the real path's `_run_bodies` performs --
             # so a bad value in a body's own class fails identically whether
@@ -108,7 +108,9 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
                 # Verbatim: a plan line is a host command, so a `[` must not be read
                 # as markup, a `:name:` as an emoji, or a long line hard-wrapped.
                 text = render_plan(
-                    name, plan_instruction(name, ctx, kw), plan_lab_tail(name, ctx, kw)
+                    name,
+                    plan_instruction(name=name, ctx=ctx, kwargs=kw),
+                    plan_lab_tail(name=name, ctx=ctx, kwargs=kw),
                 )
                 if text:  # nothing applies: print nothing, not a blank line
                     print_literal(text)
@@ -149,7 +151,7 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
     target = prepare_command_target(
-        entry.handler, entry.options_cls, verb="run", project=INSTRUCTIONS.project(entry.name)
+        entry.handler, entry.options_cls, verb="run", project=INSTRUCTIONS.project(name=entry.name)
     )
     app.command(entry.name, help=entry.help)(target)
     return app

@@ -80,7 +80,7 @@ async def nc_smoke(opts: _Options) -> CommandResult:
 
     def _result(ok: bool, detail: str) -> CommandResult:
         return CommandResult(
-            Status.Success if ok else Status.Error,
+            status=Status.Success if ok else Status.Error,
             value=detail,
             command="nc-smoke",
             retcode=0 if ok else 1,

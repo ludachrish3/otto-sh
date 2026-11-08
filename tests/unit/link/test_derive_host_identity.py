@@ -33,7 +33,7 @@ def carded_profile():
     try:
         yield "_carded"
     finally:
-        OS_PROFILES.unregister("_carded")
+        OS_PROFILES.unregister(name="_carded")
 
 
 def test_addressing_id_matches_host_identity_under_a_profile(carded_profile):
@@ -44,9 +44,9 @@ def test_addressing_id_matches_host_identity_under_a_profile(carded_profile):
         "creds": _CREDS,
     }
 
-    host_id, _addressing = addressing_from_dict(host, Element("dut"))
+    host_id, _addressing = addressing_from_dict(host, Element(name="dut"))
 
-    assert host_id == host_identity(host, Element("dut")).id
+    assert host_id == host_identity(host, element=Element(name="dut")).id
     assert host_id == "dut-lc-2", "raw derivation would have said 'dut'"
 
 

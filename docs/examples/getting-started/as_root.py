@@ -13,7 +13,7 @@ async def main() -> None:
     async with otto.open_context(lab="unix"):
         host = otto.get_host("test1")
         before = (await host.run("id -un")).only.value
-        async with host.as_user("root"):
+        async with host.as_user(user="root"):
             during = (await host.run("id -un")).only.value
         after = (await host.run("id -un")).only.value
     print(f"{before} -> {during} -> {after}")

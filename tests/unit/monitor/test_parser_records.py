@@ -67,19 +67,23 @@ def test_a_returned_parser_dict_is_a_deep_private_copy():
 
 def test_a_raw_snmp_metric_under_a_foreign_oid_is_refused():
     with pytest.raises(ValueError, match=r"9\.9\.9"):
-        SNMP_METRICS.register("1.2.3", SnmpMetric(oid="9.9.9", label="Foreign", chart="Foreign"))
+        SNMP_METRICS.register(
+            name="1.2.3", entry=SnmpMetric(oid="9.9.9", label="Foreign", chart="Foreign")
+        )
     assert "1.2.3" not in SNMP_METRICS
 
 
 def test_a_raw_project_parser_under_a_foreign_command_is_refused():
     with pytest.raises(ValueError, match="other"):
-        PROJECT_PARSERS.register("mine", ProjectParserEntry(_P("other")))
+        PROJECT_PARSERS.register(name="mine", entry=ProjectParserEntry(_P("other")))
     assert "mine" not in PROJECT_PARSERS
 
 
 def test_a_raw_pattern_set_under_a_foreign_key_is_refused():
     with pytest.raises(ValueError, match=r"'0:x'.*:y'"):
-        HOST_PATTERN_PARSERS.register("0:x", PatternParsersEntry(re.compile("y"), FrozenMap()))
+        HOST_PATTERN_PARSERS.register(
+            name="0:x", entry=PatternParsersEntry(re.compile("y"), FrozenMap())
+        )
     assert "0:x" not in HOST_PATTERN_PARSERS
 
 

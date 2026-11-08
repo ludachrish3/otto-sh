@@ -103,7 +103,7 @@ project a "base" for shared conventions and others its overlays.
 >>> host = UnixHost(
 ...     ip='10.10.200.12',
 ...     creds=[Cred(login='admin', password='secret')],
-...     element=Element('lab'),
+...     element=Element(name='lab'),
 ...     ssh_options=SshOptions(port=2222),
 ... )
 >>> host.ssh_options.port

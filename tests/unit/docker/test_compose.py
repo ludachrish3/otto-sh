@@ -67,11 +67,11 @@ from tests.conftest import active_context
 
 
 def _ok(out: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command="", retcode=0)
+    return CommandResult(status=Status.Success, value=out, command="", retcode=0)
 
 
 def _fail(out: str = "") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+    return CommandResult(status=Status.Failed, value=out, command="", retcode=1)
 
 
 _SHIPPED_RESOLVE_TIMEOUT_S = compose_mod._CONTAINER_ID_RESOLVE_TIMEOUT_S
@@ -150,7 +150,7 @@ def _make_project(
 def _capable_host(host_id: str = "test3", ne: str = "test3") -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element=Element(ne),
+        element=Element(name=ne),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -159,8 +159,8 @@ def _capable_host(host_id: str = "test3", ne: str = "test3") -> UnixHost:
 def _wire_parent_mock(host: UnixHost) -> UnixHost:
     """Replace the host's network methods with AsyncMocks so we never connect."""
     host.exec = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
-    host.put = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
-    host.get = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
+    host.put = AsyncMock(return_value=Result(status=Status.Success, value={}))  # type: ignore[method-assign]
+    host.get = AsyncMock(return_value=Result(status=Status.Success, value={}))  # type: ignore[method-assign]
     return host
 
 
@@ -188,10 +188,10 @@ class _IngestProduct(ShellProduct):
     """A concrete product a provider or a declared entry can hang on a container."""
 
     async def install(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def uninstall(self, host):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -200,7 +200,7 @@ class _IngestProduct(ShellProduct):
 @contextlib.contextmanager
 def _product_provider(provider):
     """Subscribe *provider* to the real provider subscription for the block only."""
-    token = product_mod.PRODUCT_PROVIDERS.subscribe(provider)
+    token = product_mod.PRODUCT_PROVIDERS.subscribe(value=provider)
     try:
         yield
     finally:
@@ -214,13 +214,13 @@ def _product_provider(provider):
 
 def test_compose_project_uses_user_when_no_suffix(monkeypatch):
     monkeypatch.delenv("OTTO_COMPOSE_SUFFIX", raising=False)
-    name = get_user_compose_project("Project1")
+    name = get_user_compose_project(project_name="Project1")
     assert name == f"otto-project1-{getpass.getuser().lower()}"
 
 
 def test_compose_project_honors_env_override(monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "ci-7")
-    assert get_user_compose_project("project1") == "otto-project1-ci-7"
+    assert get_user_compose_project(project_name="project1") == "otto-project1-ci-7"
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ def test_project_parent_host_rejects_non_capable():
     other = _wire_parent_mock(
         UnixHost(
             ip="1.2.3.4",
-            element=Element("other"),
+            element=Element(name="other"),
             creds=[Cred(login="u", password="p")],
             board="seed",
             docker_capable=False,
@@ -513,7 +513,7 @@ async def test_compose_up_constructs_expected_command(tmp_path):
     # Registered through the same ingest chokepoint a factory-built host runs,
     # so a provider that recognizes the service reaches the container too.
     with _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="api")]):
-        hosts = await compose_up(project, lab)
+        hosts = await compose_up(project=project, lab=lab)
     assert "api" in hosts
     assert hosts["api"].container_id == "abc123def456"
     assert hosts["api"].id in lab.hosts
@@ -548,7 +548,7 @@ async def test_compose_up_registers_containers_with_their_declared_users(tmp_pat
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab, build=False)
+    hosts = await compose_up(project=project, lab=lab, build=False)
 
     assert hosts["db"].user == "postgres"
     assert hosts["api"].user is None
@@ -576,7 +576,7 @@ async def test_compose_up_builds_images_first_when_asked(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    await compose_up(project, lab, build=True)
+    await compose_up(project=project, lab=lab, build=True)
     # The build path must have run: `docker build` itself.
     assert any("docker build " in c for c in call_log), call_log
 
@@ -602,7 +602,7 @@ async def test_compose_up_builds_nothing_by_default(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    await compose_up(project, lab)
+    await compose_up(project=project, lab=lab)
     assert not any("docker build " in c for c in call_log), (
         "the default is docker's own: up builds nothing"
     )
@@ -633,7 +633,7 @@ async def test_compose_up_always_reissues_up_when_already_running(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab)
+    hosts = await compose_up(project=project, lab=lab)
     assert "api" in hosts
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 1, "must issue `up -d` even when already running (convergent)"
@@ -667,8 +667,8 @@ async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    first = await compose_up(project, lab, build=False)
-    second = await compose_up(project, lab, build=False)  # must NOT raise
+    first = await compose_up(project=project, lab=lab, build=False)
+    second = await compose_up(project=project, lab=lab, build=False)  # must NOT raise
 
     assert first["api"].id == second["api"].id
     assert first["api"].container_id == "abc111"
@@ -706,7 +706,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab)
+    hosts = await compose_up(project=project, lab=lab)
     assert "api" in hosts
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 2, "transient network race must trigger exactly one retry"
@@ -734,7 +734,7 @@ async def test_compose_up_raises_when_the_race_recurs_on_the_retry(tmp_path, mon
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(HostCommandError, match="network otto-project1-x_default not found"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
     assert len([c for c in call_log if "compose" in c and "up -d" in c]) == 2
 
 
@@ -764,7 +764,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
         HostCommandError,
         match=r"docker compose up failed for otto-\S+ on test3: Error response from daemon: pull",
     ):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 1, "a non-transient failure must NOT be retried"
 
@@ -798,7 +798,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab)
+    hosts = await compose_up(project=project, lab=lab)
     assert "api" in hosts, "service must register once the container becomes visible"
     assert hosts["api"].container_id == "abc123"
     assert resolve_calls >= 2, "resolve must poll past the first empty result"
@@ -835,7 +835,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="1 service\\(s\\) resolved to a running"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
     assert resolve_calls == 1, "a spent budget must stop the polling"
 
 
@@ -868,7 +868,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab)
+    hosts = await compose_up(project=project, lab=lab)
     assert set(hosts) == {"api"}
 
 
@@ -890,7 +890,7 @@ async def test_compose_down_removes_registered_hosts(tmp_path):
     lab.hosts[fake.id] = fake  # type: ignore[assignment]
     assert fake.id in lab.hosts
 
-    await compose_down(project, lab)
+    await compose_down(project=project, lab=lab)
     assert fake.id not in lab.hosts
 
 
@@ -913,7 +913,7 @@ async def test_compose_down_does_not_emit_the_relative_bind_advisory(tmp_path, c
     parent = lab.hosts["test3"]
     parent.exec.return_value = _ok()  # type: ignore[union-attr]
 
-    await compose_down(project, lab)
+    await compose_down(project=project, lab=lab)
 
     assert "binds the relative source" not in caplog.text
 
@@ -937,7 +937,7 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
     parent.exec_orig = parent.exec
 
-    async with composed(project, lab):
+    async with composed(project=project, lab=lab):
         pass
 
     cmds = [c.args[0] for c in parent.exec.call_args_list]  # type: ignore[union-attr]
@@ -966,7 +966,7 @@ async def test_composed_builds_nothing_by_default(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    async with composed(project, lab, own=True):
+    async with composed(project=project, lab=lab, own=True):
         pass
 
     assert any(" up -d" in c for c in call_log), "the stack must have come up"
@@ -990,7 +990,7 @@ async def test_composed_tears_down_when_own_true(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    async with composed(project, lab, own=True):
+    async with composed(project=project, lab=lab, own=True):
         pass
 
     cmds = [c.args[0] for c in parent.exec.call_args_list]  # type: ignore[union-attr]
@@ -1031,7 +1031,7 @@ async def test_composed_teardown_survives_cancellation(tmp_path):
     hold_body = asyncio.Event()
 
     async def flow() -> None:
-        async with composed(project, lab, own=True):
+        async with composed(project=project, lab=lab, own=True):
             inside.set()
             await hold_body.wait()
 
@@ -1265,7 +1265,7 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
         container_id="",
         project=project.name,
         service="api",
-        compose_project=get_user_compose_project(project.name),
+        compose_project=get_user_compose_project(project_name=project.name),
     )
 
     # A pre-existing, unrelated host occupying the exact id the placeholder
@@ -1755,7 +1755,7 @@ async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(t
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(project, lab, build=False)
+    hosts = await compose_up(project=project, lab=lab, build=False)
 
     assert hosts["api"].source_lab == "a"
     assert hosts["api"].lab_info.name == "a"
@@ -1820,7 +1820,7 @@ async def test_compose_up_no_composes_raises(tmp_path):
     project = _make_bare_project(tmp_path)
     lab = _make_lab()
     with pytest.raises(ValueError, match=r"no .*composes"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
 
 
 @pytest.mark.asyncio
@@ -1836,7 +1836,7 @@ async def test_compose_up_build_failure_raises(tmp_path):
             [],
             None,
             CommandResult(
-                Status.Failed, value="push access denied", command="docker build", retcode=1
+                status=Status.Failed, value="push access denied", command="docker build", retcode=1
             ),
         )
     }
@@ -1848,7 +1848,7 @@ async def test_compose_up_build_failure_raises(tmp_path):
         # up: " and pass a prefix-only match.
         pytest.raises(RuntimeError, match="push access denied"),
     ):
-        await compose_up(project, lab, build=True)
+        await compose_up(project=project, lab=lab, build=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1889,7 +1889,7 @@ async def test_compose_down_no_composes_skipped(tmp_path):
     """Returns a Skipped CommandResult immediately when the project has no composes."""
     project = _make_bare_project(tmp_path)
     lab = _make_lab()
-    result = await compose_down(project, lab)
+    result = await compose_down(project=project, lab=lab)
     assert result.status is Status.Skipped
     assert result.retcode == -1  # never ran
 
@@ -1910,7 +1910,7 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with caplog.at_level(logging.ERROR):
-        result = await compose_down(project, lab)
+        result = await compose_down(project=project, lab=lab)
 
     assert any("compose down failed" in r.message for r in caplog.records)
     # The function returns the failed CommandResult — verify it didn't raise and
@@ -1940,7 +1940,7 @@ async def test_compose_down_failure_relays_dockers_output_verbatim(tmp_path, cap
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with caplog.at_level(logging.ERROR):
-        await compose_down(project, lab)
+        await compose_down(project=project, lab=lab)
 
     rendered = [shown(r) for r in caplog.records]
     assert any(
@@ -1972,7 +1972,7 @@ async def test_compose_down_swallows_host_close_error(tmp_path):
     lab.hosts[noisy.id] = noisy  # type: ignore[assignment]
 
     # Must NOT propagate the Exception from close()
-    result = await compose_down(project, lab)
+    result = await compose_down(project=project, lab=lab)
     # Prove the close() branch was actually exercised (not just skipped)
     noisy.close.assert_called_once()
     # down command succeeded, so the returned result is Success
@@ -2017,7 +2017,7 @@ async def test_compose_up_fails_when_services_cannot_be_listed_and_none_declared
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="declares none of its own"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
 
 
 @pytest.mark.asyncio
@@ -2043,7 +2043,7 @@ async def test_compose_up_only_warns_when_the_cross_check_fails(tmp_path, caplog
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
-        hosts = await compose_up(project, lab)
+        hosts = await compose_up(project=project, lab=lab)
 
     assert set(hosts) == {"api"}
     assert any(
@@ -2094,7 +2094,7 @@ async def test_composed_refuses_to_guess_whose_stack_it_is(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="cannot tell whether"):
-        async with composed(project, lab):
+        async with composed(project=project, lab=lab):
             pass
 
 
@@ -2124,7 +2124,7 @@ async def test_composed_does_not_even_probe_when_it_owns_the_stack(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    async with composed(project, lab, own=True) as hosts:
+    async with composed(project=project, lab=lab, own=True) as hosts:
         assert set(hosts) == {"api"}
     # compose_up's own probe still runs (unknown -> convergent `up -d`), but
     # composed() adds none of its own.
@@ -2230,7 +2230,7 @@ async def test_compose_up_rolls_back_a_stack_it_started_before_raising(tmp_path)
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="resolved to a running container"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
     assert downs == 1, "a stack compose_up started must not survive its own failure"
 
 
@@ -2257,7 +2257,7 @@ async def test_compose_up_does_not_roll_back_someone_elses_stack(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="resolved to a running container"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
     assert downs == 0, "a stack that was already up belongs to whoever brought it up"
 
 
@@ -2280,7 +2280,7 @@ async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path
     # ValueError: nothing on the parent failed — the compose file declares no
     # services, the same class of refusal as _project_parent_host's own raises.
     with pytest.raises(ValueError, match="names no services"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
 
 
 @pytest.mark.asyncio
@@ -2303,7 +2303,7 @@ async def test_compose_down_returns_a_failure_when_staging_cannot_be_prepared(tm
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    result = await compose_down(project, lab)
+    result = await compose_down(project=project, lab=lab)
     assert not result.is_ok
     assert "read-only file system" in result.value
 
@@ -2358,7 +2358,7 @@ async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
         active_context(lab=lab, dry_run=True),
         pytest.raises(DockerImageConfigError, match="dockerfile not found") as caught,
     ):
-        await compose_up(project, lab, build=True)
+        await compose_up(project=project, lab=lab, build=True)
     assert "\n" not in str(caught.value)
     assert parent.exec.await_count == 0
 
@@ -2563,7 +2563,7 @@ async def test_a_failed_compose_up_rolls_back_through_its_staged_files_and_keeps
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
     with pytest.raises(HostCommandError, match="port is already allocated"):
-        await compose_up(project, lab)
+        await compose_up(project=project, lab=lab)
 
     up_at = next(i for i, c in enumerate(sent) if " up -d" in c)
     after_up = sent[up_at + 1 :]

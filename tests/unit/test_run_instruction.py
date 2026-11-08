@@ -37,9 +37,9 @@ def _clean_registries():
     opts = set(OPTIONS.names())
     yield
     for name in set(STANDALONE_INSTRUCTIONS.names()) - inst:
-        STANDALONE_INSTRUCTIONS.unregister(name)
+        STANDALONE_INSTRUCTIONS.unregister(name=name)
     for name in set(OPTIONS.names()) - opts:
-        OPTIONS.unregister(name)
+        OPTIONS.unregister(name=name)
 
 
 @otto.options
@@ -61,7 +61,9 @@ async def test_run_instruction_injects_context_and_registered_class(ctx):
         seen.update(opts=opts, c=c, verb=verb)
         return "ok"
 
-    assert await run_instruction(ctx, "deploy", [_Own(debug=True), _Verb(tag="x")]) == "ok"
+    assert (
+        await run_instruction(ctx, name="deploy", opts=[_Own(debug=True), _Verb(tag="x")]) == "ok"
+    )
     assert seen["opts"].debug is True
     assert seen["c"] is ctx
     assert seen["verb"].tag == "x"
@@ -73,7 +75,7 @@ async def test_run_instruction_builds_a_registered_class_from_defaults(ctx):
     async def tagged(verb: _Verb) -> str:
         return verb.tag
 
-    assert await run_instruction(ctx, "tagged") == "none"
+    assert await run_instruction(ctx, name="tagged") == "none"
 
 
 @pytest.mark.asyncio
@@ -83,7 +85,7 @@ async def test_run_instruction_installs_the_context_for_the_call_when_none_is_ac
         return try_get_context() is c
 
     assert try_get_context() is None
-    assert await run_instruction(ctx, "which") is True
+    assert await run_instruction(ctx, name="which") is True
     assert try_get_context() is None
 
 
@@ -97,7 +99,7 @@ async def test_run_instruction_installs_the_context_over_a_different_active_one(
 
     token = set_context(other)
     try:
-        assert await run_instruction(ctx, "which") is True
+        assert await run_instruction(ctx, name="which") is True
         assert try_get_context() is other
     finally:
         reset_context(token)
@@ -111,7 +113,7 @@ async def test_run_instruction_leaves_an_already_active_context_active(ctx):
 
     token = set_context(ctx)
     try:
-        assert await run_instruction(ctx, "which") is True
+        assert await run_instruction(ctx, name="which") is True
         assert try_get_context() is ctx
     finally:
         reset_context(token)
@@ -132,8 +134,8 @@ async def test_run_instruction_restores_the_verb_binding(ctx):
     @instruction()
     async def noop(verb: _Verb) -> None: ...
 
-    ctx.bind_verb_options("run", {"tag": "before"})
-    await run_instruction(ctx, "noop", [_Verb(tag="during")])
+    ctx.bind_verb_options(verb="run", kwargs={"tag": "before"})
+    await run_instruction(ctx, name="noop", opts=[_Verb(tag="during")])
     assert ctx.options(_Verb).tag == "before"
 
 
@@ -143,9 +145,9 @@ async def test_run_instruction_restores_state_when_the_handler_raises(ctx):
     async def boom(verb: _Verb) -> None:
         raise RuntimeError("x")
 
-    ctx.bind_verb_options("run", {"tag": "before"})
+    ctx.bind_verb_options(verb="run", kwargs={"tag": "before"})
     with pytest.raises(RuntimeError):
-        await run_instruction(ctx, "boom", [_Verb(tag="during")])
+        await run_instruction(ctx, name="boom", opts=[_Verb(tag="during")])
     assert ctx.options(_Verb).tag == "before"
     assert try_get_context() is None
 
@@ -160,7 +162,7 @@ async def test_run_instruction_binds_own_class_once_when_it_is_also_registered(c
     async def f(opts: Both, c: OttoContext) -> bool:
         return c.options(Both) is opts
 
-    assert await run_instruction(ctx, "f", [Both(n=3)]) is True
+    assert await run_instruction(ctx, name="f", opts=[Both(n=3)]) is True
 
 
 @pytest.mark.asyncio
@@ -173,7 +175,7 @@ async def test_run_instruction_refuses_an_instance_registered_for_another_verb(c
     async def f() -> None: ...
 
     with pytest.raises(OptionsRegistrationError):
-        await run_instruction(ctx, "f", [TestOnly()])
+        await run_instruction(ctx, name="f", opts=[TestOnly()])
 
 
 @pytest.mark.asyncio
@@ -186,13 +188,13 @@ async def test_run_instruction_reports_a_missing_required_field(ctx):
     async def f(opts: Needs) -> None: ...
 
     with pytest.raises(OptionsValidationError, match="target"):
-        await run_instruction(ctx, "f")
+        await run_instruction(ctx, name="f")
 
 
 @pytest.mark.asyncio
 async def test_run_instruction_unknown_name_is_the_registry_error(ctx):
     with pytest.raises(ValueError, match="Unknown instruction 'nope'"):
-        await run_instruction(ctx, "nope")
+        await run_instruction(ctx, name="nope")
 
 
 def _orchestrator():
@@ -217,7 +219,7 @@ async def test_run_instruction_routes_a_project_name_through_the_orchestrator(ct
 
     monkeypatch.setattr(orchestrator, "project_instruction_body_options", validate)
     monkeypatch.setattr(orchestrator, "run_project_instruction", fake)
-    assert await run_instruction(ctx, "status", [_Verb(tag="x")]) == "walked"
+    assert await run_instruction(ctx, name="status", opts=[_Verb(tag="x")]) == "walked"
     # The validation walk is quiet: the run's own walk announces the skips.
     assert calls == [
         ("validate", "status", ctx, {"tag": "x"}, False),
@@ -237,7 +239,7 @@ async def test_run_instruction_passes_a_project_bodys_own_options_instance(ctx, 
         received.append(kwargs)
 
     monkeypatch.setattr(orchestrator, "run_project_instruction", fake)
-    await run_instruction(ctx, "install", [InstallOptions(ensure=True)])
+    await run_instruction(ctx, name="install", opts=[InstallOptions(ensure=True)])
     assert [kwargs["ensure"] for kwargs in received] == [True]
 
 
@@ -249,7 +251,7 @@ async def test_run_instruction_refuses_a_class_registered_for_test_only_for_a_pr
 
     _orchestrator()
     with pytest.raises(OptionsRegistrationError, match="TestOnly"):
-        await run_instruction(ctx, "install", [TestOnly()])
+        await run_instruction(ctx, name="install", opts=[TestOnly()])
 
 
 @pytest.mark.asyncio
@@ -266,5 +268,5 @@ async def test_run_instruction_validates_project_bodies_before_any_runs(ctx, mon
     monkeypatch.setattr(orchestrator, "project_instruction_body_options", invalid)
     monkeypatch.setattr(orchestrator, "run_project_instruction", fake)
     with pytest.raises(OptionsValidationError, match="target"):
-        await run_instruction(ctx, "status")
+        await run_instruction(ctx, name="status")
     assert ran == []

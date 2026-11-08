@@ -37,7 +37,9 @@ def _verdicts(report: TunnelCheckReport, protocol: str = "tcp") -> dict[str, Ver
 
 
 def _throwaway_id(protocol: str, port: int = SCRATCH, hops: str = "abc") -> str:
-    return make_tunnel_id(tuple(TunnelHop(h) for h in hops), protocol, port)
+    return make_tunnel_id(
+        path=tuple(TunnelHop(h) for h in hops), protocol=protocol, service_port=port
+    )
 
 
 def _check_procs_left(the_bed: Bed) -> dict[str, list[str]]:

@@ -688,7 +688,7 @@ class _ExecHost:
 
 
 def test_live_listing_parses_a_successful_exec():
-    host = _ExecHost(CommandResult(Status.Success, value="logs/\napp.bin\n", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="logs/\napp.bin\n", command="ls"))
     assert rc._live_listing(host, "/var") == [
         ListingEntry(name="logs", is_dir=True),
         ListingEntry(name="app.bin", is_dir=False),
@@ -701,32 +701,32 @@ def test_live_listing_is_redacted_from_every_sink():
     """NEVER, not QUIET: QUIET still writes the command I/O to verbose.log."""
     from otto.logger.mode import LogMode
 
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"))
     rc._live_listing(host, "/var")
     assert host.cmds[0][1] is LogMode.NEVER
 
 
 def test_live_listing_signals_a_failed_exec_as_none():
     """None, not [] — a failure must be distinguishable from an empty directory."""
-    host = _ExecHost(CommandResult(Status.Failed, value="junk\n", command="ls", retcode=2))
+    host = _ExecHost(CommandResult(status=Status.Failed, value="junk\n", command="ls", retcode=2))
     assert rc._live_listing(host, "/nope") is None
 
 
 def test_live_listing_returns_empty_list_for_a_genuinely_empty_directory():
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"))
     assert rc._live_listing(host, "/empty") == []
 
 
 def test_live_listing_passes_the_deadline_to_exec():
     """`wait_for` is the backstop; the host layer gets to unwind on its own terms."""
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"))
     rc._live_listing(host, "/var")
     assert host.timeouts == [rc.LIST_DEADLINE_SECONDS]
 
 
 def test_live_listing_closes_the_connection_when_exec_times_out(monkeypatch):
     monkeypatch.setattr(rc, "LIST_DEADLINE_SECONDS", 0.01)
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"), delay=5.0)
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"), delay=5.0)
     # asyncio.TimeoutError is only an alias of the builtin from 3.11 on.
     with pytest.raises(asyncio.TimeoutError):
         rc._live_listing(host, "/var")
@@ -735,7 +735,7 @@ def test_live_listing_closes_the_connection_when_exec_times_out(monkeypatch):
 
 def test_live_listing_deadline_failure_reaches_the_user_as_no_completions(monkeypatch):
     monkeypatch.setattr(rc, "LIST_DEADLINE_SECONDS", 0.01)
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"), delay=5.0)
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"), delay=5.0)
     monkeypatch.setattr(rc, "_load_host", lambda chain: (host, object()))
     monkeypatch.setattr(rc, "_reservation_allows", lambda chain: True)
     monkeypatch.setattr(rc, "_cached_listing_for", lambda host_id, directory: None)
@@ -759,7 +759,7 @@ def test_live_listing_runs_under_the_lifecycle_not_a_bare_asyncio_run(monkeypatc
         return real(coro, **kwargs)
 
     monkeypatch.setattr(lifecycle, "run_command", _spy)
-    host = _ExecHost(CommandResult(Status.Success, value="logs/\n", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="logs/\n", command="ls"))
     assert rc._live_listing(host, "/var") == [ListingEntry(name="logs", is_dir=True)]
     assert seen == {"teardown_deadline": rc.LIST_DEADLINE_SECONDS}
 
@@ -777,7 +777,7 @@ def test_live_listing_lets_the_command_boundary_close_the_connection():
             register_duck(self, asyncio.get_running_loop())
             return await super().exec(cmd, timeout=timeout, log=log)
 
-    host = _ClaimingHost(CommandResult(Status.Success, value="", command="ls"))
+    host = _ClaimingHost(CommandResult(status=Status.Success, value="", command="ls"))
     assert rc._live_listing(host, "/var") == []
     assert host.closed == 2, "expected the explicit close AND the loop's sweep"
 
@@ -829,7 +829,7 @@ def test_live_listing_swallows_a_failing_close():
         async def close(self):
             raise RuntimeError("connection already gone")
 
-    host = _BadClose(CommandResult(Status.Success, value="logs/\n", command="ls"))
+    host = _BadClose(CommandResult(status=Status.Success, value="logs/\n", command="ls"))
     assert rc._live_listing(host, "/var") == [ListingEntry(name="logs", is_dir=True)]
 
 
@@ -861,7 +861,7 @@ def _cached(directory):
 
 def test_failed_listing_is_not_cached(monkeypatch, real_listing_cache):
     """A transient `ls` failure must not poison the directory for the whole TTL."""
-    host = _ExecHost(CommandResult(Status.Failed, value="", command="ls", retcode=2))
+    host = _ExecHost(CommandResult(status=Status.Failed, value="", command="ls", retcode=2))
     monkeypatch.setattr(rc, "_load_host", lambda chain: (host, object()))
     assert rc.remote_path_completer(_ctx(), "/var/") == []
     assert _cached("/var") is None
@@ -869,14 +869,14 @@ def test_failed_listing_is_not_cached(monkeypatch, real_listing_cache):
 
 def test_genuinely_empty_directory_is_cached_as_empty(monkeypatch, real_listing_cache):
     """The counterpart: a successful empty listing IS cached, as []."""
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="", command="ls"))
     monkeypatch.setattr(rc, "_load_host", lambda chain: (host, object()))
     assert rc.remote_path_completer(_ctx(), "/var/") == []
     assert _cached("/var") == []
 
 
 def test_successful_listing_is_cached(monkeypatch, real_listing_cache):
-    host = _ExecHost(CommandResult(Status.Success, value="logs/\n", command="ls"))
+    host = _ExecHost(CommandResult(status=Status.Success, value="logs/\n", command="ls"))
     monkeypatch.setattr(rc, "_load_host", lambda chain: (host, object()))
     assert rc.remote_path_completer(_ctx(), "/var/") == ["/var/logs/"]
     assert _cached("/var") == [ListingEntry(name="logs", is_dir=True)]
@@ -990,7 +990,7 @@ def test_completer_prints_nothing_when_the_listing_fails(monkeypatch, capsys):
 def test_failed_listing_is_never_handed_to_the_cache(monkeypatch, real_listing_cache):
     """Asserted on the call: `store_listing(None)` would also raise its way to no entry."""
     stored = []
-    host = _ExecHost(CommandResult(Status.Failed, value="", command="ls", retcode=2))
+    host = _ExecHost(CommandResult(status=Status.Failed, value="", command="ls", retcode=2))
     monkeypatch.setattr(rc, "_load_host", lambda chain: (host, object()))
     monkeypatch.setattr(
         rc,

@@ -347,7 +347,7 @@ class SnapshotCache:
             raw = self.snapshot_path.read_bytes()
             data: Any = json.loads(raw)
             records = document_to_records(
-                data, source=str(self.snapshot_path), supplies=self.supplies
+                data=data, source=str(self.snapshot_path), supplies=self.supplies
             )
         except (OSError, ValueError, InventoryError) as e:
             logger.debug("%s: unusable snapshot (%s); refetching", self.snapshot_path, e)
@@ -389,7 +389,7 @@ class SnapshotCache:
         for the write and a warning they cannot see is not an answer.
         """
         records = {key: self.inner.lookup(key) for key in self.inner.list_keys()}
-        doc = records_to_document(records)
+        doc = records_to_document(records=records)
         self._hash = document_hash(doc)
         write_key = f"write:{self.snapshot_path}"
         try:
@@ -473,7 +473,7 @@ class SnapshotCache:
         try:
             return records[key]
         except KeyError:
-            raise InventoryKeyError(key, self.label) from None
+            raise InventoryKeyError(key, label=self.label) from None
 
     def list_keys(self) -> list[str]:
         """Every key the snapshot holds, sorted; resolves it on the first call."""
@@ -540,7 +540,7 @@ class SnapshotCache:
         return RefreshResult(previous_age=previous, count=len(self._records))
 
 
-def snapshot_cache_of(inventory: Inventory) -> "SnapshotCache | None":
+def snapshot_cache_of(*, inventory: Inventory) -> "SnapshotCache | None":
     """Return the :class:`SnapshotCache` inside *inventory*, or ``None`` if it is uncached.
 
     THE one reader of otto's wrapper stack. ``construct_inventory`` puts the

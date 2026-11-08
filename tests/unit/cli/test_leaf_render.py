@@ -41,7 +41,7 @@ def test_async_leaf_failing_result_exits_nonzero_with_message():
 
     @app.command()
     async def flaky() -> Result:
-        return Result(Status.Failed, msg="did not converge")
+        return Result(status=Status.Failed, msg="did not converge")
 
     r = DispatchRunner().invoke(app, [])
     assert r.exit_code == 1, r.output
@@ -55,7 +55,7 @@ def test_results_retcode_passes_through_as_exit_code():
     @app.command()
     async def run42() -> Results:
         return Results.collect(
-            [CommandResult(Status.Failed, value="", command="exit 42", retcode=42)]
+            items=[CommandResult(status=Status.Failed, value="", command="exit 42", retcode=42)]
         )
 
     r = DispatchRunner().invoke(app, [])
@@ -68,7 +68,7 @@ def test_never_ran_command_result_exits_255():
 
     @app.command()
     async def broken() -> CommandResult:
-        return CommandResult(Status.Error, command="x", retcode=-1)
+        return CommandResult(status=Status.Error, command="x", retcode=-1)
 
     r = DispatchRunner().invoke(app, [])
     assert r.exit_code == 255, r.output
@@ -203,7 +203,7 @@ def test_success_message_policy_renders_on_ok_result():
     @app.command()
     async def xfer(ctx: typer.Context) -> Result:
         ctx.meta[RENDER_POLICY_KEY] = RenderPolicy(success="Transfer complete.")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     r = DispatchRunner().invoke(app, [])
     assert r.exit_code == 0, r.output
@@ -216,7 +216,7 @@ def test_sync_leaf_return_value_shares_the_render_path():
 
     @app.command()
     def status() -> Result:
-        return Result(Status.Error, msg="backend down")
+        return Result(status=Status.Error, msg="backend down")
 
     r = DispatchRunner().invoke(app, [])
     assert r.exit_code == 2, r.output
@@ -237,49 +237,51 @@ def _exit_code(value, policy=None):
 
 
 def test_command_retcode_passthrough():
-    res = Results.collect([CommandResult(Status.Failed, value="", command="exit 42", retcode=42)])
+    res = Results.collect(
+        items=[CommandResult(status=Status.Failed, value="", command="exit 42", retcode=42)]
+    )
     assert _exit_code(res) == 42
 
 
 def test_command_never_ran_exits_255():
-    assert _exit_code(CommandResult(Status.Error, command="x", retcode=-1)) == 255
+    assert _exit_code(CommandResult(status=Status.Error, command="x", retcode=-1)) == 255
 
 
 def test_status_mapping_for_plain_results():
-    assert _exit_code(Result(Status.Error, msg="boom")) == 2
-    assert _exit_code(Result(Status.Failed, msg="no")) == 1
-    assert _exit_code(Result(Status.Skipped)) == 0
+    assert _exit_code(Result(status=Status.Error, msg="boom")) == 2
+    assert _exit_code(Result(status=Status.Failed, msg="no")) == 1
+    assert _exit_code(Result(status=Status.Skipped)) == 0
 
 
 def test_ok_result_prints_success_message(capsys):
-    render_leaf_value(Result(Status.Success), RenderPolicy(success="Transfer complete."))
+    render_leaf_value(Result(status=Status.Success), RenderPolicy(success="Transfer complete."))
     assert "Transfer complete." in capsys.readouterr().out
 
 
 def test_ok_transfer_mapping_prints_per_file_lines(capsys):
-    per_file = {Path("a.bin"): Result(Status.Success, value=Path("/dst/a.bin"))}
-    render_leaf_value(Result(Status.Success, value=per_file))
+    per_file = {Path("a.bin"): Result(status=Status.Success, value=Path("/dst/a.bin"))}
+    render_leaf_value(Result(status=Status.Success, value=per_file))
     out = capsys.readouterr().out
     assert "a.bin" in out
     assert "/dst/a.bin" in out
 
 
 def test_failed_mapping_prints_per_entry_diagnostics(capsys):
-    per_file = {Path("b.bin"): Result(Status.Error, msg="b.bin: reset")}
+    per_file = {Path("b.bin"): Result(status=Status.Error, msg="b.bin: reset")}
     with pytest.raises(typer.Exit) as excinfo:
-        render_leaf_value(Result(Status.Error, value=per_file, msg="1 file failed"))
+        render_leaf_value(Result(status=Status.Error, value=per_file, msg="1 file failed"))
     assert excinfo.value.exit_code == 2  # plain Result: exit_code == status.value (Error)
     assert "b.bin: reset" in capsys.readouterr().out
 
 
 def test_command_results_print_nothing_on_ok(capsys):
-    render_leaf_value(Results.collect([CommandResult(Status.Success, retcode=0)]))
+    render_leaf_value(Results.collect(items=[CommandResult(status=Status.Success, retcode=0)]))
     assert capsys.readouterr().out == ""
 
 
 def test_command_results_print_per_entry_diagnostics_on_failure(capsys):
     res = Results.collect(
-        [CommandResult(Status.Error, value="", command="x", retcode=3, msg="boom")]
+        items=[CommandResult(status=Status.Error, value="", command="x", retcode=3, msg="boom")]
     )
     with pytest.raises(typer.Exit) as excinfo:
         render_leaf_value(res)
@@ -400,4 +402,4 @@ def test_only_a_bool_false_is_a_failing_predicate(value, printed, capsys):
 
 def test_a_successful_result_holding_false_still_exits_zero():
     """A bool INSIDE a Result is data; the Result branch decides the exit code."""
-    render_leaf_value(CommandResult(Status.Success, value=False, command="x", retcode=0))
+    render_leaf_value(CommandResult(status=Status.Success, value=False, command="x", retcode=0))

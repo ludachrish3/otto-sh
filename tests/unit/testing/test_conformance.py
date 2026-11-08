@@ -235,7 +235,7 @@ class TestReservationBackendConformance:
             def reservations(self):
                 raise ReservationBackendError("scheduler unreachable")
 
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return [Reservation(user=username, resource="rack3")]
 
             def backend_name(self):
@@ -248,7 +248,7 @@ class TestReservationBackendConformance:
         """A structural backend that never provides ``reservations`` fails."""
 
         class NoMember:
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return [Reservation(user=username, resource="rack3")]
 
             def backend_name(self):
@@ -267,7 +267,7 @@ class TestReservationBackendConformance:
         """
 
         class Broken:
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return {"not": "a list"}  # wrong type
 
             def backend_name(self):
@@ -295,7 +295,7 @@ class TestReservationBackendConformance:
             username = "alice"
             reservations = None  # non-list — must be reported, not iterated
 
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return None
 
             def backend_name(self):
@@ -375,7 +375,7 @@ class TestOneHostileDoublePerRule:
             username = "alice"
             reservations: ClassVar[list] = []
 
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return []
 
         with pytest.raises(AssertionError, match="backend_name must be callable"):
@@ -604,7 +604,7 @@ class TestOneHostileDoublePerRule:
         """A per-user-only backend is skipped for the holder rules, not failed."""
 
         class PerUserOnly(ReservationBackendBase):
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return [Reservation(user=username, resource="rack3")]
 
             def backend_name(self):
@@ -629,7 +629,7 @@ class TestOneHostileDoublePerRule:
                 super().__init__(**kw)
                 self.reservations = self.fetch_reservations(self.username)
 
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 return [Reservation(user=username, resource="rack3")]
 
             def backend_name(self):
@@ -645,7 +645,7 @@ class TestReservationErrorContract:
 
     def test_failure_modes_raise_reservation_backend_error(self):
         class FailingBackend(ReservationBackendBase):
-            def fetch_reservations(self, username, start=None, end=None):
+            def fetch_reservations(self, username, *, start=None, end=None):
                 raise ReservationBackendError("scheduler unreachable")
 
             def holders(self, resource):
@@ -667,7 +667,7 @@ def _per_user_only():
     """A conforming reservation backend that deliberately omits ``holders``."""
 
     class PerUserOnly(ReservationBackendBase):
-        def fetch_reservations(self, username, start=None, end=None):
+        def fetch_reservations(self, username, *, start=None, end=None):
             return [Reservation(user=username, resource="rack3")]
 
         def backend_name(self):

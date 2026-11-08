@@ -314,7 +314,8 @@ class TestAListenerFedBeforeWeConnectIsRefused:
             async def read(self, _n: int) -> bytes:
                 return b"hello"
 
-        async def forward_port(port: int) -> int:
+        async def forward_port(*, dest_port: int) -> int:
+            port = dest_port
             forwarded.append(port)
             bed.serve(port)
             return 15000
@@ -350,7 +351,8 @@ class TestTunneledGetTakesAFreshPortWhenSharedByAnother:
             async def read(self, _n: int) -> bytes:
                 return b"hello"
 
-        async def forward_port(port: int) -> int:
+        async def forward_port(*, dest_port: int) -> int:
+            port = dest_port
             forwarded.append(port)
             bed.serve(port)
             return 15000

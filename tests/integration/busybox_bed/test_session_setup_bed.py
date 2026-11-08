@@ -34,7 +34,7 @@ async def _exec_ash(session, ctx) -> None:
 def hook():
     register_session_setup("bed-exec-ash", _exec_ash, overwrite=True)
     yield "bed-exec-ash"
-    SESSION_SETUPS.unregister("bed-exec-ash")
+    SESSION_SETUPS.unregister(name="bed-exec-ash")
 
 
 async def test_exec_ash_from_the_landing_shell(hook):

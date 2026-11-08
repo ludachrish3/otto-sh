@@ -42,7 +42,7 @@ async def ping(ctx: OttoContext, opts: PingOptions) -> Result:
     hosts = list(ctx.all_hosts())[: opts.count]
     for host in hosts:
         await host.run("true")
-    return Result(Status.Success, msg=f"pinged {len(hosts)} host(s)")
+    return Result(status=Status.Success, msg=f"pinged {len(hosts)} host(s)")
 ```
 
 ```bash
@@ -187,7 +187,7 @@ it always blocks *execution*.
 `output_dir`, `gate` and `dry_run_preview`, but not `async_leaves` or
 `overwrite`, which only `register_cli_command()` takes. The registering module
 is not metadata you pass: the engine records it, and
-`CLI_COMMANDS.origin(name)` reads it back. The first three rows are the ones
+`CLI_COMMANDS.origin(name=name)` reads it back. The first three rows are the ones
 most commands set:
 
 | Keyword      | Default | Effect                                                                                                                                   |

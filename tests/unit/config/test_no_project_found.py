@@ -90,7 +90,7 @@ def test_build_lab_with_no_project_reports_the_same_cause(nowhere: Path) -> None
     from otto.session.lab import build_lab
 
     with pytest.raises(LabBuildError) as caught:
-        build_lab([], ["pflab"])
+        build_lab([], labs=["pflab"])
     assert caught.value.kind == "no_project"
     assert str(caught.value) == no_project_found_message()
     assert "[[lab.sources]]" not in str(caught.value)

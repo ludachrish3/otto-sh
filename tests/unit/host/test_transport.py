@@ -71,7 +71,7 @@ class TestForwardPort:
         mock_listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
 
-        port = await transport.forward_port("10.0.0.5", 22)
+        port = await transport.forward_port("10.0.0.5", dest_port=22)
         mock_conn.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.5", 22)
         assert port == 44444
 
@@ -81,7 +81,7 @@ class TestForwardPort:
         mock_listener.get_port.return_value = 55555
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
 
-        assert await transport.forward_port("192.168.1.1", 8080) == 55555
+        assert await transport.forward_port("192.168.1.1", dest_port=8080) == 55555
 
     @pytest.mark.asyncio
     async def test_tracks_listeners(self, transport: _SshHopTransport, mock_conn: MagicMock):
@@ -90,7 +90,7 @@ class TestForwardPort:
             listener = MagicMock()
             listener.get_port.return_value = expected_port
             mock_conn.forward_local_port = AsyncMock(return_value=listener)
-            await transport.forward_port("10.0.0.1", expected_port)
+            await transport.forward_port("10.0.0.1", dest_port=expected_port)
 
         assert len(transport._port_forwards) == 2
 
@@ -108,7 +108,7 @@ class TestForwardPort:
         listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=listener)
 
-        ports = [await transport.forward_port("10.0.0.1", 9000) for _ in range(5)]
+        ports = [await transport.forward_port("10.0.0.1", dest_port=9000) for _ in range(5)]
 
         assert ports == [44444] * 5
         mock_conn.forward_local_port.assert_awaited_once()
@@ -131,8 +131,8 @@ class TestForwardPort:
         listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=listener)
 
-        await transport.forward_port("10.0.0.1", 9000)
-        await transport.forward_port("10.0.0.2", 9000)
+        await transport.forward_port("10.0.0.1", dest_port=9000)
+        await transport.forward_port("10.0.0.2", dest_port=9000)
 
         assert mock_conn.forward_local_port.await_count == 2
         assert len(transport._port_forwards) == 2
@@ -151,14 +151,14 @@ class TestForwardPort:
         second.get_port.return_value = 22222
 
         mock_conn.forward_local_port = AsyncMock(return_value=first)
-        assert await transport.forward_port("10.0.0.1", 9000) == 11111
+        assert await transport.forward_port("10.0.0.1", dest_port=9000) == 11111
 
-        transport.unforward_port("10.0.0.1", 9000)
+        transport.unforward_port("10.0.0.1", dest_port=9000)
         first.close.assert_called_once()
         assert transport._port_forwards == {}
 
         mock_conn.forward_local_port = AsyncMock(return_value=second)
-        assert await transport.forward_port("10.0.0.1", 9000) == 22222, (
+        assert await transport.forward_port("10.0.0.1", dest_port=9000) == 22222, (
             "forward_port handed back the released listener's port"
         )
 
@@ -175,12 +175,12 @@ class TestForwardPort:
         listener = MagicMock()
         listener.get_port.return_value = 11111
         mock_conn.forward_local_port = AsyncMock(return_value=listener)
-        await transport.forward_port("10.0.0.1", 9000)
+        await transport.forward_port("10.0.0.1", dest_port=9000)
 
-        transport.unforward_port("10.0.0.1", 9999)
-        transport.unforward_port("10.0.0.2", 9000)
-        transport.unforward_port("10.0.0.1", 9000)
-        transport.unforward_port("10.0.0.1", 9000)
+        transport.unforward_port("10.0.0.1", dest_port=9999)
+        transport.unforward_port("10.0.0.2", dest_port=9000)
+        transport.unforward_port("10.0.0.1", dest_port=9000)
+        transport.unforward_port("10.0.0.1", dest_port=9000)
 
         listener.close.assert_called_once()
 
@@ -199,7 +199,7 @@ class TestForwardPort:
         listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=listener)
 
-        await transport.forward_port("10.0.0.1", 9000)
+        await transport.forward_port("10.0.0.1", dest_port=9000)
 
         bind_host = mock_conn.forward_local_port.await_args.args[0]
         assert bind_host == "localhost", (
@@ -225,7 +225,9 @@ class TestForwardPort:
 
         mock_conn.forward_local_port = AsyncMock(side_effect=slow_forward)
 
-        ports = await asyncio.gather(*(transport.forward_port("10.0.0.1", 9000) for _ in range(4)))
+        ports = await asyncio.gather(
+            *(transport.forward_port("10.0.0.1", dest_port=9000) for _ in range(4))
+        )
 
         assert ports == [44444] * 4
         mock_conn.forward_local_port.assert_awaited_once()
@@ -252,7 +254,7 @@ class TestClose:
             listener.get_port.return_value = port
             listener.close = MagicMock()
             mock_conn.forward_local_port = AsyncMock(return_value=listener)
-            await transport.forward_port("10.0.0.1", port)
+            await transport.forward_port("10.0.0.1", dest_port=port)
             listeners.append(listener)
 
         await transport.close()
@@ -285,11 +287,11 @@ class TestClose:
         second.get_port.return_value = 22222
 
         mock_conn.forward_local_port = AsyncMock(return_value=first)
-        assert await transport.forward_port("10.0.0.1", 9000) == 11111
+        assert await transport.forward_port("10.0.0.1", dest_port=9000) == 11111
         await transport.close()
 
         mock_conn.forward_local_port = AsyncMock(return_value=second)
-        assert await transport.forward_port("10.0.0.1", 9000) == 22222, (
+        assert await transport.forward_port("10.0.0.1", dest_port=9000) == 22222, (
             "forward_port returned the closed listener's port after close()"
         )
 
@@ -310,7 +312,7 @@ class TestClose:
             listener = MagicMock()
             listener.get_port.return_value = port
             mock_conn.forward_local_port = AsyncMock(return_value=listener)
-            await transport.forward_port("10.0.0.1", port)
+            await transport.forward_port("10.0.0.1", dest_port=port)
             listeners.append(listener)
         listeners[0].close.side_effect = OSError("listener already gone")
 
@@ -445,7 +447,7 @@ class TestCloseRacesWithInFlightWork:
             return conn
 
         transport = _SshHopTransport(factory)
-        pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
+        pending = asyncio.create_task(transport.forward_port("10.0.0.1", dest_port=23))
         await reached.wait()
 
         await transport.close()
@@ -483,7 +485,7 @@ class TestCloseRacesWithInFlightWork:
         transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
-        pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
+        pending = asyncio.create_task(transport.forward_port("10.0.0.1", dest_port=23))
         await reached.wait()
 
         await transport.close()
@@ -521,7 +523,7 @@ class TestCloseRacesWithInFlightWork:
         transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
-        pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
+        pending = asyncio.create_task(transport.forward_port("10.0.0.1", dest_port=23))
         await reached.wait()
 
         try:
@@ -581,7 +583,7 @@ class TestCloseRacesWithInFlightWork:
 
         async def do_forward():
             try:
-                await transport.forward_port("10.0.0.1", 23)
+                await transport.forward_port("10.0.0.1", dest_port=23)
             finally:
                 bind_finished.set()
 
@@ -624,7 +626,7 @@ class TestCloseRacesWithInFlightWork:
             return child_conn
 
         child = _SshHopTransport(child_factory)
-        pending = asyncio.create_task(child.forward_port("10.0.0.1", 23))
+        pending = asyncio.create_task(child.forward_port("10.0.0.1", dest_port=23))
         await reached.wait()
 
         await child.close()
@@ -721,11 +723,11 @@ class TestCloseRacesWithInFlightWork:
         transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
-        first = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
+        first = asyncio.create_task(transport.forward_port("10.0.0.1", dest_port=23))
         await bind_started.wait()
         # Distinct destination, so the cache cannot short-circuit it, and the
         # tunnel is warm — so this queues on _forward_lock and nowhere else.
-        second = asyncio.create_task(transport.forward_port("10.0.0.1", 24))
+        second = asyncio.create_task(transport.forward_port("10.0.0.1", dest_port=24))
         await asyncio.sleep(0)
         assert transport._forward_lock.locked()
 

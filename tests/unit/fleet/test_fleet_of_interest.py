@@ -176,7 +176,7 @@ def oracle(world):
                 exclude_projects=tuple(case.exclude_projects or ()),
                 bootstrap=fake_bootstrap_result([world.projects[key] for key in case.project_keys]),
             )
-            surface = ctx if case.owner is None else ctx.for_project(case.owner)
+            surface = ctx if case.owner is None else ctx.for_project(name=case.owner)
             try:
                 walked = [
                     host.id
@@ -186,7 +186,7 @@ def oracle(world):
                     )
                 ]
             except ProjectScopeError:
-                assert not ctx.admissible_ids(case.owner, require_nonempty=False), case
+                assert not ctx.admissible_ids(owner=case.owner, require_nonempty=False), case
                 walked = None
             results.append((case, walked))
     return results
@@ -200,7 +200,7 @@ def _mismatches(candidate, world, oracle):
         try:
             got = candidate(
                 world.lab,
-                [world.projects[key] for key in case.project_keys],
+                projects=[world.projects[key] for key in case.project_keys],
                 owner=case.owner,
                 exclude_projects=(
                     None if case.exclude_projects is None else list(case.exclude_projects)
@@ -232,81 +232,81 @@ def _declares(project):
     return project.project_scope is not None
 
 
-def _mutant_no_declaration_is_empty(lab, projects, **kw):
+def _mutant_no_declaration_is_empty(lab, *, projects, **kw):
     """Axis: no project declared. Answers nothing instead of the whole lab."""
     if not any(_declares(project) for project in projects):
         return []
-    return fleet_of_interest(lab, projects, **kw)
+    return fleet_of_interest(lab, projects=projects, **kw)
 
 
-def _mutant_union_is_the_first_declarer(lab, projects, **kw):
+def _mutant_union_is_the_first_declarer(lab, *, projects, **kw):
     """Axis: several projects declared. The union keeps only the first declarer."""
     if kw["owner"] is None:
         first = next((project for project in projects if _declares(project)), None)
         projects = [project for project in projects if not _declares(project) or project is first]
-    return fleet_of_interest(lab, projects, **kw)
+    return fleet_of_interest(lab, projects=projects, **kw)
 
 
-def _mutant_undeclared_widens_the_union(lab, projects, **kw):
+def _mutant_undeclared_widens_the_union(lab, *, projects, **kw):
     """Axis: a declared project beside an undeclared one. The undeclared one restores the lab."""
     declaring = [project for project in projects if _declares(project)]
     if kw["owner"] is None and declaring and len(declaring) < len(projects):
         projects = [project for project in projects if not _declares(project)]
-    return fleet_of_interest(lab, projects, **kw)
+    return fleet_of_interest(lab, projects=projects, **kw)
 
 
-def _mutant_owner_ignored(lab, projects, **kw):
+def _mutant_owner_ignored(lab, *, projects, **kw):
     """Axis: owner set. Answers the union instead of the owner's fleet."""
-    return fleet_of_interest(lab, projects, **{**kw, "owner": None})
+    return fleet_of_interest(lab, projects=projects, **{**kw, "owner": None})
 
 
-def _mutant_exclude_ignored(lab, projects, **kw):
+def _mutant_exclude_ignored(lab, *, projects, **kw):
     """Axis: ``-E`` on a declaring project, without an owner. The switch does nothing."""
-    return fleet_of_interest(lab, projects, **{**kw, "exclude_projects": None})
+    return fleet_of_interest(lab, projects=projects, **{**kw, "exclude_projects": None})
 
 
-def _mutant_exclude_binds_the_owner(lab, projects, **kw):
+def _mutant_exclude_binds_the_owner(lab, *, projects, **kw):
     """Axis: ``-E`` on a declaring project, with that project as owner. The switch empties it."""
     switched = {normalize_name(name) for name in kw["exclude_projects"] or []}
     if kw["owner"] is not None and normalize_name(kw["owner"]) in switched:
         return []
-    return fleet_of_interest(lab, projects, **kw)
+    return fleet_of_interest(lab, projects=projects, **kw)
 
 
-def _mutant_exclude_not_normalized(lab, projects, **kw):
+def _mutant_exclude_not_normalized(lab, *, projects, **kw):
     """Axis: ``-E`` spelled differently from the name (``Every_A``). Only exact names count."""
     names = {project.name for project in projects}
     kept = [name for name in kw["exclude_projects"] or [] if name in names]
-    return fleet_of_interest(lab, projects, **{**kw, "exclude_projects": kept})
+    return fleet_of_interest(lab, projects=projects, **{**kw, "exclude_projects": kept})
 
 
-def _mutant_unknown_exclude_refused(lab, projects, **kw):
+def _mutant_unknown_exclude_refused(lab, *, projects, **kw):
     """Axis: an ``-E`` name that matches no project. The query validates it."""
     known = {normalize_name(project.name) for project in projects}
     if any(normalize_name(name) not in known for name in kw["exclude_projects"] or []):
         raise ValueError("unknown --exclude-projects name")
-    return fleet_of_interest(lab, projects, **kw)
+    return fleet_of_interest(lab, projects=projects, **kw)
 
 
-def _mutant_containers_flag_ignored(lab, projects, **kw):
+def _mutant_containers_flag_ignored(lab, *, projects, **kw):
     """Axis: container hosts with ``include_containers`` on. The flag does nothing."""
-    return fleet_of_interest(lab, projects, **{**kw, "include_containers": False})
+    return fleet_of_interest(lab, projects=projects, **{**kw, "include_containers": False})
 
 
-def _mutant_local_flag_ignored(lab, projects, **kw):
+def _mutant_local_flag_ignored(lab, *, projects, **kw):
     """Axis: ``local`` with ``include_local`` on. The flag does nothing."""
-    return fleet_of_interest(lab, projects, **{**kw, "include_local": False})
+    return fleet_of_interest(lab, projects=projects, **{**kw, "include_local": False})
 
 
-def _mutant_local_flag_bypasses_scope(lab, projects, **kw):
+def _mutant_local_flag_bypasses_scope(lab, *, projects, **kw):
     """Axis: a declaring scope that does NOT admit ``local``. The flag adds it anyway."""
-    got = fleet_of_interest(lab, projects, **kw)
+    got = fleet_of_interest(lab, projects=projects, **kw)
     if kw["include_local"] and "local" not in got:
         got = [*got, "local"]
     return got
 
 
-def _mutant_first_duplicate_wins(lab, projects, **kw):
+def _mutant_first_duplicate_wins(lab, *, projects, **kw):
     """Axis: two projects with the same name. The first one wins instead of the last."""
     seen = set()
     kept = []
@@ -314,7 +314,7 @@ def _mutant_first_duplicate_wins(lab, projects, **kw):
         if project.name not in seen:
             seen.add(project.name)
             kept.append(project)
-    return fleet_of_interest(lab, kept, **kw)
+    return fleet_of_interest(lab, projects=kept, **kw)
 
 
 _MUTANTS = {
@@ -348,29 +348,29 @@ def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(wo
     with pytest.raises(ProjectScopeError):
         list(ctx.all_hosts())
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_project("ghost").all_hosts())
-    assert fleet_of_interest(world.lab, [ghost]) == []
-    assert fleet_of_interest(world.lab, [ghost], owner="ghost") == []
+        list(ctx.for_project(name="ghost").all_hosts())
+    assert fleet_of_interest(world.lab, projects=[ghost]) == []
+    assert fleet_of_interest(world.lab, projects=[ghost], owner="ghost") == []
 
 
 def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world):
     ctx = install_scoped_context(world.lab, [])
     # The walk: no scope resolved, so an unknown owner falls back to the whole lab.
-    assert [host.id for host in ctx.for_project("x").all_hosts()] == ["h1", "h2", "h3"]
+    assert [host.id for host in ctx.for_project(name="x").all_hosts()] == ["h1", "h2", "h3"]
     # The query: the caller handed the projects over, so the whole lab would widen.
     with pytest.raises(
         ProjectScopeError, match=r"none of the projects\s+it was\s+given is named 'x'"
     ):
-        fleet_of_interest(world.lab, [], owner="x")
+        fleet_of_interest(world.lab, projects=[], owner="x")
 
     alpha = world.projects["alpha"]
     ctx = install_scoped_context(world.lab, [alpha])
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_project("x").all_hosts())
+        list(ctx.for_project(name="x").all_hosts())
     with pytest.raises(
         ProjectScopeError, match=r"none of the projects\s+it was\s+given is named 'x'"
     ):
-        fleet_of_interest(world.lab, [alpha], owner="x")
+        fleet_of_interest(world.lab, projects=[alpha], owner="x")
 
 
 def test_on_the_sentinel_lab_the_walk_takes_the_whole_lab_and_the_query_scopes_it(world):
@@ -379,7 +379,7 @@ def test_on_the_sentinel_lab_the_walk_takes_the_whole_lab_and_the_query_scopes_i
     ctx = OttoContext(lab=lab)
 
     assert [host.id for host in ctx.all_hosts()] == ["h1", "h2"]
-    assert fleet_of_interest(lab, [world.projects["alpha"]]) == ["h1"]
+    assert fleet_of_interest(lab, projects=[world.projects["alpha"]]) == ["h1"]
 
 
 # ── purity, and the one membership-flag rule ──────────────────────────────────
@@ -396,7 +396,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
     # that read the active context instead of its `lab` argument answers ["d1"].
     set_context(OttoContext(lab=_lab(("d1", "a"))))
 
-    got = fleet_of_interest(world.lab, [world.projects["alpha"]], include_containers=True)
+    got = fleet_of_interest(world.lab, projects=[world.projects["alpha"]], include_containers=True)
     assert got == ["h1", "h1.r1.api"]
 
     # The injection is live: the read the walk makes does reach the refusal.
@@ -421,9 +421,9 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
 
     expected = ["h1", "h3", "h1.r1.api", "local"]
     assert [host.id for host in ctx.all_hosts()] == expected
-    assert fleet_of_interest(world.lab, [plain]) == expected
+    assert fleet_of_interest(world.lab, projects=[plain]) == expected
     with pytest.raises(EmptySelectionError) as excinfo:
-        list(ctx.all_hosts(re.compile("h2")))
+        list(ctx.all_hosts(pattern=re.compile("h2")))
     assert excinfo.value.excluded_by == ["include_containers"]
 
 
@@ -433,6 +433,6 @@ def test_owner_is_not_normalized_in_the_query_or_the_walk(world):
     ctx = install_scoped_context(world.lab, projects)
 
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_project("Alpha").all_hosts())
+        list(ctx.for_project(name="Alpha").all_hosts())
     with pytest.raises(ProjectScopeError):
-        fleet_of_interest(world.lab, projects, owner="Alpha")
+        fleet_of_interest(world.lab, projects=projects, owner="Alpha")

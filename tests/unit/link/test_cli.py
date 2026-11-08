@@ -324,7 +324,7 @@ class TestScopedCli:
                 ["impair", "edge", "--delay", "200", "--port", "5201", "--proto", "tcp"],
             )
         assert result.exit_code == 0, result.output
-        assert mock.call_args.kwargs["selector"] == Selector(5201, "tcp")
+        assert mock.call_args.kwargs["selector"] == Selector(port=5201, proto="tcp")
 
     def test_impair_report_row_includes_selector(self) -> None:
         report = ImpairReport(
@@ -333,7 +333,7 @@ class TestScopedCli:
                 AppliedPlacement(
                     Placement("test1", "eth1.100", FlowDirection.A_TO_B),
                     ImpairmentParams(delay_ms=200.0),
-                    Selector(5201, "tcp"),
+                    Selector(port=5201, proto="tcp"),
                 ),
             ],
         )
@@ -377,7 +377,9 @@ class TestScopedCli:
                 ],
             )
         assert result.exit_code == 0, result.output
-        assert mock.call_args.kwargs["selector"] == Selector(5000, "tcp", end=5010, side="dst")
+        assert mock.call_args.kwargs["selector"] == Selector(
+            port=5000, proto="tcp", end=5010, side="dst"
+        )
 
     def test_bad_port_text_is_a_usage_error_naming_it(self) -> None:
         result = runner.invoke(link_app, ["impair", "edge", "--delay", "1", "--port", "5010:5000"])
@@ -418,7 +420,7 @@ class TestScopedCli:
         ):
             result = runner.invoke(link_app, ["repair", "edge", "--port", "53", "--proto", "udp"])
         assert result.exit_code == 0, result.output
-        assert mock.call_args.kwargs["selector"] == Selector(53, "udp")
+        assert mock.call_args.kwargs["selector"] == Selector(port=53, proto="udp")
 
     def test_repair_all_with_port_is_usage_error(self) -> None:
         result = runner.invoke(link_app, ["repair", "--all", "--port", "53"])
@@ -436,9 +438,9 @@ class TestScopedCli:
                 link_app, ["repair", "edge", "--port", "5000:5010", "--side", "src"]
             )
             assert result.exit_code == 0, result.output
-            assert mock.call_args.kwargs["selector"] == Selector(5000, end=5010, side="src")
+            assert mock.call_args.kwargs["selector"] == Selector(port=5000, end=5010, side="src")
             result = runner.invoke(link_app, ["repair", "edge", "--port", "5000:5000"])
-            assert mock.call_args.kwargs["selector"] == Selector(5000)
+            assert mock.call_args.kwargs["selector"] == Selector(port=5000)
 
     def test_repair_side_without_port_is_a_usage_error(self) -> None:
         result = runner.invoke(link_app, ["repair", "edge", "--side", "dst"])
@@ -453,8 +455,8 @@ class TestScopedCli:
             by_direction={
                 FlowDirection.A_TO_B: DirectionState(
                     scoped={
-                        Selector(5201, "tcp"): ImpairmentParams(delay_ms=200.0),
-                        Selector(53, "udp"): ImpairmentParams(loss_pct=5.0),
+                        Selector(port=5201, proto="tcp"): ImpairmentParams(delay_ms=200.0),
+                        Selector(port=53, proto="udp"): ImpairmentParams(loss_pct=5.0),
                     }
                 ),
                 FlowDirection.B_TO_A: DirectionState(foreign=True),
@@ -481,9 +483,9 @@ class TestScopedCli:
             by_direction={
                 FlowDirection.A_TO_B: DirectionState(
                     scoped={
-                        Selector(6000, "tcp"): ImpairmentParams(delay_ms=1.0),
-                        Selector(5000, end=5010, side="src"): ImpairmentParams(delay_ms=2.0),
-                        Selector(5000, side="dst"): ImpairmentParams(delay_ms=3.0),
+                        Selector(port=6000, proto="tcp"): ImpairmentParams(delay_ms=1.0),
+                        Selector(port=5000, end=5010, side="src"): ImpairmentParams(delay_ms=2.0),
+                        Selector(port=5000, side="dst"): ImpairmentParams(delay_ms=3.0),
                     }
                 ),
             },

@@ -326,11 +326,11 @@ class SocatCarrier(TunnelCarrier):
     def ingress_args(
         self,
         protocol: str,
+        *,
         service_port: int,
         bind_ip: str,
         next_ip: str,
         carrier_port: int,
-        *,
         idle_timeout: int | None = None,
     ) -> list[str]:
         """Delegate to :func:`ingress_socat_args` (the proven builder)."""
@@ -340,7 +340,7 @@ class SocatCarrier(TunnelCarrier):
 
     @override
     def relay_args(
-        self, protocol: str, carrier_port: int, next_ip: str, *, idle_timeout: int | None = None
+        self, protocol: str, *, carrier_port: int, next_ip: str, idle_timeout: int | None = None
     ) -> list[str]:
         """Delegate to :func:`relay_socat_args`."""
         return relay_socat_args(protocol, carrier_port, next_ip, idle_timeout=idle_timeout)
@@ -349,10 +349,10 @@ class SocatCarrier(TunnelCarrier):
     def egress_args(
         self,
         protocol: str,
+        *,
         service_port: int,
         deliver_ip: str,
         carrier_port: int,
-        *,
         idle_timeout: int | None = None,
     ) -> list[str]:
         """Delegate to :func:`egress_socat_args`."""

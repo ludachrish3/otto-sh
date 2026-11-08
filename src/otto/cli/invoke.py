@@ -967,7 +967,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     # `--lab` is not a hard-required Typer option (so lab-free subcommands can
     # run without it); build_lab refuses an empty selection (`no_labs`) before
     # any lab side effect, for everything that does need a lab.
-    lab = build_lab(projects, list(opts.labs or []))
+    lab = build_lab(projects, labs=list(opts.labs or []))
     # build_lab registered the declared container placeholders
 
     # Resolve reservation identity + backend (first project with a [reservations]
@@ -977,7 +977,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     from ..reservations.factory import build_reservation_gate
 
     reservation_gate = build_reservation_gate(
-        projects,
+        projects=projects,
         holder=opts.holder,
         skip_reservation_check=opts.skip_reservation_check,
         cwd_fallback=Path.cwd(),
@@ -1119,7 +1119,7 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     )
     labs = list(opts.labs or []) if opts is not None else []
     try:
-        check = check_projects(result, labs, selection)
+        check = check_projects(result=result, labs=labs, selection=selection)
     except ProjectLoadError as e:
         _echo_demotions(e.demoted)
         _echo_required(e.required)
@@ -1290,14 +1290,14 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     name = node.info_name or ""
     if name not in INSTRUCTIONS:
         return  # a statically-declared `run` child; nobody owns it
-    owner = INSTRUCTIONS.project(name)
+    owner = INSTRUCTIONS.project(name=name)
 
     from ..run_context import get_context
     from ..session.activation import check_instruction_active
     from ..session.errors import InstructionInactiveError
 
     try:
-        check_instruction_active(name, owner, get_context())
+        check_instruction_active(name=name, owner=owner, ctx=get_context())
     except InstructionInactiveError as e:
         # Through `fail`, never a hand-rolled `[red]` f-string: the message
         # interpolates a lab list and the literal table name `[project]`, and rich
@@ -1387,7 +1387,7 @@ def refuse_unsatisfied_dependencies() -> None:
     # handler included -- would delete as a style tag. Not the swallowed-record
     # reason, which the early console handler retired (spec 2026-08-30 §3.1).
     try:
-        warnings = check_dependencies(get_context())
+        warnings = check_dependencies(ctx=get_context())
     except DependencyRefusedError as e:
         for warning in e.warnings:
             typer.echo(f"warning: {warning}", err=True)

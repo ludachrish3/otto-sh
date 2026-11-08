@@ -31,7 +31,7 @@ class _Seam:
         self.loads: list[str] = []
         self.probes: list[str] = []
         self._check_passes = check_passes
-        self._lsmod = lsmod if lsmod is not None else Result(Status.Success, value=[])
+        self._lsmod = lsmod if lsmod is not None else Result(status=Status.Success, value=[])
         monkeypatch.setattr(host, "run", self._run)
         monkeypatch.setattr(host, "put", self._put)
         monkeypatch.setattr(host, "mkdir", self._mkdir)
@@ -42,15 +42,15 @@ class _Seam:
         self.ran.append(cmd)
         ok = cmd != _CHECK or self._check_passes
         return CommandResult(
-            Status.Success if ok else Status.Failed, command=cmd, retcode=0 if ok else 1
+            status=Status.Success if ok else Status.Failed, command=cmd, retcode=0 if ok else 1
         )
 
     async def _put(self, src, dest=None, *args, **kwargs):
         self.puts.append(Path(src))
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _mkdir(self, *args, **kwargs):
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
     async def _lsmod_read(self):
         self.probes.append("lsmod")
@@ -58,10 +58,11 @@ class _Seam:
             raise self._lsmod
         return self._lsmod
 
-    async def _load(self, artifact, module_name, *args, **kwargs):
+    async def _load(self, artifact, *, name, **kwargs):
+        module_name = name
         self.loads.append(module_name)
         self.probes.append("load")
-        return Result(Status.Success)
+        return Result(status=Status.Success)
 
 
 def _declared(tmp_path) -> DeclaredProduct:
@@ -113,7 +114,7 @@ async def test_a_declared_check_that_passes_skips_stage_and_install(tmp_path, mo
 async def test_a_kmod_probe_that_cannot_read_lsmod_installs(tmp_path, monkeypatch):
     product = _kmod(tmp_path)
     host = _host(product)
-    seam = _Seam(host, monkeypatch, lsmod=Result(Status.Failed, msg="lsmod: not found"))
+    seam = _Seam(host, monkeypatch, lsmod=Result(status=Status.Failed, msg="lsmod: not found"))
     result = await host.install()
     assert result.is_ok, result.msg
     assert seam.loads == [product.module_name]  # host.load was reached
@@ -124,7 +125,9 @@ async def test_a_kmod_probe_that_cannot_read_lsmod_installs(tmp_path, monkeypatc
 async def test_a_resident_kmod_is_passed_over(tmp_path, monkeypatch):
     product = _kmod(tmp_path)
     host = _host(product)
-    seam = _Seam(host, monkeypatch, lsmod=Result(Status.Success, value=[product.module_name]))
+    seam = _Seam(
+        host, monkeypatch, lsmod=Result(status=Status.Success, value=[product.module_name])
+    )
     result = await host.install()
     assert result.status is Status.Success
     assert seam.loads == []  # a second insmod would fail with "File exists"

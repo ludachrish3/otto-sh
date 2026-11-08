@@ -256,13 +256,13 @@ def _scoped_equivalent(expected: ScopedState, got: ScopedState) -> bool:
     if expected.kind == "whole":
         if expected.whole is None or got.whole is None:
             return expected.whole == got.whole
-        return equivalent(expected.whole, got.whole)
+        return equivalent(a=expected.whole, b=got.whole)
     if expected.kind == "scoped":
         if set(expected.selectors) != set(got.selectors):
             return False
         for selector, (band, params) in expected.selectors.items():
             got_band, got_params = got.selectors[selector]
-            if band != got_band or not equivalent(params, got_params):
+            if band != got_band or not equivalent(a=params, b=got_params):
                 return False
         return True
     return True  # "clean" and "foreign" carry no extra data beyond kind

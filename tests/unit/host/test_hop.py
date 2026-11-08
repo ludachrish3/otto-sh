@@ -58,7 +58,7 @@ def host() -> UnixHost:
     """A simple host with no hop."""
     return UnixHost(
         ip="10.0.0.1",
-        element=Element("target"),
+        element=Element(name="target"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -69,7 +69,7 @@ def hop_host() -> UnixHost:
     """A host configured with a hop."""
     return UnixHost(
         ip="10.0.0.2",
-        element=Element("target"),
+        element=Element(name="target"),
         creds=[Cred(login="user", password="pass")],
         hop="jumpbox",
         log=LogMode.QUIET,
@@ -276,7 +276,7 @@ class TestConnectionManagerTunnel:
         with patch("asyncssh.connect", fake_connect):
             jumpbox = UnixHost(
                 ip="10.10.0.1",
-                element=Element("jumpbox"),
+                element=Element(name="jumpbox"),
                 creds=[
                     Cred(login="root", password="tn", protocols=["telnet"]),
                     Cred(login="ops", password="ops-pw", protocols=["ssh"]),
@@ -286,7 +286,7 @@ class TestConnectionManagerTunnel:
             )
             target = UnixHost(
                 ip="10.10.0.2",
-                element=Element("target"),
+                element=Element(name="target"),
                 creds=[Cred(login="user", password="pass")],
                 hop="jumpbox",
                 log=LogMode.QUIET,
@@ -337,14 +337,14 @@ class TestConnectionManagerTunnel:
         ):
             jumpbox = UnixHost(
                 ip="10.10.0.1",
-                element=Element("jumpbox"),
+                element=Element(name="jumpbox"),
                 creds=[Cred(login="admin", password="secret")],
                 ssh_options=SshOptions(port=2222, kex_algs=["diffie-hellman-group14-sha1"]),
                 log=LogMode.QUIET,
             )
             target = UnixHost(
                 ip="10.10.0.2",
-                element=Element("target"),
+                element=Element(name="target"),
                 creds=[Cred(login="user", password="pass")],
                 hop="jumpbox",
                 log=LogMode.QUIET,
@@ -397,7 +397,7 @@ class TestConnectionManagerTunnel:
 
         jumpbox = UnixHost(
             ip="10.10.0.1",
-            element=Element("jumpbox"),
+            element=Element(name="jumpbox"),
             creds=[Cred(login="admin", password="secret")],
             ssh_options=SshOptions(
                 local_forwards=[
@@ -413,14 +413,14 @@ class TestConnectionManagerTunnel:
         )
         target1 = UnixHost(
             ip="10.10.0.2",
-            element=Element("target1"),
+            element=Element(name="target1"),
             creds=[Cred(login="user", password="pass")],
             hop="jumpbox",
             log=LogMode.QUIET,
         )
         target2 = UnixHost(
             ip="10.10.0.3",
-            element=Element("target2"),
+            element=Element(name="target2"),
             creds=[Cred(login="user", password="pass")],
             hop="jumpbox",
             log=LogMode.QUIET,
@@ -499,7 +499,7 @@ class TestConnectionManagerTunnel:
             shell = MockSession.return_value
             shell._ensure_initialized = AsyncMock()
             shell.close = AsyncMock()
-            await mgr.open_session("__exec_pool_1__")
+            await mgr.open_session(name="__exec_pool_1__")
 
         MockTelnet.assert_called_once()
         call = MockTelnet.call_args
@@ -595,7 +595,7 @@ class TestConnectionManagerTunnel:
             host_id="test",
             hop=_SshHopTransport(factory),
         )
-        port = await cm.forward_port(8080)
+        port = await cm.forward_port(dest_port=8080)
         assert port == 55555
         mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 8080)
 
@@ -609,7 +609,7 @@ class TestConnectionManagerTunnel:
             host_id="test",
         )
         with pytest.raises(RuntimeError, match="requires a tunnel"):
-            await cm.forward_port(8080)
+            await cm.forward_port(dest_port=8080)
 
 
 # ---------------------------------------------------------------------------
@@ -722,7 +722,7 @@ class TestTunnelCleanup:
             host_id="test",
             hop=_SshHopTransport(factory),
         )
-        await cm.forward_port(8080)
+        await cm.forward_port(dest_port=8080)
         await cm.close()
         mock_listener.close.assert_called_once()
 
@@ -736,7 +736,7 @@ class TestRebuildConnections:
     def test_rebuild_adds_tunnel(self):
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("target"),
+            element=Element(name="target"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
@@ -749,7 +749,7 @@ class TestRebuildConnections:
     def test_rebuild_removes_tunnel(self):
         host = UnixHost(
             ip="10.0.0.1",
-            element=Element("target"),
+            element=Element(name="target"),
             creds=[Cred(login="user", password="pass")],
             hop="some_hop",
             log=LogMode.QUIET,
@@ -827,12 +827,14 @@ class TestNetcatGetThroughHop:
             mock_connect.return_value = (mock_reader, mock_writer)
 
             dst = tmp_path
-            res = await ft.get_files([Path("/remote/a.txt")], dst, show_progress=False)
+            res = await ft.get_files(
+                src_files=[Path("/remote/a.txt")], dest_dir=dst, show_progress=False
+            )
             status, err = res.status, res.msg
 
             assert status == Status.Success, f"Unexpected error: {err}"
             # Verify port forwarding was used.
-            mock_connections.forward_port.assert_awaited_once_with(55555)
+            mock_connections.forward_port.assert_awaited_once_with(dest_port=55555)
             # Verify connection went through the forwarded port.
             mock_connect.assert_awaited_once()
             call_args = mock_connect.call_args
@@ -908,7 +910,9 @@ class TestNetcatGetThroughHop:
 
             mock_start_server.side_effect = fake_start_server
 
-            res = await ft.get_files([Path("/remote/a.txt")], tmp_path, show_progress=False)
+            res = await ft.get_files(
+                src_files=[Path("/remote/a.txt")], dest_dir=tmp_path, show_progress=False
+            )
             status, err = res.status, res.msg
 
             assert status == Status.Success, f"Unexpected error: {err}"
@@ -979,10 +983,10 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                await ft.put_files(src_files=[tmp_path], dest_dir=Path("/tmp"), show_progress=False)
 
                 # Verify port forwarding was used
-                mock_connections.forward_port.assert_awaited_once_with(55555)
+                mock_connections.forward_port.assert_awaited_once_with(dest_port=55555)
                 # Verify connection went to localhost via the forwarded port
                 mock_connect.assert_awaited_once()
                 call_args = mock_connect.call_args
@@ -1055,7 +1059,7 @@ class TestNetcatPutThroughHop:
 
                 mock_connect.side_effect = fake_connect
 
-                await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                await ft.put_files(src_files=[tmp_path], dest_dir=Path("/tmp"), show_progress=False)
 
                 # Verify direct connection (no forward_port called)
                 mock_connections.forward_port.assert_not_awaited()
@@ -1084,14 +1088,14 @@ class TestCycleDetection:
 
         host_a = UnixHost(
             ip="10.0.0.1",
-            element=Element("hostA"),
+            element=Element(name="hostA"),
             creds=[Cred(login="user", password="pass")],
             hop="hostb",
             log=LogMode.QUIET,
         )
         host_b = UnixHost(
             ip="10.0.0.2",
-            element=Element("hostB"),
+            element=Element(name="hostB"),
             creds=[Cred(login="user", password="pass")],
             hop="hosta",
             log=LogMode.QUIET,
@@ -1130,13 +1134,13 @@ class TestCycleDetection:
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             jumpbox = UnixHost(
                 ip="10.10.0.1",
-                element=Element("jumpbox"),
+                element=Element(name="jumpbox"),
                 creds=[Cred(login="admin", password="secret")],
                 log=LogMode.QUIET,
             )
             target = UnixHost(
                 ip="10.10.0.2",
-                element=Element("target"),
+                element=Element(name="target"),
                 creds=[Cred(login="user", password="pass")],
                 hop="jumpbox",
                 log=LogMode.QUIET,
@@ -1181,7 +1185,7 @@ class TestStandaloneHostHopResolution:
             # Build the hop TARGET and add it to a Lab.
             jumpbox = UnixHost(
                 ip="10.20.0.1",
-                element=Element("jumpbox"),
+                element=Element(name="jumpbox"),
                 creds=[Cred(login="admin", password="secret")],
                 log=LogMode.QUIET,
             )
@@ -1196,7 +1200,7 @@ class TestStandaloneHostHopResolution:
                 # Its _lab remains None; the hop target must come from the active context.
                 standalone = UnixHost(
                     ip="10.20.0.2",
-                    element=Element("target"),
+                    element=Element(name="target"),
                     creds=[Cred(login="user", password="pass")],
                     hop="jumpbox",
                     log=LogMode.QUIET,

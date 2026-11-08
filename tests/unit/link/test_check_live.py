@@ -84,9 +84,9 @@ class FakeManage:
     async def impair_link(
         self,
         _lab: object,
-        _ident: str,
-        params: ImpairmentParams,
         *,
+        ident: str,
+        params: ImpairmentParams,
         from_host: str | None = None,
         expire: int | None = None,
         selector: Selector | None = None,
@@ -103,18 +103,18 @@ class FakeManage:
             )
         imp, dev = NetEmImpairer(), self._dev(d)
         if selector is None:
-            self._host(d).netem(imp.apply_command(dev, params))
+            self._host(d).netem(imp.apply_command(dev, params=params))
             self.states[d] = DirectionState(whole=params)
             return
         self._host(d).netem(
-            imp.scoped_root_command(dev),
-            imp.scoped_band_command(dev, FIRST_SELECTOR_BAND, params),
-            *imp.scoped_filter_commands(dev, FIRST_SELECTOR_BAND, selector),
+            imp.scoped_root_command(netdev=dev),
+            imp.scoped_band_command(netdev=dev, band=FIRST_SELECTOR_BAND, params=params),
+            *imp.scoped_filter_commands(netdev=dev, band=FIRST_SELECTOR_BAND, selector=selector),
         )
         self.states[d] = DirectionState(scoped={selector: params})
 
     async def repair_link(
-        self, _lab: object, _ident: str, *, selector: Selector | None = None
+        self, _lab: object, *, ident: str, selector: Selector | None = None
     ) -> None:
         self.calls.append(Call("repair", selector=selector))
         for d, state in self.states.items():
@@ -164,7 +164,7 @@ def _verdicts(report: LinkCheckReport, host_id: str) -> dict[str, Verdict]:
 async def test_live_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     lab, test1, test2, _ = bed()
     fake = _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True)
+    report = await check_link(lab=lab, ident="edge", live=True)
     for host_id in ("test1", "test2"):
         assert _verdicts(report, host_id) == dict.fromkeys(LIVE_FEATURES, Verdict.PASS), _live(
             report, host_id
@@ -198,7 +198,7 @@ async def test_live_refuses_to_touch_an_already_impaired_link(
     users = DirectionState(whole=ImpairmentParams(delay_ms=10.0))
     fake = _fake(monkeypatch, lab)
     fake.states[B_TO_A] = users  # the OTHER direction: a bare repair would clear it too
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     assert sorted(rows) == sorted(LIVE_FEATURES)
     assert {r.verdict for r in rows.values()} == {Verdict.SKIPPED}
@@ -214,7 +214,7 @@ async def test_live_runs_directions_one_at_a_time_with_expire_60_and_repairs_in_
 ) -> None:
     lab, *_ = bed()
     fake = _fake(monkeypatch, lab)
-    await check_link(lab, "edge", live=True)
+    await check_link(lab=lab, ident="edge", live=True)
     impairs = fake.impairs()
     assert len(impairs) == 2 * 5, "five steps per direction"
     assert {c.expire for c in impairs} == {60}
@@ -235,7 +235,7 @@ async def test_safety_refusal_skips_the_direction_and_names_the_rule(
     lab, *_ = bed()
     rule = "test1/eth1.100 is test1's management interface — refusing to impair it"
     fake = _fake(monkeypatch, lab, refuse={"test1": rule})
-    report = await check_link(lab, "edge", live=True)
+    report = await check_link(lab=lab, ident="edge", live=True)
     refused = _live(report, "test1")
     assert {r.verdict for r in refused.values()} == {Verdict.SKIPPED}
     assert {r.hint for r in refused.values()} == {rule}
@@ -249,7 +249,7 @@ async def test_safety_refusal_skips_the_direction_and_names_the_rule(
 async def test_verify_mismatch_fails_read_back_only(monkeypatch: pytest.MonkeyPatch) -> None:
     lab, *_ = bed()
     _fake(monkeypatch, lab, unverified=RANGE_SELECTOR)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     assert rows["read-back"].verdict is Verdict.FAIL
     assert rows["read-back"].detail is not None
@@ -266,7 +266,7 @@ async def test_sandbox_failure_skips_the_live_row(monkeypatch: pytest.MonkeyPatc
     lab, test1, *_ = bed()
     test1.answer("netem rate", "Error: Specified qdisc kind is unknown.", ok=False)
     fake = _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True)
+    report = await check_link(lab=lab, ident="edge", live=True)
     [sandbox_rate] = [r for r in report.hosts[0].sandbox if r.feature == "rate"]
     assert sandbox_rate.verdict is Verdict.UNSUPPORTED, (
         "the premise: rate failed in test1's sandbox"
@@ -285,7 +285,7 @@ async def test_listeners_are_killed_even_when_a_step_raises(
     lab, _, test2, _ = bed()
     fake = _fake(monkeypatch, lab, unreachable_on_rate=True)
     with pytest.raises(LinkHostUnreachableError):
-        await check_link(lab, "edge", live=True, from_host="test1")
+        await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     listeners = [c for c in test2.commands if "TCP-LISTEN" in c]
     assert len(listeners) == 3, "the far endpoint carries the echo listeners"
     tag = listeners[0].split("exec -a ")[1].split()[0]
@@ -307,7 +307,7 @@ async def test_heal_check_fails_read_back_when_state_remains(
     lab, *_ = bed()
     stuck = ImpairmentParams(delay_ms=LIVE_DELAY_MS)
     fake = _fake(monkeypatch, lab, stuck=[stuck])
-    report = await check_link(lab, "edge", live=True)
+    report = await check_link(lab=lab, ident="edge", live=True)
     assert fake.states[A_TO_B] == DirectionState(whole=stuck), "the premise: it did not heal"
     assert len(fake.impairs()) == 1, "no step ran after the failed repair"
     a_rows, b_rows = _live(report, "test1"), _live(report, "test2")
@@ -342,7 +342,7 @@ class TestTheListenerSweepGoesByAge:
             "4243 00:03 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n",
         )
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         said = (
             "swept otto-check process otto-check-abc123 on test2 "
             "(earlier or concurrent run, started 120 min ago)"
@@ -359,7 +359,7 @@ class TestTheListenerSweepGoesByAge:
         lab, _, test2, _ = bed()
         test2.answer("ps -eo pid=", "4242 00:40 socat PIPE otto-check-abc123\n")
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         assert report.live_swept == [
             (
                 "left otto-check process otto-check-abc123 on test2 "
@@ -375,7 +375,7 @@ class TestTheListenerSweepGoesByAge:
         lab, _, test2, _ = bed()
         test2.answer("ps -eo pid=", "4242 ? socat PIPE otto-check-abc123\n")
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         assert report.live_swept == [
             (
                 "swept otto-check process otto-check-abc123 on test2 "
@@ -392,7 +392,7 @@ class TestTheListenerSweepGoesByAge:
         lab, _, test2, _ = bed()
         test2.answer("ps -eo pid=", "@ps-failed\n")
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         assert report.live_swept == ["could not list processes on test2; sweep skipped"]
         assert not any(c.startswith("kill ") for c in test2.commands)
 
@@ -408,7 +408,7 @@ class TestTheListenerSweepGoesByAge:
             "4242 00:40 otto-check-abc123 TCP-LISTEN:5299,bind=10.10.202.12,fork,reuseaddr PIPE\n",
         )
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         assert report.live_swept == [
             (
                 "left otto-check process otto-check-abc123 on test2 "
@@ -437,7 +437,7 @@ class TestTheListenerSweepGoesByAge:
             + ours,
         )
         _fake(monkeypatch, lab)
-        report = await check_link(lab, "edge", live=True, from_host="test1")
+        report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
         assert not [line for line in report.live_swept if line.startswith("reusing")]
 
     @pytest.mark.parametrize(
@@ -507,7 +507,7 @@ async def test_a_far_host_missing_from_the_lab_skips_its_direction(
     lab, *_ = bed()
     del lab.hosts["test2"]
     fake = _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     assert {r.verdict for r in rows.values()} == {Verdict.SKIPPED}
     assert {r.hint for r in rows.values()} == {
@@ -524,7 +524,7 @@ async def test_a_far_endpoint_without_an_ip_skips_its_direction(
     unaddressed = Link(a=EDGE.a, b=dataclasses.replace(EDGE.b, ip=""), name="noip")
     lab.links.append(unaddressed)
     fake = _fake(monkeypatch, lab, unaddressed)
-    report = await check_link(lab, "noip", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="noip", live=True, from_host="test1")
     rows = _live(report, "test1")
     assert {r.verdict for r in rows.values()} == {Verdict.SKIPPED}
     [hint] = {r.hint for r in rows.values()}
@@ -539,7 +539,7 @@ async def test_a_noisy_live_control_leaves_measured_rows_unmeasured(
 ) -> None:
     lab, *_ = bed(noisy=True)
     _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     for name in ("delay", "port range", "side", "rate", "loss"):
         assert rows[name].verdict is Verdict.UNMEASURED, name
@@ -569,7 +569,7 @@ async def test_live_listeners_bind_the_far_endpoints_link_address(
     lab, _, test2, _ = bed(fingerprint=fingerprint)
     test2.fingerprint = fingerprint
     _fake(monkeypatch, lab)
-    await check_link(lab, "edge", live=True, from_host="test1")
+    await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     listeners = [c for c in test2.commands if c.startswith("setsid bash -c ")]
     assert len(listeners) == 3
     for cmd in listeners:
@@ -587,7 +587,7 @@ async def test_a_far_endpoint_without_bash_is_missing_tool(
     lab, _, test2, _ = bed()
     test2.fingerprint = MODERN.replace("tool:bash=1", "tool:bash=0")
     _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     for name in ("port range", "side", "rate"):
         assert rows[name].verdict is Verdict.UNMEASURED, name
@@ -603,7 +603,7 @@ async def test_a_socat_probe_host_without_bash_is_missing_tool(
     """The socat client's clock is bash's; the far end has bash, the probing end does not."""
     lab, test1, test2, _ = bed(fingerprint=MODERN.replace("tool:bash=1", "tool:bash=0"))
     _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     for name in ("port range", "side", "rate"):
         assert rows[name].verdict is Verdict.UNMEASURED, name
@@ -619,7 +619,7 @@ async def test_a_foreign_qdisc_is_named_and_no_repair_is_suggested(
     lab, *_ = bed()
     fake = _fake(monkeypatch, lab)
     fake.states[B_TO_A] = DirectionState(foreign=True)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
+    report = await check_link(lab=lab, ident="edge", live=True, from_host="test1")
     rows = _live(report, "test1")
     assert {r.verdict for r in rows.values()} == {Verdict.SKIPPED}
     [hint] = {r.hint for r in rows.values()}
@@ -665,7 +665,7 @@ class TestEveryCommandSurvivesElevation:
             test2.fingerprint = fingerprint
             test2.answer("ps -eo pid=", "4242 02:00:00 socat PIPE otto-check-abc123\n")
             _fake(monkeypatch, lab)
-            await check_link(lab, "edge", live=True)
+            await check_link(lab=lab, ident="edge", live=True)
             raw += test1.raw_commands + test2.raw_commands
         return list(dict.fromkeys(raw))
 

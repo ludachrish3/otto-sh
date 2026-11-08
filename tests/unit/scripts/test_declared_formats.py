@@ -110,7 +110,5 @@ def test_each_format_module_imports_only_the_standard_library(module):
     # ``typing_extensions`` is the typing backport otto's 3.10 floor needs for
     # ``final`` (keyword-only design §4.2); it has no dependencies of its own and
     # is the one package a dependency-light module may import (dump spec §13).
-    foreign = [
-        m for m in not_stdlib if m.split(".")[0] not in ("otto", "typing_extensions")
-    ]
+    foreign = [m for m in not_stdlib if m.split(".")[0] not in ("otto", "typing_extensions")]
     assert (otto_extra, foreign) == ([], [])

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def host_summaries(
-    repository: LabRepository, inventory: "Inventory | None" = None
+    *, repository: LabRepository, inventory: "Inventory | None" = None
 ) -> list[HostSummary]:
     """Every host *repository* knows — cheaply when it can, correctly always.
 
@@ -68,14 +68,14 @@ def host_summaries(
                 docker_capable=bool(getattr(host, "docker_capable", False)),
                 docker_priority=int(getattr(host, "docker_priority", 0)),
                 os_type=getattr(host, "os_type", None),
-                logins=logins_of_creds(getattr(host, "creds", None) or []),
+                logins=logins_of_creds(creds=getattr(host, "creds", None) or []),
             )
     return sorted(by_id.values(), key=lambda s: s.id)
 
 
-def list_host_ids(repository: LabRepository) -> list[str]:
+def list_host_ids(*, repository: LabRepository) -> list[str]:
     """Every host id *repository* knows, sorted.
 
     The id-only view of :func:`host_summaries`.
     """
-    return [summary.id for summary in host_summaries(repository)]
+    return [summary.id for summary in host_summaries(repository=repository)]
