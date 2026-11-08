@@ -19,6 +19,7 @@ import {
 
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
+import ottoMark from "../assets/otto-mark.png";
 import { useIsPaused, useReviewStore } from "../data/reviewStore";
 import { SearchTrigger } from "../ui/SearchTrigger";
 import { EXPORT_BINDING, formatBinding, IMPORT_BINDING, PALETTE_BINDING } from "../ui/shortcuts";
@@ -41,9 +42,15 @@ export function AppBar() {
     >
       <div className="flex items-center gap-3">
         <div data-testid="brand" className="flex items-center gap-2 text-sm font-semibold">
-          <span aria-hidden className="text-brand-500">
-            ⬡
-          </span>
+          {/* Same file as index.html's tab favicon; Vite emits it once. A
+              decorative background, not an <img>: the mark says nothing the
+              "otto monitor" text beside it doesn't already. */}
+          <span
+            aria-hidden
+            data-testid="brand-mark"
+            className="size-6 bg-contain bg-center bg-no-repeat"
+            style={{ backgroundImage: `url(${ottoMark})` }}
+          />
           otto monitor
         </div>
         {/* CommandLayer only mounts inside App's hasData branch (no
