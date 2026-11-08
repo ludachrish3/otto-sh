@@ -670,12 +670,14 @@ _RENDERED_PAGES = {
     "scripts.render_kmodcov_matrix": "docs/cli/cov/instrumenting/kmodcov-matrix.md",
     "scripts.render_proven_range": "docs/cli/known-good.md",
     "scripts.render_module_graph": "docs/architecture/modules.md",
+    "scripts.render_python_badge": "docs/_static/generated/python-badge.svg",
 }
-"""Each git-ignored page rendered at build time, keyed by the renderer that writes it.
+"""Each git-ignored page (or page asset) rendered at build time, keyed by its renderer.
 
 Their sources are schemas/support_matrix.json, schemas/kmodcov_matrix.json,
-src/otto/check/proven.json and tach.toml. Makefile SPHINX_SRCS lists every
-source and renderer, so editing one re-triggers the build.
+src/otto/check/proven.json, tach.toml and pyproject.toml's Python classifiers.
+Makefile SPHINX_SRCS lists every source and renderer, so editing one re-triggers
+the build.
 """
 
 

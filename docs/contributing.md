@@ -1710,6 +1710,20 @@ Not every terminal block is captured: no harness captures
 nothing keeps its box art in step with the code — its columns and values are
 the contract.
 
+### Images ship with the docs
+
+Every image a page shows is a file in the tree, never an http(s) URL: the
+release's offline docs tarball (see
+[Offline documentation](installation.md#offline-documentation)) is read
+inside an air gap, where a hotlinked image is a broken one.
+`tests/unit/docs/test_docs_images_are_local.py` fails on a remote image in any
+docs source. Committed artwork (the index page's hero) lives in
+`docs/_static/`; anything derived from the tree is rendered at build time
+into `docs/_static/generated/` instead. The overview's supported-Python badge is
+one: `scripts/render_python_badge.py` draws it from `pyproject.toml`'s
+`Programming Language :: Python :: 3.X` classifiers, so adding or dropping a
+Python changes the badge with no docs edit.
+
 ### Installation page gates
 
 Two tables on {doc}`installation` are gated rather than hand-maintained, both
