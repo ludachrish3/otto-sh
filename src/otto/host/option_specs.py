@@ -11,6 +11,7 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, SecretStr, ValidationInfo, field_validator
+from typing_extensions import final
 
 from ..models.base import OttoModel
 from . import options as rt
@@ -40,6 +41,7 @@ def _extra_names_no_field(
     return extra
 
 
+@final
 class SshOptionsSpec(OttoModel):
     """Boundary spec for the SSH connection options table (``[ssh_options]`` in lab data).
 
@@ -107,6 +109,7 @@ class SshOptionsSpec(OttoModel):
         )
 
 
+@final
 class FtpOptionsSpec(OttoModel):
     """Boundary spec for the FTP transfer options table (``[ftp_options]`` in lab data).
 
@@ -146,6 +149,7 @@ class FtpOptionsSpec(OttoModel):
         )
 
 
+@final
 class SftpOptionsSpec(OttoModel):
     """Boundary spec for the SFTP transfer options table (``[sftp_options]`` in lab data).
 
@@ -178,6 +182,7 @@ class SftpOptionsSpec(OttoModel):
         )
 
 
+@final
 class ScpOptionsSpec(OttoModel):
     """Boundary spec for the SCP transfer options table (``[scp_options]`` in lab data).
 
@@ -213,6 +218,7 @@ class ScpOptionsSpec(OttoModel):
         )
 
 
+@final
 class TelnetOptionsSpec(OttoModel):
     """Boundary spec for the Telnet terminal options table (``[telnet_options]`` in lab data).
 
@@ -333,6 +339,7 @@ class ConsoleOptionsSpec(OttoModel):
         )
 
 
+@final
 class NcOptionsSpec(OttoModel):
     """Boundary spec for the netcat (nc) transfer options table (``[nc_options]`` in lab data).
 
@@ -368,6 +375,7 @@ class NcOptionsSpec(OttoModel):
         )
 
 
+@final
 class SnmpOptionsSpec(OttoModel):
     """Boundary spec for the SNMP monitor options table (``[snmp]`` in lab data).
 
@@ -398,6 +406,7 @@ class SnmpOptionsSpec(OttoModel):
         )
 
 
+@final
 class TftpOptionsSpec(OttoModel):
     """Boundary spec for the TFTP transfer options table (``[tftp_options]`` in lab data).
 

@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from typing_extensions import final
 
 # anchor_path lives in ..utils (stdlib-only, imports nothing from otto) so
 # the runtime readers that need it (coverage, reservations) never have to
@@ -116,6 +117,7 @@ def _settings_where(info: ValidationInfo) -> str:
     return f"{Path(root) / TOML_SETTINGS_PATH}: "
 
 
+@final
 class DockerImageSpec(OttoModel):
     """Boundary spec for a ``[[docker.images]]`` entry in ``settings.toml``.
 
@@ -179,6 +181,7 @@ class DockerImageSpec(OttoModel):
         return image
 
 
+@final
 class DockerComposeSpec(OttoModel):
     """Boundary spec for a ``[[docker.composes]]`` entry in ``settings.toml``.
 
@@ -294,6 +297,7 @@ class DockerUseCaseSpec(OttoModel):
         )
 
 
+@final
 class DockerSettingsSpec(OttoModel):
     """Boundary spec for the ``[docker]`` section of ``settings.toml``.
 
@@ -382,6 +386,7 @@ class MonitorSettingsSpec(OttoModel):
         return MonitorSettings(tls_cert=self.tls_cert, tls_key=self.tls_key)
 
 
+@final
 class OsProfileSpec(OttoModel):
     """A named ``[os_profiles.<name>]`` bundle: a ``base`` host-class plus raw default field values.
 
@@ -401,6 +406,7 @@ class OsProfileSpec(OttoModel):
         return dict(self.model_extra or {})
 
 
+@final
 class ReservationConfigSpec(OttoModel):
     """The otto-owned ``[reservations]`` envelope: ``backend`` + optional ``url``.
 
@@ -589,6 +595,7 @@ def _iso8601_utc(value: object) -> object:
     return dt
 
 
+@final
 class ReservationEntry(OttoModel):
     """A single reservation record: the holder, the reserved resource names, and an optional expiry.
 
@@ -606,6 +613,7 @@ class ReservationEntry(OttoModel):
         return _iso8601_utc(v)
 
 
+@final
 class ReservationFile(OttoModel):
     """The ``version: 1`` JSON reservation file the built-in JSON backend reads."""
 
@@ -1104,6 +1112,7 @@ class DeclaredEntrySpec(OttoModel):
         )
 
 
+@final
 class SettingsModel(OttoModel):
     """Boundary model for a project's ``.otto/settings.toml``.
 
@@ -1278,6 +1287,7 @@ class UserSettingsModel(OttoModel):
 # ---------------------------------------------------------------------------
 
 
+@final
 class OttoEnvSettings(BaseSettings):
     """Typed view of the ``OTTO_*`` and ``OTTOPATH`` environment; the one source of otto's env vars.
 

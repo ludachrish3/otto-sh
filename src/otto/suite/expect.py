@@ -39,7 +39,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Protocol, runtime_checkable
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from otto.utils import ellipsize
 
@@ -246,6 +246,7 @@ def _values_line(frame: FrameType, names: list[str]) -> str | None:
     return ", ".join(rendered) or None
 
 
+@final
 class ExpectCollector:
     """Collects non-fatal expectation failures.
 

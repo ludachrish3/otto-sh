@@ -1120,5 +1120,5 @@ class TelnetClient(_StreamHolder):
         await self.connect()
         return self
 
-    async def __aexit__(self, *args: object) -> None:
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()

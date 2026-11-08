@@ -52,6 +52,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from typing_extensions import final
 
 from .base import OttoModel
 from .event_style import (
@@ -62,6 +63,7 @@ from .event_style import (
 )
 
 
+@final
 class MetricPoint(OttoModel):
     """A single charted sample: timestamp, numeric value, optional hover meta.
 
@@ -140,6 +142,7 @@ class TabSpec(OttoModel):
     columns: list[str] | None = None
 
 
+@final
 class MonitorMeta(OttoModel):
     """The typed internal contract: hosts, chart specs, and tab layout.
 
@@ -177,6 +180,7 @@ class RowModel(OttoModel):
     model_config = ConfigDict(extra="ignore")
 
 
+@final
 class MetricRecord(RowModel):
     """One ``metrics`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
 
@@ -201,6 +205,7 @@ class MetricRecord(RowModel):
     with the backend catch-up (spec §7)."""
 
 
+@final
 class EventRecord(RowModel):
     """One ``events`` row at the JSON / SQLite **import** boundary.
 
@@ -389,6 +394,7 @@ class EventRevertBody(OttoModel):
     write: EventRecord | None
 
 
+@final
 class LogEventRecord(RowModel):
     """One ``log_events`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
 
@@ -404,6 +410,7 @@ class LogEventRecord(RowModel):
     fields: dict[str, str] = Field(default_factory=dict)
 
 
+@final
 class ElementRecord(RowModel):
     """One optional ``lab.elements`` entry in the export snapshot.
 
@@ -420,6 +427,7 @@ class ElementRecord(RowModel):
     description: str | None = None
 
 
+@final
 class HostSnapshot(RowModel):
     """The view-relevant subset of a host's config, frozen into a session.
 
@@ -443,6 +451,7 @@ class HostSnapshot(RowModel):
     is_virtual: bool = False
 
 
+@final
 class LinkEndpointSnapshot(RowModel):
     """One end of a snapshotted link (mirrors ``otto.link.model.LinkEndpoint``)."""
 
@@ -452,6 +461,7 @@ class LinkEndpointSnapshot(RowModel):
     port: int | None = None
 
 
+@final
 class LinkSnapshot(RowModel):
     """One static link frozen into a session's lab snapshot.
 
@@ -472,6 +482,7 @@ class LinkSnapshot(RowModel):
     impair: str | None = None
 
 
+@final
 class LabSnapshot(RowModel):
     """A session's lab config as it was at run time (spec 2026-07-10 §3)."""
 
@@ -480,6 +491,7 @@ class LabSnapshot(RowModel):
     links: list[LinkSnapshot] = Field(default_factory=list)
 
 
+@final
 class TunnelRecord(RowModel):
     """One live tunnel's last known state (spec 2026-07-16 §1).
 
@@ -500,6 +512,7 @@ class TunnelRecord(RowModel):
     age_seconds: float | None = None
 
 
+@final
 class ChartSpecRecord(ChartSpec):
     """Lenient read-back variant of :class:`ChartSpec` for export documents.
 
@@ -512,12 +525,14 @@ class ChartSpecRecord(ChartSpec):
     model_config = ConfigDict(extra="ignore")
 
 
+@final
 class TabSpecRecord(TabSpec):
     """Lenient read-back variant of :class:`TabSpec` (see :class:`ChartSpecRecord`)."""
 
     model_config = ConfigDict(extra="ignore")
 
 
+@final
 class SessionMeta(RowModel):
     """Presentation meta frozen at run time: chart/tab specs + intervals.
 
@@ -532,6 +547,7 @@ class SessionMeta(RowModel):
     tabs: list[TabSpecRecord] = Field(default_factory=list)
 
 
+@final
 class SessionRecord(RowModel):
     """One self-contained monitoring session: config snapshot + data.
 
@@ -561,6 +577,7 @@ class SessionRecord(RowModel):
     """
 
 
+@final
 class MonitorExport(RowModel):
     """The versioned historical-export document (spec 2026-07-10 §3).
 

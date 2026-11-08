@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from typing_extensions import final
+
 from ..models.inventory import InventoryRecord
 from ..utils import atomic_write_bytes
 from .json_backend import parse_inventory_document
@@ -104,6 +106,7 @@ def write_document_atomically(path: Path, doc: "Mapping[str, Any]") -> bytes:
     return payload
 
 
+@final
 @dataclass(frozen=True)
 class RecordDifference:
     """One row of ``otto inventory diff``; ``field=None`` means the key exists on one side only."""

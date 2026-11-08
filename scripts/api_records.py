@@ -76,6 +76,9 @@ DUNDER_SLOTS = {
 # Tokens recording a contract the manifest withdrew (design §4.2).
 WITHDRAWN_CONSTRUCT = "@manifest:construct=false"
 WITHDRAWN_SUBCLASS = "@manifest:subclass=false"
+# The code fact a class definition decorated ``typing_extensions.final`` carries,
+# first on its ``abstract`` line (design §4.2, "The ``@final`` token").
+FINAL = "@final"
 # Which records a binding kind must carry, and which it may carry (dump spec §2.3).
 REQUIRED = {
     "function": {"call"},
@@ -307,6 +310,51 @@ class Call:
     withdrawn: bool = False  # the params field is WITHDRAWN_CONSTRUCT
 
 
+@dataclass(frozen=True)
+class Obligations:
+    """A parsed ``abstract`` or ``requires`` field: ``[@final] (token | names | -)``.
+
+    ``withdrawn`` when the field is :data:`WITHDRAWN_SUBCLASS` (then *names* is
+    empty); ``final`` when an ``abstract`` field leads with :data:`FINAL`.
+    """
+
+    names: "tuple[str, ...]"
+    withdrawn: bool = False
+    final: bool = False
+
+
+def parse_obligations(kind: str, field: str) -> Obligations:
+    """Parse the one field of an ``abstract`` or ``requires`` record of *kind*.
+
+    The one parse site of that field: every reader takes the parsed record, so
+    ``@final`` is never a member name and never hides a withdrawal.
+    """
+    tokens = field.split(" ")
+    final = tokens[0] == FINAL
+    if final:
+        if kind != "abstract":
+            raise DumpError(f"{FINAL} on a {kind} record: {field!r}")
+        tokens = tokens[1:]
+        if not tokens:
+            raise DumpError(f"{FINAL} needs the obligations after it: {field!r}")
+    if FINAL in tokens:
+        raise DumpError(f"{FINAL} only once, and first: {field!r}")
+    rest = " ".join(tokens)
+    if rest == WITHDRAWN_SUBCLASS:
+        return Obligations((), withdrawn=True, final=final)
+    names = split_list(rest)
+    for name in names:
+        if not _is_name(name):
+            raise DumpError(f"malformed name {name!r}")
+    return Obligations(tuple(names), final=final)
+
+
+def render_obligations(obligations: Obligations) -> str:
+    """Render *obligations* as one field; the inverse of :func:`parse_obligations`."""
+    body = WITHDRAWN_SUBCLASS if obligations.withdrawn else " ".join(obligations.names) or EMPTY
+    return f"{FINAL} {body}" if obligations.final else body
+
+
 def binding_of(rec: Record) -> str:
     """Return the binding key *rec* belongs to: a member's owner, else its own key."""
     return rec.key.rpartition(".")[0] if rec.kind == "member" else rec.key
@@ -410,10 +458,8 @@ def _check_fields(kind: str, fields: "list[str]") -> None:
                 raise DumpError(f"malformed mro entry {entry!r}")
     if kind == "call":
         _check_call_fields(fields[0], fields[1])
-    if kind in ("abstract", "requires") and fields[0] != WITHDRAWN_SUBCLASS:
-        for name in split_list(fields[0]):
-            if not _is_name(name):
-                raise DumpError(f"malformed name {name!r}")
+    if kind in ("abstract", "requires"):
+        parse_obligations(kind, fields[0])
     if kind == "input":
         _check_input(fields)
     if kind == "enum":
@@ -485,7 +531,7 @@ def parse_call(rec: Record) -> Call:
 def is_withdrawn(rec: Record) -> bool:
     """Return whether *rec* records a withdrawn constructor or subclass obligation."""
     if rec.kind in ("abstract", "requires"):
-        return rec.fields[0] == WITHDRAWN_SUBCLASS
+        return parse_obligations(rec.kind, rec.fields[0]).withdrawn
     if rec.kind == "input":
         return rec.fields[0] == WITHDRAWN_CONSTRUCT
     return carries_call(rec) and parse_call(rec).withdrawn

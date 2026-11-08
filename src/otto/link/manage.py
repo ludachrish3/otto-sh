@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from ..errors import OttoError
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
@@ -136,6 +138,7 @@ class LinkNotMeasuredError(OttoError, RuntimeError):
     """
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class DryRunPlan:
     """What a ``--dry-run`` would do, and what it could not check.
@@ -164,6 +167,7 @@ class DryRunPlan:
     run that reached this type read nothing at all."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class AppliedPlacement:
     """One placement's post-verify impairment state."""
@@ -178,6 +182,7 @@ class AppliedPlacement:
     """Set when this was a port-scoped application (``--port``)."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class ImpairReport:
     """Outcome of :func:`impair_link`: every placement actually mutated."""
@@ -200,6 +205,7 @@ class ImpairReport:
     construction instead of failing."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class RepairReport:
     """Outcome of :func:`repair_link`: what got cleared, and how many timers died."""
@@ -231,6 +237,7 @@ class RepairReport:
     """The placements on a host this lab scope does not load (#695)."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class RepairAllReport:
     """Outcome of :func:`repair_all`: repaired, failed, and declined.
@@ -298,6 +305,7 @@ class RepairAllReport:
     not impairable."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class DirectionState:
     """One direction's full impairment shape (the ``list``/GUI read feed).
@@ -312,6 +320,7 @@ class DirectionState:
     foreign: bool = False
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class LinkState:
     """One link's current impairment state, direction by direction (for ``list``)."""

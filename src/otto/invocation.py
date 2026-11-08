@@ -26,6 +26,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Mapping
@@ -76,6 +78,7 @@ class CoverageCollection:
         return True
 
 
+@final
 @dataclass
 class RunPolicy:
     """What this run does, read live by every host when it acts.
@@ -132,6 +135,7 @@ class HostResolver(Protocol):
         ...
 
 
+@final
 class ContextBinding:
     """What an install changed, for its one matching reset.
 

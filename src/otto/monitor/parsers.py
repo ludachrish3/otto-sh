@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..registry import FrozenMap, Registry, registration_boundary
@@ -73,6 +73,7 @@ _mem_size_re_str = rf"{_float_re_str}(?:\s*[KMGT]B?)?"
 _percent_re_str = rf"{_float_re_str}%"
 
 
+@final
 class MetricDataPoint(NamedTuple):
     """A single data point returned by MetricParser.parse()."""
 
@@ -84,6 +85,7 @@ class MetricDataPoint(NamedTuple):
     (e.g. ``{'used': '4.2 GB', 'total': '16 GB'}`` for memory)."""
 
 
+@final
 @dataclass(frozen=True)
 class ParseContext:
     """Tick-local input to MetricParser.parse — extensible without signature breaks."""
@@ -105,6 +107,7 @@ class TimedSample(NamedTuple):
     """Series label → data point, exactly as ``parse()`` returns."""
 
 
+@final
 class LogEvent(NamedTuple):
     """One columnar log-event row produced by :meth:`MetricParser.parse_tick`.
 

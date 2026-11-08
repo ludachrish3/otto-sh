@@ -43,7 +43,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-from typing_extensions import override
+from typing_extensions import final, override
 
 from .._webassets.artifacts import MONITOR
 from ..console import CONSOLE, print_literal
@@ -941,6 +941,7 @@ async def _uvicorn_signalled_started(task: "asyncio.Task[None]", server: uvicorn
     return False
 
 
+@final
 class MonitorServer:
     """
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.

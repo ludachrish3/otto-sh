@@ -14,9 +14,12 @@ import getpass
 from dataclasses import dataclass
 from typing import Literal
 
+from typing_extensions import final
+
 IdentitySource = Literal["--holder", "$USER"]
 
 
+@final
 @dataclass(frozen=True)
 class ResolvedIdentity:
     """Effective reservation identity for this otto invocation.
@@ -33,6 +36,7 @@ class ResolvedIdentity:
     source: IdentitySource
 
 
+@final
 @dataclass(frozen=True)
 class ReservationIdentity:
     """Who the reservation check runs as, and against which backend."""

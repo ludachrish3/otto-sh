@@ -227,6 +227,17 @@ def rights_note(symbol: Symbol) -> "list[str]":
     return lines
 
 
+def rst_escape(text: str) -> str:
+    """Return manifest prose *text* safe to interpolate into reST running text.
+
+    Escapes the inline-markup starters (backslash, ``*``, backtick, ``|``) and a
+    ``_`` that ends a word (a reference); every note renders manifest prose
+    through this one helper.
+    """
+    text = re.sub(r"([\\*`|])", r"\\\1", text)
+    return re.sub(r"_(?=\W|$)", r"\\_", text)
+
+
 def positional_note(symbol: Symbol) -> "list[str]":
     """Return the reST note under a callable whose manifest entry lists positional subjects.
 
@@ -247,11 +258,12 @@ def positional_note(symbol: Symbol) -> "list[str]":
             "   See :ref:`api-calling-conventions`.",
             "",
         ]
+    why = f" ({rst_escape(symbol.why)})" if symbol.why else ""
     return [
         ".. admonition:: Positional parameters",
         "   :class: otto-positional otto-positional-parameters",
         "",
-        f"   {names} may be passed by position{f' ({symbol.why})' if symbol.why else ''}.",
+        f"   {names} may be passed by position{why}.",
         "   Every other parameter is keyword-only.",
         "   See :ref:`api-calling-conventions`.",
         "",

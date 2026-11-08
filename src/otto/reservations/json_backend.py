@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..models.base import OttoModel
 from ..utils import anchor_path
@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .registry import ReservationEnv
 
 
+@final
 class JsonReservationConfig(OttoModel):
     """The json backend's ``[reservations.json]`` sub-table: the reservation file."""
 
@@ -71,6 +72,7 @@ class JsonReservationConfig(OttoModel):
         return anchor_path(value, env.project_root, quote=False) if env is not None else value
 
 
+@final
 class JsonReservationBackend(ReservationBackendBase):
     """Read reservations from a JSON file on disk.
 

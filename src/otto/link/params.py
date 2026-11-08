@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field, fields
 from typing import ClassVar, Literal
 
+from typing_extensions import final
+
 _TIME_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>us|ms|s)?$")
 _PERCENT_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)%?$")
 
@@ -107,6 +109,7 @@ def _fmt(value: float) -> str:
     return f"{value:g}"
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class ImpairmentParams:
     """One impairment parameter set. ``None`` = not set/absent."""
@@ -174,6 +177,7 @@ _MAX_PORT = 65535
 _PORT_TEXT_RE = re.compile(r"(?P<start>[0-9]{1,5})(?::(?P<end>[0-9]{1,5}))?")
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Selector:
     """One port-scoped impairment selector: a port or inclusive port range.
@@ -397,6 +401,7 @@ MAX_SELECTORS = 8
 """Per-netdev selector cap (bands 4..11 inside the fixed 11-band prio root)."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class ScopedState:
     """Discriminated read-back of one placement netdev's impairment shape.

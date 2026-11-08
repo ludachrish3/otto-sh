@@ -62,6 +62,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
+from typing_extensions import final
+
 from ..registry import FrozenMap, Ref, Registry, registration_boundary, resolved
 
 if TYPE_CHECKING:
@@ -91,6 +93,7 @@ UNIX_PASSWORD_PROMPT = r"[Pp]assword: ?$"  # noqa: S105 — a regex pattern, not
 """``login(1)``'s prompt; BusyBox and shadow spell the case differently."""
 
 
+@final
 @dataclass(frozen=True)
 class ProfileFields:
     """What a profile supplies a host: field defaults and the console prompts."""
@@ -113,6 +116,7 @@ class ProfileFields:
     """Regex for this OS's password prompt; ``None`` with ``login_prompt``."""
 
 
+@final
 @dataclass(frozen=True)
 class HostClassEntry:
     """The record ``HOST_CLASSES`` holds for one host class name."""
@@ -128,6 +132,7 @@ class HostClassEntry:
     or project-data profile of that name exists."""
 
 
+@final
 @dataclass(frozen=True)
 class OsProfile:
     """A named profile over a base host class: the whole of what one ``os_type`` selects."""
@@ -676,6 +681,7 @@ def _profile_from_spec(name: str, spec: "OsProfileSpec") -> OsProfile:
     return OsProfile(name, spec.base, ProfileFields(FrozenMap.freeze_json(spec.defaults)))
 
 
+@final
 @dataclass(frozen=True)
 class ProfileContext:
     """The project data profiles one set of selected projects declares.

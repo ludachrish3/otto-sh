@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from otto.models.event_style import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
 
 if TYPE_CHECKING:
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
 logger = getLogger(__name__)
 
 
+@final
 class MonitorHandle:
     """Per-test metrics monitor handed out by the ``monitor`` fixture.
 

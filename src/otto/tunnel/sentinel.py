@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 
+from typing_extensions import final
+
 from ..host.daemon import dec, enc, encode_token, split_token
 from .model import (
     TUNNEL_SENTINEL_READ_VERSIONS,
@@ -44,6 +46,7 @@ second write version fails at import until the writer chooses."""
 _PAYLOAD_SEGMENTS_V1 = 9
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class ParsedSentinel:
     """One decoded tunnel process: the whole tunnel + this process's slot."""

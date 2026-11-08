@@ -493,3 +493,60 @@ def test_dunder_slots_cover_every_supported_dunder():
 )
 def test_a_non_method_member_is_not_withdrawn(form):
     assert not api_records.is_withdrawn(api_records.parse_record(f"member\totto.x:C.f\t{form}"))
+
+
+# -- the @final token (keyword-only design §4.2, amended 2026-11-08) ---------
+
+
+def test_final_before_the_withdrawn_token_is_withdrawn_and_final():
+    rec = api_records.parse_record("abstract\totto.x:C\t@final @manifest:subclass=false")
+    parsed = api_records.parse_obligations("abstract", rec.fields[0])
+    assert parsed == api_records.Obligations((), withdrawn=True, final=True)
+    assert api_records.is_withdrawn(rec)
+
+
+def test_final_before_names_is_final_with_those_members():
+    parsed = api_records.parse_obligations("abstract", "@final a b")
+    assert parsed == api_records.Obligations(("a", "b"), final=True)
+    assert api_records.parse_obligations("abstract", "@final -").names == ()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("abstract\totto.x:C\ta @final", "only once, and first"),
+        ("abstract\totto.x:C\t@final @final a", "only once, and first"),
+        ("abstract\totto.x:C\t@manifest:subclass=false @final", "only once, and first"),
+        ("abstract\totto.x:C\t@final", "needs the obligations after it"),
+        ("requires\totto.x:P\t@final run", "@final on a requires record"),
+    ],
+)
+def test_a_misplaced_final_is_a_parse_error(line, message):
+    with pytest.raises(api_records.DumpError, match=message):
+        api_records.parse_record(line)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "-",
+        "a b",
+        "@manifest:subclass=false",
+        "@final -",
+        "@final a b",
+        "@final @manifest:subclass=false",
+    ],
+)
+def test_obligations_round_trip_byte_identically(field):
+    parsed = api_records.parse_obligations("abstract", field)
+    assert api_records.render_obligations(parsed) == field
+    line = f"abstract\totto.x:C\t{field}"
+    assert api_records.render_record(api_records.parse_record(line)) == line
+
+
+def test_every_abstract_line_of_the_golden_round_trips_through_the_parsed_record():
+    for line in _GOLDEN.read_text(encoding="utf-8").splitlines():
+        if line.startswith(("abstract\t", "requires\t")):
+            kind, _, field = line.split("\t")
+            parsed = api_records.parse_obligations(kind, field)
+            assert api_records.render_obligations(parsed) == field

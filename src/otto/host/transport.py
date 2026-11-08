@@ -17,6 +17,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
+from typing_extensions import final
+
 from ..errors import OttoError
 
 if TYPE_CHECKING:
@@ -99,6 +101,7 @@ class HopTransport(Protocol):
         ...
 
 
+@final
 class SshHopTransport:
     """Concrete ``HopTransport`` backed by an SSH connection.
 

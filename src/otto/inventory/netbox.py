@@ -26,6 +26,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
+from typing_extensions import final
 
 from ..models.base import compact_validation_error, wrap_secret_values
 from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, InventoryRecord
@@ -59,6 +60,7 @@ _RESERVED_EXTRA_KEYS: frozenset[str] = frozenset({"id", "serial", "asset_tag", "
 """What this backend itself puts in ``record.extra``; an opt-in name may not shadow one."""
 
 
+@final
 class NetBoxInventory:
     """Inventory over the devices a NetBox filter selects.
 

@@ -15,7 +15,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing_extensions import final
 
+
+@final
 @dataclass(frozen=True)
 class Mount:
     """One directory shared between a container and its parent host."""

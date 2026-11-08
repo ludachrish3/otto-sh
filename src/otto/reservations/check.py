@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal, get_args
 
+from typing_extensions import final
+
 from ..errors import OttoError
 
 if TYPE_CHECKING:
@@ -96,6 +98,7 @@ def announce_expiring(report: "ReservationReport", *, now: "datetime | None" = N
             _announce_expiry(booking.resource, booking.end, reference)
 
 
+@final
 @dataclass(frozen=True)
 class ReservationGateResult:
     """Result of :meth:`ReservationGate.evaluate`.
@@ -140,6 +143,7 @@ def _hosts_in_play(run: "ActiveRun") -> set[str]:
     return {hid for hid in in_play if not is_builtin_host(run.lab.hosts.get(hid))}
 
 
+@final
 @dataclass(frozen=True)
 class ReservationGate:
     """Per-invocation reservation gate: framework-free, callable from any Python caller.
@@ -425,6 +429,7 @@ _LEVEL_ORDER = {level: i for i, level in enumerate(get_args(ResourceLevel))}
 truth rather than two lists that could drift apart."""
 
 
+@final
 @dataclass(frozen=True)
 class ResourceOrigin:
     """One reason a resource is required: the level that declared it and who at that level."""

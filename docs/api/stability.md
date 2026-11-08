@@ -100,6 +100,13 @@ added or the parameters are reordered; a positional one would not.
   promise about its abstract members. The reference shows the
   mark as a *Rights* note under the class; a class without one may be
   constructed and subclassed.
+- **`@final` restates a withdrawn subclass right.** A class marked *not for
+  subclassing* is, as a rule, also decorated `@final`, so your type checker
+  refuses a subclass before otto's docs have to. The manifest decides; the
+  decorator only restates it, and
+  [the quality gates](../architecture/quality-gates.md#what-binds-each-gate)
+  keep the two in step. A few such classes are not `@final` because otto
+  subclasses them itself; the mark still applies.
 
 Switching a callable to keyword-only was a marked breaking change, made
 once, before 1.0. How the rule is enforced is in

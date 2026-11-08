@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from typing_extensions import final
+
 from ...result import CommandResult, Result
 from ...utils import PerLoop, Status
 
@@ -33,6 +35,7 @@ TransferProgressHandler = Callable[[str, str, int, int], None]
 TransferProgressFactory = Callable[[], TransferProgressHandler]
 
 
+@final
 @dataclass(frozen=True)
 class ProgressGranularity:
     """What a backend promises the progress bar, per direction.
@@ -65,6 +68,7 @@ class ProgressGranularity:
             )
 
 
+@final
 @dataclass(frozen=True)
 class TransferContext:
     """Construction inputs a host provides to build its file transfer backend.

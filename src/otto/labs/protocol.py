@@ -9,6 +9,8 @@ from typing import (
     runtime_checkable,
 )
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     # Annotation only: runtime code never constructs a Lab from this module,
     # so the string annotations below are read by static type-checking alone.
@@ -74,6 +76,7 @@ class LabRepository(Protocol):
         ...
 
 
+@final
 @dataclass(frozen=True)
 class LoginSummary:
     """One login a host's record declares — identity only, never a secret.
@@ -91,6 +94,7 @@ class LoginSummary:
     proxy: bool = False
 
 
+@final
 @dataclass(frozen=True)
 class HostSummary:
     """Identity and addressing for one host, without constructing it.

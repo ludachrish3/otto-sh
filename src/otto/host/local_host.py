@@ -24,7 +24,7 @@ from errno import (
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -150,6 +150,7 @@ class LocalFileTransfer(BaseFileTransfer):
 logger = logging.getLogger(__name__)
 
 
+@final
 @dataclass(
     slots=True,
     kw_only=True,

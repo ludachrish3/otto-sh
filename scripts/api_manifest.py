@@ -41,7 +41,7 @@ _FORMAT_NAME_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 _POINTER_RE = re.compile(r"otto(?:\.\w+)*:\w+")
 _FORMAT_KEYS = {"reads", "writes"}
 _WHY_NEEDED_AT = 2
-SYMBOL_KEYS = {"positional", "why", "construct", "subclass", "implementer"}
+SYMBOL_KEYS = {"positional", "why", "construct", "subclass", "implementer", "final"}
 _SYMBOL_KEY_RE = re.compile(r"(\w+(?:\.\w+)*):\w+(?:\.\w+)*")
 
 
@@ -73,7 +73,9 @@ class Symbol:
     """Per-symbol facts for one binding or member key (``otto.host:Host.run``).
 
     ``given`` holds the keys the entry wrote explicitly: an omitted key and an
-    explicit default differ for the child's kind checks.
+    explicit default differ for the child's kind checks. ``final`` is None
+    when the entry does not write it (the default: a ``subclass = false``
+    class is decorated ``@final``); ``False`` is the sanctioned exemption.
     """
 
     key: str
@@ -82,6 +84,7 @@ class Symbol:
     construct: bool = True
     subclass: bool = True
     implementer: bool = False
+    final: "bool | None" = None
     given: "frozenset[str]" = frozenset()
 
 
@@ -154,7 +157,14 @@ def _symbols_of(doc: dict) -> "dict[str, Symbol]":
             raise ManifestError(f"symbols.{key}: construct = false carries no positional")
         if len(positional) >= _WHY_NEEDED_AT and not why:
             raise ManifestError(f"symbols.{key}: two or more names need a why")
-        out[key] = Symbol(key, tuple(positional), why, given=frozenset(entry), **flags)
+        final = entry.get("final")
+        if final is not None and not isinstance(final, bool):
+            raise ManifestError(f"symbols.{key}: final must be true or false")
+        if final is False and flags["subclass"] is not False:
+            raise ManifestError(f"symbols.{key}: final = false needs subclass = false beside it")
+        if final is False and not why.strip():
+            raise ManifestError(f"symbols.{key}: final = false needs a why naming the subclasses")
+        out[key] = Symbol(key, tuple(positional), why, final=final, given=frozenset(entry), **flags)
     return out
 
 

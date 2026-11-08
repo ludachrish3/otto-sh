@@ -8,6 +8,8 @@ import enum
 import hashlib
 from dataclasses import dataclass
 
+from typing_extensions import final
+
 
 class Provenance(enum.Enum):
     """Where a link came from."""
@@ -22,6 +24,7 @@ class Provenance(enum.Enum):
     """Realized by otto tunnels; reserved for topology overlays."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class LinkEndpoint:
     """One end of a link: a host, optionally pinned to a named interface."""
@@ -78,6 +81,7 @@ def make_static_link_id(a: LinkEndpoint, b: LinkEndpoint, name: str | None) -> s
     return f"{lo.host}--{hi.host}"
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Link:
     """An edge between two endpoints, from any provenance."""

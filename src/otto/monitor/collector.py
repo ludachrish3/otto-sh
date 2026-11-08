@@ -22,6 +22,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from typing_extensions import final
+
 from ..logger.mode import LogMode
 from ..models.event_style import (
     DEFAULT_EVENT_COLOR,
@@ -125,6 +127,7 @@ logger = logging.getLogger(__name__)
 _SILENT_PARSER_TICKS = 3
 
 
+@final
 @dataclass
 class MonitorTarget:
     """Pairs a UnixHost with the parser dict to use when collecting from it.
@@ -174,6 +177,7 @@ async def _gather_cancelling_siblings(coros: "Sequence[Coroutine[Any, Any, None]
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@final
 class MetricCollector:
     """
     Collects numeric metrics from multiple UnixHosts and stores time-series data.

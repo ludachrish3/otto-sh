@@ -11,6 +11,8 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from ipaddress import IPv4Interface, ip_address, ip_interface
 
+from typing_extensions import final
+
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from .model import Link, LinkEndpoint
 
@@ -29,6 +31,7 @@ BOTH_DIRECTIONS = frozenset(FlowDirection)
 """Every direction — what a bare ``impair``/``repair``/``list`` asks for."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Placement:
     """Where one direction's impairment lands: a netdev on a host."""

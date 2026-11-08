@@ -19,6 +19,8 @@ what was stated.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ...errors import OttoError
 from ...registry import BackendRegistry, Ref, class_backend, registration_boundary
 from .base import BaseFileTransfer, ProgressGranularity, TransferContext
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from ...registry import BackendEntry, Proposed
 
 
+@final
 @dataclass(frozen=True)
 class TransferMetadata:
     """What a transfer backend declares: its families, its progress promise, whether it logs in.

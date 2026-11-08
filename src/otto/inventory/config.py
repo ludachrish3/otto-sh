@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
+from typing_extensions import final
 
 from ..models.base import OttoModel
 from ..utils import anchor_path, parse_cache_ttl
@@ -48,6 +49,7 @@ def _anchored(value: Path, info: ValidationInfo) -> Path:
     return anchor_path(value, env.anchor_dir, quote=False) if env is not None else value
 
 
+@final
 class JsonInventoryConfig(OttoModel):
     """The json inventory's table: an anchored file path, and the fields it supplies."""
 
@@ -74,6 +76,7 @@ class JsonInventoryConfig(OttoModel):
         return _anchored(value, info)
 
 
+@final
 class NetBoxInventoryConfig(OttoModel):
     """The NetBox inventory's table; ``NetBoxInventory`` itself checks the values."""
 
@@ -101,6 +104,7 @@ class NetBoxInventoryConfig(OttoModel):
     """Seconds one HTTP request to NetBox may take."""
 
 
+@final
 @dataclass(frozen=True)
 class InventoryDeclaration:
     """One settings file's ``[inventory]`` and ``[creds]`` tables and where they came from."""
@@ -114,6 +118,7 @@ class InventoryDeclaration:
     """The same file's ``[creds]`` table, ``{}`` when absent (spec 2026-09-06 creds-store §4.2)."""
 
 
+@final
 @dataclass(frozen=True)
 class CompiledInventory:
     """An ``[inventory]`` table, prepared by its backend's configuration model."""

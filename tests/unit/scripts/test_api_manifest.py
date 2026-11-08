@@ -210,6 +210,26 @@ def test_parse_manifest_accepts_the_symbols_key():
         ('[symbols."otto.host:Host.run"]\npositional = "cmds"\n', "positional is a list of names"),
         ('[symbols."otto.host:Host"]\nconstruct = "no"\n', "construct must be true or false"),
         ('[symbols."otto.host:Host.run"]\nwhy = 3\n', "why must be a string"),
+        (
+            '[symbols."otto.host:Host"]\nsubclass = false\nfinal = "no"\n',
+            "final must be true or false",
+        ),
+        (
+            '[symbols."otto.host:Host"]\nfinal = false\nwhy = "Sub subclasses it"\n',
+            "final = false needs subclass = false beside it",
+        ),
+        (
+            '[symbols."otto.host:Host"]\nsubclass = true\nfinal = false\nwhy = "Sub"\n',
+            "final = false needs subclass = false beside it",
+        ),
+        (
+            '[symbols."otto.host:Host"]\nsubclass = false\nfinal = false\n',
+            "final = false needs a why naming the subclasses",
+        ),
+        (
+            '[symbols."otto.host:Host"]\nsubclass = false\nfinal = false\nwhy = " "\n',
+            "final = false needs a why naming the subclasses",
+        ),
     ],
 )
 def test_refuses_malformed_symbols(entry, message):
@@ -231,3 +251,13 @@ def test_an_empty_symbols_table_and_an_empty_entry_take_the_defaults():
         False,
     )
     assert sym.given == frozenset()
+
+
+def test_final_is_none_unless_written():
+    (sym,) = parse_symbols(MANIFEST + '\n[symbols."otto.host:Host"]\nsubclass = false\n').values()
+    assert sym.final is None
+    text = '[symbols."otto.host:Host"]\nsubclass = false\nfinal = false\nwhy = "Sub does"\n'
+    (sym,) = parse_symbols(MANIFEST + "\n" + text).values()
+    assert (sym.final, sym.given) == (False, frozenset({"subclass", "final", "why"}))
+    (sym,) = parse_symbols(MANIFEST + '\n[symbols."otto.host:Host"]\nfinal = true\n').values()
+    assert sym.final is True

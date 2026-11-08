@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
 import logging
 
+from typing_extensions import final
+
 logger = logging.getLogger(__name__)
 
 RUN_OPTIONS_KEY = "otto_test_run_options"
@@ -67,6 +69,7 @@ def _lexical_path(path: Path) -> Path:
     return Path(os.path.normpath(Path(path).expanduser().absolute()))
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class RunOptions:
     """Shared test-run options: markers/iterations/stability/coverage/monitor.
@@ -209,6 +212,7 @@ class RunOptions:
 _DEFAULT_RUN_OPTIONS = RunOptions()
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class SuiteRunResult:
     """Outcome of a :func:`run_tests` invocation.

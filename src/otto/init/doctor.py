@@ -14,6 +14,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import final
+
 from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR
 from .areas import (
     AREA_NAMES,
@@ -52,6 +54,7 @@ _ABSENT = {
 }
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class AreaVerdict:
     """The doctor's verdict on one area.
@@ -66,6 +69,7 @@ class AreaVerdict:
     detail: str = ""
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class DoctorReport:
     """Everything :func:`check_project` found. Warnings and labels never fail it."""

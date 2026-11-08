@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from typing_extensions import final
+
 SHELL_METACHARACTERS = frozenset("|&;<>()$`\\\"'*?[]{}!#")
 """Characters a shell gives a meaning to; ``~`` is not among them, since otto expands a
 leading one itself and a later one is literal."""
@@ -40,6 +42,7 @@ def shell_unsafe(value: str) -> str | None:
     return None
 
 
+@final
 @dataclass(slots=True)
 class ToolchainTool:
     """One installable toolchain tool (gdb, strace, a runtime .so, …).
@@ -88,6 +91,7 @@ def toolchain_removal_command(tool: ToolchainTool) -> str:
     return f"rm -f {path_operand(tool.dest / tool.name)}"
 
 
+@final
 @dataclass(slots=True)
 class Toolchain:
     """Describes the toolchain associated with a host's products.

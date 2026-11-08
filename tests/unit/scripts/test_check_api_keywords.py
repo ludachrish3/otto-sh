@@ -248,3 +248,60 @@ def test_a_class_call_record_is_judged_by_its_own_entry():
 def test_a_listed_po_with_a_why_passes():
     manifest = '[symbols."otto.m:f"]\npositional = ["x"]\nwhy = "mirrors the builtin"\n'
     assert _findings(_function("f", "PO:x:- KO:y:-"), manifest) == []
+
+
+# -- findings 5 and 6: @final and the subclass right (design §5) -------------
+
+
+def _closed(key):
+    return (
+        f"{key}: subclass withdrawn but the class is not @final"
+        " — decorate it, or set final = false with why"
+    )
+
+
+def _open(key):
+    return (
+        f"{key}: @final on a class whose subclass right is open"
+        " — withdraw it in the manifest, or drop the decorator"
+    )
+
+
+def _abstract(lines, field):
+    return [f"abstract\t{line.split(chr(9))[1]}\t{field}" if line.startswith("abstract\t")
+            else line for line in lines]  # fmt: skip
+
+
+def _model(name, field="-"):
+    key = f"otto.m:{name}"
+    return [f"name\t{key}\tmodel", f"mro\t{key}\t-", f"abstract\t{key}\t{field}"]
+
+
+_WITHDRAWN = "@manifest:subclass=false"
+_CLOSED_C = '[symbols."otto.m:C"]\nsubclass = false\n'
+_EXEMPT_C = '[symbols."otto.m:C"]\nsubclass = false\nfinal = false\nwhy = "Sub subclasses it"\n'
+
+
+@pytest.mark.parametrize(("lines", "key"), [(_class("C"), "otto.m:C"), (_model("C"), "otto.m:C")])
+def test_final_and_the_subclass_right_are_held_together(lines, key):
+    assert _findings(_abstract(lines, _WITHDRAWN), _CLOSED_C) == [_closed(key)]
+    assert _findings(_abstract(lines, f"@final {_WITHDRAWN}"), _CLOSED_C) == []
+    assert _findings(_abstract(lines, _WITHDRAWN), _EXEMPT_C) == []
+    assert _findings(_abstract(lines, "@final -")) == [_open(key)]
+    assert _findings(_abstract(lines, "@final -"), '[symbols."otto.m:C"]\nfinal = true\n') == [
+        _open(key)
+    ]
+    assert _findings(lines) == []
+
+
+def test_a_protocol_raises_neither_finding():
+    lines = _protocol("P", {"run": "-"})
+    lines = [line.replace("\trun", f"\t{_WITHDRAWN}") if line.startswith("requires") else line
+             for line in lines]  # fmt: skip
+    assert _findings(lines, '[symbols."otto.m:P"]\nsubclass = false\n') == []
+
+
+def test_each_class_key_is_judged_by_its_own_entry():
+    closed = f"@final {_WITHDRAWN}"
+    lines = _abstract(_class("C"), closed) + _abstract(_class("D"), closed)
+    assert _findings(lines, _CLOSED_C) == [_open("otto.m:D")]

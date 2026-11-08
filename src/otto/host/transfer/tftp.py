@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...result import Result
 from .base import ProgressGranularity, TransferContext, TransferProgressFactory
 from .embedded_base import EmbeddedFileTransfer
 
 
+@final
 class TftpFileTransfer(EmbeddedFileTransfer):
     """Reserved: TFTP transfer for embedded hosts is not yet implemented."""
 

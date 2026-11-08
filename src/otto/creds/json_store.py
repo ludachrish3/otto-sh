@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
+from typing_extensions import final
 
 from ..models.base import CredSpec, JsonFileSource, compact_validation_error
 from .errors import CredsError
@@ -54,6 +55,7 @@ def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpe
     return out
 
 
+@final
 class JsonCredsStore(JsonFileSource):
     """Creds store over one JSON file; parsed once, on first use."""
 

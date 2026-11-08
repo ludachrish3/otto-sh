@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 import logging
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...errors import OttoError
 from ...result import CommandResult, Result
@@ -456,6 +456,7 @@ def _nc_get_stat_verdict(src: Path, stat_result: CommandResult) -> Result:
     return Result(Status.Success, value=int(size))
 
 
+@final
 class NcFileTransfer(UnixFileTransfer):
     """Handles netcat file transfers for a UnixHost.
 

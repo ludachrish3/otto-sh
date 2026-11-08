@@ -62,6 +62,8 @@ if TYPE_CHECKING:
 
 import logging
 
+from typing_extensions import final
+
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
@@ -1470,6 +1472,7 @@ class SshSession(ShellSession):
         self._initialized = False
 
 
+@final
 class TelnetSession(ShellSession):
     """Telnet persistent shell session via telnetlib3 streams.
 
@@ -1658,6 +1661,7 @@ class TelnetSession(ShellSession):
         self._initialized = False
 
 
+@final
 class LocalSession(ShellSession):
     """Local persistent bash shell session via asyncio subprocess.
 
@@ -2346,7 +2350,7 @@ class HostSession:
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args: object) -> None:
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()
 
 
@@ -2703,6 +2707,7 @@ async def drain_exec_output(
         on_output(line)
 
 
+@final
 class SessionManager:
     """Manages persistent shell sessions for any host type.
 

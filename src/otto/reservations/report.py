@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from .check import (
     EXPIRY_WARNING_WINDOW,
     ResourceLevel,
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from .protocol import Reservation, ReservationBackend
 
 
+@final
 @dataclass(frozen=True)
 class ReservationRow:
     """One required resource at one declaring point, and whether the user holds it."""
@@ -46,6 +49,7 @@ class ReservationRow:
     """Whether the user holds it; ``None`` under the ``none`` backend, which cannot answer."""
 
 
+@final
 @dataclass(frozen=True)
 class MissingResource:
     """A required resource the user does not hold, and who does."""
@@ -57,6 +61,7 @@ class MissingResource:
     """Its current holders; empty means nobody, ``None`` means the backend cannot say."""
 
 
+@final
 @dataclass(frozen=True)
 class ReservationReport:
     """What a run needs, what the user holds, and the verdict.

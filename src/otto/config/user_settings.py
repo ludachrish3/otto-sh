@@ -15,6 +15,7 @@ from pathlib import Path
 
 import tomli
 from pydantic import ValidationError
+from typing_extensions import final
 
 from ..models.base import compact_validation_error, load_toml_settings
 from ..models.settings import CacheSettingsSpec, UserSettingsModel
@@ -147,6 +148,7 @@ def _read_user_settings(
         raise ValueError(f"{p}: {compact_validation_error(e)}") from e
 
 
+@final
 @dataclass(frozen=True)
 class CacheSetting:
     """Whether otto's caches are on, and where that was decided."""

@@ -152,6 +152,8 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
+from typing_extensions import final
+
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Opt, PerLoop, Status, cli_exposed
@@ -651,6 +653,7 @@ _UNASKABLE_DEFAULTS = {
 _RETRY_COOLDOWN_S = 60.0
 
 
+@final
 class Userland:
     """Resolved userland capabilities for one host."""
 

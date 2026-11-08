@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from typing_extensions import final
 
 from ..errors import EnsureStateError
 from .expect import ExpectCollector
@@ -118,6 +119,7 @@ async def _converge(step: str, source: "OptionsSource") -> None:
     _raise_unless_converged(await converge(source), step)
 
 
+@final
 class OttoFixturesPlugin:
     """Pytest plugin that gives every test, class or plain function, otto's fixtures.
 

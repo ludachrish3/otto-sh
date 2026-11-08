@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import final
+
 from ..host.element import Element
 from ..host.inventory_ref import InventoryRef
 from ..models.inventory import INVENTORY_KEY_FIELDS, MERGED_INVENTORY_FIELDS
@@ -16,6 +18,7 @@ _NO_INVENTORY = (
 )
 
 
+@final
 @dataclass(frozen=True)
 class ResolvedEntry:
     """A host dict every factory function accepts, plus where its facts came from."""

@@ -21,7 +21,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import FrozenInstanceError, dataclass
 from typing import Any, Protocol, overload, runtime_checkable
 
-from typing_extensions import Never, override
+from typing_extensions import Never, final, override
 
 from otto.errors import OttoError
 from otto.utils import Status, ellipsize
@@ -173,6 +173,7 @@ class CommandResult(Result):
         return f"<{name} status={self.status.name} retcode={self.retcode} value={value}>"
 
 
+@final
 class NotRunResult(CommandResult):
     """`CommandResult` for a command a dry run declined to issue.
 
@@ -312,6 +313,7 @@ class NotRunResult(CommandResult):
         raise FrozenInstanceError(f"cannot delete field {name!r}")
 
 
+@final
 @dataclass(frozen=True)
 class ShellResult(Result):
     """Result of one :class:`~otto.host.app_shell.AppShell` command.
@@ -328,6 +330,7 @@ class ShellResult(Result):
     """Raw output between the echoed command and the next prompt."""
 
 
+@final
 @dataclass(frozen=True)
 class Results(Result, Sequence[CommandResult]):
     """Aggregate over per-command results; itself a :class:`Result`.

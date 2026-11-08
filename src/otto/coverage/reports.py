@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ..utils import Status
 from .tree import ProductKey
 
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
     from ..result import Result
 
 
+@final
 @dataclass(frozen=True)
 class FailedReset:
     """One product whose counters could not be cleared."""
@@ -39,6 +42,7 @@ def _not_run(result: "Result") -> bool:
     return result.status is Status.NotRun
 
 
+@final
 @dataclass(frozen=True)
 class CleanReport:
     """:func:`~otto.coverage.collect.clean_coverage`'s outcome, per host and product."""
@@ -91,6 +95,7 @@ class CleanReport:
         return not self.failed
 
 
+@final
 @dataclass(frozen=True)
 class GetReport:
     """:func:`~otto.coverage.get.get_coverage`'s outcome."""

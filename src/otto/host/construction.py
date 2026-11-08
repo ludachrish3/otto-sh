@@ -20,9 +20,9 @@ import dataclasses
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, final
+from typing import TYPE_CHECKING, Any, Literal
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..errors import OttoError
 

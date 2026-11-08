@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import final
+
 from ..registry import Ref, Registry, registration_boundary, resolved
 from .command_frame import CommandFrame
 
@@ -44,6 +46,7 @@ SetupKind = Literal["default", "named", "exec_pool", "bridge"]
 database) does it on ``"default"`` and only *enters* on the others."""
 
 
+@final
 @dataclass(frozen=True)
 class SetupContext:
     """Everything a hook may need besides the session itself.
@@ -75,6 +78,7 @@ class SessionSetup:
     params: dict[str, Any] = field(default_factory=dict)
 
 
+@final
 @dataclass(frozen=True)
 class SessionSetupEntry:
     """The record :data:`SESSION_SETUPS` stores: the hook, or a ``Ref`` naming it."""

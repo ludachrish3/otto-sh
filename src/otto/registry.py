@@ -84,9 +84,9 @@ import sys
 import weakref
 from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Mapping, Sequence
 from types import CodeType
-from typing import Any, Generic, TypeVar, cast, final
+from typing import Any, Generic, TypeVar, cast
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from otto.errors import OttoError
 
@@ -138,6 +138,7 @@ F = TypeVar("F", bound=Callable[..., object])
 """Type variable for a function marked by :func:`registration_boundary`."""
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class Ref:
     """A ``"package.module:attribute"`` reference to an object, imported on first lookup."""

@@ -11,6 +11,8 @@ back as :attr:`ScaffoldReport.notices`.
 import dataclasses
 from pathlib import Path
 
+from typing_extensions import final
+
 from .areas import AREA_NAMES, detect_areas, scaffold_area, tests_init_module
 from .config import InitConfig
 from .errors import InitInputError
@@ -30,6 +32,7 @@ _NEEDS = {"tests": ["instructions"]}
 """The example tests import ``ProjectOptions`` from the init module the instructions area writes."""
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class ScaffoldReport:
     """What :func:`scaffold` did. ``areas`` includes ``prerequisites``, in write order."""

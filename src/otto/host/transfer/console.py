@@ -11,7 +11,7 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...result import CommandResult, Result
 from ...utils import Status
@@ -73,6 +73,7 @@ _WRITE_TIMEOUT = 15.0
 _RM_TIMEOUT = 10.0
 
 
+@final
 class ConsoleFileTransfer(EmbeddedFileTransfer):
     """File transfer for an embedded host, over the device shell only.
 

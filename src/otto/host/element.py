@@ -18,10 +18,13 @@ every package that builds hosts already depends on it.
 from dataclasses import dataclass, field
 from typing import Any
 
+from typing_extensions import final
+
 from ..models.base import resources_nonempty
 from .remote_host import slug
 
 
+@final
 @dataclass(frozen=True)
 class Element:
     """One element — its name, optional id, opaque metadata, and reservation set.

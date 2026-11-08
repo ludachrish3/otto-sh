@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
+from typing_extensions import final
 
 from ..models.base import OttoModel
 from ..utils import anchor_path
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from ..registry import Prepared
 
 
+@final
 class JsonCredsConfig(OttoModel):
     """The json store's ``[creds]`` keys: the file's ``path``, anchored to its project root."""
 
@@ -55,6 +57,7 @@ class JsonCredsConfig(OttoModel):
         return anchor_path(value, env.anchor_dir, quote=False) if env is not None else value
 
 
+@final
 @dataclass(frozen=True)
 class CompiledCreds:
     """A ``[creds]`` table, prepared by its store's configuration model."""

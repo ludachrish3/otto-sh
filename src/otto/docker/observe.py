@@ -11,6 +11,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ..errors import FieldError
 from ..host.errors import HostUnreachableError
 from ..host.host import is_dry_run, refuse_declined_fact
@@ -106,6 +108,7 @@ def docker_parents(lab: "Lab", parent: "str | None") -> "list[UnixHost]":
     return parents
 
 
+@final
 @dataclass
 class HostOutput:
     """What one host's daemon printed for one command."""
@@ -120,6 +123,7 @@ class HostOutput:
     otto's words, never docker's. A daemon's own refusal is a reached host."""
 
 
+@final
 @dataclass
 class ObserveReport:
     """One :class:`HostOutput` per host asked, in the order they were asked."""
@@ -132,6 +136,7 @@ class ObserveReport:
         return all(h.result.is_ok for h in self.hosts)
 
 
+@final
 @dataclass(frozen=True)
 class LogsTarget:
     """One resolved docker command and the host it runs on."""

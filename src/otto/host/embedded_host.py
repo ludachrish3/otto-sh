@@ -52,7 +52,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, NoReturn, cast
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -726,6 +726,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         )
 
 
+@final
 @dataclass(slots=True, kw_only=True)
 class ZephyrHost(EmbeddedHost):
     """A Zephyr RTOS host — the concrete, registered embedded host.

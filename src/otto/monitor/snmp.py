@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal, SupportsInt
 
 from pydantic import ConfigDict
+from typing_extensions import final
 
 from ..models.base import OttoModel
 from ..registry import Registry, registration_boundary
@@ -75,6 +76,7 @@ SnmpVersion = Literal["1", "2c"]
 # ---------------------------------------------------------------------------
 
 
+@final
 class SnmpMetric(OttoModel):
     """How a single OID's value is interpreted and charted.
 

@@ -18,6 +18,8 @@ from typing import (
     Any,
 )
 
+from typing_extensions import final
+
 from ..errors import is_containable
 from .scope import (
     TOML_SETTINGS_PATH,
@@ -287,6 +289,7 @@ def find_init_module(name: str, libs: list[Path]) -> "ModuleSpec | None":
     return spec
 
 
+@final
 @dataclass
 class Project:
     """Runtime representation of a single project, loaded from its project root.
