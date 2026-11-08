@@ -2071,7 +2071,8 @@ land: ## (Quality) The landing in one command, from a feature branch: gate-tip, 
 # `make docs` no-ops, and the release publishes a page disagreeing with the
 # artifact it just committed. src/otto/check/proven.json and its renderer are the
 # same shape again, for the setup checks' known-good environments page, and
-# tach.toml with its renderer for the architecture docs' module dependencies page.
+# tach.toml with its renderer for the architecture docs' module dependencies page,
+# and pyproject.toml with its renderer for the overview's supported-Python badge.
 # Every file under docs/examples is a literalinclude or a download-archive input,
 # so editing one must rebuild the pages that show it (build output and bytecode
 # excluded: they are not what a page shows). Only `.py` files under src/otto are globbed;
@@ -2093,6 +2094,8 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_proven_range.py      \
                 tach.toml                           \
                 scripts/render_module_graph.py      \
+                pyproject.toml                      \
+                scripts/render_python_badge.py      \
                 scripts/docs_api_reference.py       \
                 scripts/build_example_archives.py   \
                 api/public.toml                     \
