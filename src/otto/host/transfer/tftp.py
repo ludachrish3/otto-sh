@@ -10,7 +10,7 @@ from .embedded_base import EmbeddedFileTransfer
 
 
 @final
-class TftpFileTransfer(EmbeddedFileTransfer):
+class _TftpFileTransfer(EmbeddedFileTransfer):
     """Reserved: TFTP transfer for embedded hosts is not yet implemented."""
 
     progress_granularity = ProgressGranularity(
@@ -21,7 +21,7 @@ class TftpFileTransfer(EmbeddedFileTransfer):
 
     @override
     @classmethod
-    def create(cls, ctx: "TransferContext") -> "TftpFileTransfer":
+    def create(cls, ctx: "TransferContext") -> "_TftpFileTransfer":
         return cls(name=ctx.host_name, max_filename_len=ctx.max_filename_len)
 
     @override

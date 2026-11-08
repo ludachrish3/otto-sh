@@ -24,7 +24,7 @@ from otto.host.transfer.console import (
     ConsoleFileTransfer,
     _label_errno,
 )
-from otto.host.transfer.tftp import TftpFileTransfer
+from otto.host.transfer.tftp import _TftpFileTransfer
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
@@ -903,13 +903,13 @@ class TestMaxFilenameLen:
 class TestTftp:
     @pytest.mark.asyncio
     async def test_get_raises_not_implemented(self, tmp_path):
-        xfer = TftpFileTransfer(name="zephyr37_fat")
+        xfer = _TftpFileTransfer(name="zephyr37_fat")
         with pytest.raises(NotImplementedError):
             await xfer.get_files([RAM / "f"], tmp_path)
 
     @pytest.mark.asyncio
     async def test_put_raises_not_implemented(self, tmp_path):
-        xfer = TftpFileTransfer(name="zephyr37_fat")
+        xfer = _TftpFileTransfer(name="zephyr37_fat")
         src = tmp_path / "f"
         src.write_bytes(b"data")
         with pytest.raises(NotImplementedError):

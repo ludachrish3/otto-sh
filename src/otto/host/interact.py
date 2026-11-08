@@ -153,7 +153,7 @@ class _SessionLogFile:
     """Append interactive session lines to ``session.log`` in the active output dir.
 
     Bypasses the Python logging machinery deliberately: interactive I/O
-    is not an otto-issued command, so ``HostFilter`` and the console
+    is not an otto-issued command, so ``_HostFilter`` and the console
     ``RichHandler`` aren't the right path for it. Writing directly to
     the file keeps the terminal clean (only raw bytes reach the user's
     stdout) while still preserving the transcript in ``session.log``.

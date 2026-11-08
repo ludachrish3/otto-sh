@@ -5,14 +5,15 @@ import json
 import pytest
 from pydantic import SecretStr
 
-from otto.creds import CredsError, CredsStore, JsonCredsStore, parse_creds_document
+from otto.creds import CredsError, CredsStore, parse_creds_document
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory.protocol import SupportsStatPaths
 
 
 def _store(tmp_path, data):
     p = tmp_path / "creds.json"
     p.write_text(json.dumps(data))
-    return JsonCredsStore(p)
+    return _JsonCredsStore(p)
 
 
 def test_the_json_store_satisfies_the_protocol(tmp_path):
@@ -56,7 +57,7 @@ def test_the_file_is_parsed_once(tmp_path):
 
 
 def test_construction_does_no_io_and_a_missing_file_names_itself_at_first_use(tmp_path):
-    store = JsonCredsStore(tmp_path / "absent.json")  # no raise: nothing read yet
+    store = _JsonCredsStore(tmp_path / "absent.json")  # no raise: nothing read yet
     with pytest.raises(CredsError, match=r"absent\.json: "):
         store.lookup("k")
 
@@ -123,6 +124,6 @@ def test_fingerprint_tracks_the_file_and_survives_its_absence(tmp_path):
     assert before.startswith(str(tmp_path / "creds.json"))
     (tmp_path / "creds.json").write_text(json.dumps({"k": []}))  # size changes
     assert store.fingerprint() != before
-    gone = JsonCredsStore(tmp_path / "gone.json")
+    gone = _JsonCredsStore(tmp_path / "gone.json")
     assert gone.fingerprint() == f"{tmp_path / 'gone.json'}|missing"
     assert store.stat_paths() == [tmp_path / "creds.json"]

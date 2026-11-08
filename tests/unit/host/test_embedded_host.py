@@ -180,7 +180,7 @@ class TestHop:
         assert host._connections._hop is None
 
     def test_hop_builds_transport(self):
-        """A configured hop produces an SshHopTransport on the ConnectionManager."""
+        """A configured hop produces an _SshHopTransport on the ConnectionManager."""
         host = ZephyrHost(
             ip="192.0.2.1", element=Element("zephyr37_fat"), hop="test4", log=LogMode.QUIET
         )
@@ -350,7 +350,7 @@ class TestFileTransfer:
         assert isinstance(host._file_transfer, ConsoleFileTransfer)
 
     def test_transfer_backend_is_configurable(self):
-        from otto.host.transfer import TftpFileTransfer
+        from otto.host.transfer.tftp import _TftpFileTransfer
 
         host = ZephyrHost(
             ip="192.0.2.1",
@@ -361,7 +361,7 @@ class TestFileTransfer:
         )
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
         assert host.transfer == "tftp"
-        assert isinstance(host._file_transfer, TftpFileTransfer)
+        assert isinstance(host._file_transfer, _TftpFileTransfer)
 
     @pytest.mark.asyncio
     async def test_get_dry_run_declines(self, host: EmbeddedHost, tmp_path):

@@ -7,13 +7,13 @@ import pytest
 
 from otto.models.base import OttoModel
 from otto.reservations import (
-    JsonReservationBackend,
     NullReservationBackend,
     ReservationConstructionError,
     build_backend,
     register_reservation_backend,
 )
 from otto.reservations.base import ReservationBackendBase
+from otto.reservations.json_backend import _JsonReservationBackend
 
 
 def _write_reservations(path: Path) -> Path:
@@ -60,7 +60,7 @@ class TestJsonBackend:
             {"backend": "json", "json": {"path": str(f)}},
             project_root=tmp_path,
         )
-        assert isinstance(backend, JsonReservationBackend)
+        assert isinstance(backend, _JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []
 
     def test_relative_path_resolved_against_project_root(self, tmp_path):
@@ -69,7 +69,7 @@ class TestJsonBackend:
             {"backend": "json", "json": {"path": "reservations.json"}},
             project_root=tmp_path,
         )
-        assert isinstance(backend, JsonReservationBackend)
+        assert isinstance(backend, _JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []  # read from tmp_path, not the cwd
 
     def test_missing_path_raises(self, tmp_path):
@@ -114,7 +114,7 @@ class TestJsonBackend:
             {"backend": "json", "json": {"path": "~/reservations.json"}},
             project_root=project_root,
         )
-        assert isinstance(backend, JsonReservationBackend)
+        assert isinstance(backend, _JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []
 
     def test_url_forwarded_and_ignored(self, tmp_path):
@@ -124,7 +124,7 @@ class TestJsonBackend:
             {"backend": "json", "url": "https://example", "json": {"path": str(f)}},
             project_root=tmp_path,
         )
-        assert isinstance(backend, JsonReservationBackend)
+        assert isinstance(backend, _JsonReservationBackend)
 
 
 class _ApiKeyConfig(OttoModel, frozen=True):

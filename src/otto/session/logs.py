@@ -50,9 +50,8 @@ def install_logging(
     are merged first, so a conflict between projects refuses before anything is
     installed. An *overrides* entry wins over the projects'; an unknown level
     name in *overrides* raises from the stdlib after the console handler is
-    installed. The
-    :class:`~otto.host.host.HostFilter` goes on the console handlers only, so
-    ``verbose.log`` keeps every host's output.
+    installed. The host console filter (:mod:`otto.host.host`) goes on the
+    console handlers only, so ``verbose.log`` keeps every host's output.
     """
     # The composition root: importing it installs the initiator that composes
     # the projects when nothing has yet (spec 2026-10-11 placement-and-phases §3.12).
@@ -60,10 +59,10 @@ def install_logging(
 
     del bootstrap
     from ..declared import get_projects
-    from ..host.host import HostFilter
+    from ..host.host import _HostFilter
     from ..logger import management
 
     levels = merge_logging_levels(get_projects())
     levels.update(overrides or {})
     management.install(log_level, output_dir=output_dir, show_time=show_time, overrides=levels)
-    management.attach_console_suppress_filter(HostFilter())
+    management.attach_console_suppress_filter(_HostFilter())

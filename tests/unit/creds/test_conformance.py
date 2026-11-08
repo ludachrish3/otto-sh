@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from otto.creds import JsonCredsStore
+from otto.creds.json_store import _JsonCredsStore
 from otto.models.base import CredSpec
 from otto.testing import assert_creds_store_conforms
 
@@ -12,7 +12,7 @@ from otto.testing import assert_creds_store_conforms
 def _json_store(tmp_path):
     p = tmp_path / "creds.json"
     p.write_text(json.dumps({"k": [{"login": "u", "password": "p"}], "j": [{"login": "v"}]}))
-    return JsonCredsStore(p)
+    return _JsonCredsStore(p)
 
 
 class _Good:

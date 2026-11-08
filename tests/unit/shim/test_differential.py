@@ -1117,19 +1117,19 @@ def _json_inventory(path: Path):
 
 
 def _json_creds_store(path: Path):
-    from otto.creds.json_store import JsonCredsStore
+    from otto.creds.json_store import _JsonCredsStore
 
-    return JsonCredsStore(path)
+    return _JsonCredsStore(path)
 
 
 def _creds_overlay(path: Path):
     """The inventory's file in each state, beside a creds store that never exists."""
-    from otto.creds.json_store import JsonCredsStore
+    from otto.creds.json_store import _JsonCredsStore
     from otto.inventory.creds import CredsOverlay
     from otto.inventory.json_backend import JsonInventory
 
     return CredsOverlay(
-        JsonInventory(path), store=JsonCredsStore(path.parent.parent / "creds.json")
+        JsonInventory(path), store=_JsonCredsStore(path.parent.parent / "creds.json")
     )
 
 
@@ -1137,14 +1137,14 @@ def _creds_overlay(path: Path):
 # one joins here, or the coverage guard below fails.
 _STAT_SOURCES = {
     "JsonInventory": _json_inventory,
-    "JsonCredsStore": _json_creds_store,
+    "_JsonCredsStore": _json_creds_store,
     "CredsOverlay": _creds_overlay,
 }
 
 # Classes that define stat_paths without being a source themselves.
 _NOT_SOURCES = {
     "SupportsStatPaths": "the protocol",
-    "JsonFileSource": "a base: JsonInventory and JsonCredsStore are its sources",
+    "JsonFileSource": "a base: JsonInventory and _JsonCredsStore are its sources",
 }
 
 

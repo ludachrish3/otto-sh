@@ -1,7 +1,7 @@
 """Regression tests for the connection lazy-init race.
 
 Concurrent callers of ``ConnectionManager.ssh`` / ``telnet`` / ``ftp`` /
-``sftp`` (and ``SshHopTransport.get_tunnel``) used to each open their own
+``sftp`` (and ``_SshHopTransport.get_tunnel``) used to each open their own
 real protocol connection on the first call before any of them had cached
 the result. The losers were orphaned: nothing ever called ``close()`` on
 their transports, so they leaked across the test boundary and surfaced as
@@ -24,7 +24,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.login_proxy import Cred
 from otto.host.options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from otto.host.telnet import TelnetClient
-from otto.host.transport import SshHopTransport
+from otto.host.transport import _SshHopTransport
 
 N = 16
 
@@ -221,7 +221,7 @@ async def test_concurrent_hop_tunnel_opens_one_connection():
         await ready.wait()
         return AsyncMock(spec=SSHClientConnection)
 
-    hop = SshHopTransport(factory)
+    hop = _SshHopTransport(factory)
     entered, tracked_tunnel = _tracked(hop.get_tunnel)
     tasks = [asyncio.create_task(tracked_tunnel()) for _ in range(N)]
     await _let_tasks_settle()

@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import SecretStr
 
-from otto.creds import JsonCredsStore
+from otto.creds.json_store import _JsonCredsStore
 from otto.host.element import Element
 from otto.inventory import CredsOverlay, InventoryError, merge_creds, resolve_host_entry
 from otto.logger.formatters import print_crash_traceback
@@ -170,7 +170,7 @@ def _overlay(tmp_path, store_creds, record_creds):
     path = tmp_path / "creds.json"
     path.write_text(json.dumps({"k": store_creds}))
     inner = FakeInventory({"k": {"ip": "10.0.0.1", "creds": record_creds}})
-    return CredsOverlay(inner, store=JsonCredsStore(path))
+    return CredsOverlay(inner, store=_JsonCredsStore(path))
 
 
 def test_merge_keeps_passwords_that_differ_only_by_value(tmp_path):

@@ -38,7 +38,6 @@ from .registry import (
 if TYPE_CHECKING:
     from .console import ConsoleFileTransfer as ConsoleFileTransfer
     from .embedded_base import EmbeddedFileTransfer as EmbeddedFileTransfer
-    from .ftp import FtpFileTransfer as FtpFileTransfer
     from .nc import NcFileTransfer as NcFileTransfer
     from .progress import _acquire_shared_progress as _acquire_shared_progress
     from .progress import _make_sftp_progress as _make_sftp_progress
@@ -48,18 +47,15 @@ if TYPE_CHECKING:
     from .scp import ScpFileTransfer as ScpFileTransfer
     from .sftp import SftpFileTransfer as SftpFileTransfer
     from .shell import ShellFileTransfer as ShellFileTransfer
-    from .tftp import TftpFileTransfer as TftpFileTransfer
     from .unix_base import UnixFileTransfer as UnixFileTransfer
 
 _LAZY_ATTRS: dict[str, str] = {
     "ConsoleFileTransfer": "otto.host.transfer.console",
     "EmbeddedFileTransfer": "otto.host.transfer.embedded_base",
-    "FtpFileTransfer": "otto.host.transfer.ftp",
     "NcFileTransfer": "otto.host.transfer.nc",
     "ScpFileTransfer": "otto.host.transfer.scp",
     "SftpFileTransfer": "otto.host.transfer.sftp",
     "ShellFileTransfer": "otto.host.transfer.shell",
-    "TftpFileTransfer": "otto.host.transfer.tftp",
     "UnixFileTransfer": "otto.host.transfer.unix_base",
     "_acquire_shared_progress": "otto.host.transfer.progress",
     "_make_sftp_progress": "otto.host.transfer.progress",
@@ -89,7 +85,6 @@ __all__ = [
     "BaseFileTransfer",
     "ConsoleFileTransfer",
     "EmbeddedFileTransfer",
-    "FtpFileTransfer",
     "NcFileTransfer",
     "NcListenerCheck",
     "NcPortStrategy",
@@ -97,7 +92,6 @@ __all__ = [
     "ScpFileTransfer",
     "SftpFileTransfer",
     "ShellFileTransfer",
-    "TftpFileTransfer",
     "TransferBackendError",
     "TransferConstructionError",
     "TransferContext",

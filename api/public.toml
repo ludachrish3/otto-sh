@@ -413,10 +413,6 @@ positional = ["path"]
 construct = false
 subclass = false
 
-[symbols."otto.coverage:GcdaFetcher"]
-construct = false
-subclass = false
-
 [symbols."otto.coverage:GetReport"]
 construct = false
 subclass = false
@@ -454,10 +450,6 @@ positional = ["key"]
 why = "implementer-facing"
 
 [symbols."otto.creds:JsonCredsConfig"]
-construct = false
-subclass = false
-
-[symbols."otto.creds:JsonCredsStore"]
 construct = false
 subclass = false
 
@@ -946,7 +938,7 @@ why = "transfer: sources then destination, the cp convention the docs teach"
 [symbols."otto.host.transfer:EmbeddedFileTransfer"]
 subclass = false
 final = false
-why = "otto subclasses it: ConsoleFileTransfer, TftpFileTransfer"
+why = "otto subclasses it: ConsoleFileTransfer, _TftpFileTransfer"
 
 [symbols."otto.host.transfer:EmbeddedFileTransfer.apply_mode"]
 positional = ["dest_paths"]
@@ -964,29 +956,6 @@ positional = ["src_files", "dest_dir"]
 why = "transfer: sources then destination, the cp convention the docs teach"
 
 [symbols."otto.host.transfer:EmbeddedFileTransfer.run_put"]
-positional = ["src_files", "dest_dir"]
-why = "transfer: sources then destination, the cp convention the docs teach"
-
-[symbols."otto.host.transfer:FtpFileTransfer"]
-construct = false
-subclass = false
-
-[symbols."otto.host.transfer:FtpFileTransfer.apply_mode"]
-positional = ["dest_paths"]
-why = "implementer-facing"
-
-[symbols."otto.host.transfer:FtpFileTransfer.create"]
-positional = ["ctx"]
-why = "implementer-facing"
-
-[symbols."otto.host.transfer:FtpFileTransfer.dispatch_per_file"]
-positional = ["src_files"]
-
-[symbols."otto.host.transfer:FtpFileTransfer.run_get"]
-positional = ["src_files", "dest_dir"]
-why = "transfer: sources then destination, the cp convention the docs teach"
-
-[symbols."otto.host.transfer:FtpFileTransfer.run_put"]
 positional = ["src_files", "dest_dir"]
 why = "transfer: sources then destination, the cp convention the docs teach"
 
@@ -1085,29 +1054,6 @@ why = "transfer: sources then destination, the cp convention the docs teach"
 positional = ["src_files", "dest_dir"]
 why = "transfer: sources then destination, the cp convention the docs teach"
 
-[symbols."otto.host.transfer:TftpFileTransfer"]
-construct = false
-subclass = false
-
-[symbols."otto.host.transfer:TftpFileTransfer.apply_mode"]
-positional = ["dest_paths"]
-why = "implementer-facing"
-
-[symbols."otto.host.transfer:TftpFileTransfer.create"]
-positional = ["ctx"]
-why = "implementer-facing"
-
-[symbols."otto.host.transfer:TftpFileTransfer.dispatch_per_file"]
-positional = ["src_files"]
-
-[symbols."otto.host.transfer:TftpFileTransfer.run_get"]
-positional = ["src_files", "dest_dir"]
-why = "transfer: sources then destination, the cp convention the docs teach"
-
-[symbols."otto.host.transfer:TftpFileTransfer.run_put"]
-positional = ["src_files", "dest_dir"]
-why = "transfer: sources then destination, the cp convention the docs teach"
-
 [symbols."otto.host.transfer:TransferContext"]
 construct = false
 subclass = false
@@ -1119,7 +1065,7 @@ subclass = false
 [symbols."otto.host.transfer:UnixFileTransfer"]
 subclass = false
 final = false
-why = "otto subclasses it: SftpFileTransfer, FtpFileTransfer, NcFileTransfer, ScpFileTransfer, ShellFileTransfer"
+why = "otto subclasses it: SftpFileTransfer, _FtpFileTransfer, NcFileTransfer, ScpFileTransfer, ShellFileTransfer"
 
 [symbols."otto.host.transfer:UnixFileTransfer.apply_mode"]
 positional = ["dest_paths"]
@@ -1267,26 +1213,6 @@ construct = false
 subclass = false
 
 # the built-in `command` controller; custom ones subclass PowerController
-[symbols."otto.host:CommandPowerController"]
-construct = false
-subclass = false
-
-[symbols."otto.host:CommandPowerController.cycle"]
-positional = ["host"]
-why = "implementer-facing"
-
-[symbols."otto.host:CommandPowerController.off"]
-positional = ["host"]
-why = "implementer-facing"
-
-[symbols."otto.host:CommandPowerController.on"]
-positional = ["host"]
-why = "implementer-facing"
-
-[symbols."otto.host:CommandPowerController.status"]
-positional = ["host"]
-why = "implementer-facing"
-
 [symbols."otto.host:CommandResult"]
 subclass = false
 final = false
@@ -1417,7 +1343,7 @@ subclass = false
 [symbols."otto.host:EmbeddedFileTransfer"]
 subclass = false
 final = false
-why = "otto subclasses it: ConsoleFileTransfer, TftpFileTransfer"
+why = "otto subclasses it: ConsoleFileTransfer, _TftpFileTransfer"
 
 [symbols."otto.host:EmbeddedFileTransfer.apply_mode"]
 positional = ["dest_paths"]
@@ -1592,10 +1518,6 @@ construct = false
 subclass = false
 
 [symbols."otto.host:HostContext"]
-construct = false
-subclass = false
-
-[symbols."otto.host:HostFilter"]
 construct = false
 subclass = false
 
@@ -1954,18 +1876,6 @@ why = "implementer-facing"
 
 [symbols."otto.host:ShellSession.send"]
 positional = ["text"]
-why = "implementer-facing"
-
-[symbols."otto.host:SshHopTransport"]
-construct = false
-subclass = false
-
-[symbols."otto.host:SshHopTransport.forward_port"]
-positional = ["dest_host"]
-why = "implementer-facing"
-
-[symbols."otto.host:SshHopTransport.unforward_port"]
-positional = ["dest_host"]
 why = "implementer-facing"
 
 [symbols."otto.host:SuppressCommandOutput"]
@@ -2340,10 +2250,6 @@ positional = ["path"]
 construct = false
 subclass = false
 
-[symbols."otto.inventory:NetBoxInventory"]
-construct = false
-subclass = false
-
 [symbols."otto.inventory:NetBoxInventoryConfig"]
 construct = false
 subclass = false
@@ -2408,14 +2314,6 @@ why = "implementer-facing"
 
 [symbols."otto.labs:HostSummary"]
 subclass = false
-
-[symbols."otto.labs:JsonFileLabRepository"]
-construct = false
-subclass = false
-
-[symbols."otto.labs:JsonFileLabRepository.load_lab"]
-positional = ["name"]
-why = "implementer-facing"
 
 [symbols."otto.labs:LabRepository.load_lab"]
 positional = ["name"]
@@ -2988,18 +2886,6 @@ subclass = false
 
 [symbols."otto.registry:registering_project"]
 positional = ["name"]
-
-[symbols."otto.reservations:JsonReservationBackend"]
-construct = false
-subclass = false
-
-[symbols."otto.reservations:JsonReservationBackend.fetch_reservations"]
-positional = ["username"]
-why = "implementer-facing"
-
-[symbols."otto.reservations:JsonReservationBackend.holders"]
-positional = ["resource"]
-why = "implementer-facing"
 
 [symbols."otto.reservations:JsonReservationConfig"]
 construct = false

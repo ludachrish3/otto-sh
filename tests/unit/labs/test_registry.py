@@ -4,12 +4,12 @@ import pytest
 
 from otto.host.os_profile import ProfileContext
 from otto.labs import (
-    JsonFileLabRepository,
     LabRepositoryError,
     LabSourceConstructionError,
     LabSourceEnv,
     register_lab_repository,
 )
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.registry import LAB_REPOSITORIES
 
 
@@ -20,7 +20,7 @@ def _env(tmp_path):
 def test_json_builtin_builds_a_json_repository_over_anchored_paths(tmp_path):
     prepared = LAB_REPOSITORIES.prepare("json", {"paths": ["lab_data"]}, _env(tmp_path))
     built = LAB_REPOSITORIES.build(prepared)
-    assert isinstance(built, JsonFileLabRepository)
+    assert isinstance(built, _JsonFileLabRepository)
     assert built.search_paths == [tmp_path / "lab_data"]
 
 

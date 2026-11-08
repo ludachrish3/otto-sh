@@ -20,7 +20,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.file_ops import refuse_if_base64_is_absent
-from otto.host.host import HostFilter, is_dry_run
+from otto.host.host import _HostFilter, is_dry_run
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.power import PowerController, PowerState
@@ -456,9 +456,9 @@ class _Sink(logging.Handler):
 
 @contextmanager
 def _two_sided_sinks():
-    """otto's real sink topology, in miniature: a console side behind ``HostFilter``.
+    """otto's real sink topology, in miniature: a console side behind ``_HostFilter``.
 
-    ``attach_console_suppress_filter`` applies :class:`~otto.host.host.HostFilter`
+    ``attach_console_suppress_filter`` applies ``otto.host.host._HostFilter``
     to the console + ``console.log`` handlers and NOT to ``verbose.log``
     (asserted end-to-end in ``tests/unit/logger/test_management.py``), so a
     ``QUIET`` command is dropped on one side and kept on the other. Both sinks
@@ -467,7 +467,7 @@ def _two_sided_sinks():
     outcome here.
     """
     console, verbose = _Sink(), _Sink()
-    console.addFilter(HostFilter())
+    console.addFilter(_HostFilter())
     log = logging.getLogger("otto.host.host")
     prior_level = log.level
     log.setLevel(logging.DEBUG)
@@ -667,7 +667,7 @@ class TestDryRunWriteFileAnnouncesWithoutThePayload:
 
     def _sinks(self, tmp_path):
         management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-        management.attach_console_suppress_filter(HostFilter())
+        management.attach_console_suppress_filter(_HostFilter())
         return management.create_output_dir("run")
 
     @pytest.mark.asyncio

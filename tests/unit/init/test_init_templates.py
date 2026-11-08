@@ -114,7 +114,7 @@ def test_template_shows_every_coverage_tier_field_and_the_unit_toolchain() -> No
 
 def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(tmp_path) -> None:
     """The scaffolded files are accepted by the SAME parsers and join the loader uses."""
-    from otto.creds import JsonCredsStore
+    from otto.creds.json_store import _JsonCredsStore
     from otto.host.specs import UnixHostSpec
     from otto.inventory import CredsOverlay, JsonInventory, resolve_host_entry
     from otto.labs.json_repository import parse_elements, parse_lab_entries, parse_lab_sections
@@ -129,7 +129,7 @@ def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(
     (tmp_path / "creds.json").write_text(json.dumps(CREDS_JSON_TEMPLATE))
     inventory = CredsOverlay(
         JsonInventory(tmp_path / "inventory.json", supplies=["ip"]),
-        store=JsonCredsStore(tmp_path / "creds.json"),
+        store=_JsonCredsStore(tmp_path / "creds.json"),
     )
     resolved = resolve_host_entry(element.hosts[0], inventory, element.to_element()).host_data
     spec = UnixHostSpec.model_validate(resolved)

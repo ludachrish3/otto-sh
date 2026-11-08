@@ -10,7 +10,7 @@ import pytest
 
 from otto.inventory import JsonInventory
 from otto.labs import CompositeLabRepository, LabRepositoryError, LabSource, host_summaries
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 
 _LAB = {
     "labs": {"l": {}},
@@ -67,7 +67,7 @@ def repository(tmp_path):
             }
         )
     )
-    return JsonFileLabRepository(search_paths=[tmp_path])
+    return _JsonFileLabRepository(search_paths=[tmp_path])
 
 
 @pytest.fixture
@@ -163,7 +163,7 @@ def test_an_inventory_owned_field_stated_inline_names_the_entry_that_did_it(tmp_
             r"from inventory key 'dut-1'"
         ),
     ):
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab(
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab(
             "l", inventory=JsonInventory(inv, supplies=["ip"])
         )
 

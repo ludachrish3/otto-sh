@@ -767,7 +767,7 @@ def ensure_inline_lab(ctx: typer.Context) -> None:
     ``-I``/``-E`` name is a typo here too, and a half-registered world fails
     loud rather than surfacing a secondary error — then the CLI session BEFORE
     the lab load: the session applies each project's ``[logging.levels]`` floor
-    and the HostFilter, so the load's own notices (the cross-source override
+    and the _HostFilter, so the load's own notices (the cross-source override
     warning from ``otto.labs.composite``, notably) render through it. A lab
     that cannot load reports and exits with the loud path's message and code.
     """
@@ -873,7 +873,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     ``init_cli_logging``'s install is an idempotent re-affirmation. What this
     call owns is the per-invocation state the file sinks read later (xdir,
     retention, rich-file flag). The project-aware half — the merged
-    ``[logging.levels]`` overrides and the ``HostFilter`` on the console — is
+    ``[logging.levels]`` overrides and the ``_HostFilter`` on the console — is
     :func:`otto.session.install_logging`, the same call a library caller makes.
     """
     meta = ctx.meta
@@ -911,7 +911,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
 
     # The project-aware half, shared with library callers: every project's
     # [logging.levels] over otto's defaults (a conflict refuses), and the
-    # HostFilter on the console. After the dry-run notice, which stays the
+    # _HostFilter on the console. After the dry-run notice, which stays the
     # first line of a dry run. init_cli_logging above owns the CLI-only file
     # sinks; this re-affirms the console it installed with the same level.
     from ..session.logs import install_logging

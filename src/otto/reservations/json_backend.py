@@ -6,7 +6,7 @@ Intended for two audiences:
    committed to the project's git repository (or kept on a shared volume)
    that lists who holds which resources.
 2. **Tests** — unit and integration tests construct fixture JSON files and
-   point a :class:`JsonReservationBackend` at them.
+   point the ``"json"`` reservation backend at them.
 
 File format (``version: 1``)::
 
@@ -73,7 +73,7 @@ class JsonReservationConfig(OttoModel):
 
 
 @final
-class JsonReservationBackend(ReservationBackendBase):
+class _JsonReservationBackend(ReservationBackendBase):
     """Read reservations from a JSON file on disk.
 
     Implements the optional
@@ -192,6 +192,6 @@ class JsonReservationBackend(ReservationBackendBase):
 
 def _json_reservations(
     c: "Configured[JsonReservationConfig, ReservationEnv]",
-) -> JsonReservationBackend:
+) -> _JsonReservationBackend:
     """Build the json backend from its prepared sub-table."""
-    return JsonReservationBackend(c.env.url, path=c.config.path, username=c.env.username)
+    return _JsonReservationBackend(c.env.url, path=c.config.path, username=c.env.username)

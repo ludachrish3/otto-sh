@@ -87,7 +87,7 @@ def test_decode_cov_dump_reconstructs_gcda_from_console_capture():
 async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_path):
     """The collector drives the product's dump over the console via the board's
     loader and writes the decoded `.gcda` to `<staging_root>/<host.id>/<product>/`, the
-    same layout GcdaFetcher produces."""
+    same layout _GcdaFetcher produces."""
     console = (FIXTURES / "cov_dump_console.txt").read_text()
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
     host = _mock_embedded_host("zephyr37-llext", console)
@@ -218,7 +218,7 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
 ):
     """collect_all dumps every embedded host into ``<staging_root>/<id>/<product>/`` and
     leaves non-embedded hosts untouched, returning ``{(host_id, product): dir}``
-    like GcdaFetcher.fetch_all.
+    like _GcdaFetcher.fetch_all.
     """
     embedded = _mock_embedded_host(
         "zephyr37-llext",

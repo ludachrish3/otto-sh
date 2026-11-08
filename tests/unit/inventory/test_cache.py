@@ -9,16 +9,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from otto.creds.config import compile_creds_table
-from otto.inventory import (
-    CredsOverlay,
-    Inventory,
-    InventoryError,
-    JsonInventory,
-    NetBoxInventory,
-)
+from otto.inventory import CredsOverlay, Inventory, InventoryError, JsonInventory
 from otto.inventory import cache as cache_module
 from otto.inventory.cache import SnapshotCache, format_age, reset_stale_warnings
 from otto.inventory.config import compile_inventory, construct_inventory
+from otto.inventory.netbox import _NetBoxInventory
 from otto.models.settings import InventoryConfigSpec
 from otto.testing import assert_inventory_conforms
 
@@ -540,7 +535,7 @@ def test_construct_wraps_netbox_but_never_json_and_ttl_zero_disables(tmp_path, m
         construct_inventory(
             _compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(0), tmp_path)
         ),
-        NetBoxInventory,
+        _NetBoxInventory,
     )
     creds = tmp_path / "c.json"
     creds.write_text("{}")

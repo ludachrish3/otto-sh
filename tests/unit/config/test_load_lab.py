@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import Lab, load_lab
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
 
@@ -50,7 +50,7 @@ def test_load_lab_uses_injected_repository(tmp_path):
             },
         ],
     )
-    repository = JsonFileLabRepository([tmp_path])
+    repository = _JsonFileLabRepository([tmp_path])
     lab = load_lab("injected", repository=repository)
     assert lab.name == "injected"
     assert set(lab.hosts) == {"alt1", "local"}  # `local` = built-in injection
@@ -97,7 +97,7 @@ def test_load_lab_merges_multiple_names(tmp_path):
             },
         ],
     )
-    repository = JsonFileLabRepository([tmp_path])
+    repository = _JsonFileLabRepository([tmp_path])
     lab = load_lab("lab_a+lab_b", repository=repository)
     assert set(lab.hosts) == {"alt1", "test2", "local"}  # `local` = built-in injection
 
@@ -131,7 +131,7 @@ def test_load_lab_comma_is_not_a_separator(tmp_path):
             },
         ],
     )
-    repository = JsonFileLabRepository([tmp_path])
+    repository = _JsonFileLabRepository([tmp_path])
 
     with pytest.raises(LabNotFoundError):
         load_lab("lab_a,lab_b", repository=repository)
@@ -158,7 +158,7 @@ def test_merged_lab_name_uses_the_plus_separator(tmp_path):
             },
         ],
     )
-    repository = JsonFileLabRepository([tmp_path])
+    repository = _JsonFileLabRepository([tmp_path])
 
     assert load_lab("lab_a+lab_b", repository=repository).name == "lab_a+lab_b"
 

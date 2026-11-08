@@ -137,7 +137,7 @@ def parse_lab_sections(data: object, source: str) -> dict[str, Any]:
     """Validate a parsed ``lab.json`` object's section shape; return its sections.
 
     The single source of truth for the ``lab.json`` object contract — shared by
-    the runtime loader (``JsonFileLabRepository._load_lab_file``) and the
+    the runtime loader (``_JsonFileLabRepository._load_lab_file``) and the
     ``otto init`` doctor (``otto.init.doctor._validate_lab``) so the doctor
     cannot drift from what otto actually accepts (there is no second validator
     to drift). *data* is the already-parsed JSON value; *source* names its
@@ -284,7 +284,7 @@ class LabDocument:
 
 
 @final
-class JsonFileLabRepository:
+class _JsonFileLabRepository:
     """Load labs from ``lab.json`` files across a fixed set of search paths.
 
     A search path takes one of three forms: a **directory**, which is searched
@@ -734,9 +734,9 @@ class JsonLabSourceConfig(OttoModel):
         return LabSourceFacts(file_inputs=self.paths)
 
 
-def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> JsonFileLabRepository:
+def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> _JsonFileLabRepository:
     """Build the built-in json source from its parsed configuration."""
-    return JsonFileLabRepository(search_paths=list(c.config.paths), profiles=c.env.profiles)
+    return _JsonFileLabRepository(search_paths=list(c.config.paths), profiles=c.env.profiles)
 
 
 def _add_host(
@@ -867,7 +867,7 @@ def check_in_source_duplicates(
     The recording happens only once both checks pass, so a rejected file never
     poisons the state for the files after it.
 
-    Callers are ``JsonFileLabRepository._load_documents`` and the
+    Callers are ``_JsonFileLabRepository._load_documents`` and the
     ``otto init`` doctor (``otto.init.doctor._parse_lab_documents``), which is the
     whole point of it being public: the doctor must refuse exactly what the
     loader refuses, and it can only do that by running this code rather than a

@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from otto.creds import JsonCredsStore
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory import CredsOverlay, JsonInventory
 from otto.inventory.doctor import (
     creds_mode_warnings,
@@ -53,7 +53,7 @@ def test_creds_mode_warning_names_the_mode(tmp_path):
     creds = tmp_path / "creds.json"
     creds.write_text("{}")
     creds.chmod(0o644)
-    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(creds))
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(creds))
     (w,) = creds_mode_warnings(inv)
     assert "0644" in w
     assert str(creds) in w
@@ -66,7 +66,7 @@ def test_creds_mode_warning_names_the_mode(tmp_path):
 def test_creds_mode_warning_names_a_missing_creds_file(tmp_path):
     """A declared but absent creds store file warns by name — it does not silently vanish."""
     missing = tmp_path / "nope" / "creds.json"
-    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(missing))
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(missing))
     (w,) = creds_mode_warnings(inv)
     assert str(missing) in w
     assert "does not exist" in w
@@ -81,7 +81,7 @@ def test_creds_mode_warning_names_a_path_that_cannot_be_stat_ed(tmp_path, monkey
     """
     creds = tmp_path / "creds.json"
     creds.write_text("{}")
-    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(creds))
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(creds))
     real_stat = Path.stat
 
     def _denied(self, *args, **kwargs):
@@ -135,7 +135,7 @@ class _Unenumerable:
 def test_orphan_creds_are_named_bounded_and_labelled(tmp_path):
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({f"k{i}": [] for i in range(12)}))
-    inv = CredsOverlay(_inv(tmp_path, ["k0"]), store=JsonCredsStore(creds))
+    inv = CredsOverlay(_inv(tmp_path, ["k0"]), store=_JsonCredsStore(creds))
     w = orphan_creds_warning(inv)
     assert w is not None
     assert w.startswith(f"creds store '{inv.store.label}': 11 key(s) the inventory does not hold:")
@@ -150,7 +150,7 @@ def test_orphan_creds_is_silent_without_orphans_a_store_or_an_enumerable_store(t
     creds.write_text(json.dumps({"k": []}))
     assert (
         orphan_creds_warning(
-            CredsOverlay(_inv(tmp_path, ["k", "other"]), store=JsonCredsStore(creds))
+            CredsOverlay(_inv(tmp_path, ["k", "other"]), store=_JsonCredsStore(creds))
         )
         is None
     )
@@ -166,13 +166,13 @@ def test_orphan_creds_is_silent_over_an_unreadable_store(tmp_path):
     """
     missing = tmp_path / "absent.json"
     assert (
-        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(missing)))
+        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(missing)))
         is None
     )
 
     malformed = tmp_path / "malformed.json"
     malformed.write_text("not json")
     assert (
-        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(malformed)))
+        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(malformed)))
         is None
     )

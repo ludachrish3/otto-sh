@@ -54,7 +54,7 @@ async def _ftp_size(ftp_conn: "aioftp.Client", path: str) -> int:
 
 
 @final
-class FtpFileTransfer(UnixFileTransfer):
+class _FtpFileTransfer(UnixFileTransfer):
     """FTP file transfer backend for UnixHost.
 
     Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer` and
@@ -91,13 +91,13 @@ class FtpFileTransfer(UnixFileTransfer):
 
     @override
     @classmethod
-    def create(cls, ctx: "TransferContext") -> "FtpFileTransfer":
+    def create(cls, ctx: "TransferContext") -> "_FtpFileTransfer":
         if ctx.connections is None:
             raise ValueError(
-                "FtpFileTransfer requires a connections manager on the transfer context"
+                "_FtpFileTransfer requires a connections manager on the transfer context"
             )
         if ctx.exec_cmd is None:
-            raise ValueError("FtpFileTransfer requires exec_cmd on the transfer context")
+            raise ValueError("_FtpFileTransfer requires exec_cmd on the transfer context")
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,

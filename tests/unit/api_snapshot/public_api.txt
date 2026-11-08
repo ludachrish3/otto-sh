@@ -359,11 +359,6 @@ member	otto.coverage:FailedReset.product	field
 member	otto.coverage:FailedReset.reason	property:g--
 member	otto.coverage:FailedReset.result	field
 abstract	otto.coverage:FailedReset	@final @manifest:subclass=false
-name	otto.coverage:GcdaFetcher	class
-mro	otto.coverage:GcdaFetcher	-
-call	otto.coverage:GcdaFetcher	sync	@manifest:construct=false
-member	otto.coverage:GcdaFetcher.fetch_all	method	coroutine	KO:failures:-
-abstract	otto.coverage:GcdaFetcher	@final @manifest:subclass=false
 name	otto.coverage:GetReport	class
 mro	otto.coverage:GetReport	-
 call	otto.coverage:GetReport	sync	@manifest:construct=false
@@ -471,15 +466,6 @@ member	otto.creds:JsonCredsConfig.__hash__	method	sync	-
 member	otto.creds:JsonCredsConfig.model_config	attribute
 member	otto.creds:JsonCredsConfig.path	field
 abstract	otto.creds:JsonCredsConfig	@final @manifest:subclass=false
-name	otto.creds:JsonCredsStore	class
-mro	otto.creds:JsonCredsStore	-
-call	otto.creds:JsonCredsStore	sync	@manifest:construct=false
-member	otto.creds:JsonCredsStore.fingerprint	method	sync	-
-member	otto.creds:JsonCredsStore.list_keys	method	sync	-
-member	otto.creds:JsonCredsStore.lookup	method	sync	PK:key:-
-member	otto.creds:JsonCredsStore.read_document	method	sync	PK:refuse:-
-member	otto.creds:JsonCredsStore.stat_paths	method	sync	-
-abstract	otto.creds:JsonCredsStore	@final @manifest:subclass=false
 name	otto.creds:compile_creds	function
 call	otto.creds:compile_creds	sync	PK:cfg:- KO:anchor_dir:- KO:origin:-
 name	otto.creds:compile_creds_table	function
@@ -1237,24 +1223,6 @@ member	otto.host.transfer:EmbeddedFileTransfer.run_get	method	coroutine	PK:src_f
 member	otto.host.transfer:EmbeddedFileTransfer.run_put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:-
 member	otto.host.transfer:EmbeddedFileTransfer.supports_mode	attribute
 abstract	otto.host.transfer:EmbeddedFileTransfer	@manifest:subclass=false
-name	otto.host.transfer:FtpFileTransfer	class
-mro	otto.host.transfer:FtpFileTransfer	{otto.host.transfer:UnixFileTransfer} {otto.host.transfer:BaseFileTransfer}
-call	otto.host.transfer:FtpFileTransfer	sync	@manifest:construct=false
-member	otto.host.transfer:FtpFileTransfer.apply_mode	method	coroutine	PK:dest_paths:- PK:mode:-
-member	otto.host.transfer:FtpFileTransfer.authenticates	attribute
-member	otto.host.transfer:FtpFileTransfer.concurrency_limit	property:g--
-member	otto.host.transfer:FtpFileTransfer.create	classmethod	sync	PK:ctx:-
-member	otto.host.transfer:FtpFileTransfer.dispatch_per_file	method	coroutine	PK:src_files:- PK:transfer_one:- KO:concurrent:-
-member	otto.host.transfer:FtpFileTransfer.effective_progress_granularity	method	sync	-
-member	otto.host.transfer:FtpFileTransfer.get_files	method	coroutine	PK:src_files:- PK:dest_dir:- PK:show_progress:B:true PK:concurrent:B:true
-member	otto.host.transfer:FtpFileTransfer.host_families	attribute
-member	otto.host.transfer:FtpFileTransfer.prepare	method	coroutine	-
-member	otto.host.transfer:FtpFileTransfer.progress_granularity	attribute
-member	otto.host.transfer:FtpFileTransfer.put_files	method	coroutine	PK:src_files:- PK:dest_dir:- PK:show_progress:B:true PK:mode:N PK:concurrent:B:true
-member	otto.host.transfer:FtpFileTransfer.run_get	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:B:true
-member	otto.host.transfer:FtpFileTransfer.run_put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:B:true
-member	otto.host.transfer:FtpFileTransfer.supports_mode	attribute
-abstract	otto.host.transfer:FtpFileTransfer	@final @manifest:subclass=false
 name	otto.host.transfer:MAX_FILE_MODE	value
 name	otto.host.transfer:NcFileTransfer	class
 mro	otto.host.transfer:NcFileTransfer	{otto.host.transfer:UnixFileTransfer} {otto.host.transfer:BaseFileTransfer}
@@ -1340,23 +1308,6 @@ member	otto.host.transfer:ShellFileTransfer.run_put	method	coroutine	PK:src_file
 member	otto.host.transfer:ShellFileTransfer.supports_mode	attribute
 abstract	otto.host.transfer:ShellFileTransfer	@final @manifest:subclass=false
 name	otto.host.transfer:TRANSFER_BACKENDS	value
-name	otto.host.transfer:TftpFileTransfer	class
-mro	otto.host.transfer:TftpFileTransfer	{otto.host.transfer:EmbeddedFileTransfer,otto.host:EmbeddedFileTransfer} {otto.host.transfer:BaseFileTransfer}
-call	otto.host.transfer:TftpFileTransfer	sync	@manifest:construct=false
-member	otto.host.transfer:TftpFileTransfer.apply_mode	method	coroutine	PK:dest_paths:- PK:mode:-
-member	otto.host.transfer:TftpFileTransfer.authenticates	attribute
-member	otto.host.transfer:TftpFileTransfer.concurrency_limit	property:g--
-member	otto.host.transfer:TftpFileTransfer.create	classmethod	sync	PK:ctx:-
-member	otto.host.transfer:TftpFileTransfer.dispatch_per_file	method	coroutine	PK:src_files:- PK:transfer_one:- KO:concurrent:-
-member	otto.host.transfer:TftpFileTransfer.effective_progress_granularity	method	sync	-
-member	otto.host.transfer:TftpFileTransfer.get_files	method	coroutine	PK:src_files:- PK:dest_dir:- PK:show_progress:B:true PK:concurrent:B:true
-member	otto.host.transfer:TftpFileTransfer.host_families	attribute
-member	otto.host.transfer:TftpFileTransfer.progress_granularity	attribute
-member	otto.host.transfer:TftpFileTransfer.put_files	method	coroutine	PK:src_files:- PK:dest_dir:- PK:show_progress:B:true PK:mode:N PK:concurrent:B:true
-member	otto.host.transfer:TftpFileTransfer.run_get	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:B:true
-member	otto.host.transfer:TftpFileTransfer.run_put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:B:true
-member	otto.host.transfer:TftpFileTransfer.supports_mode	attribute
-abstract	otto.host.transfer:TftpFileTransfer	@final @manifest:subclass=false
 name	otto.host.transfer:TransferBackendError	class
 mro	otto.host.transfer:TransferBackendError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.host.transfer:TransferBackendError	sync	@builtin:builtins.Exception
@@ -1542,16 +1493,6 @@ member	otto.host:CommandPowerConfig.on_cmd	field
 member	otto.host:CommandPowerConfig.status_cmd	field
 member	otto.host:CommandPowerConfig.status_on	field
 abstract	otto.host:CommandPowerConfig	@final @manifest:subclass=false
-name	otto.host:CommandPowerController	class
-mro	otto.host:CommandPowerController	{otto.host:PowerController}
-call	otto.host:CommandPowerController	sync	@manifest:construct=false
-member	otto.host:CommandPowerController.__eq__	method	sync	PK:other:-
-member	otto.host:CommandPowerController.__hash__	method	sync	-
-member	otto.host:CommandPowerController.cycle	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.off	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.on	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.status	method	coroutine	PK:host:-
-abstract	otto.host:CommandPowerController	@final @manifest:subclass=false
 name	otto.host:CommandResult	class
 mro	otto.host:CommandResult	{otto.result:Result,otto:Result}
 call	otto.host:CommandResult	sync	PK:status:- PK:value:N PK:msg:S:"" PK:command:S:"" PK:retcode:I:-1 PK:timed_out:B:false
@@ -2091,11 +2032,6 @@ member	otto.host:HostContext.host_id	field
 member	otto.host:HostContext.preferences	field
 member	otto.host:HostContext.profile	field
 abstract	otto.host:HostContext	@final @manifest:subclass=false
-name	otto.host:HostFilter	class
-mro	otto.host:HostFilter	-
-call	otto.host:HostFilter	sync	@manifest:construct=false
-member	otto.host:HostFilter.filter	method	sync	PK:record:-
-abstract	otto.host:HostFilter	@final @manifest:subclass=false
 name	otto.host:HostKeyRefusal	enum
 mro	otto.host:HostKeyRefusal	-
 enum	otto.host:HostKeyRefusal	CHANGED	S:"changed"
@@ -2698,14 +2634,6 @@ member	otto.host:ShellSession.run_cmd	method	coroutine	PK:cmd:- PK:expects:N PK:
 member	otto.host:ShellSession.send	method	coroutine	PK:text:-
 member	otto.host:ShellSession.write_transport	method	coroutine	PK:data:-
 abstract	otto.host:ShellSession	@manifest:subclass=false
-name	otto.host:SshHopTransport	class
-mro	otto.host:SshHopTransport	-
-call	otto.host:SshHopTransport	sync	@manifest:construct=false
-member	otto.host:SshHopTransport.close	method	coroutine	-
-member	otto.host:SshHopTransport.forward_port	method	coroutine	PK:dest_host:- PK:dest_port:-
-member	otto.host:SshHopTransport.get_tunnel	method	coroutine	PK:_visited:N
-member	otto.host:SshHopTransport.unforward_port	method	sync	PK:dest_host:- PK:dest_port:-
-abstract	otto.host:SshHopTransport	@final @manifest:subclass=false
 name	otto.host:SuppressCommandOutput	class
 mro	otto.host:SuppressCommandOutput	-
 call	otto.host:SuppressCommandOutput	sync	PK:host:N
@@ -3416,14 +3344,6 @@ member	otto.inventory:JsonInventoryConfig.model_config	attribute
 member	otto.inventory:JsonInventoryConfig.path	field
 member	otto.inventory:JsonInventoryConfig.supplies	field
 abstract	otto.inventory:JsonInventoryConfig	@final @manifest:subclass=false
-name	otto.inventory:NetBoxInventory	class
-mro	otto.inventory:NetBoxInventory	-
-call	otto.inventory:NetBoxInventory	sync	@manifest:construct=false
-member	otto.inventory:NetBoxInventory.addressless_device_names	property:g--
-member	otto.inventory:NetBoxInventory.fingerprint	method	sync	-
-member	otto.inventory:NetBoxInventory.list_keys	method	sync	-
-member	otto.inventory:NetBoxInventory.lookup	method	sync	PK:key:-
-abstract	otto.inventory:NetBoxInventory	@final @manifest:subclass=false
 name	otto.inventory:NetBoxInventoryConfig	model
 mro	otto.inventory:NetBoxInventoryConfig	{otto.models:OttoModel}
 input	otto.inventory:NetBoxInventoryConfig	@manifest:construct=false	-	-	-
@@ -3554,13 +3474,6 @@ member	otto.labs:HostSummary.labs	field
 member	otto.labs:HostSummary.logins	field
 member	otto.labs:HostSummary.os_type	field
 abstract	otto.labs:HostSummary	@final @manifest:subclass=false
-name	otto.labs:JsonFileLabRepository	class
-mro	otto.labs:JsonFileLabRepository	-
-call	otto.labs:JsonFileLabRepository	sync	@manifest:construct=false
-member	otto.labs:JsonFileLabRepository.list_host_summaries	method	sync	PK:inventory:N
-member	otto.labs:JsonFileLabRepository.list_labs	method	sync	-
-member	otto.labs:JsonFileLabRepository.load_lab	method	sync	PK:name:- PK:preferences:N PK:inventory:N
-abstract	otto.labs:JsonFileLabRepository	@final @manifest:subclass=false
 name	otto.labs:LabNotFoundError	class
 mro	otto.labs:LabNotFoundError	{otto.labs:LabRepositoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.labs:LabNotFoundError	sync	@builtin:builtins.Exception
@@ -4938,14 +4851,6 @@ name	otto.registry:configured_backend	function
 call	otto.registry:configured_backend	sync	KO:config:- KO:factory:- KO:metadata:-
 name	otto.registry:registering_project	function
 call	otto.registry:registering_project	sync	PK:name:-
-name	otto.reservations:JsonReservationBackend	class
-mro	otto.reservations:JsonReservationBackend	{otto.reservations:ReservationBackendBase}
-call	otto.reservations:JsonReservationBackend	sync	@manifest:construct=false
-member	otto.reservations:JsonReservationBackend.backend_name	method	sync	-
-member	otto.reservations:JsonReservationBackend.fetch_reservations	method	sync	PK:username:- PK:start:N PK:end:N
-member	otto.reservations:JsonReservationBackend.holders	method	sync	PK:resource:-
-member	otto.reservations:JsonReservationBackend.reservations	property:g--
-abstract	otto.reservations:JsonReservationBackend	@final @manifest:subclass=false
 name	otto.reservations:JsonReservationConfig	model
 mro	otto.reservations:JsonReservationConfig	{otto.models:OttoModel}
 input	otto.reservations:JsonReservationConfig	@manifest:construct=false	-	-	-

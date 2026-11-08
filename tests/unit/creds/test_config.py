@@ -4,13 +4,14 @@ import json
 
 import pytest
 
-from otto.creds import CredsConstructionError, CredsEnv, CredsError, JsonCredsStore
+from otto.creds import CredsConstructionError, CredsEnv, CredsError
 from otto.creds.config import (
     JsonCredsConfig,
     compile_creds,
     compile_creds_table,
     construct_creds_store,
 )
+from otto.creds.json_store import _JsonCredsStore
 from otto.creds.registry import register_creds_backend
 from otto.models.base import OttoModel
 from otto.models.settings import CredsConfigSpec
@@ -91,7 +92,7 @@ def test_construct_builds_the_json_store_on_the_resolved_path_without_io(tmp_pat
         origin="o",
     )
     store = construct_creds_store(compiled)  # no file exists; no raise
-    assert isinstance(store, JsonCredsStore)
+    assert isinstance(store, _JsonCredsStore)
     assert store.path == (tmp_path / "creds.json").resolve()
     (tmp_path / "creds.json").write_text(json.dumps({"k": [{"login": "u"}]}))
     assert [c.login for c in store.lookup("k")] == ["u"]

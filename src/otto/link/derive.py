@@ -159,7 +159,7 @@ def resolve_declared_links(
     **both** endpoints lie outside *loaded_ids* belongs to an unrelated lab and
     is **skipped** — its errors (unknown host, bad interface, or even a
     structurally malformed record) must not break this lab's load, symmetric
-    with the cross-lab host-record containment in ``JsonFileLabRepository``. An
+    with the cross-lab host-record containment in ``_JsonFileLabRepository``. An
     entry touching the lab (≥1 endpoint in *loaded_ids*) is resolved and fails
     loud, naming the entry's original file *index* and *source*.
     """

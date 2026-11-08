@@ -580,7 +580,7 @@ def test_unix_spec_omits_command_frame_when_unset():
 
 def test_spec_power_control_coerces_through_to_host():
     """A lab-data ``[power]`` table on the spec builds a runtime controller."""
-    from otto.host.power import CommandPowerController
+    from otto.host.power import _CommandPowerController
 
     host = build_host(
         {
@@ -594,7 +594,7 @@ def test_spec_power_control_coerces_through_to_host():
             },
         }
     )
-    assert isinstance(host.power_control, CommandPowerController)
+    assert isinstance(host.power_control, _CommandPowerController)
     assert host.power_control.config.controller == "hyp"
 
 

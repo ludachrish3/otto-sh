@@ -230,7 +230,7 @@ def _fd_watermark(request: pytest.FixtureRequest) -> Iterator[None]:
     """Descriptor bracket for the hop tests, scoped by the ``hops`` marker.
 
     Catches anything the hop path still holds when the test ends: a
-    ``SshHopTransport.close()`` that aborted partway through its listener loop
+    ``_SshHopTransport.close()`` that aborted partway through its listener loop
     and so never reached the tunnel teardown, a forward built after close by a
     caller that raced it, the zombie ``_SelectorSocketTransport`` class this
     lane's fixtures already fight, and leaked telnet console transports.

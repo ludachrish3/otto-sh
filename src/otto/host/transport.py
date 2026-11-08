@@ -3,7 +3,7 @@ Hop transport abstractions for multi-hop connectivity.
 
 A ``HopTransport`` decouples the transport mechanism (SSH tunnel, future
 telnet relay, etc.) from ``ConnectionManager``.  The concrete
-``SshHopTransport`` wraps an ``SSHClientConnection`` and provides tunnel
+``_SshHopTransport`` wraps an ``SSHClientConnection`` and provides tunnel
 access and local port forwarding — the same operations that Phase 1
 performed inline inside ``ConnectionManager``.
 
@@ -102,7 +102,7 @@ class HopTransport(Protocol):
 
 
 @final
-class SshHopTransport:
+class _SshHopTransport:
     """Concrete ``HopTransport`` backed by an SSH connection.
 
     Parameters
@@ -123,7 +123,7 @@ class SshHopTransport:
     def __init__(
         self,
         factory: "Callable[..., Awaitable[SSHClientConnection]]",
-        parent: "SshHopTransport | None" = None,
+        parent: "_SshHopTransport | None" = None,
     ) -> None:
         self._factory = factory
         self._parent = parent

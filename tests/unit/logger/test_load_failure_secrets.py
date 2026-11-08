@@ -16,12 +16,12 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from otto.config.project import Project
-from otto.creds import JsonCredsStore
 from otto.creds.errors import CredsError
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory import InventoryError
-from otto.inventory.netbox import NetBoxInventory
+from otto.inventory.netbox import _NetBoxInventory
 from otto.labs.errors import LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.logger.formatters import capture_exception, render_traceback
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
@@ -46,7 +46,7 @@ def test_a_lab_host_that_fails_to_validate_logs_no_password(tmp_path):
     hosts = [{"ip": "10.0.0.9", "creds": _CREDS, "bogus": 1, "element": "bad", "labs": ["l"]}]
     write_lab_json(tmp_path / "lab.json", hosts)
     with pytest.raises(LabRepositoryError) as exc:
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
     text = _logged(exc.value)
     assert "host_data" in text  # the frames holding the parsed entry are shown, locals and all
     assert PLANTED not in text
@@ -57,7 +57,7 @@ def test_a_lab_file_that_fails_to_parse_logs_no_password(tmp_path):
         f'{{"_c": {{"password": "{PLANTED}"}}, "elements": [ oops ]}}'
     )
     with pytest.raises(LabRepositoryError, match="malformed JSON") as exc:
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
     text = _logged(exc.value)
     assert "decoder.py" in text  # json's frames are listed, by file and line only
     assert PLANTED not in text
@@ -67,7 +67,7 @@ def test_a_creds_store_entry_that_fails_to_validate_logs_no_password(tmp_path):
     path = tmp_path / "creds.json"
     path.write_text(f'{{"k": [{{"login": "u", "password": "{PLANTED}", "via": "x"}}]}}')
     with pytest.raises(CredsError) as exc:
-        JsonCredsStore(path).lookup("k")
+        _JsonCredsStore(path).lookup("k")
     text = _logged(exc.value)
     assert "parse_creds_document" in text
     assert PLANTED not in text
@@ -77,7 +77,7 @@ def test_a_creds_store_that_fails_to_parse_logs_no_password(tmp_path):
     path = tmp_path / "creds.json"
     path.write_text(f'{{"k": [{{"login": "u", "password": "{PLANTED}"}}] oops')
     with pytest.raises(CredsError) as exc:
-        JsonCredsStore(path).lookup("k")
+        _JsonCredsStore(path).lookup("k")
     text = _logged(exc.value)
     assert "decoder.py" in text
     assert PLANTED not in text
@@ -87,7 +87,7 @@ def test_a_netbox_record_that_fails_to_validate_logs_no_password(monkeypatch):
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
     d = device(1, "d1", custom_fields={"password": PLANTED, "slot_cf": "not a number"})
     with NetBoxStub([d]) as stub:
-        inv = NetBoxInventory(
+        inv = _NetBoxInventory(
             url=stub.base, custom_fields={"shelf": "slot_cf"}, extra_custom_fields=["password"]
         )
         with pytest.raises(InventoryError) as exc:

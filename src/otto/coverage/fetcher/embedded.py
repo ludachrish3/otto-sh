@@ -1,7 +1,7 @@
 """Collect ``.gcda`` coverage from embedded (Zephyr LLEXT) targets over the console.
 
 Unix hosts write ``.gcda`` to a filesystem that otto fetches with
-:class:`~otto.coverage.fetcher.remote.GcdaFetcher`.  Embedded RTOS targets have
+:mod:`otto.coverage.fetcher.remote`.  Embedded RTOS targets have
 no filesystem: a coverage-instrumented LLEXT extension built against NASA's
 embedded-gcov dumps its counters as an ASCII hexdump over the serial console
 (``call_fn cov_dump`` → ``__gcov_exit``).  This module reconstructs the binary
@@ -10,7 +10,7 @@ embedded-gcov dumps its counters as an ASCII hexdump over the serial console
 
 Each instrumented product on a board is dumped on its own — via its loader's
 call command — and staged under ``<staging_root>/<host_id>/<product>/``,
-the same tree :class:`~otto.coverage.fetcher.remote.GcdaFetcher` writes.
+the same tree :mod:`otto.coverage.fetcher.remote` writes.
 
 The on-wire format, per source file::
 
@@ -173,7 +173,7 @@ async def _dump_one_product(
         return None
 
     # Only create the per-product dir once we have files, matching
-    # GcdaFetcher and keeping the staging tree free of empty subdirs that
+    # _GcdaFetcher and keeping the staging tree free of empty subdirs that
     # lcov chokes on.
     dest = layout.cov_product_dir_in(staging_root, host.id, product.name)
     # Reset the leaf first: a .gcda left by an earlier collection into the
@@ -251,7 +251,8 @@ async def _collect_one_embedded_host(
 class EmbeddedGcdaCollector:
     """Collect coverage from embedded (Zephyr LLEXT) hosts over the console.
 
-    The embedded analogue of :class:`~otto.coverage.fetcher.remote.GcdaFetcher`:
+    The embedded analogue of the Unix fetcher in
+    :mod:`otto.coverage.fetcher.remote`:
     each instrumented product gets its own
     ``staging_root/<host.id>/<product>/`` subdirectory of decoded ``.gcda``
     files, so the downstream merge/report layer treats embedded and Unix hosts
@@ -272,7 +273,7 @@ class EmbeddedGcdaCollector:
         Returns ``{ProductKey: staging_dir}``. Non-embedded hosts and
         uninstrumented products are omitted. A product whose dump failed is
         recorded in *failures* instead, exactly as
-        :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.fetch_all` records a
+        the Unix fetcher (:mod:`otto.coverage.fetcher.remote`) records a
         failed fetch. Container hosts are walked like every other coverage
         walk and skipped as non-embedded.
         """

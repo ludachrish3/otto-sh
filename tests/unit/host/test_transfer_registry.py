@@ -12,7 +12,6 @@ from otto.host.options import NcOptions, ScpOptions, UserlandOptions
 from otto.host.transfer import (
     TRANSFER_BACKENDS,
     BaseFileTransfer,
-    FtpFileTransfer,
     NcFileTransfer,
     ProgressGranularity,
     ScpFileTransfer,
@@ -22,6 +21,7 @@ from otto.host.transfer import (
     build_transfer_backend,
     register_transfer_backend,
 )
+from otto.host.transfer.ftp import _FtpFileTransfer
 from otto.host.userland import Userland
 from otto.registry import Ref, class_backend
 
@@ -73,7 +73,7 @@ class TestBuiltins:
 
     def test_ftp_registered_to_ftpfiletransfer(self):
         cls = _cls("ftp")
-        assert cls is FtpFileTransfer
+        assert cls is _FtpFileTransfer
         assert cls.host_families == frozenset({"unix"})
 
     def test_scp_registered_to_scpfiletransfer(self):
@@ -203,19 +203,19 @@ def test_public_reexports_available():
 def test_each_selector_resolves_to_its_own_backend_class():
     from otto.host.transfer import (
         ConsoleFileTransfer,
-        FtpFileTransfer,
         NcFileTransfer,
         ScpFileTransfer,
         SftpFileTransfer,
-        TftpFileTransfer,
     )
+    from otto.host.transfer.ftp import _FtpFileTransfer
+    from otto.host.transfer.tftp import _TftpFileTransfer
 
     assert _cls("scp") is ScpFileTransfer
     assert _cls("sftp") is SftpFileTransfer
-    assert _cls("ftp") is FtpFileTransfer
+    assert _cls("ftp") is _FtpFileTransfer
     assert _cls("nc") is NcFileTransfer
     assert _cls("console") is ConsoleFileTransfer
-    assert _cls("tftp") is TftpFileTransfer
+    assert _cls("tftp") is _TftpFileTransfer
 
 
 def test_public_import_surface_preserved():
@@ -261,10 +261,11 @@ class TestEmbeddedTransferRegistration:
         assert cls.host_families == frozenset({"embedded"})
 
     def test_tftp_registered_embedded_only(self):
-        from otto.host.transfer import EmbeddedFileTransfer, TftpFileTransfer
+        from otto.host.transfer import EmbeddedFileTransfer
+        from otto.host.transfer.tftp import _TftpFileTransfer
 
         cls = _cls("tftp")
-        assert cls is TftpFileTransfer
+        assert cls is _TftpFileTransfer
         assert issubclass(cls, EmbeddedFileTransfer)
         assert cls.host_families == frozenset({"embedded"})
 
@@ -372,11 +373,11 @@ def test_the_ftp_stride_is_aioftps_own_block_size():
     """
     import aioftp
 
-    from otto.host.transfer.ftp import _FTP_BLOCK_SIZE, FtpFileTransfer
+    from otto.host.transfer.ftp import _FTP_BLOCK_SIZE, _FtpFileTransfer
 
     assert _FTP_BLOCK_SIZE == aioftp.DEFAULT_BLOCK_SIZE
-    assert FtpFileTransfer.progress_granularity.put == aioftp.DEFAULT_BLOCK_SIZE
-    assert FtpFileTransfer.progress_granularity.get == aioftp.DEFAULT_BLOCK_SIZE
+    assert _FtpFileTransfer.progress_granularity.put == aioftp.DEFAULT_BLOCK_SIZE
+    assert _FtpFileTransfer.progress_granularity.get == aioftp.DEFAULT_BLOCK_SIZE
 
 
 # ── built through the registry: a context in, a built backend out ────────────

@@ -200,7 +200,7 @@ def test_inventory_block_includes_the_creds_files_stat_triple(tmp_path, monkeypa
     and a REAL json creds store, not a stand-in.
     """
     import otto.config.completion_tree as ct
-    from otto.creds import JsonCredsStore
+    from otto.creds.json_store import _JsonCredsStore
     from otto.inventory import CredsOverlay, JsonInventory
 
     inv_path = tmp_path / "inv.json"
@@ -208,7 +208,7 @@ def test_inventory_block_includes_the_creds_files_stat_triple(tmp_path, monkeypa
     creds_path = tmp_path / "creds.json"
     creds_path.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     overlay = CredsOverlay(
-        JsonInventory(inv_path, supplies=["ip"]), store=JsonCredsStore(creds_path)
+        JsonInventory(inv_path, supplies=["ip"]), store=_JsonCredsStore(creds_path)
     )
     monkeypatch.setattr(ct, "_build_inventory", lambda projects: overlay)
     block = inventory_block([])

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from otto.creds import JsonCredsStore
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory.creds import CredsOverlay
 from otto.inventory.json_backend import JsonInventory
 from otto.inventory.protocol import SupportsStatPaths
@@ -16,7 +16,7 @@ def test_json_inventory_reports_its_file(tmp_path: Path):
 
 def test_creds_overlay_adds_its_creds_file(tmp_path: Path):
     inner = JsonInventory(tmp_path / "inv.json")
-    overlay = CredsOverlay(inner, store=JsonCredsStore(tmp_path / "creds.json"))
+    overlay = CredsOverlay(inner, store=_JsonCredsStore(tmp_path / "creds.json"))
     assert overlay.stat_paths() == [tmp_path / "inv.json", tmp_path / "creds.json"]
 
 
@@ -29,7 +29,7 @@ def test_creds_overlay_over_an_opaque_inner_is_opaque(tmp_path: Path):
             return "hash"
 
     assert (
-        CredsOverlay(Opaque(), store=JsonCredsStore(tmp_path / "creds.json")).stat_paths() is None
+        CredsOverlay(Opaque(), store=_JsonCredsStore(tmp_path / "creds.json")).stat_paths() is None
     )
 
 

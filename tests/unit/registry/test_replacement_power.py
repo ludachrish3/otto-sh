@@ -9,13 +9,13 @@ The root isolation fixture restores the table.
 from otto.host import CommandPowerConfig
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
-from otto.host.power import POWER_CONTROLLERS, CommandPowerController, register_power_controller
+from otto.host.power import POWER_CONTROLLERS, _CommandPowerController, register_power_controller
 
 REPLACES = [("otto.host.power:POWER_CONTROLLERS", "command")]
 """Every ``(table, built-in name)`` pair this module replaces."""
 
 
-class _Spy(CommandPowerController):
+class _Spy(_CommandPowerController):
     pass
 
 

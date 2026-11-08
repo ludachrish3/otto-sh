@@ -147,15 +147,15 @@ def test_two_projects_disagreeing_refuse_before_anything_is_installed(monkeypatc
 
 @pytest.mark.usefixtures("_clean_logging")
 def test_the_host_filter_goes_on_the_console_only(monkeypatch, tmp_path):
-    from otto.host import HostFilter
+    from otto.host.host import _HostFilter
 
     _projects(monkeypatch)
     install_logging(output_dir=tmp_path)
     console = management._state.console_handler
-    assert any(isinstance(f, HostFilter) for f in console.filters)
+    assert any(isinstance(f, _HostFilter) for f in console.filters)
     verbose = management._state.verbose_handler
     assert verbose is not None
-    assert not any(isinstance(f, HostFilter) for f in verbose.filters)
+    assert not any(isinstance(f, _HostFilter) for f in verbose.filters)
 
 
 @pytest.mark.usefixtures("_clean_logging")
@@ -179,14 +179,14 @@ def test_the_console_has_no_timestamp_by_default(monkeypatch):
 
 @pytest.mark.usefixtures("_clean_logging")
 def test_a_prior_cli_install_leaves_exactly_one_host_filter(monkeypatch):
-    from otto.host import HostFilter
+    from otto.host.host import _HostFilter
 
     _projects(monkeypatch)
     management.install("INFO")
-    management.attach_console_suppress_filter(HostFilter())
+    management.attach_console_suppress_filter(_HostFilter())
     install_logging()
     console = management._state.console_handler
-    assert sum(isinstance(f, HostFilter) for f in console.filters) == 1
+    assert sum(isinstance(f, _HostFilter) for f in console.filters) == 1
 
 
 @pytest.mark.usefixtures("_clean_logging")

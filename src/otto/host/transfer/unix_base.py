@@ -5,7 +5,7 @@ exec_cmd), the :meth:`_warmup_for_transfer` helper, and a no-op default
 :meth:`prepare`.  Protocol-specific subclasses
 (:class:`~otto.host.transfer.ScpFileTransfer`,
 :class:`~otto.host.transfer.SftpFileTransfer`,
-:class:`~otto.host.transfer.FtpFileTransfer`,
+the ``"ftp"`` kind's backend,
 :class:`~otto.host.transfer.NcFileTransfer`) inherit from this and override
 :meth:`prepare` when they need a real probe.
 """

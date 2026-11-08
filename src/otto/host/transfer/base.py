@@ -321,11 +321,11 @@ class BaseFileTransfer(ABC):
     Concrete backends (Unix's :class:`~otto.host.transfer.UnixFileTransfer`
     subclasses (:class:`~otto.host.transfer.ScpFileTransfer`,
     :class:`~otto.host.transfer.SftpFileTransfer`,
-    :class:`~otto.host.transfer.FtpFileTransfer`,
+    the ``"ftp"`` kind,
     :class:`~otto.host.transfer.NcFileTransfer`), embedded's
     :class:`~otto.host.transfer.EmbeddedFileTransfer` subclasses
     (:class:`~otto.host.transfer.ConsoleFileTransfer`,
-    :class:`~otto.host.transfer.TftpFileTransfer`), and any
+    the ``"tftp"`` kind), and any
     future ones) implement two abstract methods —
     ``run_put`` and ``run_get`` — both of which receive a
     :data:`TransferProgressFactory` and a keyword-only ``concurrent``,

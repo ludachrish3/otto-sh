@@ -56,7 +56,7 @@ def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpe
 
 
 @final
-class JsonCredsStore(JsonFileSource):
+class _JsonCredsStore(JsonFileSource):
     """Creds store over one JSON file; parsed once, on first use."""
 
     def __init__(self, path: Path) -> None:
@@ -79,10 +79,10 @@ class JsonCredsStore(JsonFileSource):
         return sorted(self._load())
 
 
-def _json_creds(c: "Configured[JsonCredsConfig, CredsEnv]") -> JsonCredsStore:
+def _json_creds(c: "Configured[JsonCredsConfig, CredsEnv]") -> _JsonCredsStore:
     """Build the built-in json store from its parsed configuration.
 
     ``Path.resolve()`` runs here, on the way into the store, so its
     ``fingerprint()`` names the resolved file.
     """
-    return JsonCredsStore(path=c.config.path.resolve())
+    return _JsonCredsStore(path=c.config.path.resolve())

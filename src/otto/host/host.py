@@ -1489,7 +1489,7 @@ class BaseHost(ABC):
         receives it, and is folded with the host's standing mode HERE rather
         than by each call site. This method IS the dry-run path's emit seam —
         it calls ``_log_command`` directly — and ``_effective_log`` belongs at
-        the emit seam (see :class:`HostFilter`), so folding inside is the one
+        the emit seam (see ``_HostFilter``), so folding inside is the one
         place it cannot be forgotten. The fold is a most-restrictive ``max``
         (:func:`~otto.logger.mode.effective_mode`), hence idempotent, so a
         caller that hands over an already-folded mode is still correct.
@@ -1499,7 +1499,7 @@ class BaseHost(ABC):
         that logged at ``NORMAL`` put the contents of a credentials file on
         the console that a real run keeps off it. ``QUIET`` removes the line
         from the console and ``console.log``; it still reaches ``verbose.log``,
-        which carries no :class:`HostFilter`.
+        which carries no ``_HostFilter``.
         """
         self._log_command(f"[DRY RUN] {cmd}", self._effective_log(log))
         return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.name)
@@ -3726,7 +3726,7 @@ class BaseHost(ABC):
 
 
 @final
-class HostFilter(Filter):
+class _HostFilter(Filter):
     """Console-side suppress filter: drops a host record whose ``log_mode`` is QUIET or NEVER.
 
     Attached to the console + ``console.log`` handlers only —

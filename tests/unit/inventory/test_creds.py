@@ -5,7 +5,8 @@ import json
 import pytest
 from pydantic import SecretStr
 
-from otto.creds import CredsError, JsonCredsStore
+from otto.creds import CredsError
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory import CredsOverlay, Inventory, InventoryError
 
 from .test_resolve import FakeInventory
@@ -14,7 +15,7 @@ from .test_resolve import FakeInventory
 def _store(tmp_path, data):
     p = tmp_path / "creds.json"
     p.write_text(json.dumps(data))
-    return JsonCredsStore(p)
+    return _JsonCredsStore(p)
 
 
 class _Raising:
@@ -80,7 +81,7 @@ def test_a_key_absent_from_the_store_keeps_the_records_own_creds(tmp_path):
 
 def test_construction_does_no_io_and_a_broken_store_names_itself_at_first_use(tmp_path):
     inner = FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"])
-    inv = CredsOverlay(inner, store=JsonCredsStore(tmp_path / "absent.json"))
+    inv = CredsOverlay(inner, store=_JsonCredsStore(tmp_path / "absent.json"))
     with pytest.raises(InventoryError, match=r"absent\.json: "):
         inv.lookup("k")
 
@@ -159,7 +160,7 @@ def test_fingerprint_combines_inner_and_store(tmp_path):
 
 
 def test_fingerprint_survives_a_missing_store_file(tmp_path):
-    inv = CredsOverlay(FakeInventory({}), store=JsonCredsStore(tmp_path / "absent.json"))
+    inv = CredsOverlay(FakeInventory({}), store=_JsonCredsStore(tmp_path / "absent.json"))
     assert inv.fingerprint() == f"fake|creds:{tmp_path / 'absent.json'}|missing"
 
 

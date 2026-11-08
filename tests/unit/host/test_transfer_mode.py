@@ -254,14 +254,10 @@ def _unix_backend(exec_cmd):
 
 
 def test_every_unix_backend_supports_mode():
-    from otto.host.transfer import (
-        FtpFileTransfer,
-        NcFileTransfer,
-        ScpFileTransfer,
-        SftpFileTransfer,
-    )
+    from otto.host.transfer import NcFileTransfer, ScpFileTransfer, SftpFileTransfer
+    from otto.host.transfer.ftp import _FtpFileTransfer
 
-    for cls in (ScpFileTransfer, SftpFileTransfer, FtpFileTransfer, NcFileTransfer):
+    for cls in (ScpFileTransfer, SftpFileTransfer, _FtpFileTransfer, NcFileTransfer):
         assert cls.supports_mode is True, cls.__name__
 
 

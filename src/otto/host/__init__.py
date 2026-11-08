@@ -75,7 +75,6 @@ if TYPE_CHECKING:
     from .file_ops import PosixFileOps as PosixFileOps
     from .host import BaseHost as BaseHost
     from .host import Host as Host
-    from .host import HostFilter as HostFilter
     from .host import ShellCommand as ShellCommand
     from .host import SuppressCommandOutput as SuppressCommandOutput
     from .host import is_dry_run as is_dry_run
@@ -97,7 +96,6 @@ if TYPE_CHECKING:
     from .os_profile import register_os_profile as register_os_profile
     from .os_profile import resolve_os_profile as resolve_os_profile
     from .power import CommandPowerConfig as CommandPowerConfig
-    from .power import CommandPowerController as CommandPowerController
     from .power import PowerConstructionError as PowerConstructionError
     from .power import PowerControlError as PowerControlError
     from .power import PowerController as PowerController
@@ -138,7 +136,6 @@ if TYPE_CHECKING:
     from .transfer.registry import build_transfer_backend as build_transfer_backend
     from .transfer.registry import register_transfer_backend as register_transfer_backend
     from .transport import HopTransport as HopTransport
-    from .transport import SshHopTransport as SshHopTransport
     from .unix_host import UnixHost as UnixHost
     from .userland import Userland as Userland
 
@@ -194,7 +191,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "PosixFileOps": "otto.host.file_ops",
     "BaseHost": "otto.host.host",
     "Host": "otto.host.host",
-    "HostFilter": "otto.host.host",
     "ShellCommand": "otto.host.host",
     "SuppressCommandOutput": "otto.host.host",
     "is_dry_run": "otto.host.host",
@@ -215,7 +211,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "get_os_profile": "otto.host.os_profile",
     "register_host_class": "otto.host.os_profile",
     "register_os_profile": "otto.host.os_profile",
-    "CommandPowerController": "otto.host.power",
     "PowerController": "otto.host.power",
     "PowerState": "otto.host.power",
     "PowerConstructionError": "otto.host.power",
@@ -253,7 +248,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_transfer_backend": "otto.host.transfer.registry",
     "register_transfer_backend": "otto.host.transfer.registry",
     "HopTransport": "otto.host.transport",
-    "SshHopTransport": "otto.host.transport",
     "UnixHost": "otto.host.unix_host",
     "Userland": "otto.host.userland",
     "CommandResult": "otto.result",
@@ -284,7 +278,6 @@ __all__ = [
     "BashFrame",
     "CommandFrame",
     "CommandPowerConfig",
-    "CommandPowerController",
     "CommandResult",
     "ConnectionManager",
     "Consume",
@@ -305,7 +298,6 @@ __all__ = [
     "HostCapabilities",
     "HostClassEntry",
     "HostContext",
-    "HostFilter",
     "HostKeyRefusal",
     "HostKeyRefusedError",
     "HostLoopError",
@@ -349,7 +341,6 @@ __all__ = [
     "ShellCommand",
     "ShellProduct",
     "ShellSession",
-    "SshHopTransport",
     "SuppressCommandOutput",
     "TelnetSession",
     "TermBackendError",

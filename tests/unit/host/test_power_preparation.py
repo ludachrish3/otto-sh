@@ -18,10 +18,10 @@ from otto.host import (
 )
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict, host_identity, validate_host_dict
-from otto.host.power import POWER_CONTROLLERS, CommandPowerController, PowerController
+from otto.host.power import POWER_CONTROLLERS, PowerController, _CommandPowerController
 from otto.labs.drops import collecting_drops
 from otto.labs.errors import LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.models.base import OttoModel
 from otto.registry import BackendRegistry
 from tests._fixtures.labdata import write_lab_json
@@ -83,7 +83,7 @@ def test_the_json_schema_shows_all_three_forms():
 
 def test_the_built_host_carries_the_controller_built_from_the_parse():
     host = create_host_from_dict({**_UNIX, "power_control": _TABLE}, element=Element("e"))
-    assert isinstance(host.power_control, CommandPowerController)
+    assert isinstance(host.power_control, _CommandPowerController)
     assert host.power_control.config.controller == "hyp"
 
 
@@ -146,7 +146,7 @@ def test_the_build_s_prepared_power_passes_the_registry_s_provenance_check():
     ready = hc.spec.validate_in(hc.context)
     power = ready._payload.power
     assert power.registry is POWER_CONTROLLERS
-    assert isinstance(POWER_CONTROLLERS.build(power), CommandPowerController)
+    assert isinstance(POWER_CONTROLLERS.build(power), _CommandPowerController)
 
 
 def test_stock_checks_then_check_in_once_then_preparation(monkeypatch):
@@ -192,7 +192,7 @@ def _lab(tmp_path, power_control):
         }
     ]
     write_lab_json(tmp_path / "lab.json", hosts, links=[])
-    return JsonFileLabRepository(search_paths=[tmp_path])
+    return _JsonFileLabRepository(search_paths=[tmp_path])
 
 
 @pytest.mark.parametrize("kind", ["malformed", "uncopyable"])

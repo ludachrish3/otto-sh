@@ -19,7 +19,7 @@ from otto.host.os_profile import OsProfile, ProfileContext, ProfileFields
 from otto.host.unix_host import UnixHost
 from otto.labs.drops import collecting_drops
 from otto.labs.errors import LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.link import LinkImpairer, register_impairer
 from otto.registry import FrozenMap
 from tests._fixtures.host_build import build_host
@@ -99,7 +99,7 @@ def test_a_refused_entry_drops_out_of_summaries_with_a_recorded_drop(tmp_path, r
     ]
     write_lab_json(tmp_path / "lab.json", hosts, links=[])
     with collecting_drops() as drops:
-        ids = {s.id for s in JsonFileLabRepository(search_paths=[tmp_path]).list_host_summaries()}
+        ids = {s.id for s in _JsonFileLabRepository(search_paths=[tmp_path]).list_host_summaries()}
     assert ids == {"good"}
     assert any("element 'bad' hosts[0]" in d.where and reason in d.reason for d in drops)
 
@@ -114,13 +114,13 @@ def test_a_refused_entry_is_not_addressable_by_a_declared_link(tmp_path, refused
     links = [{"endpoints": [{"host": "good"}, {"host": "bad"}], "protocol": "udp"}]
     write_lab_json(tmp_path / "lab.json", hosts, links=links)
     with pytest.raises(LabRepositoryError, match=r"unknown host 'bad'"):
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
 
 
 def test_an_entry_that_loads_under_its_real_preferences_stays_in_summaries(tmp_path):
     hosts = [{**_EITHER, "creds": _SSH_CREDS, "element": "either", "labs": ["l"]}]
     write_lab_json(tmp_path / "lab.json", hosts, links=[])
-    summaries = JsonFileLabRepository(search_paths=[tmp_path]).list_host_summaries()
+    summaries = _JsonFileLabRepository(search_paths=[tmp_path]).list_host_summaries()
     assert {s.id for s in summaries} == {"either"}
 
 

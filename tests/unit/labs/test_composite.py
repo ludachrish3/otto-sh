@@ -21,7 +21,7 @@ from otto.labs import (
     LabRepositoryError,
     LabSource,
 )
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import Lab
 from otto.testing import assert_lab_repository_conforms
 
@@ -587,8 +587,8 @@ def test_summaries_resolve_patterns_against_all_declared_labs(tmp_path) -> None:
     (b / "lab.json").write_text(json.dumps({"labs": {"site.b4": {}}, "elements": []}))
     comp = CompositeLabRepository(
         [
-            LabSource(label="a", repository=JsonFileLabRepository([a])),
-            LabSource(label="b", repository=JsonFileLabRepository([b])),
+            LabSource(label="a", repository=_JsonFileLabRepository([a])),
+            LabSource(label="b", repository=_JsonFileLabRepository([b])),
         ]
     )
     (s,) = comp.list_host_summaries()
@@ -610,7 +610,7 @@ def _composite_over(tmp_path, docs: list[dict]) -> CompositeLabRepository:
         d = tmp_path / f"src{idx}"
         d.mkdir(exist_ok=True)
         (d / "lab.json").write_text(json.dumps(doc))
-        sources.append(LabSource(label=f"src{idx}", repository=JsonFileLabRepository([d])))
+        sources.append(LabSource(label=f"src{idx}", repository=_JsonFileLabRepository([d])))
     return CompositeLabRepository(sources)
 
 

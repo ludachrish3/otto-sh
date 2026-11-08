@@ -50,7 +50,7 @@ from unittest.mock import AsyncMock
 import pytest
 from typing_extensions import Self
 
-from otto.host.transfer.ftp import FtpFileTransfer
+from otto.host.transfer.ftp import _FtpFileTransfer
 from otto.utils import Status
 
 
@@ -117,9 +117,9 @@ class _FakeConnections:
         return self._client
 
 
-def _backend(client: _RecordingFtpClient) -> FtpFileTransfer:
+def _backend(client: _RecordingFtpClient) -> _FtpFileTransfer:
     """The REAL backend over a recording client. Nothing about otto is faked."""
-    return FtpFileTransfer(
+    return _FtpFileTransfer(
         connections=_FakeConnections(client),  # ty: ignore[invalid-argument-type]
         name="dut",
         exec_cmd=AsyncMock(),
@@ -305,8 +305,8 @@ class _LocalWritingFtpClient:
         raise AssertionError("the no-progress arm must not open a download_stream")
 
 
-def _get_backend(client: _LocalWritingFtpClient) -> FtpFileTransfer:
-    return FtpFileTransfer(
+def _get_backend(client: _LocalWritingFtpClient) -> _FtpFileTransfer:
+    return _FtpFileTransfer(
         connections=_FakeConnections(client),  # ty: ignore[invalid-argument-type]
         name="dut",
         exec_cmd=AsyncMock(),

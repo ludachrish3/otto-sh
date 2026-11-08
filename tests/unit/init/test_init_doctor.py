@@ -1173,7 +1173,7 @@ def test_the_doctor_and_the_loader_report_the_same_contextual_error(tmp_path: Pa
     from otto.init.doctor import _inventory_for
     from otto.init.templates import EXAMPLE_LAB_NAME
     from otto.labs.errors import LabRepositoryError
-    from otto.labs.json_repository import JsonFileLabRepository
+    from otto.labs.json_repository import _JsonFileLabRepository
 
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
@@ -1186,7 +1186,7 @@ def test_the_doctor_and_the_loader_report_the_same_contextual_error(tmp_path: Pa
     assert len(doctor_lines) == 1
     # The scaffold's host is inventory-referenced: the loader resolves it against the
     # inventory the doctor resolves it against.
-    repository = JsonFileLabRepository(search_paths=[tmp_path / "lab_data"])
+    repository = _JsonFileLabRepository(search_paths=[tmp_path / "lab_data"])
     with pytest.raises(LabRepositoryError) as exc:
         repository.load_lab(EXAMPLE_LAB_NAME, inventory=_inventory_for(tmp_path))
     tail = "term 'console' requires console_options.server"

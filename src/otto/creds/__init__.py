@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from .config import construct_creds_store as construct_creds_store
     from .errors import CredsConstructionError as CredsConstructionError
     from .errors import CredsError as CredsError
-    from .json_store import JsonCredsStore as JsonCredsStore
     from .json_store import parse_creds_document as parse_creds_document
     from .protocol import CredsStore as CredsStore
     from .registry import CredsEnv as CredsEnv
@@ -36,7 +35,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "compile_creds_table": "otto.creds.config",
     "construct_creds_store": "otto.creds.config",
     "CredsError": "otto.creds.errors",
-    "JsonCredsStore": "otto.creds.json_store",
     "parse_creds_document": "otto.creds.json_store",
     "CredsStore": "otto.creds.protocol",
     "register_creds_backend": "otto.creds.registry",
@@ -67,7 +65,6 @@ __all__ = [
     "CredsError",
     "CredsStore",
     "JsonCredsConfig",
-    "JsonCredsStore",
     "compile_creds",
     "compile_creds_table",
     "construct_creds_store",

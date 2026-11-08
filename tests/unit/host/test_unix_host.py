@@ -2022,7 +2022,7 @@ class TestNcFileTransfer:
     @pytest.mark.asyncio
     async def test_nc_put_suppresses_host_logging_during_transfer(self, tmp_path: Path):
         """During put, the transfer's own commands must be quiet so their
-        records are dropped by HostFilter, and the host's own mode is left
+        records are dropped by _HostFilter, and the host's own mode is left
         as it was."""
         h = UnixHost(
             ip="10.0.0.1",

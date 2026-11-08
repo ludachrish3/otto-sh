@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from .errors import InventoryKeyError as InventoryKeyError
     from .json_backend import JsonInventory as JsonInventory
     from .json_backend import parse_inventory_document as parse_inventory_document
-    from .netbox import NetBoxInventory as NetBoxInventory
     from .protocol import Inventory as Inventory
     from .protocol import SupportsStatPaths as SupportsStatPaths
     from .protocol import check_supplies as check_supplies
@@ -62,7 +61,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "InventoryKeyError": "otto.inventory.errors",
     "JsonInventory": "otto.inventory.json_backend",
     "parse_inventory_document": "otto.inventory.json_backend",
-    "NetBoxInventory": "otto.inventory.netbox",
     "Inventory": "otto.inventory.protocol",
     "SupportsStatPaths": "otto.inventory.protocol",
     "check_supplies": "otto.inventory.protocol",
@@ -107,7 +105,6 @@ __all__ = [
     "InventoryMetadata",
     "JsonInventory",
     "JsonInventoryConfig",
-    "NetBoxInventory",
     "NetBoxInventoryConfig",
     "RecordDifference",
     "RefreshResult",

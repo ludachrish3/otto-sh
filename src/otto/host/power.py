@@ -5,11 +5,11 @@ Powering a host on or off cannot run *on* the host — it's off. A
 :class:`PowerController` embodies *where* control happens: it runs commands on a
 designated controller host (a hypervisor, a jump host with ``ipmitool``, a PDU
 controller) resolved via the target's lab back-reference, or talks to an
-external API. otto ships :class:`CommandPowerController` (the generic
-command-based backend); projects register richer ones (IPMI/redfish/libvirt/
-cloud/PDU) via :func:`register_power_controller` — a configured backend: a
-config model parses the host's ``power_control`` table and a factory builds
-the controller with the host's id (:class:`PowerEnv`).
+external API. otto ships the ``"command"`` kind (the generic command-based
+backend, configured by :class:`CommandPowerConfig`); projects register richer
+ones (IPMI/redfish/libvirt/cloud/PDU) via :func:`register_power_controller` —
+a configured backend: a config model parses the host's ``power_control`` table
+and a factory builds the controller with the host's id (:class:`PowerEnv`).
 """
 
 import string
@@ -68,7 +68,7 @@ class PowerEnv:
 
 @final
 class CommandPowerConfig(OttoModel):
-    """What :class:`CommandPowerController` runs, and where.
+    """What the ``"command"`` power controller runs, and where.
 
     Commands are ``str.format``-templated with the target host's ``name``,
     ``ip`` and ``id``, each shell-quoted as one word: a display name built
@@ -132,7 +132,7 @@ class PowerController(ABC):
 
 
 @final
-class CommandPowerController(PowerController):
+class _CommandPowerController(PowerController):
     """Generic controller that runs configured commands on a *controller* host.
 
     Its :class:`CommandPowerConfig` holds the commands,
@@ -252,9 +252,9 @@ class CommandPowerController(PowerController):
         return PowerState.ON if self.config.status_on in cmd_result.value else PowerState.OFF
 
 
-def _command_power(c: Configured[CommandPowerConfig, PowerEnv]) -> CommandPowerController:
+def _command_power(c: Configured[CommandPowerConfig, PowerEnv]) -> _CommandPowerController:
     """Build the ``command`` controller from its parsed table."""
-    return CommandPowerController(c.config)
+    return _CommandPowerController(c.config)
 
 
 def _describe_parse_error(exc: Exception) -> str:
