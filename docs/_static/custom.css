@@ -34,3 +34,24 @@ body[data-md-color-scheme="slate"],
         max-width: min(100% - 3rem, 92rem);
     }
 }
+
+/* Index hero (docs/index.rst). The hero image is the landing page's heading,
+   so the page's own "otto" h1 — kept for the browser tab and the nav — is
+   hidden on the one page that carries the hero. */
+.md-typeset:has(.otto-index-hero) h1 {
+    display: none;
+}
+
+.otto-index-hero {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.otto-index-hero img {
+    max-width: min(100%, 450px);
+    height: auto;
+}
+
+.otto-index-hero p {
+    font-size: 1.1rem;
+}

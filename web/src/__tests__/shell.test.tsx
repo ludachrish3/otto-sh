@@ -86,6 +86,21 @@ describe("App shell", () => {
     expect(screen.getByTestId("empty-review")).toBeTruthy();
   });
 
+  // The app-bar mark and the tab favicon are one file: index.html's <link
+  // rel="icon"> and AppBar's import both name it, and Vite emits it once.
+  it("app-bar brand mark is the same image as the tab favicon", () => {
+    render(<App />);
+    const mark = screen.getByTestId("brand-mark");
+    const html = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../index.html"),
+      "utf8",
+    );
+    const favicon = /<link rel="icon"[^>]*href="(?<href>[^"]+)"/u.exec(html)?.groups?.["href"];
+    expect(favicon).toBe("/src/assets/otto-mark.png");
+    // jsdom serializes the CSS url() with quotes.
+    expect(mark.style.backgroundImage).toBe(`url("${favicon}")`);
+  });
+
   // There is deliberately no "renders no status text or dot" test here. Those
   // testids (spec decision 9) have never existed in this codebase — absence
   // assertions on ids nothing renders are green against every possible
