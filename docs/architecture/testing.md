@@ -362,11 +362,11 @@ Three more axes sit alongside level/resource, each narrower in scope:
   docs themselves (`.md`/`.rst`) are a separate mechanism, run through
   Sphinx's doctest builder (`make doctest`); both are part of `make docs`.
 - **Cross-Python matrix.** otto's floor is Python 3.10 and its ceiling is
-  3.14. `make nox-unit` re-runs the no-VM unit tier across all five
+  3.15. `make nox-unit` re-runs the no-VM unit tier across all six
   versions — the fastest safe cross-version check. `make nox` tiers this
   further: the full suite on 3.10, the oldest supported interpreter
   (uninstrumented: the coverage floor is `make coverage`'s); every product
-  test on the 3.14 canary (where version-specific deprecation warnings show
+  test on the 3.15 canary (where version-specific deprecation warnings show
   up first); a *trimmed* hostless slice on the versions
   between — the `tests/unit` tier with coverage off. One
   family runs on 3.10 only, in every nox session and in `make coverage`:
@@ -374,8 +374,8 @@ Three more axes sit alongside level/resource, each narrower in scope:
   build files or a generated corpus rather than otto under a particular
   interpreter (the lane and tier guards, the support-matrix and
   conformance-bed plumbing). They prove the same thing on every Python,
-  so every other interpreter deselects them — the 3.14 canary included —
-  which means a family test red only on 3.14 is not something the matrix
+  so every other interpreter deselects them — the 3.15 canary included —
+  which means a family test red only on 3.15 is not something the matrix
   looks for, by decision ([#566](https://github.com/ludachrish3/otto-sh/issues/566)).
   The shim differential is NOT in the family: it runs the completion shim
   the user's interpreter executes, so it runs on every Python (and
@@ -390,8 +390,8 @@ Three more axes sit alongside level/resource, each narrower in scope:
 
   | session | Pythons | selects | instrumentation |
   | --- | --- | --- | --- |
-  | `tests_hostless_unit` | 3.10–3.14 | `tests/unit` minus the `interpreter_agnostic` family | instrumented on 3.10; the trimmed middle selection on 3.11–3.14, coverage off |
-  | `tests_hostless_e2e` | the bookends, 3.10 and 3.14 | the no-VM `tests/e2e` tier | instrumented on 3.10; coverage off on 3.14 |
+  | `tests_hostless_unit` | 3.10–3.15 | `tests/unit` minus the `interpreter_agnostic` family | instrumented on 3.10; the trimmed middle selection on 3.11–3.14, coverage off |
+  | `tests_hostless_e2e` | the bookends, 3.10 and 3.15 | the no-VM `tests/e2e` tier | instrumented on 3.10; coverage off on 3.15 |
   | `tests_hostless_guards` | 3.10 only | the `interpreter_agnostic` family, one parallel leg and no serial twin | instrumented |
 
   The primary's three sessions together select exactly what the one session

@@ -2,13 +2,13 @@
 
 ``make nox`` runs the full suite on the PRIMARY (3.10, the floor), every
 product test (the suite minus the ``interpreter_agnostic`` family) on the
-CANARY (3.14, the newest), and a hostless leg on the versions between.
+CANARY (3.15, the newest), and a hostless leg on the versions between.
 Measured on 2026-09-11, that hostless leg cost ~1,420 s of CPU per interior
 Python, and 65 % of it was work whose subject is not otto-under-THIS-
 interpreter at all: the ``tests/e2e`` tier (real ``otto`` subprocesses,
 real ``pip`` venv builds) and the repository-policy guards that re-collect the
 whole tree in a subprocess. Those tests prove the same thing on every
-Python, so the PRIMARY runs everything; every other interpreter, the 3.14
+Python, so the PRIMARY runs everything; every other interpreter, the 3.15
 canary included, deselects the ``interpreter_agnostic`` family (#566 Q2:
 the family proves the same thing on every Python and stays in ``make
 coverage`` on 3.10). The interior versions also drop the ``tests/e2e``
@@ -233,7 +233,7 @@ def test_the_canary_runs_the_middle_pair_and_the_e2e_pair_uninstrumented(
         ("tests_hostless_e2e", _E2E_CANARY_PAIR),
     ):
         seen = _python_pytest_invocations(
-            _NOXFILE, resolve_names=True, scope=session, python="3.14"
+            _NOXFILE, resolve_names=True, scope=session, python="3.15"
         )
         assert seen == [["pytest", *bundles[name]] for name in pair], (session, seen)
         for name in pair:
@@ -598,7 +598,7 @@ def test_every_catch_all_session_runs_the_family_on_the_primary_only(
 
 _SYNTHETIC = """
 PRIMARY_PYTHON = "3.10"
-CANARY_PYTHON = "3.14"
+CANARY_PYTHON = "3.15"
 P_TEST_ARGS = ("tests/unit", "-m", "not busybox and not serial_timing")
 P_SERIAL_ARGS = ("tests/unit", "-m", "serial_timing and not busybox", "-n0", "--cov-append")
 N_TEST_ARGS = (
@@ -848,8 +848,8 @@ def test_the_make_nox_target_keeps_the_middle_on_the_hostless_session() -> None:
     recipe = re.search(r"^nox:.*?\n((?:\t.*\n)+)", live, re.MULTILINE)
     assert recipe is not None, "Makefile has no `nox` recipe"
     assert "tests_hostless_unit-$(v)" in recipe.group(1), recipe.group(1)
-    assert re.search(r"^NOX_MIDDLE\s*:?=\s*3\.11 3\.12 3\.13\s*$", live, re.MULTILINE), (
-        "NOX_MIDDLE is no longer the three interior versions"
+    assert re.search(r"^NOX_MIDDLE\s*:?=\s*3\.11 3\.12 3\.13 3\.14\s*$", live, re.MULTILINE), (
+        "NOX_MIDDLE is no longer the four interior versions"
     )
 
 

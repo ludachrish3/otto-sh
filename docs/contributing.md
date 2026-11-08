@@ -530,7 +530,7 @@ only, never from the environment.
 A landing is a pull request, and its checks are split by who can run them.
 **The PR's CI runs everything that needs no lab**: every validation job in
 `.github/workflows/ci.yml`, the hostless matrix (the `tests_hostless-3.10` …
-`3.14` contexts: `tests/unit` and the no-VM e2e, one nox session per tier,
+`3.15` contexts: `tests/unit` and the no-VM e2e, one nox session per tier,
 each on the Pythons [the session table](architecture/testing.md#other-axes-typescript-doctests-cross-python)
 gives it; the two bookend contexts are certificates over
 the primary's and the canary's sessions, and the 3.10 one also needs the
@@ -1505,7 +1505,7 @@ what you want to exercise:
 | Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample); verifies against `schemas/support_matrix.json` and leaves the tree clean; the release certifies (`make release-matrix`) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |
 | otto_kmodcov toolchain proofs (opt-in, dev VM only; `make release` runs it) | `make kmodcov` (`KMODCOV_TOOLCHAINS=gcc-9,…,clang`, `KMODCOV_CROSS_KDIR=<prepared kernel source tree>`, `KMODCOV_KERNELS=x86_64-cross,2.6.32,…,6.17` — the host's own cross build plus the six kernels `scripts/provision_kmodcov_kernels.sh` provisions under `KMODCOV_KERNELS_DIR` (the script itself reads `OTTO_KMODCOV_KERNELS_DIR`), idempotently: re-runs are cheap, and a re-pin rebuilds only what it changes); verifies against `schemas/kmodcov_matrix.json` (the {ref}`compatibility matrix <kmodcov-matrix>`) and leaves the tree clean; the release certifies (`make release-kmodcov-matrix`) | test1/test2, plus gcc 9–14, clang 18, the 6.8 source tree, docker with the qemu-x86_64 binfmt (`qemu-user-static` with `binfmt-support`) and the provisioned kernel set on the dev VM |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
-| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, trimmed hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
+| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.15, trimmed hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 
 `make stability-tunnel` soaks the tunnel machinery against the live bed:
 add/remove churn (2- and 3-hop), concurrent populations, racing adds,
@@ -1702,22 +1702,22 @@ hosts are excluded by the pattern rather than by inference.
 
 `make ci` runs the no-testbed CI gate under one Python (whichever uv resolves by
 default). To exercise the full matrix the way CI does — Python 3.10
-through 3.14 — use `nox`:
+through 3.15 — use `nox`:
 
 ```bash
 make nox-unit                      # unit level tier across all Pythons (no VMs; family on 3.10 only)
 make nox-integration               # unit + integration tiers across all Pythons (full lab; family on 3.10 only)
-make nox                           # tiered matrix: full suite on 3.10 (the oldest supported interpreter; uninstrumented — the floor is make coverage's); every product test, minus the interpreter_agnostic family, on 3.14 (warning canary); trimmed hostless on 3.11-3.13 (needs VMs)
+make nox                           # tiered matrix: full suite on 3.10 (the oldest supported interpreter; uninstrumented — the floor is make coverage's); every product test, minus the interpreter_agnostic family, on 3.15 (warning canary); trimmed hostless on 3.11-3.14 (needs VMs)
 make nox-full                      # every tier on all Pythons; the interpreter_agnostic family on 3.10 only (needs VMs)
 uv run nox -s tests_hostless_unit-3.10  # one tier of the no-testbed CI gate under one Python (no floor)
-uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
+uv run nox -s tests_unit-3.15 -- -k test_session   # forward args to pytest
 uv run nox --list                  # show every available session
 ```
 
 Nox sessions are defined in `noxfile.py` and use uv as the venv backend
 via `nox-uv`, so each session reuses the same lockfile-resolved deps as
 local development. The toolchains themselves come from
-`uv python install 3.10 3.11 3.12 3.13 3.14` (run once per machine).
+`uv python install 3.10 3.11 3.12 3.13 3.14 3.15` (run once per machine).
 `make all` is unchanged and remains the dev-VM contract — `nox` covers
 the cross-Python axis that `make all` doesn't.
 
@@ -2414,13 +2414,11 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
 - **Regenerate per interpreter.** `make import-snapshot` rewrites only the
   running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
   For another minor, install its nox env and run the script with that
-  interpreter: `uv run nox -s tests_hostless_unit-3.14 --install-only`, then
-  `.nox/tests_hostless_unit-3-14/bin/python scripts/import_budget.py --update`.
+  interpreter: `uv run nox -s tests_hostless_unit-3.15 --install-only`, then
+  `.nox/tests_hostless_unit-3-15/bin/python scripts/import_budget.py --update`
+  (any minor in `PYTHON_VERSIONS` works the same way).
   A missing-baseline failure prints the same commands for the interpreter
-  it ran on. The next Python has a ceilings file too, read by nightly's
-  `python-canary`. It is not in `noxfile.py`'s `PYTHON_VERSIONS`, so its install
-  step needs the flag: `uv run nox -s tests_hostless_unit-3.15 --extra-python
-  3.15 --install-only`. `--update` moves ceilings only: a `target_ratio` breach
+  it ran on. `--update` moves ceilings only: a `target_ratio` breach
   stays red.
 - **Never regenerate to absorb a cost increase without saying so.** A
   regeneration that raises a baseline goes in a commit whose message says

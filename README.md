@@ -1,6 +1,6 @@
 # otto
 
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)
 
 **otto** — Our Trusty Testing Orchestrator — is a framework for deploying
 products to remote hosts for testing and validation. It provides a CLI and a

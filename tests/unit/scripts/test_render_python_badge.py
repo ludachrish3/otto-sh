@@ -2,6 +2,7 @@
 
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import unquote
 
 import pytest
 
@@ -67,3 +68,31 @@ def test_sphinx_srcs_names_pyproject_and_the_renderer() -> None:
     assert srcs, "no SPHINX_SRCS assignment found in the Makefile (guard misparse?)"
     assert "pyproject.toml" in srcs.group(0)
     assert "scripts/render_python_badge.py" in srcs.group(0)
+
+
+_README_BADGE = re.compile(r"https://img\.shields\.io/badge/python-(?P<value>[^)\s]+?)-blue\b")
+
+
+def _readme_badge_versions(readme_text: str) -> str:
+    """The value text of the README's shields.io python badge, decoded as shields reads it."""
+    match = _README_BADGE.search(readme_text)
+    assert match, "README.md has no img.shields.io python badge (guard misparse?)"
+    # shields.io path segments: `--` is a literal dash, `__` a literal underscore.
+    return unquote(match.group("value")).replace("--", "-").replace("__", "_")
+
+
+def test_the_readme_badge_decodes_its_value_like_shields() -> None:
+    readme = "![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)\n"
+    assert _readme_badge_versions(readme) == "3.10 | 3.12"
+
+
+def test_the_readme_badge_lists_exactly_the_declared_minors() -> None:
+    """README.md's badge is hand-written for GitHub and PyPI, so it is pinned to the classifiers.
+
+    The docs badge is rendered from ``pyproject.toml``; the README cannot use that
+    git-ignored SVG, so this keeps its hotlinked copy from drifting when a Python
+    is added or dropped.
+    """
+    readme = (CHECKOUT_ROOT / "README.md").read_text(encoding="utf-8")
+    pyproject = (CHECKOUT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert _readme_badge_versions(readme) == rpb.versions_text(pyproject)
