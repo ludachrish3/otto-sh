@@ -9,7 +9,9 @@ what the child does not: the positional shape of every ``call`` and method
 ``mro``, or reached through a structurally conforming protocol), the sources
 must agree, and a positional-only or variadic parameter the entry covers needs
 a ``why``. A withdrawn or builtin-inherited constructor has nothing to judge;
-the interpreter's own slots of a supported dunder are skipped.
+the interpreter's own slots of a supported dunder are skipped. A class or
+model whose subclass right is withdrawn must be ``@final`` in the dump (or
+exempt with ``final = false``), and a ``@final`` one must have it withdrawn.
 """
 
 import sys
@@ -41,8 +43,10 @@ def _conforming_protocols(dump: Dump) -> "dict[str, list[str]]":
     protocols = {}
     for key, kind in dump.bindings.items():
         rec = dump.get("requires", key)
-        if kind == "protocol" and rec is not None and not api_records.is_withdrawn(rec):
-            protocols[key] = set(api_records.split_list(rec.fields[0]))
+        if kind == "protocol" and rec is not None:
+            parsed = api_records.parse_obligations("requires", rec.fields[0])
+            if not parsed.withdrawn:
+                protocols[key] = set(parsed.names)
     out: dict[str, list[str]] = {}
     for key in dump.bindings:
         names = set(dump.members_of(key))
@@ -137,7 +141,10 @@ def _unlisted(key: str, name: str, kind: str) -> str:
 
 
 def findings(dump: Dump, symbols: "dict[str, Symbol]") -> "list[str]":
-    """Return one finding per positional parameter the effective entries do not justify."""
+    """Return one finding per positional parameter the effective entries do not justify.
+
+    Then one per class or model whose ``@final`` and subclass right disagree.
+    """
     entries = effective_entries(dump, symbols)
     out: list[str] = []
     for rec in _callables(dump):
@@ -145,6 +152,36 @@ def findings(dump: Dump, symbols: "dict[str, Symbol]") -> "list[str]":
         if call.withdrawn or call.builtin is not None:
             continue
         out += _judge(rec, call, entries.get(rec.key), symbols)
+    return out + _final_findings(dump, symbols, entries)
+
+
+def _final_findings(
+    dump: Dump, symbols: "dict[str, Symbol]", entries: "dict[str, tuple[Symbol, list[str]]]"
+) -> "list[str]":
+    """Hold ``@final`` and a withdrawn subclass right together (design §5, findings 5-6).
+
+    Classes and models only: a protocol's ``requires`` record never carries the
+    token. The entry is the effective one (a class's own, at each alias key).
+    """
+    out = []
+    for key, kind in sorted(dump.bindings.items()):
+        rec = dump.get("abstract", key)
+        if kind not in ("class", "model") or rec is None:
+            continue
+        final = api_records.parse_obligations("abstract", rec.fields[0]).final
+        applied = entries.get(key)
+        entry = applied[0] if applied is not None else symbols.get(key)
+        closed = entry is not None and not entry.subclass
+        if closed and not final and entry.final is not False:
+            out.append(
+                f"{key}: subclass withdrawn but the class is not @final"
+                " — decorate it, or set final = false with why"
+            )
+        if final and not closed:
+            out.append(
+                f"{key}: @final on a class whose subclass right is open"
+                " — withdraw it in the manifest, or drop the decorator"
+            )
     return out
 
 

@@ -37,6 +37,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from .errors import NoCoverageDataError
 
 if TYPE_CHECKING:
@@ -67,6 +69,7 @@ def _searched_where(host: "Any", product: "Any") -> str:
     return "console" if isinstance(host, EmbeddedHost) else cov_dir_of(product)
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class CollectResult:
     """Outcome of a :func:`collect_coverage` run.

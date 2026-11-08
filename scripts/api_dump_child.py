@@ -61,17 +61,24 @@ def _why(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _literal_list(module: types.ModuleType, const: str) -> "list | None":
-    """Return the literal list *module*'s source assigns to *const* at top level, else None.
-
-    The LAST top-level assignment wins, as at runtime. Any non-literal element (a
-    name, a call, a comprehension) makes the whole value non-literal.
-    """
+def _source_tree(module: "types.ModuleType | None") -> "ast.Module | None":
+    """Return the parsed source file of *module*; None when it has no ``.py`` file."""
     path = getattr(module, "__file__", None)
     if not path or not path.endswith(".py"):
         return None
     with tokenize.open(path) as fh:  # honours a PEP 263 coding cookie
-        tree = ast.parse(fh.read(), path)
+        return ast.parse(fh.read(), path)
+
+
+def _literal_list(tree: "ast.Module | None", const: str) -> "list | None":
+    """Return the literal list module source *tree* assigns to *const* at top level, else None.
+
+    The LAST top-level assignment wins, as at runtime. Any non-literal element (a
+    name, a call, a comprehension) makes the whole value non-literal; no source
+    (*tree* None) is None.
+    """
+    if tree is None:
+        return None
     found: "list | None" = None
     for stmt in tree.body:
         if isinstance(stmt, ast.Assign):
@@ -87,6 +94,76 @@ def _literal_list(module: types.ModuleType, const: str) -> "list | None":
             )
             found = [e.value for e in value.elts] if literal else None
     return found
+
+
+def _module_tree(module_name: str, cache: "dict[str, ast.Module | None]") -> "ast.Module | None":
+    """Return :func:`_source_tree` of the loaded module *module_name*, cached in *cache*."""
+    if module_name not in cache:
+        cache[module_name] = _source_tree(sys.modules.get(module_name))
+    return cache[module_name]
+
+
+def _final_spellings(tree: ast.Module) -> "tuple[set[str], bool]":
+    """Return the ``final`` spellings *tree* binds (design §4.2).
+
+    The names bound by ``from typing_extensions import final`` without an ``as``,
+    and whether ``import typing_extensions`` binds that very name.
+    """
+    names: set[str] = set()
+    module_bound = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "typing_extensions":
+            names.update(a.name for a in node.names if a.name == "final" and a.asname is None)
+        elif isinstance(node, ast.Import):
+            module_bound |= any(
+                a.name == "typing_extensions" and a.asname is None for a in node.names
+            )
+    return names, module_bound
+
+
+def _is_final_decorator(node: ast.expr, names: "set[str]", module_bound: bool) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in names
+    return (
+        module_bound
+        and isinstance(node, ast.Attribute)
+        and node.attr == "final"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "typing_extensions"
+    )
+
+
+def is_final_definition(cls: type, cache: "dict[str, ast.Module | None] | None" = None) -> bool:
+    """Return whether *cls*'s DEFINITION is decorated ``typing_extensions.final``.
+
+    Read from the source, never the runtime (design §4.2): ``typing.final`` sets
+    ``__final__`` only from 3.11, so the dump would differ by interpreter. The
+    defining module is ``cls.__module__``; ``cls.__qualname__`` walks nested
+    ``ClassDef`` bodies. Two spellings count: a name bound by ``from
+    typing_extensions import final`` and ``typing_extensions.final`` under
+    ``import typing_extensions``; no alias is resolved. A ``<locals>`` qualname,
+    a module without a source file, or a class the walk does not find is False.
+    """
+    qualname = getattr(cls, "__qualname__", "")
+    if "<locals>" in qualname:
+        return False
+    tree = _module_tree(getattr(cls, "__module__", ""), {} if cache is None else cache)
+    if tree is None:
+        return False
+    body: "list[ast.stmt]" = tree.body
+    found: "ast.ClassDef | None" = None
+    for part in qualname.split("."):
+        # The LAST top-level definition of a name wins, as at runtime.
+        found = next(
+            (n for n in reversed(body) if isinstance(n, ast.ClassDef) and n.name == part), None
+        )
+        if found is None:
+            return False
+        body = found.body
+    names, module_bound = _final_spellings(tree)
+    return found is not None and any(
+        _is_final_decorator(d, names, module_bound) for d in found.decorator_list
+    )
 
 
 def _is_dunder(name: str) -> bool:
@@ -337,6 +414,7 @@ class Producer:
         self.bindings: dict[str, object] = {}
         self.paths: dict[str, list[tuple[int, str]]] = {}  # key -> enclosing (id, key) chain
         self.keys_by_id: dict[int, list[str]] = {}
+        self._module_trees: "dict[str, ast.Module | None]" = {}  # one parse per module per run
 
     # -- collection -------------------------------------------------------
 
@@ -630,6 +708,9 @@ class Producer:
         finally:
             self.private[key] = self._private(cls, call_params)
 
+    def _is_final(self, cls: type) -> bool:
+        return is_final_definition(cls, self._module_trees)
+
     def _obligations(self, key: str, names: "list[str]") -> str:
         if self._withdrawn(key, "subclass"):
             return self.api.WITHDRAWN_SUBCLASS
@@ -653,7 +734,10 @@ class Producer:
             self._try_member(key, name, raw)
         if kind in ("class", "model"):
             abstract = sorted(getattr(cls, "__abstractmethods__", ()))
-            self._add("abstract", key, [self._obligations(key, abstract)])
+            field = self._obligations(key, abstract)
+            if self._is_final(cls):
+                field = f"{self.api.FINAL} {field}"
+            self._add("abstract", key, [field])
         if kind == "protocol":
             required = sorted(typing_extensions.get_protocol_members(cls))
             self._add("requires", key, [self._obligations(key, required)])
@@ -822,6 +906,7 @@ class Producer:
             "a callable, method or class",
         ),
         ("implementer", ("method",), "a method"),
+        ("final", ("class", "model"), "a class or model"),
     )
 
     def _check_symbol(self, key: str, entry: "dict[str, object]") -> None:
@@ -888,6 +973,7 @@ class Producer:
                 tuple(typing.cast("list[str]", entry.get("positional", []))),
                 entry.get("construct", True),
                 entry.get("subclass", True),
+                entry.get("final", True),
             )
 
         for keys in self.keys_by_id.values():
@@ -934,7 +1020,7 @@ class Producer:
             self.refusals.append(f"format {name}: {pointer} does not exist")
             return None
         value = getattr(module, const)
-        literal = _literal_list(module, const)
+        literal = _literal_list(_module_tree(module.__name__, self._module_trees), const)
         if literal is None or type(value) is not list or value != literal:
             self.refusals.append(
                 f"format {name}: {pointer} is not a literal list: "

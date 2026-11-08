@@ -3,6 +3,8 @@
 import dataclasses
 from typing import TYPE_CHECKING, Literal
 
+from typing_extensions import final
+
 from .errors import ProjectLoadError, ProjectSelectionError
 
 if TYPE_CHECKING:
@@ -11,6 +13,7 @@ if TYPE_CHECKING:
     from ..declared import BootstrapResult
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class ProjectSelection:
     """The normalised ``include_projects`` / ``exclude_projects`` a run carries."""
@@ -19,6 +22,7 @@ class ProjectSelection:
     exclude: list[str] = dataclasses.field(default_factory=list)
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class DemotedProject:
     """A load error that does not stop the run, because its project is inactive before the lab.
@@ -46,6 +50,7 @@ class DemotedProject:
         )
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class RequiredProject:
     """A load error that is fatal only because an active project requires its inactive project.
@@ -116,6 +121,7 @@ def _required_sentence(
     )
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class ProjectCheck:
     """What the bootstrap gate let through."""

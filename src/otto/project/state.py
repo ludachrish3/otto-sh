@@ -22,6 +22,8 @@ edges can be imported from any of them without a cycle to hold apart.
 import enum
 from dataclasses import dataclass, field
 
+from typing_extensions import final
+
 
 class InstallState(enum.Enum):
     """Tri-state install answer for one project or for the lab as a whole.
@@ -38,6 +40,7 @@ class InstallState(enum.Enum):
     UNINSTALLED = "uninstalled"
 
 
+@final
 @dataclass(frozen=True)
 class ProjectScopeSummary:
     """What per-project scoping decided about one project, in display terms.
@@ -123,6 +126,7 @@ class ProjectScopeSummary:
     """
 
 
+@final
 @dataclass
 class ProjectStatus:
     """Lab-level aggregate plus the per-project detail behind it.
@@ -199,6 +203,7 @@ class CleanlinessKind(enum.Enum):
     """One discovered otto tunnel, or the scan itself when it fell short."""
 
 
+@final
 @dataclass(frozen=True)
 class CleanlinessItem:
     """One named thing ``cleanup`` acts on, and what could be learned about it."""
@@ -251,6 +256,7 @@ class CleanlinessItem:
             )
 
 
+@final
 @dataclass
 class CleanlinessReport:
     """Every cleanliness row the lab surrendered, in ``cleanup``'s own order.

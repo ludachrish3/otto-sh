@@ -256,3 +256,3164 @@ reads = "otto.models.formats:RESERVATIONS_READ_VERSIONS"
 [formats.tunnel-sentinel]
 reads = "otto.tunnel.model:TUNNEL_SENTINEL_READ_VERSIONS"
 writes = "otto.tunnel.model:TUNNEL_SENTINEL_WRITE_VERSIONS"
+
+# Per-symbol rights (keyword-only interfaces spec §4.1, §6.3, §6.4): a withdrawn
+# constructor or subclass right, the default-body hooks users override, and the
+# parameters that stay positional (§5, §6.2-6.6): a user-called subject the docs
+# call positionally, a host verb's subject, a transfer pair, an error's first
+# parameter, a registrar's name and class, an implementer-facing subject.
+# Every public path to one object carries the same entry.
+
+[symbols."otto.bootstrap:BootstrapError"]
+positional = ["root"]
+
+[symbols."otto.bootstrap:BootstrapResult"]
+construct = false
+subclass = false
+
+[symbols."otto.bootstrap:BootstrapWarning"]
+construct = false
+subclass = false
+
+[symbols."otto.bootstrap:DependencyError"]
+positional = ["root"]
+
+[symbols."otto.bootstrap:ProjectScopeError"]
+positional = ["root"]
+
+[symbols."otto.cli.registry:CommandSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.cli.registry:register_cli_command"]
+positional = ["name", "loader"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.config:CacheSetting"]
+construct = false
+subclass = false
+
+[symbols."otto.config:DockerCompose"]
+construct = false
+subclass = false
+
+[symbols."otto.config:DockerImage"]
+construct = false
+subclass = false
+
+[symbols."otto.config:DockerSettings"]
+construct = false
+subclass = false
+
+[symbols."otto.config:MonitorSettings"]
+construct = false
+subclass = false
+
+[symbols."otto.config:Project"]
+subclass = false
+
+[symbols."otto.config:ResolvedDependency"]
+construct = false
+subclass = false
+
+[symbols."otto.config:Version"]
+construct = false
+subclass = false
+
+[symbols."otto.context:ContextBinding"]
+construct = false
+subclass = false
+
+# built by open_context()/the CLI; docs teach otto.context:OttoContext only as a type
+[symbols."otto.context:OttoContext"]
+subclass = false
+
+[symbols."otto.context:OttoContext.do_for_all_hosts"]
+positional = ["method", "args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.context:OttoContext.get_host"]
+positional = ["host_id"]
+
+[symbols."otto.context:OttoContext.options"]
+positional = ["cls"]
+
+[symbols."otto.context:OttoContext.run_on_all_hosts"]
+positional = ["cmds"]
+
+[symbols."otto.context:OttoContext.sweep_loop"]
+positional = ["loop"]
+
+[symbols."otto.context:ProjectContextView"]
+construct = false
+subclass = false
+
+[symbols."otto.context:ProjectContextView.all_hosts"]
+positional = ["args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.context:ProjectContextView.do_for_all_hosts"]
+positional = ["method", "args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.context:ProjectContextView.run_on_all_hosts"]
+positional = ["args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.context:RunPolicy"]
+subclass = false
+
+[symbols."otto.context:reset_context"]
+positional = ["token"]
+
+[symbols."otto.context:set_context"]
+positional = ["ctx"]
+
+[symbols."otto.coverage:CleanReport"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:CollectResult"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:CoverageCaptureError"]
+positional = ["result"]
+
+[symbols."otto.coverage:CoverageCleanError"]
+positional = ["report"]
+
+[symbols."otto.coverage:CoverageDataMismatchError"]
+positional = ["detail"]
+
+[symbols."otto.coverage:CoverageInputError"]
+positional = ["message"]
+
+[symbols."otto.coverage:CoverageNotInstrumentedError"]
+positional = ["message"]
+
+[symbols."otto.coverage:CoverageReporter"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:CoverageStore"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:CoverageStore.register_tier"]
+positional = ["tier"]
+
+[symbols."otto.coverage:CoverageToolVersionError"]
+positional = ["detail"]
+
+[symbols."otto.coverage:DestinationError"]
+positional = ["path"]
+
+[symbols."otto.coverage:FailedReset"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:GcdaFetcher"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:GetReport"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:PairingError"]
+positional = ["kind"]
+
+[symbols."otto.coverage:ReportInputs"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:TierConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.coverage:collect_coverage"]
+positional = ["cov_dir"]
+
+[symbols."otto.coverage:resolve_report_inputs"]
+positional = ["projects"]
+
+[symbols."otto.coverage:run_coverage_report"]
+positional = ["cov_dirs"]
+
+[symbols."otto.creds:CompiledCreds"]
+construct = false
+subclass = false
+
+[symbols."otto.creds:CredsEnv"]
+construct = false
+subclass = false
+
+[symbols."otto.creds:CredsStore.lookup"]
+positional = ["key"]
+why = "implementer-facing"
+
+[symbols."otto.creds:JsonCredsConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.creds:JsonCredsStore"]
+construct = false
+subclass = false
+
+[symbols."otto.creds:register_creds_backend"]
+positional = ["name"]
+
+[symbols."otto.docker:AdapterResult"]
+subclass = false
+
+[symbols."otto.docker:BuildOptions"]
+subclass = false
+
+[symbols."otto.docker:BuildReport"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:DockerVerbError"]
+positional = ["message"]
+
+[symbols."otto.docker:FailedImage"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:HostOutput"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:HostReport"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: TeardownReport"
+
+[symbols."otto.docker:ImageBuild"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:LogsTarget"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:ObserveReport"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:ProjectBuild"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:TeardownReport"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:UseCaseStack"]
+construct = false
+subclass = false
+
+[symbols."otto.docker:compose_build"]
+positional = ["use_case"]
+
+[symbols."otto.docker:deploy"]
+positional = ["use_case"]
+
+[symbols."otto.docker:deployed"]
+positional = ["use_case"]
+
+[symbols."otto.docker:get_container_host"]
+positional = ["host_id"]
+
+[symbols."otto.docker:register_compose_adapter"]
+positional = ["use_case"]
+
+[symbols."otto.docker:teardown"]
+positional = ["use_case"]
+
+[symbols."otto.examples.app_shell:PyRepl.attach"]
+positional = ["session"]
+
+[symbols."otto.examples.app_shell:PyRepl.cmd"]
+positional = ["text"]
+
+[symbols."otto.examples.lab_repository:ExampleLabRepository.load_lab"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.examples.monitor:UptimeParser.parse"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.examples.monitor:UptimeParser.parse_tick"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.examples.options:DeviceTestOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.examples.options:ProjectOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.examples.reservations:ExampleReservationBackend.fetch_reservations"]
+positional = ["username"]
+why = "implementer-facing"
+
+[symbols."otto.examples.reservations:ExampleReservationBackend.holders"]
+positional = ["resource"]
+why = "implementer-facing"
+
+[symbols."otto.examples.reservations_cli:check_report"]
+positional = ["gate"]
+
+[symbols."otto.examples.reservations_cli:translate"]
+positional = ["action"]
+
+[symbols."otto.host.app_shell:AppShell.attach"]
+positional = ["session"]
+
+[symbols."otto.host.app_shell:AppShell.cmd"]
+positional = ["text"]
+
+[symbols."otto.host.app_shell:apply_parse"]
+positional = ["spec"]
+
+[symbols."otto.host.app_shell:parse_one"]
+positional = ["model"]
+
+[symbols."otto.host.command_frame:BashFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.quiet_history"]
+implementer = true
+
+[symbols."otto.host.command_frame:CommandFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.recover_pattern"]
+implementer = true
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.restore_interactive"]
+implementer = true
+
+[symbols."otto.host.command_frame:RawFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:SessionMarkers"]
+construct = false
+subclass = false
+
+[symbols."otto.host.command_frame:ZephyrFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.region_before_end"]
+positional = ["buffer"]
+
+[symbols."otto.host.command_frame:register_command_frame"]
+positional = ["type_name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.dev_tool:DevTool.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.dev_tool:DevTool.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.dev_tool:DevTool.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.dev_tool:DevTool.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.dev_tool:register_dev_tool_kind"]
+positional = ["name", "factory"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.dev_tool:register_dev_tool_provider"]
+positional = ["provider"]
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.ls_command"]
+implementer = true
+positional = ["path"]
+why = "implementer-facing"
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.read_command"]
+implementer = true
+positional = ["path"]
+why = "implementer-facing"
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.rm_command"]
+implementer = true
+positional = ["path"]
+why = "implementer-facing"
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.statvfs_command"]
+implementer = true
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.trunc_command"]
+implementer = true
+positional = ["path"]
+why = "implementer-facing"
+
+[symbols."otto.host.embedded_filesystem:EmbeddedFileSystem.write_command"]
+implementer = true
+positional = ["path"]
+why = "implementer-facing"
+
+[symbols."otto.host.embedded_filesystem:register_filesystem"]
+positional = ["type_name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.login_proxy:Cred"]
+subclass = false
+
+[symbols."otto.host.login_proxy:ProxyContext"]
+construct = false
+subclass = false
+
+[symbols."otto.host.login_proxy:ProxyIO.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host.login_proxy:ProxyIO.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host.login_proxy:register_login_proxy"]
+positional = ["name", "fn"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.login_proxy:resolve_chain"]
+positional = ["creds"]
+
+[symbols."otto.host.options:FtpOptions"]
+subclass = false
+
+[symbols."otto.host.options:LocalPortForward"]
+subclass = false
+
+[symbols."otto.host.options:NcOptions"]
+subclass = false
+
+[symbols."otto.host.options:ScpOptions"]
+subclass = false
+
+[symbols."otto.host.options:SftpOptions"]
+subclass = false
+
+[symbols."otto.host.options:SnmpOptions"]
+subclass = false
+
+[symbols."otto.host.options:SshOptions"]
+subclass = false
+
+[symbols."otto.host.options:TelnetOptions"]
+subclass = false
+
+[symbols."otto.host.product:DeclaredEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.host.product:Product.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.resolved_stage_dir"]
+positional = ["host"]
+
+[symbols."otto.host.product:Product.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:Product.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ProductPlan"]
+construct = false
+subclass = false
+
+[symbols."otto.host.product:ShellProduct.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.resolved_stage_dir"]
+positional = ["host"]
+
+[symbols."otto.host.product:ShellProduct.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:ShellProduct.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host.product:register_product_kind"]
+positional = ["name", "factory"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.product:register_product_provider"]
+positional = ["provider"]
+
+[symbols."otto.host.session_setup:SessionSetupEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.host.session_setup:SetupContext"]
+subclass = false
+
+[symbols."otto.host.session_setup:register_session_setup"]
+positional = ["name", "fn"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host.session_setup:session_setup_from_spec"]
+positional = ["value"]
+
+[symbols."otto.host.transfer:BaseFileTransfer.apply_mode"]
+implementer = true
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:BaseFileTransfer.create"]
+implementer = true
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:BaseFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:BaseFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:BaseFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ConsoleFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:ConsoleFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ConsoleFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ConsoleFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:ConsoleFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ConsoleFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer"]
+subclass = false
+final = false
+why = "otto subclasses it: ConsoleFileTransfer, TftpFileTransfer"
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:EmbeddedFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:FtpFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:FtpFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:FtpFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:FtpFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:FtpFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:FtpFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:NcFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:NcFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:NcFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:NcFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:NcFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:NcFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ProgressGranularity"]
+subclass = false
+
+[symbols."otto.host.transfer:ScpFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:ScpFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ScpFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ScpFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:ScpFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ScpFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:SftpFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:SftpFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:SftpFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:SftpFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:SftpFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:SftpFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ShellFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:ShellFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ShellFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:ShellFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:ShellFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:ShellFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:TftpFileTransfer"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:TftpFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:TftpFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:TftpFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:TftpFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:TftpFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:TransferContext"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:TransferMetadata"]
+construct = false
+subclass = false
+
+[symbols."otto.host.transfer:UnixFileTransfer"]
+subclass = false
+final = false
+why = "otto subclasses it: SftpFileTransfer, FtpFileTransfer, NcFileTransfer, ScpFileTransfer, ShellFileTransfer"
+
+[symbols."otto.host.transfer:UnixFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:UnixFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host.transfer:UnixFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host.transfer:UnixFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:UnixFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host.transfer:register_transfer_backend"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host:BaseHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:BaseHost.get_debug_logs"]
+implementer = true
+
+[symbols."otto.host:BaseHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
+
+[symbols."otto.host:BaseHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:BaseHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:BaseHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.quiet_history"]
+implementer = true
+
+[symbols."otto.host:CommandFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.recover_pattern"]
+implementer = true
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.restore_interactive"]
+implementer = true
+
+[symbols."otto.host:CommandPowerConfig"]
+construct = false
+subclass = false
+
+# the built-in `command` controller; custom ones subclass PowerController
+[symbols."otto.host:CommandPowerController"]
+construct = false
+subclass = false
+
+[symbols."otto.host:CommandPowerController.cycle"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandPowerController.off"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandPowerController.on"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandPowerController.status"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandResult"]
+subclass = false
+final = false
+why = "otto subclasses it: NotRunResult"
+
+[symbols."otto.host:ConnectionManager.create"]
+implementer = true
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host:Consume"]
+subclass = false
+positional = ["reason"]
+
+[symbols."otto.host:Convert"]
+subclass = false
+positional = ["fn"]
+
+[symbols."otto.host:DeclaredProduct.get_logs"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.install"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.is_installed"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.resolved_stage_dir"]
+positional = ["host"]
+
+[symbols."otto.host:DeclaredProduct.stage"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DeclaredProduct.uninstall"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DevTool.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DevTool.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DevTool.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:DevTool.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+# conforms but cannot be registered (docs/extend/custom-host-classes.md:341)
+[symbols."otto.host:DockerContainerHost"]
+construct = false
+subclass = false
+
+[symbols."otto.host:DockerContainerHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:DockerContainerHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.exists"]
+positional = ["path"]
+
+[symbols."otto.host:DockerContainerHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:DockerContainerHost.glob"]
+positional = ["pattern"]
+
+[symbols."otto.host:DockerContainerHost.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:DockerContainerHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.parent_path"]
+positional = ["container_path"]
+
+[symbols."otto.host:DockerContainerHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:DockerContainerHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:DockerContainerHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:Element"]
+subclass = false
+
+[symbols."otto.host:EmbeddedFileTransfer"]
+subclass = false
+final = false
+why = "otto subclasses it: ConsoleFileTransfer, TftpFileTransfer"
+
+[symbols."otto.host:EmbeddedFileTransfer.apply_mode"]
+positional = ["dest_paths"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedFileTransfer.create"]
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedFileTransfer.dispatch_per_file"]
+positional = ["src_files"]
+
+[symbols."otto.host:EmbeddedFileTransfer.run_get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedFileTransfer.run_put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.exists"]
+positional = ["path"]
+
+[symbols."otto.host:EmbeddedHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedHost.get_debug_logs"]
+implementer = true
+
+[symbols."otto.host:EmbeddedHost.load"]
+positional = ["file"]
+
+[symbols."otto.host:EmbeddedHost.ls"]
+positional = ["path"]
+why = "CLI shape: positional like the shell's ls"
+
+[symbols."otto.host:EmbeddedHost.mkdir"]
+positional = ["path"]
+
+[symbols."otto.host:EmbeddedHost.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
+
+[symbols."otto.host:EmbeddedHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:EmbeddedHost.read_file"]
+positional = ["path"]
+
+[symbols."otto.host:EmbeddedHost.rm"]
+positional = ["path"]
+
+[symbols."otto.host:EmbeddedHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.unload"]
+positional = ["name"]
+
+[symbols."otto.host:EmbeddedHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHost.write_file"]
+positional = ["path"]
+
+[symbols."otto.host:EmbeddedHostSpec.build_kwargs"]
+positional = ["ready"]
+
+[symbols."otto.host:EmbeddedHostSpec.check_in"]
+implementer = true
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host:EmbeddedHostSpec.to_host"]
+implementer = true
+
+[symbols."otto.host:EmbeddedHostSpec.validate_in"]
+positional = ["ctx"]
+
+[symbols."otto.host:HopTransport.forward_port"]
+positional = ["dest_host"]
+why = "implementer-facing"
+
+[symbols."otto.host:HopTransport.unforward_port"]
+positional = ["dest_host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:Host.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:Host.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:Host.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:HostBuild"]
+construct = false
+subclass = false
+
+[symbols."otto.host:HostCapabilities"]
+subclass = false
+
+[symbols."otto.host:HostClassEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.host:HostContext"]
+construct = false
+subclass = false
+
+[symbols."otto.host:HostFilter"]
+construct = false
+subclass = false
+
+[symbols."otto.host:HostLoopError"]
+positional = ["host_id"]
+
+[symbols."otto.host:HostReadiness"]
+construct = false
+subclass = false
+
+[symbols."otto.host:HostSession"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: DeclinedSession"
+
+[symbols."otto.host:HostSession.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:HostSession.run"]
+positional = ["cmds"]
+
+[symbols."otto.host:HostSession.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:HostSpec.build_kwargs"]
+positional = ["ready"]
+
+[symbols."otto.host:HostSpec.check_in"]
+implementer = true
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host:HostSpec.to_host"]
+implementer = true
+
+[symbols."otto.host:HostSpec.validate_in"]
+positional = ["ctx"]
+
+[symbols."otto.host:HostSpecInContext"]
+construct = false
+subclass = false
+
+# conforms but cannot be registered (docs/extend/custom-host-classes.md:341)
+[symbols."otto.host:LocalHost"]
+subclass = false
+
+[symbols."otto.host:LocalHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:LocalHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.exists"]
+positional = ["path"]
+
+[symbols."otto.host:LocalHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:LocalHost.glob"]
+positional = ["pattern"]
+
+[symbols."otto.host:LocalHost.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:LocalHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:LocalHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalSession"]
+construct = false
+subclass = false
+
+[symbols."otto.host:LocalSession.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:LocalSession.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:Mount"]
+construct = false
+subclass = false
+
+[symbols."otto.host:OsProfile"]
+construct = false
+subclass = false
+
+[symbols."otto.host:Pass"]
+subclass = false
+
+[symbols."otto.host:PosixFileOps"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: LocalHost, DockerContainerHost, UnixHost"
+
+[symbols."otto.host:PosixFileOps.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:PosixFileOps.exists"]
+positional = ["path"]
+
+[symbols."otto.host:PosixFileOps.glob"]
+positional = ["pattern"]
+
+[symbols."otto.host:PosixFileOps.ls"]
+positional = ["path"]
+why = "CLI shape: positional like the shell's ls"
+
+[symbols."otto.host:PosixFileOps.mkdir"]
+positional = ["path"]
+
+[symbols."otto.host:PosixFileOps.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:PosixFileOps.read_file"]
+positional = ["path"]
+
+[symbols."otto.host:PosixFileOps.rm"]
+positional = ["path"]
+
+[symbols."otto.host:PosixFileOps.write_file"]
+positional = ["path"]
+
+[symbols."otto.host:PosixPrivilege"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: LocalHost, DockerContainerHost, UnixHost"
+
+[symbols."otto.host:PowerControlSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.host:PowerController.cycle"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:PowerController.off"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:PowerController.on"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:PowerController.status"]
+implementer = true
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:PowerEnv"]
+construct = false
+subclass = false
+
+[symbols."otto.host:Product.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.resolved_stage_dir"]
+positional = ["host"]
+
+[symbols."otto.host:Product.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:Product.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ProfileContext"]
+construct = false
+subclass = false
+
+[symbols."otto.host:ProfileFields"]
+subclass = false
+
+[symbols."otto.host:RawFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:RemoteHost.get_debug_logs"]
+implementer = true
+
+[symbols."otto.host:RemoteHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
+
+[symbols."otto.host:RemoteHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:RemoteHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:RemoteHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:Resolve"]
+subclass = false
+
+[symbols."otto.host:Results"]
+construct = false
+subclass = false
+
+[symbols."otto.host:RuntimeOnly"]
+subclass = false
+
+[symbols."otto.host:SessionManager"]
+construct = false
+subclass = false
+
+[symbols."otto.host:SessionManager.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:SessionManager.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:SessionMarkers"]
+construct = false
+subclass = false
+
+[symbols."otto.host:ShellCommand"]
+subclass = false
+
+[symbols."otto.host:ShellProduct.install"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.is_installed"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.resolved_stage_dir"]
+positional = ["host"]
+
+[symbols."otto.host:ShellProduct.stage"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellProduct.uninstall"]
+positional = ["host"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellSession"]
+subclass = false
+final = false
+why = "otto subclasses it: SshSession, TelnetSession, LocalSession, _NoTransport, _BridgeShellSession"
+
+[symbols."otto.host:ShellSession.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:ShellSession.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:SshHopTransport"]
+construct = false
+subclass = false
+
+[symbols."otto.host:SshHopTransport.forward_port"]
+positional = ["dest_host"]
+why = "implementer-facing"
+
+[symbols."otto.host:SshHopTransport.unforward_port"]
+positional = ["dest_host"]
+why = "implementer-facing"
+
+[symbols."otto.host:SuppressCommandOutput"]
+subclass = false
+
+[symbols."otto.host:TelnetSession"]
+construct = false
+subclass = false
+
+[symbols."otto.host:TelnetSession.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:TelnetSession.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:TermContext"]
+construct = false
+subclass = false
+
+[symbols."otto.host:TermMetadata"]
+construct = false
+subclass = false
+
+[symbols."otto.host:Toolchain"]
+construct = false
+subclass = false
+
+[symbols."otto.host:ToolchainTool"]
+construct = false
+subclass = false
+
+[symbols."otto.host:TransferMetadata"]
+construct = false
+subclass = false
+
+[symbols."otto.host:UnixHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:UnixHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.exists"]
+positional = ["path"]
+
+[symbols."otto.host:UnixHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:UnixHost.get_debug_logs"]
+implementer = true
+
+[symbols."otto.host:UnixHost.glob"]
+positional = ["pattern"]
+
+[symbols."otto.host:UnixHost.load"]
+positional = ["file"]
+
+[symbols."otto.host:UnixHost.ls"]
+positional = ["path"]
+why = "CLI shape: positional like the shell's ls"
+
+[symbols."otto.host:UnixHost.mkdir"]
+positional = ["path"]
+
+[symbols."otto.host:UnixHost.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:UnixHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
+
+[symbols."otto.host:UnixHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:UnixHost.read_file"]
+positional = ["path"]
+
+[symbols."otto.host:UnixHost.rm"]
+positional = ["path"]
+
+[symbols."otto.host:UnixHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.unload"]
+positional = ["name"]
+
+[symbols."otto.host:UnixHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHost.write_file"]
+positional = ["path"]
+
+[symbols."otto.host:UnixHostSpec.build_kwargs"]
+positional = ["ready"]
+
+[symbols."otto.host:UnixHostSpec.check_in"]
+implementer = true
+positional = ["ctx"]
+why = "implementer-facing"
+
+[symbols."otto.host:UnixHostSpec.to_host"]
+implementer = true
+
+[symbols."otto.host:UnixHostSpec.validate_in"]
+positional = ["ctx"]
+
+[symbols."otto.host:Userland"]
+construct = false
+subclass = false
+
+[symbols."otto.host:ZephyrFrame.end_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.extract_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.handshake"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.marks_begin"]
+positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.recover"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.recover_pattern"]
+positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.region_before_end"]
+positional = ["buffer"]
+
+# the in-tree worked example of an EmbeddedHost subclass, not a base (docs/extend/extending-embedded.md:132)
+[symbols."otto.host:ZephyrHost"]
+construct = false
+subclass = false
+
+[symbols."otto.host:ZephyrHost.app_shell"]
+positional = ["shell_cls"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.cp"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:ZephyrHost.exec"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.exists"]
+positional = ["path"]
+
+[symbols."otto.host:ZephyrHost.expect"]
+positional = ["pattern"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.get"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:ZephyrHost.load"]
+positional = ["file"]
+
+[symbols."otto.host:ZephyrHost.ls"]
+positional = ["path"]
+why = "CLI shape: positional like the shell's ls"
+
+[symbols."otto.host:ZephyrHost.mkdir"]
+positional = ["path"]
+
+[symbols."otto.host:ZephyrHost.mv"]
+positional = ["src", "dst"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:ZephyrHost.open_session"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.power"]
+positional = ["state"]
+why = "CLI shape: the state reads naturally positionally"
+
+[symbols."otto.host:ZephyrHost.put"]
+positional = ["src_files", "dest_dir"]
+why = "transfer: sources then destination, the cp convention the docs teach"
+
+[symbols."otto.host:ZephyrHost.read_file"]
+positional = ["path"]
+
+[symbols."otto.host:ZephyrHost.rm"]
+positional = ["path"]
+
+[symbols."otto.host:ZephyrHost.run"]
+positional = ["cmds"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.send"]
+positional = ["text"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.unload"]
+positional = ["name"]
+
+[symbols."otto.host:ZephyrHost.wait_until_down"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.wait_until_up"]
+positional = ["timeout"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrHost.write_file"]
+positional = ["path"]
+
+[symbols."otto.host:create_host_from_dict"]
+positional = ["host_data"]
+
+[symbols."otto.host:host_context"]
+positional = ["host_data"]
+
+[symbols."otto.host:host_identity"]
+positional = ["host_data"]
+
+[symbols."otto.host:register_command_frame"]
+positional = ["type_name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host:register_dev_tool_provider"]
+positional = ["provider"]
+
+[symbols."otto.host:register_host_class"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host:register_os_profile"]
+positional = ["name", "base"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host:register_power_controller"]
+positional = ["type_name"]
+
+[symbols."otto.host:register_product_provider"]
+positional = ["provider"]
+
+[symbols."otto.host:register_term_backend"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.host:register_transfer_backend"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.init:AreaVerdict"]
+construct = false
+subclass = false
+
+[symbols."otto.init:DoctorReport"]
+construct = false
+subclass = false
+
+[symbols."otto.init:FileWrite"]
+construct = false
+subclass = false
+
+[symbols."otto.init:InitConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.init:InitConfig.for_project"]
+positional = ["root"]
+
+[symbols."otto.init:InitInputError"]
+positional = ["message"]
+
+[symbols."otto.init:ScaffoldReport"]
+construct = false
+subclass = false
+
+[symbols."otto.init:check_project"]
+positional = ["root"]
+
+[symbols."otto.init:scaffold"]
+positional = ["config"]
+
+[symbols."otto.init:scaffold_candidates"]
+positional = ["root"]
+
+[symbols."otto.instructions:instruction"]
+positional = ["args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.instructions:run_instruction"]
+positional = ["ctx"]
+
+[symbols."otto.inventory:CompiledInventory"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:CredsOverlay"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:CredsOverlay.lookup"]
+positional = ["key"]
+why = "implementer-facing"
+
+[symbols."otto.inventory:Inventory.lookup"]
+positional = ["key"]
+why = "implementer-facing"
+
+[symbols."otto.inventory:InventoryDeclaration"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:InventoryEnv"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:InventoryKeyError"]
+positional = ["key"]
+
+[symbols."otto.inventory:InventoryMetadata"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:JsonInventory"]
+subclass = false
+positional = ["path"]
+
+[symbols."otto.inventory:JsonInventoryConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:NetBoxInventory"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:NetBoxInventoryConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:RecordDifference"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:RefreshResult"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:ResolvedEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:SnapshotCache"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:check_supplies"]
+positional = ["supplies"]
+
+[symbols."otto.inventory:register_inventory_backend"]
+positional = ["name"]
+
+[symbols."otto.inventory:resolve_host_entry"]
+positional = ["host_data"]
+
+[symbols."otto.lab:EmptySelectionError"]
+positional = ["pattern"]
+
+[symbols."otto.lab:Lab"]
+subclass = false
+
+[symbols."otto.lab:Lab.add_host"]
+positional = ["host"]
+
+[symbols."otto.lab:do_for_all_hosts"]
+positional = ["method", "args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto.lab:fleet_of_interest"]
+positional = ["lab"]
+
+[symbols."otto.lab:get_host"]
+positional = ["host_id"]
+
+[symbols."otto.lab:load_lab"]
+positional = ["labnames"]
+
+[symbols."otto.lab:run_on_all_hosts"]
+positional = ["cmds"]
+
+[symbols."otto.labs:CompositeLabRepository"]
+construct = false
+subclass = false
+
+[symbols."otto.labs:CompositeLabRepository.load_lab"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.labs:HostSummary"]
+subclass = false
+
+[symbols."otto.labs:JsonFileLabRepository"]
+construct = false
+subclass = false
+
+[symbols."otto.labs:JsonFileLabRepository.load_lab"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.labs:LabRepository.load_lab"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.labs:LabSource"]
+construct = false
+subclass = false
+
+[symbols."otto.labs:LabSourceEnv"]
+subclass = false
+
+[symbols."otto.labs:LoginSummary"]
+construct = false
+subclass = false
+
+[symbols."otto.labs:logins_of_host_data"]
+positional = ["host_data"]
+
+[symbols."otto.labs:register_lab_repository"]
+positional = ["name"]
+
+[symbols."otto.link:AppliedPlacement"]
+construct = false
+subclass = false
+
+[symbols."otto.link:DirectionState"]
+construct = false
+subclass = false
+
+[symbols."otto.link:DryRunPlan"]
+construct = false
+subclass = false
+
+[symbols."otto.link:ImpairReport"]
+construct = false
+subclass = false
+
+[symbols."otto.link:ImpairmentParams"]
+subclass = false
+
+[symbols."otto.link:Link"]
+construct = false
+subclass = false
+
+[symbols."otto.link:LinkCheckReport"]
+construct = false
+subclass = false
+
+[symbols."otto.link:LinkEndpoint"]
+construct = false
+subclass = false
+
+[symbols."otto.link:LinkImpairer.apply_command"]
+implementer = true
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:LinkImpairer.clear_command"]
+implementer = true
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:LinkImpairer.parse_read"]
+implementer = true
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.link:LinkImpairer.read_command"]
+implementer = true
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:LinkState"]
+construct = false
+subclass = false
+
+# the built-in impairer; custom ones subclass LinkImpairer
+[symbols."otto.link:NetEmImpairer"]
+construct = false
+subclass = false
+
+[symbols."otto.link:NetEmImpairer.apply_command"]
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:NetEmImpairer.clear_command"]
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:NetEmImpairer.parse_read"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.link:NetEmImpairer.read_command"]
+positional = ["netdev"]
+why = "implementer-facing"
+
+[symbols."otto.link:Placement"]
+construct = false
+subclass = false
+
+[symbols."otto.link:RepairAllReport"]
+construct = false
+subclass = false
+
+[symbols."otto.link:RepairReport"]
+construct = false
+subclass = false
+
+[symbols."otto.link:ScopedState"]
+construct = false
+subclass = false
+
+[symbols."otto.link:Selector"]
+subclass = false
+
+[symbols."otto.link:impair_link"]
+positional = ["lab"]
+
+[symbols."otto.link:read_link_states"]
+positional = ["lab"]
+
+[symbols."otto.link:register_impairer"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.link:repair_link"]
+positional = ["lab"]
+
+[symbols."otto.models:ChartSpec"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: ChartSpecRecord"
+
+[symbols."otto.models:ChartSpecRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:CredSpec"]
+subclass = false
+
+[symbols."otto.models:DockerComposeSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:DockerImageSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:DockerImageSpec.model_post_init"]
+positional = ["context"]
+why = "third-party: pydantic"
+
+[symbols."otto.models:DockerSettingsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ElementRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:EventRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:FtpOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:HostSnapshot"]
+construct = false
+subclass = false
+
+[symbols."otto.models:InventoryRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:LabSnapshot"]
+construct = false
+subclass = false
+
+[symbols."otto.models:LinkEndpointSnapshot"]
+construct = false
+subclass = false
+
+[symbols."otto.models:LinkSnapshot"]
+construct = false
+subclass = false
+
+[symbols."otto.models:LogEventRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:MetricPoint"]
+construct = false
+subclass = false
+
+[symbols."otto.models:MetricRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:MonitorExport"]
+construct = false
+subclass = false
+
+[symbols."otto.models:MonitorMeta"]
+construct = false
+subclass = false
+
+[symbols."otto.models:NcOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:OsProfileSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:OttoEnvSettings"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ReservationConfigSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ReservationEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ReservationFile"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ScpOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:SessionMeta"]
+construct = false
+subclass = false
+
+[symbols."otto.models:SessionRecord"]
+construct = false
+subclass = false
+
+# the settings.toml boundary model otto parses; no docs page extends it
+[symbols."otto.models:SettingsModel"]
+construct = false
+subclass = false
+
+[symbols."otto.models:SftpOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:SnmpOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:SshOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:TabSpec"]
+construct = false
+subclass = false
+final = false
+why = "otto subclasses it: TabSpecRecord"
+
+[symbols."otto.models:TabSpecRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.models:TelnetOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:TftpOptionsSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:ToolchainSpec"]
+construct = false
+subclass = false
+
+[symbols."otto.models:TunnelRecord"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor.log_sourced:CsvMetricParser"]
+positional = ["command"]
+
+[symbols."otto.monitor.log_sourced:CsvMetricParser.parse"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.log_sourced:CsvMetricParser.parse_tick"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.log_sourced:RegexLogEventParser"]
+positional = ["command"]
+
+[symbols."otto.monitor.log_sourced:RegexLogEventParser.parse"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.log_sourced:RegexLogEventParser.parse_tick"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.parsers:LogEvent"]
+subclass = false
+positional = ["ts", "fields"]
+why = "tuple record"
+
+[symbols."otto.monitor.parsers:MetricDataPoint"]
+subclass = false
+positional = ["value", "meta"]
+why = "tuple record"
+
+[symbols."otto.monitor.parsers:MetricParser.parse"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.parsers:MetricParser.parse_tick"]
+implementer = true
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor.parsers:ParseContext"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor.parsers:register_host_parsers"]
+positional = ["host_id", "parsers"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.monitor.parsers:register_parsers"]
+positional = ["parsers"]
+
+[symbols."otto.monitor.snmp:SnmpMetric"]
+subclass = false
+
+[symbols."otto.monitor.snmp:register_snmp_metric"]
+positional = ["metric"]
+
+[symbols."otto.monitor:LiveReport"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MetricCollector"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MetricParser.parse"]
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor:MetricParser.parse_tick"]
+implementer = true
+positional = ["output"]
+why = "implementer-facing"
+
+[symbols."otto.monitor:MonitorEvent"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MonitorInputError"]
+positional = ["message"]
+
+[symbols."otto.monitor:MonitorSelection"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MonitorServer"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MonitorSession"]
+construct = false
+subclass = false
+
+[symbols."otto.monitor:MonitorTarget"]
+subclass = false
+
+[symbols."otto.monitor:MonitorTlsError"]
+positional = ["message"]
+
+[symbols."otto.monitor:NoMonitorableHostsError"]
+positional = ["walked"]
+
+[symbols."otto.monitor:ReviewSourceError"]
+positional = ["message"]
+
+[symbols."otto.params:options"]
+positional = ["cls"]
+why = "third-party: dataclasses (decorator factory, cls beside **dataclass_kwargs)"
+
+[symbols."otto.params:options_key"]
+positional = ["cls_or_path"]
+
+[symbols."otto.params:register_options"]
+positional = ["cls_or_path"]
+
+[symbols."otto.params:verbs_for"]
+positional = ["cls"]
+
+[symbols."otto.project:CleanlinessItem"]
+construct = false
+subclass = false
+
+[symbols."otto.project:CleanlinessReport"]
+construct = false
+subclass = false
+
+[symbols."otto.project:CleanupOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:GetLogsOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:HostPlan"]
+construct = false
+subclass = false
+
+[symbols."otto.project:InstallOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:InstallToolsOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:ProductPlanEntry"]
+construct = false
+subclass = false
+
+[symbols."otto.project:ProjectActions.cleanup"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.get_logs"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.install"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.install_tools"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.is_clean"]
+implementer = true
+
+[symbols."otto.project:ProjectActions.is_uninstalled"]
+implementer = true
+
+[symbols."otto.project:ProjectActions.status"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.uninstall"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectActions.uninstall_tools"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto.project:ProjectPlan"]
+construct = false
+subclass = false
+
+[symbols."otto.project:ProjectScopeSummary"]
+construct = false
+subclass = false
+
+[symbols."otto.project:ProjectStatus"]
+construct = false
+subclass = false
+
+[symbols."otto.project:StatusOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:TailStep"]
+construct = false
+subclass = false
+
+[symbols."otto.project:UninstallOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:UninstallToolsOptions"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto.project:register_project_actions"]
+positional = ["cls"]
+
+# docs/architecture/quality-gates.md:153 no-registry-subclass
+[symbols."otto.registry:BackendRegistry"]
+construct = false
+subclass = false
+
+[symbols."otto.registry:BackendRegistry.get"]
+positional = ["name"]
+
+[symbols."otto.registry:BackendRegistry.register_many"]
+positional = ["entries"]
+
+[symbols."otto.registry:ClassEntry"]
+subclass = false
+
+[symbols."otto.registry:Configured"]
+subclass = false
+
+[symbols."otto.registry:FrozenMap"]
+subclass = false
+
+[symbols."otto.registry:Justified"]
+subclass = false
+
+[symbols."otto.registry:Prepared"]
+construct = false
+subclass = false
+
+[symbols."otto.registry:Ref"]
+subclass = false
+
+# docs/architecture/quality-gates.md:153 no-registry-subclass
+[symbols."otto.registry:Registry"]
+construct = false
+subclass = false
+
+[symbols."otto.registry:Registry.get"]
+positional = ["name"]
+
+[symbols."otto.registry:Registry.register_many"]
+positional = ["entries"]
+
+# docs/architecture/quality-gates.md:153 no-registry-subclass
+[symbols."otto.registry:RegistryView"]
+construct = false
+subclass = false
+
+[symbols."otto.registry:RegistryView.get"]
+positional = ["name"]
+
+[symbols."otto.registry:RequireProject"]
+subclass = false
+
+# docs/architecture/quality-gates.md:153 no-registry-subclass
+[symbols."otto.registry:Subscription"]
+construct = false
+subclass = false
+
+[symbols."otto.registry:registering_project"]
+positional = ["name"]
+
+[symbols."otto.reservations:JsonReservationBackend"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:JsonReservationBackend.fetch_reservations"]
+positional = ["username"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:JsonReservationBackend.holders"]
+positional = ["resource"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:JsonReservationConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:MissingReservationError"]
+positional = ["message"]
+
+[symbols."otto.reservations:MissingReservationError.from_report"]
+positional = ["report"]
+
+[symbols."otto.reservations:MissingResource"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:NoneReservationConfig"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:NullReservationBackend"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:NullReservationBackend.fetch_reservations"]
+positional = ["username"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:NullReservationBackend.holders"]
+positional = ["resource"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:Reservation"]
+subclass = false
+
+[symbols."otto.reservations:ReservationBackend.fetch_reservations"]
+positional = ["username"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:ReservationBackendBase.fetch_reservations"]
+positional = ["username"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:ReservationEnv"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ReservationGate"]
+subclass = false
+
+[symbols."otto.reservations:ReservationGate.report"]
+positional = ["lab"]
+
+[symbols."otto.reservations:ReservationGateResult"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ReservationIdentity"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ReservationReport"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ReservationRow"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ResolvedIdentity"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:ResourceOrigin"]
+construct = false
+subclass = false
+
+[symbols."otto.reservations:SupportsResourceHolders.holders"]
+positional = ["resource"]
+why = "implementer-facing"
+
+[symbols."otto.reservations:gate_from_settings"]
+positional = ["settings"]
+
+[symbols."otto.reservations:register_reservation_backend"]
+positional = ["name"]
+
+[symbols."otto.reservations:resolve_username"]
+positional = ["holder"]
+
+[symbols."otto.result:CommandNotRunError"]
+positional = ["command"]
+
+[symbols."otto.result:CommandResult"]
+subclass = false
+final = false
+why = "otto subclasses it: NotRunResult"
+
+[symbols."otto.result:NotRunResult"]
+construct = false
+subclass = false
+
+[symbols."otto.result:Result"]
+subclass = false
+final = false
+why = "otto subclasses it: CommandResult, ShellResult, Results"
+
+[symbols."otto.result:Results"]
+construct = false
+subclass = false
+
+[symbols."otto.result:ShellResult"]
+construct = false
+subclass = false
+
+[symbols."otto.session:DemotedProject"]
+construct = false
+subclass = false
+
+[symbols."otto.session:DependencyRefusedError"]
+positional = ["unsatisfied"]
+
+[symbols."otto.session:InstructionInactiveError"]
+positional = ["instruction"]
+
+[symbols."otto.session:LabBuildError"]
+positional = ["message"]
+
+[symbols."otto.session:ProjectCheck"]
+construct = false
+subclass = false
+
+[symbols."otto.session:ProjectLoadError"]
+positional = ["errors"]
+
+[symbols."otto.session:ProjectSelection"]
+construct = false
+subclass = false
+
+[symbols."otto.session:ProjectSelectionError"]
+positional = ["message"]
+
+[symbols."otto.session:RequiredProject"]
+construct = false
+subclass = false
+
+[symbols."otto.session:build_lab"]
+positional = ["projects"]
+
+[symbols."otto.suite:ExpectCollector"]
+subclass = false
+
+[symbols."otto.suite:ExpectCollector.__call__"]
+positional = ["condition"]
+
+[symbols."otto.suite:ExpectCollector.expect"]
+positional = ["condition"]
+
+[symbols."otto.suite:MonitorHandle"]
+construct = false
+subclass = false
+
+[symbols."otto.suite:MonitorHandle.event"]
+positional = ["label"]
+
+[symbols."otto.suite:OttoFixturesPlugin"]
+construct = false
+subclass = false
+
+[symbols."otto.suite:RunOptions"]
+subclass = false
+
+[symbols."otto.suite:SuiteRunResult"]
+construct = false
+subclass = false
+
+[symbols."otto.suite:UnknownSelectionError"]
+positional = ["message"]
+
+[symbols."otto.suite:prepare_run"]
+positional = ["opts"]
+
+[symbols."otto.testing:assert_creds_store_conforms"]
+positional = ["store"]
+
+[symbols."otto.testing:assert_host_conforms"]
+positional = ["cls"]
+
+[symbols."otto.testing:assert_host_registrable"]
+positional = ["cls"]
+
+[symbols."otto.testing:assert_inventory_conforms"]
+positional = ["inventory"]
+
+[symbols."otto.testing:assert_lab_repository_conforms"]
+positional = ["repository"]
+
+[symbols."otto.testing:assert_reservation_backend_conforms"]
+positional = ["backend"]
+
+[symbols."otto.testing:assert_transfer_backend_conforms"]
+positional = ["cls"]
+
+[symbols."otto.tunnel:AddedTunnel"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:DiscoveredTunnel"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:DryRunPlan"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:ParsedSentinel"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:RemovedReport"]
+construct = false
+subclass = false
+
+# the built-in carrier; custom ones subclass TunnelCarrier
+[symbols."otto.tunnel:SocatCarrier"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:SocatCarrier.egress_args"]
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:SocatCarrier.ingress_args"]
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:SocatCarrier.relay_args"]
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:Tunnel"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:TunnelCarrier.egress_args"]
+implementer = true
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:TunnelCarrier.ingress_args"]
+implementer = true
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:TunnelCarrier.relay_args"]
+implementer = true
+positional = ["protocol"]
+why = "implementer-facing"
+
+[symbols."otto.tunnel:TunnelCheckReport"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:TunnelDiscovery"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:TunnelHop"]
+construct = false
+subclass = false
+
+[symbols."otto.tunnel:add_tunnel"]
+positional = ["lab"]
+
+[symbols."otto.tunnel:discover_tunnels"]
+positional = ["lab"]
+
+[symbols."otto.tunnel:register_carrier"]
+positional = ["name", "cls"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto.tunnel:remove_tunnel"]
+positional = ["lab"]
+
+[symbols."otto.utils:Arg"]
+subclass = false
+
+[symbols."otto.utils:Opt"]
+subclass = false
+
+[symbols."otto:AppShell.attach"]
+positional = ["session"]
+
+[symbols."otto:AppShell.cmd"]
+positional = ["text"]
+
+[symbols."otto:CommandResult"]
+subclass = false
+final = false
+why = "otto subclasses it: NotRunResult"
+
+[symbols."otto:Cred"]
+subclass = false
+
+# built by open_context()/the CLI; docs teach otto.context:OttoContext only as a type
+[symbols."otto:OttoContext"]
+subclass = false
+
+[symbols."otto:OttoContext.do_for_all_hosts"]
+positional = ["method", "args"]
+why = "forwards positionals to the called method"
+
+[symbols."otto:OttoContext.get_host"]
+positional = ["host_id"]
+
+[symbols."otto:OttoContext.options"]
+positional = ["cls"]
+
+[symbols."otto:OttoContext.run_on_all_hosts"]
+positional = ["cmds"]
+
+[symbols."otto:OttoContext.sweep_loop"]
+positional = ["loop"]
+
+[symbols."otto:ProjectActions.cleanup"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.get_logs"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.install"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.install_tools"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.is_clean"]
+implementer = true
+
+[symbols."otto:ProjectActions.is_uninstalled"]
+implementer = true
+
+[symbols."otto:ProjectActions.status"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.uninstall"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:ProjectActions.uninstall_tools"]
+implementer = true
+positional = ["opts"]
+why = "implementer-facing"
+
+[symbols."otto:Result"]
+subclass = false
+final = false
+why = "otto subclasses it: CommandResult, ShellResult, Results"
+
+[symbols."otto:Results"]
+construct = false
+subclass = false
+
+[symbols."otto:RunOptions"]
+subclass = false
+
+[symbols."otto:SetupContext"]
+subclass = false
+
+[symbols."otto:ShellResult"]
+construct = false
+subclass = false
+
+[symbols."otto:app"]
+positional = ["args"]
+why = "deferred dataclass; real fields unrecorded, see #950"
+
+[symbols."otto:get_host"]
+positional = ["host_id"]
+
+[symbols."otto:load_lab"]
+positional = ["labnames"]
+
+[symbols."otto:options"]
+positional = ["cls"]
+why = "third-party: dataclasses (decorator factory, cls beside **dataclass_kwargs)"
+
+[symbols."otto:register_cli_command"]
+positional = ["name", "loader"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto:register_login_proxy"]
+positional = ["name", "fn"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto:register_options"]
+positional = ["cls_or_path"]
+
+[symbols."otto:register_project_actions"]
+positional = ["cls"]
+
+[symbols."otto:register_session_setup"]
+positional = ["name", "fn"]
+why = "registrar: the name, then what it registers"
+
+[symbols."otto:run_on_all_hosts"]
+positional = ["cmds"]

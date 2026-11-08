@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar, runtime_checkable
 
 from pydantic import SecretStr
+from typing_extensions import final
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
@@ -63,6 +64,7 @@ class ProxyIO(Protocol):
         ...
 
 
+@final
 @dataclass(frozen=True)
 class ProxyContext:
     """Everything a proxy step may need.

@@ -8,6 +8,8 @@ import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     from ..config.project import Project
     from .exclusions.rules import ExclusionRule
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
     from .tiers import TierConfig
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class ReportInputs:
     """What ``[coverage]`` says about a report; all-default is the git-less path.

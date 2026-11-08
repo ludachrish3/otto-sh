@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from pydantic import SecretStr
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..errors import OttoError
 from ..models.base import Cred
@@ -95,6 +95,7 @@ class ConsoleEndpoint:
     """The transport to forward through, or ``None`` to dial *server_ip* directly."""
 
 
+@final
 @dataclass(frozen=True)
 class TermContext:
     """Construction inputs a host provides to build its connection backend.
@@ -1379,6 +1380,7 @@ class _UserConnections:
         return getattr(self._primary, name)
 
 
+@final
 @dataclass(frozen=True)
 class TermMetadata:
     """What a term backend declares: the families it serves, whether it logs in, how it is reached.

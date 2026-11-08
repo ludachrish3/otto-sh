@@ -43,7 +43,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
@@ -72,6 +72,7 @@ RECOVER_SUFFIX = "RECOVER__"
 It follows the head's ``_`` separator, as :data:`READY_SUFFIX` does."""
 
 
+@final
 @dataclass(frozen=True)
 class SessionMarkers:
     """Per-session sentinel tokens a ``CommandFrame`` renders into commands and scans on parsing.

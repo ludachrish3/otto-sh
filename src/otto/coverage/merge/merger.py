@@ -86,7 +86,7 @@ class LcovMerger:
         """Return the merger; leaving the block calls :meth:`close`."""
         return self
 
-    def __exit__(self, *_exc: object) -> None:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         """Remove the merger's wrapper directory."""
         self.close()
 

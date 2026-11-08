@@ -945,3 +945,35 @@ def test_withdrawing_a_namedtuple_constructor_is_a_withdrawal(tmp_path):
     # The withdrawal is judged before the tuple-shape rule, either way round.
     assert api_compat.compare_dumps(open_, closed) == ["otto:T: constructor withdrawn"]
     assert api_compat.compare_dumps(closed, open_) == []
+
+
+# -- @final is invisible to the judge (keyword-only design §4.4) -------------
+
+_ABSTRACTS = ["-", "run", "run stop", api_records.WITHDRAWN_SUBCLASS]
+
+
+def _abstract_dump(field):
+    head = f"{api_records.V2_HEADER}\n{api_records.SCHEMA_PREFIX}{api_records.PRODUCER_SCHEMA}\n"
+    body = (
+        f"name\totto:C\tclass\nmro\totto:C\t-\ncall\totto:C\tsync\t-\nabstract\totto:C\t{field}\n"
+    )
+    return api_records.parse_dump(head + body)
+
+
+@pytest.mark.parametrize(("before", "after"), list(itertools.product(_ABSTRACTS, repeat=2)))
+def test_final_changes_no_verdict(before, after):
+    plain = api_compat.compare_dumps(_abstract_dump(before), _abstract_dump(after))
+    for old_final, new_final in itertools.product((False, True), repeat=2):
+        old = f"@final {before}" if old_final else before
+        new = f"@final {after}" if new_final else after
+        assert api_compat.compare_dumps(_abstract_dump(old), _abstract_dump(new)) == plain
+    withdrawing = before != api_records.WITHDRAWN_SUBCLASS == after
+    assert ("otto:C: obligations withdrawn" in plain) is withdrawing
+
+
+def test_final_is_never_an_implementer_member():
+    assert api_compat.implementer_members(_abstract_dump("@final run"), {}) == frozenset(
+        {"otto:C.run"}
+    )
+    withdrawn = _abstract_dump(f"@final {api_records.WITHDRAWN_SUBCLASS}")
+    assert api_compat.implementer_members(withdrawn, {}) == frozenset()

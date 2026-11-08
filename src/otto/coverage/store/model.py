@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, get_args
 
+from typing_extensions import final
+
 from ...layout import product_label
 from ..formats import STORE_READ_VERSIONS, STORE_WRITE_VERSIONS, found_version_label
 
@@ -653,6 +655,7 @@ def _load_run(rd: dict[str, Any]) -> RunRecord:
     )
 
 
+@final
 class CoverageStore:
     """Central store for all coverage data across all files, hosts, and tiers.
 

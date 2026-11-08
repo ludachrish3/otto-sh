@@ -306,6 +306,11 @@ is still caught; a **withdrawn token** stands where the contract would be:
 - `subclass = false`: the `abstract` (class) or `requires` (protocol) name list is
   `@manifest:subclass=false`.
 
+A class or model whose definition is decorated `typing_extensions.final` (read from the defining
+module's source, amended 2026-11-08) puts `@final` as the first token of its `abstract` line, before
+the withdrawn token or the name list; the obligation record carries it as a flag that every reader
+takes from the parsed record (`api_records`), never the raw field. `requires` lines never carry it.
+
 The token is refused anywhere else. The parent passes each entry's runtime keys to the child as
 `--symbol <key> <spec>` (§5.3), so the child reads no manifest. The full rules are in that
 design's §4.2 and §4.3.
@@ -497,6 +502,13 @@ so their bytes agree.
 tokens extend the field grammar, not the schema: no committed dump's bytes change under the new
 producer, because no committed tree has a `[symbols]` table. The retained-producer clause above is
 not triggered.
+
+**Not a bump: the `@final` token (amended 2026-11-08 by the keyword-only design, §4.2).** The
+`abstract` line's `@final` token is read from the defining module's source, for the two
+`typing_extensions.final` spellings only. No committed class definition uses them, so no committed
+dump's bytes change under the new producer, and the result does not depend on the interpreter
+(`typing.final` marks the runtime class only from 3.11 and is never read). The retained-producer
+clause is not triggered.
 
 | Schema | Introduced by | Change |
 |---|---|---|
@@ -721,7 +733,9 @@ writes = "otto.link.sentinel:WRITE_VERSIONS"   # the versions otto emits
   need not have a single "current" version, and the link sentinel already reads `"v1"`, `"v2"`
   and `"v3"` while writing `"v1"` and `"v3"`.
 - **A version is an `int` or a `str`.** The `otto check` report's marker is `"otto-check/1"`.
-- **Each constant is a literal list,** and must live in a dependency-light module. The child
+- **Each constant is a literal list,** and must live in a dependency-light module: the standard
+  library, its own package chain and `typing_extensions` (the typing backport the 3.10 floor needs
+  for `final`; it has no dependencies) are the only imports. The child
   imports that module, and never imports or runs a reader to learn a version. If the module
   does not import, that is a refusal; the producer never falls back to a static value.
 - **Every acceptance and dispatch path uses the declared `reads` constant,** including the

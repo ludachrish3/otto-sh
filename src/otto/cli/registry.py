@@ -16,6 +16,7 @@ from typing import Any
 
 import typer
 from typer.models import TyperInfo
+from typing_extensions import final
 
 from ..registry import Registry, registration_boundary
 from .builtin_commands import register_builtin_commands
@@ -24,6 +25,7 @@ from .invoke import prepare_command_target
 __all__ = ["CLI_COMMANDS", "CommandSpec", "cli_command", "register_cli_command"]
 
 
+@final
 @dataclass(frozen=True)
 class CommandSpec:
     """One registered top-level CLI command or group."""

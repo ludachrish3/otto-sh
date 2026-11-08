@@ -10,6 +10,8 @@ succeeded. Frozen and equality-comparable; not hashable (they hold dicts).
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     from ..result import CommandResult
     from .resolve import Displacement
@@ -34,6 +36,7 @@ class HostReport:
         return not self.failed
 
 
+@final
 @dataclass(frozen=True)
 class TeardownReport(HostReport):
     """:func:`~otto.docker.deployment.teardown`'s outcome."""
@@ -42,6 +45,7 @@ class TeardownReport(HostReport):
     """The use-case that was torn down."""
 
 
+@final
 @dataclass(frozen=True)
 class ImageBuild:
     """One image's build, with what the daemon lists for it afterwards."""
@@ -63,6 +67,7 @@ class ImageBuild:
         return self.result.is_ok
 
 
+@final
 @dataclass(frozen=True)
 class ProjectBuild:
     """One project's build on one host."""
@@ -77,6 +82,7 @@ class ProjectBuild:
     """Maps each declared image name to its build."""
 
 
+@final
 @dataclass(frozen=True)
 class FailedImage:
     """One image whose build failed."""
@@ -89,6 +95,7 @@ class FailedImage:
     """The failing build result."""
 
 
+@final
 @dataclass(frozen=True)
 class BuildReport:
     """A build verb's outcome.

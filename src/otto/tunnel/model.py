@@ -11,6 +11,8 @@ import enum
 import hashlib
 from dataclasses import dataclass
 
+from typing_extensions import final
+
 
 class Direction(enum.Enum):
     """Which mirrored chain a process belongs to (spec §6.1)."""
@@ -56,6 +58,7 @@ CHECK_ECHO_WRITE_VERSIONS: list[str] = ["v1"]
 """``otto-check`` echo sentinel versions ``otto tunnel check`` launches echoes under."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class TunnelHop:
     """One position in a tunnel's ordered path."""
@@ -80,6 +83,7 @@ def make_tunnel_id(path: tuple[TunnelHop, ...], protocol: str, service_port: int
     return "tun-" + hashlib.sha256(canon.encode()).hexdigest()[:12] + f"-{service_port}"
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Tunnel:
     """One end-to-end forwarding path (one ``add`` = one tunnel, spec D4)."""

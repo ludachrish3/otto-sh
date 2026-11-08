@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from typing_extensions import final
 
 from ..host.factory import (
     create_host_from_dict,
@@ -282,6 +283,7 @@ class LabDocument:
     """The file's raw ``links`` entries, resolved later against loaded ids."""
 
 
+@final
 class JsonFileLabRepository:
     """Load labs from ``lab.json`` files across a fixed set of search paths.
 

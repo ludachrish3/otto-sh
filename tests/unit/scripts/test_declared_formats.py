@@ -5,7 +5,7 @@ versions otto reads and writes. This runs the real API-dump producer on those
 pointers. It also checks two things the dump alone cannot show: every read
 version has a frozen sample (and no sample outlives its version), and every
 module a pointer names imports nothing beyond the standard library and its
-own package chain.
+own package chain, ``typing_extensions`` excepted.
 """
 
 import json
@@ -107,5 +107,10 @@ def test_each_format_module_imports_only_the_standard_library(module):
     parts = module.split(".")
     chain = {".".join(parts[: i + 1]) for i in range(len(parts))}
     otto_extra = [m for m in not_stdlib if m.split(".")[0] == "otto" and m not in chain]
-    foreign = [m for m in not_stdlib if m.split(".")[0] != "otto"]
+    # ``typing_extensions`` is the typing backport otto's 3.10 floor needs for
+    # ``final`` (keyword-only design §4.2); it has no dependencies of its own and
+    # is the one package a dependency-light module may import (dump spec §13).
+    foreign = [
+        m for m in not_stdlib if m.split(".")[0] not in ("otto", "typing_extensions")
+    ]
     assert (otto_extra, foreign) == ([], [])

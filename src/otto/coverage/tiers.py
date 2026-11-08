@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from .colors import default_tier_color
 from .errors import CoverageInputError
 from .store.model import TIER_SYSTEM
@@ -31,6 +33,7 @@ class TierToolchain:
     lcov_args: list[str] = field(default_factory=list)
 
 
+@final
 @dataclass(frozen=True)
 class TierConfig:
     """One declared coverage tier, ready for runtime use."""

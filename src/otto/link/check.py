@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..check.fingerprint import (
     ELEVATION_TIMEOUT_S,
@@ -150,6 +150,7 @@ class LinkCheckHost:
     netdev whose address otto does not know is absent, never guessed."""
 
 
+@final
 @dataclass(frozen=True)
 class LinkCheckReport(ReportVerdicts):
     """Everything one ``otto link check`` found — what the CLI renders and ``--report`` writes."""

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 import logging
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...result import CommandResult, Result
 from ...utils import Status
@@ -183,6 +183,7 @@ async def refuse_if_scp_is_absent(
     refuse_if_gapped("scp-transfer", host=host, attempted=attempted)
 
 
+@final
 class ScpFileTransfer(UnixFileTransfer):
     """SCP file transfer backend for UnixHost.
 

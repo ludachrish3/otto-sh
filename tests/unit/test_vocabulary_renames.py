@@ -58,20 +58,8 @@ RENAMES: list[Rename] = [
     Rename(
         "param", "otto.bootstrap:BootstrapError", "otto.bootstrap:BootstrapError", "sut_dir", "root"
     ),
-    Rename(
-        "param",
-        "otto.bootstrap:BootstrapResult",
-        "otto.bootstrap:BootstrapResult",
-        "repos",
-        "projects",
-    ),
-    Rename(
-        "param",
-        "otto.bootstrap:BootstrapResult",
-        "otto.bootstrap:BootstrapResult",
-        "ordered_repos",
-        "ordered_projects",
-    ),
+    # BootstrapResult's constructor is withdrawn; the member row pins repos -> projects.
+    # BootstrapResult's constructor is withdrawn; a member row pins ordered_projects.
     Rename(
         "member",
         "otto.bootstrap:BootstrapResult.ordered_repos",
@@ -80,13 +68,7 @@ RENAMES: list[Rename] = [
     Rename(
         "member", "otto.bootstrap:BootstrapResult.repos", "otto.bootstrap:BootstrapResult.projects"
     ),
-    Rename(
-        "param",
-        "otto.bootstrap:BootstrapWarning",
-        "otto.bootstrap:BootstrapWarning",
-        "sut_dir",
-        "root",
-    ),
+    # BootstrapWarning's constructor is withdrawn; the member row pins sut_dir -> root.
     Rename(
         "member", "otto.bootstrap:BootstrapWarning.sut_dir", "otto.bootstrap:BootstrapWarning.root"
     ),
@@ -123,27 +105,9 @@ RENAMES: list[Rename] = [
         "otto.context:OttoContext.ordered_projects",
     ),
     Rename("member", "otto.context:OttoContext.repos", "otto.context:OttoContext.projects"),
-    Rename(
-        "param",
-        "otto.context:ProjectContextView",
-        "otto.context:ProjectContextView",
-        "repo_name",
-        "project_name",
-    ),
-    Rename(
-        "param",
-        "otto.coverage:CoverageReporter",
-        "otto.coverage:CoverageReporter",
-        "project_name",
-        "report_title",
-    ),
-    Rename(
-        "param",
-        "otto.coverage:ReportInputs",
-        "otto.coverage:ReportInputs",
-        "repo_root",
-        "project_root",
-    ),
+    # ProjectContextView's constructor is withdrawn: project_name is no longer a public spelling.
+    # CoverageReporter's constructor is withdrawn: report_title is no longer a public spelling.
+    # ReportInputs's constructor is withdrawn; the member row pins repo_root -> project_root.
     Rename(
         "member", "otto.coverage:ReportInputs.repo_root", "otto.coverage:ReportInputs.project_root"
     ),
@@ -174,12 +138,12 @@ RENAMES: list[Rename] = [
         "project_name",
         "report_title",
     ),
-    Rename("param", "otto.docker:BuildReport", "otto.docker:BuildReport", "repos", "projects"),
+    # BuildReport's constructor is withdrawn; the member row pins repos -> projects.
     Rename("member", "otto.docker:BuildReport.repos", "otto.docker:BuildReport.projects"),
-    Rename("param", "otto.docker:FailedImage", "otto.docker:FailedImage", "repo", "project"),
+    # FailedImage's constructor is withdrawn; the member row pins repo -> project.
     Rename("member", "otto.docker:FailedImage.repo", "otto.docker:FailedImage.project"),
     Rename("name", "otto.docker:RepoBuild", "otto.docker:ProjectBuild"),
-    Rename("param", "otto.docker:RepoBuild", "otto.docker:ProjectBuild", "repo", "project"),
+    # ProjectBuild's constructor is withdrawn; the member row pins repo -> project.
     Rename("member", "otto.docker:RepoBuild.repo", "otto.docker:ProjectBuild.project"),
     Rename("param", "otto.docker:build_images", "otto.docker:build_images", "repo", "project"),
     Rename("param", "otto.docker:build_on", "otto.docker:build_on", "repo", "project"),
@@ -252,12 +216,10 @@ RENAMES: list[Rename] = [
     Rename(
         "param", "otto.project:ProjectActions", "otto.project:ProjectActions", "repo", "project"
     ),
-    Rename(
-        "param", "otto.project:ProjectStatus", "otto.project:ProjectStatus", "repos", "projects"
-    ),
+    # ProjectStatus's constructor is withdrawn; the member row pins repos -> projects.
     Rename("member", "otto.project:ProjectStatus.repos", "otto.project:ProjectStatus.projects"),
     Rename("name", "otto.project:RepoPlan", "otto.project:ProjectPlan"),
-    Rename("param", "otto.project:RepoPlan", "otto.project:ProjectPlan", "repo", "project"),
+    # ProjectPlan's constructor is withdrawn; the member row pins repo -> project.
     Rename("member", "otto.project:RepoPlan.repo", "otto.project:ProjectPlan.project"),
     Rename("name", "otto.project:RepoScope", "otto.project:ProjectScopeSummary"),
     Rename("param", "otto.project:actions_for", "otto.project:actions_for", "repo", "project"),
@@ -266,13 +228,7 @@ RENAMES: list[Rename] = [
     Rename("member", "otto.registry:RegistryView.repo", "otto.registry:RegistryView.project"),
     Rename("name", "otto.registry:RequireRepo", "otto.registry:RequireProject"),
     Rename("name", "otto.registry:registering_repo", "otto.registry:registering_project"),
-    Rename(
-        "param",
-        "otto.reservations:NullReservationBackend",
-        "otto.reservations:NullReservationBackend",
-        "repo_dir",
-        "project_root",
-    ),
+    # NullReservationBackend's constructor is withdrawn: project_root is not public.
     Rename(
         "param",
         "otto.reservations:ReservationBackendBase",
@@ -280,13 +236,7 @@ RENAMES: list[Rename] = [
         "repo_dir",
         "project_root",
     ),
-    Rename(
-        "param",
-        "otto.reservations:ReservationEnv",
-        "otto.reservations:ReservationEnv",
-        "repo_dir",
-        "project_root",
-    ),
+    # ReservationEnv's constructor is withdrawn; the member row pins repo_dir -> project_root.
     Rename(
         "member",
         "otto.reservations:ReservationEnv.repo_dir",
@@ -314,7 +264,7 @@ RENAMES: list[Rename] = [
         "project_root",
     ),
     Rename("name", "otto.session:DemotedRepo", "otto.session:DemotedProject"),
-    Rename("param", "otto.session:DemotedRepo", "otto.session:DemotedProject", "repo", "name"),
+    # DemotedProject's constructor is withdrawn; the member row pins repo -> name.
     Rename("member", "otto.session:DemotedRepo.repo", "otto.session:DemotedProject.name"),
     Rename("name", "otto.session:RepoCheck", "otto.session:ProjectCheck"),
     Rename("name", "otto.session:RepoLoadError", "otto.session:ProjectLoadError"),
@@ -361,13 +311,7 @@ RENAMES: list[Rename] = [
     Rename(
         "member", "otto.session:DemotedRepo.project", "otto.session:DemotedProject.normalized_name"
     ),
-    Rename(
-        "param",
-        "otto.session:DemotedRepo",
-        "otto.session:DemotedProject",
-        "project",
-        "normalized_name",
-    ),
+    # DemotedProject's constructor is withdrawn; the member row pins project -> normalized_name.
 ]
 
 

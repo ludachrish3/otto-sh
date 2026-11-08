@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 import logging
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...result import CommandResult, Result
 from ...utils import Status
@@ -160,6 +160,7 @@ async def open_sftp_or_attribute(
 _SFTP_BLOCK_SIZE = 16384
 
 
+@final
 class SftpFileTransfer(UnixFileTransfer):
     """SFTP file transfer backend for UnixHost.
 

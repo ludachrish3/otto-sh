@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ConfigDict, SecretStr
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import final
 
 from ..models.base import as_secret
 
@@ -59,6 +60,7 @@ _FORWARD_CONFIG = ConfigDict(extra="forbid")
 # ---------------------------------------------------------------------------
 
 
+@final
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class LocalPortForward:
     """An SSH local port forward: listen locally, send to host:port via the remote."""
@@ -167,6 +169,7 @@ def _refuse_shadowing(opts: "DataclassInstance") -> None:
         raise ValueError(msg)
 
 
+@final
 @dataclass(slots=True)
 class SshOptions:
     """Connection options for asyncssh-backed SSH sessions.
@@ -379,6 +382,7 @@ class SshOptions:
 # ---------------------------------------------------------------------------
 
 
+@final
 @dataclass(slots=True)
 class TelnetOptions:
     """Connection options for telnetlib3-backed telnet sessions.
@@ -579,6 +583,7 @@ class ConsoleOptions:
 # ---------------------------------------------------------------------------
 
 
+@final
 @dataclass(slots=True)
 class SftpOptions:
     """Connection options for asyncssh-backed SFTP clients.
@@ -634,6 +639,7 @@ class SftpOptions:
 # ---------------------------------------------------------------------------
 
 
+@final
 @dataclass(slots=True)
 class ScpOptions:
     """Connection options for ``asyncssh.scp`` file transfers.
@@ -691,6 +697,7 @@ class ScpOptions:
 # ---------------------------------------------------------------------------
 
 
+@final
 @dataclass(slots=True)
 class FtpOptions:
     """Connection options for aioftp-backed FTP clients.
@@ -769,6 +776,7 @@ class FtpOptions:
 # ---------------------------------------------------------------------------
 
 
+@final
 @dataclass(slots=True)
 class NcOptions:
     """Connection options for netcat-based file transfers.
@@ -884,6 +892,7 @@ class TftpOptions:
     """Per-block retransmit timeout, in seconds."""
 
 
+@final
 @dataclass(slots=True)
 class SnmpOptions:
     """Per-host SNMP polling config — the acquisition half of SNMP monitoring.

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ..registry import (
     BackendRegistry,
     C,
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from .protocol import Inventory
 
 
+@final
 @dataclass(frozen=True)
 class InventoryEnv:
     """The environment otto hands an inventory backend.
@@ -45,6 +48,7 @@ class InventoryEnv:
     """The settings file that declared the table, for messages."""
 
 
+@final
 @dataclass(frozen=True)
 class InventoryMetadata:
     """What an inventory backend states at registration, read without importing it."""

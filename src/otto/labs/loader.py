@@ -27,6 +27,8 @@ from typing import (
     Any,
 )
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     from ..host.host import Host
     from ..inventory.protocol import Inventory
@@ -87,6 +89,7 @@ def split_lab_names(value: str) -> list[str]:
     return names
 
 
+@final
 @dataclass
 class Lab:
     """Container for a named lab environment and its registered hosts.

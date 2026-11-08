@@ -9,6 +9,8 @@ import bisect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from typing_extensions import final
+
 from ..models.dependencies import DependencyClause, clauses_satisfiable, normalize_name
 from .scope import BootstrapWarning, DependencyError
 
@@ -28,6 +30,7 @@ _MIN_CONFLICTING_ENTRIES = 2
 """Below this, a single declared entry was already proven satisfiable at settings-parse time."""
 
 
+@final
 @dataclass(frozen=True)
 class ResolvedDependency:
     """Resolution outcome for one declared dependency of one project."""

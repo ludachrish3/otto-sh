@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
+from typing_extensions import final
 
 from ..models.base import JsonFileSource, compact_validation_error
 from ..models.inventory import SUPPLIES_EXEMPT_FIELDS, InventoryRecord
@@ -62,6 +63,7 @@ def parse_inventory_document(
     return records
 
 
+@final
 class JsonInventory(JsonFileSource):
     """Inventory over one stage-1 JSON file; parsed once, on first use."""
 

@@ -17,7 +17,7 @@ import itertools
 from collections.abc import Callable, Mapping
 from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, final
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 
 from pydantic import (
     BeforeValidator,
@@ -30,7 +30,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from typing_extensions import override
+from typing_extensions import final, override
 
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
@@ -154,6 +154,7 @@ class ToolchainToolSpec(OttoModel):
         )
 
 
+@final
 class ToolchainSpec(OttoModel):
     """Toolchain paths: the ``sysroot`` directory plus the ``lcov`` and ``gcov`` binaries."""
 
@@ -292,6 +293,7 @@ def _validate_impairer_menu(v: list[str]) -> list[str]:
     return [_validate_impairer_name(entry) for entry in v]
 
 
+@final
 class PowerControlSpec(OttoModel):
     """A ``power_control`` table: the controller's ``type`` and the keys its config model parses."""
 

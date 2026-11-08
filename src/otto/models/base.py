@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from typing_extensions import final
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -75,6 +76,7 @@ def compact_validation_error(error: "ValidationError") -> str:
     )
 
 
+@final
 @dataclass(frozen=True)
 class Cred:
     """One credential entry: a login plus how to become it."""
@@ -243,6 +245,7 @@ def cred_identity(login: str, protocols: list[str]) -> str:
     return f"{login} [{', '.join(sorted(protocols))}]"
 
 
+@final
 class CredSpec(OttoModel):
     """One ``creds`` entry: a login plus (optionally) how to become it."""
 

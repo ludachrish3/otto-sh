@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from .protocol import LabRepository
 
 
+@final
 @dataclass(frozen=True)
 class LabSourceEnv:
     """What otto hands a lab-source backend beside its parsed configuration.

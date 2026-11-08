@@ -36,7 +36,7 @@ from dataclasses import (
 from pathlib import Path
 from typing import Annotated
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -454,6 +454,7 @@ async def ensure_private_root(parent: "Host") -> Path:
     return root
 
 
+@final
 @dataclass(slots=True, kw_only=True)
 class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A Docker container exposed as a first-class otto host.

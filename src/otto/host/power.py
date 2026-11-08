@@ -20,7 +20,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from pydantic import ConfigDict
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..errors import OttoError
 from ..models.base import OttoModel
@@ -53,6 +53,7 @@ class PowerConstructionError(PowerControlError, ValueError):
     """
 
 
+@final
 @dataclass(frozen=True)
 class PowerEnv:
     """The environment otto hands a power controller.
@@ -65,6 +66,7 @@ class PowerEnv:
     """The id of the host whose ``power_control`` this is."""
 
 
+@final
 class CommandPowerConfig(OttoModel):
     """What :class:`CommandPowerController` runs, and where.
 
@@ -129,6 +131,7 @@ class PowerController(ABC):
         return None
 
 
+@final
 class CommandPowerController(PowerController):
     """Generic controller that runs configured commands on a *controller* host.
 

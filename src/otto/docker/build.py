@@ -12,6 +12,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from typing_extensions import final
+
 from ..config.project import Project
 from ..config.scope import DockerImage
 from ..errors import OttoError
@@ -89,6 +91,7 @@ def check_project_images(project: Project, image_names: "Iterable[str] | None" =
             check_declared_paths(project.name, image)
 
 
+@final
 @dataclass(frozen=True)
 class BuildOptions:
     """The ``docker build`` flags a caller may add; each is docker's own."""

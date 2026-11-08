@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
-from typing_extensions import Unpack
+from typing_extensions import Unpack, final
 
 from .host.host import DEFAULT_COMMAND_TIMEOUT
 from .invocation import ContextBinding, RunPolicy, Variant
@@ -349,6 +349,7 @@ def _flags_hiding_every_match(
     return sorted(hiding)
 
 
+@final
 @dataclass(init=False)
 class OttoContext:
     """The active per-invocation runtime: chosen lab and run policy."""
@@ -1261,6 +1262,7 @@ the old argument must keep working. What is refused is the disagreement.
 """
 
 
+@final
 class ProjectContextView:
     """One project's face on the live context: its fleet, and its owner stamp (spec §7).
 

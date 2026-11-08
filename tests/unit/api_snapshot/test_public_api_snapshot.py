@@ -21,7 +21,7 @@ import pytest
 
 from scripts import api_compat, api_records, api_regen
 from scripts.api_agreement import namespace_reports
-from scripts.api_manifest import load_manifest
+from scripts.api_manifest import load_manifest, load_symbols
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -167,12 +167,20 @@ def _findings(old: str, new: str) -> "list[str]":
 
 
 def test_red_a_name_dropped_from_a_declared_all_moves_the_dump(tmp_path, live_dump):
-    """RED-proof: drop a name from ``otto.__all__`` and the dump loses its record."""
+    """RED-proof: drop a name from ``otto.__all__`` and the dump loses its record.
+
+    The name carries no ``[symbols]`` entry: an entry for a name no longer
+    public is itself refused, which would hide the move this test proves.
+    """
+    symbols = load_symbols(MANIFEST)
+    assert not any(key == "otto:get_lab" or key.startswith("otto:get_lab.") for key in symbols), (
+        "otto:get_lab gained a [symbols] entry: pick another unlisted name for this RED-proof"
+    )
     mutated = _dump_of_an_edited_copy(
-        tmp_path, "otto/__init__.py", ["__all__ = ["], '    "CommandResult",\n', ""
+        tmp_path, "otto/__init__.py", ["__all__ = ["], '    "get_lab",\n', ""
     )
     assert mutated != live_dump
-    assert "otto:CommandResult: removed" in _findings(live_dump, mutated)
+    assert "otto:get_lab: removed" in _findings(live_dump, mutated)
 
 
 def test_red_a_renamed_host_parameter_moves_the_dump(tmp_path, live_dump):

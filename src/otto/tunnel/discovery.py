@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import final
+
 from ..errors import OttoError
 from ..host.daemon import parse_ps_output, ps_scan_command
 from ..host.host import is_dry_run
@@ -230,6 +232,7 @@ async def discover_observations(lab: "Lab") -> tuple[list[tuple[str, Observation
     return await _scan_hosts(hosts)
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class DiscoveredTunnel:
     """One live tunnel: intended shape + what was actually observed."""
@@ -268,6 +271,7 @@ class DiscoveredTunnel:
         return "ok"
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class TunnelDiscovery:
     """A full scan: the tunnels seen plus the hosts that couldn't be scanned."""

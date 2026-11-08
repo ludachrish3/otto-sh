@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from typing_extensions import final
+
 from ..models.base import secret_safe_json_default
 from ..models.inventory import InventoryRecord
 from .creds import CredsOverlay
@@ -154,6 +156,7 @@ def snapshot_slug_material(
     return f"{backend}|{label}|{dumped}|ttl={ttl}"
 
 
+@final
 @dataclass(frozen=True)
 class RefreshResult:
     """What ``otto inventory refresh`` reports: the replaced snapshot's age, and the new size."""
@@ -209,6 +212,7 @@ class _StoredSnapshot:
     age: timedelta
 
 
+@final
 class SnapshotCache:
     """Wrap *inner* so a process pays one fetch per TTL window.
 

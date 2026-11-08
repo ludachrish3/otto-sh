@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
+from typing_extensions import final
 
 from ..models.base import CredSpec, compact_validation_error, cred_identity
 from ..models.inventory import InventoryRecord
@@ -115,6 +116,7 @@ def _revalidate_merged_cred(c: dict[str, Any], *, key: "str | None", label: str)
         ) from e
 
 
+@final
 class CredsOverlay:
     """Wrap an inventory so ``creds`` compose from the creds store and the record.
 

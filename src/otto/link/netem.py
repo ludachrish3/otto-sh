@@ -12,7 +12,7 @@ import shlex
 from dataclasses import dataclass
 from typing import ClassVar
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from .params import (
     FIRST_SELECTOR_BAND,
@@ -458,6 +458,7 @@ def _dev(netdev: str) -> str:
     return f"dev {shlex.quote(netdev)}"
 
 
+@final
 class NetEmImpairer(LinkImpairer):
     """tc/netem on a unix host's interface."""
 

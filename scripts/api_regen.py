@@ -153,6 +153,7 @@ def _symbol_spec(sym: Symbol) -> str:
         "construct": str(sym.construct).lower(),
         "subclass": str(sym.subclass).lower(),
         "implementer": str(sym.implementer).lower(),
+        "final": str(sym.final).lower(),
     }
     return ",".join(f"{k}={values[k]}" for k in values if k in sym.given)
 

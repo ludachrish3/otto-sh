@@ -5,7 +5,7 @@ from re import (
     compile as compile_re,
 )
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 version_re = compile_re(
     r"(?P<major>\d+)\."
@@ -16,6 +16,7 @@ version_re = compile_re(
 )
 
 
+@final
 @dataclass(
     init=False,
 )

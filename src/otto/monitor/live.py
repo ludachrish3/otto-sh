@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ..utils import compile_host_pattern, name_by_reason, validate_interval
 from .errors import MonitorInputError, NoMonitorableHostsError
 
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@final
 @dataclass(frozen=True)
 class LiveReport:
     """What a finished live run did. No verdict field: a live run serves or raises."""

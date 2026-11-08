@@ -239,14 +239,15 @@ def _obligations(key: str, old: api_records.Dump, new: api_records.Dump) -> "lis
         old_rec, new_rec = old.get(kind, key), new.get(kind, key)
         if old_rec is None or new_rec is None:
             continue
-        if api_records.is_withdrawn(old_rec) or api_records.is_withdrawn(new_rec):
-            if not api_records.is_withdrawn(old_rec):
+        # The parsed record, never the raw field: ``@final`` is invisible to the
+        # judge (design §4.4); the manifest token alone withdraws obligations.
+        was = api_records.parse_obligations(kind, old_rec.fields[0])
+        now = api_records.parse_obligations(kind, new_rec.fields[0])
+        if was.withdrawn or now.withdrawn:
+            if not was.withdrawn:
                 out.append(f"{key}: obligations withdrawn")
             continue
-        gained = sorted(
-            set(api_records.split_list(new_rec.fields[0]))
-            - set(api_records.split_list(old_rec.fields[0]))
-        )
+        gained = sorted(set(now.names) - set(was.names))
         out += [f"{key}: new obligation {name} for implementers" for name in gained]
     return out
 
@@ -293,8 +294,9 @@ def implementer_members(dump: api_records.Dump, symbols: "dict[str, Symbol]") ->
     for key in dump.bindings:
         for kind in ("abstract", "requires"):
             rec = dump.get(kind, key)
-            if rec is not None and not api_records.is_withdrawn(rec):
-                out.update(f"{key}.{name}" for name in api_records.split_list(rec.fields[0]))
+            if rec is not None:
+                parsed = api_records.parse_obligations(kind, rec.fields[0])
+                out.update(f"{key}.{name}" for name in parsed.names)
     return frozenset(out)
 
 

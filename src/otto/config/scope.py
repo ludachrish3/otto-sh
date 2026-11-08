@@ -58,6 +58,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from ..errors import OttoError
 
 if TYPE_CHECKING:
@@ -136,6 +138,7 @@ def refused_names(errors: "list[BootstrapError]") -> list[str]:
     return sorted({e.name for e in errors if isinstance(e, DuplicateProjectError)})
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class BootstrapWarning:
     """A non-fatal dependency finding: rendered at startup, never gates dispatch."""
@@ -1132,6 +1135,7 @@ ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
 """Context file names docker reads as a tar archive on ``docker build -``."""
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class DockerImage:
     """A Dockerfile-built image declared by a project."""
@@ -1161,6 +1165,7 @@ class DockerImage:
         return self.context.name.endswith(ARCHIVE_SUFFIXES)
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class DockerCompose:
     """A docker-compose file contributed by a project."""
@@ -1210,6 +1215,7 @@ class DockerUseCase:
     """Allowlisted variable names copied from the invoking user's shell."""
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class DockerSettings:
     """Per-project docker configuration parsed from `[docker]` in `settings.toml`."""
@@ -1240,6 +1246,7 @@ def declared_use_case_names(projects: "Iterable[Project]") -> list[str]:
     )
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class MonitorSettings:
     """Per-project monitor configuration parsed from `[monitor]` in `settings.toml`.

@@ -11,6 +11,8 @@ write inside ``facts["scratch_dir"]``.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from typing_extensions import final
+
 from ..registry import (
     Justified,
     Registry,
@@ -20,6 +22,7 @@ from ..registry import (
 )
 
 
+@final
 @dataclass
 class AdapterResult:
     """What a compose adapter hands back to otto (spec §7)."""

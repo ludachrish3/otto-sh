@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from ..host.docker_host import DockerContainerHost, parent_staging_root
 from ..host.errors import HostCommandError
 from ..host.host import is_dry_run
@@ -71,6 +73,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@final
 @dataclass
 class UseCaseStack:
     """What one :func:`deploy` produced, on the one parent it deployed to."""

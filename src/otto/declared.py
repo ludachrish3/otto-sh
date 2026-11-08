@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeVar, cast
 
+from typing_extensions import final
+
 from .registry import Ref, Registry, resolved
 
 if TYPE_CHECKING:
@@ -78,6 +80,7 @@ _RETIRED_KEYS = {"element": "element.name", "element_id": "element.id"}
 retired ``element_metadata.<key>`` root is handled in :func:`_reject_key`."""
 
 
+@final
 @dataclass(frozen=True)
 class DeclaredEntry:
     """One parsed ``[[products]]``/``[[dev_tools]]`` table, in runtime form."""
@@ -465,6 +468,7 @@ class KindBuilder(Generic[T]):
 # rebinds a module global.
 
 
+@final
 @dataclass(frozen=True)
 class BootstrapResult:
     """Everything bootstrap produced: environment, projects, contained errors."""

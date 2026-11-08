@@ -1298,3 +1298,121 @@ def test_positional_on_a_constructor_without_parameters_is_refused(tmp_path):
         "otto.p:M: a model's constructor is its fields; remove __init__ or declare a dataclass",
         "otto.p:W: positional names a withdrawn constructor",
     ]
+
+
+# -- the @final token (keyword-only design §4.2, amended 2026-11-08) ---------
+
+_FINAL_TREE = {
+    "otto/__init__.py": "",
+    "otto/defs.py": (
+        "import dataclasses\nimport typing\nimport typing_extensions\n"
+        "from pydantic import BaseModel\nfrom typing_extensions import final\n"
+        "from typing_extensions import final as _f\n"
+        "@final\nclass Plain: ...\n"
+        "@typing_extensions.final\nclass Dotted: ...\n"
+        "@typing.final\nclass Typing: ...\n"
+        "@_f\nclass Aliased: ...\n"
+        "class Open: ...\n"
+        "class Child(Plain): ...\n"  # a subclass of a final class is not final itself
+        "@final\n@dataclasses.dataclass\nclass Above:\n    a: int = 0\n"
+        "@dataclasses.dataclass\n@final\nclass Below:\n    a: int = 0\n"
+        "@final\nclass Model(BaseModel):\n    a: int = 0\n"
+        "class Outer:\n    @final\n    class Inner: ...\n"
+    ),
+    # bound outside its defining module: found by __module__ + __qualname__
+    "otto/p.py": (
+        "from otto.defs import Plain, Dotted, Typing, Aliased, Open, Child, Above, Below,"
+        " Model, Outer\n"
+        "__all__ = ['Plain', 'Dotted', 'Typing', 'Aliased', 'Open', 'Child', 'Above',"
+        " 'Below', 'Model', 'Outer']\n"
+    ),
+}
+
+
+def test_final_is_read_from_the_defining_source(tmp_path):
+    src = write_tree(tmp_path, _FINAL_TREE)
+    dump = dump_of(src, ["otto.p"])
+    fields = {
+        rec.key.rpartition(":")[2]: rec.fields[0]
+        for rec in dump.records.values()
+        if rec.kind == "abstract"
+    }
+    assert fields == {
+        "Plain": "@final -",
+        "Dotted": "@final -",
+        "Typing": "-",
+        "Aliased": "-",
+        "Open": "-",
+        "Child": "-",
+        "Above": "@final -",
+        "Below": "@final -",
+        "Model": "@final -",
+        "Outer": "-",
+        "Outer.Inner": "@final -",
+    }
+
+
+def test_final_leads_the_withdrawn_token(tmp_path):
+    src = write_tree(tmp_path, _FINAL_TREE)
+    rep = run_child_json(src, ["otto.p"], symbols=[_sym("otto.p:Plain", subclass=False)])
+    assert rep["refusals"] == []
+    assert "abstract\totto.p:Plain\t@final @manifest:subclass=false" in rep["records"]
+
+
+def test_is_final_definition_edge_cases(tmp_path, monkeypatch):
+    from scripts import api_dump_child
+
+    src = write_tree(
+        tmp_path,
+        {
+            "fin_mod.py": (
+                "from typing_extensions import final\n"
+                "def make():\n    @final\n    class Local: ...\n    return Local\n"
+                "@final\nclass Top: ...\n"
+            )
+        },
+    )
+    monkeypatch.syspath_prepend(str(src))
+    import fin_mod
+
+    cache: dict = {}
+    assert api_dump_child.is_final_definition(fin_mod.Top, cache)
+    assert not api_dump_child.is_final_definition(fin_mod.make(), cache)  # <locals>
+    assert list(cache) == ["fin_mod"]  # one parse per module
+    sourceless = type("Sourceless", (), {"__module__": "builtins"})
+    assert not api_dump_child.is_final_definition(sourceless)
+    monkeypatch.delitem(sys.modules, "fin_mod")
+
+
+def test_final_applies_to_a_class_or_model_only(tmp_path):
+    body = (
+        "from typing import Protocol\n__all__=['C', 'P', 'f']\n"
+        "class C: ...\nclass P(Protocol):\n    def run(self): ...\ndef f(): ...\n"
+    )
+    syms = [
+        _sym("otto.p:C", subclass=False, final=False),
+        _sym("otto.p:P", subclass=False, final=False),
+        _sym("otto.p:f", final=False),
+    ]
+    assert _with_symbols(tmp_path, body, syms)["refusals"] == [
+        "otto.p:P: final applies to a class or model",
+        "otto.p:f: final applies to a class or model",
+    ]
+
+
+def test_two_paths_to_one_class_must_agree_on_final(tmp_path):
+    src = write_tree(
+        tmp_path,
+        {
+            "otto/__init__.py": "",
+            "otto/p.py": "__all__=['C']\nclass C: ...\n",
+            "otto/q.py": "from otto.p import C\n__all__=['C']\n",
+        },
+    )
+    closed = [_sym("otto.p:C", subclass=False), _sym("otto.q:C", subclass=False)]
+    one = [_sym("otto.p:C", subclass=False, final=False), closed[1]]
+    assert run_child_json(src, ["otto.p", "otto.q"], symbols=one)["refusals"] == [
+        "otto.p:C: paths otto.p:C and otto.q:C to one object carry different symbol entries"
+    ]
+    both = [_sym(s.key, subclass=False, final=False) for s in closed]
+    assert run_child_json(src, ["otto.p", "otto.q"], symbols=both)["refusals"] == []

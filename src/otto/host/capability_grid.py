@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from typing_extensions import Self
+from typing_extensions import Self, final
 
 if TYPE_CHECKING:
     # Type-only: a runtime import here would cycle back through host.py,
@@ -115,6 +115,7 @@ class SessionIdentity(str, Enum):
     )
 
 
+@final
 @dataclass(frozen=True)
 class HostCapabilities:
     """What one host family promises across its four verbs.

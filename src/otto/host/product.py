@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn
 
-from typing_extensions import TypeIs, override
+from typing_extensions import TypeIs, final, override
 
 from .. import layout
 from ..declared import (
@@ -89,6 +89,7 @@ LOGIN_HOME_PLACEHOLDER = "<login home>"
 """How a plan names a staging directory that only a connected host can answer."""
 
 
+@final
 @dataclass
 class ProductPlan:
     """What a product's hooks would do on one host, from configuration alone."""

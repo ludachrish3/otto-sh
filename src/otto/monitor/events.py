@@ -10,6 +10,8 @@ Events appear as vertical lines on all metric charts. They can be created by:
 from dataclasses import dataclass
 from datetime import datetime
 
+from typing_extensions import final
+
 from ..models.event_style import (
     AUTO_EVENT_COLORS,
     DEFAULT_EVENT_COLOR,
@@ -22,6 +24,7 @@ from .event_ops import EventValidationError
 __all__ = ["AUTO_EVENT_COLORS", "MonitorEvent"]
 
 
+@final
 @dataclass
 class MonitorEvent:
     """A labeled, timestamped marker for the monitoring dashboard."""

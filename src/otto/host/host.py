@@ -380,6 +380,7 @@ def refuse_declined_elevation(
     raise CommandNotRunError(asked, host)
 
 
+@final
 @dataclass(slots=True)
 class ShellCommand:
     """A command plus the per-command options that should be used to run it.
@@ -1220,7 +1221,7 @@ class Host(Protocol):
 
     async def __aenter__(self) -> Self: ...
 
-    async def __aexit__(self, *exc: object) -> None: ...
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None: ...
 
 
 def _first_failure_reason(result: Result) -> str:
@@ -2712,7 +2713,7 @@ class BaseHost(ABC):
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()
 
     ####################
@@ -3724,6 +3725,7 @@ class BaseHost(ABC):
         )
 
 
+@final
 class HostFilter(Filter):
     """Console-side suppress filter: drops a host record whose ``log_mode`` is QUIET or NEVER.
 
@@ -3789,6 +3791,7 @@ def _quieted(host: object, mode: LogMode) -> LogMode:
 
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment
+@final
 @dataclass
 class SuppressCommandOutput:
     """Suppress command/output logging for one host or globally.
@@ -3812,5 +3815,5 @@ class SuppressCommandOutput:
         entry = _EVERY_HOST if self.host is None else id(self.host)
         self._token = _SUPPRESSED_HOSTS.set(_SUPPRESSED_HOSTS.get() | {entry})
 
-    def __exit__(self, *_: object) -> None:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         _SUPPRESSED_HOSTS.reset(self._token)

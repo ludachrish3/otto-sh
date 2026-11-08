@@ -19,10 +19,13 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from typing_extensions import final
+
 Owner = Literal["otto", "user"]
 Outcome = Literal["created", "refreshed", "kept", "pruned", "appended"]
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class FileWrite:
     """One file the scaffolder touched, and what it did to it.

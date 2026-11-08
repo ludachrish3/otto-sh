@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..check.errors import CheckHostUnreachableError
 from ..check.fingerprint import TUNNEL_TOOLS, TUNNEL_VERSIONS, HostFingerprint, probe_fingerprint
@@ -149,6 +149,7 @@ class TunnelCheckColumn:
     rows is evidence."""
 
 
+@final
 @dataclass
 class TunnelCheckReport(ReportVerdicts):
     """Everything one ``otto tunnel check`` found — what the CLI renders and ``--report`` writes."""

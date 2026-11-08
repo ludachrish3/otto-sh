@@ -52,8 +52,8 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607", "INP001", "E402"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
-"scripts/**" = ["INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design
+"tests/**" = ["TID251", "S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607", "INP001", "E402"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
+"scripts/**" = ["TID251", "INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design; TID251: the banned-api list guards src/otto only
 "docs/conf.py" = ["INP001", "ANN", "D"]  # Sphinx build config — not autodoc'd; annotations and pydocstyle add nothing here
 "docs/examples/*/tests/**" = ["S101"]  # an example project's pytest tests assert like any pytest test
 "docs/examples/**" = ["INP001", "T201"]  # an example project is not a package; its scripts print
@@ -61,6 +61,9 @@ ignore = [
 "src/otto/_shim.py" = ["PTH"]  # the console-script shim: os.path by design — pathlib costs file syscalls on every command
 "src/otto/_shim_complete.py" = ["PTH"]  # the completion shim: os.path by design — pathlib costs file syscalls on every TAB
 "src/otto/home_root.py" = ["PTH"]  # the home derivation on the warm completion path: os.path by design, the TAB must not import pathlib
+
+[lint.flake8-tidy-imports.banned-api]
+"typing.final".msg = "use typing_extensions.final: the dump child reads it from the source (keyword-only design §4.2)"
 
 [lint.pylint]
 # Maximum number of arguments for function / method

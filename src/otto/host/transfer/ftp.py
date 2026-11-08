@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 import logging
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ...result import CommandResult, Result
 from ...utils import Status
@@ -53,6 +53,7 @@ async def _ftp_size(ftp_conn: "aioftp.Client", path: str) -> int:
         return 0
 
 
+@final
 class FtpFileTransfer(UnixFileTransfer):
     """FTP file transfer backend for UnixHost.
 

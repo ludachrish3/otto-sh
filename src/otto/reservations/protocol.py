@@ -48,6 +48,8 @@ from typing import (
     runtime_checkable,
 )
 
+from typing_extensions import final
+
 
 @runtime_checkable
 class ReservationBackend(Protocol):
@@ -135,6 +137,7 @@ class SupportsUsernameCompletion(Protocol):
         ...
 
 
+@final
 @dataclass(frozen=True)
 class Reservation:
     """One booking: *user* holds *resource* over ``[start, end]``.

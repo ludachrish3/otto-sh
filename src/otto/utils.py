@@ -39,6 +39,8 @@ from typing import (
     overload,
 )
 
+from typing_extensions import final
+
 from .errors import OttoError
 
 if TYPE_CHECKING:
@@ -588,6 +590,7 @@ def _get_literal_values(
     raise ValueError(f"{type_} is {origin}, not a Literal or Union of Literals")
 
 
+@final
 @dataclass(frozen=True)
 class Arg:
     """CLI overlay: force a parameter to a positional argument.
@@ -614,6 +617,7 @@ class Arg:
     """
 
 
+@final
 @dataclass(frozen=True)
 class Opt:
     """CLI overlay: force a parameter to a ``--option``. Imports no typer.

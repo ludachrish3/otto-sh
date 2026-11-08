@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from .errors import LabNotFoundError, LabRepositoryError
 from .protocol import HostSummary
 
@@ -47,6 +49,7 @@ logger = logging.getLogger(__name__)
 _ElementKey = str
 
 
+@final
 @dataclass
 class LabSource:
     """One constructed host source: its user-facing label and its backend."""
@@ -55,6 +58,7 @@ class LabSource:
     repository: "LabRepository"
 
 
+@final
 class CompositeLabRepository:
     """Merge N ``LabRepository`` backends, later sources overriding earlier.
 

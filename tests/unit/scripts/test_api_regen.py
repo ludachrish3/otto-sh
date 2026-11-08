@@ -645,3 +645,15 @@ def test_generate_at_commit_passes_the_archived_symbols(tmp_path, monkeypatch):
     _echo_child(tmp_path, monkeypatch)
     out = api_regen.generate_at_commit(repo.root, sha, "api/public.toml", api_regen.CurrentEnv())
     assert out.refusals[-4:] == ["--symbol", "otto:C", "subclass=false", "otto"]
+
+
+def test_run_child_passes_final_like_the_other_keys(tmp_path, monkeypatch):
+    _echo_child(tmp_path, monkeypatch)
+    sym = Symbol(
+        "otto:C", why="w", subclass=False, final=False,
+        given=frozenset({"subclass", "final", "why"}),
+    )  # fmt: skip
+    argv = api_regen.run_child(Path(sys.executable), tmp_path, ["otto"], symbols=[sym])["refusals"]
+    assert argv[argv.index("--symbol") :] == [
+        "--symbol", "otto:C", "subclass=false,final=false", "otto",
+    ]  # fmt: skip

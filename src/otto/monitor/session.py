@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from typing_extensions import Self
+from typing_extensions import Self, final
 
 from ..host.connections import teardown_step
 from ..host.remote_host import RemoteHost
@@ -203,6 +203,7 @@ def report_stopped_collection(task: "asyncio.Task[None]") -> None:
     logger.error("Monitor: collection stopped: %r", task.exception())
 
 
+@final
 class MonitorSession:
     """One live monitor session: its identity, lab snapshot, collector and archive.
 
@@ -400,5 +401,5 @@ class MonitorSession:
         await self.open()
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.finish()

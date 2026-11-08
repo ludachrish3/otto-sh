@@ -46,6 +46,7 @@ from scripts.docs_api_reference import (
     qualify_relative_roles,
     replace_defaults,
     rights_note,
+    rst_escape,
     shows_value,
     single_none,
     single_none_in_signature,
@@ -800,3 +801,24 @@ def test_a_tuple_record_note_names_the_shape_break():
     assert "otto-positional-tuple-record" in note
     assert "``ts``, ``line``" in note
     assert "breaking change" in note
+
+
+def test_manifest_prose_in_a_note_is_escaped_and_renders_clean():
+    import docutils.core
+    import docutils.nodes
+    import docutils.utils
+
+    assert rst_escape("a *b* `c` |d| e_ f\\g") == "a \\*b\\* \\`c\\` \\|d\\| e\\_ f\\\\g"
+    note = positional_note(Symbol("otto.m:options", ("cls",), "cls beside **x"))
+    assert "(cls beside \\*\\*x)" in "\n".join(note)
+    # :ref: is Sphinx's role, unknown to plain docutils: everything else must parse clean
+    text = "\n".join(line for line in note if ":ref:" not in line)
+    tree = docutils.core.publish_doctree(
+        text,
+        settings_overrides={
+            "report_level": docutils.utils.Reporter.WARNING_LEVEL,
+            "halt_level": docutils.utils.Reporter.SEVERE_LEVEL + 1,
+            "warning_stream": False,
+        },
+    )
+    assert list(tree.findall(docutils.nodes.system_message)) == []

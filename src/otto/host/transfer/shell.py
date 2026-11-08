@@ -81,6 +81,8 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..userland import Userland
 
+from typing_extensions import final
+
 from ...result import CommandResult, Result
 from ...utils import Status
 from ..errors import UnsupportedOnUserlandError
@@ -1115,6 +1117,7 @@ class UuencodeCodec(ShellCodec):
         return ChunkLoopOutcome(num_chunks)
 
 
+@final
 class ShellFileTransfer(UnixFileTransfer):
     """File transfer using nothing but command execution -- no scp, nc, or rsync.
 

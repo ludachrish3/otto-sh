@@ -10,7 +10,7 @@ an option; the launcher quotes each argv word for the shell.
 import re
 from typing import ClassVar, Protocol
 
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..errors import OttoError
 from ..host.shell_quote import socat_host
@@ -312,6 +312,7 @@ def pick_random_free_port(
     return rng.choice(free)
 
 
+@final
 class SocatCarrier(TunnelCarrier):
     """socat, carrying each protocol as itself hop to hop — the first-party tunnel transport."""
 

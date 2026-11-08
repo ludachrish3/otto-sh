@@ -11,6 +11,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
 
+from typing_extensions import final
+
 from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from ..models.monitor import TunnelRecord
@@ -49,6 +51,7 @@ def is_monitorable(host: RemoteHost) -> bool:
     return unmonitorable_reason(host) is None
 
 
+@final
 @dataclass(frozen=True)
 class MonitorSelection:
     """A host selection split by :func:`unmonitorable_reason`.

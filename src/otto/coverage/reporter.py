@@ -38,6 +38,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from typing_extensions import final
+
 from ..layout import run_dir_of_cov
 from .merge.lcov_loader import LCOVLoader
 from .merge.merger import LcovMerger
@@ -233,6 +235,7 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> "dict[str, Toolchain]":
     return result
 
 
+@final
 class CoverageReporter:
     """Load and render coverage from captures, harvested unit tiers and tracefiles.
 

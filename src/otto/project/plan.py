@@ -12,6 +12,8 @@ a project whose actions override the body, a host class that overrides the verb,
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from ..host.host import BaseHost
 from ..host.product import (
     ProductPlan,
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     from ..run_context import OttoContext
 
 
+@final
 @dataclass
 class ProductPlanEntry:
     """One product's (or dev tool's) plan, in the position the host installs it."""
@@ -50,6 +53,7 @@ class ProductPlanEntry:
     plan: ProductPlan
 
 
+@final
 @dataclass
 class HostPlan:
     """What one host would do for one project, and what could not be checked.
@@ -65,6 +69,7 @@ class HostPlan:
     dev_tools: list[ProductPlanEntry] = field(default_factory=list)
 
 
+@final
 @dataclass
 class TailStep:
     """One lab-wide step ``cleanup`` takes once, after every project's body.
@@ -78,6 +83,7 @@ class TailStep:
     host_id: str | None = None
 
 
+@final
 @dataclass
 class ProjectPlan:
     """One project's hosts, in lab order, and the project-level gaps."""

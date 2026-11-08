@@ -25,6 +25,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import final
+
 from ... import layout
 from ...host.shell_quote import path_operand
 from ...utils import Status
@@ -363,6 +365,7 @@ async def _fetch_one_host(
     return await fetch_each(host, products, failures, fetch_one) or None
 
 
+@final
 class GcdaFetcher:
     """Fetch ``.gcda`` from the lab's coverage hosts into a per-host, per-product staging tree.
 

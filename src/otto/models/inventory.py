@@ -20,6 +20,7 @@ the host as ``host.inventory_ref.extra``.
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
+from typing_extensions import final
 
 from ..host.address import validate_address
 from ..host.specs import InterfaceSpec, IntOrStr
@@ -29,6 +30,7 @@ from ..host.specs import (
 from .base import CredSpec, OttoModel, nonnegative, strip_comment_keys
 
 
+@final
 class InventoryRecord(OttoModel):
     """One inventory record: machine facts, keyed by an opaque inventory key."""
 

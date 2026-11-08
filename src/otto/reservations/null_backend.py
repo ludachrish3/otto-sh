@@ -9,7 +9,7 @@ set up a scheduler yet aren't blocked.
 from typing import TYPE_CHECKING
 
 from pydantic import ConfigDict
-from typing_extensions import override
+from typing_extensions import final, override
 
 from ..models.base import OttoModel
 from .base import ReservationBackendBase
@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from .registry import ReservationEnv
 
 
+@final
 class NoneReservationConfig(OttoModel):
     """The ``none`` backend's sub-table: it takes no keys."""
 
     model_config = ConfigDict(frozen=True)
 
 
+@final
 class NullReservationBackend(ReservationBackendBase):
     """Always returns "no reservations known" — the check is a no-op."""
 

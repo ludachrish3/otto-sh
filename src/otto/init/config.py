@@ -4,11 +4,14 @@ import dataclasses
 import re
 from pathlib import Path
 
+from typing_extensions import final
+
 from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR, DEFAULT_KMODCOV_DIR
 from .errors import InitInputError
 from .settings_file import existing_settings_name
 
 
+@final
 @dataclasses.dataclass(frozen=True)
 class InitConfig:
     """The project root and the values the settings template is filled with.

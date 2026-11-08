@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import final
+
 from ..registry import (
     BackendRegistry,
     C,
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from .protocol import CredsStore
 
 
+@final
 @dataclass(frozen=True)
 class CredsEnv:
     """The environment otto hands a creds store.

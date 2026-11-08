@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from typing_extensions import final
+
 from ..host.daemon import kill_command, launch_command
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import is_dry_run
@@ -381,6 +383,7 @@ def _process_plan(
     return plan
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class DryRunPlan:
     """What a ``--dry-run`` would do, and what it could not check.
@@ -421,6 +424,7 @@ class DryRunPlan:
     run that reached this type read nothing at all."""
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class AddedTunnel:
     """A successfully added + verified tunnel — or, under ``--dry-run``, a plan."""
@@ -1081,6 +1085,7 @@ async def add_tunnel(
     return AddedTunnel(tunnel=tunnel, carrier_fwd=carrier_fwd, carrier_rev=carrier_rev)
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class RemovedReport:
     """What a reap pass tore down — and what refused to die (spec §10)."""
