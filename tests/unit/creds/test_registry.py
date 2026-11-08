@@ -2,7 +2,8 @@
 
 import pytest
 
-from otto.creds import CredsConstructionError, CredsEnv, JsonCredsStore, register_creds_backend
+from otto.creds import CredsConstructionError, CredsEnv, register_creds_backend
+from otto.creds.json_store import _JsonCredsStore
 from otto.creds.registry import CREDS_BACKENDS
 from otto.models.base import OttoModel
 
@@ -22,7 +23,7 @@ def _other(c):
 def test_json_is_pre_registered_and_builds_the_json_store(tmp_path):
     prepared = CREDS_BACKENDS.prepare("json", {"path": "c.json"}, CredsEnv(tmp_path, "o.toml"))
     store = CREDS_BACKENDS.build(prepared)
-    assert isinstance(store, JsonCredsStore)
+    assert isinstance(store, _JsonCredsStore)
     assert store.path == (tmp_path / "c.json").resolve()
 
 

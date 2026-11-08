@@ -12,7 +12,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import load_lab
 from otto.logger.mode import LogMode
 from tests._fixtures.gs_example import import_gs_example
@@ -63,7 +63,7 @@ def _composed_ids(path: Path) -> list[str]:
     """
     import_gs_example()
     search = [path.parent]
-    labs = JsonFileLabRepository(search_paths=search).list_labs()
+    labs = _JsonFileLabRepository(search_paths=search).list_labs()
     builtins = set(builtin_host_ids())
     ids: set[str] = set()
     for lab in labs:

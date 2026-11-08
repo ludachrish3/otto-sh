@@ -19,7 +19,7 @@ from otto.host.element import Element
 from otto.host.factory import host_identity
 from otto.host.os_profile import OS_PROFILES, register_os_profile
 from otto.labs import LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.link.derive import addressing_from_dict
 from tests._fixtures.labdata import write_lab_json
 
@@ -73,7 +73,7 @@ def test_a_link_authored_against_the_raw_id_fails_loudly(tmp_path, carded_profil
         ],
         [{"endpoints": [{"host": "dut"}, {"host": "srv"}]}],
     )
-    repository = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = _JsonFileLabRepository(search_paths=[tmp_path])
 
     with pytest.raises(LabRepositoryError) as excinfo:
         repository.load_lab("e")
@@ -104,7 +104,7 @@ def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
         ],
         [{"endpoints": [{"host": "fine"}, {"host": "srv"}]}],
     )
-    repository = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = _JsonFileLabRepository(search_paths=[tmp_path])
 
     lab = repository.load_lab("e")
 
@@ -133,7 +133,7 @@ def test_a_lab_declaring_a_link_by_the_advertised_id_loads(tmp_path, carded_prof
         ],
         [{"endpoints": [{"host": "dut-lc-2"}, {"host": "srv"}]}],
     )
-    repository = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = _JsonFileLabRepository(search_paths=[tmp_path])
 
     lab = repository.load_lab("e")
 

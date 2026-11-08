@@ -173,7 +173,7 @@ async def test_the_post_fetch_reset_neither_probes_nor_replaces_the_evidence(tmp
     with (
         patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
         patch("otto.fleet.all_hosts", return_value=[host]),
-        patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher) as fetcher_cls,
+        patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher) as fetcher_cls,
         patch(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             new=AsyncMock(return_value={}),

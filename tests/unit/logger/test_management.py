@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from otto import layout
-from otto.host.host import HostFilter
+from otto.host.host import _HostFilter
 from otto.logger import management
 from otto.logger.mode import LogMode
 
@@ -65,7 +65,7 @@ def test_create_output_dir_writes_console_and_verbose(tmp_path):
 
 def test_verbose_log_keeps_quiet_console_log_drops_it(tmp_path):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    management.attach_console_suppress_filter(HostFilter())
+    management.attach_console_suppress_filter(_HostFilter())
     out = management.create_output_dir("test")
     log = logging.getLogger("otto")
     host = type("H", (), {"name": "h1"})()
@@ -555,22 +555,22 @@ def test_reset_closes_the_log_files_after_shutdown_listener(tmp_path):
 def test_attaching_the_same_filter_class_twice_leaves_one(tmp_path):
     """One suppress filter per class per handler (repeated ensure_cli_session).
 
-    Every session builds a fresh ``HostFilter``, and ``install_console`` copies
+    Every session builds a fresh ``_HostFilter``, and ``install_console`` copies
     the filters it finds onto each replacement — so N in-process invocations
     left N interchangeable HostFilters re-deciding the same verdict.
     """
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    management.attach_console_suppress_filter(HostFilter())
-    management.attach_console_suppress_filter(HostFilter())
+    management.attach_console_suppress_filter(_HostFilter())
+    management.attach_console_suppress_filter(_HostFilter())
 
     console = management._state.console_handler
-    assert [type(f) for f in console.filters] == [HostFilter], console.filters
+    assert [type(f) for f in console.filters] == [_HostFilter], console.filters
 
 
 def test_the_console_swap_carries_the_suppress_filters(tmp_path, capsys):
     """A re-install must not silently UN-suppress.
 
-    ``attach_console_suppress_filter`` hangs HostFilter/LogMode on the console
+    ``attach_console_suppress_filter`` hangs _HostFilter/LogMode on the console
     handler; the replacement a re-install builds carries none of them. Not
     reachable from the CLI (it attaches the filter after its last install), but
     ``install`` makes "attach a suppress filter, then re-install to raise the
@@ -580,7 +580,7 @@ def test_the_console_swap_carries_the_suppress_filters(tmp_path, capsys):
 
     out = tmp_path / "out"
     install(log_level="INFO", output_dir=out)
-    filt = HostFilter()
+    filt = _HostFilter()
     management.attach_console_suppress_filter(filt)
     install(log_level="DEBUG", output_dir=out)
 

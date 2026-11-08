@@ -18,7 +18,7 @@ import pytest
 
 from otto.host.builtin_hosts import builtin_host_ids
 from otto.host.os_profile import OS_PROFILES, register_os_profile
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from tests._fixtures.labdata import write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
@@ -76,10 +76,10 @@ def profile_defaulting_ip():
         OS_PROFILES.unregister("_equiv_ip_profile")
 
 
-def _write_lab(tmp_path: Path, hosts: list[dict]) -> JsonFileLabRepository:
+def _write_lab(tmp_path: Path, hosts: list[dict]) -> _JsonFileLabRepository:
     """Write *hosts* (flat v1-style dicts) as a v2 document and open it."""
     write_lab_json(tmp_path / "lab.json", hosts)
-    return JsonFileLabRepository(search_paths=[tmp_path])
+    return _JsonFileLabRepository(search_paths=[tmp_path])
 
 
 def test_summary_ids_match_constructed_host_ids(tmp_path):
@@ -165,14 +165,14 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
     assert sorted(summary.lab_patterns) == ["e", "w"]
 
 
-def _two_file_repository(tmp_path, first: dict, second: dict) -> JsonFileLabRepository:
+def _two_file_repository(tmp_path, first: dict, second: dict) -> _JsonFileLabRepository:
     """One source holding two lab files: *first* in ``a/``, *second* in ``b/``."""
     a, b = tmp_path / "a", tmp_path / "b"
     for d in (a, b):
         d.mkdir()
     write_lab_json(a / "lab.json", [first])
     write_lab_json(b / "lab.json", [second])
-    return JsonFileLabRepository(search_paths=[a, b])
+    return _JsonFileLabRepository(search_paths=[a, b])
 
 
 _BARE_X_CPU_1 = {"ip": "10.0.0.1", "element": "x-cpu-1", "creds": _CREDS}

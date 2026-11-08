@@ -16,7 +16,7 @@ from otto.inventory import (
     InventoryKeyError,
 )
 from otto.inventory.config import compile_inventory, construct_inventory
-from otto.inventory.netbox import NATIVE_SUPPLIES, NetBoxInventory
+from otto.inventory.netbox import NATIVE_SUPPLIES, _NetBoxInventory
 from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.settings import InventoryConfigSpec
 from otto.testing import assert_inventory_conforms
@@ -34,13 +34,13 @@ def _token(monkeypatch):
 
 
 def _inv(stub, **kw):
-    return NetBoxInventory(url=stub.base, **kw)
+    return _NetBoxInventory(url=stub.base, **kw)
 
 
 def test_netbox_is_registered_and_construction_is_lazy(tmp_path):
     prepared = INVENTORY_BACKENDS.prepare("netbox", {"url": DEAD}, InventoryEnv(tmp_path, "o.toml"))
     inv = INVENTORY_BACKENDS.build(prepared)  # nothing listens; no error until first use
-    assert isinstance(inv, NetBoxInventory)
+    assert isinstance(inv, _NetBoxInventory)
     assert inv.label == f"netbox:{DEAD}"
     assert inv.supplies == NATIVE_SUPPLIES
     with pytest.raises(InventoryError, match=f"netbox inventory {DEAD}"):
@@ -65,7 +65,7 @@ def test_construction_makes_no_requests_and_the_first_use_fetches_once():
 
 def test_token_env_is_read_at_first_use_not_at_construction(monkeypatch):
     monkeypatch.delenv("NETBOX_TOKEN")
-    inv = NetBoxInventory(url=DEAD)  # construction is silent even with no token anywhere
+    inv = _NetBoxInventory(url=DEAD)  # construction is silent even with no token anywhere
     with pytest.raises(
         InventoryError, match="environment variable 'NETBOX_TOKEN' is not set"
     ) as excinfo:
@@ -141,7 +141,7 @@ def test_custom_fields_may_only_map_a_record_field():
     with pytest.raises(
         ValueError, match="custom_fields maps 'bogus', which is not an inventory record field"
     ):
-        NetBoxInventory(url=DEAD, custom_fields={"bogus": "cf"})
+        _NetBoxInventory(url=DEAD, custom_fields={"bogus": "cf"})
 
 
 def test_extra_custom_fields_are_opt_in():
@@ -179,9 +179,9 @@ def test_ip_source_must_name_a_source_the_backend_can_read():
         ValueError,
         match=r"ip_source must be 'primary_ip4', 'oob_ip', or 'cf:<custom field>', got 'bogus'",
     ):
-        NetBoxInventory(url=DEAD, ip_source="bogus")
+        _NetBoxInventory(url=DEAD, ip_source="bogus")
     with pytest.raises(ValueError, match="got 'cf:'"):
-        NetBoxInventory(url=DEAD, ip_source="cf:")  # a prefix with no field name
+        _NetBoxInventory(url=DEAD, ip_source="cf:")  # a prefix with no field name
 
 
 def test_device_without_an_address_fails_only_when_looked_up():
@@ -231,12 +231,12 @@ def test_unknown_key():
 
 def test_url_must_be_non_empty():
     with pytest.raises(ValueError, match="'url' must be a non-empty NetBox base URL"):
-        NetBoxInventory(url="")
+        _NetBoxInventory(url="")
 
 
 def test_the_default_timeout_is_thirty_seconds():
     """Generous, because a filtered fetch over a large instance is a real query."""
-    assert NetBoxInventory(url=DEAD).timeout == 30.0
+    assert _NetBoxInventory(url=DEAD).timeout == 30.0
 
 
 @pytest.mark.parametrize("bad", [0, -1, "30", None, True])
@@ -244,7 +244,7 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_at_construction(bad)
     """``True`` is in here on purpose: ``bool`` is an ``int``, and ``timeout = true``
     in a TOML table would otherwise quietly mean "one second"."""
     with pytest.raises(ValueError, match="timeout must be a positive number of seconds"):
-        NetBoxInventory(url=DEAD, timeout=bad)
+        _NetBoxInventory(url=DEAD, timeout=bad)
 
 
 def _compiled(tmp_path, table, *, anchor=None):
@@ -303,7 +303,7 @@ def test_verify_is_no_longer_an_argument():
     # COMMITTED settings table is exactly the proliferation the spec removes,
     # and the constructor must not quietly grow it back.
     with pytest.raises(TypeError, match="verify"):
-        NetBoxInventory(url=DEAD, verify=False)  # type: ignore[call-arg]
+        _NetBoxInventory(url=DEAD, verify=False)  # type: ignore[call-arg]
 
 
 def test_a_certificate_the_os_store_does_not_know_is_refused(tmp_path, monkeypatch):
@@ -414,7 +414,7 @@ def test_unnamed_devices_are_skipped_and_counted():
 
 
 def test_unnamed_device_ids_is_empty_before_the_first_fetch():
-    assert NetBoxInventory(url=DEAD).unnamed_device_ids == []
+    assert _NetBoxInventory(url=DEAD).unnamed_device_ids == []
 
 
 @pytest.mark.parametrize("field", ["ip", "creds", "interfaces"])
@@ -426,7 +426,7 @@ def test_custom_fields_may_not_map_a_field_the_backend_owns(field):
             r"\(excluded: \['creds', 'interfaces', 'ip'\]\)"
         ),
     ):
-        NetBoxInventory(url=DEAD, custom_fields={field: "cf"})
+        _NetBoxInventory(url=DEAD, custom_fields={field: "cf"})
 
 
 def test_extra_custom_fields_must_be_a_list_not_a_bare_string():
@@ -434,12 +434,12 @@ def test_extra_custom_fields_must_be_a_list_not_a_bare_string():
     with pytest.raises(
         ValueError, match="extra_custom_fields must be a list of NetBox custom field names, got str"
     ):
-        NetBoxInventory(url=DEAD, extra_custom_fields="owner")
+        _NetBoxInventory(url=DEAD, extra_custom_fields="owner")
     with pytest.raises(
         ValueError,
         match="extra_custom_fields must be a list of NetBox custom field names, got list",
     ):
-        NetBoxInventory(url=DEAD, extra_custom_fields=[3])
+        _NetBoxInventory(url=DEAD, extra_custom_fields=[3])
 
 
 def test_custom_fields_must_be_a_mapping():
@@ -447,7 +447,7 @@ def test_custom_fields_must_be_a_mapping():
         ValueError,
         match="custom_fields must be a table of record field -> NetBox custom field name, got list",
     ):
-        NetBoxInventory(url=DEAD, custom_fields=["sw_version"])
+        _NetBoxInventory(url=DEAD, custom_fields=["sw_version"])
 
 
 @pytest.mark.parametrize("reserved", ["id", "serial", "asset_tag", "status", "tags"])
@@ -459,16 +459,16 @@ def test_extra_custom_fields_may_not_shadow_what_the_backend_puts_in_extra(reser
             r"record\.extra from the device itself"
         ),
     ):
-        NetBoxInventory(url=DEAD, extra_custom_fields=[reserved])
+        _NetBoxInventory(url=DEAD, extra_custom_fields=[reserved])
 
 
 def test_a_trailing_slash_in_the_url_is_normalised_away():
     # The snapshot cache's slug hashes `self.url`, so two spellings of one
     # inventory must not be able to look like two.
-    inv = NetBoxInventory(url="https://netbox.example.com/")
+    inv = _NetBoxInventory(url="https://netbox.example.com/")
     assert inv.url == "https://netbox.example.com"
     assert inv.label == "netbox:https://netbox.example.com"
-    assert inv.label == NetBoxInventory(url="https://netbox.example.com").label
+    assert inv.label == _NetBoxInventory(url="https://netbox.example.com").label
 
 
 def test_the_http_session_is_closed_after_the_fetch(monkeypatch):
@@ -495,12 +495,12 @@ def test_the_http_session_is_closed_after_the_fetch(monkeypatch):
 
 
 def test_the_config_model_s_defaults_are_the_constructor_s():
-    """One set of defaults: the model and ``NetBoxInventory`` must never drift apart."""
+    """One set of defaults: the model and ``_NetBoxInventory`` must never drift apart."""
     import inspect
 
     from otto.inventory.config import NetBoxInventoryConfig
 
-    params = inspect.signature(NetBoxInventory).parameters
+    params = inspect.signature(_NetBoxInventory).parameters
     fields = NetBoxInventoryConfig.model_fields
     assert set(fields) <= set(params)
     for name, field in sorted(fields.items()):

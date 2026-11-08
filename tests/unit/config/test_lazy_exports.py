@@ -140,16 +140,16 @@ def test_otto_inventory_does_not_pull_the_settings_graph():
 _PYNETBOX_SCRIPT = """
 import sys
 
-import otto.inventory
+import otto.inventory.netbox
 
 assert "pynetbox" not in sys.modules, (
-    "bare 'import otto.inventory' must not import pynetbox: the package re-exports "
-    "NetBoxInventory, importing otto.inventory.netbox eagerly, so an eager 'import pynetbox' "
+    "bare 'import otto.inventory.netbox' must not import pynetbox: "
+    "the netbox kind's module must stay cheap to load, so an eager 'import pynetbox' "
     "there would put pynetbox + requests + urllib3 on the bootstrap path of every otto verb"
 )
 assert "requests" not in sys.modules, "...and requests, which pynetbox drags in with it"
 
-inv = otto.inventory.NetBoxInventory(url="http://127.0.0.1:9")
+inv = otto.inventory.netbox._NetBoxInventory(url="http://127.0.0.1:9")
 
 assert "pynetbox" not in sys.modules, "construction must not import it either"
 
@@ -168,11 +168,11 @@ print("LAZY IMPORT OK")
 def test_pynetbox_is_imported_only_by_the_first_netbox_fetch():
     """R14: ``pynetbox`` stays off every surface that never talks to NetBox.
 
-    ``otto.inventory`` re-exports ``NetBoxInventory``, importing
-    ``otto.inventory.netbox`` eagerly, so the module is on the bootstrap path
-    even for a deployment with no NetBox at all. Only the import of ``pynetbox``
-    itself is deferred, and this asserts it in both directions: absent after a
-    bare import AND after construction, present after the first fetch.
+    Importing ``otto.inventory.netbox`` (the ``"netbox"`` kind) must stay
+    cheap, so the module can sit on the bootstrap path even for a deployment
+    with no NetBox at all. Only the import of ``pynetbox`` itself is deferred,
+    and this asserts it in both directions: absent after a bare import AND
+    after construction, present after the first fetch.
     """
     out = subprocess.run(
         [sys.executable, "-c", _PYNETBOX_SCRIPT],

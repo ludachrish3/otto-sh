@@ -202,9 +202,9 @@ class TestShippedBackendsInherit:
         assert isinstance(NullReservationBackend(), ReservationBackendBase)
 
     def test_json_backend(self, tmp_path):
-        from otto.reservations import JsonReservationBackend
+        from otto.reservations.json_backend import _JsonReservationBackend
 
-        assert isinstance(JsonReservationBackend(path=tmp_path / "r.json"), ReservationBackendBase)
+        assert isinstance(_JsonReservationBackend(path=tmp_path / "r.json"), ReservationBackendBase)
 
     def test_example_backend(self):
         from otto.examples.reservations import ExampleReservationBackend

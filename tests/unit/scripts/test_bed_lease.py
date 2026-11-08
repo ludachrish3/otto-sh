@@ -20,7 +20,7 @@ from unittest import mock
 import pytest
 
 from otto.reservations.identity import resolve_username
-from otto.reservations.json_backend import JsonReservationBackend
+from otto.reservations.json_backend import _JsonReservationBackend
 from otto.utils import wait_for
 from scripts import bed_lease
 from scripts.process_group import process_state, signal_group
@@ -259,7 +259,7 @@ def test_the_rendered_file_is_otto_format_with_every_resolved_resource(root):
     [entry] = rendered["reservations"]
     assert entry["user"] == resolve_username(None).username
     assert "expires" not in entry, "the backend drops an expired entry; the lease must not"
-    backend = JsonReservationBackend(path=root / "tech1.reservations.json")
+    backend = _JsonReservationBackend(path=root / "tech1.reservations.json")
     for resource in ("test1-chassis", "test2-console", "test1", "zephyr37_llext", "bb1350"):
         assert [h.user for h in backend.holders(resource)] == [entry["user"]], resource
     assert entry["resources"] == _record(root)["resources"]
@@ -591,7 +591,7 @@ def test_an_expired_lease_with_a_live_holder_is_held_and_still_read_by_otto(root
     time.sleep(1.1)
     assert _run(root, "acquire", "--pid", str(ME)) == 1
     assert "overran its budget" in capsys.readouterr().out
-    backend = JsonReservationBackend(path=root / "tech1.reservations.json")
+    backend = _JsonReservationBackend(path=root / "tech1.reservations.json")
     assert backend.holders("test1")
 
 

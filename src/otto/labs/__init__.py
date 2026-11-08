@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from .errors import LabNotFoundError as LabNotFoundError
     from .errors import LabRepositoryError as LabRepositoryError
     from .errors import LabSourceConstructionError as LabSourceConstructionError
-    from .json_repository import JsonFileLabRepository as JsonFileLabRepository
     from .protocol import HostSummary as HostSummary
     from .protocol import LabRepository as LabRepository
     from .protocol import LoginSummary as LoginSummary
@@ -37,7 +36,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "LabRepositoryError": "otto.labs.errors",
     "LabSourceConstructionError": "otto.labs.errors",
     "LabSourceEnv": "otto.labs.sources",
-    "JsonFileLabRepository": "otto.labs.json_repository",
     "HostSummary": "otto.labs.protocol",
     "LabRepository": "otto.labs.protocol",
     "LoginSummary": "otto.labs.protocol",
@@ -68,7 +66,6 @@ def __dir__() -> list[str]:
 __all__ = [
     "CompositeLabRepository",
     "HostSummary",
-    "JsonFileLabRepository",
     "LabNotFoundError",
     "LabRepository",
     "LabRepositoryError",

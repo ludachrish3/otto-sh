@@ -1,5 +1,5 @@
 """
-Unit tests for HopTransport / SshHopTransport.
+Unit tests for HopTransport / _SshHopTransport.
 
 Tests verify tunnel caching, port-forward delegation, and cascade cleanup
 without touching real SSH connections.
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from asyncssh import SSHClientConnection
 
-from otto.host.transport import HopTransportTornDownError, SshHopTransport
+from otto.host.transport import HopTransportTornDownError, _SshHopTransport
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,8 +33,8 @@ def factory(mock_conn: MagicMock) -> AsyncMock:
 
 
 @pytest.fixture
-def transport(factory: AsyncMock) -> SshHopTransport:
-    return SshHopTransport(factory)
+def transport(factory: AsyncMock) -> _SshHopTransport:
+    return _SshHopTransport(factory)
 
 
 # ---------------------------------------------------------------------------
@@ -45,14 +45,14 @@ def transport(factory: AsyncMock) -> SshHopTransport:
 class TestGetTunnel:
     @pytest.mark.asyncio
     async def test_calls_factory(
-        self, transport: SshHopTransport, factory: AsyncMock, mock_conn: MagicMock
+        self, transport: _SshHopTransport, factory: AsyncMock, mock_conn: MagicMock
     ):
         result = await transport.get_tunnel()
         factory.assert_awaited_once()
         assert result is mock_conn
 
     @pytest.mark.asyncio
-    async def test_caches_connection(self, transport: SshHopTransport, factory: AsyncMock):
+    async def test_caches_connection(self, transport: _SshHopTransport, factory: AsyncMock):
         first = await transport.get_tunnel()
         second = await transport.get_tunnel()
         assert first is second
@@ -66,7 +66,7 @@ class TestGetTunnel:
 
 class TestForwardPort:
     @pytest.mark.asyncio
-    async def test_delegates_to_connection(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_delegates_to_connection(self, transport: _SshHopTransport, mock_conn: MagicMock):
         mock_listener = MagicMock()
         mock_listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
@@ -76,7 +76,7 @@ class TestForwardPort:
         assert port == 44444
 
     @pytest.mark.asyncio
-    async def test_returns_local_port(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_returns_local_port(self, transport: _SshHopTransport, mock_conn: MagicMock):
         mock_listener = MagicMock()
         mock_listener.get_port.return_value = 55555
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
@@ -84,7 +84,7 @@ class TestForwardPort:
         assert await transport.forward_port("192.168.1.1", 8080) == 55555
 
     @pytest.mark.asyncio
-    async def test_tracks_listeners(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_tracks_listeners(self, transport: _SshHopTransport, mock_conn: MagicMock):
         """Distinct destinations each get their own listener, tracked for cleanup."""
         for expected_port in (11111, 22222):
             listener = MagicMock()
@@ -96,7 +96,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_repeat_destination_reuses_one_listener(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """A destination that already has a forward does not get a second one.
 
@@ -116,7 +116,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_same_port_on_a_different_host_is_a_different_forward(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """The key is the destination, not the port.
 
@@ -139,7 +139,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_unforward_closes_the_listener_and_frees_the_key(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """Releasing must both close the socket and re-arm the cache.
 
@@ -164,7 +164,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_unforward_of_an_unknown_destination_is_a_no_op(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """Callers release from a ``finally`` without knowing whether they took one.
 
@@ -186,7 +186,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_forward_binds_loopback_not_every_interface(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """The listener must not be reachable from off-box.
 
@@ -209,7 +209,7 @@ class TestForwardPort:
 
     @pytest.mark.asyncio
     async def test_concurrent_callers_build_one_forward(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """Without the lock both callers miss the cache and one listener leaks.
 
@@ -238,14 +238,14 @@ class TestForwardPort:
 
 class TestClose:
     @pytest.mark.asyncio
-    async def test_closes_connection(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_closes_connection(self, transport: _SshHopTransport, mock_conn: MagicMock):
         await transport.get_tunnel()
         await transport.close()
         mock_conn.close.assert_called_once()
         mock_conn.wait_closed.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_closes_port_forwards(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_closes_port_forwards(self, transport: _SshHopTransport, mock_conn: MagicMock):
         listeners = []
         for port in (11111, 22222):
             listener = MagicMock()
@@ -262,7 +262,7 @@ class TestClose:
 
     @pytest.mark.asyncio
     async def test_close_re_arms_the_forward_cache(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """``close()`` invalidates the cached forward without ending the transport.
 
@@ -295,7 +295,7 @@ class TestClose:
 
     @pytest.mark.asyncio
     async def test_one_bad_listener_does_not_abort_the_teardown(
-        self, transport: SshHopTransport, mock_conn: MagicMock
+        self, transport: _SshHopTransport, mock_conn: MagicMock
     ):
         """A raising ``listener.close()`` must not skip the rest of teardown.
 
@@ -326,12 +326,12 @@ class TestClose:
         parent_conn = MagicMock(spec=SSHClientConnection)
         parent_conn.close = MagicMock()
         parent_conn.wait_closed = AsyncMock()
-        parent = SshHopTransport(AsyncMock(return_value=parent_conn))
+        parent = _SshHopTransport(AsyncMock(return_value=parent_conn))
 
         child_conn = MagicMock(spec=SSHClientConnection)
         child_conn.close = MagicMock()
         child_conn.wait_closed = AsyncMock()
-        child = SshHopTransport(AsyncMock(return_value=child_conn), parent=parent)
+        child = _SshHopTransport(AsyncMock(return_value=child_conn), parent=parent)
 
         await child.get_tunnel()
         await parent.get_tunnel()
@@ -341,7 +341,7 @@ class TestClose:
         parent_conn.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_idempotent(self, transport: SshHopTransport, mock_conn: MagicMock):
+    async def test_idempotent(self, transport: _SshHopTransport, mock_conn: MagicMock):
         await transport.get_tunnel()
         await transport.close()
         await transport.close()  # should not raise
@@ -350,7 +350,7 @@ class TestClose:
     @pytest.mark.asyncio
     async def test_close_without_connect(self, factory: AsyncMock):
         """Closing a transport that was never used is a no-op."""
-        transport = SshHopTransport(factory)
+        transport = _SshHopTransport(factory)
         await transport.close()  # should not raise
         factory.assert_not_awaited()
 
@@ -444,7 +444,7 @@ class TestCloseRacesWithInFlightWork:
             await release.wait()
             return conn
 
-        transport = SshHopTransport(factory)
+        transport = _SshHopTransport(factory)
         pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
         await reached.wait()
 
@@ -480,7 +480,7 @@ class TestCloseRacesWithInFlightWork:
 
         conn = self._conn()
         conn.forward_local_port = forward_local_port
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
@@ -518,7 +518,7 @@ class TestCloseRacesWithInFlightWork:
 
         conn = self._conn()
         conn.forward_local_port = forward_local_port
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         pending = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
@@ -576,7 +576,7 @@ class TestCloseRacesWithInFlightWork:
         conn.wait_closed = wait_closed
         conn.forward_local_port = forward_local_port
 
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         async def do_forward():
@@ -606,7 +606,7 @@ class TestCloseRacesWithInFlightWork:
         ``RemoteHost._build_hop_transport``'s factory assigns ``outer._parent``
         and opens the parent's SSH connection as a side effect, both inside the
         single await this window brackets (remote_host.py, "Build the parent
-        SshHopTransport lazily on first use"). So ``close()`` reads
+        _SshHopTransport lazily on first use"). So ``close()`` reads
         ``_parent is None``, skips the cascade, and the factory then produces a
         live SSH session to the INTERMEDIATE hop owned by a transport that was
         never marked closed. Tearing down only the connection we were handed
@@ -614,16 +614,16 @@ class TestCloseRacesWithInFlightWork:
         """
         reached, release = asyncio.Event(), asyncio.Event()
         parent_conn, child_conn = self._conn(), self._conn()
-        child: SshHopTransport
+        child: _SshHopTransport
 
         async def child_factory(**_):
             reached.set()
             await release.wait()
-            child._parent = SshHopTransport(AsyncMock(return_value=parent_conn))
+            child._parent = _SshHopTransport(AsyncMock(return_value=parent_conn))
             await child._parent.get_tunnel()
             return child_conn
 
-        child = SshHopTransport(child_factory)
+        child = _SshHopTransport(child_factory)
         pending = asyncio.create_task(child.forward_port("10.0.0.1", 23))
         await reached.wait()
 
@@ -667,7 +667,7 @@ class TestCloseRacesWithInFlightWork:
                 await release_first.wait()
             return conn
 
-        transport = SshHopTransport(factory)
+        transport = _SshHopTransport(factory)
         first = asyncio.create_task(transport.get_tunnel())
         await first_call.wait()
         # Second caller queues on _conn_lock while the first holds it.
@@ -718,7 +718,7 @@ class TestCloseRacesWithInFlightWork:
 
         conn = self._conn()
         conn.forward_local_port = forward_local_port
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         first = asyncio.create_task(transport.forward_port("10.0.0.1", 23))
@@ -764,7 +764,7 @@ class TestCloseRacesWithInFlightWork:
             parent_conns.append(conn)
             return conn
 
-        parent = SshHopTransport(parent_factory)
+        parent = _SshHopTransport(parent_factory)
         reached, release = asyncio.Event(), asyncio.Event()
         parked = True
 
@@ -778,7 +778,7 @@ class TestCloseRacesWithInFlightWork:
             await parent.get_tunnel()
             return self._conn()
 
-        child = SshHopTransport(child_factory, parent=parent)
+        child = _SshHopTransport(child_factory, parent=parent)
         pending = asyncio.create_task(child.get_tunnel())
         await reached.wait()
 
@@ -812,7 +812,7 @@ class TestCloseRacesWithInFlightWork:
         """
         conn = self._conn()
         conn._transport = MagicMock()
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         await transport.close()
@@ -836,7 +836,7 @@ class TestCloseRacesWithInFlightWork:
             await release.wait()
             return conn
 
-        transport = SshHopTransport(factory)
+        transport = _SshHopTransport(factory)
         pending = asyncio.create_task(transport.get_tunnel())
         await reached.wait()
 
@@ -860,7 +860,7 @@ class TestCloseRacesWithInFlightWork:
         conn = self._conn()
         conn._transport = MagicMock()
         conn.wait_closed = AsyncMock(side_effect=OSError("socket already gone"))
-        transport = SshHopTransport(AsyncMock(return_value=conn))
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
         await transport.get_tunnel()
 
         with pytest.raises(OSError, match="socket already gone"):

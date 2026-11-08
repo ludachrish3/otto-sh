@@ -10,10 +10,10 @@ from otto.host.login_proxy import Cred
 from otto.host.power import (
     POWER_CONTROLLERS,
     CommandPowerConfig,
-    CommandPowerController,
     PowerConstructionError,
     PowerController,
     PowerState,
+    _CommandPowerController,
     build_power_controller,
     power_control_from_spec,
 )
@@ -49,7 +49,7 @@ async def test_command_controller_on_runs_formatted_command_on_controller():
     runner = AsyncMock()
     runner.exec.return_value = _fake_command_result("virsh start vm1", "", Status.Success, 0)
     target = _target_with_controller(runner)
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(
             on_cmd="virsh start {name}", off_cmd="virsh destroy {name}", controller="hyp"
         )
@@ -77,7 +77,7 @@ async def test_a_placeholder_value_a_shell_could_act_on_is_refused(hostile):
     runner = AsyncMock()
     target = _target_with_controller(runner)
     target.name = hostile
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd="ssh hv virsh start {name}", off_cmd="off", controller="hyp")
     )
     with pytest.raises(ValueError, match=r"placeholder \{name\}") as refused:
@@ -101,7 +101,7 @@ async def test_an_inert_placeholder_value_renders_as_plain_substitution(name, ip
     target.name = name
     target.ip = ip
     template = "ssh hv 'virsh start {name}' {ip} {id}"
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd=template, off_cmd="off", controller="hyp")
     )
     await pc.on(target)
@@ -115,7 +115,7 @@ async def test_only_the_placeholders_a_template_uses_are_checked():
     runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
     target = _target_with_controller(runner)
     target.name = "vm one; reboot"
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd="virsh start {id}", off_cmd="off", controller="hyp")
     )
     result = await pc.on(target)
@@ -136,7 +136,7 @@ async def test_a_placeholder_that_is_not_bare_is_refused(placeholder):
     runner = AsyncMock()
     target = _target_with_controller(runner)
     target.name = "vm one; reboot"
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd=f"virsh start {placeholder}", off_cmd="off", controller="hyp")
     )
     with pytest.raises(ValueError, match="bare") as refused:
@@ -153,7 +153,7 @@ async def test_a_none_ip_renders_as_nothing():
     runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
     target = _target_with_controller(runner)
     target.ip = None
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd="on {name}{ip}", off_cmd="off", controller="hyp")
     )
     await pc.on(target)
@@ -167,7 +167,7 @@ async def test_command_controller_renders_an_empty_placeholder_as_nothing():
     runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
     target = _target_with_controller(runner)
     target.ip = ""
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd="on {name}{ip}", off_cmd="off", controller="hyp")
     )
     await pc.on(target)
@@ -181,7 +181,7 @@ async def test_command_controller_status_parses_on_marker():
         "virsh domstate vm1", "running", Status.Success, 0
     )
     target = _target_with_controller(runner)
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(
             on_cmd="x",
             off_cmd="y",
@@ -195,7 +195,7 @@ async def test_command_controller_status_parses_on_marker():
 
 @pytest.mark.asyncio
 async def test_command_controller_status_none_when_no_status_command():
-    pc = CommandPowerController(CommandPowerConfig(on_cmd="x", off_cmd="y"))
+    pc = _CommandPowerController(CommandPowerConfig(on_cmd="x", off_cmd="y"))
     assert await pc.status(_target_with_controller(AsyncMock())) is None
 
 
@@ -204,7 +204,7 @@ async def test_cycle_default_is_off_then_on():
     runner = AsyncMock()
     runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
     target = _target_with_controller(runner)
-    pc = CommandPowerController(
+    pc = _CommandPowerController(
         CommandPowerConfig(on_cmd="on {name}", off_cmd="off {name}", controller="hyp")
     )
     result = await pc.cycle(target)
@@ -216,7 +216,7 @@ async def test_cycle_default_is_off_then_on():
 def test_registry_builtin_and_unknown():
     assert "command" in POWER_CONTROLLERS
     built = build_power_controller("command", {"on_cmd": "o", "off_cmd": "f"}, host_id="h")
-    assert isinstance(built, CommandPowerController)
+    assert isinstance(built, _CommandPowerController)
     with pytest.raises(
         PowerConstructionError,
         match=r"configured in power_control of host 'h'\): lookup failed: Unknown power controller",
@@ -228,7 +228,7 @@ def test_power_control_from_spec_dict_builds_command_controller():
     pc = power_control_from_spec(
         {"type": "command", "on_cmd": "o", "off_cmd": "f", "controller": "hyp"}, host_id="h"
     )
-    assert isinstance(pc, CommandPowerController)
+    assert isinstance(pc, _CommandPowerController)
     assert pc.config.on_cmd == "o"
     assert pc.config.controller == "hyp"
 
@@ -239,20 +239,20 @@ def test_a_bare_type_name_builds_from_an_empty_table():
 
 
 def test_power_control_from_spec_passthrough_and_none():
-    pc = CommandPowerController(CommandPowerConfig(on_cmd="o", off_cmd="f"))
+    pc = _CommandPowerController(CommandPowerConfig(on_cmd="o", off_cmd="f"))
     assert power_control_from_spec(pc, host_id="h") is pc
     assert power_control_from_spec(None, host_id="h") is None
 
 
 def test_a_command_controller_compares_and_shows_by_its_config():
     config = CommandPowerConfig(on_cmd="o", off_cmd="f")
-    assert CommandPowerController(config) == CommandPowerController(
+    assert _CommandPowerController(config) == _CommandPowerController(
         CommandPowerConfig(on_cmd="o", off_cmd="f")
     )
-    assert CommandPowerController(config) != CommandPowerController(
+    assert _CommandPowerController(config) != _CommandPowerController(
         CommandPowerConfig(on_cmd="o", off_cmd="g")
     )
-    assert repr(CommandPowerController(config)) == f"CommandPowerController({config!r})"
+    assert repr(_CommandPowerController(config)) == f"_CommandPowerController({config!r})"
 
 
 def test_unix_power_control_coerced_from_dict():
@@ -265,7 +265,7 @@ def test_unix_power_control_coerced_from_dict():
         log=LogMode.QUIET,
         power_control={"type": "command", "on_cmd": "o", "off_cmd": "f"},
     )
-    assert isinstance(host.power_control, CommandPowerController)
+    assert isinstance(host.power_control, _CommandPowerController)
 
 
 def test_hosts_default_power_control_none():

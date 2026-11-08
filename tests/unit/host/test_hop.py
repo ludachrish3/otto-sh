@@ -19,7 +19,7 @@ from otto.host.host_key_client import HostKeyCheck
 from otto.host.login_proxy import Cred
 from otto.host.options import LocalPortForward, NcOptions, SshOptions
 from otto.host.session import SessionManager
-from otto.host.transport import SshHopTransport
+from otto.host.transport import _SshHopTransport
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -119,7 +119,7 @@ class TestConnectionManagerTunnel:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         assert cm.has_tunnel
 
@@ -133,7 +133,7 @@ class TestConnectionManagerTunnel:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         tunnel1 = await cm._ensure_tunnel()
         tunnel2 = await cm._ensure_tunnel()
@@ -150,7 +150,7 @@ class TestConnectionManagerTunnel:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
             mock_ssh = MagicMock(spec=SSHClientConnection)
@@ -245,7 +245,7 @@ class TestConnectionManagerTunnel:
             term="telnet",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
             mock_tc = MagicMock()
@@ -482,7 +482,7 @@ class TestConnectionManagerTunnel:
             term="telnet",
             name="bb1350",
             host_id="bb1350",
-            hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
+            hop=_SshHopTransport(AsyncMock(return_value=mock_tunnel)),
         )
         cm.telnet_options.port = 2335
 
@@ -535,7 +535,7 @@ class TestConnectionManagerTunnel:
             term="telnet",
             name="test",
             host_id="test",
-            hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
+            hop=_SshHopTransport(AsyncMock(return_value=mock_tunnel)),
         )
         with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
             dead, fresh = MagicMock(), MagicMock()
@@ -561,7 +561,7 @@ class TestConnectionManagerTunnel:
         mock_tunnel.forward_local_port = AsyncMock(return_value=mock_listener)
         factory = AsyncMock(return_value=mock_tunnel)
 
-        hop = SshHopTransport(factory)
+        hop = _SshHopTransport(factory)
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
@@ -593,7 +593,7 @@ class TestConnectionManagerTunnel:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         port = await cm.forward_port(8080)
         assert port == 55555
@@ -695,7 +695,7 @@ class TestTunnelCleanup:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         # Establish the tunnel
         await cm._ensure_tunnel()
@@ -720,7 +720,7 @@ class TestTunnelCleanup:
             term="ssh",
             name="test",
             host_id="test",
-            hop=SshHopTransport(factory),
+            hop=_SshHopTransport(factory),
         )
         await cm.forward_port(8080)
         await cm.close()

@@ -1059,7 +1059,7 @@ class ConnectionManager:
         are the first that both sit behind a hop and open named sessions.
 
         Forwards are cached per destination by
-        :meth:`~otto.host.transport.SshHopTransport.forward_port`, so a pool of
+        the hop transport's ``forward_port`` (:mod:`otto.host.transport`), so a pool of
         exec sessions shares one listener rather than taking one each.
         """
         remote_port = self._telnet_options.port

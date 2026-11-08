@@ -5,7 +5,7 @@ import pytest
 from otto.host import CommandPowerConfig, PowerConstructionError, PowerEnv
 from otto.host.power import (
     POWER_CONTROLLERS,
-    CommandPowerController,
+    _CommandPowerController,
     build_power_controller,
     power_control_from_spec,
     register_power_controller,
@@ -17,7 +17,7 @@ def test_the_command_controller_is_built_from_its_config_model():
     ctl = power_control_from_spec(
         {"type": "command", "on_cmd": "on {id}", "off_cmd": "off"}, host_id="h1"
     )
-    assert isinstance(ctl, CommandPowerController)
+    assert isinstance(ctl, _CommandPowerController)
     assert ctl.config == CommandPowerConfig(on_cmd="on {id}", off_cmd="off")
 
 
@@ -39,7 +39,7 @@ def test_a_custom_controller_receives_the_host_id():
         "pdu",
         config=Cfg,
         factory=lambda c: (
-            seen.append(c.env) or CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
+            seen.append(c.env) or _CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
         ),
     )
     build_power_controller("pdu", {"outlet": 3}, host_id="rack-1")
@@ -52,7 +52,7 @@ def test_a_factory_mutating_its_config_cannot_change_the_next_build():
 
     def factory(c):
         c.config.tags.append("x")
-        return CommandPowerController(
+        return _CommandPowerController(
             CommandPowerConfig(on_cmd=str(len(c.config.tags)), off_cmd="")
         )
 
@@ -63,7 +63,7 @@ def test_a_factory_mutating_its_config_cannot_change_the_next_build():
 
 
 def test_none_and_an_instance_pass_through():
-    ctl = CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
+    ctl = _CommandPowerController(CommandPowerConfig(on_cmd="", off_cmd=""))
     assert power_control_from_spec(None, host_id="h") is None
     assert power_control_from_spec(ctl, host_id="h") is ctl
 
@@ -75,7 +75,7 @@ def _spy_over_command(seen: list):
     register_power_controller(
         "command",
         config=CommandPowerConfig,
-        factory=lambda c: seen.append(c.env) or CommandPowerController(c.config),
+        factory=lambda c: seen.append(c.env) or _CommandPowerController(c.config),
         overwrite=True,
     )
 

@@ -44,7 +44,7 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
 
 
 def _empty_fetcher() -> MagicMock:
-    """A ``GcdaFetcher`` double that fetches nothing."""
+    """A ``_GcdaFetcher`` double that fetches nothing."""
     fetcher = MagicMock()
     fetcher.fetch_all = AsyncMock(return_value={})
     return fetcher
@@ -165,7 +165,7 @@ class TestNamedExceptions:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -190,7 +190,7 @@ class TestNamedExceptions:
 
 
 class TestFetchStage:
-    """The fetch constructs its GcdaFetcher at the given ``cov_dir`` (staging per
+    """The fetch constructs its _GcdaFetcher at the given ``cov_dir`` (staging per
     ``(host, product)``), and a run that retrieves no ``.gcda`` from any product
     fails loud naming every ``host:product:cov_dir`` triple it searched."""
 
@@ -211,7 +211,7 @@ class TestFetchStage:
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()
+                "otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()
             ) as fetcher_cls,
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
@@ -247,7 +247,7 @@ class TestFetchStage:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[h1, h2]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -275,7 +275,7 @@ class TestFetchStage:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -307,7 +307,7 @@ class TestFetchStage:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host, runner]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -339,7 +339,7 @@ class TestProductsOnly:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -400,7 +400,7 @@ class TestProductsOnly:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -451,7 +451,7 @@ class TestCleanAfterFetch:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher_instance),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -612,7 +612,7 @@ class TestCollectEmbedded:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[hop, zephyr37_llext]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=_empty_fetcher()),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch(
@@ -888,7 +888,7 @@ class TestFetchedToolchainMetadata:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=doubles),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -1285,7 +1285,7 @@ class TestCaptureTail:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -1325,7 +1325,7 @@ class TestCaptureTail:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
             patch("otto.fleet.all_hosts", return_value=hosts),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
@@ -1565,7 +1565,7 @@ class TestContainerOnlyPattern:
                     return_value={"hosts": r".*\.r1\.api", "tiers": {}},
                 ),
                 patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-                patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+                patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
             ):
                 result = asyncio.run(collect_coverage(cov_dir, projects=[project]))
         finally:
@@ -1649,7 +1649,7 @@ def _two_targets(
     with (
         patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
         patch("otto.fleet.all_hosts", return_value=[host]),
-        patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+        patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
         patch(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             new=AsyncMock(side_effect=embedded),
@@ -1759,7 +1759,7 @@ class TestAFailedFetchIsAFailedProduct:
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch("otto.coverage.fetcher.remote._GcdaFetcher", return_value=fetcher),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),

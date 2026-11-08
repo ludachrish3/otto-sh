@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from otto.host.host import (
-    HostFilter,
     SuppressCommandOutput,
+    _HostFilter,
     get_logging_command_output_enabled,
 )
 from otto.host.inventory_ref import InventoryRef
@@ -374,7 +374,7 @@ async def test_run_command_with_global_suppression(caplog):
                 await host.run(["echo hello world"])
                 assert get_logging_command_output_enabled() is False
                 for log in caplog.records:
-                    assert HostFilter().filter(log) is False
+                    assert _HostFilter().filter(log) is False
                 assert host.log is LogMode.NORMAL
             assert get_logging_command_output_enabled() is True
     finally:
@@ -403,7 +403,7 @@ async def test_run_command_with_local_suppression():
     try:
         # A QUIET host folds its standing mode into each record's ``log_mode``
         # at the emit seam (``_effective_log``), so the records it emits carry
-        # ``log_mode=LogMode.QUIET`` and HostFilter drops them — the filter no
+        # ``log_mode=LogMode.QUIET`` and _HostFilter drops them — the filter no
         # longer reads ``host.log`` directly.
         assert get_logging_command_output_enabled() is True
         host._log_command("echo hello world", host._effective_log(LogMode.NORMAL))
@@ -412,7 +412,7 @@ async def test_run_command_with_local_suppression():
         assert cmd_records
         for record in cmd_records:
             assert getattr(record, "log_mode", None) is LogMode.QUIET
-            assert HostFilter().filter(record) is False
+            assert _HostFilter().filter(record) is False
     finally:
         otto_logger.removeHandler(handler)
         otto_logger.setLevel(prev_level)
@@ -548,7 +548,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             assert get_logging_command_output_enabled() is True
             # Under overlap: each host's own records (emitted now, while QUIET)
             # are filtered out, and the global flag is unaffected for other hosts.
-            assert HostFilter().filter(make_record(host)) is False
+            assert _HostFilter().filter(make_record(host)) is False
 
     try:
         await asyncio.gather(
@@ -561,8 +561,8 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
         assert host_a.log is LogMode.NORMAL
         assert host_b.log is LogMode.NORMAL
         # Post-restoration, records emitted now are NORMAL and would be allowed.
-        assert HostFilter().filter(make_record(host_a)) is True
-        assert HostFilter().filter(make_record(host_b)) is True
+        assert _HostFilter().filter(make_record(host_a)) is True
+        assert _HostFilter().filter(make_record(host_b)) is True
     finally:
         await host_a.close()
         await host_b.close()

@@ -15,7 +15,7 @@ from otto.examples.lab_repository import ExampleLabRepository
 from otto.host.element import Element
 from otto.host.factory import host_identity
 from otto.labs import CompositeLabRepository, LabSource, host_summaries
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from tests._fixtures.labdata import write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
@@ -49,9 +49,9 @@ def _priorities(summaries) -> dict[str, int]:
 
 
 @pytest.fixture
-def json_repository(tmp_path: Path) -> JsonFileLabRepository:
+def json_repository(tmp_path: Path) -> _JsonFileLabRepository:
     write_lab_json(tmp_path / "lab.json", _HOSTS, links=[])
-    return JsonFileLabRepository(search_paths=[tmp_path])
+    return _JsonFileLabRepository(search_paths=[tmp_path])
 
 
 def test_json_backend_summaries_carry_the_rank(json_repository):

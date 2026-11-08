@@ -5,7 +5,7 @@ import pytest
 from otto.host.power import POWER_CONTROLLERS
 from otto.inventory import InventoryError
 from otto.labs.errors import LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.registry import BackendRegistry
 from tests._fixtures.labdata import write_lab_json
 
@@ -39,7 +39,7 @@ def test_the_loader_reports_the_factory_s_error_with_file_element_and_index(tmp_
         LabRepositoryError,
         match=rf"Lab file '{path}': element 'bad' hosts\[0\] in lab 'l': .*{tail}",
     ):
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
 
 
 def test_an_unresolved_inventory_reference_is_attributed_like_a_factory_error(tmp_path):
@@ -53,7 +53,7 @@ def test_an_unresolved_inventory_reference_is_attributed_like_a_factory_error(tm
         LabRepositoryError,
         match=rf"Lab file '{path}': element 'bad' hosts\[0\] in lab 'l': .*inventory",
     ) as exc:
-        JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+        _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
     assert isinstance(exc.value.__cause__, InventoryError)
 
 
@@ -77,5 +77,5 @@ def test_a_loaded_host_parses_its_power_table_once(tmp_path, monkeypatch):
         }
     ]
     write_lab_json(tmp_path / "lab.json", hosts, links=[])
-    JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+    _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
     assert calls == ["command"]

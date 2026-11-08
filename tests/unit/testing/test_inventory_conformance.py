@@ -164,7 +164,7 @@ def test_positive_control_needs_a_backend_that_honours_inventory(tmp_path):
     referenced entry raises and the "loaded WITH the inventory" rule fires.
     """
     from otto.inventory import JsonInventory as _JsonInventory
-    from otto.labs.json_repository import JsonFileLabRepository
+    from otto.labs.json_repository import _JsonFileLabRepository
 
     (tmp_path / "lab.json").write_text(
         json.dumps(
@@ -188,12 +188,12 @@ def test_positive_control_needs_a_backend_that_honours_inventory(tmp_path):
     )
     (tmp_path / "inventory.json").write_text(json.dumps({"k": {"ip": "10.0.0.1"}}))
     inv = _JsonInventory(tmp_path / "inventory.json", supplies=["ip"])
-    honours = JsonFileLabRepository(search_paths=[tmp_path])
+    honours = _JsonFileLabRepository(search_paths=[tmp_path])
     assert_inventory_conforms(inv, repository=honours, lab="l")
 
     class Ignores:  # a backend that drops inventory= on the floor
         def load_lab(self, name, preferences=None, inventory=None):
-            return JsonFileLabRepository(search_paths=[tmp_path]).load_lab(name)
+            return _JsonFileLabRepository(search_paths=[tmp_path]).load_lab(name)
 
         def list_labs(self):
             return ["l"]

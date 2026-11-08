@@ -291,7 +291,7 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
     _mark(stdout_handler)
     if previous is not None:
         # Carry the suppress filters over. ``attach_console_suppress_filter``
-        # hangs HostFilter/LogMode on the console handler, and a freshly built
+        # hangs _HostFilter/LogMode on the console handler, and a freshly built
         # replacement carries none of them — so without this, "attach a
         # suppress filter, then re-install to raise the level" silently
         # UN-suppresses. Same principle as install_sinks copying the console's
@@ -1288,7 +1288,7 @@ def install_sinks(output_dir: Path, *, proxy_streams: bool) -> None:
             output_dir / "verbose.log", verbose_floor(log_level), _state.rich_log_file
         )
         # console.log holds the console's log records, so it inherits the console
-        # handler's suppress filters (e.g. HostFilter). attach_console_suppress_filter
+        # handler's suppress filters (e.g. _HostFilter). attach_console_suppress_filter
         # may run before this dir exists (the CLI attaches in its callback, builds the
         # dir later), so copy them here; verbose.log deliberately keeps QUIET records.
         if _state.console_handler is not None:
@@ -1358,7 +1358,7 @@ def attach_console_suppress_filter(filt: Filter) -> None:
     """Apply *filt* to the console + console.log handlers only (NOT verbose.log).
 
     ONE filter per class per handler. Each ``ensure_cli_session`` builds a fresh
-    ``HostFilter`` and calls this, and ``install_console`` copies every filter it
+    ``_HostFilter`` and calls this, and ``install_console`` copies every filter it
     finds onto the replacement handler — so N in-process invocations (a
     CliRunner test file; never production, where one process is one invocation)
     left N interchangeable HostFilters, each re-deciding the same verdict for

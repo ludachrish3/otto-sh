@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from .interface import Interface
     from .options import SnmpOptions
     from .session_setup import SessionSetup
-    from .transport import SshHopTransport
+    from .transport import _SshHopTransport
 
 logger = logging.getLogger(__name__)
 
@@ -576,8 +576,8 @@ class RemoteHost(BaseHost):
             return None
         return self._lab_host(self.hop, role="hop")
 
-    def _build_hop_transport(self, hop_id: str | None = None) -> "SshHopTransport":
-        """Build an ``SshHopTransport`` for reaching this host through its hop.
+    def _build_hop_transport(self, hop_id: str | None = None) -> "_SshHopTransport":
+        """Build an ``_SshHopTransport`` for reaching this host through its hop.
 
         *hop_id* names the host to tunnel into; ``None`` (the default) means
         this host's own ``hop``. The console term passes its console server's
@@ -595,7 +595,7 @@ class RemoteHost(BaseHost):
         it once per hopped target.
 
         For multi-hop chains the transport holds a reference to its parent
-        :class:`SshHopTransport`, so ``close()`` cascades down the entire
+        ``_SshHopTransport``, so ``close()`` cascades down the entire
         chain — every intermediate SSH connection (and its underlying
         asyncio transport) gets closed explicitly. Without that linkage,
         the outermost SSH connection (e.g. test1 in an
@@ -608,7 +608,7 @@ class RemoteHost(BaseHost):
 
         Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
         """
-        from .transport import SshHopTransport
+        from .transport import _SshHopTransport
 
         hop_id = self.hop if hop_id is None else hop_id
         if hop_id is None:
@@ -617,17 +617,17 @@ class RemoteHost(BaseHost):
             )
         host_name = self.name
 
-        # The outer SshHopTransport — its ``_parent`` is set lazily on the
+        # The outer _SshHopTransport — its ``_parent`` is set lazily on the
         # first call to ``_create_tunnel`` (when the config is
         # available and we can resolve the hop chain). Linking ``_parent``
         # makes ``close()`` walk the chain so every intermediate SSH
         # connection's asyncio transport gets explicitly closed.
         # placeholder factory is replaced below; needed to satisfy the
         # constructor without doing anything that requires the config.
-        async def _placeholder(*args: object, **kwargs: object) -> NoReturn:  # noqa: ARG001 — required by SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
-            raise RuntimeError("SshHopTransport factory not initialized")
+        async def _placeholder(*args: object, **kwargs: object) -> NoReturn:  # noqa: ARG001 — required by _SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
+            raise RuntimeError("_SshHopTransport factory not initialized")
 
-        outer = SshHopTransport(_placeholder)
+        outer = _SshHopTransport(_placeholder)
 
         async def _create_tunnel(
             _visited: set[str] | None = None,
@@ -641,7 +641,7 @@ class RemoteHost(BaseHost):
 
             parent_tunnel = None
             if hop_host.hop:
-                # Build the parent SshHopTransport lazily on first use and
+                # Build the parent _SshHopTransport lazily on first use and
                 # cache it on ``outer._parent`` so close() can walk it.
                 # Reusing the cached connection avoids re-tunneling on
                 # subsequent calls and gives close() a single object to
@@ -649,9 +649,9 @@ class RemoteHost(BaseHost):
                 # ``_conn_lock``, which is what prevents concurrent callers
                 # of the outer factory from each opening their own parent
                 # connection and leaking the race losers.
-                if outer._parent is None:  # noqa: SLF001 — intra-package access to SshHopTransport._parent cache
+                if outer._parent is None:  # noqa: SLF001 — intra-package access to _SshHopTransport._parent cache
                     outer._parent = hop_host._build_hop_transport()  # noqa: SLF001 — intra-package access to RemoteHost._build_hop_transport
-                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)  # noqa: SLF001 — intra-package access to SshHopTransport._parent
+                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)  # noqa: SLF001 — intra-package access to _SshHopTransport._parent
 
             # A hop is always an SSH tunnel, so it resolves against ssh
             # (spec 2026-09-13 cred-scope §4) regardless of the hop host's
@@ -684,7 +684,7 @@ class RemoteHost(BaseHost):
                 apply_post_connect=False,
             )
 
-        outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure
+        outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to _SshHopTransport._factory closure
         return outer
 
     def console_endpoint(self) -> ConsoleEndpoint:

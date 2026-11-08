@@ -311,7 +311,7 @@ def _register_builtin_backends() -> None:
         ),
         (
             "ftp",
-            "otto.host.transfer.ftp:FtpFileTransfer",
+            "otto.host.transfer.ftp:_FtpFileTransfer",
             TransferMetadata(unix, ProgressGranularity(put=8192, get=8192), authenticates=True),
         ),
         (
@@ -347,7 +347,7 @@ def _register_builtin_backends() -> None:
         ),
         (
             "tftp",
-            "otto.host.transfer.tftp:TftpFileTransfer",
+            "otto.host.transfer.tftp:_TftpFileTransfer",
             TransferMetadata(
                 embedded,
                 ProgressGranularity(

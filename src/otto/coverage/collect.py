@@ -296,7 +296,7 @@ async def collect_coverage(
 
     Every matched host is walked product by product. A product on a Unix or
     container host writes ``.gcda`` under its own ``cov_dir`` on a filesystem
-    fetched by :class:`~otto.coverage.fetcher.remote.GcdaFetcher`; an embedded
+    fetched by :mod:`otto.coverage.fetcher.remote`; an embedded
     (Zephyr LLEXT) board has no filesystem and dumps its products' counters
     over the console instead, decoded by
     :func:`~otto.coverage.fetcher.embedded.collect_embedded_coverage`. Both
@@ -392,7 +392,7 @@ async def collect_coverage(
     from .capture.produce import ProduceResult, ProductCapture, produce_captures
     from .errors import CoverageCaptureError
     from .fetcher.embedded import collect_embedded_coverage
-    from .fetcher.remote import GcdaFetcher
+    from .fetcher.remote import _GcdaFetcher
     from .tree import ProductKey
 
     if projects is None:
@@ -449,7 +449,7 @@ async def collect_coverage(
         # No reconnect step: a host whose connection belonged to one of
         # pytest's closed loops drops it on first use here and reconnects on
         # this loop (BaseHost._claim_loop).
-        fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern, present_at_reset=present_at_reset)
+        fetcher = _GcdaFetcher(cov_dir, pattern=cov_pattern, present_at_reset=present_at_reset)
         fetched = await fetcher.fetch_all(failures=fetch_failures)
         product_dirs.update(fetched)
 

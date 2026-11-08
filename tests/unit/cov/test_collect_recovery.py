@@ -70,7 +70,7 @@ def lab(tmp_path, monkeypatch):
         def save(self, p):
             p.write_text("{}")
 
-    monkeypatch.setattr("otto.coverage.fetcher.remote.GcdaFetcher.fetch_all", fetch_all)
+    monkeypatch.setattr("otto.coverage.fetcher.remote._GcdaFetcher.fetch_all", fetch_all)
     monkeypatch.setattr(collect, "clean_coverage", clean)
     monkeypatch.setattr("otto.coverage.merge.merger.LcovMerger.capture_pairs", capture_pairs)
     monkeypatch.setattr(produce, "build_capture", lambda **kw: _Cap())

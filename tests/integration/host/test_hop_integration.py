@@ -605,7 +605,7 @@ async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
             "hop builds an asyncssh local port forward and the tunnel transport "
             "holds it until the host closes, so without reuse a bulk put of N "
             "files strands a listening socket per file mid-operation. "
-            "SshHopTransport.forward_port must reuse the forward for a "
+            "_SshHopTransport.forward_port must reuse the forward for a "
             "destination it already has one for."
         )
     finally:

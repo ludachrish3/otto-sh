@@ -4,7 +4,7 @@ These tests verify the fetch half of the coverage workflow:
 1. Compile a C product with ``--coverage``
 2. Deploy to multiple remote hosts
 3. Run the product (generating ``.gcda`` files)
-4. Fetch ``.gcda`` files using ``GcdaFetcher``
+4. Fetch ``.gcda`` files using ``_GcdaFetcher``
 
 Capture and report from fetched counters are covered end to end by the
 ``tests/e2e/cov`` lanes.
@@ -24,7 +24,7 @@ import pytest
 import tomli
 
 import otto.host.factory  # noqa: F401 — imported for its side effect: the factory module is what puts the built-in "file" product kind in PRODUCT_KINDS
-from otto.coverage.fetcher.remote import GcdaFetcher
+from otto.coverage.fetcher.remote import _GcdaFetcher
 from otto.host.local_host import LocalHost
 from otto.host.product import PRODUCT_KIND_BUILDER, stamp_cov_dir
 from otto.host.unix_host import UnixHost
@@ -39,7 +39,7 @@ def configured_hosts(*hosts):
     """Temporarily install an OttoContext exposing the given hosts via all_hosts().
 
     Used by integration tests that construct UnixHost instances directly
-    (bypassing the lab loader) but need the new GcdaFetcher to see them.
+    (bypassing the lab loader) but need the new _GcdaFetcher to see them.
     """
     lab = Lab(name="pipeline_test")
     lab.hosts = {h.id: h for h in hosts}
@@ -164,7 +164,7 @@ class TestCoverageFetch:
             # host with two products two separate staging dirs.
             cov_dir = tmp_path / "cov"
             with configured_hosts(*hosts):
-                fetcher = GcdaFetcher(cov_dir)
+                fetcher = _GcdaFetcher(cov_dir)
                 product_dirs = await fetcher.fetch_all(failures={})
 
             # Verify we got .gcda files from both hosts

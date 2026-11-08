@@ -165,7 +165,7 @@ def monitor(
             from .invoke import ensure_cli_session
 
             # Session state only (the project's [logging.levels], the console's
-            # HostFilter): review reads a local file, so no lab is loaded.
+            # _HostFilter): review reads a local file, so no lab is loaded.
             ensure_cli_session(ctx)
             run_command(serve_review(source, projects=get_projects()))
             return

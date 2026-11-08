@@ -4,7 +4,7 @@ Coverage works in two steps:
 
 1. **Collect**: ``otto test --cov`` fetches ``.gcda`` files from remote
    hosts into the suite's output directory using
-   :class:`~otto.coverage.fetcher.remote.GcdaFetcher`.
+   the fetcher in :mod:`otto.coverage.fetcher.remote`.
 
 2. **Report**: ``otto cov report`` loads each product's capture (capturing
    any product not yet captured) and renders a multi-tier HTML report using
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from .errors import NoCoverageDataError as NoCoverageDataError
     from .errors import NoCoverageHostsError as NoCoverageHostsError
     from .errors import PairingError as PairingError
-    from .fetcher.remote import GcdaFetcher as GcdaFetcher
     from .get import get_coverage as get_coverage
     from .report_inputs import ReportInputs as ReportInputs
     from .report_inputs import resolve_report_inputs as resolve_report_inputs
@@ -66,7 +65,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "CoverageToolVersionError": "otto.coverage.errors",
     "DestinationError": "otto.coverage.config",
     "FailedReset": "otto.coverage.reports",
-    "GcdaFetcher": "otto.coverage.fetcher.remote",
     "GetReport": "otto.coverage.reports",
     "GitUnavailableError": "otto.coverage.capture.gitio",
     "NoCoverageDataError": "otto.coverage.errors",
@@ -113,7 +111,6 @@ __all__ = [
     "CoverageToolVersionError",
     "DestinationError",
     "FailedReset",
-    "GcdaFetcher",
     "GetReport",
     "GitUnavailableError",
     "NoCoverageDataError",

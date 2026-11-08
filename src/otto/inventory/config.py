@@ -78,7 +78,7 @@ class JsonInventoryConfig(OttoModel):
 
 @final
 class NetBoxInventoryConfig(OttoModel):
-    """The NetBox inventory's table; ``NetBoxInventory`` itself checks the values."""
+    """The NetBox inventory's table; the ``"netbox"`` backend itself checks the values."""
 
     model_config = ConfigDict(frozen=True)
 

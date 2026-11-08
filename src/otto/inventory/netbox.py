@@ -61,7 +61,7 @@ _RESERVED_EXTRA_KEYS: frozenset[str] = frozenset({"id", "serial", "asset_tag", "
 
 
 @final
-class NetBoxInventory:
+class _NetBoxInventory:
     """Inventory over the devices a NetBox filter selects.
 
     Parameters
@@ -380,6 +380,6 @@ class NetBoxInventory:
         return None
 
 
-def _netbox_inventory(c: "Configured[NetBoxInventoryConfig, InventoryEnv]") -> NetBoxInventory:
+def _netbox_inventory(c: "Configured[NetBoxInventoryConfig, InventoryEnv]") -> _NetBoxInventory:
     """Build the built-in NetBox inventory from its parsed configuration."""
-    return NetBoxInventory(**c.config.model_dump())
+    return _NetBoxInventory(**c.config.model_dump())

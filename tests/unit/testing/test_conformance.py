@@ -10,20 +10,16 @@ from uuid import uuid4
 
 import pytest
 
-from otto.labs import (
-    HostSummary,
-    JsonFileLabRepository,
-    LabNotFoundError,
-    SupportsHostSummaries,
-)
+from otto.labs import HostSummary, LabNotFoundError, SupportsHostSummaries
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.reservations import (
-    JsonReservationBackend,
     NullReservationBackend,
     Reservation,
     ReservationBackendBase,
     SupportsResourceHolders,
 )
 from otto.reservations.check import ReservationBackendError
+from otto.reservations.json_backend import _JsonReservationBackend
 from otto.testing import (
     assert_lab_repository_conforms,
     assert_reservation_backend_conforms,
@@ -73,7 +69,7 @@ def _reservations_file(path: Path) -> Path:
 class TestLabRepositoryConformance:
     def test_json_builtin_conforms(self, tmp_path):
         _hosts_file(tmp_path)
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         # Must not raise.
         assert_lab_repository_conforms(repository, expected_labs=["alpha", "beta"])
 
@@ -213,7 +209,7 @@ class TestReservationBackendConformance:
 
     def test_json_builtin_conforms_with_round_trip(self, tmp_path):
         f = _reservations_file(tmp_path)
-        backend = JsonReservationBackend(path=f, username="alice")
+        backend = _JsonReservationBackend(path=f, username="alice")
         assert_reservation_backend_conforms(
             backend, known_user="alice", known_resources=["lab-a", "shared"]
         )
@@ -224,7 +220,7 @@ class TestReservationBackendConformance:
         ``reservations`` raises ``ReservationBackendError`` by design there. The
         helper must record it as a skipped rule, never let it escape.
         """
-        backend = JsonReservationBackend(path=_reservations_file(tmp_path))
+        backend = _JsonReservationBackend(path=_reservations_file(tmp_path))
         with caplog.at_level(logging.WARNING, logger="otto.testing.conformance"):
             assert_reservation_backend_conforms(backend)
         assert "skipping the `reservations` rules" in caplog.text

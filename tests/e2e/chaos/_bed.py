@@ -141,7 +141,7 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     what every caller actually means.
     """
     data = json.loads(lab_data_path().read_text())
-    # Skip records this process cannot resolve, mirroring JsonFileLabRepository:
+    # Skip records this process cannot resolve, mirroring _JsonFileLabRepository:
     # addressing_from_dict validates through the profile/frame registries, and
     # tech1/lab.json's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
     # only a project's init modules register — never the pytest process.

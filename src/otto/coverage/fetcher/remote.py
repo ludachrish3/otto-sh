@@ -366,7 +366,7 @@ async def _fetch_one_host(
 
 
 @final
-class GcdaFetcher:
+class _GcdaFetcher:
     """Fetch ``.gcda`` from the lab's coverage hosts into a per-host, per-product staging tree.
 
     ::

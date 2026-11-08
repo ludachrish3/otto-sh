@@ -252,14 +252,14 @@ def test_a_context_binding_reset_elsewhere_raises():
 
 
 class _ConsoleSide(logging.Handler):
-    """Keeps what the console side would show: the records HostFilter passes AT EMIT time."""
+    """Keeps what the console side would show: the records _HostFilter passes AT EMIT time."""
 
     def __init__(self) -> None:
-        from otto.host.host import HostFilter
+        from otto.host.host import _HostFilter
 
         super().__init__(level=logging.INFO)
         self.kept: list[str] = []
-        self.addFilter(HostFilter())
+        self.addFilter(_HostFilter())
 
     def emit(self, record: logging.LogRecord) -> None:
         self.kept.append(record.getMessage())
@@ -310,13 +310,13 @@ def test_peer_lookup_prefers_the_back_reference_then_the_installed_resolver():
 
 @pytest.mark.asyncio
 async def test_a_power_controller_resolves_through_the_installed_resolver():
-    from otto.host.power import CommandPowerConfig, CommandPowerController
+    from otto.host.power import CommandPowerConfig, _CommandPowerController
 
     controller_host = make_host("test2")
     lab = Lab(name="rig")
     lab.add_host(controller_host)
     target = make_host("test1")  # no back-reference
-    power = CommandPowerController(
+    power = _CommandPowerController(
         CommandPowerConfig(on_cmd="on", off_cmd="off", controller=controller_host.id)
     )
     binding = set_context(OttoContext(lab=lab))

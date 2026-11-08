@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from .identity import ReservationIdentity as ReservationIdentity
     from .identity import ResolvedIdentity as ResolvedIdentity
     from .identity import resolve_username as resolve_username
-    from .json_backend import JsonReservationBackend as JsonReservationBackend
     from .json_backend import JsonReservationConfig as JsonReservationConfig
     from .null_backend import NoneReservationConfig as NoneReservationConfig
     from .null_backend import NullReservationBackend as NullReservationBackend
@@ -71,7 +70,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "ReservationIdentity": "otto.reservations.identity",
     "ResolvedIdentity": "otto.reservations.identity",
     "resolve_username": "otto.reservations.identity",
-    "JsonReservationBackend": "otto.reservations.json_backend",
     "JsonReservationConfig": "otto.reservations.json_backend",
     "NoneReservationConfig": "otto.reservations.null_backend",
     "NullReservationBackend": "otto.reservations.null_backend",
@@ -106,7 +104,6 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "RESERVATION_BACKENDS",
-    "JsonReservationBackend",
     "JsonReservationConfig",
     "MissingReservationError",
     "MissingResource",

@@ -2,7 +2,7 @@
 
 :class:`EmbeddedFileTransfer` holds the common embedded fields (exec_cmd,
 filesystem, mount state) shared by :class:`~otto.host.transfer.ConsoleFileTransfer`
-and :class:`~otto.host.transfer.TftpFileTransfer`. Subclasses implement
+and the ``"tftp"`` kind's backend. Subclasses implement
 ``run_get`` / ``run_put`` and self-register their selector on import.
 """
 
@@ -38,13 +38,13 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # Legacy positional-compat: the old EmbeddedFileTransfer accepted
         # ``transfer`` as its first positional argument. Accept and ignore it
         # here so existing test call-sites that pass it by keyword still work;
-        # concrete subclasses (ConsoleFileTransfer, TftpFileTransfer) are
+        # concrete subclasses (ConsoleFileTransfer, _TftpFileTransfer) are
         # selected by the registry, not by this field.
         transfer: str | None = None,  # noqa: ARG002 — legacy positional-compat seam; accepted and ignored so existing call-sites pass by keyword
     ) -> None:
         super().__init__(name=name, max_filename_len=max_filename_len)
         # Stored even when None so subclasses that don't need exec_cmd
-        # (e.g. TftpFileTransfer's stub) can still be constructed without it.
+        # (e.g. _TftpFileTransfer's stub) can still be constructed without it.
         self._exec_cmd = exec_cmd
         # The host's on-device filesystem variant. Source of truth for the
         # mount command, the no-FS short-circuit (``supports_transfer``),

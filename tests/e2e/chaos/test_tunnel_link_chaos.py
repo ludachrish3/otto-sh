@@ -64,13 +64,13 @@ _HOLD_MARKER = "otto-chaos-portblock"
 #
 # The phase markers land on stdout instead -- NOT because QUIET-suppression
 # is skipped (it isn't: `ensure_cli_session` in otto/cli/invoke.py attaches
-# `HostFilter` to the console handler unconditionally, output_dir or not, and
+# `_HostFilter` to the console handler unconditionally, output_dir or not, and
 # it correctly drops every QUIET/NEVER-tagged, HOST-tagged record). The
 # markers this module keys on are a DIFFERENT kind of line: `ShellSession.
 # _run_cmd_inner`'s own "framed write"/"run_cmd done" traces (src/otto/host/
 # session.py, the `logger.debug(f"{self._log_tag}: framed write cmd=...")` /
 # `"... run_cmd done cmd=..."` calls) are unconditional and carry no
-# `extra={"host": ..., "log_mode": ...}` tag at all -- `HostFilter.filter`
+# `extra={"host": ..., "log_mode": ...}` tag at all -- `_HostFilter.filter`
 # passes any untagged record straight through (`host is None` -> always
 # keep), regardless of what LogMode the underlying host.exec/run call asked
 # for. Those traces fire for every `host.run()` call on ANY transport (link

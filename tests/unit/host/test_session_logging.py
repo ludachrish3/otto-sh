@@ -381,7 +381,7 @@ class TestPerCommandLogSuppression:
 # Console-suppress filter (Task 2)
 # ---------------------------------------------------------------------------
 
-from otto.host.host import HostFilter
+from otto.host.host import _HostFilter
 from otto.logger.mode import LogMode
 
 
@@ -393,14 +393,14 @@ def _record(mode):
 
 
 def test_console_suppress_filter_drops_quiet_and_never():
-    f = HostFilter()
+    f = _HostFilter()
     assert f.filter(_record(LogMode.NORMAL)) is True
     assert f.filter(_record(LogMode.QUIET)) is False
     assert f.filter(_record(LogMode.NEVER)) is False
 
 
 def test_console_suppress_filter_passes_non_command_records():
-    f = HostFilter()
+    f = _HostFilter()
     rec = logging.LogRecord("otto", logging.WARNING, __file__, 0, "boom", None, None)
     assert f.filter(rec) is True  # no host tag → always passes (warnings/errors)
 

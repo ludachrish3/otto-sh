@@ -1,4 +1,4 @@
-"""JsonFileLabRepository: construction, search paths, file shape, links and preferences.
+"""_JsonFileLabRepository: construction, search paths, file shape, links and preferences.
 
 Also covers the v2-specific rules: declared labs, element membership by
 pattern, and the migration error a v1 top-level ``hosts`` array raises (spec
@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from otto.creds import JsonCredsStore
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory import CredsOverlay, JsonInventory
 from otto.labs import LabNotFoundError, LabRepositoryError
-from otto.labs.json_repository import JsonFileLabRepository, parse_lab_sections
+from otto.labs.json_repository import _JsonFileLabRepository, parse_lab_sections
 from otto.labs.loader import Lab
 from tests._fixtures.labdata import write_lab_json
 
@@ -64,7 +64,7 @@ def _el(name, labs, hosts=None, **extra) -> dict:
 
 
 class TestJsonFileLabRepository:
-    """Tests for JsonFileLabRepository (construct-time search paths)."""
+    """Tests for _JsonFileLabRepository (construct-time search paths)."""
 
     def test_load_lab_simple(self, tmp_path):
         _hosts_file(
@@ -80,7 +80,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("testlab")
 
         assert isinstance(lab, Lab)
@@ -109,7 +109,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("multilab")
 
         assert isinstance(lab, Lab)
@@ -120,7 +120,7 @@ class TestJsonFileLabRepository:
 
     def test_load_lab_not_found_no_hosts_file(self, tmp_path):
         """A missing lab.json raises LabNotFoundError, not FileNotFoundError."""
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabNotFoundError) as exc_info:
             repository.load_lab("nonexistent")
@@ -142,7 +142,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabNotFoundError) as exc_info:
             repository.load_lab("nonexistent")
@@ -170,7 +170,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("lab_a")
 
         assert len(lab.hosts) == 1
@@ -195,7 +195,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([path1, path2])
+        repository = _JsonFileLabRepository([path1, path2])
         lab = repository.load_lab("testlab")
 
         assert isinstance(lab, Lab)
@@ -205,7 +205,7 @@ class TestJsonFileLabRepository:
         """Malformed JSON raises LabRepositoryError."""
         (tmp_path / "lab.json").write_text("{invalid json")
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabRepositoryError):
             repository.load_lab("badlab")
@@ -223,7 +223,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabRepositoryError) as exc_info:
             repository.load_lab("badlab")
@@ -265,7 +265,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("resourcelab")
 
         assert lab.resources == {"alt1", "citrus"}
@@ -286,7 +286,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("idlab")
 
         assert "alt1-qemu-0" in lab.hosts
@@ -312,7 +312,7 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         assert repository.list_labs() == ["alpha", "beta"]
 
     def test_list_labs_multiple_search_paths(self, tmp_path):
@@ -346,22 +346,22 @@ class TestJsonFileLabRepository:
             ],
         )
 
-        repository = JsonFileLabRepository([path1, path2])
+        repository = _JsonFileLabRepository([path1, path2])
         assert repository.list_labs() == ["alpha", "beta"]
 
     def test_list_labs_no_hosts_file(self, tmp_path):
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         assert repository.list_labs() == []
 
     def test_list_labs_skips_malformed_file(self, tmp_path):
         """A malformed lab.json is skipped by list_labs, not fatal."""
         (tmp_path / "lab.json").write_text("{invalid json")
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         assert repository.list_labs() == []
 
     def test_default_search_paths_empty(self):
         """Constructed with no search paths -> no labs, no lab file found."""
-        repository = JsonFileLabRepository()
+        repository = _JsonFileLabRepository()
         assert repository.list_labs() == []
 
 
@@ -370,13 +370,13 @@ class TestLabFileShape:
 
     def test_array_top_level_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps([{"ip": "192.0.2.1"}]))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="JSON object"):
             repository.load_lab("unix")
 
     def test_unknown_section_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({"elements": [], "routes": []}))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="unknown section"):
             repository.load_lab("unix")
 
@@ -385,31 +385,31 @@ class TestLabFileShape:
         payload = json.loads((tmp_path / "lab.json").read_text())
         payload["_comment"] = "a note"
         (tmp_path / "lab.json").write_text(json.dumps(payload))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         assert repository.load_lab("unix").hosts  # loads fine
 
     def test_missing_sections_default_empty(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({}))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabNotFoundError):  # neither declared nor matched
             repository.load_lab("unix")
 
     def test_section_not_array_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({"elements": {"not": "a list"}}))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="must be a JSON array"):
             repository.load_lab("unix")
 
     def test_labs_section_not_object_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({"labs": ["unix"]}))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="'labs' must be a JSON object"):
             repository.load_lab("unix")
 
     def test_hosts_json_is_not_read(self, tmp_path):
         """Hard cutover: a legacy hosts.json is invisible."""
         (tmp_path / "hosts.json").write_text(json.dumps([HOST_ENTRY]))
-        repository = JsonFileLabRepository(search_paths=[tmp_path])
+        repository = _JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabNotFoundError, match=r"lab\.json"):
             repository.load_lab("unix")
 
@@ -430,7 +430,7 @@ class TestDeclaredLinks:
                 }
             ],
         )
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("unix")
 
         assert len(lab.links) == 1
@@ -460,7 +460,7 @@ class TestDeclaredLinks:
                 }
             ],
         )
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("unix")
 
         assert "kiwi-seed" not in lab.hosts  # dangling: not part of this lab's hosts
@@ -495,7 +495,7 @@ class TestDeclaredLinks:
                 }
             ],
         )
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("unix")
 
         assert lab.links == []
@@ -538,7 +538,7 @@ class TestDeclaredLinks:
                 {"endpoints": [{"host": "kiwi-seed"}]},
             ],
         )
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("unix")
 
         assert set(lab.hosts) == {"test1", "test2"}
@@ -558,7 +558,7 @@ class TestDeclaredLinks:
                 }
             ],
         )
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabRepositoryError, match=r"lab\.json.*index 0"):
             repository.load_lab("unix")
@@ -587,7 +587,7 @@ class TestDeclaredLinks:
         }
         _write_lab(tmp_path, hosts=[host_a, malformed_other])
 
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("unix")
 
         assert "test1" in lab.hosts
@@ -638,7 +638,7 @@ class TestDeclaredLinks:
         )
         _write_lab(path2, hosts=[dup_first, dup_second])
 
-        repository = JsonFileLabRepository([path1, path2])
+        repository = _JsonFileLabRepository([path1, path2])
 
         with caplog.at_level(logging.WARNING):
             lab = repository.load_lab("unix")
@@ -673,7 +673,7 @@ class TestLoadLabWithPreferences:
         The preference connect_timeout wins; the host-only port is preserved.
         """
         self._hosts(tmp_path)
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab(
             "testlab",
             preferences={".*": {"ssh_options": {"connect_timeout": 99.0}}},
@@ -685,7 +685,7 @@ class TestLoadLabWithPreferences:
     def test_defaults_none_unchanged_behavior(self, tmp_path):
         """``preferences=None`` matches today's behavior."""
         self._hosts(tmp_path)
-        repository = JsonFileLabRepository([tmp_path])
+        repository = _JsonFileLabRepository([tmp_path])
         lab = repository.load_lab("testlab")
         host = next(iter(lab.hosts.values()))
         assert host.ssh_options.port == 9000
@@ -697,7 +697,7 @@ class TestLoadLabWithPreferences:
 def test_top_level_hosts_is_the_migration_error(tmp_path: Path) -> None:
     _write(tmp_path, {"hosts": [], "links": []})
     with pytest.raises(LabRepositoryError, match=r"'hosts'.*moved.*'elements'"):
-        JsonFileLabRepository([tmp_path]).load_lab("unix")
+        _JsonFileLabRepository([tmp_path]).load_lab("unix")
 
 
 def test_parse_lab_sections_shapes() -> None:
@@ -723,7 +723,7 @@ def test_members_by_fullmatch_pattern_and_flattened_identity(tmp_path: Path) -> 
             ],
         ),
     )
-    lab = JsonFileLabRepository([tmp_path]).load_lab("unix")
+    lab = _JsonFileLabRepository([tmp_path]).load_lab("unix")
     # The element's ``id`` is data: it reaches ``host.element.id`` and stays
     # out of the host id (spec 2026-09-05 §2.1).
     assert set(lab.hosts) == {"test1", "dut"}
@@ -761,7 +761,7 @@ def test_hosts_of_one_element_share_the_one_frozen_element(tmp_path: Path) -> No
             ],
         ),
     )
-    lab = JsonFileLabRepository([tmp_path]).load_lab("l")
+    lab = _JsonFileLabRepository([tmp_path]).load_lab("l")
     a, b = lab.hosts["dut-a"], lab.hosts["dut-b"]
     assert a.element is b.element
     assert a.element.metadata == {"rack": "B4"}
@@ -774,15 +774,15 @@ def test_hosts_of_one_element_share_the_one_frozen_element(tmp_path: Path) -> No
 def test_source_with_neither_members_nor_declaration_raises_not_found(tmp_path: Path) -> None:
     _write(tmp_path, _doc(labs={"unix": {}}, elements=[_el("t", ["unix"])]))
     with pytest.raises(LabNotFoundError):
-        JsonFileLabRepository([tmp_path]).load_lab("embedded")
+        _JsonFileLabRepository([tmp_path]).load_lab("embedded")
 
 
 def test_declaration_only_and_members_only_contributions(tmp_path: Path) -> None:
     _write(tmp_path, _doc(labs={"unix": {"resources": ["r"]}}, elements=[_el("t", ["other"])]))
-    declared_only = JsonFileLabRepository([tmp_path]).load_lab("unix")
+    declared_only = _JsonFileLabRepository([tmp_path]).load_lab("unix")
     assert declared_only.hosts == {}
     assert declared_only.resources == {"r"}
-    members_only = JsonFileLabRepository([tmp_path]).load_lab("other")
+    members_only = _JsonFileLabRepository([tmp_path]).load_lab("other")
     assert set(members_only.hosts) == {"t"}
     assert members_only.resources == set()
     assert "other" not in members_only.metadata
@@ -790,7 +790,7 @@ def test_declaration_only_and_members_only_contributions(tmp_path: Path) -> None
 
 def test_list_labs_is_the_declared_set_not_the_patterns(tmp_path: Path) -> None:
     _write(tmp_path, _doc(labs={"unix": {}, "b": {}}, elements=[_el("t", ["unix", "ghost"])]))
-    assert JsonFileLabRepository([tmp_path]).list_labs() == ["b", "unix"]
+    assert _JsonFileLabRepository([tmp_path]).list_labs() == ["b", "unix"]
 
 
 def test_duplicate_element_name_errors_even_with_distinct_ids(tmp_path: Path) -> None:
@@ -805,7 +805,7 @@ def test_duplicate_element_name_errors_even_with_distinct_ids(tmp_path: Path) ->
     )
     match = r"duplicate element 'dut' at elements\[0\] and elements\[1\] — one element, one entry"
     with pytest.raises(LabRepositoryError, match=match):
-        JsonFileLabRepository([tmp_path]).load_lab("l")
+        _JsonFileLabRepository([tmp_path]).load_lab("l")
 
 
 def test_elements_that_slug_alike_error_naming_both_spellings(tmp_path: Path) -> None:
@@ -813,7 +813,7 @@ def test_elements_that_slug_alike_error_naming_both_spellings(tmp_path: Path) ->
     _write(tmp_path, _doc(labs={"l": {}}, elements=[_el("Server", ["l"]), _el("server", ["l"])]))
     match = r"elements\[0\] 'Server' and elements\[1\] 'server' both slug to 'server'"
     with pytest.raises(LabRepositoryError, match=match):
-        JsonFileLabRepository([tmp_path]).load_lab("l")
+        _JsonFileLabRepository([tmp_path]).load_lab("l")
 
 
 def test_host_entry_error_names_element_and_index(tmp_path: Path) -> None:
@@ -824,7 +824,7 @@ def test_host_entry_error_names_element_and_index(tmp_path: Path) -> None:
     # (?s): the pydantic report is multi-line — the offending key is on a later
     # line than the "element 'dut' hosts[0]" prefix this test is really pinning.
     with pytest.raises(LabRepositoryError, match=r"(?s)element 'dut' hosts\[0\].*ipp"):
-        JsonFileLabRepository([tmp_path]).load_lab("l")
+        _JsonFileLabRepository([tmp_path]).load_lab("l")
 
 
 def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path: Path) -> None:
@@ -855,10 +855,10 @@ def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path
     creds_path = tmp_path / "creds.json"
     creds_path.write_text(json.dumps({"dut-1": [{"login": "root", "password": "SECRET_XYZ"}]}))
     overlay = CredsOverlay(
-        JsonInventory(inv_path, supplies=["ip", "creds"]), store=JsonCredsStore(creds_path)
+        JsonInventory(inv_path, supplies=["ip", "creds"]), store=_JsonCredsStore(creds_path)
     )
     with pytest.raises(LabRepositoryError) as exc_info:
-        JsonFileLabRepository([tmp_path]).load_lab("l", inventory=overlay)
+        _JsonFileLabRepository([tmp_path]).load_lab("l", inventory=overlay)
     message = str(exc_info.value)
     assert "SECRET_XYZ" not in message
     # A model-level before-validator has an empty ``loc``, so the finding is
@@ -889,14 +889,14 @@ def test_provider_failure_is_wrapped_with_the_entry_that_caused_it(
     monkeypatch.setattr("otto.host.factory.apply_product_providers", _explode)
 
     with pytest.raises(LabRepositoryError, match=r"element 'dut' hosts\[0\]") as exc_info:
-        JsonFileLabRepository([tmp_path]).load_lab("l")
+        _JsonFileLabRepository([tmp_path]).load_lab("l")
     assert exc_info.value.__cause__ is boom  # chained, never swallowed
     assert "provider is broken" in str(exc_info.value)
 
 
 def test_summaries_carry_patterns_and_resolved_labs(tmp_path: Path) -> None:
     _write(tmp_path, _doc(labs={"unix": {}, "unix.b4": {}}, elements=[_el("t", ["unix(\\..*)?"])]))
-    (s,) = JsonFileLabRepository([tmp_path]).list_host_summaries()
+    (s,) = _JsonFileLabRepository([tmp_path]).list_host_summaries()
     assert s.id == "t"
     assert s.lab_patterns == ["unix(\\..*)?"]
     assert s.labs == ["unix", "unix.b4"]
@@ -924,5 +924,5 @@ def test_links_still_resolve_against_flattened_ids(tmp_path: Path) -> None:
             ],
         ),
     )
-    lab = JsonFileLabRepository([tmp_path]).load_lab("l")
+    lab = _JsonFileLabRepository([tmp_path]).load_lab("l")
     assert len(lab.links) == 1

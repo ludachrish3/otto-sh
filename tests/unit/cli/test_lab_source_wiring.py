@@ -9,12 +9,12 @@ import pytest
 from otto.config.project import Project
 from otto.labs import (
     CompositeLabRepository,
-    JsonFileLabRepository,
     LabNotFoundError,
     LabRepositoryError,
     build_lab_sources,
     register_lab_repository,
 )
+from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import load_lab
 from otto.labs.registry import LAB_REPOSITORIES
 from tests._fixtures.labdata import write_lab_json
@@ -59,7 +59,7 @@ def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> 
     repository = build_lab_sources([project])
     assert isinstance(repository, CompositeLabRepository)
     assert [s.label for s in repository.sources] == ["r1/json#1"]
-    assert isinstance(repository.sources[0].repository, JsonFileLabRepository)
+    assert isinstance(repository.sources[0].repository, _JsonFileLabRepository)
     assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "local"}
 
 
