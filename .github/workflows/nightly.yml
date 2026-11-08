@@ -566,7 +566,7 @@ jobs:
   # The next-Python canary. NOT a matrix entry, whether or not it passes:
   # PYTHON_VERSIONS in noxfile.py is the supported window, and this job probes
   # the interpreter one past its ceiling so the day it CAN join the window is
-  # noticed rather than discovered. Ten rungs:
+  # noticed rather than discovered. Eleven rungs:
   #
   #   1  runtime dependencies install   (published wheels, or sdists that build)
   #   2  the dev group installs too     (tooling gaps kept apart from runtime ones)
@@ -578,7 +578,10 @@ jobs:
   #   7  the chaos suites pass          (tier 2 and the Docker slice)
   #   8  the dashboard browser suite    (Chromium)
   #   9  host-contract conformance      (`make conformance`, hermetic)
-  #  10  the import budget holds        (last: its ceilings are per-interpreter)
+  #  10  the import budget holds        (its ceilings are per-interpreter)
+  #  11  every binary runtime dependency ships a wheel for it
+  #                                     (the air-gap readiness rung: `scripts/
+  #                                      check_docs_wheel_matrix.py --minor`)
   #
   # Rungs 1-4 are prerequisites and a failure there stops the climb. From
   # rung 5 on every rung runs even after one fails, so one nightly names every
@@ -587,9 +590,11 @@ jobs:
   # The verdict is a RATCHET against CANARY_EXPECTED_RUNG, the rung this repo
   # currently expects the canary to reach. Reaching exactly that rung is green.
   # Reaching a HIGHER one is red: the ecosystem moved, bump the constant. Rung
-  # 10 is the top, so that red cannot fire while the constant is 10: promoting
-  # the version into PYTHON_VERSIONS and retiring this job is tracked on #333,
-  # not prompted here. Reaching a LOWER one is red too: something regressed — a
+  # 11 is the top, and reaching it is the PROMOTION signal: the interpreter
+  # passes every lane AND an air-gapped lab could install otto on it from
+  # wheels alone, so it can join PYTHON_VERSIONS (the checklist on #333).
+  # Rung 11 reads the LOCK, so a wheel that lands upstream climbs it only once
+  # a lock bump picks the release up. Reaching a LOWER one is red too: something regressed — a
   # wheel pulled, a dependency raising its floor, a commit here that broke the
   # next Python or grew its import budget — and silently resetting the climb is
   # exactly what a plain allowed-to-fail job would do. `continue-on-error` is
@@ -618,11 +623,12 @@ jobs:
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 10 = the whole ladder,
+      # The rung the canary is EXPECTED to reach today. 10 = every test lane,
       # first reached on CPython 3.15.2 on x86_64 by this workflow dispatched
-      # on the branch that set it (#333). Promoting 3.15 into PYTHON_VERSIONS
-      # and retiring this job is a separate step, so until then this job
-      # guards the climb: any rung that breaks reds it as "regressed".
+      # on the branch that set it (#333). Rung 11 is still red: pyyaml 6.0.3
+      # publishes no cp315 wheel, so an air-gap bundle for 3.15 would be
+      # incomplete and 3.15 is not promoted. Until it climbs, this job guards
+      # the climb: any rung that breaks reds it as "regressed".
       #
       # That includes the import budget: rung 10 reads the 3.15 ceilings, so a
       # commit that grows the budget and regenerates only the supported minors'
@@ -752,12 +758,13 @@ jobs:
             rung 8 "the dashboard browser suite passes" canary_dashboard || true
             rung 9 "host-contract conformance passes" canary_conformance || true
             rung 10 "the import budget holds (ceilings are per-interpreter)" uv run --frozen pytest tests/unit/import_budget -p no:cacheprovider --no-cov || true
+            rung 11 "every binary runtime dependency ships a wheel for it (air-gap readiness)" uv run --frozen python scripts/check_docs_wheel_matrix.py --minor "$CANARY_PYTHON" || true
           fi
 
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "**Reached rung $reached; expected rung $CANARY_EXPECTED_RUNG.**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$reached" -gt "$CANARY_EXPECTED_RUNG" ]; then
-            echo "::error::Python $CANARY_PYTHON climbed to rung $reached (expected $CANARY_EXPECTED_RUNG): bump CANARY_EXPECTED_RUNG in nightly.yml (and tick the checklist on #333); at rung 10, promote it into PYTHON_VERSIONS and retire this job"
+            echo "::error::Python $CANARY_PYTHON climbed to rung $reached (expected $CANARY_EXPECTED_RUNG): bump CANARY_EXPECTED_RUNG in nightly.yml (and tick the checklist on #333); at rung 11, promote it into PYTHON_VERSIONS"
             exit 1
           fi
           if [ "$reached" -lt "$CANARY_EXPECTED_RUNG" ]; then

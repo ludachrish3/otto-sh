@@ -26,6 +26,13 @@ the media has crossed. Dev dependencies are deliberately out of scope -- they
 never enter the wheel bundle.
 
 Usage: python scripts/check_docs_wheel_matrix.py [uv.lock pyproject.toml docs/installation.md]
+       python scripts/check_docs_wheel_matrix.py --minor 3.15 [uv.lock]
+
+``--minor`` asks claim 4 alone of a Python otto does NOT declare yet: does
+every binary runtime dependency in the lock have an installable wheel for it?
+It is the next-Python canary's readiness rung (``.github/workflows/nightly.yml``),
+so the day the last wheel lands is noticed by the same ratchet that watched
+the rest of the climb.
 """
 
 import re
@@ -215,6 +222,33 @@ def wheel_gaps(
     ]
 
 
+def binary_closure(lock: dict) -> dict[str, list[dict]]:
+    """Map each binary-wheel runtime dependency to every wheel the lock records for it."""
+    return {
+        name: wheels
+        for name, entries in runtime_closure(lock).items()
+        if classify(wheels := [w for entry in entries for w in entry.get("wheels", [])]) != PURE
+    }
+
+
+def closure_wheel_gaps(lock: dict, minors: list[tuple[int, int]]) -> list[str]:
+    """Claim 4: each binary runtime dependency with no installable wheel for a minor."""
+    return [
+        gap
+        for name, wheels in sorted(binary_closure(lock).items())
+        for gap in wheel_gaps(name, wheels, minors, TARGET_ARCH)
+    ]
+
+
+def parse_minor(text: str) -> tuple[int, int]:
+    """Read ``3.15`` as ``(3, 15)``; refuse anything that is not MAJOR.MINOR."""
+    match = re.fullmatch(r"(\d+)\.(\d+)", text)
+    if match is None:
+        msg = f"--minor wants MAJOR.MINOR (e.g. 3.15), not {text!r}"
+        raise SystemExit(msg)
+    return int(match.group(1)), int(match.group(2))
+
+
 def audit(lock: dict, pyproject_text: str, docs_text: str) -> list[str]:
     """Return every drift between the docs' air-gap claims and the lock."""
     problems: list[str] = []
@@ -235,13 +269,7 @@ def audit(lock: dict, pyproject_text: str, docs_text: str) -> list[str]:
         if (major, minor) not in minors
     )
 
-    closure = runtime_closure(lock)
-    actual = {}
-    for name, entries in closure.items():
-        wheels = [wheel for entry in entries for wheel in entry.get("wheels", [])]
-        matrix = classify(wheels)
-        if matrix != PURE:
-            actual[name] = matrix
+    actual = {name: classify(wheels) for name, wheels in binary_closure(lock).items()}
 
     problems.extend(
         f"{name}: ships binary wheels but is missing from {SECTION_HEADING!r}"
@@ -257,15 +285,20 @@ def audit(lock: dict, pyproject_text: str, docs_text: str) -> list[str]:
         if table[name] != actual[name]
     )
 
-    for name in sorted(actual):
-        wheels = [wheel for entry in closure[name] for wheel in entry.get("wheels", [])]
-        problems.extend(wheel_gaps(name, wheels, minors, TARGET_ARCH))
+    problems.extend(closure_wheel_gaps(lock, minors))
     return problems
 
 
 def main(argv: list[str]) -> int:
     """Print each drift line; return 1 when the docs and the lock disagree."""
     root = Path(__file__).resolve().parent.parent
+    if argv[:1] == ["--minor"]:
+        minor = parse_minor(argv[1] if len(argv) > 1 else "")
+        lock_path = Path(argv[2]) if len(argv) > 2 else root / "uv.lock"  # noqa: PLR2004
+        gaps = closure_wheel_gaps(tomli.loads(lock_path.read_text()), [minor])
+        for gap in gaps:
+            print(gap)
+        return 1 if gaps else 0
     lock_path = Path(argv[0]) if argv else root / "uv.lock"
     pyproject_path = Path(argv[1]) if len(argv) > 1 else root / "pyproject.toml"
     docs_path = Path(argv[2]) if len(argv) > 2 else root / "docs" / "installation.md"  # noqa: PLR2004

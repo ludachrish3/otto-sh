@@ -9,6 +9,8 @@ here is INJECTED into a synthetic lock/table — inheriting the real checkout's
 
 import importlib.util
 
+import pytest
+
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _MODULE_PATH = CHECKOUT_ROOT / "scripts" / "check_docs_wheel_matrix.py"
@@ -360,6 +362,66 @@ def test_audit_flags_a_dependency_with_no_wheel_for_a_supported_python():
     docs = docs.replace("| abi3 |", "| per-version |")
     problems = mod.audit(lock, pyproject, docs)
     assert any("no wheel" in p and "3.11" in p for p in problems)
+
+
+# --------------------------------------------------------------------------
+# --minor: the next-Python canary's readiness rung, claim 4 alone
+# --------------------------------------------------------------------------
+
+
+def _write_lock(tmp_path, lock):
+    lines = []
+    for entry in lock["package"]:
+        lines.append(f'[[package]]\nname = "{entry["name"]}"')
+        if "dependencies" in entry:
+            deps = ", ".join(f'{{ name = "{d["name"]}" }}' for d in entry["dependencies"])
+            lines.append(f"dependencies = [{deps}]")
+        wheels = ", ".join(f'{{ url = "{w["url"]}" }}' for w in entry.get("wheels", []))
+        lines.append(f"wheels = [{wheels}]\n")
+    path = tmp_path / "uv.lock"
+    path.write_text("\n".join(lines))
+    return path
+
+
+def test_minor_mode_and_audit_share_one_gap_answer():
+    # Both entry points judge claim 4 through closure_wheel_gaps: same lock, same gaps.
+    mod = _load_gate()
+    lock, pyproject, docs = _healthy_inputs(mod)
+    for entry in lock["package"]:
+        if entry["name"] == "cryptography":
+            entry["wheels"] = _wheels("cryptography-49.0.0-cp310-cp310-manylinux_2_34_x86_64.whl")
+    docs = docs.replace("| abi3 |", "| per-version |")
+    gaps = mod.closure_wheel_gaps(lock, [(3, 11)])
+    assert gaps
+    assert all(gap in mod.audit(lock, pyproject, docs) for gap in gaps)
+
+
+def test_minor_mode_reports_a_missing_wheel_for_an_undeclared_python(tmp_path, capsys):
+    # INJECTED: a cp310-only package; 3.15 is in no classifier, which --minor ignores.
+    mod = _load_gate()
+    lock, _pyproject, _docs = _healthy_inputs(mod)
+    lock["package"].append(
+        {"name": "pyyaml", "wheels": _wheels("pyyaml-6.0.3-cp310-cp310-manylinux_2_17_x86_64.whl")}
+    )
+    lock["package"][0]["dependencies"].append({"name": "pyyaml"})
+    path = _write_lock(tmp_path, lock)
+    assert mod.main(["--minor", "3.15", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert "pyyaml: no wheel for Python 3.15" in out
+    assert "cryptography" not in out  # cp39-abi3 covers 3.15
+
+
+def test_minor_mode_is_clean_when_every_binary_dependency_has_a_wheel(tmp_path, capsys):
+    mod = _load_gate()
+    lock, _pyproject, _docs = _healthy_inputs(mod)
+    assert mod.main(["--minor", "3.15", str(_write_lock(tmp_path, lock))]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_minor_mode_refuses_a_malformed_minor():
+    mod = _load_gate()
+    with pytest.raises(SystemExit, match=r"MAJOR\.MINOR"):
+        mod.main(["--minor", "3"])
 
 
 # --------------------------------------------------------------------------
