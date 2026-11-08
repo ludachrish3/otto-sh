@@ -109,16 +109,31 @@ def _inject_long_values(
 
 
 def _boxes(page: Page, testids: list[str], *, required: list[str]) -> dict[str, dict]:
-    boxes: dict[str, dict] = {}
-    for testid in testids:
-        loc = page.locator(f'[data-testid="app-bar"] [data-testid="{testid}"]')
-        if loc.count() == 0 or not loc.first.is_visible():
-            assert testid not in required, f"{testid} missing from the header"
-            continue
-        box = loc.first.bounding_box()
-        assert box is not None
-        boxes[testid] = box
-    return boxes
+    """Every visible control's box, read in ONE frame.
+
+    The ``?lines=`` route scrolls its row into view about when the chips
+    appear, so boxes read one round trip apart can straddle that scroll and
+    pair a pre-scroll box with a post-scroll one (#963). One ``evaluate``
+    reads them all from the same layout, once every required control is
+    up (the search pill waits on its search hit).
+    """
+    for testid in required:
+        control = page.locator(f'[data-testid="app-bar"] [data-testid="{testid}"]').first
+        expect(control).to_be_visible()
+    found: dict[str, dict | None] = page.evaluate(
+        """(testids) => Object.fromEntries(testids.map((id) => {
+            const el = document.querySelector(
+                `[data-testid="app-bar"] [data-testid="${id}"]`);
+            if (!el || getComputedStyle(el).visibility === "hidden") return [id, null];
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) return [id, null];
+            return [id, {x: r.x, y: r.y, width: r.width, height: r.height}];
+        }))""",
+        testids,
+    )
+    for testid in required:
+        assert found[testid] is not None, f"{testid} missing from the header"
+    return {testid: box for testid, box in found.items() if box is not None}
 
 
 def _intersect(a: dict, b: dict) -> bool:
@@ -137,8 +152,6 @@ def _scrollport(page: Page) -> Locator:
 @pytest.mark.parametrize("width", WIDTHS)
 def test_header_controls_never_overlap(page: Page, report_dir: Path, width: int) -> None:
     _goto(page, report_dir, width, POPULATED_ROUTE)
-    expect(page.locator('[data-testid="product-chip"]')).to_be_visible()
-    expect(page.locator('[data-testid="search-pill"]')).to_be_visible()
     # The populated header really is populated.
     boxes = _boxes(page, CONTROL_TESTIDS, required=["brand", "app-nav", *CHIP_TESTIDS])
     _assert_header_sound(boxes, width)
@@ -172,7 +185,6 @@ def test_header_with_long_names_stays_sound(page: Page, report_dir: Path, width:
     chunk = (tickets / "PROJ-204.js").read_text()
     (tickets / f"{LONG_TICKET}.js").write_text(chunk.replace("PROJ-204", LONG_TICKET))
     _goto(page, report_dir, width, LONG_ROUTE)
-    expect(page.locator('[data-testid="product-chip"]')).to_be_visible()
     boxes = _boxes(page, CONTROL_TESTIDS, required=["brand", "app-nav", *CHIP_TESTIDS])
     _assert_header_sound(boxes, width)
     for chip, full in CHIP_LABELS.items():
