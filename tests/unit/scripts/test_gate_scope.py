@@ -2891,6 +2891,48 @@ def test_an_empty_range_is_a_plan_of_the_live_line_alone(tmp_path):
     assert p.bed is False
 
 
+def test_a_suspended_lane_leaves_the_plans_stamped_keys_for_its_suspended_list(
+    tmp_path, monkeypatch
+):
+    """gate_scope.SUSPENDED_LANES is the one place: the oracle still emits the lane (the
+    census keeps proving a change reaches it), the plan lists it under ``suspended``, so no
+    consumer runs it, stamps it or demands it."""
+    monkeypatch.setattr(gs, "SUSPENDED_LANES", {"make coverage-bed": "test: held back"})
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "main").strip()
+    tip = _git(repo, "rev-parse", "feature").strip()
+    p = gs.plan(repo, base, tip, git_env(repo))
+    assert p.suspended == ["make coverage-bed"]
+    assert p.stamped == ["make check-python", "make collect-check", "make docs-captures-check"]
+    assert p.bed is True, "docs-captures-check still takes the lease"
+    # the oracle's own list is unchanged: suspension is the plan's, not the scope's
+    scope = _scope([gs.Change("tests/e2e/chaos/test_c.py", "M")])
+    assert "make chaos" in gs.commands(scope, **TIP)
+
+
+def test_the_suspended_lanes_are_the_chaos_lanes_until_985_closes():
+    """Owner decision 2026-11-09 (#985, blocked on #978): both chaos lanes, nothing else, each
+    a stamped lane the oracle classifies, each reason naming the issue. Empty the table in
+    #985 and delete this test."""
+    assert set(gs.SUSPENDED_LANES) == {"make chaos", "make chaos-embedded"}
+    for key, reason in gs.SUSPENDED_LANES.items():
+        assert all(g in gs.BED_GOALS for g in gs.goals(key)), key
+        assert "#985" in reason, reason
+        assert "#978" in reason, reason
+    chaos = "tests/e2e/chaos/test_c.py"
+    report = gs.render(
+        _scope([gs.Change(chaos, "M")], {("head", chaos): _HOSTLESS}),
+        _scope([gs.Change(chaos, "M")], {("head", chaos): _HOSTLESS}),
+        base="origin/main",
+        merge_base="abc",
+        commit_range="a..b",
+        tip_range="a..b",
+        count=1,
+    )
+    assert "  make chaos  (suspended — #985" in report, report
+    assert "  make chaos-embedded  (suspended — #985" in report, report
+
+
 def test_check_breaking_accepts_a_range_ending_at_the_sha_head_resolves_to(tmp_path):
     # the plan's live line names the tip by sha; check-breaking must take that for HEAD
     repo = _repo(tmp_path)  # HEAD is the feature tip
