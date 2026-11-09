@@ -14,6 +14,7 @@ failure, 2 refusal or usage.
 import argparse
 import ast
 import copy
+import dataclasses
 import fnmatch
 import json
 import re
@@ -687,6 +688,21 @@ LIVE_GOALS = RANGE_TARGETS
 """History-dependent goals: run by the push itself over the pushed range, never stamped."""
 STAMPED_GOALS = STATIC_GOALS + BED_GOALS
 """Every goal a tip can emit that the runner stamps by tree."""
+_CHAOS_SUSPENDED = (
+    "#985: suspended by owner decision (2026-11-09) while a warm reboot strands a lab VM "
+    "(#978); re-enabled before 0.20.0"
+)
+SUSPENDED_LANES: "dict[str, str]" = {
+    "make chaos": _CHAOS_SUSPENDED,
+    "make chaos-embedded": _CHAOS_SUSPENDED,
+}
+"""Lane keys the owner has suspended, each with its reason — the ONE place that decides.
+
+The oracle still names a suspended lane (a chaos-tree change still *reaches* the chaos
+lanes, and the census keeps proving so), but :func:`plan` lists it under ``suspended``
+instead of ``stamped``: `make gate-tip` prints it and runs nothing, the push hook demands no
+stamp for it, and the `local-gate` digest omits it. The lanes still run by hand. Empty means
+nothing is suspended; #985 empties it."""
 
 
 class UnknownGoalError(ValueError):
@@ -1635,6 +1651,8 @@ class Plan:
     bed: bool
     # the range's path classes, sorted (the scope's ``classes``)
     classes: "list[str]"
+    # the lane keys the oracle named that SUSPENDED_LANES holds back, in run order
+    suspended: "list[str]" = dataclasses.field(default_factory=list)
 
 
 def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None) -> Plan:
@@ -1647,7 +1665,8 @@ def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" =
         head_tree(repo, env, tip_sha),
     )
     cmds = commands(scope, tip=True, base=base_sha, tip_rev=tip_sha)
-    stamped = [lane_key(line) for line in cmds if not is_live(line)]
+    keys = [lane_key(line) for line in cmds if not is_live(line)]
+    stamped = [key for key in keys if key not in SUSPENDED_LANES]
     return Plan(
         base_sha=base_sha,
         tip_sha=tip_sha,
@@ -1656,6 +1675,7 @@ def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" =
         stamped=stamped,
         bed=any(is_bed(key) for key in stamped),
         classes=sorted(scope.classes),
+        suspended=[key for key in keys if key in SUSPENDED_LANES],
     )
 
 
@@ -1690,10 +1710,16 @@ def render(
         lines.append(f"{label} ({rng}): {', '.join(scope.classes)} — {files} file(s) at head")
         label_reason = "bed half" if tip else "full gate"
         lines += [f"  ({label_reason}: {reason})" for reason in scope.full_at_commit]
-        lines += [f"  {cmd}" for cmd in commands(scope, tip=tip, base=base)]
+        lines += [_rendered(cmd) for cmd in commands(scope, tip=tip, base=base)]
     if tip_scope is not None:
         lines.append("run them and stamp the tree: make gate-tip")
     return "\n".join(lines) + "\n"
+
+
+def _rendered(cmd: str) -> str:
+    """Return the report line for *cmd*; a suspended lane carries its reason."""
+    reason = SUSPENDED_LANES.get(lane_key(cmd))
+    return f"  {cmd}" if reason is None else f"  {cmd}  (suspended — {reason})"
 
 
 def main(argv: "list[str] | None" = None, *, env: "dict[str, str] | None" = None) -> int:

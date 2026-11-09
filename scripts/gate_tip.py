@@ -1375,12 +1375,18 @@ def _walk(ctx: _Run) -> None:
     never for a lane already stamped or one a dirty tree refuses, and never in a dry run.
     """
     plan = ctx.plan
-    total = len(plan.live) + len(plan.stamped)
+    total = len(plan.live) + len(plan.suspended) + len(plan.stamped)
     for index, line in enumerate(plan.live, 1):
         _say(ctx.opts, f"[{index}/{total}] {line} … live at push")
         ctx.live += 1
         ctx.rows.append(Row(lane_key(line), "live at push"))
-    for index, key in enumerate(plan.stamped, len(plan.live) + 1):
+    for index, key in enumerate(plan.suspended, len(plan.live) + 1):
+        # named by the oracle, held back by the owner (gate_scope.SUSPENDED_LANES): never run,
+        # never stamped, never demanded by the push hook
+        _say(ctx.opts, f"[{index}/{total}] {key} … suspended ({gate_scope.SUSPENDED_LANES[key]})")
+        ctx.rows.append(Row(key, "suspended"))
+    first = len(plan.live) + len(plan.suspended) + 1
+    for index, key in enumerate(plan.stamped, first):
         label = f"[{index}/{total}] {key}"
         if _already_stamped(ctx, label, key):
             continue

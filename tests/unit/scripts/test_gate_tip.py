@@ -1839,9 +1839,9 @@ class TestTheOraclesLanes:
         assert "make coverage-bed" in gs.plan(repo, remote_sha, tip).stamped
         _stamp_tip(repo, remote_sha, tip)
         assert base_tip != tip
-        monkeypatch.setattr(gs, "TEST_SUITE_LANES", [*gs.TEST_SUITE_LANES, "make chaos"])
+        monkeypatch.setattr(gs, "TEST_SUITE_LANES", [*gs.TEST_SUITE_LANES, "make kmodcov"])
         missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, tip))
-        assert missing == [gt.Missing("make chaos", "no stamp")]
+        assert missing == [gt.Missing("make kmodcov", "no stamp")]
 
 
 class TestMeasuredOutputsThroughTheCheck:
@@ -3109,6 +3109,29 @@ def test_a_url_push_elsewhere_names_the_url(monkeypatch, tmp_path):
     assert gt.pre_push(opts, _branch("refs/heads/x", tip)) == 1
     assert err.getvalue().splitlines()[-1] == (
         f"the push targets {mirror}; make gate-tip planned against origin/main"
+    )
+
+
+def test_a_suspended_lane_is_printed_never_run_never_stamped_never_demanded(monkeypatch, tmp_path):
+    """gate_scope.SUSPENDED_LANES holds a lane back everywhere at once: the runner lists it as
+    suspended with its reason and runs nothing for it, the gate goes green without its
+    stamp, and the push check (`missing_stamps`) wants none."""
+    monkeypatch.setattr(gs, "SUSPENDED_LANES", {"make coverage-bed": "#985 test: held back"})
+    repo, _bare_repo, base, tip = _published_src(tmp_path)
+    runner = FakeRunner()
+    opts = _options(repo, runner)
+    assert gt.run(opts) == 0
+    ran = [FakeRunner.key(cmd) for cmd, _cwd, _env in runner.calls]
+    assert "make coverage-bed" not in ran, ran
+    out = opts.out.getvalue()
+    assert "make coverage-bed … suspended (#985 test: held back)" in out, out
+    assert re.search(r"suspended\s+make coverage-bed$", out, re.MULTILINE), out
+    plan = gt.range_plan(repo, base, tip)
+    assert plan.suspended == ["make coverage-bed"]
+    assert gt.missing_stamps(repo, plan) == []
+    assert (
+        gt.stamp_path(gt.stamps_root(repo, gt.STORE), plan.tree, "make coverage-bed").exists()
+        is False
     )
 
 
