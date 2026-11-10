@@ -489,7 +489,12 @@ export interface EventCreateBody {
  * that distinction — an explicit null CLEARS the end (span → point); for the
  * other fields null means unchanged, same as absent. The merged
  * start/end ordering check happens in the route, where the existing event's
- * values are known.
+ * values are known. The label check likewise runs inside the mutation
+ * sequence, against the current event: a blank ``label`` is refused only
+ * when it differs from the event's current one
+ * (``otto.monitor.event_ops.check_label_write``), the same answer a
+ * library update gets: a PATCH that resends an older event's already-blank
+ * label alongside a colour is accepted.
  *
  * ``defer_build=False``: same FastAPI request-body reason as
  * :class:`EventCreateBody` — see its docstring.

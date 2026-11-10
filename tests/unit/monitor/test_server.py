@@ -27,12 +27,14 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from _archive import _make_archive
+from _events import BLANKS
 
 from otto.models import LabSnapshot, MonitorExport, SessionRecord
 from otto.models.monitor import EventRecord
 from otto.monitor import event_ops
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
+from otto.monitor.events import MonitorEvent
 from otto.monitor.export import build_db_export
 from otto.monitor.server import OBSERVED_AT_HEADER, MonitorServer, _build_app
 from otto.monitor.session import new_frame
@@ -418,6 +420,47 @@ class TestSessionEventRoutes:
     async def test_create_with_wrong_session_404s(self, live_server: _RunningServer) -> None:
         status, _ = await post_json(live_server, "/api/session/nope/event", {"label": "x"})
         assert status == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", BLANKS)
+    async def test_create_blank_label_422s_and_stores_nothing(
+        self, live_server: _RunningServer, blank: str
+    ) -> None:
+        """The HTTP create refuses the same blank labels the library writes do (#964)."""
+        sid = live_server.collector.session_id
+        status, _ = await post_json(live_server, f"/api/session/{sid}/event", {"label": blank})
+        assert status == 422
+        assert live_server.collector.get_events() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", BLANKS)
+    async def test_patch_resending_a_legacy_blank_label_recolours(
+        self, live_server: _RunningServer, blank: str
+    ) -> None:
+        """A PATCH obeys the library's label rule: an unchanged blank label is put back.
+
+        Recolouring an older event whose label is already blank succeeds even
+        when the PATCH resends that label, as a library update does, while a
+        PATCH that blanks a labelled event is still refused (#964).
+        """
+        collector = live_server.collector
+        sid = collector.session_id
+        collector._store.note_imported_event(
+            MonitorEvent(timestamp=datetime.now(timezone.utc), label=blank, id=41)
+        )
+        status, body = await patch_json(
+            live_server, f"/api/session/{sid}/event/41", {"label": blank, "color": "#ff0000"}
+        )
+        assert status == 200
+        assert body["color"] == "#ff0000"
+        assert body["label"] == blank
+
+        _, created = await post_json(live_server, f"/api/session/{sid}/event", {"label": "keep"})
+        status, _ = await patch_json(
+            live_server, f"/api/session/{sid}/event/{created['id']}", {"label": blank}
+        )
+        assert status == 422
+        assert next(e for e in collector.get_events() if e.id == created["id"]).label == "keep"
 
     @pytest.mark.asyncio
     async def test_create_span_end_before_resolved_now_422s(

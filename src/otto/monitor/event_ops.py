@@ -149,25 +149,35 @@ def check_span(timestamp: datetime, end_timestamp: datetime | None) -> None:
         raise EventValidationError(SPAN_ORDER_ERROR)
 
 
+def check_label_write(existing: str | None, label: str) -> None:
+    """Refuse a blank label an event write introduces, as :class:`EventValidationError`.
+
+    The ONE place a library, archive or revert write asks "does this label
+    need the create/update rule?" (the rule itself is
+    ``otto.models.monitor.checked_label``). ``existing`` is the label the
+    event already holds, or ``None`` when the write creates or restores one:
+    a new label is checked, as on a create. A label that equals ``existing``
+    is put back as it is, as a PATCH that omits it would leave it: an older
+    archive may hold one that is now refused.
+    """
+    if existing is None or label != existing:
+        try:
+            checked_label(label)
+        except ValueError as err:
+            raise EventValidationError(str(err)) from err
+
+
 def check_revert_write(expect: EventRecord | None, write: EventRecord | None) -> None:
     """Refuse a revert's ``write`` that a create or an update would refuse.
 
-    The span is checked as :func:`check_span` checks every stored pair. The
-    label goes through ``otto.models.monitor.checked_label``, the create and
-    update bodies' own rule, only where one of them would apply it: on a
-    restore (no ``expect``, so the label is new, as on a create) and on an
-    update that changes the label (as a PATCH that sends it). A label the
-    event already holds is put back as it is, as a PATCH that omits it would
-    leave it: an older archive may hold one that is now refused.
+    The span is checked as :func:`check_span` checks every stored pair, the
+    label as :func:`check_label_write` does: on a restore (no ``expect``, so
+    the label is new) and on an update that changes it.
     """
     if write is None:
         return
     check_span(write.timestamp, write.end_timestamp)
-    if expect is None or write.label != expect.label:
-        try:
-            checked_label(write.label)
-        except ValueError as err:
-            raise EventValidationError(str(err)) from err
+    check_label_write(None if expect is None else expect.label, write.label)
 
 
 @dataclass

@@ -75,7 +75,12 @@ def insert_event(
     color: str,
     dash: str,
 ) -> int:
-    """Insert one event row for *session_id*; returns the new rowid."""
+    """Insert one event row for *session_id*; returns the new rowid.
+
+    A blank *label* raises :class:`~otto.monitor.event_ops.EventValidationError`
+    (a ``ValueError``) before the archive is opened.
+    """
+    event_ops.check_label_write(None, label)
     with _locked_connection(path) as conn:
         _require_session(conn, path, session_id)
         cursor = conn.execute(
@@ -116,9 +121,19 @@ def _require_expected(
 
 
 def _update_row(
-    conn: sqlite3.Connection, session_id: str, event_id: int, fields: dict[str, Any]
+    conn: sqlite3.Connection,
+    session_id: str,
+    event_id: int,
+    fields: dict[str, Any],
+    current: EventRecord,
 ) -> bool:
-    """Run the one UPDATE of an event's editable fields (``fields`` is ``editable_fields``)."""
+    """Run the one UPDATE of an event's editable fields (``fields`` is ``editable_fields``).
+
+    ``current`` is the row as it stands: a label that differs from it must not
+    be blank (:func:`~otto.monitor.event_ops.check_label_write`), checked
+    before the UPDATE for every caller.
+    """
+    event_ops.check_label_write(current.label, fields["label"])
     cursor = conn.execute(
         "UPDATE events SET label = ?, color = ?, dash = ?, ts = ?, end_ts = ? "
         "WHERE id = ? AND session_id = ?",
@@ -150,8 +165,10 @@ def _restore_row(
 ) -> EventRecord:
     """Put ``write`` back under ``event_id``, if this session may reuse that id.
 
-    Refused when the id is present, held by another session, or never handed out.
+    Refused when the id is present, held by another session, or never handed out,
+    or when ``write``'s label is blank (a restore introduces its label).
     """
+    event_ops.check_label_write(None, write.label)
     _require_session(conn, "archive", session_id)
     present = _current(conn, session_id, event_id)
     if present is not None:
@@ -192,12 +209,20 @@ def update_event(
     color: str,
     dash: str,
 ) -> bool:
-    """Overwrite an event's editable fields. False if (session, id) matches nothing."""
+    """Overwrite an event's editable fields. False if (session, id) matches nothing.
+
+    A *label* that differs from the stored one must not be blank
+    (:class:`~otto.monitor.event_ops.EventValidationError`); one that keeps it
+    passes, so a legacy blank-label row can still change colour or end.
+    """
     fields = event_ops.ResolvedEventFields(
         label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
     )
     with _locked_connection(path) as conn:
-        return _update_row(conn, session_id, event_id, event_ops.editable_fields(fields))
+        current = _current(conn, session_id, event_id)
+        if current is None:
+            return False
+        return _update_row(conn, session_id, event_id, event_ops.editable_fields(fields), current)
 
 
 def delete_event(path: str, session_id: str, event_id: int) -> EventRecord | None:
@@ -216,7 +241,8 @@ def restore_event(path: str, session_id: str, event_id: int, write: EventRecord)
     has the id (carrying it) or the id was never handed out (the table's
     ``sqlite_sequence`` is the high-water mark), so a restore can neither
     overwrite an event nor claim an id a later create would collide with. A
-    legacy colour or dash in ``write`` is written unchanged.
+    legacy colour or dash in ``write`` is written unchanged; a blank label is
+    refused (:class:`~otto.monitor.event_ops.EventValidationError`).
     """
     with _locked_connection(path) as conn:
         return _restore_row(conn, session_id, event_id, write)
@@ -234,7 +260,8 @@ def revert_event(
     The review-mode twin of ``MetricCollector.revert_event``; the leg comes
     from :func:`~otto.monitor.event_ops.revert_leg`. Returns the stored row
     after an update or restore, the removed row after a delete. A missing
-    event on the update or delete leg raises ``EventChanged(None)``.
+    event on the update or delete leg raises ``EventChanged(None)``, and a
+    blank new label on the update or restore leg raises ``EventValidationError``.
     """
     leg = event_ops.revert_leg(expect, write)
     with _locked_connection(path) as conn:
@@ -247,5 +274,5 @@ def revert_event(
         if write is None:
             _delete_row(conn, session_id, event_id)
             return current
-        _update_row(conn, session_id, event_id, event_ops.editable_fields(write))
+        _update_row(conn, session_id, event_id, event_ops.editable_fields(write), current)
         return _current(conn, session_id, event_id)

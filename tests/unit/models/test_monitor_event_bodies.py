@@ -78,8 +78,10 @@ class TestEventUpdateBody:
             EventUpdateBody(dash="wavy")
         with pytest.raises(ValidationError, match="color"):
             EventUpdateBody(color="blue")
-        with pytest.raises(ValidationError, match="label"):
-            EventUpdateBody(label="   ")
+
+    def test_a_blank_label_is_left_to_the_update_rule(self) -> None:
+        """The body can't know the current label; the route's rule decides (#964)."""
+        assert EventUpdateBody(label="   ").label == "   "
 
     def test_short_hex_normalised(self) -> None:
         assert EventUpdateBody(color="#ABC").color == "#aabbcc"
