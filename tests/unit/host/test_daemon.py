@@ -71,7 +71,9 @@ class TestPsScanCommand:
             " | \\grep -a ' otto-tunnel:' || true"
         )
 
-    @pytest.mark.parametrize("bad", ["o'tto", "otto tunnel", "otto.tunnel", "otto[x]", "", "-x"])
+    @pytest.mark.parametrize(
+        "bad", ["o'tto", "otto tunnel", "otto.tunnel", "otto[x]", "", "-x", "otto\n"]
+    )
     def test_rejects_prefixes_that_break_shell_quoting_or_grep_regex(self, bad: str) -> None:
         # The prefix is spliced into a single-quoted grep BRE: a quote breaks
         # the shell line, a regex metachar changes match semantics, and the

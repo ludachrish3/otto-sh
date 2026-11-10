@@ -65,6 +65,7 @@ from ..utils import (
 from .base import OttoModel
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
+from .version_format import version_re
 
 if TYPE_CHECKING:
     from ..config.scope import (
@@ -629,12 +630,6 @@ class ReservationFile(OttoModel):
 # SettingsModel — boundary model for .otto/settings.toml
 # ---------------------------------------------------------------------------
 
-# settings.toml version format: X.Y.Z with an optional extra tag beginning
-# with '-', '+' or '.'. Mirrors config.version.version_re; duplicated (not
-# imported) so models/ stays free of the config bootstrap. A drift test in
-# tests/unit/config/test_version.py keeps the two in behavioral lockstep.
-_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]+)?$")
-
 # The option tables accepted under [host_preferences."<selector>"], each mapped
 # to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS (a drift
 # test keeps them in lockstep). All but the last are per-protocol;
@@ -659,7 +654,7 @@ _HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer", "
 
 # max_age format: "<days>d", e.g. "180d". No months/weeks — keep the unit
 # unambiguous for the staleness calculation in the collection model.
-_MAX_AGE_RE = re.compile(r"^\d+d$")
+_MAX_AGE_RE = re.compile(r"\d+d")
 
 
 def _toolchain_value(field: str, value: str) -> str:
@@ -770,7 +765,7 @@ class CoverageTierSpec(OttoModel):
     @field_validator("max_age")
     @classmethod
     def _validate_max_age(cls, v: str | None) -> str | None:
-        if v is not None and _MAX_AGE_RE.match(v) is None:
+        if v is not None and _MAX_AGE_RE.fullmatch(v) is None:
             raise ValueError(f"max_age {v!r} must be '<days>d', e.g. '180d'")
         return v
 
@@ -1188,7 +1183,7 @@ class SettingsModel(OttoModel):
     @field_validator("version")
     @classmethod
     def _validate_version_format(cls, v: str) -> str:
-        if _VERSION_RE.match(v) is None:
+        if version_re.fullmatch(v) is None:
             raise ValueError(
                 f"version {v!r} must be MAJOR.MINOR.PATCH with an optional "
                 "'-', '+' or '.' suffix (e.g. 1.2.3, 1.2.3-rc1)"

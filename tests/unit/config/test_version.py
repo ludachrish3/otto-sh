@@ -69,23 +69,17 @@ def test_version_bare_separator_rejected():
         Version("1.2.3-")
 
 
-def test_settings_regex_drift_lockstep():
-    """models/settings.py deliberately duplicates the pattern — keep behavior identical."""
-    from otto.config.version import version_re
-    from otto.models.settings import _VERSION_RE
+def test_version_trailing_newline_rejected():
+    with pytest.raises(ValueError, match="does not match the expected format"):
+        Version("1.2.3\n")
 
-    probes = [
-        "1.2.3",
-        "1.2.3-rc1",
-        "1.2.3+build.5",
-        "1.2.3.dev1",
-        "10.20.30",
-        "1.2.3garbage",
-        "1.2.3-",
-        "1.2",
-        "1.2.3 ",
-        "x.y.z",
-        "",
-    ]
-    for probe in probes:
-        assert (version_re.match(probe) is None) == (_VERSION_RE.match(probe) is None), probe
+
+def test_settings_validator_shares_the_version_rule():
+    """models/settings.py and config.version share models.version_format's one pattern."""
+    from otto.config import version as config_version
+    from otto.models import settings
+    from otto.models.version_format import version_re
+
+    assert settings.version_re is version_re
+    assert config_version.version_re is version_re
+    assert not hasattr(settings, "_VERSION_RE")
