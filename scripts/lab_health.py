@@ -89,7 +89,10 @@ _RESTART_SETTLE_S = 20
 
 # A hopped Unix guest (the chaos guest) boots a full Ubuntu under TCG: after a
 # restart, or an interrupted reboot, poll for its sshd this long, every
-# ``_GUEST_POLL_S`` seconds.
+# ``_GUEST_POLL_S`` seconds. It bounds sshd answering after a UNIT restart (a
+# cold QEMU start); tests/e2e/chaos/_bed.py's ``wait_for_new_boot`` bounds a new
+# boot id after a guest reboot, which also sits out a shutdown hold of up to
+# 90 s, so its window is the longer one.
 _GUEST_BOOT_S = 300
 _GUEST_POLL_S = 10.0
 
@@ -584,7 +587,7 @@ def _is_hopped_unix(host: dict) -> bool:
         host.get("os_type", "unix") == "unix"
         and bool(host.get("hop"))
         and "creds" in host
-        and host.get("valid_terms", ["ssh", "telnet"])[0] == "ssh"
+        and (host.get("valid_terms") or ["ssh", "telnet"])[0] == "ssh"
     )
 
 

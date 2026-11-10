@@ -20,6 +20,7 @@ from tests._fixtures.labdata import (
     element_of,
     entry_of,
     flat_hosts,
+    host_data,
     lab_data_dir,
     lab_data_path,
     register_zephyr_inline_frame,
@@ -31,6 +32,7 @@ from tests.e2e.chaos._bed import (
     CHAOS_GUEST_HOST_ID,
     CHAOS_HOP_DATA_TAP,
     CHAOS_LAB,
+    chaos_guest_target,
 )
 
 
@@ -121,3 +123,17 @@ def test_the_embedded_lab_is_half_outside_by_design():
     exists so no sweep is aimed at `embedded`."""
     lab = load_lab("embedded", search_paths=[lab_data_dir() / "tech1"])
     assert dangling_ends(lab) == ["test4--ubu2404-qemu: ubu2404-qemu"]
+
+
+def test_chaos_guest_target_names_the_host_the_loader_builds():
+    """The guest target aims at the id the loader derives from the committed record,
+    through the hop's address and first cred (shape of the BusyBox target pin)."""
+    target = chaos_guest_target()
+    data = next(h for h in flat_hosts("tech1") if h["element"] == CHAOS_GUEST_ELEMENT)
+    loaded = create_host_from_dict(entry_of(data), lab_name=CHAOS_LAB, element=element_of(data))
+    assert target.host_id == loaded.id == CHAOS_GUEST_HOST_ID
+    assert target.lab == CHAOS_LAB
+    hop = host_data(CHAOS_GUEST_HOP)
+    assert target.ssh_host == hop["ip"]
+    assert target.ssh_username == hop["creds"][0]["login"]
+    assert target.ssh_password == hop["creds"][0]["password"]

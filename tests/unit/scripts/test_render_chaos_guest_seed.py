@@ -123,6 +123,8 @@ def test_the_hold_unit_stops_before_sshd_and_user_sessions():
         "RemainAfterExit=yes",
         "TimeoutStopSec=600",
         "ExecStop=/usr/local/sbin/chaos-shutdown-hold",
+        # 1777: a login creates and removes its own hold; the bed reap removes a leftover.
+        "ExecStart=/usr/bin/install -d -m 1777 /run/chaos",
     ):
         assert needle in unit
     assert "/run/chaos/shutdown_hold" in hold_script_text()

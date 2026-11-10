@@ -2225,7 +2225,7 @@ SystemMaxUse=200M"
             D=/home/vagrant/chaos-guest
             U=chaos-qemu-ubu2404.service
             install -d -o vagrant -g vagrant "$D"
-            set -- $(python3 /vagrant/scripts/render_chaos_guest_seed.py --image-pin "$arch")
+            pin=$(python3 /vagrant/scripts/render_chaos_guest_seed.py --image-pin "$arch") && set -- $pin
             url=$1; sha=$2; name=$3
 
             # Disk admission, before anything is downloaded or created.

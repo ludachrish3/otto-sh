@@ -23,9 +23,12 @@ import tomli
 from otto.docker.observe import default_docker_parent
 from otto.host.factory import create_host_from_dict
 from otto.labs.loader import Lab
+from otto.result import CommandResult
 from otto.tunnel.discovery import parse_process_discovery
 from otto.tunnel.model import make_tunnel_id
+from otto.utils import Status
 from tests._fixtures import tunnel_bed
+from tests._fixtures.bed_hygiene import ProbeFailedError
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
 from tests._fixtures.tunnel_bed import cli_project_root, format_leftover_report, owning_suite
 
@@ -181,3 +184,57 @@ def test_cli_project_ranks_test2_as_the_one_docker_parent(tmp_path: Path) -> Non
             create_host_from_dict(entry_of(flat), lab_name="unix", element=element_of(flat))
         )
     assert default_docker_parent(lab=lab).id == "test2"
+
+
+def _fake_bed_host(built: list[str], status: Status, output: str):
+    """A ``build_bed_host`` stand-in whose discovery answers *status* / *output*."""
+
+    class _Host:
+        def __init__(self, ne: str) -> None:
+            self.id = ne
+            built.append(ne)
+
+        async def exec(self, cmd: str, **_k) -> CommandResult:
+            return CommandResult(status=status, value=output, command=cmd)
+
+        async def close(self) -> None:
+            return None
+
+    return _Host
+
+
+@pytest.mark.asyncio
+async def test_observe_tunnel_processes_raises_on_a_failed_discovery(monkeypatch) -> None:
+    """A timed-out discovery is a failed probe, host-named, never a clean bed."""
+    monkeypatch.setattr(tunnel_bed, "build_bed_host", _fake_bed_host([], Status.Error, ""))
+    with pytest.raises(ProbeFailedError, match="test4"):
+        await tunnel_bed.observe_tunnel_processes(hosts=("test4",))
+
+
+@pytest.mark.asyncio
+async def test_observe_tunnel_processes_parses_a_healthy_discovery(monkeypatch) -> None:
+    fake = _fake_bed_host([], Status.Success, _STABILITY_PS_LINE)
+    monkeypatch.setattr(tunnel_bed, "build_bed_host", fake)
+    found = await tunnel_bed.observe_tunnel_processes(hosts=("test1",))
+    assert [(host_id, obs.pid) for host_id, obs in found] == [("test1", 530366)]
+
+
+@pytest.mark.asyncio
+async def test_observe_tunnel_processes_scans_only_the_hosts_it_is_given(monkeypatch) -> None:
+    """``hosts=`` narrows the scan; the default stays the three peers."""
+    built: list[str] = []
+    monkeypatch.setattr(tunnel_bed, "build_bed_host", _fake_bed_host(built, Status.Success, ""))
+    assert await tunnel_bed.observe_tunnel_processes(hosts=("test4",)) == []
+    assert built == ["test4"]
+    built.clear()
+    await tunnel_bed.observe_tunnel_processes()
+    assert built == list(tunnel_bed.UNIX)
+
+
+def test_cli_project_renders_exactly_the_elements_it_is_given(tmp_path: Path) -> None:
+    """The chaos lab's SUT holds the hop and the guest only, and the guest keeps its hop."""
+    sut = cli_project_root(tmp_path, elements=("test4", "ubu2404"))
+    doc = json.loads((sut / "lab_data" / "lab.json").read_text())
+    hosts = {flat["element"]: flat for flat in flatten_lab_doc(doc)}
+    assert set(hosts) == {"test4", "ubu2404"}
+    assert hosts["ubu2404"]["hop"] == "test4"

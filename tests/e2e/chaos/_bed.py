@@ -34,6 +34,8 @@ from otto.labs.loader import Lab
 from otto.link.derive import addressing_from_dict, raw_endpoint_host_ids, resolve_declared_links
 from otto.logger.mode import LogMode
 from otto.result import Result
+from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, Observation, parse_process_discovery
+from otto.utils import wait_for
 from scripts.render_chaos_guest_seed import CHAOS_GUEST
 from tests._fixtures._host_pool import DOCKER_HOST, UNIX_POOL, lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
@@ -167,12 +169,27 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     return matches[0].id
 
 
-def unix_link_id() -> str:
-    """The declared test1<->test2 eth2 link's id."""
-    return declared_link_id("test1", "test2")
+UNIX_PAIR = ("test1", "test2")
+"""The lab VM pair the unix chaos scenarios dirty (element names; id == element)."""
 
 
-def tunnel_target(root) -> ChaosTarget:
+def host_id_of(element: str) -> str:
+    """The host id lab data derives for *element*; the one place a pair's ids are computed.
+
+    The same rule ``make_bed_target`` applies (``make_host_id(element, board, slot)``
+    off the tech1 record), so a ``("test4", "ubu2404")`` pair names ``ubu2404-qemu``
+    exactly where a link endpoint spells it.
+    """
+    data = host_data(element)
+    return make_host_id(element_for(element).name, data.get("board"), data.get("slot"))
+
+
+def unix_link_id(pair: tuple[str, str] = UNIX_PAIR) -> str:
+    """The declared link id joining *pair* (element names; default test1<->test2)."""
+    return declared_link_id(host_id_of(pair[0]), host_id_of(pair[1]))
+
+
+def tunnel_target(root, *, lab: str = "unix", host: str = "test1") -> ChaosTarget:
     """ChaosTarget for CLI-driven tunnel commands against `cli_project_root`'s isolated SUT.
 
     Hoisted from two former per-module copies (``test_tunnel_link_chaos.py``,
@@ -184,13 +201,13 @@ def tunnel_target(root) -> ChaosTarget:
     ``observe_tunnel_processes``/``run_probe`` instead. Populated from
     test1's real creds anyway, for shape-parity with ``make_bed_target``.
     """
-    test1 = host_data("test1")
-    cred = test1["creds"][0]
+    data = host_data(host)
+    cred = data["creds"][0]
     return ChaosTarget(
         root=root,
-        lab="unix",
-        host_id="test1",
-        ssh_host=test1["ip"],
+        lab=lab,
+        host_id=host_id_of(host),
+        ssh_host=data["ip"],
         ssh_port=22,
         ssh_username=cred["login"],
         ssh_client_key=None,
@@ -198,8 +215,8 @@ def tunnel_target(root) -> ChaosTarget:
     )
 
 
-def unix_link_entries() -> list[dict[str, Any]]:
-    """tech1's raw link entries whose BOTH ends are the unix pair the chaos lane dirties.
+def unix_link_entries(pair: tuple[str, str] = UNIX_PAIR) -> list[dict[str, Any]]:
+    """tech1's raw link entries whose BOTH ends are *pair* (default: the unix pair).
 
     Filtered by endpoint pair, never by list index (see ``declared_link_id``
     for why): the bb1350 TAP link also touches test1, and a lab that carried
@@ -208,10 +225,13 @@ def unix_link_entries() -> list[dict[str, Any]]:
     ``lab_json_v2``, which writes a document for otto to load.
     """
     data = json.loads(lab_data_path().read_text())
-    return [e for e in data["links"] if set(raw_endpoint_host_ids(e)) == {"test1", "test2"}]
+    want = {host_id_of(element) for element in pair}
+    return [e for e in data["links"] if set(raw_endpoint_host_ids(e)) == want]
 
 
-def closed_unix_link_target(tmp_path: Path) -> ChaosTarget:
+def closed_unix_link_target(
+    tmp_path: Path, *, pair: tuple[str, str] = UNIX_PAIR, lab: str = "unix"
+) -> ChaosTarget:
     """ChaosTarget for CLI-driven link commands on a CLOSED unix lab.
 
     ``make_bed_target("test1")`` loads tech1's ``unix`` verbatim, which (by the
@@ -223,18 +243,35 @@ def closed_unix_link_target(tmp_path: Path) -> ChaosTarget:
     link chaos scenarios ask. Pinned hostless by
     ``tests/unit/test_chaos_link_lab_scope.py``.
     """
-    return tunnel_target(cli_project_root(tmp_path, links=unix_link_entries()))
+    return tunnel_target(
+        cli_project_root(tmp_path, links=unix_link_entries(pair), elements=pair),
+        lab=lab,
+        host=pair[0],
+    )
 
 
-def assert_eth2_netem_free(what: str) -> None:
-    """Assert both eth2 endpoints (test1, test2) carry no netem qdisc.
+def end_probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
+    """Read *cmd*'s output off one link end: the ONE place that decides how an end is read.
+
+    A lab VM is reached directly (:func:`probe_text`); the chaos guest only
+    through its hop (:func:`chaos_guest_probe_text`).
+    """
+    if element == CHAOS_GUEST_ELEMENT:
+        return chaos_guest_probe_text(cmd, timeout=timeout)
+    return probe_text(element, cmd, timeout=timeout)
+
+
+def assert_eth2_netem_free(
+    what: str, *, ends: tuple[tuple[str, str], ...] = (("test1", "eth2"), ("test2", "eth2"))
+) -> None:
+    """Assert every ``(element, netdev)`` end (default: test1/test2 eth2) has no netem qdisc.
 
     Hoisted from two former per-module copies (``test_tunnel_link_chaos.py``,
     ``test_reboot_chaos.py`` — verified behaviorally identical before the
     hoist).
     """
-    for elem in ("test1", "test2"):
-        qdisc = probe_text(elem, "tc qdisc show dev eth2")
+    for elem, netdev in ends:
+        qdisc = end_probe_text(elem, f"tc qdisc show dev {netdev}")
         assert "netem" not in qdisc, f"{elem}: netem survived {what}: {qdisc!r}"
 
 
@@ -269,7 +306,7 @@ and from nowhere else, which is why nothing reaches it without
 ``hop: test1`` resolving first (see :func:`busybox_hop_context`).
 """
 
-BUSYBOX_CHAOS_HOST_ID = make_host_id(BUSYBOX_CHAOS_ELEMENT, "qemu", None)
+BUSYBOX_CHAOS_HOST_ID = host_id_of(BUSYBOX_CHAOS_ELEMENT)
 """The guest's HOST ID (``element-board``), which is what link endpoints,
 ``--from`` and ``otto host`` all name — as distinct from the element name the
 probe helpers above take."""
@@ -287,12 +324,15 @@ CHAOS_GUEST_ELEMENT = CHAOS_GUEST.element
 block is read off ``CHAOS_GUEST`` (``scripts/render_chaos_guest_seed.py``), the
 one definition the provisioner also renders from; none is a second spelling."""
 
-CHAOS_GUEST_HOST_ID = make_host_id(CHAOS_GUEST_ELEMENT, "qemu", None)
+CHAOS_GUEST_HOST_ID = host_id_of(CHAOS_GUEST_ELEMENT)
 """The guest's HOST ID (``element-board``), as link endpoints and ``--from`` name
 it. ``test_chaos_guest_lab_entries`` asserts it equals ``CHAOS_GUEST.host_id``."""
 
 CHAOS_GUEST_HOP = CHAOS_GUEST.hop
 """The lab VM the guest is reachable through (its QEMU host)."""
+
+CHAOS_GUEST_UNIT = CHAOS_GUEST.unit
+"""The hop's systemd unit that runs the guest's QEMU process."""
 
 CHAOS_LAB = CHAOS_GUEST.lab
 """The lab holding exactly the hop and the guest, so no sweep is aimed at
@@ -304,6 +344,9 @@ management netdev is never impaired."""
 
 CHAOS_HOP_DATA_TAP = CHAOS_GUEST.data.tap
 """The hop's TAP device for the data plane: the declared link's other end."""
+
+CHAOS_PAIR = (CHAOS_GUEST_HOP, CHAOS_GUEST_ELEMENT)
+"""The reboot lane's pair: the hop and the QEMU guest behind it (element names)."""
 
 
 def busybox_link_id() -> str:
@@ -347,15 +390,22 @@ def busybox_target() -> ChaosTarget:
     :func:`busybox_probe_text`, which goes through otto's own telnet-over-hop
     path because that is the only path there is.
     """
-    guest = host_data(BUSYBOX_CHAOS_ELEMENT)
-    hop = host_data(BUSYBOX_HOP_ELEMENT)
+    return _hopped_target("busybox", BUSYBOX_CHAOS_ELEMENT, BUSYBOX_HOP_ELEMENT)
+
+
+def _hopped_target(lab: str, guest_element: str, hop_element: str) -> ChaosTarget:
+    """The one ``ChaosTarget`` builder for a hopped guest: ``tests/project_e2e``, lab *lab*.
+
+    The host id is the guest's (:func:`host_id_of`); the ``ssh_*`` fields are the
+    HOP's first cred, for shape parity with ``make_bed_target`` (``spawn_otto``
+    reads ``root``/``lab`` only).
+    """
+    hop = host_data(hop_element)
     cred = hop["creds"][0]
     return ChaosTarget(
         root=PROJECT_E2E,
-        lab="busybox",
-        host_id=make_host_id(
-            element_for(BUSYBOX_CHAOS_ELEMENT).name, guest.get("board"), guest.get("slot")
-        ),
+        lab=lab,
+        host_id=host_id_of(guest_element),
         ssh_host=hop["ip"],
         ssh_port=22,
         ssh_username=cred["login"],
@@ -365,28 +415,28 @@ def busybox_target() -> ChaosTarget:
 
 
 @contextlib.contextmanager
-def busybox_hop_context() -> Iterator[None]:
+def _hop_context(hop_element: str, lab_name: str) -> Iterator[None]:
     """Install the hop host in the active context, then put it back.
 
-    An in-process guest host built from lab data carries ``hop:
-    test1``, and that id is resolved against the ACTIVE context's lab
-    when the connection dials — a pytest process has no such lab unless one
-    is installed. Mirrors the discipline in
+    An in-process guest host built from lab data carries ``hop: <element>``,
+    and that id is resolved against the ACTIVE context's lab when the
+    connection dials -- a pytest process has no such lab unless one is
+    installed. Mirrors the discipline in
     ``tests/integration/busybox_bed/conftest.py`` (install, then restore the
     whole run state the install set), with one deliberate difference: the
     scope is ONE probe, not one module. The chaos lane's other modules build their own
     hosts and spawn their own subprocesses against the unix bed, and a
     session-scoped context carrying a two-host lab would sit under all of
     them for the whole run. Nothing here is worth that blast radius, and the
-    ContextVar is process-global state — the narrowest scope that works is
+    ContextVar is process-global state -- the narrowest scope that works is
     the right one.
     """
-    lab = Lab(name="busybox_chaos")
-    data = host_data(BUSYBOX_HOP_ELEMENT)
+    lab = Lab(name=lab_name)
+    data = host_data(hop_element)
     lab.add_host(
         UnixHost(
             ip=data["ip"],
-            element=element_for(BUSYBOX_HOP_ELEMENT),
+            element=element_for(hop_element),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -398,56 +448,87 @@ def busybox_hop_context() -> Iterator[None]:
         yield
 
 
-def busybox_probe(coro_factory):
-    """Run ``await coro_factory(guest)`` on a fresh guest host in a fresh loop.
+def _hopped_probe(guest_element: str, lab_name: str, coro_factory):
+    """Run ``await coro_factory(guest)`` on a fresh guest host in a fresh loop, inside its hop.
 
-    The guest twin of :func:`run_probe`, and it carries the same G5 contract:
-    a non-ok :class:`~otto.result.Result` coming back RAISES (host-named,
-    status-quoted) rather than being returned, because an oracle reading
-    ``.value`` off a dead probe reports "clean bed" for exactly the failures
-    chaos manufactures. Factories must return the ``Result`` itself (or use
-    :func:`busybox_probe_text`), never unwrap ``.value`` first.
+    Carries the same G5 contract as :func:`run_probe`: a non-ok
+    :class:`~otto.result.Result` coming back RAISES (host-named, status-quoted)
+    rather than being returned, because an oracle reading ``.value`` off a dead
+    probe reports "clean bed" for exactly the failures chaos manufactures.
+    Factories must return the ``Result`` itself, never unwrap ``.value`` first.
 
     The host is built by the FACTORY from the committed lab entry, never by
     hand: ``UnixHost(...)`` direct would default ``term="ssh"`` on a guest
-    whose committed record puts ``telnet`` first (bb1350 answers ssh too,
-    which is exactly why the default must not be guessed), and the point of
-    driving the committed record is that the chaos arm exercises what an
-    ``otto host`` user exercises.
+    whose committed record puts ``telnet`` first, and the point of driving the
+    committed record is that the chaos arm exercises what an ``otto host`` user
+    exercises. The hop is the record's own ``hop`` field.
     """
+    data = host_data(guest_element)
 
     async def _go():
-        host = create_host_from_dict(
-            host_data(BUSYBOX_CHAOS_ELEMENT),
-            lab_name="busybox",
-            element=element_for(BUSYBOX_CHAOS_ELEMENT),
-        )
+        host = create_host_from_dict(data, lab_name=lab_name, element=element_for(guest_element))
         try:
             out = await coro_factory(host)
         finally:
             await host.close()
         if isinstance(out, Result):
-            check_probe_result(BUSYBOX_CHAOS_ELEMENT, out)
+            check_probe_result(guest_element, out)
         return out
 
-    with busybox_hop_context():
+    with _hop_context(data["hop"], lab_name):
         return asyncio.run(_go())
 
 
-def busybox_probe_text(cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
-    """The one spelling for a checked text read off the guest.
+def _exec_factory(cmd: str, timeout: float):
+    """The ``coro_factory`` of every checked guest text read: ``exec`` *cmd* quietly.
 
-    :func:`busybox_probe` + ``exec`` + the status check + the ``.value``
-    unwrap, so guest-reading helpers cannot drift back into the unchecked
-    ``(result.value or "")`` shape.
+    Returns the ``Result`` itself, so the probe's status check vets it before
+    the twins unwrap ``.value`` (``busybox_probe_text``, ``chaos_guest_probe_text``).
+    """
+    return lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET)
+
+
+@contextlib.contextmanager
+def busybox_hop_context() -> Iterator[None]:
+    """:func:`_hop_context` for the BusyBox guest: install ``test1`` as the active lab's host."""
+    with _hop_context(BUSYBOX_HOP_ELEMENT, "busybox"):
+        yield
+
+
+def busybox_probe(coro_factory):
+    """Run ``await coro_factory(guest)`` on a fresh bb1350 host; see :func:`_hopped_probe`."""
+    return _hopped_probe(BUSYBOX_CHAOS_ELEMENT, "busybox", coro_factory)
+
+
+def busybox_probe_text(cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
+    """The one spelling for a checked text read off the BusyBox guest.
 
     ``exec`` on a ``term: telnet`` host has no stateless channel to open, so
-    it routes through a pooled shell session — which means every probe here
+    it routes through a pooled shell session -- which means every probe here
     is also a fresh LOGIN through the hop, and its success is itself evidence
     the guest's console still serves a shell.
     """
-    out = busybox_probe(lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
-    return out.value
+    return busybox_probe(_exec_factory(cmd, timeout)).value
+
+
+def _prove_guest_shell(probe_text, *, marker: str, where: str, remedy: str) -> None:
+    """Fail LOUD, guest-named and with the operator remedy, unless the guest echoes *marker*.
+
+    Reachability is proven by asking for a shell, not by a TCP connect: a
+    connect proves only that a daemon bound its port, and says nothing about
+    the login path. *where* names the guest, its hop and the address; *remedy*
+    names the operator recovery.
+    """
+    try:
+        answer = probe_text(f"echo {marker}")
+    except Exception as exc:
+        raise RuntimeError(
+            f"{where} will not serve a shell: {exc!r}. {remedy} "
+            "(Chaos lane fails loud on a down bed -- it never skips.)"
+        ) from exc
+    assert marker in answer, (
+        f"{where} answered a login but not the marker: {answer!r} -- console wedged?"
+    )
 
 
 @contextlib.contextmanager
@@ -470,23 +551,153 @@ def busybox_bed() -> Iterator[BusyboxChaosBed]:
     """
     guest = host_data(BUSYBOX_CHAOS_ELEMENT)
     ip = guest["ip"]
-    try:
-        answer = busybox_probe_text("echo BUSYBOX-CHAOS-READY")
-    except Exception as exc:
-        raise RuntimeError(
-            f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} "
-            f"(via {BUSYBOX_HOP_ELEMENT} at {ip}:23) will not serve a shell: {exc!r}. "
+    _prove_guest_shell(
+        busybox_probe_text,
+        marker="BUSYBOX-CHAOS-READY",
+        where=f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} (via {BUSYBOX_HOP_ELEMENT} at {ip}:23)",
+        remedy=(
             "Is the bed provisioned and up? Recover with `make qemu-restart`; "
-            f"check with `scripts/lab_health.py`. (Chaos lane fails loud on a "
-            "down bed -- it never skips.)"
-        ) from exc
-    assert "BUSYBOX-CHAOS-READY" in answer, (
-        f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} (via {BUSYBOX_HOP_ELEMENT} at "
-        f"{ip}:23) answered a login but not the marker: {answer!r} -- console wedged?"
+            "check with `scripts/lab_health.py`."
+        ),
     )
     yield BusyboxChaosBed(
         element=BUSYBOX_CHAOS_ELEMENT,
         version=guest["sw_version"],
         ip=ip,
         target=busybox_target(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The chaos reboot guest -- the lane's third target, hopped through test4
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class ChaosGuestBed:
+    element: str  # lab element name, always CHAOS_GUEST_ELEMENT
+    host_id: str  # CHAOS_GUEST_HOST_ID, as link endpoints and --from spell it
+    hop: str  # the lab VM it is reached through, CHAOS_GUEST_HOP
+    ip: str  # the guest's address on the hop's /30, routable from the hop only
+    target: ChaosTarget  # aim the otto subprocess here
+
+
+def chaos_guest_target() -> ChaosTarget:
+    """``ChaosTarget`` aiming an otto subprocess at the reboot guest, lab ``chaos``.
+
+    The SUT is ``tests/project_e2e`` unchanged (its lab source compiles
+    ``tech1/lab.json``). The ``ssh_*`` fields are the HOP's, for shape parity
+    with :func:`busybox_target`: ``spawn_otto`` reads ``root``/``lab`` only, and
+    the oracle for this target is :func:`chaos_guest_probe_text`.
+    """
+    return _hopped_target(CHAOS_LAB, CHAOS_GUEST_ELEMENT, CHAOS_GUEST_HOP)
+
+
+def chaos_guest_probe(coro_factory):
+    """Run ``await coro_factory(guest)`` on a fresh guest host inside the hop context."""
+    return _hopped_probe(CHAOS_GUEST_ELEMENT, CHAOS_LAB, coro_factory)
+
+
+def chaos_guest_probe_text(cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
+    """The one spelling for a checked text read off the reboot guest."""
+    return chaos_guest_probe(_exec_factory(cmd, timeout)).value
+
+
+def observe_guest_tunnel_processes() -> list[Observation]:
+    """The guest's tagged tunnel processes, by the sentinel oracle (never ``pgrep``).
+
+    ``observe_tunnel_processes`` cannot list a hopped guest (``build_bed_host``
+    makes a bare ``UnixHost`` with no lab), so this reads the same
+    ``DISCOVERY_PS_COMMAND`` through the hop and decodes it with the production
+    ``parse_process_discovery``. Plain, not ``async``: the hopped probe runs its
+    own loop, so a caller must not be inside one (``asyncio.run`` would nest).
+    """
+    return parse_process_discovery(chaos_guest_probe_text(DISCOVERY_PS_COMMAND))
+
+
+def chaos_guest_boot_id() -> str:
+    """The guest kernel's boot id: it changes exactly when the guest rebooted."""
+    return chaos_guest_probe_text("cat /proc/sys/kernel/random/boot_id").strip()
+
+
+_BOOT_POLL_S = 10.0
+
+
+def wait_for_new_boot(old: str, *, timeout: float = 600.0) -> str:
+    """Wait until the guest's boot id differs from *old*; return the new one.
+
+    The 600 s default bounds a new boot id after a guest REBOOT, which may first
+    sit out a shutdown hold of up to 90 s (the guest's ``reboot.target`` bound)
+    before the TCG boot; ``scripts/lab_health.py``'s ``_GUEST_BOOT_S`` (300 s)
+    bounds only sshd answering after a unit restart, so it is the shorter one.
+
+    The guest is unreachable for part of every reboot, so a failing probe is
+    "not yet", never an error (``wait_for`` propagates predicate exceptions, so
+    the predicate swallows its own). Expiry raises ``WaitTimeoutError``.
+    """
+    seen: list[str] = []
+
+    def _rebooted() -> bool:
+        try:
+            current = chaos_guest_boot_id()
+        except Exception:  # noqa: BLE001 -- a guest mid-reboot refuses the probe
+            return False
+        if current == old:
+            return False
+        seen.append(current)
+        return True
+
+    wait_for(
+        _rebooted,
+        timeout,
+        interval=_BOOT_POLL_S,
+        on_timeout=f"{CHAOS_GUEST_ELEMENT} boot id still {old!r} after {timeout:.0f}s",
+    )
+    return seen[-1]
+
+
+def set_shutdown_hold(seconds: int | None) -> None:
+    """Make the guest's shutdown hold for *seconds* (``None`` removes the hold).
+
+    No sudo: the hold unit creates the directory 1777, so the login writes and
+    removes its own hold file, and the bed reap can remove a leftover one.
+    """
+    hold = CHAOS_GUEST.hold_file
+    if seconds is None:
+        chaos_guest_probe_text(f"rm -f {hold}")
+    else:
+        chaos_guest_probe_text(f"echo {int(seconds)} > {hold}")
+
+
+@contextlib.contextmanager
+def chaos_guest_bed() -> Iterator[ChaosGuestBed]:
+    """Prove the guest serves a shell and carries its tools, then yield the bed handle.
+
+    NO LEASE and NO REAP of its own, for :func:`busybox_bed`'s reasons: the guest
+    is not in the unix pool, and the lane's ``$(call bed_reap)`` at its start
+    reaches the guest through its hop -- the one reap there is.
+    """
+    ip = host_data(CHAOS_GUEST_ELEMENT)["ip"]
+    _prove_guest_shell(
+        chaos_guest_probe_text,
+        marker="CHAOS-GUEST-READY",
+        where=(
+            f"Chaos guest {CHAOS_GUEST_ELEMENT} (via {CHAOS_GUEST_HOP} at {ip}, "
+            f"unit {CHAOS_GUEST.unit})"
+        ),
+        remedy=(
+            "Is the bed provisioned and up? Recover with `make qemu-restart`; "
+            "check with `scripts/lab_health.py`."
+        ),
+    )
+    tools = chaos_guest_probe_text("command -v socat bash tc").split()
+    assert len(tools) == 3, (
+        f"Chaos guest {CHAOS_GUEST_ELEMENT} is missing a tool of `socat bash tc`: found {tools!r}"
+    )
+    yield ChaosGuestBed(
+        element=CHAOS_GUEST_ELEMENT,
+        host_id=CHAOS_GUEST_HOST_ID,
+        hop=CHAOS_GUEST_HOP,
+        ip=ip,
+        target=chaos_guest_target(),
     )

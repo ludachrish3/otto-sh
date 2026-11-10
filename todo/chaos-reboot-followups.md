@@ -4,17 +4,9 @@ Recorded during the final-review fix wave for Plan 6 (reboot hardening,
 `src/otto/host/host.py`'s `BaseHost.reboot` + `UnixHost._confirm_recovered`).
 Known gaps, deliberately out of this wave's scope rather than missed.
 
-## 1. CLI-exposed reboot floats bypass `_validate_timeout`
+## 1. ✅ CLI-exposed reboot floats bypass `_validate_timeout`
 
-`reboot`'s `timeout`, `down_timeout`, and `poll_interval` are all
-`@cli_exposed` floats but none are run through `_validate_timeout`
-(`src/otto/host/host.py:78`) the way `run`/`exec` args are. A negative
-`poll_interval` busy-spins the wait loops; a NaN `timeout` makes the
-`min(down_timeout, timeout)` clamp order-dependent (`min(x, nan)` vs
-`min(nan, x)` differ). `timeout` itself already had this gap pre-Plan-6;
-`down_timeout`/`poll_interval` are new with this plan. Any future validation
-must respect the `down_timeout<=0` skip semantics from Finding 3 — a
-blanket `>= 0` check would break the documented opt-out.
+Done: `reboot`'s bounds resolve through the `reboot_options` table (#979).
 
 ## 2. EmbeddedHost / console-server topologies need a topology-aware down probe
 
@@ -32,6 +24,8 @@ up waits)` — it has no floor of its own, so a slow down/up phase can leave
 the recovery gate almost no time to retry a stalled shell. Worth deciding
 whether it deserves a guaranteed minimum slice of `timeout` once real-host
 (not scripted-probe) reboot scenarios exist to validate against (Plan 4).
+The guest's shutdown-hold unit now makes this reproducible
+(`tests/e2e/chaos/_bed.py::set_shutdown_hold`).
 
 ## 4. Prompt-then-freeze: one clean round-trip is not proof of a settled boot
 
@@ -48,3 +42,6 @@ every healthy reboot); or a family-tunable settle delay before the
 confirming probe. Interacts with #3 (any settle window eats the leftover
 budget). Real-host scenarios (Plan 4) are the right place to learn what
 actually discriminates.
+
+The guest's shutdown-hold unit also makes this reproducible: hold the shutdown,
+then watch what a prompt-then-freeze boot does to the confirming probe.

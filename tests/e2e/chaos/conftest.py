@@ -12,7 +12,14 @@ import pytest
 from tests._fixtures.fd_watermark import (
     _fd_watermark,  # noqa: F401 — imported fixture, registered by name
 )
-from tests.e2e.chaos._bed import BusyboxChaosBed, ChaosBed, busybox_bed, leased_bed
+from tests.e2e.chaos._bed import (
+    BusyboxChaosBed,
+    ChaosBed,
+    ChaosGuestBed,
+    busybox_bed,
+    chaos_guest_bed,
+    leased_bed,
+)
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +46,20 @@ def busybox_chaos_bed() -> Iterator[BusyboxChaosBed]:
     Guest arms bracket their own remote state instead, on the guest.
     """
     with busybox_bed() as bed:
+        yield bed
+
+
+@pytest.fixture(scope="session")
+def chaos_guest() -> Iterator[ChaosGuestBed]:
+    """The lane's Ubuntu reboot guest, session-scoped, UNLEASED and pool-free.
+
+    Unleased for ``busybox_chaos_bed``'s reasons: the guest is a QEMU guest
+    behind test4, not a pool unix host, so requesting it must never reach
+    ``lease_unix_host``. Every consumer carries ``no_hygiene_bracket`` for the
+    same reason as above. Nothing here cleans the guest: the bed reap at the
+    lane's edges (``$(call bed_reap)``) is what does.
+    """
+    with chaos_guest_bed() as bed:
         yield bed
 
 
