@@ -121,6 +121,35 @@ def _require_expected(
     return current
 
 
+def _row_to_write(
+    conn: sqlite3.Connection, session_id: str, event_id: int, expect: EventRecord | None
+) -> EventRecord | None:
+    """Return the row an update or delete writes over; with ``expect``, it must still be it.
+
+    The compare is :func:`_require_expected`'s, the revert's own, so an
+    edit that read the row before another writer changed it is refused with
+    :class:`EventChanged` carrying the row as it now stands (``None`` when
+    it is gone).
+    """
+    if expect is None:
+        return _current(conn, session_id, event_id)
+    return _require_expected(conn, session_id, event_id, expect)
+
+
+def read_event(path: str, session_id: str, event_id: int) -> EventRecord | None:
+    """Read the event ``(session_id, event_id)`` as the archive holds it, or ``None`` when absent.
+
+    The archive is the truth in review mode, so a review server's edit
+    resolves against this row, never against its served document's copy:
+    another writer of the archive (a second review server, a revert's
+    write) can have made that copy stale. Taken under the archive's
+    ``.lock``, like every write, so a live monitor writing the file is
+    refused (:class:`ArchiveLockedError`).
+    """
+    with _locked_connection(path) as conn:
+        return _current(conn, session_id, event_id)
+
+
 def _update_row(
     conn: sqlite3.Connection,
     session_id: str,
@@ -209,12 +238,16 @@ def update_event(
     label: str,
     color: str,
     dash: str,
+    expect: EventRecord | None = None,
 ) -> bool:
     """Overwrite an event's editable fields. False if (session, id) matches nothing.
 
     A *label* that differs from the stored one must not be blank
     (:class:`~otto.monitor.event_ops.EventValidationError`); one that keeps it
     passes, so a legacy blank-label row can still change colour or end.
+    With *expect* (the row the edit was resolved against), the row must
+    still be it: otherwise :class:`~otto.monitor.event_ops.EventChanged`
+    carries the row as it stands, and nothing is written.
     """
     fields = event_ops.ResolvedEventFields(
         label=label,
@@ -224,16 +257,21 @@ def update_event(
         end_timestamp=as_utc(end_timestamp),
     )
     with _locked_connection(path) as conn:
-        current = _current(conn, session_id, event_id)
+        current = _row_to_write(conn, session_id, event_id, expect)
         if current is None:
             return False
         return _update_row(conn, session_id, event_id, event_ops.editable_fields(fields), current)
 
 
-def delete_event(path: str, session_id: str, event_id: int) -> EventRecord | None:
-    """Delete one event row; return the removed row, or ``None`` if (session, id) matches none."""
+def delete_event(
+    path: str, session_id: str, event_id: int, *, expect: EventRecord | None = None
+) -> EventRecord | None:
+    """Delete one event row; return the removed row, or ``None`` if (session, id) matches none.
+
+    With *expect*, the row must still be it, as for :func:`update_event`.
+    """
     with _locked_connection(path) as conn:
-        removed = _current(conn, session_id, event_id)
+        removed = _row_to_write(conn, session_id, event_id, expect)
         if removed is not None:
             _delete_row(conn, session_id, event_id)
         return removed

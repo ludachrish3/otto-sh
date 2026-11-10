@@ -8,9 +8,12 @@ is invalid. Callers translate :class:`EventValidationError` into their own
 surface's failure shape (HTTP 422; a raised ValueError in library code).
 """
 
+import asyncio
+import contextlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar
 
 from ..errors import OttoError
 from ..models.monitor import (
@@ -178,6 +181,161 @@ def check_revert_write(expect: EventRecord | None, write: EventRecord | None) ->
         return
     check_span(write.timestamp, write.end_timestamp)
     check_label_write(None if expect is None else expect.label, write.label)
+
+
+class _Labelled(Protocol):
+    """An event record of either backend: all the core reads of it is its label."""
+
+    @property
+    def label(self) -> str: ...
+
+
+_E = TypeVar("_E", bound=_Labelled)
+_R = TypeVar("_R")
+_P = TypeVar("_P")
+
+
+async def run_locked_in_phases(
+    lock: asyncio.Lock,
+    *,
+    prepare: "Callable[[], Awaitable[_P]]",
+    commit: "Callable[[_P], Awaitable[_R]]",
+) -> _R:
+    """Run one event write under ``lock``, cancellation-safe: the ONE place that is decided (#941).
+
+    Every event mutation of both backends runs its locked section through
+    here (or :func:`run_locked`, its one-phase form). Under ``lock``,
+    ``prepare()`` reads and decides; ``commit(prepared)`` writes the store
+    and then changes what is served. The section runs as an inner task the
+    caller awaits through :func:`asyncio.shield`, so cancelling the caller
+    never interrupts a write midway:
+
+    * cancelled while it waits for the lock, or before ``commit`` starts (an
+      awaited read in ``prepare``), the section is cancelled with nothing
+      written;
+    * cancelled once ``commit`` has started, the section runs to its end, the
+      store write AND the change to what is served, before the lock is
+      released and the caller's :class:`asyncio.CancelledError` is re-raised.
+      A store write running in a worker thread finishes whatever the caller
+      does, so stopping there would leave the store ahead of what is served,
+      and the next mutation would merge onto the stale copy.
+
+    The caller holds the lock and the inner task runs inside it, so the lock
+    is released in the caller's own step once the section is done: no other
+    mutation can run (and publish) between the section's end and the
+    caller's response, whose stamp must follow the publish of its own change
+    and no other.
+
+    An exception from ``prepare`` or ``commit`` propagates. A section that
+    fails after its caller was cancelled is not reported: the caller sees
+    only its cancellation.
+    """
+    async with lock:
+        committing = False
+
+        async def section() -> _R:
+            nonlocal committing
+            prepared = await prepare()
+            committing = True  # no await before commit's first one: its write
+            return await commit(prepared)
+
+        task = asyncio.ensure_future(section())
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not committing:
+                task.cancel()
+            while not task.done():
+                # Cancelled again: the section still finishes first.
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({task})
+            if not task.cancelled():
+                task.exception()  # retrieved; the caller's cancellation wins
+            raise
+
+
+async def _nothing_to_prepare() -> None:
+    """:func:`run_locked`'s ``prepare``: a one-phase section reads nothing first."""
+
+
+async def run_locked(lock: asyncio.Lock, commit: "Callable[[], Awaitable[_R]]") -> _R:
+    """Run ``commit()`` (a store write, then the change to what is served) under ``lock``.
+
+    The one-phase form of :func:`run_locked_in_phases`, with its
+    cancellation guarantee: once started, ``commit`` runs to its end before
+    the lock is released, and the caller's cancellation is re-raised after.
+    For a create or a revert whose whole decision lives in its one write.
+    """
+
+    async def commit_prepared(_: None) -> _R:
+        return await commit()
+
+    return await run_locked_in_phases(lock, prepare=_nothing_to_prepare, commit=commit_prepared)
+
+
+@dataclass
+class _Resolution(Generic[_E]):
+    """What :func:`mutate_under_lock`'s read and resolve decided: the event, and its new record."""
+
+    current: _E
+    resolved: _E | None
+
+
+async def mutate_under_lock(
+    lock: asyncio.Lock,
+    *,
+    read: "Callable[[], Awaitable[_E | None]]",
+    resolve: "Callable[[_E], _E | None]",
+    write: "Callable[[_E, _E | None], Awaitable[bool]]",
+    apply: "Callable[[_E, _E | None], _R]",
+) -> "_R | None":
+    """Change or delete one event: the ONE "lock, read, resolve, write, apply" sequence (#941).
+
+    Both backends run every change and delete through it, with their own
+    callables: the live collector (``MetricCollector.mutate_event``: its
+    store, its DB, its publish) and a review server (its archive, the
+    served document). Under ``lock``, so no two mutations interleave, and
+    through :func:`run_locked_in_phases`, so a cancelled request never leaves
+    the store and what is served apart:
+
+    1. ``await read()`` the event as it stands in the backend's store (the
+       live store, or the review archive's row); ``None`` (no such event)
+       returns ``None`` with nothing written.
+    2. ``resolve(current)`` it to the new full record, or ``None`` to delete
+       it. It is where a caller's merge lives (a PATCH's omitted fields, an
+       end's "already ended" refusal), so it always reads the latest state;
+       an exception it raises propagates with nothing written.
+    3. A resolved label that differs from the current one must not be blank
+       (:func:`check_label_write`), checked here for every change.
+    4. ``await write(current, resolved)`` to the backend's store. ``False``
+       means the store no longer holds the event: ``None`` is returned and
+       nothing applied. An exception propagates, likewise.
+    5. ``apply(current, resolved)`` to what the backend serves, in one
+       synchronous step, and return its result.
+
+    Steps 1-3 are the section's ``prepare``, steps 4-5 its ``commit``: a
+    request cancelled before its write starts writes nothing, and one
+    cancelled after runs its write AND its apply before the lock is released
+    and the cancellation re-raised. ``apply`` follows its own ``write`` in
+    order, and the lock is released in the caller's own step, so the
+    caller's response is built before any other mutation runs.
+    """
+
+    async def prepare() -> "_Resolution[_E] | None":
+        current = await read()
+        if current is None:
+            return None
+        resolved = resolve(current)
+        if resolved is not None:
+            check_label_write(current.label, resolved.label)
+        return _Resolution(current, resolved)
+
+    async def commit(step: "_Resolution[_E] | None") -> "_R | None":
+        if step is None or not await write(step.current, step.resolved):
+            return None
+        return apply(step.current, step.resolved)
+
+    return await run_locked_in_phases(lock, prepare=prepare, commit=commit)
 
 
 @dataclass

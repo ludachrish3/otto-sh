@@ -75,6 +75,29 @@ class _AlreadyEndedError(Exception):
     """An /end resolver found the span already ended (answered 409)."""
 
 
+def _resolve_update(
+    body: EventUpdateBody, current: "MonitorEvent | EventRecord", *, refuse_ended: bool
+) -> event_ops.ResolvedEventFields:
+    """Resolve a PATCH or /end onto the event as it stands: the ONE update resolver for both modes.
+
+    ``refuse_ended`` is /end's "already ended" check (:class:`_AlreadyEndedError`);
+    the merge is ``event_ops.merge_update``. Each mode's adapter builds its
+    own record from the result (a live ``MonitorEvent`` via
+    ``dataclasses.replace``, a review ``EventRecord``) and runs it inside its
+    mutation sequence, so it reads the current fields under the lock.
+    """
+    if refuse_ended and current.end_timestamp is not None:
+        raise _AlreadyEndedError
+    return merge_update(
+        body,
+        existing_label=current.label,
+        existing_color=current.color,
+        existing_dash=current.dash,
+        existing_timestamp=current.timestamp,
+        existing_end=current.end_timestamp,
+    )
+
+
 OBSERVED_AT_HEADER = "X-Otto-Observed-At"
 """The response header that carries the server's time on every live event mutation.
 
@@ -86,6 +109,7 @@ live window's horizon at once even when the stream's echo is withheld (#866).
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R", bound=Response)
+_T = TypeVar("_T")
 
 
 def _dist_index_path() -> Path:
@@ -470,9 +494,122 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         event omits end_timestamp instead of carrying null (document_json's
         contract, so the SSE echo and the HTTP response are field-identical).
         """
-        record = EventRecord.model_validate(event_dict)
+        return _record_response(EventRecord.model_validate(event_dict), status_code)
+
+    def _record_response(record: EventRecord, status_code: int = 200) -> JSONResponse:
+        """Serialize a format:1 EventRecord, exclude_none (see ``_event_response``)."""
         return JSONResponse(
             record.model_dump(mode="json", exclude_none=True), status_code=status_code
+        )
+
+    def _review_archive() -> str:
+        """Return the review archive's path (``_mutation_guard`` refused a review without one)."""
+        assert archive_path is not None  # noqa: S101 — guard enforced this
+        return str(archive_path)
+
+    def _sync_document_event(session_id: str, event_id: int, row: EventRecord | None) -> None:
+        """Repair the served document's copy of one event to the archive's row (#941).
+
+        The ONE repair: the archive is the truth in review mode, and the
+        document a snapshot from load that another writer of the archive (a
+        second review server, a revert's write) can have made stale. A copy
+        that differs from *row* becomes it; a *row* of ``None`` (gone from the
+        archive) drops the copy. A copy that already matches is left alone, so
+        the cached body is rebuilt only when something changed.
+        """
+        copy = _find_document_event(session_id, event_id)
+        if row is None:
+            if copy is not None:
+                _drop_document_event(session_id, event_id)
+        elif copy != row:
+            _patch_document_event(session_id, row)
+
+    async def _archive_write(session_id: str, event_id: int, write: "Callable[[], _T]") -> "_T":
+        """Run one archive write off the loop; a refusal as changed repairs the document first.
+
+        ``archive_edit`` raises :class:`~otto.monitor.event_ops.EventChanged`
+        when the row is no longer the one the write expected; the document's
+        copy is synced to the row it carries (:func:`_sync_document_event`)
+        before the refusal reaches the route's 409.
+        """
+        try:
+            return await asyncio.to_thread(write)
+        except event_ops.EventChanged as err:
+            _sync_document_event(session_id, event_id, err.current)
+            raise
+
+    async def _mutate_review_event(
+        session_id: str,
+        event_id: int,
+        resolve: "Callable[[EventRecord], EventRecord | None]",
+    ) -> EventRecord | None:
+        """Review mode's ``collector.mutate_event``: one sequence, over the archive and document.
+
+        ``event_ops.mutate_under_lock`` under the collector's
+        ``mutation_lock`` (#941). The archive is the truth, as the
+        collector's store is in live mode: read the event's ROW from the
+        archive (``archive_edit.read_event``, off the loop) and repair the
+        document's copy to it, ``resolve`` against that row, write the
+        archive with the row as the expected state, then patch the document.
+        Another writer that changed the row between the read and the write
+        makes the write raise :class:`~otto.monitor.event_ops.EventChanged`
+        (the route's 409 ``changed``), with nothing written and the document
+        repaired to the row as it stands. Returns the stored record after a
+        change, the removed row after a delete, or ``None`` when the archive
+        holds no such event (the document drops its copy).
+        """
+        path = _review_archive()
+        removed: EventRecord | None = None
+
+        async def read() -> EventRecord | None:
+            row = await asyncio.to_thread(archive_edit.read_event, path, session_id, event_id)
+            _sync_document_event(session_id, event_id, row)
+            return row
+
+        async def write(current: EventRecord, resolved: EventRecord | None) -> bool:
+            nonlocal removed
+            if resolved is None:
+                removed = await _archive_write(
+                    session_id,
+                    event_id,
+                    lambda: archive_edit.delete_event(path, session_id, event_id, expect=current),
+                )
+                return removed is not None
+            return await _archive_write(
+                session_id,
+                event_id,
+                lambda: archive_edit.update_event(
+                    path,
+                    session_id,
+                    event_id,
+                    expect=current,
+                    **event_ops.editable_fields(resolved),
+                ),
+            )
+
+        def apply(_current: EventRecord, resolved: EventRecord | None) -> EventRecord:
+            if resolved is None:
+                assert removed is not None  # noqa: S101 — write returned True only with the row
+                _drop_document_event(session_id, event_id)
+                return removed
+            _patch_document_event(session_id, resolved)
+            return resolved
+
+        return await event_ops.mutate_under_lock(
+            collector.mutation_lock(),
+            read=read,
+            resolve=resolve,
+            write=write,
+            apply=apply,
+        )
+
+    def _event_changed(err: event_ops.EventChanged) -> JSONResponse:
+        """409 ``changed`` carrying the event as it stands: the ONE shape a stale write answers."""
+        current = (
+            None if err.current is None else err.current.model_dump(mode="json", exclude_none=True)
+        )
+        return JSONResponse(
+            {"error": str(err), "code": "changed", "current": current}, status_code=409
         )
 
     def _archive_busy(err: archive_edit.ArchiveLockedError) -> JSONResponse:
@@ -523,11 +660,11 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         except EventValidationError as err:
             return JSONResponse({"error": str(err)}, status_code=422)
         if mode == "review":
-            assert archive_path is not None  # noqa: S101 — guard enforced this
-            try:
+
+            async def commit() -> EventRecord:
                 rowid = await asyncio.to_thread(
                     archive_edit.insert_event,
-                    str(archive_path),
+                    _review_archive(),
                     session_id,
                     timestamp=timestamp,
                     end_timestamp=end_timestamp,
@@ -536,19 +673,26 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     color=body.color,
                     dash=body.dash,
                 )
+                created = EventRecord(
+                    id=rowid,
+                    timestamp=timestamp,
+                    end_timestamp=end_timestamp,
+                    label=body.label,
+                    source="manual",
+                    color=body.color,
+                    dash=body.dash,
+                )
+                _patch_document_event(session_id, created)
+                return created
+
+            try:
+                # Under the one mutation lock (#941), so the document patch
+                # follows this archive write before any other write starts,
+                # even when the request is cancelled during it.
+                record = await event_ops.run_locked(collector.mutation_lock(), commit)
             except archive_edit.ArchiveLockedError as err:
                 return _archive_busy(err)
-            record = EventRecord(
-                id=rowid,
-                timestamp=timestamp,
-                end_timestamp=end_timestamp,
-                label=body.label,
-                source="manual",
-                color=body.color,
-                dash=body.dash,
-            )
-            _patch_document_event(session_id, record)
-            return JSONResponse(record.model_dump(mode="json", exclude_none=True), status_code=201)
+            return _record_response(record, status_code=201)
         event = await collector.add_event(
             label=body.label,
             timestamp=timestamp,
@@ -559,89 +703,52 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         )
         return _event_response(event.to_dict(), status_code=201)
 
-    async def _apply_live_update(
-        event_id: int, body: EventUpdateBody, *, refuse_ended: bool = False
+    async def _apply_update(
+        session_id: str, event_id: int, body: EventUpdateBody, *, refuse_ended: bool = False
     ) -> JSONResponse:
-        """One merge rule for PATCH and /end — event_ops resolves, collector writes.
+        """One merge rule for PATCH and /end in both modes: ``_resolve_update`` inside the sequence.
 
-        The merge runs INSIDE the collector's one mutation entry point, onto
-        the event as it stands under its lock: a PATCH racing an /end (or a
-        delete) can never merge onto fields read before the other landed.
-        ``refuse_ended`` is /end's "already ended" check, made there too.
+        The merge runs INSIDE each mode's one mutation entry point
+        (``collector.mutate_event`` live, ``_mutate_review_event`` in
+        review), onto the event as it stands under the lock: a PATCH racing
+        an /end (or a delete) can never merge onto fields read before the
+        other landed. Only the record each backend builds differs.
         """
-
-        def resolve(current: "MonitorEvent") -> "MonitorEvent":
-            if refuse_ended and current.end_timestamp is not None:
-                raise _AlreadyEndedError
-            fields = merge_update(
-                body,
-                existing_label=current.label,
-                existing_color=current.color,
-                existing_dash=current.dash,
-                existing_timestamp=current.timestamp,
-                existing_end=current.end_timestamp,
-            )
-            return dataclasses.replace(current, **event_ops.editable_fields(fields))
-
         try:
-            updated = await collector.mutate_event(event_id=event_id, resolve=resolve)
+            if mode == "review":
+                record = await _mutate_review_event(
+                    session_id,
+                    event_id,
+                    lambda current: EventRecord(
+                        id=current.id,
+                        source=current.source,
+                        **event_ops.editable_fields(
+                            _resolve_update(body, current, refuse_ended=refuse_ended)
+                        ),
+                    ),
+                )
+            else:
+                event = await collector.mutate_event(
+                    event_id=event_id,
+                    resolve=lambda current: dataclasses.replace(
+                        current,
+                        **event_ops.editable_fields(
+                            _resolve_update(body, current, refuse_ended=refuse_ended)
+                        ),
+                    ),
+                )
+                record = None if event is None else EventRecord.model_validate(event.to_dict())
         except EventValidationError as err:
             return JSONResponse({"error": str(err)}, status_code=422)
         except _AlreadyEndedError:
             return JSONResponse({"error": "Event already ended"}, status_code=409)
-        if updated is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
-        return _event_response(updated.to_dict())
-
-    async def _apply_review_update(
-        session_id: str, event_id: int, existing: EventRecord, body: EventUpdateBody
-    ) -> JSONResponse:
-        """Review-mode mirror of ``_apply_live_update`` — same merge rule, archive write.
-
-        The SAME ``event_ops.merge_update`` that is wired into the live path
-        (Chris's dedup directive): only the write target (archive_edit vs. the
-        collector) and the "existing event" source (the document's
-        ``EventRecord`` vs. a live ``MonitorEvent``) differ.
-        """
-        assert archive_path is not None  # noqa: S101 — guard enforced this
-        try:
-            fields = merge_update(
-                body,
-                existing_label=existing.label,
-                existing_color=existing.color,
-                existing_dash=existing.dash,
-                existing_timestamp=existing.timestamp,
-                existing_end=existing.end_timestamp,
-            )
-        except EventValidationError as err:
-            return JSONResponse({"error": str(err)}, status_code=422)
-        try:
-            updated = await asyncio.to_thread(
-                archive_edit.update_event,
-                str(archive_path),
-                session_id,
-                event_id,
-                timestamp=fields.timestamp,
-                end_timestamp=fields.end_timestamp,
-                label=fields.label,
-                color=fields.color,
-                dash=fields.dash,
-            )
+        except event_ops.EventChanged as err:
+            return _event_changed(err)
         except archive_edit.ArchiveLockedError as err:
             return _archive_busy(err)
-        if not updated:
+        if record is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
-        record = EventRecord(
-            id=event_id,
-            timestamp=fields.timestamp,
-            end_timestamp=fields.end_timestamp,
-            label=fields.label,
-            source=existing.source,
-            color=fields.color,
-            dash=fields.dash,
-        )
-        _patch_document_event(session_id, record)
-        return JSONResponse(record.model_dump(mode="json", exclude_none=True))
+        return _record_response(record)
 
     @app.post("/api/session/{session_id}/event/{event_id}/end")
     @_observed
@@ -653,14 +760,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         # Ending IS a partial update (end_timestamp only) — same seam, not a
         # second resolution path, in either mode.
         stamp_end = EventUpdateBody(end_timestamp=event_ops.utc_now())
-        if mode == "review":
-            doc_existing = _find_document_event(session_id, event_id)
-            if doc_existing is None:
-                return JSONResponse({"error": "Event not found"}, status_code=404)
-            if doc_existing.end_timestamp is not None:
-                return JSONResponse({"error": "Event already ended"}, status_code=409)
-            return await _apply_review_update(session_id, event_id, doc_existing, stamp_end)
-        return await _apply_live_update(event_id, stamp_end, refuse_ended=True)
+        return await _apply_update(session_id, event_id, stamp_end, refuse_ended=True)
 
     @app.patch("/api/session/{session_id}/event/{event_id}")
     @_observed
@@ -670,12 +770,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         refused = _mutation_guard(session_id)
         if refused is not None:
             return refused
-        if mode == "review":
-            doc_existing = _find_document_event(session_id, event_id)
-            if doc_existing is None:
-                return JSONResponse({"error": "Event not found"}, status_code=404)
-            return await _apply_review_update(session_id, event_id, doc_existing, body)
-        return await _apply_live_update(event_id, body)
+        return await _apply_update(session_id, event_id, body)
 
     @app.delete("/api/session/{session_id}/event/{event_id}")
     @_observed
@@ -685,17 +780,15 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         if refused is not None:
             return refused
         if mode == "review":
-            assert archive_path is not None  # noqa: S101 — guard enforced this
             try:
-                deleted = await asyncio.to_thread(
-                    archive_edit.delete_event, str(archive_path), session_id, event_id
-                )
+                deleted = await _mutate_review_event(session_id, event_id, lambda _current: None)
+            except event_ops.EventChanged as err:
+                return _event_changed(err)
             except archive_edit.ArchiveLockedError as err:
                 return _archive_busy(err)
             if deleted is None:
                 return JSONResponse({"error": "Event not found"}, status_code=404)
-            _drop_document_event(session_id, event_id)
-            return JSONResponse(deleted.model_dump(mode="json", exclude_none=True))
+            return _record_response(deleted)
         removed = await collector.delete_event(event_id=event_id)
         if removed is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
@@ -717,44 +810,45 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             return JSONResponse({"error": str(err)}, status_code=422)
         try:
             if mode == "review":
-                assert archive_path is not None  # noqa: S101 — guard enforced this
-                record = await asyncio.to_thread(
-                    archive_edit.revert_event,
-                    str(archive_path),
-                    session_id,
-                    event_id,
-                    body.expect,
-                    body.write,
-                )
+
+                async def commit() -> EventRecord | None:
+                    reverted = await _archive_write(
+                        session_id,
+                        event_id,
+                        lambda: archive_edit.revert_event(
+                            _review_archive(), session_id, event_id, body.expect, body.write
+                        ),
+                    )
+                    if leg == "delete":
+                        _drop_document_event(session_id, event_id)
+                    else:
+                        assert reverted is not None  # noqa: S101 — only the delete leg returns no record to keep
+                        _patch_document_event(session_id, reverted)
+                    return reverted
+
+                # archive_edit.revert_event is review's whole revert decision
+                # (leg, compare against the archive row, write) under its
+                # flock; the mutation lock (#941) orders it, and the document
+                # patch after it, against this server's other writes, even
+                # when the request is cancelled during it. A refusal as
+                # changed repairs the document to the row (_archive_write).
+                record = await event_ops.run_locked(collector.mutation_lock(), commit)
             else:
                 event = await collector.revert_event(
                     event_id=event_id, expect=body.expect, write=body.write
                 )
                 record = EventRecord.model_validate(event.to_dict())
         except event_ops.EventChanged as err:
-            current = (
-                None
-                if err.current is None
-                else err.current.model_dump(mode="json", exclude_none=True)
-            )
-            return JSONResponse(
-                {"error": str(err), "code": "changed", "current": current}, status_code=409
-            )
+            return _event_changed(err)
         except archive_edit.ArchiveLockedError as err:
             return _archive_busy(err)
         except LookupError:
             return JSONResponse({"error": "unknown session"}, status_code=404)
         except EventValidationError as err:
             return JSONResponse({"error": str(err)}, status_code=422)
-        if mode == "review":
-            if leg == "delete":
-                _drop_document_event(session_id, event_id)
-            else:
-                assert record is not None  # noqa: S101 — only the delete leg returns no record to keep
-                _patch_document_event(session_id, record)
         if leg == "delete" or record is None:
             return JSONResponse(None)
-        return JSONResponse(record.model_dump(mode="json", exclude_none=True))
+        return _record_response(record)
 
     @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]

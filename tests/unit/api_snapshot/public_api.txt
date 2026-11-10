@@ -4384,6 +4384,7 @@ member	otto.monitor:MetricCollector.get_series	method	sync	-
 member	otto.monitor:MetricCollector.get_tunnel_records	method	sync	-
 member	otto.monitor:MetricCollector.init_db	method	coroutine	-
 member	otto.monitor:MetricCollector.mutate_event	method	coroutine	KO:event_id:- KO:resolve:-
+member	otto.monitor:MetricCollector.mutation_lock	method	sync	-
 member	otto.monitor:MetricCollector.restore_event	method	coroutine	KO:event_id:- KO:write:-
 member	otto.monitor:MetricCollector.revert_event	method	coroutine	KO:event_id:- KO:expect:- KO:write:-
 member	otto.monitor:MetricCollector.run	method	coroutine	KO:interval:O KO:duration:N
