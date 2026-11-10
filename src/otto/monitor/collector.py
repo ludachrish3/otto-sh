@@ -841,9 +841,10 @@ class MetricCollector:
         """Record a labeled event and push it to all dashboard subscribers.
 
         *color* is ``#rrggbb`` or ``#rgb`` (stored as lowercase ``#rrggbb``);
-        a named colour or an unknown *dash* raises ``ValueError`` before
-        anything is stored or published.
+        a named colour, an unknown *dash* or a blank *label* raises
+        ``ValueError`` before anything is stored or published.
         """
+        event_ops.check_label_write(None, label)
         event = MonitorEvent(
             timestamp=timestamp or event_ops.utc_now(),
             label=label,
@@ -873,7 +874,12 @@ class MetricCollector:
         publish in one synchronous step. ``resolve`` is where a caller's
         merge lives (a PATCH's omitted fields, an end's "already ended"
         refusal), so it always reads the latest state; an exception it raises
-        propagates, as does a DB failure, with memory unchanged.
+        propagates, as does a DB failure, with memory unchanged. A resolved
+        label that differs from the current one must not be blank
+        (``event_ops.EventValidationError``, a ``ValueError``): this is the
+        one place a change is checked, so ``update_event`` and a revert's
+        update leg share it. A change that keeps the label as it is passes,
+        even for a legacy blank one.
 
         The DB write comes first so that the memory change and its publish
         (which stamps ``observed_at``) are one step: no snapshot sees a change
@@ -902,6 +908,7 @@ class MetricCollector:
                 )
                 return current
             edited = replace(resolved, id=current.id, source=current.source)
+            event_ops.check_label_write(current.label, edited.label)
             if self._db:
                 await self._db.update_event(edited)
             for name, value in event_ops.editable_fields(edited).items():
@@ -933,11 +940,13 @@ class MetricCollector:
         event), so a restore can neither overwrite an event nor claim an id
         a later create would collide with.
         ``write`` is validated strictly, as every live write is: a legacy
-        colour or dash raises ``event_ops.EventValidationError`` (the
-        route's 422) before anything is written.
+        colour or dash, or a blank label (a restore introduces its label),
+        raises ``event_ops.EventValidationError`` (the route's 422) before
+        anything is written.
         ``source`` is kept from ``write``: a restored ``auto`` event stays
         ``auto``.
         """
+        event_ops.check_label_write(None, write.label)
         async with self._mutation_lock():
             present = self._store.find_event(event_id)
             if present is not None:
@@ -978,7 +987,8 @@ class MetricCollector:
         :meth:`restore_event`. Any mismatch raises
         ``event_ops.EventChanged`` carrying the actual
         state, with nothing written or published. ``source`` is compared,
-        never written, on the update leg.
+        never written, on the update leg. A blank new label raises
+        ``event_ops.EventValidationError``, likewise with nothing written.
 
         Returns the stored event after an update or restore, or the removed
         event after a delete.
@@ -1017,7 +1027,8 @@ class MetricCollector:
         :meth:`mutate_event` resolver instead, so it reads them under the
         lock. ``timestamp`` is REQUIRED so a call site cannot silently keep
         passing the old start while believing it edited it (the 5a
-        `interval=None` trap, made structural).
+        `interval=None` trap, made structural). A blank *label* that
+        differs from the event's own raises ``event_ops.EventValidationError``.
         """
         # No check here: replace() runs MonitorEvent.__post_init__, which
         # normalises the colour and refuses a bad colour or dash inside the

@@ -257,9 +257,12 @@ class EventRecord(RowModel):
 def checked_label(value: str) -> str:
     """Return ``value``, refusing a blank label: the ONE label rule.
 
-    ``EventCreateBody`` and ``EventUpdateBody`` validate with it, and
-    ``otto.monitor.event_ops.check_revert_write`` applies it to a revert's
-    ``write``. ``EventRecord`` does not, so an old file still loads.
+    ``EventCreateBody`` validates with it. Every update (an HTTP PATCH
+    included) and every library write that stores a new or changed label (the collector's
+    ``add_event``, ``mutate_event`` and ``restore_event``, the archive's
+    insert, update and restore, and a revert's ``write``) reaches it through
+    ``otto.monitor.event_ops.check_label_write``. ``EventRecord`` does not
+    validate with it, so an old file still loads.
     """
     if not value.strip():
         raise ValueError("label must not be empty")
@@ -346,7 +349,12 @@ class EventUpdateBody(OttoModel):
     that distinction — an explicit null CLEARS the end (span → point); for the
     other fields null means unchanged, same as absent. The merged
     start/end ordering check happens in the route, where the existing event's
-    values are known.
+    values are known. The label check likewise runs inside the mutation
+    sequence, against the current event: a blank ``label`` is refused only
+    when it differs from the event's current one
+    (``otto.monitor.event_ops.check_label_write``), the same answer a
+    library update gets: a PATCH that resends an older event's already-blank
+    label alongside a colour is accepted.
 
     ``defer_build=False``: same FastAPI request-body reason as
     :class:`EventCreateBody` — see its docstring.
@@ -359,11 +367,6 @@ class EventUpdateBody(OttoModel):
     end_timestamp: datetime | None = None
     color: str | None = None
     dash: str | None = None
-
-    @field_validator("label")
-    @classmethod
-    def _label(cls, value: str | None) -> str | None:
-        return None if value is None else checked_label(value)
 
     @field_validator("color")
     @classmethod
