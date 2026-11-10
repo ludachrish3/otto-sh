@@ -57,11 +57,18 @@ the base `shutdown`, so `shutdown` raises on embedded hosts too.
 ## `reboot` options
 
 ```text
-otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS]
+otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS] [--down-timeout SECS]
+                           [--poll-interval SECS]
 ```
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--hard / --no-hard` | `--no-hard` | Power-cycle via the power controller instead of an in-shell reboot |
 | `--wait / --no-wait` | `--no-wait` | Block until the host is reachable again after reboot |
-| `--timeout SECS` | `600.0` | Maximum seconds to wait when `--wait` is set |
+| `--timeout SECS` | the host's `reboot_options` | Whole-wait bound in seconds when `--wait` is set |
+| `--down-timeout SECS` | the host's `reboot_options` | Down-phase bound in seconds; `0` skips the down phase |
+| `--poll-interval SECS` | the host's `reboot_options` | Seconds between reachability probes |
+
+The three bounds default to the host's `reboot_options`, layered from the lab
+data and `[host_preferences]` ({ref}`reboot-options-reference` has the defaults); a
+flag given here is the final word and is held to the same bounds as lab data.

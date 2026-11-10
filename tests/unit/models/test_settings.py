@@ -388,6 +388,21 @@ def test_host_preferences_accepts_selections_and_option_tables():
     assert m.host_preferences["router.*"]["telnet_options"] == {"port": 9023}
 
 
+def test_host_preferences_accept_a_reboot_options_table():
+    def load(table):
+        return SettingsModel.model_validate(
+            {"name": "p", "version": "1.0.0", "host_preferences": {".*": {"reboot_options": table}}}
+        )
+
+    assert load({"down_timeout": 30}).host_preferences[".*"]["reboot_options"] == {
+        "down_timeout": 30
+    }
+    with pytest.raises(ValueError, match="down_timout"):
+        load({"down_timout": 30})
+    with pytest.raises(ValueError, match="timeout"):
+        load({"timeout": 0})
+
+
 def test_host_preferences_unknown_inner_key_raises():
     with pytest.raises(ValueError, match=r"unknown \[host_preferences\] key 'bogus'"):
         SettingsModel.model_validate(

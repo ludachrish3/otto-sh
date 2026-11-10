@@ -24,7 +24,7 @@ otto host <HOST_ID> put <SRC...> <DEST>
 otto host <HOST_ID> get <SRC...> <DEST>
 otto host <HOST_ID> login [--user NAME] [--force]
 otto host <HOST_ID> logout
-otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS]
+otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS] [--down-timeout SECS] [--poll-interval SECS]
 otto host <HOST_ID> install [--stage-only]
 otto host <HOST_ID> power [STATE]
 otto host <HOST_ID> ls [PATH] [--all]

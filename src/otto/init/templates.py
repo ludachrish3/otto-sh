@@ -85,9 +85,10 @@ paths = ["lab_data"]
 #transfer = ["scp", "sftp"]
 #impairer = ["tc"]
 # Option tables may also sit under a selector: ssh_options, telnet_options,
-# sftp_options, scp_options, ftp_options, nc_options, and userland_options
-# (facts about the device, not a protocol). Their fields are not listed
-# here — the schema autocompletes them. Example:
+# sftp_options, scp_options, ftp_options, nc_options, userland_options
+# (facts about the device, not a protocol), and reboot_options (the reboot
+# bounds). Their fields are not listed here — the schema autocompletes them.
+# Example:
 #[host_preferences.".*".ssh_options]
 #port = 22
 

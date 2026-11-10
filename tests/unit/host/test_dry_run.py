@@ -1496,6 +1496,17 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
         assert real.is_ok is True
 
     @pytest.mark.asyncio
+    async def test_the_dry_run_message_reads_the_reboot_options_table(self):
+        """With no arguments the preview carries the table's bounds; 0 skips the down phase."""
+        host = _unix()
+        with active_context(dry_run=True):
+            default = await host.reboot(wait=True)
+            skipped = await host.reboot(wait=True, down_timeout=0)
+        for bound in ("120.0s", "600.0s", "2.0s"):
+            assert bound in default.msg, default.msg
+        assert "down phase skipped" in skipped.msg, skipped.msg
+
+    @pytest.mark.asyncio
     async def test_a_hard_reboot_with_no_controller_fails_the_same_way_it_always_did(self):
         """A dry run checks the caller's OWN input; it does not preview the impossible.
 

@@ -551,7 +551,7 @@ async def test_reboot_wait_timeout_downgrades_to_failed(monkeypatch):
         return False
 
     monkeypatch.setattr(type(host), "wait_until_up", never_up)
-    result = await host.reboot(hard=True, wait=True, timeout=0.0)
+    result = await host.reboot(hard=True, wait=True, timeout=0.01)
     assert result.status is Status.Failed
     assert "reachable" in result.msg
     assert ctrl.calls == ["off", "on"]  # the reboot still happened
@@ -571,7 +571,7 @@ async def test_reboot_wait_success_keeps_status(monkeypatch):
         return True
 
     monkeypatch.setattr(type(host), "wait_until_up", comes_up)
-    result = await host.reboot(hard=True, wait=True, timeout=0.0)
+    result = await host.reboot(hard=True, wait=True, timeout=0.01)
     assert result.status is Status.Success
 
 

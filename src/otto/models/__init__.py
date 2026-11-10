@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..host.option_specs import FtpOptionsSpec as FtpOptionsSpec
     from ..host.option_specs import NcOptionsSpec as NcOptionsSpec
+    from ..host.option_specs import RebootOptionsSpec as RebootOptionsSpec
     from ..host.option_specs import ScpOptionsSpec as ScpOptionsSpec
     from ..host.option_specs import SftpOptionsSpec as SftpOptionsSpec
     from ..host.option_specs import SnmpOptionsSpec as SnmpOptionsSpec
@@ -96,6 +97,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "validate_interval": "otto.utils",
     "FtpOptionsSpec": "otto.host.option_specs",
     "NcOptionsSpec": "otto.host.option_specs",
+    "RebootOptionsSpec": "otto.host.option_specs",
     "ScpOptionsSpec": "otto.host.option_specs",
     "SftpOptionsSpec": "otto.host.option_specs",
     "SnmpOptionsSpec": "otto.host.option_specs",
@@ -156,6 +158,7 @@ __all__ = [
     "OsProfileSpec",
     "OttoEnvSettings",
     "OttoModel",
+    "RebootOptionsSpec",
     "ReservationConfigSpec",
     "ReservationEntry",
     "ReservationFile",

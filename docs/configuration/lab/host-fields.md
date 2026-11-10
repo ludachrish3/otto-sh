@@ -95,6 +95,7 @@ connection-options reference.
 | `ftp_options` | FTP transfer |
 | `nc_options` | Netcat transfer |
 | `userland_options` | The device's own userland (see below) |
+| `reboot_options` | The bounds of `reboot(wait=True)`, on every host family (see {ref}`reboot-options-reference`) |
 
 `userland_options` is the odd one out: it names no protocol.  It carries
 declared answers about the *device* — which elevation mechanism it has,

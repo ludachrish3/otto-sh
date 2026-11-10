@@ -36,6 +36,7 @@ _CONVERT = {
     "debug_log_globs",
     "interfaces",
     "telnet_options",
+    "reboot_options",
     "console_options",
     "snmp",
     "toolchain",

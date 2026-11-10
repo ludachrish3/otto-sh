@@ -834,6 +834,9 @@ subclass = false
 [symbols."otto.host.options:NcOptions"]
 subclass = false
 
+[symbols."otto.host.options:RebootOptions"]
+subclass = false
+
 [symbols."otto.host.options:ScpOptions"]
 subclass = false
 
@@ -2745,6 +2748,10 @@ subclass = false
 
 # the settings.toml boundary model otto parses; no docs page extends it
 [symbols."otto.models:SettingsModel"]
+construct = false
+subclass = false
+
+[symbols."otto.models:RebootOptionsSpec"]
 construct = false
 subclass = false
 

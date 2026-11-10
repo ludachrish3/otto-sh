@@ -1073,6 +1073,24 @@ def test_userland_options_merge_per_key_like_every_other_option_table():
     assert h.userland_options.stat_size == "wc"  # host-only key preserved
 
 
+def test_reboot_options_merge_per_key_like_every_other_option_table():
+    from otto.host.options import RebootOptions
+
+    h = create_host_from_dict(
+        {
+            "os_type": "unix",
+            "ip": "1.1.1.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "valid_terms": ["ssh"],
+            "valid_transfers": ["scp"],
+            "reboot_options": {"down_timeout": 30},
+        },
+        preferences={".*": {"reboot_options": {"timeout": 300}}},
+        element=Element(name="test1"),
+    )
+    assert h.reboot_options == RebootOptions(timeout=300, down_timeout=30, poll_interval=2)
+
+
 def test_selection_preference_overrides_lab_pin():
     # The flip: product selection wins over the lab term pin, still menu-gated.
     h = create_host_from_dict(

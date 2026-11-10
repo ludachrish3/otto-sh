@@ -88,6 +88,7 @@ FIRST_ALL = {
         "FtpOptions",
         "LocalPortForward",
         "NcOptions",
+        "RebootOptions",
         "ScpOptions",
         "SftpOptions",
         "SnmpOptions",

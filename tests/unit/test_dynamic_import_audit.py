@@ -1103,6 +1103,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/models/__init__.py", "otto.host.specs:ToolchainSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.host.option_specs:FtpOptionsSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.host.option_specs:NcOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:RebootOptionsSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.host.option_specs:ScpOptionsSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.host.option_specs:SftpOptionsSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.host.option_specs:SnmpOptionsSpec", FACADE_BINDING),
