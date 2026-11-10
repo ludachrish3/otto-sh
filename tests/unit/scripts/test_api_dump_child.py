@@ -1182,6 +1182,24 @@ def test_entries_on_two_paths_to_one_function_must_agree(tmp_path):
     assert run_child_json(src, ["otto.p", "otto.q"], symbols=both)["refusals"] == []
 
 
+def test_entries_on_two_paths_to_one_method_must_agree_on_implementer(tmp_path):
+    src = write_tree(
+        tmp_path,
+        {
+            "otto/__init__.py": "",
+            "otto/p.py": "__all__=['C']\nclass C:\n    def m(self, host): ...\n",
+            "otto/q.py": "from otto.p import C\n__all__=['C']\n",
+        },
+    )
+    one = [_sym("otto.p:C.m", implementer=True, positional=("host",))]
+    rep = run_child_json(src, ["otto.p", "otto.q"], symbols=one)
+    assert rep["refusals"] == [
+        "otto.p:C.m: paths otto.p:C.m and otto.q:C.m to one object carry different symbol entries"
+    ]
+    both = [*one, _sym("otto.q:C.m", implementer=True, positional=("host",))]
+    assert run_child_json(src, ["otto.p", "otto.q"], symbols=both)["refusals"] == []
+
+
 def test_a_nested_class_and_its_classref_must_agree(tmp_path):
     body = "__all__=['Outer', 'Inner']\nclass Outer:\n    class Inner: ...\nInner = Outer.Inner\n"
     rep = _with_symbols(tmp_path, body, [_sym("otto.p:Outer.Inner", construct=False)])
