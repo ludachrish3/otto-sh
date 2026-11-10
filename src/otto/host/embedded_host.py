@@ -61,7 +61,7 @@ from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ZephyrFrame
-from .connections import TermContext, build_term_backend
+from .connections import ConnectionManager, TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     CONCURRENT_HELP,
@@ -256,11 +256,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             abandon_console()
         self._build_connection_state()
 
-    def _build_connection_state(self) -> None:
-        """Build the connection manager, session manager and transfer backend from the fields.
+    @override
+    def _build_connections(self) -> ConnectionManager:
+        """Construct the console backend for the current ``term`` via the registry seam.
 
-        Shared by ``__post_init__`` and :meth:`rebuild_connections`, so a
-        rebuilt host is wired exactly as a new one.
+        Shared by construction, :meth:`rebuild_connections` and the fresh down probe.
         """
         hop_transport = self._build_hop_transport() if self.hop else None
         # Through the registry, as a unix host builds: a backend registered over
@@ -268,7 +268,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         # options are forced in the context, so every backend sees them: an RTOS
         # shell has no login step, and its one console serves one client.
         telnet_options = replace(self.telnet_options, login=False, single_client_console=True)
-        self._connections = build_term_backend(
+        return build_term_backend(
             name=self.term,
             ctx=TermContext(
                 ip=self.ip,
@@ -284,6 +284,14 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 host_id=self.id,
             ),
         )
+
+    def _build_connection_state(self) -> None:
+        """Build the connection manager, session manager and transfer backend from the fields.
+
+        Shared by ``__post_init__`` and :meth:`rebuild_connections`, so a
+        rebuilt host is wired exactly as a new one.
+        """
+        self._connections = self._build_connections()
         self._session_mgr = SessionManager(
             connections=self._connections,
             name=self.name,
@@ -325,9 +333,17 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ####################
 
     @override
-    async def _probe_connection(self) -> None:
-        """Open the single console (telnet or console term) — the embedded connect probe."""
-        conns = self._live_connections()
+    async def _release_probe_line(self) -> None:
+        """On a ``console`` term, release the cached client: the one console serves one client."""
+        if self.term != "console":
+            return
+        abandon_console = getattr(self._live_connections(), "abandon_console", None)
+        if abandon_console is not None:
+            abandon_console()
+
+    @override
+    async def _probe_with(self, conns: ConnectionManager) -> None:
+        """Open the single console (telnet or console term) on *conns*."""
         await (conns.console() if self.term == "console" else conns.telnet())
 
     ####################

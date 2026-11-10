@@ -54,6 +54,11 @@ the base `shutdown`, so `shutdown` raises on embedded hosts too.
     await host.wait_until_up(120)     # after a reboot/power-on  (timeout is required)
     await host.wait_until_down(60)    # after a shutdown          (timeout is required)
 
+The down phase never trusts a cached connection: each poll of
+`wait_until_down` calls `is_reachable(fresh=True)`, which dials through a
+throwaway connection and closes it, so a login that succeeded early in a slow
+shutdown cannot keep the host reading as up.
+
 ## `reboot` options
 
 ```text

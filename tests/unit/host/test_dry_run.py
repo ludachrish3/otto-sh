@@ -1470,7 +1470,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
         async def recording_soft_reboot() -> Result:
             return Result(status=Status.Success)
 
-        async def recording_is_reachable(timeout: float = 10.0) -> bool:
+        async def recording_is_reachable(timeout: float = 10.0, fresh: bool = False) -> bool:
             dials.append("dial")
             return next(answers)
 

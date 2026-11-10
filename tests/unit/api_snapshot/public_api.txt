@@ -1420,7 +1420,7 @@ member	otto.host:BaseHost.install_tools	method	coroutine	KO:dev:B:true KO:toolch
 member	otto.host:BaseHost.inventory_ref	field
 member	otto.host:BaseHost.is_clean	method	coroutine	-
 member	otto.host:BaseHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:BaseHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:BaseHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:BaseHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:BaseHost.lab_info	field
 member	otto.host:BaseHost.log	field
@@ -1647,7 +1647,7 @@ member	otto.host:DockerContainerHost.install_tools	method	coroutine	KO:dev:B:tru
 member	otto.host:DockerContainerHost.inventory_ref	field
 member	otto.host:DockerContainerHost.is_clean	method	coroutine	-
 member	otto.host:DockerContainerHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:DockerContainerHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:DockerContainerHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:DockerContainerHost.is_running	method	coroutine	-
 member	otto.host:DockerContainerHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:DockerContainerHost.is_virtual	field
@@ -1776,7 +1776,7 @@ member	otto.host:EmbeddedHost.inventory_ref	field
 member	otto.host:EmbeddedHost.ip	field
 member	otto.host:EmbeddedHost.is_clean	method	coroutine	-
 member	otto.host:EmbeddedHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:EmbeddedHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:EmbeddedHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:EmbeddedHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:EmbeddedHost.is_virtual	field
 member	otto.host:EmbeddedHost.lab_info	field
@@ -1967,7 +1967,7 @@ member	otto.host:Host.install_tools	method	coroutine	KO:dev:B:true KO:toolchain:
 member	otto.host:Host.inventory_ref	field
 member	otto.host:Host.is_clean	method	coroutine	-
 member	otto.host:Host.is_installed	method	coroutine	KO:owner:N
-member	otto.host:Host.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:Host.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:Host.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:Host.lab_info	field
 member	otto.host:Host.log	field
@@ -2207,7 +2207,7 @@ member	otto.host:LocalHost.install_tools	method	coroutine	KO:dev:B:true KO:toolc
 member	otto.host:LocalHost.inventory_ref	field
 member	otto.host:LocalHost.is_clean	method	coroutine	-
 member	otto.host:LocalHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:LocalHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:LocalHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:LocalHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:LocalHost.lab_info	field
 member	otto.host:LocalHost.log	field
@@ -2472,7 +2472,7 @@ member	otto.host:RemoteHost.inventory_ref	field
 member	otto.host:RemoteHost.ip	field
 member	otto.host:RemoteHost.is_clean	method	coroutine	-
 member	otto.host:RemoteHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:RemoteHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:RemoteHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:RemoteHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:RemoteHost.is_virtual	field
 member	otto.host:RemoteHost.lab_info	field
@@ -2808,7 +2808,7 @@ member	otto.host:UnixHost.inventory_ref	field
 member	otto.host:UnixHost.ip	field
 member	otto.host:UnixHost.is_clean	method	coroutine	-
 member	otto.host:UnixHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:UnixHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:UnixHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:UnixHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:UnixHost.is_virtual	field
 member	otto.host:UnixHost.lab_info	field
@@ -3078,7 +3078,7 @@ member	otto.host:ZephyrHost.inventory_ref	field
 member	otto.host:ZephyrHost.ip	field
 member	otto.host:ZephyrHost.is_clean	method	coroutine	-
 member	otto.host:ZephyrHost.is_installed	method	coroutine	KO:owner:N
-member	otto.host:ZephyrHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3
+member	otto.host:ZephyrHost.is_reachable	method	coroutine	KO:timeout:F:0x1.4000000000000p+3 KO:fresh:B:false
 member	otto.host:ZephyrHost.is_uninstalled	method	coroutine	KO:owner:N
 member	otto.host:ZephyrHost.is_virtual	field
 member	otto.host:ZephyrHost.lab_info	field

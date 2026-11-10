@@ -558,6 +558,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             session_setup=self.session_setup,
         )
 
+    @override
     def _build_connections(self) -> ConnectionManager:
         """Construct the connection backend for the current ``term`` via the registry seam.
 
@@ -709,29 +710,35 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return s.getsockname()[0]
 
     @override
-    async def _probe_connection(self) -> None:
-        """Open this host's term channel (ssh, telnet or console); warm FTP when configured.
+    async def _release_probe_line(self) -> None:
+        """On a ``console`` term, close the cached client so a new dial can take the line.
 
-        On a ``console`` term the probe dials the console server, never the
-        device's own address, and always dials fresh: the TCP link to the
-        server outlives a device reboot, so a cached client being alive says
-        nothing about the device. Any cached client (and the session on it)
-        is closed first, and the device counts as up only when a new client
-        logs in through its login prompt again. This is what lets
-        ``reboot(wait=True)`` see a console host go down and come back. On a
-        ``login: false`` console there is no prompt to observe, so a fresh
-        dial proves only that the server answers.
+        The TCP link to the console server outlives a device reboot, so a
+        cached client being alive says nothing about the device; the device
+        counts as up only when a new client logs in through its login prompt
+        again. This is what lets ``reboot(wait=True)`` see a console host go
+        down and come back. On a ``login: false`` console there is no prompt
+        to observe, so a fresh dial proves only that the server answers.
         """
         if self.term == "console":
             await self.close()
-            await self._live_connections().console()
+
+    @override
+    async def _probe_with(self, conns: ConnectionManager) -> None:
+        """Open the term channel (ssh, telnet or console) on *conns*; warm FTP when configured.
+
+        On a ``console`` term the probe dials the console server, never the
+        device's own address.
+        """
+        if self.term == "console":
+            await conns.console()
         elif self.term == "ssh":
-            await self._live_connections().ssh()
+            await conns.ssh()
         else:
-            await self._live_connections().telnet()
+            await conns.telnet()
 
         if self.transfer == "ftp":
-            await self._live_connections().ftp()
+            await conns.ftp()
 
     ####################
     #  Command execution

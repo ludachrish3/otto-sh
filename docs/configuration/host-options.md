@@ -544,7 +544,10 @@ session on it:
   reachability probe (`otto host <id> probe`, `is_reachable()`, and each
   poll of `reboot(wait=True)`) does the same and then dials fresh: the link
   to the server outlives a device reboot, so only a new login shows the
-  device is up.
+  device is up. During `reboot`'s down phase every term follows this rule:
+  each poll releases the line, then dials through a throwaway connection
+  that it closes before the next poll, so a connection cached while the host
+  was shutting down never reads it as still up.
 
 When otto closes the session it logs out (per `logout`), so the next client
 finds `login:`, then waits for the line to go quiet before it releases it.

@@ -566,7 +566,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
         """Return ``True`` — the local machine is always reachable."""
         return True
 
