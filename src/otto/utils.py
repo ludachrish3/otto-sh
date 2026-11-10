@@ -23,7 +23,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -47,6 +47,24 @@ if TYPE_CHECKING:
     import asyncio
 
 __all__ = ["Arg", "Exclude", "Opt", "Status", "cli_exposed"]
+
+
+@overload
+def as_utc(value: datetime) -> datetime: ...
+@overload
+def as_utc(value: None) -> None: ...
+def as_utc(value: datetime | None) -> datetime | None:
+    """Apply otto's naive-means-UTC convention: the ONE place it is decided.
+
+    ``None`` (an absent optional timestamp) stays ``None``.
+
+    A naive *value* is read as UTC; an aware one is returned unchanged, its
+    offset preserved (never converted), so the same instant stays the same
+    instant and only a naive value gains a ``tzinfo``.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
 
 
 def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:

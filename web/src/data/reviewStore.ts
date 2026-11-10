@@ -344,7 +344,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
     // The `>=` comparison above is a NaN blind spot: `NaN >= NaN` (and
     // every other NaN comparison) is `false`, so an inverted/empty check
     // alone lets a NaN range walk straight through. A NaN reaches here for
-    // real — `parseTs` (data/time.ts) is `Date.parse`, which returns NaN
+    // real — `parseTs` (data/time.ts) returns NaN, as `Date.parse` does,
     // for a malformed/non-ISO timestamp, and the events-panel jump builds
     // its range from a parsed event timestamp. `Number.isFinite` on both
     // edges closes that gap: it rejects NaN and +/-Infinity alike, which

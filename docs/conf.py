@@ -229,6 +229,9 @@ _SHORT_TYPE_ALIASES = {
     # class of misqualification as ``types.Annotated`` above; both resolve to
     # the one real symbol rather than being silenced.
     "pathlib.Annotated": "typing.Annotated",
+    # models/monitor.py's AwareTimestamp is ``Annotated[datetime, ...]``, so the
+    # same rule renders it as ``datetime.Annotated``.
+    "datetime.Annotated": "typing.Annotated",
     # The same misqualification for a pydantic field whose default is a model
     # instance: a spec field's field-kind marker makes its annotation
     # ``Annotated[TelnetOptionsSpec, Convert(...)]``, rendered with the module of
@@ -344,6 +347,10 @@ _INTERNAL_ALIASES = {
     # re-dispatch through resolve_any_xref, which matches across object types
     # (same trick as ``asyncssh.connect`` in _SHORT_TYPE_ALIASES).
     "otto.models.settings.anchor_to_project_root": "otto.models.settings.anchor_to_project_root",
+    # models/monitor.py's AwareTimestamp, ``Annotated[datetime,
+    # AfterValidator(as_utc)]``: the identical re-dispatch for its validator,
+    # documented as a py:function on the utils internals page.
+    "otto.utils.as_utc": "otto.utils.as_utc",
     # host/specs.py's IntOrStr is the same shape one alias down —
     # ``Annotated[int | str, BeforeValidator(coerce_digit_string)]``, carried by
     # HostSpec.site/.rack and InventoryRecord.site/.rack — so the validator

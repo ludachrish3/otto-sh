@@ -21,6 +21,7 @@ from typing import Any
 
 from ..errors import OttoError
 from ..models.monitor import EventRecord
+from ..utils import as_utc
 from . import event_ops
 from .db import (
     EVENT_ID_TAKEN_SQL,
@@ -87,8 +88,8 @@ def insert_event(
             EVENT_INSERT_SQL,
             event_insert_params(
                 session_id,
-                timestamp=timestamp,
-                end_timestamp=end_timestamp,
+                timestamp=as_utc(timestamp),
+                end_timestamp=as_utc(end_timestamp),
                 label=label,
                 source=source,
                 color=color,
@@ -216,7 +217,11 @@ def update_event(
     passes, so a legacy blank-label row can still change colour or end.
     """
     fields = event_ops.ResolvedEventFields(
-        label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
+        label=label,
+        color=color,
+        dash=dash,
+        timestamp=as_utc(timestamp),
+        end_timestamp=as_utc(end_timestamp),
     )
     with _locked_connection(path) as conn:
         current = _current(conn, session_id, event_id)

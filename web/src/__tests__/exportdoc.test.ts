@@ -10,7 +10,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import kitchenDoc from "../../fixtures/kitchen-sink.json" with { type: "json" };
 import { eventMarkers } from "../charts/options";
@@ -24,6 +24,7 @@ import {
   sessionBounds,
   subjectKind,
 } from "../data/exportDoc";
+import { parseTs } from "../data/time";
 
 function metric(host: string, label: string, timestamp: string, value: number) {
   return { host, label, timestamp, value };
@@ -477,5 +478,43 @@ describe("observedAtMicros (#868)", () => {
     expect(observedAtMicros(null)).toBeNull();
     expect(observedAtMicros(undefined)).toBeNull();
     expect(observedAtMicros("not a time")).toBeNull();
+  });
+});
+
+// Naive means UTC at the browser's import boundary too (otto.utils.as_utc on
+// the server): a legacy capture whose bounds and samples are stored naive,
+// imported directly, keeps its event inside its own window in a zone that is
+// not UTC, and reads the same instants as the server's review of it (which
+// serves every stamp with `Z`).
+describe("a legacy naive document in a non-UTC zone", () => {
+  const doc = (zone: string) => ({
+    format: 1,
+    sessions: [
+      {
+        id: "s",
+        start: `2026-07-18T12:00:00${zone}`,
+        end: `2026-07-18T13:00:00${zone}`,
+        lab: { hosts: [{ id: "h0", element: "h0" }] },
+        chart_map: { m0: "CPU" },
+        metrics: [metric("h0", "m0", `2026-07-18T12:10:00${zone}`, 1)],
+        events: [{ id: 1, timestamp: `2026-07-18T12:30:00${zone}`, label: "old" }],
+      },
+    ],
+  });
+
+  it("imports its event inside its capture window, as the served review does", () => {
+    vi.stubEnv("TZ", "America/Chicago");
+    const [naive] = parse(doc("")).sessions;
+    const [served] = parse(doc("Z")).sessions;
+    if (naive === undefined || served === undefined) throw new Error("no session");
+    expect(sessionBounds(naive)).toEqual({
+      from: Date.UTC(2026, 6, 18, 12),
+      to: Date.UTC(2026, 6, 18, 13),
+    });
+    expect(sessionBounds(naive)).toEqual(sessionBounds(served));
+    const eventMs = parseTs(naive.events[0]?.timestamp ?? "");
+    expect(eventMs).toBe(Date.UTC(2026, 6, 18, 12, 30));
+    expect(naive.index.tsMs).toEqual(served.index.tsMs);
+    expect(naive.index.tsMs.get("h0/m0")).toEqual([Date.UTC(2026, 6, 18, 12, 10)]);
   });
 });

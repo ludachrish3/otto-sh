@@ -422,7 +422,7 @@ export function withLanes<T extends { fromMs: number; toMs: number }>(
 /** Start order's lane test: the lane's most recently placed occupant still
  * covers the event's start. `laneEnd > event.fromMs` is "still occupied",
  * kept in that form rather than `laneEnd <= event.fromMs` so that a NaN end
- * (Date.parse of a malformed wire timestamp) stays on the side it always
+ * (parseTs of a malformed wire timestamp) stays on the side it always
  * has: free. */
 function lastStillCovers(occupants: { toMs: number }[], event: { fromMs: number }): boolean {
   const last = occupants.at(-1);

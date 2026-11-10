@@ -1660,3 +1660,108 @@ class TestWaitStarted:
             await asyncio.gather(task, return_exceptions=True)
         finally:
             blocker.close()
+
+
+UTC_PLUS_2 = timedelta(hours=2)
+
+
+def _instant(text: object) -> datetime:
+    """Parse a wire timestamp (``Z`` or an offset; 3.10's fromisoformat takes only the latter)."""
+    return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+
+
+class TestEventTimestampsAreAware:
+    """#965: a naive event timestamp means UTC; a mixed write is never a 500.
+
+    Every write route, live and review, answers 2xx with an aware stored
+    instant, or 422 for a backward span; an existing offset is preserved.
+    """
+
+    @staticmethod
+    async def _post(served: _Served, **fields: object) -> tuple[int, dict[str, object]]:
+        return await post_json(served.handle, served.base, {"label": "x", **fields})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("start", "end", "ok"),
+        [
+            # aware start, naive end (naive = UTC)
+            ("2026-07-18T12:00:00+02:00", "2026-07-18T11:00:00", True),
+            ("2026-07-18T12:00:00+00:00", "2026-07-18T11:00:00", False),
+            # naive start, aware end
+            ("2026-07-18T12:00:00", "2026-07-18T15:00:00+02:00", True),
+            ("2026-07-18T12:00:00", "2026-07-18T14:00:00+02:00", False),
+            # both naive
+            ("2026-07-18T12:00:00", "2026-07-18T12:30:00", True),
+            ("2026-07-18T12:00:00", "2026-07-18T11:30:00", False),
+        ],
+        ids=[
+            "aware-naive-ok",
+            "aware-naive-back",
+            "naive-aware-ok",
+            "naive-aware-back",
+            "naive-naive-ok",
+            "naive-naive-back",
+        ],
+    )
+    async def test_create_mixed_awareness(
+        self, served: _Served, start: str, end: str, ok: bool
+    ) -> None:
+        status, body = await self._post(served, timestamp=start, end_timestamp=end)
+        assert status == (201 if ok else 422)
+        if ok:
+            for key in ("timestamp", "end_timestamp"):
+                assert _instant(body[key]).tzinfo is not None
+            assert (await served.events())[body["id"]]["timestamp"] == body["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_create_preserves_an_existing_offset_and_pins_a_naive_one_to_utc(
+        self, served: _Served
+    ) -> None:
+        _, aware = await self._post(served, timestamp="2026-07-18T12:00:00+02:00")
+        assert _instant(aware["timestamp"]).utcoffset() == UTC_PLUS_2
+        _, naive = await self._post(served, timestamp="2026-07-18T12:00:00")
+        assert _instant(naive["timestamp"]) == datetime(2026, 7, 18, 12, tzinfo=timezone.utc)
+
+    @pytest.mark.asyncio
+    async def test_patch_an_aware_event_with_a_naive_end(self, served: _Served) -> None:
+        created = await served.create(timestamp="2026-07-18T12:00:00+00:00")
+        url = f"{served.base}/{created['id']}"
+        status, body = await patch_json(
+            served.handle, url, {"end_timestamp": "2026-07-18T13:00:00"}
+        )
+        assert status == 200
+        assert _instant(body["end_timestamp"]) == datetime(2026, 7, 18, 13, tzinfo=timezone.utc)
+        status, _ = await patch_json(served.handle, url, {"end_timestamp": "2026-07-18T11:00:00"})
+        assert status == 422
+
+    @pytest.mark.asyncio
+    async def test_revert_expect_naming_the_stored_instant_as_naive_matches(
+        self, served: _Served
+    ) -> None:
+        created = await served.create(timestamp="2026-07-18T12:01:00+00:00")
+        naive_expect = {**created, "timestamp": "2026-07-18T12:01:00"}
+        status, _, body = await served.revert(
+            created["id"], naive_expect, {**created, "label": "z"}
+        )
+        assert status == 200
+        assert body["label"] == "z"
+
+    @pytest.mark.asyncio
+    async def test_a_library_event_with_a_naive_timestamp_takes_patch_and_end(
+        self, live_server: _RunningServer
+    ) -> None:
+        sid = live_server.collector.session_id
+        naive = datetime(2026, 7, 18, 12, 0)  # noqa: DTZ001 — the naive input under test
+        event = await live_server.collector.add_event(label="lib", timestamp=naive)
+        assert event.timestamp == naive.replace(tzinfo=timezone.utc)
+        base = f"/api/session/{sid}/event"
+        status, body = await patch_json(
+            live_server, f"{base}/{event.id}", {"end_timestamp": "2026-07-18T13:00:00"}
+        )
+        assert status == 200
+        assert _instant(body["end_timestamp"]) == datetime(2026, 7, 18, 13, tzinfo=timezone.utc)
+        other = await live_server.collector.add_event(label="lib2", timestamp=naive)
+        status, body = await _request_json(live_server, "POST", f"{base}/{other.id}/end", {})
+        assert status == 200
+        assert _instant(body["end_timestamp"]).tzinfo is not None

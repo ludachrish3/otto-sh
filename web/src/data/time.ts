@@ -1,9 +1,21 @@
 /** Time helpers for the review UI. All internal times are epoch ms. */
 import type { NormalizedSession, TimeRange } from "./exportDoc";
 
+/** A wire or imported ISO-8601 timestamp as epoch ms; NaN when unparsable.
+ * The ONE place the browser reads a timestamp string: every server, stream
+ * and imported stamp goes through it. otto's convention is that a stamp with
+ * no offset means UTC (the server's otto.utils.as_utc), so an offset-less
+ * time reads as UTC here too, never as the browser's local time (which is
+ * what bare Date.parse does): a legacy capture stored naive then shows the
+ * same instants served or imported, in any zone. A stamp that carries `Z` or
+ * an offset is read as written. User-typed times are not stamps: the date
+ * fields convert their local wall-clock value to ms (ui/calendarTime.ts). */
 export function parseTs(iso: string): number {
-  return Date.parse(iso);
+  return Date.parse(NAIVE_TIME.test(iso) ? `${iso}Z` : iso);
 }
+
+/** A date-time whose time part ends with no `Z` or `±hh:mm` offset. */
+const NAIVE_TIME = /T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/u;
 
 /** The live window: follow the tail unless the view is pinned. `nowMs` is
  * the reference instant — callers pass `displayEndMs(session)` rather than a
@@ -28,9 +40,9 @@ export function displayEndMs(session: NormalizedSession): number {
  * cluster's overflow list, a log table's time cell): 24-hour `HH:MM:SS` in
  * local time, matching the chart's x-axis. Padded by hand rather than via
  * toLocaleTimeString, whose `hour12: false` renders midnight as "24" in some
- * engines. Accepts epoch ms or anything `Date` parses (a wire timestamp). */
+ * engines. Accepts epoch ms or a wire timestamp (read by parseTs). */
 export function formatClockTime(t: number | string): string {
-  const d = new Date(t);
+  const d = new Date(typeof t === "string" ? parseTs(t) : t);
   const two = (n: number) => String(n).padStart(2, "0");
   return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
 }

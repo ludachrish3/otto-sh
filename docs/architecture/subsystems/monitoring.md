@@ -170,6 +170,18 @@ than silently showing stale data. Only the live view and live exports age
 out — the DB keeps everything, so a review opened from a `.db` archive is
 always complete.
 
+**A timestamp with no offset means UTC, everywhere one enters otto.** The
+server decides it once, in `otto.utils.as_utc`, and every timestamp field of
+the monitor models takes it through the `AwareTimestamp` alias
+(`otto.models.monitor`): session bounds, samples, log events and events alike,
+so a review serves every stamp of a legacy archive that stored them naive as
+UTC. The browser decides it once too, in `parseTs` (`web/src/data/time.ts`),
+which every served, streamed or imported stamp goes through. A legacy capture
+therefore shows the same instants whether it is reviewed or imported, in any
+browser zone, and its events stay inside its own window. The one deliberate
+exception is a time the user types into a date field: that is local wall-clock
+time (`web/src/ui/calendarTime.ts`).
+
 **Event changes are ordered by the server's stamp.** An event can reach a
 tab by three routes that race: the HTTP response to the tab's own mutation,
 the SSE echo of that mutation or of another actor's, and a bootstrap or

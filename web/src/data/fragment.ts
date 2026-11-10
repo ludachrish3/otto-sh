@@ -11,6 +11,7 @@ import {
   parseObservedAt,
 } from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
+import { parseTs } from "./time";
 
 /**
  * Applies one live-stream fragment to a session. `warnings`, when passed, is
@@ -144,7 +145,7 @@ export function applyFragment(
 
   let endMs = session.endMs;
   for (const m of metrics) {
-    const ts = Date.parse(m.timestamp);
+    const ts = parseTs(m.timestamp);
     if (ts > endMs) endMs = ts;
   }
 
