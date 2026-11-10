@@ -10,7 +10,7 @@ wait for the first.
 """
 
 import asyncio
-import socket
+import contextlib
 import struct
 from unittest.mock import MagicMock
 
@@ -20,6 +20,7 @@ from telnetlib3.telopt import IAC, NAWS, SB, SE
 from otto.host import telnet as telnet_mod
 from otto.host.telnet import ReadGateClosed, TelnetClient
 from otto.utils import wait_for_async
+from tests._fixtures.loopback_servers import closed_port
 from tests.unit.host._telnet_fakes import RecordingReader, SilentTelnetPeer, fake_stream
 
 
@@ -578,12 +579,6 @@ NEVER_NEGOTIATES = {"connect_minwait": 30, "connect_maxwait": 30}
 BANNER = [b"*** Booting Zephyr OS ***\r\n", b"uart:~$ "]
 
 
-def _refused_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def _cancel_in_establishment(monkeypatch) -> None:
     """Cancel the opening task from ``connection_made``, as a caller timeout there would."""
     loop = asyncio.get_running_loop()
@@ -653,23 +648,24 @@ async def test_close_after_failed_open_is_bounded(monkeypatch, case, path):
     monkeypatch.setattr(TelnetClient, "close", timed_close)
 
     async with SilentTelnetPeer(BANNER if case == "cancel_negotiation" else None) as peer:
-        port = _refused_port() if case == "refused" else peer.port
-        options = TelnetOptions(port=port, single_client_console=True, extra=NEVER_NEGOTIATES)
-        if case == "cancel_establishment":
-            _cancel_in_establishment(monkeypatch)
-        opening = asyncio.create_task(_open_through(path, options))
-        if case == "cancel_negotiation":
-            await wait_for_async(
-                lambda: bool(telnet_mod._live_console_transports) or opening.done(),
-                2.0,
-                interval=0.01,
-                on_timeout="the open never registered its transport",
-            )
-            await asyncio.sleep(0.1)  # the banner has arrived; negotiation never completes
-            opening.cancel()
-        expected = OSError if case == "refused" else asyncio.CancelledError
-        with pytest.raises(expected):
-            await opening
+        with contextlib.ExitStack() as stack:  # the refused port stays held through the dial
+            port = stack.enter_context(closed_port()) if case == "refused" else peer.port
+            options = TelnetOptions(port=port, single_client_console=True, extra=NEVER_NEGOTIATES)
+            if case == "cancel_establishment":
+                _cancel_in_establishment(monkeypatch)
+            opening = asyncio.create_task(_open_through(path, options))
+            if case == "cancel_negotiation":
+                await wait_for_async(
+                    lambda: bool(telnet_mod._live_console_transports) or opening.done(),
+                    2.0,
+                    interval=0.01,
+                    on_timeout="the open never registered its transport",
+                )
+                await asyncio.sleep(0.1)  # the banner has arrived; negotiation never completes
+                opening.cancel()
+            expected = OSError if case == "refused" else asyncio.CancelledError
+            with pytest.raises(expected):
+                await opening
 
     # The caller's own failure cleanup closed the client, and returned at once.
     ((client, took),) = closes

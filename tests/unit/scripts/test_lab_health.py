@@ -36,6 +36,7 @@ from scripts.lab_health import (
     _load_hosts,
     _print_report,
 )
+from tests._fixtures.loopback_servers import closed_port
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -898,11 +899,8 @@ def test_console_probe_classifies_the_stripped_tail(reply, expected):
 
 
 def test_console_probe_reports_a_refused_connect():
-    srv = socket.socket()
-    srv.bind(("127.0.0.1", 0))
-    port = srv.getsockname()[1]
-    srv.close()  # nothing listens here now
-    assert _probe(port).startswith("CONNFAIL")
+    with closed_port() as port:  # bound, never listening, held through the dial
+        assert _probe(port).startswith("CONNFAIL")
 
 
 def test_console_probe_reset_ends_a_shell():
