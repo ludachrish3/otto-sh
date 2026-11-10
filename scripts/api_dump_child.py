@@ -414,6 +414,7 @@ class Producer:
         self.bindings: dict[str, object] = {}
         self.paths: dict[str, list[tuple[int, str]]] = {}  # key -> enclosing (id, key) chain
         self.keys_by_id: dict[int, list[str]] = {}
+        self.member_names: dict[str, list[str]] = {}  # class key -> its public member names
         self._module_trees: "dict[str, ast.Module | None]" = {}  # one parse per module per run
 
     # -- collection -------------------------------------------------------
@@ -470,6 +471,7 @@ class Producer:
         except Exception as exc:  # noqa: BLE001 -- reported when the binding is emitted
             self.refusals.append(f"{key}: cannot enumerate members: {_why(exc)}")
             return
+        self.member_names[key] = sorted(members)
         for name, raw in sorted(members.items()):
             if _is_class(raw) and id(raw) not in {i for i, _ in inner_path}:
                 self._add_binding(f"{key}.{name}", raw, inner_path)
@@ -965,7 +967,12 @@ class Producer:
             return
 
     def _check_aliases(self) -> None:
-        """Refuse binding paths to one object whose entries disagree (absent = default)."""
+        """Refuse binding paths to one object whose entries disagree (absent = default).
+
+        A class's members are judged with it: ``p:C.m`` and ``q:C.m`` are two
+        paths to one method, so their entries (``implementer`` included) must
+        agree too.
+        """
 
         def view(k: str) -> "tuple[object, ...]":
             entry = self.symbols.get(k, {})
@@ -974,16 +981,22 @@ class Producer:
                 entry.get("construct", True),
                 entry.get("subclass", True),
                 entry.get("final", True),
+                entry.get("implementer", False),
             )
 
-        for keys in self.keys_by_id.values():
-            first, *rest = sorted(keys)
+        def disagree(first: str, rest: "list[str]") -> None:
             other = next((k for k in rest if view(k) != view(first)), None)
             if other is not None:
                 self.refusals.append(
                     f"{first}: paths {first} and {other} to one object"
                     " carry different symbol entries"
                 )
+
+        for keys in self.keys_by_id.values():
+            first, *rest = sorted(keys)
+            disagree(first, rest)
+            for name in self.member_names.get(first, []):
+                disagree(f"{first}.{name}", [f"{k}.{name}" for k in rest])
 
     # -- formats (dump spec §13) ------------------------------------------
 
