@@ -285,6 +285,12 @@ async def test_base_host_async_cm_delegates_to_close():
         async def _close(self) -> None:
             self.close_calls += 1
 
+        async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
+            raise NotImplementedError
+
+        async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
+            raise NotImplementedError
+
     h = _MinimalHost()
     async with h as entered:
         assert entered is h

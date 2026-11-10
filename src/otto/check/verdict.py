@@ -8,6 +8,7 @@ measurement came out wrong (otto, or the host, misbehaves). ``unmeasured`` is
 """
 
 import enum
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
@@ -71,7 +72,7 @@ def count_verdicts(results: list[FeatureResult]) -> dict[Verdict, int]:
     return counts
 
 
-class ReportVerdicts:
+class ReportVerdicts(ABC):
     """The verdict roll-up every check report shares: what failed, and whether the run is ok.
 
     A report supplies :meth:`results` and a ``refusal`` field; this adds the
@@ -79,10 +80,12 @@ class ReportVerdicts:
     """
 
     @property
+    @abstractmethod
     def refusal(self) -> str | None:
         """Why the run was refused before any feature ran, or ``None``."""
         raise NotImplementedError
 
+    @abstractmethod
     def results(self) -> list[FeatureResult]:
         """Every result the report holds."""
         raise NotImplementedError

@@ -13,6 +13,7 @@ the wire: a tunnel's identity is its path+protocol+port, and remove reaps by
 pid, so it tears down any carrier's processes.
 """
 
+from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
@@ -22,7 +23,7 @@ DEFAULT_CARRIER = "socat"
 the ``add_tunnel`` default in the library; one source of truth for both."""
 
 
-class TunnelCarrier:
+class TunnelCarrier(ABC):
     """Builds the argv each tunnel process executes.
 
     Stateless: implementations build argv lists; the orchestration layer
@@ -44,6 +45,7 @@ class TunnelCarrier:
     tools_description: ClassVar[str] = ""
     """Human summary of the required tools, for the missing-tools error."""
 
+    @abstractmethod
     def ingress_args(
         self,
         protocol: str,
@@ -57,12 +59,14 @@ class TunnelCarrier:
         """Argv accepting client traffic on the service port, shipping to the carrier."""
         raise NotImplementedError
 
+    @abstractmethod
     def relay_args(
         self, protocol: str, *, carrier_port: int, next_ip: str, idle_timeout: int | None = None
     ) -> list[str]:
         """Argv for an intermediate-hop pass-through (same carrier port both sides)."""
         raise NotImplementedError
 
+    @abstractmethod
     def egress_args(
         self,
         protocol: str,

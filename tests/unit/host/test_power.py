@@ -480,6 +480,12 @@ async def test_probe_less_remote_subclass_fails_with_a_named_error():
         def _log_command(self, msg, log=None):
             pass
 
+        async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
+            raise NotImplementedError
+
+        async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
+            raise NotImplementedError
+
     # RemoteHost declares the shared remote fields itself now, so even a
     # hand-rolled subclass takes its constructor, every field keyword-only.
     host = ProbeLess(ip="10.0.0.1", element=Element(name="lab"))

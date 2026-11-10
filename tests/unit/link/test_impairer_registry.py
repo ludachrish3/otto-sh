@@ -39,15 +39,12 @@ class TestRegistry:
         assert IMPAIRERS.origin(name="fake").endswith("test_impairer_registry")
 
     def test_base_methods_are_abstract(self) -> None:
-        base = LinkImpairer()
-        for call in (
-            lambda: base.apply_command("eth0", params=None),  # type: ignore[arg-type]
-            lambda: base.read_command("eth0"),
-            lambda: base.clear_command("eth0"),
-            lambda: base.parse_read(""),
-        ):
-            with pytest.raises(NotImplementedError):
-                call()
+        """The four whole-link methods are declared obligations: a bare subclass cannot be built."""
+        assert LinkImpairer.__abstractmethods__ == frozenset(
+            {"apply_command", "read_command", "clear_command", "parse_read"}
+        )
+        with pytest.raises(TypeError, match="abstract"):
+            _FakeImpairer()
 
 
 class TestScopedContract:
@@ -57,11 +54,25 @@ class TestScopedContract:
         assert LinkImpairer.supports_selectors is False
 
     def test_scoped_methods_default_to_not_implemented(self) -> None:
+        """The port-scoped methods are gated by ``supports_selectors``, not obligations."""
         import pytest
 
-        from otto.link.params import ImpairmentParams, LinkImpairer, Selector
+        from otto.link.params import ImpairmentParams, Selector
 
-        imp = LinkImpairer()
+        class _WholeLinkOnly(_FakeImpairer):
+            def apply_command(self, netdev, *, params):
+                return ""
+
+            def read_command(self, netdev):
+                return ""
+
+            def clear_command(self, netdev):
+                return ""
+
+            def parse_read(self, output):
+                return None
+
+        imp = _WholeLinkOnly()
         sel = Selector(port=5201, proto="tcp")
         with pytest.raises(NotImplementedError):
             imp.scoped_root_command(netdev="eth1")
