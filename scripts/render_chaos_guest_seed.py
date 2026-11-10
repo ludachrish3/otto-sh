@@ -166,7 +166,7 @@ def hold_unit_text() -> str:
         "[Service]\n"
         "Type=oneshot\n"
         "RemainAfterExit=yes\n"
-        f"ExecStart=/bin/mkdir -p {Path(g.hold_file).parent}\n"
+        f"ExecStart=/usr/bin/install -d -m 1777 {Path(g.hold_file).parent}\n"
         f"ExecStop={_HOLD_SCRIPT}\n"
         f"TimeoutStopSec={g.hold_timeout_stop_s}\n"
         "\n"

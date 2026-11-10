@@ -37,6 +37,7 @@ _EMBEDDED_TECHS = ("tech1",)
 # spirit as _EMBEDDED_TECHS: an exact roster, so both a lost bed guest and a
 # stray sixth one fail loudly.
 _BUSYBOX_TECHS = ("tech1",)
+_CHAOS_TECHS = ("tech1",)
 _BUSYBOX_GUESTS = ("bb1161", "bb1211", "bb1281", "bb1310", "bb1350")
 _BUSYBOX_HOP = "test1"
 _CHAOS_GUESTS = ("ubu2404",)
@@ -99,7 +100,7 @@ def test_the_chaos_guest_hops_through_test4(tech: str) -> None:
     """The second carve-out: exactly the chaos guest hops, through test4."""
     hosts = flat_hosts(tech, with_labs=True)
     guests = [h for h in hosts if _is_chaos_guest(h)]
-    expected = _CHAOS_GUESTS if tech in _BUSYBOX_TECHS else ()
+    expected = _CHAOS_GUESTS if tech in _CHAOS_TECHS else ()
     assert tuple(h["element"] for h in guests) == expected
     assert {h["hop"] for h in guests} == ({_CHAOS_HOP} if expected else set())
 

@@ -80,8 +80,11 @@ every login, and otto's probe (a login) would read that as "down" at once.
 A scenario sets the hold over the guest's shell before it issues the reboot:
 
 ```bash
-echo 75 | sudo tee /run/chaos/shutdown_hold
+echo 75 > /run/chaos/shutdown_hold
 ```
+
+The hold unit creates `/run/chaos` with mode 1777, so a login creates and removes its
+own hold without sudo, and the bed reap can remove a leftover one.
 
 The hold's `TimeoutStopSec` is 600, well above any hold, but the lab's `reboot.target`
 bound of 90 s applies on the guest too, so a hold is effective up to about 85 s and a
@@ -126,7 +129,9 @@ It is idempotent and touches nothing but its own files, the journal cap and its 
 installs `cloud-image-utils` and `qemu-utils`, checks the free disk before downloading
 anything, downloads and checksum-checks the pinned image once, creates the overlay once,
 and renders the seed, the wrapper and the unit by calling the renderer. The `Vagrantfile`
-holds none of the guest's addresses, MACs or QEMU flags.
+holds none of the guest's addresses, MACs or QEMU flags. The journal cap is a journald
+drop-in, and the provisioner restarts `systemd-journald` once, only when that drop-in
+changes.
 
 **The re-seed rule.** The seed is rendered into a staging directory and compared with the
 installed one. If it differs, the provisioner stops the unit, deletes the overlay and the

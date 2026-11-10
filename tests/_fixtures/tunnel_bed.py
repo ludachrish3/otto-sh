@@ -24,7 +24,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from otto.utils import wait_for_async
-from tests._fixtures.bed_hygiene import argv_pattern
+from tests._fixtures.bed_hygiene import argv_pattern, check_probe_result
 from tests._fixtures.labdata import flat_hosts, host_data, lab_json_v2, make_host
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT1, run_otto
@@ -159,8 +159,12 @@ def format_leftover_report(found: list, *, module: str, preexisting: bool) -> st
     return "\n".join([header, *rows, "", "Reap them, then re-run:", _reap_recipe(sorted(set(ids)))])
 
 
-async def observe_tunnel_processes() -> list:
-    r"""Scan all three peers; return ``[(host_id, Observation), ...]``.
+async def observe_tunnel_processes(hosts: tuple[str, ...] = UNIX) -> list:
+    r"""Scan *hosts* (default: all three peers); return ``[(host_id, Observation), ...]``.
+
+    Direct-ssh lab VMs only: ``build_bed_host`` makes a bare ``UnixHost`` with
+    no lab, so a hopped guest cannot be listed here (the chaos guest has its
+    own, ``tests.e2e.chaos._bed.observe_guest_tunnel_processes``).
 
     Must decode each line through :func:`parse_process_discovery` (the same
     strict sentinel parser production discovery uses) rather than treat any
@@ -169,15 +173,20 @@ async def observe_tunnel_processes() -> list:
     snapshot (the grep argv literally contains the search string), which is a
     self-match, not a real tagged tunnel process. ``parse_process_discovery``
     requires the full 11-segment sentinel and correctly ignores that noise.
+
+    A non-ok discovery result raises through ``check_probe_result`` (the
+    same check the hopped guest probe applies), host-named.
     """
-    hosts = [build_bed_host(ne) for ne in UNIX]
+    bed_hosts = [build_bed_host(ne) for ne in hosts]
     found: list = []
     try:
-        for host in hosts:
+        for host in bed_hosts:
             result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
+            # A timed-out or errored discovery raises, never reads as "clean".
+            check_probe_result(host.id, result)
             found.extend((host.id, o) for o in parse_process_discovery(result.value))
     finally:
-        await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)
+        await asyncio.gather(*(h.close() for h in bed_hosts), return_exceptions=True)
     return found
 
 
@@ -406,7 +415,12 @@ def random_outfile() -> str:
     return f"/tmp/otto_tunnel_e2e_{uuid.uuid4().hex}.out"
 
 
-def cli_project_root(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path:
+def cli_project_root(
+    tmp_path: Path,
+    *,
+    links: Iterable[dict[str, Any]] = (),
+    elements: tuple[str, ...] = ("test1", "test2"),
+) -> Path:
     """Scaffold a project for CLI-driven tunnel tests: real unix lab + declared containers.
 
     Extracted verbatim (2026-07-17) from
@@ -427,6 +441,9 @@ def cli_project_root(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) ->
       also guards the bed contract that ``192.168.1.x`` is provisioned on the
       peers (Vagrantfile: the dedicated ``eth2`` data-plane NIC); an
       unprovisioned bed fails loudly at the post-add verify.
+    - *elements* are the hosts the rendered lab holds, exactly; a hopped element
+      keeps its ``hop`` and the hop must be among *elements* (the chaos lab is
+      ``("test4", "ubu2404")``).
     - The project is named ``project1`` and declares the same ``api`` compose as
       ``tests/project1``, so lab load registers container-host placeholders —
       the exact issue #139 trigger. Every tunnel command must leave them
@@ -438,7 +455,7 @@ def cli_project_root(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) ->
     # only where a source DECLARES it — so the written document has to carry
     # the elements' membership, which the plain flat dict no longer does.
     by_element = {h["element"]: h for h in flat_hosts(with_labs=True)}
-    hosts = [by_element[ne] for ne in ("test1", "test2")]
+    hosts = [by_element[ne] for ne in elements]
     # Both hosts are ``docker_capable``, so the one parent rule needs a
     # strictly higher ``docker_priority`` on one of them or it ties and no
     # placeholders register. test2 is the parent: the placeholders are

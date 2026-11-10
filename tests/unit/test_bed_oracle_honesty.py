@@ -383,7 +383,7 @@ def _parsed_or_fail(path: Path) -> ast.AST:
 # without a line here would be a silent hole, which is what
 # ``test_every_probe_helper_is_actually_exercised_in_the_lanes`` below refuses
 # to allow.
-_PROBE_FACTORY_ARG = {"run_probe": 1, "busybox_probe": 0}
+_PROBE_FACTORY_ARG = {"run_probe": 1, "busybox_probe": 0, "chaos_guest_probe": 0}
 
 
 def _factory_value_offenders(tree) -> list:

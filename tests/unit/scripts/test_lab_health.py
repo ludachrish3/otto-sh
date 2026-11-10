@@ -1512,6 +1512,13 @@ def test_only_a_ssh_first_hopped_unix_host_is_probed_by_banner():
     assert not lab_health._is_ssh_host(_GUEST)
 
 
+def test_an_empty_valid_terms_list_routes_like_an_absent_one():
+    """No ``IndexError``: an empty list falls back to the default term order."""
+    absent = {k: v for k, v in _GUEST.items() if k != "valid_terms"}
+    empty = {**_GUEST, "valid_terms": []}
+    assert lab_health._is_hopped_unix(empty) == lab_health._is_hopped_unix(absent)
+
+
 def test_a_hopped_unix_host_is_probed_by_ssh_banner_through_its_hop(monkeypatch):
     calls = []
 
