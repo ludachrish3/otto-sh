@@ -925,10 +925,12 @@ the lane (so `make gate-scope` and the census keep saying what a change
 reaches, with the reason beside it), but the plan lists it under `suspended`
 rather than `stamped`: `make gate-tip` prints it and runs nothing, writes no
 stamp, the pre-push check demands none, and the `local-gate` digest omits it.
-Today the table holds `make chaos` and `make chaos-embedded`
-([#985](https://github.com/ludachrish3/otto-sh/issues/985), while
-[#978](https://github.com/ludachrish3/otto-sh/issues/978) strands lab VMs on a
-warm reboot); emptying it is the whole re-enable.
+Today the table is empty. It held `make chaos` and `make chaos-embedded` from
+2026-11-09, while a warm reboot stranded a lab VM
+([#978](https://github.com/ludachrish3/otto-sh/issues/978));
+[#985](https://github.com/ludachrish3/otto-sh/issues/985) moved the reboot scenarios
+onto [the chaos reboot guest](architecture/subsystems/chaos-guest.md), whose reboot
+strands nothing, and emptied it.
 
 `make gate-tip` takes [the bed lease](#bed-lease) itself, immediately before
 the first bed lane that will actually run, keeps it through the last, and
@@ -1462,7 +1464,7 @@ what you want to exercise:
 | Stability / soak — every tier runs and the target fails at the end if any did (so `make release-campaign` can rely on it) | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Probe-line cut sweep (#853): every tail of the readiness handshake, the resync probe and the recovery probe, typed into each installed interactive shell on a pty, then the line whole (`stability`-marked; nightly's `probe-cut-sweep` job; never a release stage) | `make stability-cut-sweep` (`CUT_SWEEP_WORKERS=N`, default 4) | none |
 | The #386 console-release bed proof (opt-in, dev VM only; `make release-campaign` runs it; what it runs: `tests/integration/host/test_console_release_bed.py`) | `make console-release-bed` | the telnet Zephyr guests and their hop |
-| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded`. On demand only — never part of `make release` (owner decision, 2026-10-15; see [quality gates](architecture/quality-gates.md#the-last-two-rows-are-the-point)), and since 2026-11-09 [suspended as a gate lane](#the-landings-gate-is-stamped) until [#985](https://github.com/ludachrish3/otto-sh/issues/985) lifts it once [#978](https://github.com/ludachrish3/otto-sh/issues/978) is fixed. | leased unix host, incl. test3 for docker (+ zephyr board for the embedded leg) |
+| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded`. On demand only — never part of `make release` (owner decision, 2026-10-15; see [quality gates](architecture/quality-gates.md#the-last-two-rows-are-the-point)); its reboot scenarios reboot only [the chaos reboot guest](architecture/subsystems/chaos-guest.md) behind test4, never a lab VM ([#985](https://github.com/ludachrish3/otto-sh/issues/985)). | leased unix host, incl. test3 for docker and the chaos reboot guest on test4 (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
 | Host-contract conformance, hermetic venue (opt-in; also the GitHub nightly job) | `make conformance` (`OTTO_CONFORMANCE_CELLS=N\|all`) | none — loopback sshd + pinned BusyBox artifacts as subprocesses |
 | Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |

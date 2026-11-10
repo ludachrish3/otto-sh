@@ -392,16 +392,15 @@ often a bed finding as a product defect (two runs on 2026-10-14 each
 stranded a lab VM in its firmware after a warm reboot) and a release must
 not wait on that;
 [#643](https://github.com/ludachrish3/otto-sh/issues/643) tracks a
-scheduled dev-VM run so the lane keeps producing signal. Since 2026-11-09 the
-chaos lanes are also **suspended as gate lanes** (owner decision): a change
-under `tests/e2e/chaos/` still reaches them in `make gate-scope`'s list, but
-`make gate-tip` prints them as suspended and runs nothing, and the push hook
-demands no stamp (`SUSPENDED_LANES` in `scripts/gate_scope.py`, [the
-suspended-lane rule](../contributing.md#the-landings-gate-is-stamped)). A warm
-reboot strands a lab VM in its firmware
-([#978](https://github.com/ludachrish3/otto-sh/issues/978));
-[#985](https://github.com/ludachrish3/otto-sh/issues/985) lifts the suspension
-before 0.20.0. The release census
+scheduled dev-VM run so the lane keeps producing signal. The chaos lanes were
+suspended as gate lanes from 2026-11-09, while a warm reboot stranded a lab VM
+in its firmware ([#978](https://github.com/ludachrish3/otto-sh/issues/978));
+[#985](https://github.com/ludachrish3/otto-sh/issues/985) moved their reboot
+scenarios onto [the chaos reboot guest](subsystems/chaos-guest.md) and lifted
+the suspension, so they are gate lanes again. The mechanism stays:
+`SUSPENDED_LANES` in `scripts/gate_scope.py` ([the suspended-lane
+rule](../contributing.md#the-landings-gate-is-stamped)) holds a lane back
+without touching the oracle, and the table is empty today. The release census
 in `tests/unit/test_lane_invariants.py` proves that every test pytest
 collects is selected by some stage of the release **or named in the owner's
 exemption list** beside its reason (the chaos rows and the cut sweep's

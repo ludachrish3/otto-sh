@@ -689,21 +689,14 @@ LIVE_GOALS = RANGE_TARGETS
 """History-dependent goals: run by the push itself over the pushed range, never stamped."""
 STAMPED_GOALS = STATIC_GOALS + BED_GOALS
 """Every goal a tip can emit that the runner stamps by tree."""
-_CHAOS_SUSPENDED = (
-    "#985: suspended by owner decision (2026-11-09) while a warm reboot strands a lab VM "
-    "(#978); re-enabled before 0.20.0"
-)
-SUSPENDED_LANES: "dict[str, str]" = {
-    "make chaos": _CHAOS_SUSPENDED,
-    "make chaos-embedded": _CHAOS_SUSPENDED,
-}
+SUSPENDED_LANES: "dict[str, str]" = {}
 """Lane keys the owner has suspended, each with its reason — the ONE place that decides.
 
 The oracle still names a suspended lane (a chaos-tree change still *reaches* the chaos
 lanes, and the census keeps proving so), but :func:`plan` lists it under ``suspended``
 instead of ``stamped``: `make gate-tip` prints it and runs nothing, the push hook demands no
 stamp for it, and the `local-gate` digest omits it. The lanes still run by hand. Empty means
-nothing is suspended; #985 empties it."""
+nothing is suspended."""
 
 
 class UnknownGoalError(ValueError):
