@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 [CAPTURE_FORMAT_VERSION] = CAPTURE_WRITE_VERSIONS
 """``capture.json`` schema version, bumped on breaking on-disk changes.
 
+Version 4 drops the ``display_name`` field, which nothing read: a run's
+label is ``<host>/<product>``.
+
 Version 3 adds the required ``product`` field: a capture is one
 (host, product) pair's retrieval, staged under ``cov/<host>/<product>/``.
 Version 2 renames the git-anchor field from ``pin`` to ``base_commit``
@@ -62,7 +65,6 @@ class Capture(OttoModel):
     note: str | None = None
     labs: list[str] = Field(default_factory=list)
     board: str = ""
-    display_name: str | None = None
     files: dict[str, CaptureFileCov] = Field(default_factory=dict)
 
     def save(self, path: Path) -> None:
@@ -148,7 +150,6 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
     note: str | None = None,
-    display_name: str | None = None,
     base_commit: str | None = None,
     now: datetime | None = None,
 ) -> Capture:
@@ -158,8 +159,6 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
         board: The staging-dir/host-id name the counters came from.
         product: The product whose counters these are — the ``<product>``
             segment of ``cov/<host>/<product>/``.
-        display_name: Host display name to annotate onto the capture;
-            ``board`` stays the staging-dir/host-id name.
         base_commit: The commit the counters were collected at, when known;
             the capture is refused unless the tree is still at it.
 
@@ -222,6 +221,5 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
         note=note,
         labs=labs,
         board=board,
-        display_name=display_name,
         files=files,
     )

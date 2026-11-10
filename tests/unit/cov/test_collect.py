@@ -1345,7 +1345,7 @@ class TestCaptureTail:
 
     @pytest.mark.usefixtures("fake_head")
     def test_annotations_passed_through_to_produce(self, tmp_path):
-        """tier/ticket/note/tester/display_names thread through to produce_captures."""
+        """tier/ticket/note/tester thread through to produce_captures."""
         project = MagicMock()
         project.root = tmp_path / "sut"
         project.name = "proj"
@@ -1383,7 +1383,6 @@ class TestCaptureTail:
                     ticket="JIRA-1",
                     note="hi",
                     tester={"name": "chris"},
-                    display_names={"board1": "Board One"},
                 )
             )
 
@@ -1392,7 +1391,7 @@ class TestCaptureTail:
         assert kwargs["ticket"] == "JIRA-1"
         assert kwargs["note"] == "hi"
         assert kwargs["tester"] == {"name": "chris"}
-        assert kwargs["display_names"] == {"board1": "Board One"}
+        assert "display_names" not in kwargs
         assert result.captures_written == [cov_dir / "board1" / "capture.json"]
 
 

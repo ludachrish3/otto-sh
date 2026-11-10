@@ -32,7 +32,6 @@ class GitTimeline(TmpGitRepo):
 
     def capture(
         self,
-        label: str,
         lines: dict[str, dict[int, int]],
         *,
         tier: str = "manual",
@@ -50,7 +49,6 @@ class GitTimeline(TmpGitRepo):
             base_commit=gitio.head_commit(self.root),
             captured_at=captured_at,
             board=host,
-            display_name=label,
             ticket=ticket,
             files=files,
         )

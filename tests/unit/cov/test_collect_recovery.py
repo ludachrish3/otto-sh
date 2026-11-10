@@ -103,7 +103,6 @@ def collect_kwargs(monkeypatch):
         return {
             "projects": [project],
             "tier": None,
-            "display_names": {"h": "h"},
             "clean_after_fetch": True,
         }
 

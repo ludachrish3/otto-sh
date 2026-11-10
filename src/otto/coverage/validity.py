@@ -33,8 +33,7 @@ def register_capture_run(
     and product are the capture's context,
     :func:`~otto.coverage.capture.supersede.supersede_key`, so the run and its
     supersede context name one host. The label is ``add_run``'s own,
-    ``<host>/<product>``: the capture's ``display_name`` does not reach the
-    store.
+    ``<host>/<product>``.
     """
     context = supersede_key(capture)
     return store.add_run(

@@ -75,8 +75,7 @@ deliberately does **not** share this version counter; see
   report groups a context by, and what `?ctx=` pins. It is
   `<host_id>/<product>` for a run on a host (the id `otto monitor` and
   `otto test` print), `<tier>/<product>` for a unit view, and the tier alone
-  for a `--tier` tracefile. otto builds it; no input names its own, and a
-  capture's `display_name` does not reach the store. `CoverageStore.load`
+  for a `--tier` tracefile. otto builds it; no input names its own. `CoverageStore.load`
   rebuilds each row's label and refuses a row whose stored label differs,
   naming the run id, and refuses a row whose `source` is not one of the
   four below.

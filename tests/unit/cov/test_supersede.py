@@ -1,7 +1,7 @@
 """Same-context re-capture supersedes: newest capture per context key wins.
 
 The key is :class:`~otto.coverage.capture.supersede.SupersedeKey`, ``(tier, host,
-product)`` — per PRODUCT, not per host, and never per display name."""
+product)`` — per PRODUCT, not per host."""
 
 from otto.coverage.capture.model import Capture
 from otto.coverage.capture.supersede import select_manual_captures
@@ -11,7 +11,6 @@ def _cap(
     captured_at: str,
     board: str = "bench-1",
     tier: str = "manual",
-    display_name: str | None = None,
     ticket: str | None = None,
     product: str = "app",
 ) -> Capture:
@@ -21,7 +20,6 @@ def _cap(
         base_commit="c" * 40,
         captured_at=captured_at,
         board=board,
-        display_name=display_name,
         ticket=ticket,
     )
 
@@ -36,11 +34,6 @@ class TestSelectManualCaptures:
         a = _cap("2026-06-01T00:00:00Z", board="bench-1")
         b = _cap("2026-06-01T00:00:00Z", board="bench-2")
         assert select_manual_captures([a, b]) == [a, b]
-
-    def test_a_display_name_alone_does_not_split_a_context(self):
-        a = _cap("2026-06-01T00:00:00Z", display_name="bring-up")
-        b = _cap("2026-06-02T00:00:00Z", display_name="cert-sweep")
-        assert select_manual_captures([a, b]) == [b]
 
     def test_one_host_and_product_in_two_tiers_both_survive(self):
         a = _cap("2026-06-01T00:00:00Z", tier="manual", board="h1", product="app")

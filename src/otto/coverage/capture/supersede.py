@@ -10,9 +10,7 @@ several instrumented products: without it, a host's second product
 supersedes its first and that product's coverage disappears from the
 report — silently, since the reporter also seeds its cross-source dedupe
 set from every committed manual capture, so the loser's cov-dir copy is
-skipped as well. A capture's ``display_name`` is not part of it: two
-captures of one host and product that differ only in display name are one
-context, and the newer supersedes the older.
+skipped as well.
 """
 
 import logging

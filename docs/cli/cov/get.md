@@ -130,7 +130,7 @@ a manual capture — the human metadata:
 
 ```json
 {
-  "schema": 3,
+  "schema": 4,
   "tier": "manual",
   "product": "myproduct",
   "base_commit": "<commit sha>",

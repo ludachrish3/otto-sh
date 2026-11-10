@@ -264,9 +264,8 @@ def test_unverifiable_base_commit_warns_with_ticket_and_remedy(git_repo: Path, c
     assert "re-capture" in rec.message
 
 
-def test_register_capture_run_ignores_the_display_name(git_repo: Path) -> None:
+def test_register_capture_run_labels_the_run_host_slash_product(git_repo: Path) -> None:
     cap = _capture(git_repo)
-    cap.display_name = "Rack 2 Slot 4"
     store = CoverageStore(tier_order=["manual"])
     rid = register_capture_run(store, cap, source="manual")
     rec = store.runs[rid]
@@ -291,7 +290,6 @@ def test_register_capture_run_sets_host() -> None:
         base_commit="deadbeef",
         board="rig-1",
         product="app",
-        display_name="Rig One",
     )
     store = CoverageStore(tier_order=["nightly"])
     rid = register_capture_run(store, cap, source="run")

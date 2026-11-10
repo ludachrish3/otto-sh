@@ -288,7 +288,6 @@ async def collect_coverage(
     ticket: str | None = None,
     note: str | None = None,
     tester: dict[str, str] | None = None,
-    display_names: dict[str, str] | None = None,
     clean_after_fetch: bool = True,
     present_at_reset: frozenset[tuple[str, str]] = frozenset(),
 ) -> CollectResult:
@@ -352,7 +351,6 @@ async def collect_coverage(
         ticket: Optional ticket reference annotated onto every capture.
         note: Optional free-text note annotated onto every capture.
         tester: Optional tester identity annotated onto each capture.
-        display_names: Optional board-dir (host id) → display name map.
         clean_after_fetch: When ``True`` (default), call :func:`clean_coverage`
             on exactly the (host, product) pairs that captured (embedded
             boards included) once production is done — the ``otto test
@@ -528,7 +526,6 @@ async def collect_coverage(
                 tester=tester,
                 ticket=ticket,
                 note=note,
-                display_names=display_names,
             )
         except CoverageCaptureError as e:
             produced, failure = e.result, e

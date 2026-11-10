@@ -17,10 +17,10 @@ STORE_READ_VERSIONS: list[int] = [9]
 STORE_WRITE_VERSIONS: list[int] = [9]
 """``store.json`` versions ``CoverageStore.save`` writes."""
 
-CAPTURE_READ_VERSIONS: list[int] = [3]
+CAPTURE_READ_VERSIONS: list[int] = [4]
 """``capture.json`` versions ``Capture.load`` accepts."""
 
-CAPTURE_WRITE_VERSIONS: list[int] = [3]
+CAPTURE_WRITE_VERSIONS: list[int] = [4]
 """``capture.json`` versions ``Capture.save`` writes."""
 
 TICKETS_WRITE_VERSIONS: list[int] = [2]

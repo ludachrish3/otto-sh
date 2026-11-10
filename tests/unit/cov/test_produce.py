@@ -168,32 +168,6 @@ async def test_produce_skips_product_dirs_without_counters(
     assert any("empty_dir" in rec.message for rec in caplog.records)
 
 
-@pytest.mark.asyncio
-async def test_produce_annotates_display_names_by_host(
-    tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cov_dir = tmp_path / "out" / "cov"
-    for host in ("host1", "host2"):
-        _counters(cov_dir / host / "app", git_repo)
-    _write_meta(cov_dir, git_repo)
-    _stub_merger(monkeypatch, git_repo)
-
-    written = (
-        await produce_captures(
-            cov_dir,
-            tier="system",
-            project_root=git_repo,
-            labs=["lab1"],
-            products={},
-            display_names={"host1": "Rack 2 Slot 4"},
-        )
-    ).written
-
-    by_host = {Capture.load(p).board: Capture.load(p) for p in written}
-    assert by_host["host1"].display_name == "Rack 2 Slot 4"
-    assert by_host["host2"].display_name is None  # no entry -> not annotated
-
-
 def test_a_gcda_directly_under_the_host_dir_is_refused(tmp_path):
     from otto.config.coverage_settings import CoverageConfigError
     from otto.coverage.capture.produce import _product_dirs

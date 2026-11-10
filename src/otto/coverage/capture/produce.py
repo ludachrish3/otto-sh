@@ -135,7 +135,6 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
     note: str | None = None,
-    display_names: dict[str, str] | None = None,
     only: list[ProductKey] | None = None,
     objects: ObjectListCache | None = None,
 ) -> ProduceResult:
@@ -168,8 +167,6 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
         tester: Optional tester identity to annotate onto each capture.
         ticket: Optional ticket reference to annotate onto each capture.
         note: Optional free-text note to annotate onto each capture.
-        display_names: Host-dir name (host id) → host display name; hosts
-            without an entry are annotated ``None``.
         only: When given, produce only these (host, product) pairs; the
             others are left exactly as they are.
         objects: The object-list cache to read artifacts through (a caller
@@ -252,7 +249,6 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
                     tester=tester,
                     ticket=ticket,
                     note=note,
-                    display_name=(display_names or {}).get(board),
                     base_commit=base_commit,
                 )
                 capture_path = board_dir / "capture.json"
