@@ -1,7 +1,6 @@
 """Async host abstraction: the Host protocol, BaseHost ABC, and run helpers."""
 
 import asyncio
-import math
 import re
 import shlex
 import uuid
@@ -17,6 +16,7 @@ from contextvars import ContextVar
 from dataclasses import (
     dataclass,
     field,
+    replace,
 )
 from logging import (
     INFO,
@@ -64,6 +64,7 @@ from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .log_haul import haul_globs
+from .options import RebootOptions, _validate_timeout
 from .toolchain import Toolchain, toolchain_removal_command
 
 if TYPE_CHECKING:
@@ -152,14 +153,6 @@ given. Pass ``float("inf")`` for a deliberately unbounded command; there is
 no other way to disable the bound.
 """
 
-DEFAULT_REBOOT_DOWN_TIMEOUT = 60.0
-"""Default bound (seconds) for ``reboot(wait=True)``'s down phase — a host
-still reachable this long after the reboot command means the reboot didn't
-take, and the wait fails loudly instead of watching the old OS.
-
-Pass ``down_timeout=0`` (or negative) to skip the down phase — for hosts
-whose reachability probe target survives the reboot."""
-
 _EXEC_REAP_TIMEOUT = 5.0
 """Seconds to wait for a terminated command to report its exit status.
 
@@ -177,22 +170,6 @@ process, waits ``_EXEC_REAP_TIMEOUT``, then kills it and waits once more
 abandons even that. Connection acquisition and channel creation are asyncssh's
 own and not bounded here.
 """
-
-
-def _validate_timeout(timeout: float) -> float:
-    """Reject timeout values ``asyncio.wait_for`` would silently misinterpret.
-
-    Annotations are not enforced at runtime, so this guards the public entry
-    points against callers a type checker never sees. ``float("inf")`` is
-    allowed — it is the supported spelling for an unbounded command.
-    """
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-        raise TypeError(f"timeout must be a number, got {type(timeout).__name__}: {timeout!r}")
-    if math.isnan(timeout):
-        raise ValueError("timeout must not be NaN")
-    if timeout < 0:
-        raise ValueError(f"timeout must be >= 0, got {timeout!r}")
-    return float(timeout)
 
 
 def _validate_user(user: str) -> None:
@@ -1063,9 +1040,9 @@ class Host(Protocol):
         *,
         hard: bool = False,
         wait: bool = False,
-        timeout: float = 600.0,
-        down_timeout: float = DEFAULT_REBOOT_DOWN_TIMEOUT,
-        poll_interval: float = 2.0,
+        timeout: float | None = None,
+        down_timeout: float | None = None,
+        poll_interval: float | None = None,
     ) -> Result:
         """Reboot this host.
 
@@ -1073,10 +1050,11 @@ class Host(Protocol):
         via the :class:`~otto.host.power.PowerController`. When *wait* is
         ``True``, blocks through a two-phase watch: first the host must go
         DOWN (bounded by the lesser of *down_timeout* and *timeout* — pass
-        ``down_timeout<=0`` to skip this phase for hosts whose reachability
+        ``down_timeout=0`` to skip this phase for hosts whose reachability
         probe target survives the reboot), then come back UP and answer a
         recovery probe (within the remainder of *timeout*), polling every
-        *poll_interval* seconds. Returns a :class:`~otto.result.Result`.
+        *poll_interval* seconds. Each bound left ``None`` comes from the
+        host's ``reboot_options``. Returns a :class:`~otto.result.Result`.
         """
         ...
 
@@ -1299,6 +1277,10 @@ class BaseHost(ABC):
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
     (warnings/errors are unaffected)."""
+
+    reboot_options: RebootOptions = field(default_factory=RebootOptions, repr=False)
+    """Bounds for ``reboot(wait=True)``; the bounds policy lives in
+    :class:`~otto.host.options.RebootOptions`."""
 
     lab_info: "LabInfo" = field(
         default_factory=LabInfo,
@@ -3472,9 +3454,21 @@ class BaseHost(ABC):
         *,
         hard: bool = False,
         wait: bool = False,
-        timeout: float = 600.0,
-        down_timeout: float = DEFAULT_REBOOT_DOWN_TIMEOUT,
-        poll_interval: float = 2.0,
+        timeout: Annotated[
+            float | None,
+            Opt(help="Whole-wait bound in seconds; default: the host's reboot_options.timeout"),
+        ] = None,
+        down_timeout: Annotated[
+            float | None,
+            Opt(
+                help="Down-phase bound in seconds, 0 skips it; "
+                "default: the host's reboot_options.down_timeout"
+            ),
+        ] = None,
+        poll_interval: Annotated[
+            float | None,
+            Opt(help="Seconds between probes; default: the host's reboot_options.poll_interval"),
+        ] = None,
     ) -> Result:
         """Reboot this host.
 
@@ -3484,8 +3478,12 @@ class BaseHost(ABC):
         a two-phase watch: first the host must go DOWN (bounded by the minimum
         of *down_timeout* and *timeout* — a host that never goes down means the
         reboot didn't take), then come back UP (within the remainder of
-        *timeout*), probing every *poll_interval* seconds. Pass
-        ``down_timeout<=0`` to skip the down phase entirely and proceed
+        *timeout*), probing every *poll_interval* seconds. Each bound left
+        ``None`` comes from :attr:`reboot_options` (lab data, then
+        ``[host_preferences]``); an explicit one is the final word and goes
+        through the same :class:`~otto.host.options.RebootOptions` policy, so
+        it raises the same ``ValueError`` a bad lab value does. Pass
+        ``down_timeout=0`` to skip the down phase entirely and proceed
         straight to the up wait — the documented opt-out for hosts whose
         reachability probe target survives the reboot (e.g. ``LocalHost``, or
         an embedded target reached through a console server that stays up
@@ -3528,6 +3526,18 @@ class BaseHost(ABC):
                 device, and previewing a power cycle that cannot happen would
                 fabricate feasibility.
         """
+        opts = replace(
+            self.reboot_options,
+            **{
+                name: value
+                for name, value in (
+                    ("timeout", timeout),
+                    ("down_timeout", down_timeout),
+                    ("poll_interval", poll_interval),
+                )
+                if value is not None
+            },
+        )
         if is_dry_run():
             if hard:
                 # Asked even though nothing will be cycled: it names the
@@ -3541,16 +3551,16 @@ class BaseHost(ABC):
                 not_done = "no reboot command issued"
             if not wait:
                 waiting = "no wait"
-            elif down_timeout > 0:
+            elif opts.down_timeout > 0:
                 waiting = (
-                    f"then wait up to {min(down_timeout, timeout)}s for it to go down "
-                    f"and {timeout}s in total for it to come back, polling every "
-                    f"{poll_interval}s"
+                    f"then wait up to {min(opts.down_timeout, opts.timeout)}s for it to go down "
+                    f"and {opts.timeout}s in total for it to come back, polling every "
+                    f"{opts.poll_interval}s"
                 )
             else:
                 waiting = (
-                    f"then wait up to {timeout}s for it to come back (down phase "
-                    f"skipped), polling every {poll_interval}s"
+                    f"then wait up to {opts.timeout}s for it to come back (down phase "
+                    f"skipped), polling every {opts.poll_interval}s"
                 )
             return self._dry_run_power_report(
                 f"REBOOT ({'hard' if hard else 'soft'})",
@@ -3577,10 +3587,10 @@ class BaseHost(ABC):
             self.rebuild_connections()
         if result.is_ok and wait:
             loop = asyncio.get_running_loop()
-            deadline = loop.time() + timeout
-            down_bound = min(down_timeout, timeout)
-            if down_timeout > 0 and not await self.wait_until_down(
-                down_bound, interval=poll_interval
+            deadline = loop.time() + opts.timeout
+            down_bound = min(opts.down_timeout, opts.timeout)
+            if opts.down_timeout > 0 and not await self.wait_until_down(
+                down_bound, interval=opts.poll_interval
             ):
                 return Result(
                     status=Status.Failed,
@@ -3590,17 +3600,20 @@ class BaseHost(ABC):
                     ),
                 )
             remaining = max(0.0, deadline - loop.time())
-            if not await self.wait_until_up(remaining, interval=poll_interval):
+            if not await self.wait_until_up(remaining, interval=opts.poll_interval):
                 return Result(
                     status=Status.Failed,
-                    msg=f"{self.name!r} did not become reachable within {timeout}s after reboot",
+                    msg=(
+                        f"{self.name!r} did not become reachable within "
+                        f"{opts.timeout}s after reboot"
+                    ),
                 )
-            if not await self._confirm_recovered(deadline, poll_interval):
+            if not await self._confirm_recovered(deadline, opts.poll_interval):
                 return Result(
                     status=Status.Failed,
                     msg=(
                         f"{self.name!r} accepts connections but its shell never answered "
-                        f"within {timeout}s of the reboot — likely still booting"
+                        f"within {opts.timeout}s of the reboot — likely still booting"
                     ),
                 )
         return result

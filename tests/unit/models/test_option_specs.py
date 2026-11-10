@@ -8,6 +8,7 @@ from otto.host.option_specs import (
     ConsoleOptionsSpec,
     FtpOptionsSpec,
     NcOptionsSpec,
+    RebootOptionsSpec,
     ScpOptionsSpec,
     SftpOptionsSpec,
     SnmpOptionsSpec,
@@ -21,6 +22,7 @@ from otto.host.options import (
     FtpOptions,
     LocalPortForward,
     NcOptions,
+    RebootOptions,
     RemotePortForward,
     ScpOptions,
     SftpOptions,
@@ -240,6 +242,27 @@ def test_nc_spec_rejects_unknown_key():
     # table) — not a complaint about something nested inside it.
     with pytest.raises(ValidationError, match=r"(?m)^extra\n\s+Extra inputs are not permitted"):
         NcOptionsSpec(extra={"x": 1})  # otto-owned: no passthrough
+
+
+def test_reboot_spec_defaults_match_runtime():
+    rt_obj = RebootOptionsSpec().to_runtime()
+    assert rt_obj == RebootOptions()
+    assert (rt_obj.timeout, rt_obj.down_timeout, rt_obj.poll_interval) == (600.0, 120.0, 2.0)
+
+
+def test_reboot_spec_rejects_unknown_key():
+    with pytest.raises(ValidationError, match="down_timout"):
+        RebootOptionsSpec.model_validate({"down_timout": 30})
+
+
+def test_reboot_spec_applies_the_runtime_policy():
+    """The spec carries no bounds; the runtime ``__post_init__`` is the one policy."""
+    for bad in ({"timeout": 0}, {"down_timeout": -1}, {"poll_interval": float("inf")}):
+        (field,) = bad
+        with pytest.raises(ValidationError, match=field):
+            RebootOptionsSpec(**bad)
+    assert RebootOptionsSpec(down_timeout=0).to_runtime().down_timeout == 0
+    assert RebootOptionsSpec(poll_interval=0).to_runtime().poll_interval == 0
 
 
 @pytest.mark.parametrize("spec_cls", [ScpOptionsSpec, SftpOptionsSpec])

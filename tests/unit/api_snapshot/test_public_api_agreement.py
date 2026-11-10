@@ -42,6 +42,7 @@ MOVED_BINDINGS = [
     MovedBinding("otto.models", "ToolchainSpec", "otto.host.specs"),
     MovedBinding("otto.models", "FtpOptionsSpec", "otto.host.option_specs"),
     MovedBinding("otto.models", "NcOptionsSpec", "otto.host.option_specs"),
+    MovedBinding("otto.models", "RebootOptionsSpec", "otto.host.option_specs"),
     MovedBinding("otto.models", "ScpOptionsSpec", "otto.host.option_specs"),
     MovedBinding("otto.models", "SftpOptionsSpec", "otto.host.option_specs"),
     MovedBinding("otto.models", "SnmpOptionsSpec", "otto.host.option_specs"),

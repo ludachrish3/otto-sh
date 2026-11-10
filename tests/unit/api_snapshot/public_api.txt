@@ -186,6 +186,7 @@ abstract	otto.context:ContextBinding	@final @manifest:subclass=false
 name	otto.context:HostOverrides	typeddict
 input	otto.context:HostOverrides	S:"ftp_options"	optional	-	S:"ftp_options"
 input	otto.context:HostOverrides	S:"nc_options"	optional	-	S:"nc_options"
+input	otto.context:HostOverrides	S:"reboot_options"	optional	-	S:"reboot_options"
 input	otto.context:HostOverrides	S:"scp_options"	optional	-	S:"scp_options"
 input	otto.context:HostOverrides	S:"sftp_options"	optional	-	S:"sftp_options"
 input	otto.context:HostOverrides	S:"ssh_options"	optional	-	S:"ssh_options"
@@ -975,6 +976,14 @@ member	otto.host.options:NcOptions.port	field
 member	otto.host.options:NcOptions.port_cmd	field
 member	otto.host.options:NcOptions.port_strategy	field
 abstract	otto.host.options:NcOptions	@final @manifest:subclass=false
+name	otto.host.options:RebootOptions	class
+mro	otto.host.options:RebootOptions	-
+call	otto.host.options:RebootOptions	sync	KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+6 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host.options:RebootOptions.__eq__	method	sync	PK:other:-
+member	otto.host.options:RebootOptions.down_timeout	field
+member	otto.host.options:RebootOptions.poll_interval	field
+member	otto.host.options:RebootOptions.timeout	field
+abstract	otto.host.options:RebootOptions	@final @manifest:subclass=false
 name	otto.host.options:ScpOptions	class
 mro	otto.host.options:ScpOptions	-
 call	otto.host.options:ScpOptions	sync	KO:preserve:B:false KO:recurse:B:true KO:block_size:I:16384 KO:extra:O KO:max_concurrent_transfers:N
@@ -1382,7 +1391,7 @@ name	otto.host.transfer:validate_filename_lengths	function
 call	otto.host.transfer:validate_filename_lengths	sync	KO:files:- KO:limit:- KO:host_name:-
 name	otto.host:BaseHost	class
 mro	otto.host:BaseHost	-
-call	otto.host:BaseHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
+call	otto.host:BaseHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
 member	otto.host:BaseHost.__aenter__	method	coroutine	-
 member	otto.host:BaseHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:BaseHost.__eq__	method	sync	PK:other:-
@@ -1424,7 +1433,8 @@ member	otto.host:BaseHost.power	method	coroutine	PK:state:N
 member	otto.host:BaseHost.power_control	field
 member	otto.host:BaseHost.products	field
 member	otto.host:BaseHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
-member	otto.host:BaseHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:BaseHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:BaseHost.reboot_options	field
 member	otto.host:BaseHost.rebuild_connections	method	sync	-
 member	otto.host:BaseHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:BaseHost.remove_toolchain_tools	method	coroutine	-
@@ -1662,7 +1672,8 @@ member	otto.host:DockerContainerHost.products	field
 member	otto.host:DockerContainerHost.project	field
 member	otto.host:DockerContainerHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:DockerContainerHost.read_file	method	coroutine	PK:path:-
-member	otto.host:DockerContainerHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:DockerContainerHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:DockerContainerHost.reboot_options	field
 member	otto.host:DockerContainerHost.rebuild_connections	method	sync	-
 member	otto.host:DockerContainerHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:DockerContainerHost.remove_toolchain_tools	method	coroutine	-
@@ -1719,7 +1730,7 @@ member	otto.host:EmbeddedFileTransfer.supports_mode	attribute
 abstract	otto.host:EmbeddedFileTransfer	@manifest:subclass=false
 name	otto.host:EmbeddedHost	class
 mro	otto.host:EmbeddedHost	{otto.host:RemoteHost} {otto.host:BaseHost}
-call	otto.host:EmbeddedHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:false KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"embedded" KO:os_name:N KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"telnet" KO:transfer:S:"console" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:filesystem:O KO:loader:N
+call	otto.host:EmbeddedHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:false KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"embedded" KO:os_name:N KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"telnet" KO:transfer:S:"console" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:filesystem:O KO:loader:N
 member	otto.host:EmbeddedHost.__aenter__	method	coroutine	-
 member	otto.host:EmbeddedHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:EmbeddedHost.__eq__	method	sync	PK:other:-
@@ -1793,7 +1804,8 @@ member	otto.host:EmbeddedHost.products	field
 member	otto.host:EmbeddedHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:EmbeddedHost.rack	field
 member	otto.host:EmbeddedHost.read_file	method	coroutine	PK:path:-
-member	otto.host:EmbeddedHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:EmbeddedHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:EmbeddedHost.reboot_options	field
 member	otto.host:EmbeddedHost.rebuild_connections	method	sync	-
 member	otto.host:EmbeddedHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:EmbeddedHost.remove_toolchain_tools	method	coroutine	-
@@ -1859,6 +1871,7 @@ input	otto.host:EmbeddedHostSpec	S:"os_type"	optional	S:"embedded"	S:"os_type"
 input	otto.host:EmbeddedHostSpec	S:"os_version"	optional	N	S:"os_version"
 input	otto.host:EmbeddedHostSpec	S:"power_control"	optional	N	S:"power_control"
 input	otto.host:EmbeddedHostSpec	S:"rack"	optional	N	S:"rack"
+input	otto.host:EmbeddedHostSpec	S:"reboot_options"	optional	O	S:"reboot_options"
 input	otto.host:EmbeddedHostSpec	S:"resources"	optional	O	S:"resources"
 input	otto.host:EmbeddedHostSpec	S:"session_setup"	optional	N	S:"session_setup"
 input	otto.host:EmbeddedHostSpec	S:"shelf"	optional	N	S:"shelf"
@@ -1900,6 +1913,7 @@ member	otto.host:EmbeddedHostSpec.os_type	field
 member	otto.host:EmbeddedHostSpec.os_version	field
 member	otto.host:EmbeddedHostSpec.power_control	field
 member	otto.host:EmbeddedHostSpec.rack	field
+member	otto.host:EmbeddedHostSpec.reboot_options	field
 member	otto.host:EmbeddedHostSpec.resources	field
 member	otto.host:EmbeddedHostSpec.session_setup	field
 member	otto.host:EmbeddedHostSpec.shelf	field
@@ -1966,7 +1980,7 @@ member	otto.host:Host.power	method	coroutine	PK:state:N
 member	otto.host:Host.power_control	field
 member	otto.host:Host.products	field
 member	otto.host:Host.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
-member	otto.host:Host.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:Host.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
 member	otto.host:Host.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:Host.remove_toolchain_tools	method	coroutine	-
 member	otto.host:Host.resources	field
@@ -2097,6 +2111,7 @@ input	otto.host:HostSpec	S:"os_type"	optional	S:"unix"	S:"os_type"
 input	otto.host:HostSpec	S:"os_version"	optional	N	S:"os_version"
 input	otto.host:HostSpec	S:"power_control"	optional	N	S:"power_control"
 input	otto.host:HostSpec	S:"rack"	optional	N	S:"rack"
+input	otto.host:HostSpec	S:"reboot_options"	optional	O	S:"reboot_options"
 input	otto.host:HostSpec	S:"resources"	optional	O	S:"resources"
 input	otto.host:HostSpec	S:"session_setup"	optional	N	S:"session_setup"
 input	otto.host:HostSpec	S:"shelf"	optional	N	S:"shelf"
@@ -2132,6 +2147,7 @@ member	otto.host:HostSpec.os_type	field
 member	otto.host:HostSpec.os_version	field
 member	otto.host:HostSpec.power_control	field
 member	otto.host:HostSpec.rack	field
+member	otto.host:HostSpec.reboot_options	field
 member	otto.host:HostSpec.resources	field
 member	otto.host:HostSpec.session_setup	field
 member	otto.host:HostSpec.shelf	field
@@ -2158,7 +2174,7 @@ call	otto.host:HostValidationError	sync	@builtin:builtins.ValueError
 abstract	otto.host:HostValidationError	-
 name	otto.host:LocalHost	class
 mro	otto.host:LocalHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:BaseHost}
-call	otto.host:LocalHost	sync	KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
+call	otto.host:LocalHost	sync	KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
 member	otto.host:LocalHost.__aenter__	method	coroutine	-
 member	otto.host:LocalHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:LocalHost.__eq__	method	sync	PK:other:-
@@ -2209,7 +2225,8 @@ member	otto.host:LocalHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
 member	otto.host:LocalHost.products	field
 member	otto.host:LocalHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:LocalHost.read_file	method	coroutine	PK:path:-
-member	otto.host:LocalHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:LocalHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:LocalHost.reboot_options	field
 member	otto.host:LocalHost.rebuild_connections	method	sync	-
 member	otto.host:LocalHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:LocalHost.remove_toolchain_tools	method	coroutine	-
@@ -2413,7 +2430,7 @@ call	otto.host:RawLandingError	sync	@builtin:builtins.RuntimeError
 abstract	otto.host:RawLandingError	-
 name	otto.host:RemoteHost	class
 mro	otto.host:RemoteHost	{otto.host:BaseHost}
-call	otto.host:RemoteHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:N KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N
+call	otto.host:RemoteHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:N KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N
 member	otto.host:RemoteHost.__aenter__	method	coroutine	-
 member	otto.host:RemoteHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:RemoteHost.__eq__	method	sync	PK:other:-
@@ -2476,7 +2493,8 @@ member	otto.host:RemoteHost.power_control	field
 member	otto.host:RemoteHost.products	field
 member	otto.host:RemoteHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:RemoteHost.rack	field
-member	otto.host:RemoteHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:RemoteHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:RemoteHost.reboot_options	field
 member	otto.host:RemoteHost.rebuild_connections	method	sync	-
 member	otto.host:RemoteHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:RemoteHost.remove_toolchain_tools	method	coroutine	-
@@ -2735,7 +2753,7 @@ abstract	otto.host:TransferMetadata	@final @manifest:subclass=false
 name	otto.host:TransferProgressHandler	alias
 name	otto.host:UnixHost	class
 mro	otto.host:UnixHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:RemoteHost} {otto.host:BaseHost}
-call	otto.host:UnixHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false KO:init_timeout:N
+call	otto.host:UnixHost	sync	KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:ip:- KO:creds:O KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false KO:init_timeout:N
 member	otto.host:UnixHost.__aenter__	method	coroutine	-
 member	otto.host:UnixHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:UnixHost.__eq__	method	sync	PK:other:-
@@ -2820,7 +2838,8 @@ member	otto.host:UnixHost.products	field
 member	otto.host:UnixHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:UnixHost.rack	field
 member	otto.host:UnixHost.read_file	method	coroutine	PK:path:-
-member	otto.host:UnixHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:UnixHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:UnixHost.reboot_options	field
 member	otto.host:UnixHost.rebuild_connections	method	sync	-
 member	otto.host:UnixHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:UnixHost.remove_toolchain_tools	method	coroutine	-
@@ -2896,6 +2915,7 @@ input	otto.host:UnixHostSpec	S:"os_type"	optional	S:"unix"	S:"os_type"
 input	otto.host:UnixHostSpec	S:"os_version"	optional	N	S:"os_version"
 input	otto.host:UnixHostSpec	S:"power_control"	optional	N	S:"power_control"
 input	otto.host:UnixHostSpec	S:"rack"	optional	N	S:"rack"
+input	otto.host:UnixHostSpec	S:"reboot_options"	optional	O	S:"reboot_options"
 input	otto.host:UnixHostSpec	S:"resources"	optional	O	S:"resources"
 input	otto.host:UnixHostSpec	S:"scp_options"	optional	O	S:"scp_options"
 input	otto.host:UnixHostSpec	S:"session_setup"	optional	N	S:"session_setup"
@@ -2947,6 +2967,7 @@ member	otto.host:UnixHostSpec.os_type	field
 member	otto.host:UnixHostSpec.os_version	field
 member	otto.host:UnixHostSpec.power_control	field
 member	otto.host:UnixHostSpec.rack	field
+member	otto.host:UnixHostSpec.reboot_options	field
 member	otto.host:UnixHostSpec.resources	field
 member	otto.host:UnixHostSpec.scp_options	field
 member	otto.host:UnixHostSpec.session_setup	field
@@ -3085,7 +3106,8 @@ member	otto.host:ZephyrHost.products	field
 member	otto.host:ZephyrHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:ZephyrHost.rack	field
 member	otto.host:ZephyrHost.read_file	method	coroutine	PK:path:-
-member	otto.host:ZephyrHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:F:0x1.2c00000000000p+9 KO:down_timeout:F:0x1.e000000000000p+5 KO:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:ZephyrHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
+member	otto.host:ZephyrHost.reboot_options	field
 member	otto.host:ZephyrHost.rebuild_connections	method	sync	-
 member	otto.host:ZephyrHost.remove_coverage_dirs	method	coroutine	KO:owner:N
 member	otto.host:ZephyrHost.remove_toolchain_tools	method	coroutine	-
@@ -4065,6 +4087,15 @@ name	otto.models:OttoModel	model
 mro	otto.models:OttoModel	-
 member	otto.models:OttoModel.model_config	attribute
 abstract	otto.models:OttoModel	-
+name	otto.models:RebootOptionsSpec	model
+mro	otto.models:RebootOptionsSpec	{otto.models:OttoModel}
+input	otto.models:RebootOptionsSpec	@manifest:construct=false	-	-	-
+member	otto.models:RebootOptionsSpec.down_timeout	field
+member	otto.models:RebootOptionsSpec.model_config	attribute
+member	otto.models:RebootOptionsSpec.poll_interval	field
+member	otto.models:RebootOptionsSpec.timeout	field
+member	otto.models:RebootOptionsSpec.to_runtime	method	sync	-
+abstract	otto.models:RebootOptionsSpec	@final @manifest:subclass=false
 name	otto.models:ReservationConfigSpec	model
 mro	otto.models:ReservationConfigSpec	{otto.models:OttoModel}
 input	otto.models:ReservationConfigSpec	@manifest:construct=false	-	-	-

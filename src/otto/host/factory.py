@@ -41,10 +41,11 @@ if TYPE_CHECKING:
 # merge carries it — but the layers replace each other wholesale instead of
 # blending, so a product default and a host's own table cannot coexist.
 #
-# All but the last are per-protocol. ``userland_options`` describes the DEVICE
+# All but the last two are per-protocol. ``userland_options`` describes the DEVICE
 # rather than a connection to it, and is here for the same layering reason: an
 # os_profile can default a whole host class's answers while a single host pins
-# one key inline.
+# one key inline. ``reboot_options`` bounds the ``reboot`` verb, not a protocol, and
+# layers the same way.
 OPTIONS_KEYS: frozenset[str] = frozenset(
     {
         "ssh_options",
@@ -54,6 +55,7 @@ OPTIONS_KEYS: frozenset[str] = frozenset(
         "ftp_options",
         "nc_options",
         "userland_options",
+        "reboot_options",
     }
 )
 

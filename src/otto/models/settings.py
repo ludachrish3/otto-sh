@@ -48,6 +48,7 @@ from ..declared import DeclaredEntry, MatchLeaf, validate_match_table
 from ..host.option_specs import (
     FtpOptionsSpec,
     NcOptionsSpec,
+    RebootOptionsSpec,
     ScpOptionsSpec,
     SftpOptionsSpec,
     SshOptionsSpec,
@@ -630,9 +631,10 @@ class ReservationFile(OttoModel):
 
 # The option tables accepted under [host_preferences."<selector>"], each mapped
 # to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS (a drift
-# test keeps them in lockstep). All but the last are per-protocol;
+# test keeps them in lockstep). All but the last two are per-protocol;
 # userland_options describes the device itself, and is settable here so a
-# product can answer for a whole class of hosts at once.
+# product can answer for a whole class of hosts at once; reboot_options bounds
+# the reboot verb.
 _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "ssh_options": SshOptionsSpec,
     "telnet_options": TelnetOptionsSpec,
@@ -641,6 +643,7 @@ _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "ftp_options": FtpOptionsSpec,
     "nc_options": NcOptionsSpec,
     "userland_options": UserlandOptionsSpec,
+    "reboot_options": RebootOptionsSpec,
 }
 
 # Capability names accepted inside a [host_preferences."<selector>"] table. Each

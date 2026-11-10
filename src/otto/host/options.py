@@ -22,6 +22,7 @@ Example::
 """
 
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import MISSING, dataclass, field, fields
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -36,6 +37,7 @@ __all__ = [
     "FtpOptions",
     "LocalPortForward",
     "NcOptions",
+    "RebootOptions",
     "ScpOptions",
     "SftpOptions",
     "SnmpOptions",
@@ -1071,3 +1073,55 @@ class UserlandOptions:
     be ash or hush, so the version number cannot answer a behavioural question
     — only the device can.
     """
+
+
+# ---------------------------------------------------------------------------
+# Reboot
+# ---------------------------------------------------------------------------
+
+
+def _validate_timeout(timeout: float, name: str = "timeout") -> float:
+    """Reject timeout values ``asyncio.wait_for`` would silently misinterpret.
+
+    Annotations are not enforced at runtime, so this guards the public entry
+    points against callers a type checker never sees. ``float("inf")`` is
+    allowed — it is the supported spelling for an unbounded command. *name*
+    is the field or argument the message blames.
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise TypeError(f"{name} must be a number, got {type(timeout).__name__}: {timeout!r}")
+    if math.isnan(timeout):
+        raise ValueError(f"{name} must not be NaN")
+    if timeout < 0:
+        raise ValueError(f"{name} must be >= 0, got {timeout!r}")
+    return float(timeout)
+
+
+@final
+@dataclass(slots=True, kw_only=True)
+class RebootOptions:
+    """Bounds for ``reboot(wait=True)``'s down, up and recovery phases.
+
+    Declared in lab data as a host's ``[reboot_options]`` table. ``__post_init__``
+    is the one place the bounds policy lives; the boundary spec
+    (:class:`~otto.host.option_specs.RebootOptionsSpec`) runs it rather than
+    restating it.
+    """
+
+    timeout: float = 600.0
+    """The whole wait, in seconds (``> 0`` and finite)."""
+
+    down_timeout: float = 120.0
+    """How long to wait for the host to go down, in seconds (``>= 0`` and finite).
+    ``0`` skips the down phase."""
+
+    poll_interval: float = 2.0
+    """Pause between probes, in seconds (``>= 0`` and finite)."""
+
+    def __post_init__(self) -> None:
+        for name in ("timeout", "down_timeout", "poll_interval"):
+            value = _validate_timeout(getattr(self, name), name)
+            if math.isinf(value):
+                raise ValueError(f"{name} must be finite, got {value!r}")
+        if self.timeout <= 0:
+            raise ValueError(f"timeout must be > 0, got {self.timeout!r}")

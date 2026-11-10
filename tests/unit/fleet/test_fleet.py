@@ -15,7 +15,7 @@ from otto.fleet import (
 )
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.factory import create_host_from_dict
-from otto.host.options import SshOptions, TelnetOptions, UserlandOptions
+from otto.host.options import RebootOptions, SshOptions, TelnetOptions, UserlandOptions
 from otto.labs.loader import Lab
 from otto.result import CommandResult, Results
 from otto.utils import Status
@@ -509,6 +509,13 @@ class TestPerCallOptionOverrides:
         assert host.userland_options is override
         assert host._userland() is not original._userland()
         assert host._userland()._options is override
+
+    def test_reboot_options_are_overridable_per_call(self, three_hosts):
+        override = RebootOptions(down_timeout=5)
+        host = get_host("test1", reboot_options=override)
+
+        assert host is not three_hosts["test1"]
+        assert host.reboot_options is override
 
     def test_override_does_not_mutate_stored_host(self, three_hosts):
         """Stored host's options remain untouched after an override call."""

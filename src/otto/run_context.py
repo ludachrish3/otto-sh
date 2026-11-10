@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from .host.options import (
         FtpOptions,
         NcOptions,
+        RebootOptions,
         ScpOptions,
         SftpOptions,
         SshOptions,
@@ -216,6 +217,7 @@ class HostOverrides(TypedDict, total=False):
     ftp_options: "FtpOptions | None"
     nc_options: "NcOptions | None"
     userland_options: "UserlandOptions | None"
+    reboot_options: "RebootOptions | None"
 
 
 HOST_OVERRIDE_KEYS: frozenset[str] = frozenset(HostOverrides.__annotations__)

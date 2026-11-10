@@ -83,6 +83,7 @@ from .option_specs import (
     ConsoleOptionsSpec,
     FtpOptionsSpec,
     NcOptionsSpec,
+    RebootOptionsSpec,
     ScpOptionsSpec,
     SftpOptionsSpec,
     SnmpOptionsSpec,
@@ -585,6 +586,11 @@ class HostSpec(OttoModel):
     telnet_options: Annotated[TelnetOptionsSpec, Convert(_value_only(_to_runtime))] = (
         TelnetOptionsSpec()
     )
+    reboot_options: Annotated[RebootOptionsSpec, Convert(_value_only(_to_runtime))] = (
+        RebootOptionsSpec()
+    )
+    """Bounds for ``reboot(wait=True)`` on any host family; the policy lives in
+    ``RebootOptions``."""
     console_options: Annotated[ConsoleOptionsSpec, Convert(_value_only(_to_runtime))] = (
         ConsoleOptionsSpec()
     )

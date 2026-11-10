@@ -23,6 +23,7 @@ fragment on this page shows:
 | ``scp_options``   | SCP transfers                  |
 | ``ftp_options``   | FTP transfers (aioftp)         |
 | ``nc_options``    | see {doc}`../cli/host/netcat`     |
+| ``reboot_options``| the ``reboot`` verb, not a protocol ({ref}`reboot-options-reference`) |
 
 One further table, ``userland_options``, sits alongside these but names no
 protocol: it declares facts about the *device* (which elevation mechanism it
@@ -30,6 +31,12 @@ has, which ``timeout`` convention its applet speaks) that otto otherwise
 probes for once per host.  It layers exactly like the protocol tables,
 per-call override included.  `otto host <id> probe` prints the table ready to paste —
 see {ref}`userland-capabilities`.  See also {doc}`lab-config`.
+
+``reboot_options`` is a second such table: it names no protocol either, and
+bounds the ``reboot`` verb that every host family has (see
+{ref}`reboot-options-reference`).  It layers like the others, with one
+difference at the last step: the final word is the ``reboot`` CLI flag or
+per-call keyword rather than ``--term`` / ``--transfer``.
 
 The same tables — all but ``console_options``, which is read from the
 host's ``lab.json`` entry alone — are recognized in four places, layered
@@ -911,6 +918,35 @@ option objects, described at the top of this page.
 ```json
 {
     "nc_options": { "exec_name": "ncat", "port": 9500 }
+}
+```
+
+(reboot-options-reference)=
+
+## `reboot_options` reference
+
+The `reboot_options` object bounds the waits of `reboot(wait=True)` on every
+host family (unix, local, docker and embedded) and accepts the three fields of
+{class}`~otto.host.options.RebootOptions`:
+
+| Field            | Default | Bound            | Purpose                                                      |
+|------------------|---------|------------------|--------------------------------------------------------------|
+| ``timeout``      | ``600`` | ``> 0``, finite  | Seconds for the whole wait (down, up and recovery together). |
+| ``down_timeout`` | ``120`` | ``>= 0``, finite | Seconds to wait for the host to go down.                     |
+| ``poll_interval``| ``2``   | ``>= 0``, finite | Seconds between probes.                                      |
+
+``down_timeout = 0`` skips the down phase.  The bounds are enforced in one
+place, `RebootOptions.__post_init__`; a lab entry or a `[host_preferences]`
+table that breaks one is refused when it is read, naming the field.
+
+The values resolve through the layers described at the top of this page:
+defaults, then the host's `lab.json` table, then `[host_preferences]`, then
+the CLI flag or per-call keyword.  Per-key merging applies, so a host that
+sets only `down_timeout` still inherits `timeout` from a preference.
+
+```json
+{
+    "reboot_options": { "timeout": 300, "down_timeout": 30 }
 }
 ```
 

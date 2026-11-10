@@ -10,7 +10,7 @@ modified here.
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import Field, SecretStr, ValidationInfo, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from typing_extensions import final
 
 from ..models.base import OttoModel
@@ -500,6 +500,33 @@ class UserlandOptionsSpec(OttoModel):
         )
 
 
+@final
+class RebootOptionsSpec(OttoModel):
+    """Boundary spec for the reboot bounds table (``[reboot_options]`` in lab data).
+
+    Carries no bounds of its own: the model validator builds the ``RebootOptions``
+    runtime dataclass, whose ``__post_init__`` is the one bounds policy, so lab
+    data and ``[host_preferences]`` obey it identically.
+    """
+
+    timeout: float = rt.field_default(rt.RebootOptions, "timeout")
+    down_timeout: float = rt.field_default(rt.RebootOptions, "down_timeout")
+    poll_interval: float = rt.field_default(rt.RebootOptions, "poll_interval")
+
+    @model_validator(mode="after")
+    def _apply_runtime_policy(self) -> "RebootOptionsSpec":
+        self.to_runtime()
+        return self
+
+    def to_runtime(self) -> rt.RebootOptions:
+        """Build the ``RebootOptions`` runtime dataclass from the validated spec fields."""
+        return rt.RebootOptions(
+            timeout=self.timeout,
+            down_timeout=self.down_timeout,
+            poll_interval=self.poll_interval,
+        )
+
+
 OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (SshOptionsSpec, rt.SshOptions),
     (TelnetOptionsSpec, rt.TelnetOptions),
@@ -511,6 +538,7 @@ OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (SnmpOptionsSpec, rt.SnmpOptions),
     (TftpOptionsSpec, rt.TftpOptions),
     (UserlandOptionsSpec, rt.UserlandOptions),
+    (RebootOptionsSpec, rt.RebootOptions),
 ]
 """Each boundary option spec paired with the runtime dataclass it builds.
 Drives the drift guard so the duplicated field lists cannot silently diverge.

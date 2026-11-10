@@ -23,7 +23,8 @@ that matters.  Under each selector, two kinds of values are allowed:
   lab-defined `valid_terms` / `valid_transfers` / `valid_impairers` menu;
   out-of-menu entries are skipped.
 - **Option tables** (`ssh_options`, `telnet_options`, `sftp_options`,
-  `scp_options`, `ftp_options`, `nc_options`, `userland_options`) — per-key
+  `scp_options`, `ftp_options`, `nc_options`, `userland_options`,
+  `reboot_options`) — per-key
   value overrides.
 
 ```toml
@@ -38,6 +39,7 @@ transfer = ["nc"]
 ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 telnet_options = { cols = 200, echo_negotiation_timeout = 1.0 }
 nc_options = { exec_name = "ncat", port_strategy = "proc" }
+reboot_options = { down_timeout = 30 }
 
 # Narrower selectors overlay specific host groups.
 [host_preferences."router.*"]
@@ -46,7 +48,7 @@ telnet_options = { port = 9023 }
 
 Valid option-table names are: `ssh_options`, `telnet_options`,
 `sftp_options`, `scp_options`, `ftp_options`, `nc_options`,
-`userland_options`.  Unknown keys raise at startup so typos fail loudly
+`userland_options`, `reboot_options`.  Unknown keys raise at startup so typos fail loudly
 instead of silently no-opping.
 
 **Precedence (lowest to highest):**

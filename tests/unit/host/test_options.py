@@ -11,6 +11,7 @@ from otto.host.options import (
     FtpOptions,
     LocalPortForward,
     NcOptions,
+    RebootOptions,
     RemotePortForward,
     ScpOptions,
     SftpOptions,
@@ -307,6 +308,45 @@ class TestNcOptions:
         assert opts.port_cmd is None
         assert opts.listener_check == "auto"
         assert opts.listener_cmd is None
+
+
+# ---------------------------------------------------------------------------
+# RebootOptions
+# ---------------------------------------------------------------------------
+
+
+class TestRebootOptions:
+    def test_defaults(self):
+        opts = RebootOptions()
+        assert (opts.timeout, opts.down_timeout, opts.poll_interval) == (600.0, 120.0, 2.0)
+
+    def test_zero_timeout_is_refused_naming_the_field(self):
+        with pytest.raises(ValueError, match="timeout"):
+            RebootOptions(timeout=0)
+
+    def test_nan_down_timeout_is_refused_naming_the_field(self):
+        with pytest.raises(ValueError, match="down_timeout"):
+            RebootOptions(down_timeout=float("nan"))
+
+    def test_infinite_and_negative_are_refused(self):
+        with pytest.raises(ValueError, match="timeout"):
+            RebootOptions(timeout=float("inf"))
+        with pytest.raises(ValueError, match="poll_interval"):
+            RebootOptions(poll_interval=-1)
+
+    def test_zero_poll_interval_and_down_timeout_are_accepted(self):
+        assert RebootOptions(poll_interval=0).poll_interval == 0
+        assert RebootOptions(down_timeout=0).down_timeout == 0
+
+    def test_every_family_carries_the_default(self):
+        from otto.host import EmbeddedHost, LocalHost, UnixHost
+        from otto.host.command_frame import ZephyrFrame
+
+        unix = UnixHost(ip="192.0.2.1", element=Element(name="u"))
+        emb = EmbeddedHost(ip="192.0.2.2", element=Element(name="e"), command_frame=ZephyrFrame())
+        assert unix.reboot_options == RebootOptions()
+        assert LocalHost().reboot_options == RebootOptions()
+        assert emb.reboot_options == RebootOptions()
 
 
 # ---------------------------------------------------------------------------

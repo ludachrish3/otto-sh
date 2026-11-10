@@ -14,6 +14,7 @@ import otto.host.connections as connections_mod
 from otto.host.element import Element
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
+from otto.host.options import RebootOptions
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
@@ -234,3 +235,28 @@ async def test_default_recovery_gate_keeps_reachability_semantics(monkeypatch):
     _scripted_reachable(monkeypatch, h, [True, False, True])
     result = await h.reboot(wait=True, timeout=5.0, down_timeout=5.0, poll_interval=0)
     assert result.status == Status.Success
+
+
+def test_reboot_defaults_come_from_the_hosts_reboot_options(monkeypatch):
+    host = _reboot_ready_local(monkeypatch)
+    host.reboot_options = RebootOptions(timeout=0.3, down_timeout=0.1, poll_interval=0.01)
+    _scripted_reachable(monkeypatch, host, [True])  # never goes down
+    r = asyncio.run(host.reboot(wait=True))
+    assert r.status is Status.Failed
+    assert "never went down within 0.1s" in r.msg
+
+
+def test_an_explicit_argument_is_the_final_word_over_the_table(monkeypatch):
+    host = _reboot_ready_local(monkeypatch)
+    host.reboot_options = RebootOptions(timeout=0.3, down_timeout=10.0, poll_interval=0.01)
+    _scripted_reachable(monkeypatch, host, [True])
+    r = asyncio.run(host.reboot(wait=True, down_timeout=0.05))
+    assert "never went down within 0.05s" in r.msg
+
+
+def test_an_explicit_argument_obeys_the_same_policy_as_lab_data(monkeypatch):
+    host = _reboot_ready_local(monkeypatch)
+    with pytest.raises(ValueError, match="down_timeout"):
+        asyncio.run(host.reboot(wait=True, down_timeout=-1))
+    with pytest.raises(ValueError, match="timeout"):
+        asyncio.run(host.reboot(wait=True, timeout=0))
