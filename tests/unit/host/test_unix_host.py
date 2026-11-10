@@ -4577,8 +4577,8 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
         device.up = False
         return Result(status=Status.Success)
 
-    async def is_reachable(*, timeout: float = 10.0) -> bool:
-        reachable = await real_is_reachable(timeout=timeout)
+    async def is_reachable(*, timeout: float = 10.0, fresh: bool = False) -> bool:
+        reachable = await real_is_reachable(timeout=timeout, fresh=fresh)
         polls.append(reachable)
         if len(polls) == 2:  # booted: the login prompt is back from the next dial on
             device.up = True

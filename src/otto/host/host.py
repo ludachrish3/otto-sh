@@ -1066,8 +1066,11 @@ class Host(Protocol):
         """
         ...
 
-    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
-        """Return ``True`` if the host responds to a connection probe within *timeout* seconds."""
+    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+        """Return ``True`` if the host responds to a connection probe within *timeout* seconds.
+
+        *fresh* probes through a throwaway connection, never a cached one.
+        """
         ...
 
     async def wait_until_up(self, timeout: float, *, interval: float = 2.0) -> bool:
@@ -3633,10 +3636,11 @@ class BaseHost(ABC):
             f"shutdown is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
+    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
         """Whether this host answers a lightweight connection probe.
 
-        Per-family override; default raises (no generic probe).
+        With *fresh* the probe dials through a throwaway connection and never
+        trusts a cached one. Per-family override; default raises (no generic probe).
         """
         raise NotImplementedError(
             f"is_reachable is not supported on '{self.__class__.__name__}'"
@@ -3660,10 +3664,15 @@ class BaseHost(ABC):
         return True
 
     async def wait_until_down(self, timeout: float, *, interval: float = 2.0) -> bool:
-        """Poll :meth:`is_reachable` until *not* reachable or *timeout*."""
+        """Poll a fresh :meth:`is_reachable` until *not* reachable or *timeout*.
+
+        Every poll dials anew (``fresh=True``): during a slow shutdown the first
+        probe can still log in, and a cached transport would then read the host
+        as up long after it went down (#435).
+        """
 
         async def unreachable() -> bool:
-            return not await self.is_reachable()
+            return not await self.is_reachable(fresh=True)
 
         # probe_first kept for the same edge-of-budget reason as wait_until_up.
         try:

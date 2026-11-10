@@ -59,6 +59,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_FRESH_CLOSE_S = 10.0
+"""Bound on closing a fresh probe's throwaway manager: SSH teardown awaits
+``wait_closed()`` without a bound of its own, so a stalled close would
+otherwise eat the down window."""
+
 
 _SLUG_RUN = re.compile(r"[^a-z0-9]+")
 
@@ -330,21 +335,44 @@ class RemoteHost(BaseHost):
     """Manages the raw transport connection(s) for this host; built by the
     family's ``__post_init__``."""
 
-    async def _probe_connection(self) -> None:
-        """Open this family's transport channel(s) without running a command.
+    def _build_connections(self) -> "ConnectionManager":
+        """Construct a new connection manager for this host from its fields.
 
-        The family-specific half of :meth:`verify_connection`: Unix dispatches
-        on ``term`` (and warms the FTP control channel when ``transfer`` is
-        ``ftp``); embedded opens its single telnet console. Failure is signalled
-        by raising — the template's ``except`` turns it into a
-        ``Status.Error`` result.
+        The one manager factory per family: construction, rebuild and the
+        fresh down probe (:meth:`is_reachable` with ``fresh=True``) all call it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _build_connections"
+        ) from None
+
+    async def _probe_with(self, conns: "ConnectionManager") -> None:
+        """Open this family's transport channel(s) on *conns* without running a command.
+
+        The family-specific dial dispatch: Unix dispatches on ``term`` (and
+        warms the FTP control channel when ``transfer`` is ``ftp``); embedded
+        opens its single console. Failure is signalled by raising. Both the
+        live probe (:meth:`_probe_connection`) and the fresh probe call it.
         """
         # The message IS the diagnostic: verify_connection's template converts
         # this raise into a CommandResult whose value is str(e), so a bare
         # NotImplementedError would surface as an EMPTY error message.
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _probe_connection"
-        ) from None
+        raise NotImplementedError(f"{type(self).__name__} must implement _probe_with") from None
+
+    async def _release_probe_line(self) -> None:
+        """Release a single-client line before a probe dials; default no-op.
+
+        A console server serves one client, so a family whose cached client
+        holds it must let go first or the new dial is refused.
+        """
+
+    async def _probe_connection(self) -> None:
+        """Open this host's channel(s) on the live manager, after releasing the probe line.
+
+        The family-specific half of :meth:`verify_connection`; the template's
+        ``except`` turns a raise into a ``Status.Error`` result.
+        """
+        await self._release_probe_line()
+        await self._probe_with(self._live_connections())
 
     async def verify_connection(self) -> CommandResult:
         """Attempt to connect without running any commands.
@@ -425,8 +453,29 @@ class RemoteHost(BaseHost):
         return self._session_mgr.has_live_sessions or self._connections.connected
 
     @override
-    async def is_reachable(self, *, timeout: float = 10.0) -> bool:
-        """Probe by attempting a connection (no command), bounded by *timeout*."""
+    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+        """Probe by attempting a connection (no command), bounded by *timeout*.
+
+        With *fresh* the probe line is released, a throwaway manager is built
+        by ``_build_connections()`` and probed, and it is closed (bounded by
+        ``_FRESH_CLOSE_S``, never raising) before returning; the live
+        manager's caches are untouched. ``reboot``'s down phase uses it so a
+        transport cached by an early login cannot read a dead host as up (#435).
+        """
+        if fresh:
+            await self._release_probe_line()
+            conns = self._build_connections()
+            try:
+                await asyncio.wait_for(self._probe_with(conns), timeout)
+                ok = True
+            except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable
+                ok = False
+            finally:
+                try:
+                    await asyncio.wait_for(conns.close(), _FRESH_CLOSE_S)
+                except Exception as exc:  # noqa: BLE001 — a throwaway's teardown must never raise out
+                    logger.debug("%s: fresh probe close did not finish: %r", self.name, exc)
+            return ok
         try:
             result = await asyncio.wait_for(self.verify_connection(), timeout)
         except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable

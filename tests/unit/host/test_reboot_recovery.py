@@ -67,7 +67,7 @@ async def test_reboot_rebuilds_connections_before_waiting(monkeypatch):
     monkeypatch.setattr(h, "_soft_reboot", AsyncMock(side_effect=side_effect))
     monkeypatch.setattr(h, "rebuild_connections", lambda: order.append("rebuild"))
 
-    async def up(self, timeout=10.0):
+    async def up(self, *, timeout=10.0, fresh=False):
         order.append("probe")
         return True
 
@@ -95,7 +95,7 @@ def _scripted_reachable(monkeypatch, host, sequence: "list[bool]") -> None:
     """Drive is_reachable from a finite script; the last value repeats."""
     seq = list(sequence)
 
-    async def fake(self, timeout=10.0):
+    async def fake(self, *, timeout=10.0, fresh=False):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     monkeypatch.setattr(type(host), "is_reachable", fake)
@@ -260,3 +260,191 @@ def test_an_explicit_argument_obeys_the_same_policy_as_lab_data(monkeypatch):
         asyncio.run(host.reboot(wait=True, down_timeout=-1))
     with pytest.raises(ValueError, match="timeout"):
         asyncio.run(host.reboot(wait=True, timeout=0))
+
+
+# --- #435: the down phase probes through a throwaway connection, never the cache ---
+
+
+def test_wait_until_down_never_trusts_a_cached_transport(monkeypatch):
+    """#435: the first probe during a shutdown hold logs in; every later probe must dial."""
+    host = _unix_host()
+    dials: "list[int]" = []
+
+    async def fake_connect(*a, **kw):
+        dials.append(1)
+        if len(dials) == 1:
+            return MagicMock()  # the hold: one login succeeds
+        raise ConnectionRefusedError  # then sshd is gone
+
+    monkeypatch.setattr(connections_mod, "ssh_connect", AsyncMock(side_effect=fake_connect))
+    assert asyncio.run(host.wait_until_down(1.0, interval=0.01)) is True
+    assert len(dials) >= 2
+
+
+def _count_builds(monkeypatch, host) -> "tuple[list[object], list[object]]":
+    """Wrap the host class's manager factory so each throwaway's build and close is recorded."""
+    built: "list[object]" = []
+    closed: "list[object]" = []
+    real_build = type(host)._build_connections
+
+    def counting_build(self):
+        m = real_build(self)
+        built.append(m)
+        orig = m.close
+
+        async def close():
+            closed.append(m)
+            await orig()
+
+        monkeypatch.setattr(m, "close", close)
+        return m
+
+    monkeypatch.setattr(type(host), "_build_connections", counting_build)
+    return built, closed
+
+
+def test_a_fresh_probe_closes_its_throwaway_manager_every_poll(monkeypatch):
+    host = _unix_host()
+    built, closed = _count_builds(monkeypatch, host)
+    monkeypatch.setattr(
+        connections_mod, "ssh_connect", AsyncMock(side_effect=ConnectionRefusedError)
+    )
+    asyncio.run(host.wait_until_down(0.05, interval=0.01))
+    assert built
+    assert built == closed
+    assert host._connections not in built
+
+
+class _RecordingHop:
+    """A hop transport stand-in: hands out a tunnel object and counts its closes."""
+
+    def __init__(self) -> None:
+        self.closes = 0
+
+    async def get_tunnel(self):
+        return MagicMock()
+
+    async def close(self) -> None:
+        self.closes += 1
+
+
+@pytest.mark.parametrize("outcome", ["succeeds", "refused", "hangs"])
+def test_a_fresh_probe_through_a_hop_closes_hop_and_target_every_poll(monkeypatch, outcome):
+    hops: "list[_RecordingHop]" = []
+
+    def build_hop(self):
+        hop = _RecordingHop()
+        hops.append(hop)
+        return hop
+
+    monkeypatch.setattr(UnixHost, "_build_hop_transport", build_hop)
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        hop="h",
+    )
+    live_hop = hops[0]
+    built, closed = _count_builds(monkeypatch, host)
+
+    async def dial(*a, **kw):
+        if outcome == "succeeds":
+            return MagicMock()
+        if outcome == "refused":
+            raise ConnectionRefusedError
+        await asyncio.sleep(60)
+        return None
+
+    monkeypatch.setattr(connections_mod, "ssh_connect", AsyncMock(side_effect=dial))
+
+    async def polls() -> "list[bool]":
+        return [await host.is_reachable(timeout=0.05, fresh=True) for _ in range(3)]
+
+    results = asyncio.run(polls())
+    assert results == [outcome == "succeeds"] * 3
+    assert len(built) == 3
+    assert built == closed
+    probe_hops = hops[1:]
+    assert len(probe_hops) == 3
+    assert [h.closes for h in probe_hops] == [1, 1, 1]
+    assert live_hop.closes == 0
+
+
+def test_a_stalled_close_does_not_defeat_the_down_window(monkeypatch):
+    import otto.host.remote_host as remote_host_mod
+
+    host = _unix_host()
+    real_build = type(host)._build_connections
+
+    def stalled_build(self):
+        m = real_build(self)
+
+        async def close():
+            await asyncio.sleep(60)
+
+        monkeypatch.setattr(m, "close", close)
+        return m
+
+    monkeypatch.setattr(type(host), "_build_connections", stalled_build)
+    monkeypatch.setattr(remote_host_mod, "_FRESH_CLOSE_S", 0.01)
+    monkeypatch.setattr(
+        connections_mod, "ssh_connect", AsyncMock(side_effect=ConnectionRefusedError)
+    )
+
+    async def probe() -> bool:
+        return await asyncio.wait_for(host.is_reachable(timeout=0.05, fresh=True), 0.1)
+
+    assert asyncio.run(probe()) is False
+
+
+def test_a_fresh_probe_leaves_the_live_caches_alone(monkeypatch):
+    host = _unix_host()
+    sentinel = MagicMock()
+    host._connections._ssh_conn = sentinel
+    monkeypatch.setattr(connections_mod, "ssh_connect", AsyncMock(return_value=MagicMock()))
+    assert asyncio.run(host.is_reachable(fresh=True)) is True
+    assert host._connections._ssh_conn is sentinel
+
+
+def test_a_console_term_releases_the_line_before_a_fresh_dial(monkeypatch):
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+    )
+    order: "list[str]" = []
+
+    async def close(self):
+        order.append("close")
+
+    def build(self):
+        order.append("build")
+        m = MagicMock()
+        m.console = AsyncMock()
+        m.close = AsyncMock()
+        return m
+
+    monkeypatch.setattr(UnixHost, "close", close)
+    monkeypatch.setattr(UnixHost, "_build_connections", build)
+    assert asyncio.run(host.is_reachable(fresh=True)) is True
+    assert order == ["close", "build"]
+
+
+def test_embedded_hosts_build_a_throwaway_manager_too():
+    from otto.host.command_frame import ZephyrFrame
+    from otto.host.connections import ConnectionManager
+    from otto.host.embedded_host import EmbeddedHost
+
+    h = EmbeddedHost(
+        ip="192.0.2.1",
+        element=Element(name="zephyr37_fat"),
+        log=LogMode.QUIET,
+        command_frame=ZephyrFrame(),
+    )
+    m = h._build_connections()
+    assert isinstance(m, ConnectionManager)
+    assert m is not h._connections
