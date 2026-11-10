@@ -13,7 +13,7 @@ def test_fold_200_files_is_batched(tmp_path, monkeypatch):
     for i in range(200):
         tl.write(f"f{i:03}.c", f"int f{i}(void)\n{{\n    return {i};\n}}\n")
     tl.commit("base")
-    tl.capture("bench", {f"f{i:03}.c": {3: 1} for i in range(200)})
+    tl.capture({f"f{i:03}.c": {3: 1} for i in range(200)})
     tl.write("f000.c", "int f0(void)\n{\n    return -1;\n}\n")
     tl.commit("churn")
 
@@ -33,7 +33,7 @@ def test_fold_gcd_base_is_batched(tmp_path, monkeypatch):
     for i in range(100):
         tl.write(f"f{i:03}.c", f"int f{i}(void)\n{{\n    return {i};\n}}\n")
     tl.commit("base")
-    cap = tl.capture("bench", {f"f{i:03}.c": {3: 1} for i in range(100)})
+    cap = tl.capture({f"f{i:03}.c": {3: 1} for i in range(100)})
     for i in range(0, 100, 10):
         tl.write(f"f{i:03}.c", f"int f{i}(void)\n{{\n    return -1;\n}}\n")
     tl.commit("churn")

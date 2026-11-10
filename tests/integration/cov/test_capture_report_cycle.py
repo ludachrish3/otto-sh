@@ -109,7 +109,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     git("add", "f.c")
     git("commit", "-qm", "init")
 
-    def cap(ticket: str, lines: dict[int, int], board: str, display_name: str | None) -> Capture:
+    def cap(ticket: str, lines: dict[int, int], board: str) -> Capture:
         return Capture(
             tier="manual",
             product="app",
@@ -118,15 +118,13 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
             ticket=ticket,
             labs=["lab1"],
             board=board,
-            display_name=display_name,
             files={"f.c": CaptureFileCov(blob=blob_sha(root, Path("f.c")), lines=lines)},
         )
 
     # Two hosts: one host and product is one context, so the newer of two
-    # captures on b1/app would supersede the older. The display name never
-    # reaches the label.
-    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "b1", "Rack 2 Slot 4"), root)
-    write_manual_capture(cap("T-22", {2: 3}, "b2", None), root)
+    # captures on b1/app would supersede the older.
+    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "b1"), root)
+    write_manual_capture(cap("T-22", {2: 3}, "b2"), root)
 
     # Edit line 1 → T-1's evidence for it is revoked.
     (root / "f.c").write_text("int EDITED;\nint b;\nint c;\n")

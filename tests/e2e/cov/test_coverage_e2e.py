@@ -642,7 +642,7 @@ class TestGcdaFetchStructure:
             )
 
     def test_capture_names_its_product(self, coverage_run):
-        """capture.json (schema 3) records which product it came from."""
+        """capture.json records which product it came from."""
         *_, cov_dir = coverage_run
         for product_dir in _product_dirs(cov_dir):
             capture = Capture.load(product_dir / "capture.json")

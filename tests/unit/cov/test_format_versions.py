@@ -66,13 +66,8 @@ def _store_v9(store: CoverageStore) -> None:
     assert store.tier_order == ["system", "manual"]
 
 
-def _capture_v3(capture: Capture) -> None:
-    assert (capture.tier, capture.product, capture.board, capture.display_name) == (
-        "manual",
-        "app",
-        "board1",
-        "Board One",
-    )
+def _capture_v4(capture: Capture) -> None:
+    assert (capture.tier, capture.product, capture.board) == ("manual", "app", "board1")
     assert capture.files["src/app.c"].lines == {1: 2, 2: 0}
     assert capture.files["src/app.c"].branches == {1: [(0, 0, 1), (0, 1, None)]}
     assert (capture.tester, capture.ticket) == ({"name": "Ada"}, "PROJ-2")
@@ -81,7 +76,7 @@ def _capture_v3(capture: Capture) -> None:
 STORE_MEANING = {9: _store_v9}
 """What each declared store read version's sample must load as; a version with no entry fails."""
 
-CAPTURE_MEANING = {3: _capture_v3}
+CAPTURE_MEANING = {4: _capture_v4}
 """What each declared capture read version's sample must load as."""
 
 
@@ -121,9 +116,9 @@ def test_a_v8_store_names_the_regenerate_fix(tmp_path):
 
 
 def test_capture_load_accepts_only_the_declared_read_versions(monkeypatch):
-    monkeypatch.setattr(capture_model, "CAPTURE_READ_VERSIONS", [4])
-    with pytest.raises(ValueError, match=r"capture format v4 required; found v3"):
-        Capture.load(_capture_sample(3))
+    monkeypatch.setattr(capture_model, "CAPTURE_READ_VERSIONS", [5])
+    with pytest.raises(ValueError, match=r"capture format v5 required; found v4"):
+        Capture.load(_capture_sample(4))
 
 
 @pytest.mark.parametrize(

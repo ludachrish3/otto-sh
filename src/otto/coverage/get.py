@@ -173,7 +173,6 @@ async def get_coverage(
             ticket=ticket,
             note=note,
             tester=tester,
-            display_names={h.id: h.name for h in hosts},
             clean_after_fetch=False,
         )
     except CoverageCaptureError as e:

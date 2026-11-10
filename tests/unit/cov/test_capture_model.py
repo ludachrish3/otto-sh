@@ -278,7 +278,7 @@ def test_roundtrip_and_strictness(git_repo: Path, tmp_path: Path) -> None:
     loaded = Capture.load(out)
     assert loaded == cap
     raw = json.loads(out.read_text())
-    assert raw["schema"] == 3
+    assert raw["schema"] == 4
     # never-reached branch ("-") must round-trip as JSON null, not 0.
     assert raw["files"]["f.c"]["branches"]["3"][1] == [0, 1, None]
     raw["surprise"] = True
@@ -289,27 +289,7 @@ def test_roundtrip_and_strictness(git_repo: Path, tmp_path: Path) -> None:
         Capture.load(out)
 
 
-def test_build_capture_annotates_display_name_and_roundtrips(
-    git_repo: Path, tmp_path: Path
-) -> None:
-    info = _write_info(tmp_path, git_repo / "f.c")
-    cap = build_capture(
-        info_path=info,
-        tier="system",
-        project_root=git_repo,
-        board="rack2-slot4-id",
-        product="app",
-        labs=["lab1"],
-        display_name="Rack 2 Slot 4",
-    )
-    assert cap.display_name == "Rack 2 Slot 4"
-    out = tmp_path / "cap.json"
-    cap.save(out)
-    assert Capture.load(out).display_name == "Rack 2 Slot 4"
-
-
-def test_capture_display_name_defaults_none_for_old_files(git_repo: Path, tmp_path: Path) -> None:
-    # A capture serialized before the field existed must load with None.
+def test_a_fresh_capture_has_no_display_name(git_repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, git_repo / "f.c")
     cap = build_capture(
         info_path=info,
@@ -322,9 +302,26 @@ def test_capture_display_name_defaults_none_for_old_files(git_repo: Path, tmp_pa
     out = tmp_path / "cap.json"
     cap.save(out)
     raw = json.loads(out.read_text())
-    raw.pop("display_name")
-    out.write_text(json.dumps(raw))
-    assert Capture.load(out).display_name is None
+    assert "display_name" not in raw
+    assert raw["schema"] == 4
+
+
+def test_a_v3_capture_is_refused_with_the_recapture_message(tmp_path: Path) -> None:
+    out = tmp_path / "cap.json"
+    out.write_text(
+        json.dumps(
+            {
+                "schema": 3,
+                "tier": "system",
+                "product": "app",
+                "base_commit": "b" * 40,
+                "board": "b",
+                "display_name": "Board One",
+            }
+        )
+    )
+    with pytest.raises(ValueError, match=r"capture format v4 required; found v3 — re-capture"):
+        Capture.load(out)
 
 
 def test_capture_requires_product(git_repo: Path, tmp_path: Path) -> None:
@@ -341,5 +338,5 @@ def test_build_capture_annotates_product_and_roundtrips(git_repo: Path, tmp_path
     assert cap.product == "app"
     out = tmp_path / "capture.json"
     cap.save(out)
-    assert json.loads(out.read_text())["schema"] == 3
+    assert json.loads(out.read_text())["schema"] == 4
     assert Capture.load(out).product == "app"

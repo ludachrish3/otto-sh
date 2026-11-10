@@ -257,11 +257,6 @@ The key is `SupersedeKey`, built by `supersede_key` from the capture's
   committed manual captures, so the loser's cov-dir copy is skipped too.
 - **Tier** is in the key, so one host and product captured in two tiers is
   two contexts: both captures survive, each crediting its own tier.
-- **A capture's `display_name` is not.** It stays in `capture.json` but
-  never reaches the store, whose run label is `<host_id>/<product>`
-  ({ref}`coverage-store-json`). Two captures of one host and product that
-  differ only in `display_name` are one context, and the newer supersedes the
-  older.
 
 "Newest" is a plain string comparison on `captured_at`, which is sound
 because the stamp is a zero-padded UTC `%Y-%m-%dT%H:%M:%SZ` and therefore

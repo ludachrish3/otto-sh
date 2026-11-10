@@ -417,7 +417,7 @@ abstract	otto.coverage:TierConfig	@final @manifest:subclass=false
 name	otto.coverage:clean_coverage	function
 call	otto.coverage:clean_coverage	coroutine	KO:projects:N KO:host_ids:N KO:pairs:N KO:record_presence:B:false
 name	otto.coverage:collect_coverage	function
-call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true KO:present_at_reset:Z:[]
+call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:clean_after_fetch:B:true KO:present_at_reset:Z:[]
 name	otto.coverage:get_coverage	function
 call	otto.coverage:get_coverage	coroutine	KO:output_dir:N KO:tier:N KO:ticket:N KO:note:N KO:tester_name:N KO:tester_email:N KO:clean:B:false KO:projects:N
 name	otto.coverage:resolve_get_tier	function
@@ -5698,7 +5698,7 @@ name	otto:try_get_context	function
 call	otto:try_get_context	sync	-
 format	check-echo-sentinel	S:"v1"	S:"v1"
 format	check-report	-	S:"otto-check/1"
-format	coverage-capture	I:3	I:3
+format	coverage-capture	I:4	I:4
 format	coverage-store	I:9	I:9
 format	coverage-tickets	-	I:2
 format	kmodcov-interface	I:2	-

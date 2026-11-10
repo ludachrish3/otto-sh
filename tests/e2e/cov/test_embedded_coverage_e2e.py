@@ -292,7 +292,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
     # The capture names the product it came from — the dimension the store and
-    # the report key their per-product rollups by (capture schema 3).
+    # the report key their per-product rollups by.
     capture = Capture.load(cov_dir / "zephyr37-llext" / PRODUCT / "capture.json")
     assert capture.product == PRODUCT, f"capture names product {capture.product!r}"
 

@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "tier": "manual",
   "product": "app",
   "base_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -10,6 +10,5 @@
   "note": "sample",
   "labs": ["lab1"],
   "board": "board1",
-  "display_name": "Board One",
   "files": {"src/app.c": {"blob": "cccccccccccccccccccccccccccccccccccccccc", "lines": {"1": 2, "2": 0}, "branches": {"1": [[0, 0, 1], [0, 1, null]]}}}
 }
