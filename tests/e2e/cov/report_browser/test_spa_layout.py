@@ -17,6 +17,8 @@ from urllib.parse import quote
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from tests.e2e.cov.report_browser._support import swap_payload_strings
+
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
@@ -91,21 +93,7 @@ def _inject_long_values(
         swaps += [('"router-a"', json.dumps(LONG_BOARD)), ('"lab1"', json.dumps(LONG_LAB))]
     if tier:
         swaps += [('"Unit"', json.dumps(LONG_TIER))]
-    page.add_init_script(
-        f"""(() => {{
-            const swaps = {json.dumps(swaps)};
-            Object.defineProperty(window, "__OTTO_COV__", {{
-                configurable: true,
-                set(v) {{
-                    let s = JSON.stringify(v);
-                    for (const [a, b] of swaps) s = s.split(a).join(b);
-                    Object.defineProperty(window, "__OTTO_COV__", {{
-                        value: JSON.parse(s), writable: true, configurable: true,
-                    }});
-                }},
-            }});
-        }})();"""
-    )
+    swap_payload_strings(page, swaps)
 
 
 def _boxes(page: Page, testids: list[str], *, required: list[str]) -> dict[str, dict]:

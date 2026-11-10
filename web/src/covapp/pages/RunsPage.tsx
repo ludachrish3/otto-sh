@@ -30,6 +30,7 @@ import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
 import { TierChip } from "../chrome/TierChip";
+import { TintDot } from "../chrome/TintedPill";
 import { type Context, groupContexts, resolveScope, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
 import {
@@ -301,12 +302,11 @@ function ContextDetail({
             {ctx.status === "stale" ? (
               <tr>
                 <td className="px-3 py-1.5 text-left font-medium text-secondary">Line</td>
-                <td
-                  colSpan={2}
-                  className="px-3 py-1.5 text-right font-medium"
-                  style={{ color: index.state_colors.stale }}
-                >
-                  {ctx.revoked} credits revoked — anchor unverifiable
+                <td colSpan={2} className="px-3 py-1.5 text-right font-medium text-secondary">
+                  <span className="inline-flex items-center gap-1.5">
+                    <TintDot color={index.state_colors.stale} />
+                    {ctx.revoked} credits revoked — anchor unverifiable
+                  </span>
                 </td>
               </tr>
             ) : (

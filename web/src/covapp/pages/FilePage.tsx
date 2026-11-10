@@ -11,6 +11,7 @@ import { type CodeLine, CodeView, type GutterCol } from "@/ui/CodeView";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
+import { TintDot, tintStyle } from "../chrome/TintedPill";
 import { type FocusScope, resolveScope } from "../contexts";
 import { loadFileChunk, StampMismatchError } from "../data";
 import { parseHashQuery, useFocus } from "../focus";
@@ -85,10 +86,7 @@ export function rowClassForFocus(
 function tierStyleFor(rowClass: string, index: IndexPayload): CSSProperties | undefined {
   if (!rowClass.startsWith("t-")) return;
   const color = index.tier_colors[rowClass.slice(2)] ?? "currentColor";
-  return {
-    backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
-    borderLeftColor: color,
-  };
+  return { ...tintStyle(color), borderLeftColor: color };
 }
 
 /** The file page's own divergence from DirectoryPage's tree (spec §6.3,
@@ -398,15 +396,14 @@ function RunChip({ id, line, index }: { id: number; line: LineJson; index: Index
   return (
     <span
       data-testid="run-chip"
-      style={revoked ? { color: index.state_colors.stale } : undefined}
-      className="inline-flex items-center gap-1.5 rounded-full border border-secondary bg-primary
-        px-2.5 py-1 text-xs font-medium text-secondary shadow-xs"
+      style={revoked ? tintStyle(index.state_colors.stale) : undefined}
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border border-secondary px-2.5 py-1 text-xs font-medium text-secondary shadow-xs",
+        !revoked && "bg-primary",
+      )}
     >
-      <span
-        aria-hidden
-        className="size-2 shrink-0 rounded-sm"
-        style={{ backgroundColor: index.tier_colors[run.tier] ?? "currentColor" }}
-      />
+      <TintDot color={index.tier_colors[run.tier] ?? "currentColor"} />
+      {revoked && <TintDot color={index.state_colors.stale} testId="state-dot" />}
       {run.label}
       <span
         data-testid="host-pill"
