@@ -19,6 +19,7 @@ from otto.host.survey.dial import (
 )
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.loopback_servers import closed_port
 
 
 @pytest.mark.parametrize(
@@ -150,10 +151,8 @@ async def test_direct_dial_eof_before_a_banner_says_the_peer_closed_it():
 
 @pytest.mark.asyncio
 async def test_direct_dial_refused_is_closed():
-    server, port = await _serve(None)
-    server.close()
-    await server.wait_closed()
-    out = await dial_direct("127.0.0.1", port, timeout=2.0)
+    with closed_port() as port:
+        out = await dial_direct("127.0.0.1", port, timeout=2.0)
     assert out.state == "closed"
 
 
@@ -427,10 +426,8 @@ async def test_the_real_hop_script_calls_a_silent_held_open_port_open_with_no_ba
 @pytest.mark.asyncio
 async def test_the_real_hop_script_reports_a_refused_port_as_closed():
     """The rc semantics the restructure had to preserve: no OTTO_STATE, and bash's own rc."""
-    server, port = await _serve(None)
-    server.close()
-    await server.wait_closed()
-    out = await dial_via_hop(
-        _bash_hop_run, "local", "127.0.0.1", port, timeout=1.0, userland=_Userland()
-    )
+    with closed_port() as port:
+        out = await dial_via_hop(
+            _bash_hop_run, "local", "127.0.0.1", port, timeout=1.0, userland=_Userland()
+        )
     assert out.state == "closed", out

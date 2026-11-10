@@ -463,25 +463,24 @@ class TestConnectAndClose:
             await c.open()
 
     async def test_a_refused_dial_is_a_console_error_with_the_prefix(self):
-        # A real telnetlib3 dial at a port nothing listens on.
-        import socket
+        # A real telnetlib3 dial at a port nothing listens on, held for the dial.
+        from tests._fixtures.loopback_servers import closed_port
 
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
-        c = ConsoleClient(
-            host="127.0.0.1",
-            port=port,
-            user="test",
-            password="Password1",
-            options=ConsoleOptions(server="test1", port=4001, login_timeout=2.0),
-            name="test2",
-            server="test1",
-        )
-        with pytest.raises(
-            ConsoleError, match=r"^test2: console test1:4001 \(dial=ssh\) could not be dialled"
-        ) as excinfo:
-            await c.open()
+        with closed_port() as port:
+            c = ConsoleClient(
+                host="127.0.0.1",
+                port=port,
+                user="test",
+                password="Password1",
+                options=ConsoleOptions(server="test1", port=4001, login_timeout=2.0),
+                name="test2",
+                server="test1",
+            )
+            with pytest.raises(
+                ConsoleError,
+                match=r"^test2: console test1:4001 \(dial=ssh\) could not be dialled",
+            ) as excinfo:
+                await c.open()
         assert isinstance(excinfo.value.__cause__, OSError)
         assert not c.alive
 
@@ -1132,11 +1131,11 @@ class TestTakeThenRelease:
         from otto.host import telnet
         from otto.host.connections import ConnectionManager, ConsoleEndpoint, TermContext
         from otto.host.telnet import CONSOLE_QUIESCE_BUDGET
+        from tests._fixtures.loopback_servers import closed_port
         from tests.unit.host._telnet_fakes import SilentTelnetPeer
         from tests.unit.host.test_telnet_client import (
             BANNER,
             _cancel_in_establishment,
-            _refused_port,
         )
 
         loop = asyncio.get_running_loop()
@@ -1190,54 +1189,55 @@ class TestTakeThenRelease:
 
         installed = window in ("cancel_negotiation", "login_refused")
         async with SilentTelnetPeer(BANNER if installed else None) as peer:
-            peer.drained = drained
-            port = _refused_port() if window == "refused" else peer.port
-            options = ConsoleOptions(
-                server="test1",
-                port=port,
-                dial="direct",
-                settle=0.0,
-                login_prompt=LOGIN,
-                password_prompt=PASSWORD,
-                echo_negotiation_timeout=0.05,
-                extra={"connect_minwait": 0, "connect_maxwait": 0.05},
-            )
-            mgr = ConnectionManager.create(
-                TermContext(
-                    ip="127.0.0.1",
-                    creds=[],
-                    term="console",
-                    name="dev1",
-                    host_id="dev1",
-                    console_options=options,
-                    console_endpoint=lambda: ConsoleEndpoint(server_ip="127.0.0.1", hop=None),
+            with contextlib.ExitStack() as stack:  # the refused port stays held through the dial
+                peer.drained = drained
+                port = stack.enter_context(closed_port()) if window == "refused" else peer.port
+                options = ConsoleOptions(
+                    server="test1",
+                    port=port,
+                    dial="direct",
+                    settle=0.0,
+                    login_prompt=LOGIN,
+                    password_prompt=PASSWORD,
+                    echo_negotiation_timeout=0.05,
+                    extra={"connect_minwait": 0, "connect_maxwait": 0.05},
                 )
-            )
-            if window == "cancel_establishment":
-                _cancel_in_establishment(monkeypatch)
-            opening = asyncio.ensure_future(mgr.console())
-            if window == "cancel_negotiation":
-                await wait_for_async(
-                    negotiating.is_set, 2.0, interval=0.01, on_timeout="never negotiated echo"
+                mgr = ConnectionManager.create(
+                    TermContext(
+                        ip="127.0.0.1",
+                        creds=[],
+                        term="console",
+                        name="dev1",
+                        host_id="dev1",
+                        console_options=options,
+                        console_endpoint=lambda: ConsoleEndpoint(server_ip="127.0.0.1", hop=None),
+                    )
                 )
-                await asyncio.sleep(0.1)  # the banner has arrived; the echo never agrees
-                assert _live_console_transports, "the opener registered it as single-client"
-                opening.cancel()
-            if window == "refused":
-                expected: Any = OSError
-            elif window == "login_refused":
-                expected = ConsoleError
-            else:
-                expected = asyncio.CancelledError
-            with pytest.raises(expected):
-                await opening
-            if installed:
-                await wait_for_async(
-                    lambda: peer.drained_at_eof is not None,
-                    2.0,
-                    interval=0.01,
-                    on_timeout="the peer never saw the client's EOF",
-                )
+                if window == "cancel_establishment":
+                    _cancel_in_establishment(monkeypatch)
+                opening = asyncio.ensure_future(mgr.console())
+                if window == "cancel_negotiation":
+                    await wait_for_async(
+                        negotiating.is_set, 2.0, interval=0.01, on_timeout="never negotiated echo"
+                    )
+                    await asyncio.sleep(0.1)  # the banner has arrived; the echo never agrees
+                    assert _live_console_transports, "the opener registered it as single-client"
+                    opening.cancel()
+                if window == "refused":
+                    expected: Any = OSError
+                elif window == "login_refused":
+                    expected = ConsoleError
+                else:
+                    expected = asyncio.CancelledError
+                with pytest.raises(expected):
+                    await opening
+                if installed:
+                    await wait_for_async(
+                        lambda: peer.drained_at_eof is not None,
+                        2.0,
+                        interval=0.01,
+                        on_timeout="the peer never saw the client's EOF",
+                    )
 
         ((client, took),) = closes
         assert mgr._console_conn is None
