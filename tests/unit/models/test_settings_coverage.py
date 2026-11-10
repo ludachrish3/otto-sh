@@ -416,3 +416,10 @@ def test_an_unexpandable_tilde_dir_still_overlaps_as_written(
     products = {"app": ["~nosuchuser/b"], "tool": ["~nosuchuser/b/./t"]}
     with pytest.raises(ValidationError, match="equals or sits inside another"):
         _tier(products, tmp_path if with_root else None)
+
+
+def test_tier_max_age_with_trailing_newline_is_refused() -> None:
+    with pytest.raises(ValidationError, match="must be"):
+        CoverageTierSpec.model_validate(
+            {"kind": "unit", "precedence": 1, "products": {}, "max_age": "180d\n"}
+        )

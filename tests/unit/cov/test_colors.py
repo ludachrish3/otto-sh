@@ -59,3 +59,8 @@ def test_renderer_default_goes_through_default_tier_color(monkeypatch: pytest.Mo
     monkeypatch.setattr(spa_data, "default_tier_color", lambda kind: "#123456")
     resolved = spa_data._resolve_tier_colors(CoverageStore(tier_order=["mystery"]), ["mystery"])
     assert resolved == {"mystery": "#123456"}
+
+
+def test_hex_color_with_trailing_newline_rejected() -> None:
+    with pytest.raises(ValueError, match="color"):
+        validate_color("#aabbcc\n")

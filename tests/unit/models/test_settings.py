@@ -1088,3 +1088,8 @@ def test_the_role_refusal_names_both_replacements():
             {"name": "integration", "composes": ["core"], "role": "edge"}
         )
     assert "name it with --parent or rank a host with docker_priority" in str(e.value)
+
+
+def test_settings_rejects_version_with_trailing_newline():
+    with pytest.raises(ValidationError, match=r"must be MAJOR\.MINOR\.PATCH"):
+        SettingsModel.model_validate({"name": "r", "version": "1.2.3\n"})

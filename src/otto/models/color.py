@@ -7,7 +7,7 @@ Validation happens at settings load; consumers use values verbatim.
 
 import re
 
-_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
 
 # The CSS Color Module Level 4 extended named colors (lowercase).
 CSS_COLOR_NAMES: frozenset[str] = frozenset(
@@ -170,7 +170,7 @@ def validate_color(value: str) -> str:
     Raises:
         ValueError: if the value is neither.
     """
-    if _HEX_RE.match(value):
+    if _HEX_RE.fullmatch(value):
         return value
     if value.lower() in CSS_COLOR_NAMES:
         return value

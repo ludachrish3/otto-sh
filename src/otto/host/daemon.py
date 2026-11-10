@@ -186,7 +186,7 @@ _ETIME_MAX_FIELDS = 3
 _MIN_PS_FIELDS = 3
 
 
-_PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+_PREFIX_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
 """Sentinel prefixes are spliced into a single-quoted grep BRE (see below), so
 they are restricted to characters that are inert in BOTH contexts."""
 
@@ -247,7 +247,7 @@ def ps_scan_command(prefix: str) -> str:
     Raises:
         ValueError: If *prefix* contains characters outside that safe set.
     """
-    if not _PREFIX_RE.match(prefix):
+    if not _PREFIX_RE.fullmatch(prefix):
         raise ValueError(
             f"daemon sentinel prefix {prefix!r} must match [A-Za-z0-9][A-Za-z0-9-]* — "
             "it is spliced into a single-quoted grep pattern"

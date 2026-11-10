@@ -1,19 +1,10 @@
 """Semantic version parsing for product version strings declared in settings.toml."""
 
 from dataclasses import dataclass
-from re import (
-    compile as compile_re,
-)
 
 from typing_extensions import final, override
 
-version_re = compile_re(
-    r"(?P<major>\d+)\."
-    r"(?P<minor>\d+)\."
-    r"(?P<patch>\d+)"
-    r"(?P<extra>[-+.][0-9A-Za-z.+-]+)?"
-    r"$"
-)
+from ..models.version_format import version_re
 
 
 @final
@@ -52,7 +43,7 @@ class Version:
         version: str,
     ) -> None:
 
-        match = version_re.match(version)
+        match = version_re.fullmatch(version)
         if match is None:
             raise ValueError(
                 f'Version string "{version}" does not match the expected format'
