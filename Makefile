@@ -2023,7 +2023,7 @@ check-api-snapshot: ## (Quality) Fail if the public-API golden is not, byte for 
 	@$(SAY) "checking public-API golden snapshot"
 	@uv run python scripts/api_snapshot.py --manifest api/public.toml --check
 
-check-api-teaching: ## (Quality) Fail if the docs, README or a shipped example teach an otto name api/public.toml does not declare, or a declared namespace disagrees with its runtime (scripts/api_teaching.py; spec 2026-10-04-public-api-manifest-design.md §6)
+check-api-teaching: ## (Quality) Fail if the docs, README or a shipped example teach an otto name api/public.toml does not declare, call a public callable with more positional arguments than the API dump records (code blocks and prose spans alike), or a declared namespace disagrees with its runtime (scripts/api_teaching.py; spec 2026-10-04-public-api-manifest-design.md §6)
 	@$(SAY) "checking every taught otto name against api/public.toml"
 	@uv run python scripts/api_teaching.py --manifest api/public.toml
 

@@ -172,22 +172,36 @@ def _block_start(block: Block) -> int:
     return block.lines[0][0] if block.lines else 0
 
 
-def _is_literal(info: str, lang: str) -> bool:
-    """Return whether a fence with *info* (effective *lang*) holds literal text.
+def is_code_block(block: Block) -> bool:
+    """Return whether *block* holds code (literal text), not a container's Markdown body.
+
+    The one decision of what a frame's ``lang`` means: a plain-language or
+    bare fence, an indented block and every :data:`LITERAL_DIRECTIVES`
+    directive are code; a container directive (``{note}``, ``{tab-item}``,
+    ``{eval-rst}``) or a colon div holds prose. ``{code-block} <lang>`` is
+    unwrapped to its language by :func:`_frame_lang`, so it reads as code
+    here too.
+    """
+    lang = block.lang
+    if lang == COLON_DIV_LANG:
+        return False
+    if lang.startswith("{"):
+        return lang in LITERAL_DIRECTIVES
+    return True  # a plain-language fence, an indented block, or a markdown display fence
+
+
+def _is_literal(lang: str) -> bool:
+    """Return whether a fence of effective *lang* holds literal text.
 
     CommonMark: a fenced code block's content is literal, so no line in it
-    opens a fence. That holds for every plain-language or bare fence and
-    every :data:`LITERAL_DIRECTIVES` directive. A container directive or a
-    colon div is not literal. Neither is a ``markdown``/``md`` display
-    fence: its whole content is suppressed anyway, and tracking the fences
-    it shows keeps their closers from ending it early.
+    opens a fence. That is :func:`is_code_block`'s decision, minus a
+    ``markdown``/``md`` display fence: its whole content is suppressed
+    anyway, and tracking the fences it shows keeps their closers from
+    ending it early.
     """
-    first = info.split(maxsplit=1)[0] if info else ""
-    if lang == COLON_DIV_LANG or lang in DISPLAY_LANGS:
+    if lang in DISPLAY_LANGS:
         return False
-    if first.startswith("{"):
-        return first in LITERAL_DIRECTIVES
-    return True
+    return is_code_block(Block(Path(), lang, []))
 
 
 def _open_frame(line: str, suppressed: bool) -> dict | None:
@@ -204,15 +218,22 @@ def _open_frame(line: str, suppressed: bool) -> dict | None:
         "ticks": ticks,
         "char": char,
         "lang": lang,
-        "literal": _is_literal(info, lang),
+        "literal": _is_literal(lang),
         "suppressed": suppressed or lang in DISPLAY_LANGS,
         "body": [],
     }
 
 
-def _close_frame(path: Path, frame: dict, blocks: list[Block]) -> None:
-    """Add a finished fence frame's blocks: the RST blocks of an ``{eval-rst}``, else itself."""
-    if frame["suppressed"]:
+def _close_frame(path: Path, frame: dict, blocks: list[Block], parent: "dict | None") -> None:
+    """Add a finished fence frame's blocks: the RST blocks of an ``{eval-rst}``, else itself.
+
+    A ``markdown``/``md`` display fence is one block of its own lang holding
+    its lines, which no caller reads as code or prose; a fence shown inside
+    it hands its lines to *parent* so the display block is whole.
+    """
+    if frame["suppressed"] and frame["lang"] not in DISPLAY_LANGS:
+        if parent is not None:
+            parent["body"].extend(frame["body"])
         return
     if frame["lang"] == EVAL_RST_LANG:
         blocks.extend(_rst_scan(path, frame["body"]))
@@ -227,11 +248,11 @@ def markdown_blocks(path: Path) -> list[Block]:
     plain/```{doctest}```/MyST ```{code-block} python```, possibly nested in
     a MyST container directive or a list item's indented continuation),
     CommonMark's blank-line-then-4-space-indent code blocks (``lang`` is
-    ``"indented"``), and — inside a fence explicitly labelled
-    ``markdown``/``md`` — nothing at all: that fence exists to show fence
-    *syntax* as prose (see ``docs/contributing.md``'s doctest-fence example),
-    so it and everything textually inside it, however it's nested, is
-    suppressed.
+    ``"indented"``), and — for a fence explicitly labelled
+    ``markdown``/``md`` — one block of that lang holding every line inside
+    it, however nested: that fence exists to show fence *syntax* as prose
+    (see ``docs/contributing.md``'s doctest-fence example), so nothing in it
+    is code or prose to a caller; the block only marks its lines as taken.
 
     Nesting is tracked with an explicit stack rather than one open/close
     pair: inside a container, a fence line WITH an info string is always a
@@ -260,7 +281,8 @@ def markdown_blocks(path: Path) -> list[Block]:
         if stack:
             top = stack[-1]
             if _fence_closes(line, top["ticks"], top["char"]):
-                _close_frame(path, stack.pop(), blocks)
+                closed = stack.pop()
+                _close_frame(path, closed, blocks, stack[-1] if stack else None)
                 i += 1
                 prev_blank = False
                 continue
@@ -292,7 +314,8 @@ def markdown_blocks(path: Path) -> list[Block]:
         prev_blank = not line.strip()
         i += 1
     while stack:  # CommonMark: a fence never closed runs to the end of the document
-        _close_frame(path, stack.pop(), blocks)
+        closed = stack.pop()
+        _close_frame(path, closed, blocks, stack[-1] if stack else None)
     return sorted(blocks, key=_block_start)
 
 
@@ -495,6 +518,38 @@ def python_blocks(path: Path) -> list[Block]:
                 break
         blocks.extend(_docstring_blocks(path, body))
     return blocks
+
+
+_INLINE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(?P<text>[^`\n]+?)(?<!`)\1(?!`)")
+_INLINE_CALL = re.compile(r"^[^\W\d]\w*(?:\.[^\W\d]\w*)*\(.*\)$")
+
+
+def inline_spans(path: Path, code_blocks: "list[Block]") -> list[Block]:
+    """Every inline code span of a page that reads as a call, as one-line ``inline`` blocks.
+
+    Prose teaches calls too — ``expect(cond, "why")`` in a sentence is as much
+    a taught shape as the same line in a fence. A span is a run of one or
+    more backticks closed by the same run on one line (Markdown's inline
+    code; RST's double-backtick literal is the two-tick case, and its
+    single-backtick interpreted text is read the same way), on a line
+    that no code block of *code_blocks* claims (a container's prose lines
+    are read: an admonition teaches too), whose text is ``name(...)`` or
+    ``a.b.c(...)``: a callable's name, optionally dotted, applied to an
+    argument list. Anything else a span holds (a path, a flag, a bare name)
+    is not a call and is not returned. Two limits: a span whose text itself
+    holds a backtick, and a span wrapped across lines, are not found. Each
+    block has the span's text as its one line, at the page line it sits on.
+    """
+    taken = {no for block in code_blocks if is_code_block(block) for no, _ in block.lines}
+    out: list[Block] = []
+    for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if no in taken:
+            continue
+        for match in _INLINE_SPAN.finditer(line):
+            text = match.group("text").strip()
+            if _INLINE_CALL.match(text):
+                out.append(Block(path, "inline", [(no, text)]))
+    return out
 
 
 def literal_includes(path: Path, docs_root: Path) -> list[tuple[int, Path]]:

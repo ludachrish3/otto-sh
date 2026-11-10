@@ -2004,13 +2004,20 @@ these ties in mind:
   Exactly one fence may define that class.
 - **Imports on these pages must be public.** `scripts/api_teaching.py` is
   gated in CI; run it locally with `make check-api-teaching`. It reads
-  every code block under `docs/` (except `docs/superpowers/`) and in the
-  top-level `README.md`, and the whole of
+  every code block and every inline code span under `docs/` (except
+  `docs/superpowers/`) and in the top-level `README.md`, and the whole of
   `docs/examples/` and `src/otto/examples/`. Among other things, it refuses:
   - an import, a dotted access or a `"module:Name"` string that names an
     undeclared path;
   - a star import;
-  - a taught use of an otto underscore member.
+  - a taught use of an otto underscore member;
+  - a call that passes a public callable more positional arguments than
+    its signature takes (the `positional-call` finding: a `Result` built with
+    its status by position, once `status` is keyword-only), in a code block or
+    in an inline code span
+    of the prose: a sentence's `` `f(a, b)` `` teaches the shape as much as
+    a fence does. Write the call as a reader must write it, or describe the
+    old shape in words.
 
   The full list of finding kinds is in that script's module docstring.
 

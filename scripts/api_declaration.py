@@ -33,6 +33,34 @@ class Declaration(Protocol):
         """Return the sorted ``module:Class`` key of every class the API dump reported."""
         ...
 
+    def positional_limit(self, key: str) -> "int | None":
+        """Return how many leading positional arguments public callable *key* accepts.
+
+        *key* is ``module:name`` for a function or a class's constructor and
+        ``module:Class.method`` for a method (receiver not counted). None when
+        the dump has no shape for it: an unknown key, a variadic signature, a
+        builtin or withdrawn constructor.
+        """
+        ...
+
+    def takes_receiver(self, key: str) -> bool:
+        """Return True when *key* is a plain method: called via its class, it takes the receiver."""
+        ...
+
+    def bindings_named(self, name: str) -> "list[str]":
+        """Return every declared ``module:name`` binding key of *name*, sorted."""
+        ...
+
+    def methods_named(self, name: str) -> "list[str]":
+        """Return every ``module:Class.name`` key the dump recorded a shape for, sorted.
+
+        Prose that says ``status(host)`` may mean a function or a hook of
+        that name; this is how a caller learns the hooks exist. A nested
+        class's constructor key (``module:Outer.Inner``) is listed here too,
+        since a shape alone does not tell it from a method.
+        """
+        ...
+
 
 @dataclass
 class StaticDeclaration:
@@ -41,6 +69,8 @@ class StaticDeclaration:
     members: dict[str, set[str]]
     private: "dict[str, set[str]]" = field(default_factory=dict)
     withdrawn: "set[str]" = field(default_factory=set)
+    shapes: "dict[str, int | None]" = field(default_factory=dict)
+    receivers: "set[str]" = field(default_factory=set)  # the keys recorded as plain methods
 
     def is_namespace(self, module: str) -> bool:
         """Return True when *module* is a key of :attr:`members`."""
@@ -65,3 +95,26 @@ class StaticDeclaration:
         classes filters them with the dump's records.
         """
         return sorted(self.private)
+
+    def positional_limit(self, key: str) -> "int | None":
+        """Return ``shapes[key]``, or None when the key has no recorded shape."""
+        return self.shapes.get(key)
+
+    def takes_receiver(self, key: str) -> bool:
+        """Return True when *key* is in :attr:`receivers`."""
+        return key in self.receivers
+
+    def bindings_named(self, name: str) -> "list[str]":
+        """Return ``module:name`` for every namespace of :attr:`members` listing *name*."""
+        return [f"{m}:{name}" for m in sorted(self.members) if name in self.members[m]]
+
+    def methods_named(self, name: str) -> "list[str]":
+        """Return the keys of :attr:`shapes` whose last dotted segment is *name*."""
+        return [k for k in sorted(self.shapes) if _method_name(k) == name]
+
+
+def _method_name(key: str) -> "str | None":
+    """Return the method name of a ``module:Class.method`` key, None for a binding key."""
+    _, _, path = key.partition(":")
+    owner, dot, method = path.rpartition(".")
+    return method if dot and owner else None

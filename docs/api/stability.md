@@ -120,8 +120,8 @@ raises `TypeError`; name the argument instead:
 
 | Before | After |
 |---|---|
-| `expect(cond, "why")` | `expect(cond, msg="why")` |
-| `UnixHost("10.0.0.1", creds)` | `UnixHost(ip="10.0.0.1", creds=creds)` |
+| the message to `expect` by position | `expect(cond, msg="why")` |
+| the address and credentials to `UnixHost` by position | `UnixHost(ip="10.0.0.1", creds=creds)` |
 
 The positional subjects that remain are the exceptions listed
 under {ref}`api-calling-conventions`. The CLI follows the signatures, so two host

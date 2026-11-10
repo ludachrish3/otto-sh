@@ -79,8 +79,8 @@ register_host_class("my-rtos", MyRtosHost)
 
 `kw_only=True` is what keeps the constructor the shape every otto host has:
 every field by keyword, `MyRtosHost(ip=..., element=...)`.  Without it your
-three overrides join a positional signature —
-`MyRtosHost(ip, os_type, os_name, command_frame)` — which no otto host has.
+three overrides join a positional signature, taking `ip`, `os_type`,
+`os_name` and `command_frame` in order, which no otto host has.
 
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
