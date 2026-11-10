@@ -1446,7 +1446,7 @@ member	otto.host:BaseHost.uninstall	method	coroutine	KO:get_product_logs:B:true 
 member	otto.host:BaseHost.uninstall_dev_tools	method	coroutine	KO:owner:N
 member	otto.host:BaseHost.wait_until_down	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
 member	otto.host:BaseHost.wait_until_up	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
-abstract	otto.host:BaseHost	-
+abstract	otto.host:BaseHost	get put
 name	otto.host:BashFrame	class
 mro	otto.host:BashFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host:BashFrame	sync	-
@@ -2510,7 +2510,7 @@ member	otto.host:RemoteHost.valid_transfers	field
 member	otto.host:RemoteHost.verify_connection	method	coroutine	-
 member	otto.host:RemoteHost.wait_until_down	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
 member	otto.host:RemoteHost.wait_until_up	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
-abstract	otto.host:RemoteHost	-
+abstract	otto.host:RemoteHost	get put
 name	otto.host:Resolve	class
 mro	otto.host:Resolve	-
 call	otto.host:Resolve	sync	KO:fn:-
@@ -3655,7 +3655,7 @@ member	otto.link:LinkImpairer.scoped_filter_commands	method	sync	KO:netdev:- KO:
 member	otto.link:LinkImpairer.scoped_read_commands	method	sync	KO:netdev:-
 member	otto.link:LinkImpairer.scoped_root_command	method	sync	KO:netdev:-
 member	otto.link:LinkImpairer.supports_selectors	attribute
-abstract	otto.link:LinkImpairer	-
+abstract	otto.link:LinkImpairer	apply_command clear_command parse_read read_command
 name	otto.link:LinkNotMeasuredError	class
 mro	otto.link:LinkNotMeasuredError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.link:LinkNotMeasuredError	sync	@builtin:builtins.RuntimeError
@@ -5387,7 +5387,7 @@ member	otto.tunnel:TunnelCarrier.relay_args	method	sync	PK:protocol:- KO:carrier
 member	otto.tunnel:TunnelCarrier.requirements_command	attribute
 member	otto.tunnel:TunnelCarrier.supported_protocols	attribute
 member	otto.tunnel:TunnelCarrier.tools_description	attribute
-abstract	otto.tunnel:TunnelCarrier	-
+abstract	otto.tunnel:TunnelCarrier	egress_args ingress_args relay_args
 name	otto.tunnel:TunnelCheckReport	class
 mro	otto.tunnel:TunnelCheckReport	-
 call	otto.tunnel:TunnelCheckReport	sync	@manifest:construct=false

@@ -662,6 +662,12 @@ class AppShellHost(BaseHost):
         self.opened_names.append(name)
         return self._session
 
+    async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
+    async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
 
 def _recording_demo(script=None):
     """Build an (AppShellHost, RecordingHostSession) pair scripted with ``script``."""

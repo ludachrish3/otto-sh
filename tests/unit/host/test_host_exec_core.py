@@ -26,6 +26,12 @@ class _Recording(BaseHost):
         self.refuse_exec_expects_calls = 0
         self._ambient = ambient
 
+    async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
+    async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
     def _refuse_exec_expects(self) -> None:
         self.refuse_exec_expects_calls += 1
 

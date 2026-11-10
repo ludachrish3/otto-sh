@@ -46,6 +46,12 @@ class _Host(BaseHost):
     async def _exec_one(self, *a, **k):  # pragma: no cover — never reached by a plan
         raise AssertionError("a plan contacted the host")
 
+    async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
+    async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
+        raise NotImplementedError
+
 
 class _Overriding(_Host):
     async def install(self, stage_only=False, owner=None):  # pragma: no cover

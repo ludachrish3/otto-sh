@@ -11,14 +11,23 @@ Impairment is pluggable the same way term/transfer backends are — see
 `LinkImpairer` builds the shell commands for one placement's impairment:
 
 ```python
-class LinkImpairer:
+class LinkImpairer(ABC):
     host_families: ClassVar[frozenset[str]] = frozenset()
 
-    def apply_command(self, netdev: str, params: ImpairmentParams) -> str: ...
+    @abstractmethod
+    def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str: ...
+    @abstractmethod
     def read_command(self, netdev: str) -> str: ...
+    @abstractmethod
     def clear_command(self, netdev: str) -> str: ...
+    @abstractmethod
     def parse_read(self, output: str) -> ImpairmentParams | None: ...
 ```
+
+The four whole-link methods are the class's obligations: a subclass that
+leaves one out cannot be instantiated. The port-scoped `scoped_*` builders
+and `parse_scoped` are optional, behind `supports_selectors`; a subclass
+that leaves them alone keeps `--port` requests a loud capability error.
 
 `otto.link.netem.NetEmImpairer` (`host_families = {"unix"}`) is the only
 first-party registrant, built on `tc`/netem. A custom impairer registers
@@ -34,7 +43,7 @@ from otto.link import ImpairmentParams, LinkImpairer, register_impairer
 class MyImpairer(LinkImpairer):
     host_families: ClassVar[frozenset[str]] = frozenset({"unix"})
 
-    def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+    def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
         return f"my-shaper set {netdev} {params.describe()}"
 
     def read_command(self, netdev: str) -> str:
@@ -164,19 +173,26 @@ Tunnel transport is pluggable the same way link impairment is — see
 `TunnelCarrier` builds the argv for one tagged process's role:
 
 ```python
-class TunnelCarrier:
+class TunnelCarrier(ABC):
     supported_protocols: ClassVar[frozenset[str]] = frozenset()
     requirements_command: ClassVar[str] = ""
     tools_description: ClassVar[str] = ""
 
+    @abstractmethod
     def ingress_args(
-        self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+        self, protocol, *, service_port, bind_ip, next_ip, carrier_port, idle_timeout=None
     ) -> list[str]: ...
-    def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None) -> list[str]: ...
+    @abstractmethod
+    def relay_args(self, protocol, *, carrier_port, next_ip, idle_timeout=None) -> list[str]: ...
+    @abstractmethod
     def egress_args(
-        self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None
+        self, protocol, *, service_port, deliver_ip, carrier_port, idle_timeout=None
     ) -> list[str]: ...
 ```
+
+All three are the class's obligations: a carrier that leaves one out cannot
+be instantiated. Only the protocol is positional; otto passes the rest by
+keyword.
 
 `idle_timeout` is `None` unless the tunnel was added with `--idle-timeout`:
 `None` means nothing the carrier launches may time out, and an int is the
@@ -207,7 +223,7 @@ class MyCarrier(TunnelCarrier):
         return [] if idle_timeout is None else ["--timeout", str(idle_timeout)]
 
     def ingress_args(
-        self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+        self, protocol, *, service_port, bind_ip, next_ip, carrier_port, idle_timeout=None
     ):
         return [
             "my-tool",
@@ -217,10 +233,10 @@ class MyCarrier(TunnelCarrier):
             f"{next_ip}:{carrier_port}",
         ]
 
-    def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None):
+    def relay_args(self, protocol, *, carrier_port, next_ip, idle_timeout=None):
         return ["my-tool", "relay", *self._timeout_opts(idle_timeout), str(carrier_port), next_ip]
 
-    def egress_args(self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None):
+    def egress_args(self, protocol, *, service_port, deliver_ip, carrier_port, idle_timeout=None):
         return [
             "my-tool",
             "deliver",

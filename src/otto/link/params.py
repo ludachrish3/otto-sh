@@ -15,6 +15,7 @@ a loop. Standard library only.
 # Spec: docs/superpowers/specs/2026-07-10-link-impairment-design.md §3.1/§3.3.
 
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from typing import ClassVar, Literal
 
@@ -446,7 +447,7 @@ class ScopedState:
         return cls("foreign")
 
 
-class LinkImpairer:
+class LinkImpairer(ABC):
     """Builds the shell commands that apply/read/clear one placement's impairment.
 
     Stateless: implementations build command strings and parse output; the
@@ -462,18 +463,22 @@ class LinkImpairer:
     third-party impairers are unaffected; a ``--port`` request routed to a
     non-supporting impairer is a loud capability error in orchestration."""
 
+    @abstractmethod
     def apply_command(self, netdev: str, *, params: ImpairmentParams) -> str:
         """Shell command applying *params* to *netdev* (idempotent replace)."""
         raise NotImplementedError
 
+    @abstractmethod
     def read_command(self, netdev: str) -> str:
         """Shell command whose output :meth:`parse_read` understands."""
         raise NotImplementedError
 
+    @abstractmethod
     def clear_command(self, netdev: str) -> str:
         """Shell command removing this impairer's state from *netdev*."""
         raise NotImplementedError
 
+    @abstractmethod
     def parse_read(self, output: str) -> ImpairmentParams | None:
         """Parse :meth:`read_command` output; ``None`` = no impairment present."""
         raise NotImplementedError

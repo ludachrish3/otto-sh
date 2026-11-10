@@ -5,7 +5,7 @@ import math
 import re
 import shlex
 import uuid
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
@@ -2538,6 +2538,7 @@ class BaseHost(ABC):
             concurrent=concurrent,
         )
 
+    @abstractmethod
     async def get(
         self,
         src_files: list[Path] | Path,
@@ -2551,6 +2552,7 @@ class BaseHost(ABC):
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
 
+    @abstractmethod
     async def put(
         self,
         src_files: list[Path] | Path,
