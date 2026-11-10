@@ -270,7 +270,7 @@ job that enforces it on the pull request and again on the push to `main`.
 | public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.14) |
 | uv floor: otto's env code and the `otto env` e2e run against the declared minimum uv, binary and package both | — | `tests_uv_floor` | `uv-floor` |
 | breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking` (the one live goal of every tip; the hook runs it at the push) | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
-| docs teach only declared names (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
+| docs teach only declared names, called in the shapes the API dump records, in code blocks and in prose spans (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
 | public callables take keywords only, except the positional parameters `api/public.toml`'s `[symbols]` table lists; a class is `@final` exactly when its subclass right is withdrawn (`scripts/check_api_keywords.py`) | `check-api-keywords` (inside `make lint-python`, so `make check-python` runs it) | `lint` | `lint-python` |
 | test-isolation leak guard | `nox-unit-repeat` (by hand only; `make gate-scope` never names it) | `tests_unit_repeat` | `unit-repeat` — a nightly lane (since #795; it was CI's longest job by a factor of two): a leak shows up there, never in a local lane or a PR check |
 | import budget | `profile` — gates each gated surface's file operations against its per-interpreter ceilings and target ratio, and prints the tracked surfaces (see {doc}`startup-performance`); never wall-clock, which fails for reasons outside the change | via `tests_hostless_unit` | `tests-primary`, `tests-canary`, `tests` — enforced by `tests/unit/import_budget/` |
@@ -438,7 +438,10 @@ The declaration in spec 1 of
   `api_dump_invariance-<python>`).
 - `scripts/api_teaching.py` checks every otto name the docs and the shipped
   examples teach, including taught use of an otto class's underscore
-  members. It gates in CI; run it locally with `make check-api-teaching`.
+  members, and that every taught call, in a code block or an inline prose
+  span, passes no more positional arguments than the dump's shape for that
+  callable accepts. It gates in CI; run it locally with
+  `make check-api-teaching`.
 - `scripts/check_api_keywords.py` refuses a public callable that takes a
   positional parameter the manifest's `[symbols]` table does not list. It
   runs in `make lint-python` and CI's `lint` session; run it alone with

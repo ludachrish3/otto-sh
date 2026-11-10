@@ -19,6 +19,19 @@ A name ``doctest_global_setup`` injects is not *taught*: a page that uses
 one without importing it first is a ``setup-only-name`` finding, because a
 reader copying the example would get a ``NameError``.
 
+Prose teaches too. A page's inline code spans that read as a call
+(``Result(Status.Success)`` between backticks in a sentence) are a second
+corpus (:func:`scripts.api_docs_blocks.inline_spans`): each is parsed as
+one expression, in page order with the blocks, and judged by shape alone,
+through the page's bindings as they stand there first, then through the
+declaration when the page has not bound the name and every declared binding
+of that bare name (and every method of that name) agrees on a shape. A span
+that is not Python (``f(a[, b])``), names nothing declared, or could mean
+two callables of different shapes is left alone. A pytest fixture parameter
+(``expect`` in a test's signature) has no provenance the checker can see, so
+``expect(cond, "why")`` is judged only where ``expect`` is a bound instance
+of ``ExpectCollector``.
+
 There is no exception list: what the walker cannot analyse becomes a
 finding, never a skip. A Python block ``ast.parse`` rejects (a placeholder
 like ``<your host>``, a TOML snippet in a ``::`` literal) is read statement
@@ -44,6 +57,13 @@ The finding kinds:
   manifest withdraws. A local subclass that inherits the constructor
   (``class M(UnixHost): ...; M()``) constructs its first otto base, so the finding
   names that base and ``--untaught-constructors`` counts the base as taught.
+* ``positional-call`` -- taught code, or a prose span, passes a public
+  callable more positional arguments than the API dump records it accepting
+  (``PO``/``PK`` parameters; the receiver of a method is not counted). A
+  class is judged by its constructor, unless the page defines the class
+  itself over an otto base, when its constructor is its own. ``*args`` and
+  the ``...`` elision teach no position; a variadic, builtin or withdrawn
+  constructor has no shape to judge.
 * ``star-import`` -- ``from otto.x import *``.
 * ``dynamic-import`` -- ``import_module("otto...")`` or ``__import__``.
 * ``setup-only-name`` -- a name only ``doctest_global_setup`` binds.
@@ -83,7 +103,10 @@ from scripts.api_declaration import (  # noqa: E402 -- path set up above
     Declaration,
     StaticDeclaration,  # noqa: F401 -- re-exported: still importable from this module
 )
-from scripts.api_parse import parse_quietly  # noqa: E402 -- path set up above
+from scripts.api_parse import (  # noqa: E402 -- path set up above
+    parse_expression_quietly,
+    parse_quietly,
+)
 
 PAGE_PY_LANGS = {
     "python",
@@ -131,6 +154,8 @@ class _OttoClass:
 
     label: str  # "module:Class" of the (first) otto class
     private: frozenset[str]
+    derived: bool = False  # a class the page defines over that otto base: its own constructor
+    own: frozenset[str] = frozenset()  # the methods a derived class's body defines itself
 
 
 @dataclass
@@ -145,6 +170,7 @@ class _State:
     classes: dict[str, _OttoClass] = field(default_factory=dict)  # local name -> otto class
     instances: dict[str, _OttoClass] = field(default_factory=dict)  # local name -> its class
     plain: set[str] = field(default_factory=set)  # declared otto names that are not classes
+    functions: dict[str, str] = field(default_factory=dict)  # local name -> "module:name" key
     names: set[str] = field(default_factory=set)  # every name the scope has bound
     parent: "_State | None" = None
 
@@ -178,6 +204,13 @@ class _State:
                 return name in scope.plain
         return False
 
+    def function_of(self, name: str) -> str | None:
+        """Return the ``module:name`` key *name* is bound to by a from-import, None if none."""
+        for scope in self._chain():
+            if name in scope.names:
+                return scope.functions.get(name)
+        return None
+
     def bound(self, name: str) -> bool:
         """Return True when *name* is bound here or in an enclosing scope."""
         return any(name in scope.names for scope in self._chain())
@@ -210,6 +243,29 @@ def _object_path_findings(decl: Declaration, label: str, no: int, text: str) -> 
         for module, name in OBJECT_PATH_IN_TEXT.findall(text)
         if not decl.declares(module, name)
     ]
+
+
+def _attribute_chain(node: ast.Attribute) -> "tuple[ast.Name | None, list[str]]":
+    """Split ``a.b.c`` into its root name and ``["b", "c"]``; the root is None when not a name."""
+    chain: list[str] = []
+    cur: ast.expr = node
+    while isinstance(cur, ast.Attribute):
+        chain.append(cur.attr)
+        cur = cur.value
+    return (cur if isinstance(cur, ast.Name) else None), list(reversed(chain))
+
+
+def _is_placeholder(arg: ast.expr) -> bool:
+    """Return True for an argument that teaches no position: ``*args`` or the ``...`` elision."""
+    return isinstance(arg, ast.Starred) or (isinstance(arg, ast.Constant) and arg.value is Ellipsis)
+
+
+def _try_parse_expression(text: str) -> "ast.expr | None":
+    """Parse one prose span as an expression; None when it is not Python (``f(a[, b])``)."""
+    try:
+        return parse_expression_quietly(text)
+    except (SyntaxError, ValueError):
+        return None
 
 
 def _try_parse(source: str) -> ast.Module | None:
@@ -287,6 +343,7 @@ class _Checker(ast.NodeVisitor):
         cls: "_OttoClass | None" = None,
         instance: "_OttoClass | None" = None,
         plain: bool = False,
+        function: str | None = None,
     ) -> None:
         self.state.names.add(name)
         if plain:
@@ -297,6 +354,7 @@ class _Checker(ast.NodeVisitor):
             (self.state.modules, module),
             (self.state.classes, cls),
             (self.state.instances, instance),
+            (self.state.functions, function),
         ):
             if value is None:
                 slot.pop(name, None)
@@ -313,24 +371,37 @@ class _Checker(ast.NodeVisitor):
             return self._class_expr(node.value)
         if isinstance(node, ast.Name):
             return self.state.class_of(node.id)
-        chain: list[str] = []
-        cur: ast.expr = node
-        while isinstance(cur, ast.Attribute):
-            chain.append(cur.attr)
-            cur = cur.value
-        if not isinstance(cur, ast.Name):
+        if not isinstance(node, ast.Attribute):
             return None
-        root = self.state.class_of(cur.id)
-        if root is not None:  # a nested class reached through an otto class: ``Outer.Inner``
-            module, _, name = root.label.partition(":")
-            return self._declared_class(module, ".".join([name, *reversed(chain)]))
-        path = self.state.module_of(cur.id)
+        root, chain = _attribute_chain(node)
+        if root is None:
+            return None
+        cls = self.state.class_of(root.id)
+        if cls is not None:  # a nested class reached through an otto class: ``Outer.Inner``
+            module, _, name = cls.label.partition(":")
+            return self._declared_class(module, ".".join([name, *chain]))
+        resolved = self._module_chain_of(node)
+        if resolved is None:
+            return None
+        path, parts = resolved
+        return self._declared_class(path, ".".join(parts)) if parts else None
+
+    def _module_chain_of(self, node: ast.Attribute) -> "tuple[str, list[str]] | None":
+        """Resolve ``mod.sub.rest`` rooted at a bound otto module to (deepest namespace, rest).
+
+        The one place the namespace descent is decided: each leading part
+        that names a declared namespace under the path so far joins the
+        path; what remains is the member path under it (empty when the
+        chain names a namespace itself). None when the root is not a bound
+        otto module.
+        """
+        root, parts = _attribute_chain(node)
+        path = self.state.module_of(root.id) if root is not None else None
         if path is None:
             return None
-        parts = list(reversed(chain))
         while parts and self.decl.is_namespace(f"{path}.{parts[0]}"):
             path = f"{path}.{parts.pop(0)}"
-        return self._declared_class(path, ".".join(parts)) if parts else None
+        return path, parts
 
     def _instance_expr(self, node: ast.expr) -> "_OttoClass | None":
         """Return the otto class *node* is an instance of: a bound name or a constructor call."""
@@ -396,28 +467,23 @@ class _Checker(ast.NodeVisitor):
                 self._bind(local, submodule)
             elif self.decl.declares(module, alias.name):
                 cls = self._declared_class(module, alias.name)
-                self._bind(local, cls=cls, plain=cls is None)
+                key = f"{module}:{alias.name}" if cls is None else None
+                self._bind(local, cls=cls, plain=cls is None, function=key)
             else:
                 self._add(node, "undeclared-import", f"{module}:{alias.name}")
                 self._bind(local)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        chain: list[str] = []
         cur: ast.expr = node
         while isinstance(cur, ast.Attribute):
             owner = self._class_expr(cur.value) or self._instance_expr(cur.value)
             self._private_use(cur, owner, cur.attr, "used")
-            chain.append(cur.attr)
             cur = cur.value
-        path = self.state.module_of(cur.id) if isinstance(cur, ast.Name) else None
-        if path is not None:
-            for part in reversed(chain):
-                if self.decl.is_namespace(f"{path}.{part}"):
-                    path = f"{path}.{part}"
-                    continue
-                if not self.decl.declares(path, part):
-                    self._add(node, "undeclared-attribute", f"{path}:{part}")
-                break
+        resolved = self._module_chain_of(node)
+        if resolved is not None:
+            path, parts = resolved
+            if parts and not self.decl.declares(path, parts[0]):
+                self._add(node, "undeclared-attribute", f"{path}:{parts[0]}")
         self.visit(cur)
 
     def visit_Name(self, node: ast.Name) -> None:
@@ -539,7 +605,16 @@ class _Checker(ast.NodeVisitor):
             elif self._mentions_otto(_without_type_arguments(base)):
                 self._add(base, "unfollowable-otto-base", ast.unparse(base))
         merged = (
-            _OttoClass(otto_bases[0].label, frozenset().union(*(b.private for b in otto_bases)))
+            _OttoClass(
+                otto_bases[0].label,
+                frozenset().union(*(b.private for b in otto_bases)),
+                derived=True,
+                own=frozenset(
+                    stmt.name
+                    for stmt in node.body
+                    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ),
+            )
             if otto_bases
             else None
         )
@@ -599,6 +674,117 @@ class _Checker(ast.NodeVisitor):
             if match and not self.decl.declares(*match.groups()):
                 self._add(node, "undeclared-object-path", node.value)
 
+    def _module_attribute_key(self, node: ast.Attribute) -> str | None:
+        """Return ``module:name`` for ``mod.sub.name`` rooted at a bound otto module, else None."""
+        resolved = self._module_chain_of(node)
+        if resolved is None:
+            return None
+        path, parts = resolved
+        return f"{path}:{parts[0]}" if len(parts) == 1 else None
+
+    def _call_key(self, node: ast.Call) -> str | None:
+        """Return the dump key of the callable *node* applies, as far as the scope resolves it.
+
+        A class (``C(...)``, ``mod.C(...)``) is its constructor; a bound
+        instance applied (``collector(...)``, ``C()(...)``) is its class's
+        ``__call__``; a from-imported function or a ``mod.f(...)`` chain is
+        the function; ``obj.m(...)`` on a bound otto class or instance is the
+        method. Anything else is None.
+        """
+        func = node.func
+        cls = self._class_expr(func)
+        if cls is not None:
+            return None if cls.derived else cls.label
+        instance = self._instance_expr(func)
+        if instance is not None:  # ``collector(cond, ...)``: the class's ``__call__``
+            return None if instance.derived else f"{instance.label}.__call__"
+        if isinstance(func, ast.Name):
+            return self.state.function_of(func.id)
+        if isinstance(func, ast.Attribute):
+            owner = self._class_expr(func.value) or self._instance_expr(func.value)
+            if owner is not None:
+                if owner.derived and func.attr in owner.own:
+                    return None  # the page's own override: its shape is the page's
+                return f"{owner.label}.{func.attr}"
+            return self._module_attribute_key(func)
+        return None
+
+    def _through_class(self, node: ast.Call) -> bool:
+        """Return True when *node* calls a method through its class, not an instance.
+
+        ``C.m(obj, x)`` may pass the receiver itself, which the dump's shape
+        drops, so such a call is allowed one positional more.
+        """
+        func = node.func
+        return (
+            isinstance(func, ast.Attribute)
+            and not isinstance(func.value, ast.Call)
+            and self._class_expr(func.value) is not None
+        )
+
+    def _check_positional(self, node: ast.Call, key: str | None, *, through_class: bool) -> None:
+        """Record a call passing more positional arguments than *key*'s public shape takes.
+
+        A plain method called through its class (``C.m(obj, x)``) may pass the
+        receiver itself, which the dump's shape drops, so it is allowed one
+        positional more; a classmethod or staticmethod takes none.
+        """
+        if key is None:
+            return
+        limit = self.decl.positional_limit(key)
+        if limit is None:
+            return
+        slack = 1 if through_class and self.decl.takes_receiver(key) else 0
+        given = sum(1 for arg in node.args if not _is_placeholder(arg))
+        if given > limit + slack:
+            noun = "argument" if limit == 1 else "arguments"
+            self._add(
+                node,
+                "positional-call",
+                f"{key}: {given} positional where it accepts {limit} {noun}",
+            )
+
+    def check_inline_call(self, node: ast.Call) -> None:
+        """Judge a prose span's call by shape alone, resolving a bare name through the declaration.
+
+        The page's bindings as they stand where the span sits come first (a
+        span is read in page order with the blocks); a name the page has not
+        bound resolves when every declared ``module:name`` of that name agrees
+        on a shape, so a re-exported alias is one callable and a clash is left
+        alone. A name the page bound to something of its own is what the page
+        says it is. ``C.m(...)`` and ``C(...).m(...)`` resolve the same way
+        through ``C``.
+        """
+        for call in [n for n in ast.walk(node) if isinstance(n, ast.Call)]:
+            key = self._call_key(call)
+            through_class = self._through_class(call)
+            if key is None:
+                func = call.func
+                if isinstance(func, ast.Name):
+                    key = self._unbound_key(func.id)
+                elif isinstance(func, ast.Attribute):
+                    root = func.value.func if isinstance(func.value, ast.Call) else func.value
+                    owner = self._unbound_key(root.id) if isinstance(root, ast.Name) else None
+                    key = f"{owner}.{func.attr}" if owner is not None else None
+                    through_class = owner is not None and root is func.value
+            self._check_positional(call, key, through_class=through_class)
+
+    def _unbound_key(self, name: str) -> str | None:
+        """:meth:`_unique_key` for a name the page never bound; a bound one means what it says."""
+        return None if self.state.bound(name) else self._unique_key(name)
+
+    def _unique_key(self, name: str) -> str | None:
+        """Resolve a bare prose name to a declared binding when nothing of that name disagrees.
+
+        Only a binding (a function or class) resolves: ``sftp(1)`` names no
+        otto binding, so it is left alone even though a method ``sftp`` exists.
+        A method of the same name whose shape differs makes the name ambiguous.
+        """
+        bindings = self.decl.bindings_named(name)
+        keys = [*bindings, *self.decl.methods_named(name)]
+        limits = {self.decl.positional_limit(k) for k in keys}
+        return bindings[0] if bindings and len(limits) == 1 else None
+
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
@@ -623,6 +809,7 @@ class _Checker(ast.NodeVisitor):
         for kw in node.keywords:
             if kw.arg is not None:
                 self._private_use(kw, cls, kw.arg, "passed as a constructor keyword")
+        self._check_positional(node, self._call_key(node), through_class=self._through_class(node))
         if name in {"getattr", "setattr", "delattr", "hasattr"} and len(node.args) > 1:
             attr = node.args[1]
             if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
@@ -945,7 +1132,26 @@ def _check_scope(
         return
     state = _State()
     package = _package_of(path, repo_root)
+    spans = iter(blocks.inline_spans(path, file_blocks) if page else [])
+    pending = next(spans, None)
+
+    def spans_before(line: "int | None") -> None:
+        """Judge the prose spans above *line* (all of them for None) with the bindings so far."""
+        nonlocal pending
+        while pending is not None and (line is None or pending.lines[0][0] < line):
+            ((no, text),) = pending.lines
+            expr = _try_parse_expression(text)
+            if isinstance(expr, ast.Call):
+                _Checker(decl, setup_names, package, label, [no], state, out).check_inline_call(
+                    expr
+                )
+            pending = next(spans, None)
+
     for block in file_blocks:
+        if block.lines:
+            spans_before(block.lines[0][0])
+        if block.lang in blocks.DISPLAY_LANGS:
+            continue  # shown fence syntax: neither code nor prose
         if block.lang not in py_langs:
             for no, text in block.lines:
                 out.extend(_object_path_findings(decl, label, no, text))
@@ -957,6 +1163,7 @@ def _check_scope(
             _check_unparseable(source, nums, checker)
             continue
         checker.visit(tree)
+    spans_before(None)
 
 
 def check_file(
@@ -1039,6 +1246,35 @@ def check_corpus(
 OTTO_ERROR = "otto.errors:OttoError"
 
 
+def positional_shapes(dump_text: str) -> "tuple[dict[str, int | None], set[str]]":
+    """Read the dump's call shapes: each callable key's positional count, and the plain methods.
+
+    A ``call`` record is a function or a class's constructor; a ``member``
+    record of form ``method``, ``classmethod`` or ``staticmethod`` is that
+    callable with its receiver, if any, already dropped by the producer. The
+    count is its ``PO``/``PK`` parameters; a variadic (``VP``) signature, a
+    ``@builtin`` constructor and a withdrawn one map to None: nothing to
+    judge. The second value names the ``method`` members, the ones a call
+    through the class may pass a receiver to.
+    """
+    from scripts import api_records
+
+    dump = api_records.parse_dump(dump_text)
+    limits: dict[str, int | None] = {}
+    receivers: set[str] = set()
+    for rec in dump.records.values():
+        if not api_records.carries_call(rec):
+            continue
+        call = api_records.parse_call(rec)
+        if call.params is None or any(p.kind == "VP" for p in call.params):
+            limits[rec.key] = None
+        else:
+            limits[rec.key] = sum(1 for p in call.params if p.kind in ("PO", "PK"))
+        if rec.kind == "member" and rec.fields[0] == "method":
+            receivers.add(rec.key)
+    return limits, receivers
+
+
 def _constructor_candidates(dump_text: str) -> set[str]:
     """Return the bindings whose constructor ``construct = false`` could withdraw.
 
@@ -1113,11 +1349,16 @@ def main(argv: list[str]) -> int:
     failures = agreement_failures(names, reports)
     generated = api_regen.generate_worktree(args.root, args.manifest, assume_dir=args.report)
     refusals = list(generated.refusals)
+    shapes, receivers = (
+        positional_shapes(generated.text) if generated.text is not None else ({}, set())
+    )
     decl = declaration_from(
         reports,
         assume_dir_when_missing=args.report,
         private={key: set(members) for key, members in generated.private.items()},
         withdrawn=withdrawn,
+        shapes=shapes,
+        receivers=receivers,
     )
     constructed: set[str] = set()
     findings = check_corpus(

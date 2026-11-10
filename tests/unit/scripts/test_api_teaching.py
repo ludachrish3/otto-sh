@@ -12,11 +12,35 @@ pytestmark = pytest.mark.interpreter_agnostic
 
 DECL = StaticDeclaration(
     members={
-        "otto": {"Status", "load_lab"},
+        "otto": {"Status", "load_lab", "Result", "Results", "expect"},
         "otto.docker": {"deploy"},
-        "otto.host": {"Element", "LocalHost", "host_identity"},
+        "otto.host": {"Element", "LocalHost", "host_identity", "expect"},
+        "otto.suite": {"ExpectCollector"},
         "otto.examples": set(),
-    }
+    },
+    private={
+        "otto:Result": set(),
+        "otto:Results": set(),
+        "otto.host:LocalHost": set(),
+        "otto.host:Element": set(),
+        "otto.suite:ExpectCollector": set(),
+    },
+    # The dump's positional shapes: a constructor, a function, a method, a classmethod,
+    # a ``__call__``, a re-export that agrees with its home, and one whose two homes
+    # disagree (``load_lab``). ``receivers`` names the plain methods.
+    shapes={
+        "otto:Result": 0,
+        "otto:Results.collect": 0,
+        "otto:expect": 1,
+        "otto.host:expect": 1,
+        "otto:load_lab": 1,
+        "otto.host:LocalHost": 0,
+        "otto.host:LocalHost.run": 1,
+        "otto.host:Element": None,
+        "otto.suite:ExpectCollector": 0,
+        "otto.suite:ExpectCollector.__call__": 1,
+    },
+    receivers={"otto.host:LocalHost.run", "otto.suite:ExpectCollector.__call__"},
 )
 
 
@@ -985,3 +1009,279 @@ def test_untaught_constructors_on_a_refused_dump_prints_refusals_only(tmp_path, 
     assert capsys.readouterr().out.splitlines() == [
         "producer refusal: otto:Nope: symbol entry names no public binding or member"
     ]
+
+
+# -- the positional rule (#982, #983) -----------------------------------------
+
+
+def test_a_positional_constructor_call_beyond_the_shape_is_a_finding(tmp_path):
+    page = _page(
+        tmp_path, "```python\nfrom otto import Result, Status\nResult(Status.Success)\n```\n"
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 3)
+    ]
+
+
+def test_a_keyword_constructor_call_is_not_a_finding(tmp_path):
+    page = _page(
+        tmp_path, "```python\nfrom otto import Result, Status\nResult(status=Status.Success)\n```\n"
+    )
+    assert _kinds(page, tmp_path) == []
+
+
+def test_a_from_imported_function_called_past_its_shape_is_a_finding(tmp_path):
+    page = _page(tmp_path, '```python\nfrom otto import expect\nexpect(cond, "why")\n```\n')
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:expect: 2 positional where it accepts 1 argument", 3)
+    ]
+    fine = _page(
+        tmp_path, '```python\nfrom otto import expect\nexpect(cond, msg="why")\n```\n', "b.md"
+    )
+    assert _kinds(fine, tmp_path) == []
+
+
+def test_a_module_attribute_call_and_a_method_call_are_judged(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nimport otto\nfrom otto.host import LocalHost\n"
+        'otto.expect(c, "w")\nh = LocalHost()\nh.run("ls", 5)\nLocalHost().run("ls", 5)\n```\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:expect: 2 positional where it accepts 1 argument", 4),
+        ("positional-call", "otto.host:LocalHost.run: 2 positional where it accepts 1 argument", 6),
+        ("positional-call", "otto.host:LocalHost.run: 2 positional where it accepts 1 argument", 7),
+    ]
+
+
+def test_an_unknown_shape_a_splat_and_an_unresolved_callee_are_not_judged(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.host import Element, LocalHost\nfrom otto import expect\n"
+        'Element("a", "b", "c")\nexpect(*args)\nsomething("a", "b")\nh = LocalHost()\n'
+        'h.other("a", "b")\n```\n',
+    )
+    assert _kinds(page, tmp_path) == []
+
+
+def test_a_prose_span_teaching_a_positional_call_is_a_finding(tmp_path):
+    page = _page(
+        tmp_path,
+        'Intro.\n\nCall `expect(cond, "why")` to record it, or `expect(cond, msg="why")`.\n'
+        "A nested one: ``Result(Status.Success)`` in RST ticks.\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:expect: 2 positional where it accepts 1 argument", 3),
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 4),
+    ]
+
+
+def test_a_prose_span_resolves_a_class_method_and_ignores_what_it_cannot(tmp_path):
+    page = _page(
+        tmp_path,
+        'Use `LocalHost.run(h, "ls", 5)` or `LocalHost().run("ls", 5)`; '
+        '`load_lab("x", 1)` has two homes with one shape, '
+        '`nothing("a", "b")` is undeclared, '
+        '`expect(cond[, "why"])` is not Python, and `host.run("ls", 5)` names no class.\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto.host:LocalHost.run: 3 positional where it accepts 1 argument", 1),
+        ("positional-call", "otto.host:LocalHost.run: 2 positional where it accepts 1 argument", 1),
+        ("positional-call", "otto:load_lab: 2 positional where it accepts 1 argument", 1),
+    ]
+
+
+def test_a_call_through_the_class_may_pass_the_receiver(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.host import LocalHost\nh = LocalHost()\n"
+        'LocalHost.run(h, "ls")\nLocalHost.run(h, "ls", 5)\n```\n\n'
+        'Prose: `LocalHost.run(h, "ls")` and `LocalHost.run("ls", 5)`.\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto.host:LocalHost.run: 3 positional where it accepts 1 argument", 5)
+    ]
+
+
+def test_a_prose_span_inside_a_container_is_read(tmp_path):
+    page = _page(
+        tmp_path,
+        '```{note}\nCall `expect(cond, "why")` here.\n```\n\n'
+        ":::{tip}\nOr `Result(Status.Success)`.\n:::\n\n"
+        '```python\nexpect(cond, "why")  # a fence line: `x()` spans here are not spans\n```\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:expect: 2 positional where it accepts 1 argument", 2),
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 6),
+    ]
+
+
+def test_a_page_defined_override_is_not_judged_against_the_base(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.host import LocalHost\n"
+        "class Mine(LocalHost):\n    def run(self, cmd, timeout):\n        pass\n"
+        'm = Mine()\nm.run("ls", 5)\nm.sftp("a", "b")\n```\n',
+    )
+    decl = StaticDeclaration(
+        members=DECL.members,
+        private=DECL.private,
+        shapes={**DECL.shapes, "otto.host:LocalHost.sftp": 0},
+        receivers=DECL.receivers,
+    )
+    findings = check_file(page, decl, set(), repo_root=tmp_path, corpus={page})
+    assert [(f.kind, f.detail, f.line) for f in findings] == [
+        (
+            "positional-call",
+            "otto.host:LocalHost.sftp: 2 positional where it accepts 0 arguments",
+            8,
+        )
+    ]
+
+
+def test_a_prose_span_follows_the_page_s_own_imports_first(tmp_path):
+    page = _page(
+        tmp_path,
+        '```python\nfrom otto.host import LocalHost as LH\n```\n\nThen `LH().run("ls", 5)`.\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto.host:LocalHost.run: 2 positional where it accepts 1 argument", 5)
+    ]
+
+
+def test_a_span_inside_a_fence_is_not_read_twice(tmp_path):
+    page = _page(tmp_path, "```python\nfrom otto import expect\nexpect(cond, `x`)\n```\n")
+    kinds = [k for k, _, _ in _kinds(page, tmp_path)]
+    assert "positional-call" not in kinds
+
+
+def test_positional_shapes_read_the_dump():
+    dump = (
+        "# api-snapshot v2\n# producer-schema 1\n"
+        "name\totto:f\tfunction\ncall\totto:f\tsync\tPK:a:- KO:b:N\n"
+        "name\totto:g\tfunction\ncall\totto:g\tsync\tPK:a:- VP:rest:-\n"
+        "name\totto:C\tclass\nmro\totto:C\t-\ncall\totto:C\tsync\t@manifest:construct=false\n"
+        "abstract\totto:C\t-\nmember\totto:C.m\tmethod\tsync\tPO:x:- PK:y:- KO:z:N\n"
+        "member\totto:C.k\tclassmethod\tsync\tKO:n:N\n"
+        "name\totto:E\tclass\nmro\totto:E\t@builtin:builtins.ValueError\n"
+        "call\totto:E\tsync\t@builtin:builtins.ValueError\nabstract\totto:E\t-\n"
+    )
+    assert api_teaching.positional_shapes(dump) == (
+        {"otto:f": 1, "otto:g": None, "otto:C": None, "otto:C.m": 2, "otto:C.k": 0, "otto:E": None},
+        {"otto:C.m"},
+    )
+
+
+def test_an_elided_argument_teaches_no_position(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto import Result\nResult(..., status=1)\n```\n\n"
+        "Prose: `Result(..., status=1)` and `Result(x, ...)`.\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 6)
+    ]
+
+
+def test_a_page_defined_subclass_has_its_own_constructor(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.host import LocalHost\n"
+        "class Mine(LocalHost):\n    def __init__(self, a, b):\n        pass\n"
+        'm = Mine(1, 2)\nm.run("ls", 5)\n```\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto.host:LocalHost.run: 2 positional where it accepts 1 argument", 7)
+    ]
+
+
+def test_a_bare_prose_name_that_is_also_a_method_name_is_ambiguous(tmp_path):
+    # ``deploy`` is a declared function taking no positional argument AND a
+    # LocalHost method taking one: the span could mean either, so it is not judged.
+    decl = StaticDeclaration(
+        members=DECL.members,
+        private=DECL.private,
+        shapes={
+            **DECL.shapes,
+            "otto.docker:deploy": 0,
+            "otto.host:LocalHost.deploy": 1,
+            "otto.host:LocalHost.sftp": 0,
+        },
+        receivers=DECL.receivers,
+    )
+    # ``sftp(1)`` is a manpage reference: a method of that name is not a binding.
+    page = _page(tmp_path, "Then `deploy(host)` runs it, as `sftp(1)` would.\n")
+    findings = check_file(page, decl, set(), repo_root=tmp_path, corpus={page})
+    assert findings == []
+    assert decl.bindings_named("deploy") == ["otto.docker:deploy"]
+    assert decl.methods_named("deploy") == ["otto.host:LocalHost.deploy"]
+
+
+def test_a_classmethod_called_through_the_class_gets_no_receiver_slack(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto import Results\nResults.collect(items)\n```\n\n"
+        "Prose: `Results.collect(items)`.\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:Results.collect: 1 positional where it accepts 0 arguments", 3),
+        ("positional-call", "otto:Results.collect: 1 positional where it accepts 0 arguments", 6),
+    ]
+
+
+def test_a_bound_instance_applied_is_its_class_s_call(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.suite import ExpectCollector\ncollector = ExpectCollector()\n"
+        'collector(cond, "why")\nExpectCollector()(cond, "why")\ncollector(cond, msg="why")\n```\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        (
+            "positional-call",
+            "otto.suite:ExpectCollector.__call__: 2 positional where it accepts 1 argument",
+            4,
+        ),
+        (
+            "positional-call",
+            "otto.suite:ExpectCollector.__call__: 2 positional where it accepts 1 argument",
+            5,
+        ),
+    ]
+
+
+def test_a_prose_name_the_page_bound_itself_is_what_the_page_says(tmp_path):
+    page = _page(
+        tmp_path,
+        "```python\ndef Result(value):\n    return value\n```\n\nThen `Result(1)` is its own.\n",
+    )
+    assert _kinds(page, tmp_path) == []
+
+
+def test_prose_is_judged_in_page_order_with_the_blocks(tmp_path):
+    page = _page(
+        tmp_path,
+        '```python\nfrom otto import load_lab as make\n```\n\nHere `make("lab")` is fine.\n\n'
+        '```python\nfrom otto import Result as make\n```\n\nNow `make("lab")` is a constructor.\n',
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 11)
+    ]
+
+
+def test_a_markdown_display_fence_is_neither_code_nor_prose(tmp_path):
+    page = _page(
+        tmp_path,
+        "````markdown\nShown: `Result(1)` and a fence:\n```python\nResult(1)\n```\n````\n\n"
+        "But `Result(1)` here is prose.\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("positional-call", "otto:Result: 1 positional where it accepts 0 arguments", 8)
+    ]
+
+
+def test_a_span_with_an_invalid_escape_is_still_judged():
+    # Under warnings-as-errors ``ast.parse`` would raise on the escape; the shared
+    # quiet parser reads it like a code block.
+    expr = api_teaching._try_parse_expression('Result("\\d")')
+    assert expr is not None
+    assert expr.func.id == "Result"

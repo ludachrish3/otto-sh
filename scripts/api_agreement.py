@@ -449,12 +449,17 @@ def declaration_from(
     assume_dir_when_missing: bool,
     private: "dict[str, set[str]] | None" = None,
     withdrawn: "set[str] | None" = None,
+    shapes: "dict[str, int | None] | None" = None,
+    receivers: "set[str] | None" = None,
 ) -> StaticDeclaration:
     """Build a validator declaration from runtime reports, plus the dump's private-member map.
 
     *private* maps ``"module:Class"`` to its underscore members, as
     ``scripts/api_dump_child.py`` reports them; it drives ``taught-private-member``.
     *withdrawn* holds the ``module:Class`` keys whose manifest ``construct`` is false.
+    *shapes* maps each callable key to the positional arguments it accepts and
+    *receivers* names the keys that are plain methods
+    (:func:`scripts.api_teaching.positional_shapes`); they drive ``positional-call``.
 
     *assume_dir_when_missing* treats a namespace with no ``__all__`` as
     declaring every non-underscore global. Only the dormant report target
@@ -468,5 +473,9 @@ def declaration_from(
         else:
             members[ns] = set(report.public_dir) if assume_dir_when_missing else set()
     return StaticDeclaration(
-        members=members, private=dict(private or {}), withdrawn=set(withdrawn or ())
+        members=members,
+        private=dict(private or {}),
+        withdrawn=set(withdrawn or ()),
+        shapes=dict(shapes or {}),
+        receivers=set(receivers or ()),
     )

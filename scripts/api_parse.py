@@ -12,7 +12,9 @@ A leaf module: it imports nothing from ``scripts``.
 """
 
 import ast
+import contextlib
 import warnings
+from collections.abc import Iterator
 
 
 def parse_quietly(source: str, filename: str = "<unknown>") -> ast.Module:
@@ -21,7 +23,20 @@ def parse_quietly(source: str, filename: str = "<unknown>") -> ast.Module:
     A real syntax error still raises ``SyntaxError`` (or ``ValueError`` for a
     NUL byte before 3.12), exactly as ``ast.parse`` does.
     """
+    with _quiet():
+        return ast.parse(source, filename=filename)
+
+
+def parse_expression_quietly(text: str) -> ast.expr:
+    """Parse one expression (``mode="eval"``) under the same silenced warnings."""
+    with _quiet():
+        return ast.parse(text, mode="eval").body
+
+
+@contextlib.contextmanager
+def _quiet() -> "Iterator[None]":
+    """Silence the compiler's warnings for one read of foreign code; the one place that decides."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
         warnings.simplefilter("ignore", DeprecationWarning)
-        return ast.parse(source, filename=filename)
+        yield
