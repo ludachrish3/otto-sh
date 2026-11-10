@@ -51,6 +51,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import shlex
 import shutil
@@ -61,6 +62,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from otto.host.remote_host import make_host_id
+from otto.utils import WaitTimeoutError, wait_for
 
 DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/lab.json")
 
@@ -85,6 +87,12 @@ _DRIFT_WARN_S = 2.0
 # need ~15-30 s before telnetd answers.
 _RESTART_SETTLE_S = 20
 
+# A hopped Unix guest (the chaos guest) boots a full Ubuntu under TCG: after a
+# restart, or an interrupted reboot, poll for its sshd this long, every
+# ``_GUEST_POLL_S`` seconds.
+_GUEST_BOOT_S = 300
+_GUEST_POLL_S = 10.0
+
 # SSH budget for the AUTHENTICATED console probe. Its four bounded reads (three
 # login steps at `step` = 8 s, then uptime at 0.75 * step = 6 s) can spend 30 s
 # before it gives up and prints "OK login", which overruns `_run_ssh`'s 25 s
@@ -93,6 +101,27 @@ _RESTART_SETTLE_S = 20
 # possible fault. Raise both together if those budgets ever change. The
 # credential-less call keeps the default; nothing about it got slower.
 _LOGIN_PROBE_SSH_TIMEOUT_S = 45.0
+
+# Runs on the hop VM (which has python3) to probe a guest's sshd: argv is
+# ``addr port``. Prints "OK <banner line>" when the first bytes start with
+# "SSH-", "NOBANNER" when the socket opened but nothing SSH-like arrived, and
+# "CONNFAIL <reason>" when it did not open.
+_SSH_BANNER_PROBE = """
+import socket, sys
+try:
+    s = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10)
+except OSError as e:
+    print("CONNFAIL", e)
+    sys.exit(0)
+s.settimeout(10)
+try:
+    data = s.recv(64)
+except OSError:
+    data = b""
+s.close()
+line = data.decode("ascii", "replace").splitlines()[0] if data else ""
+print("OK", line) if line.startswith("SSH-") else print("NOBANNER")
+"""
 
 # Runs on the hop VM (which has python3) to probe a guest telnet console: open
 # the port, nudge the shell, and read what comes back. Prints one of
@@ -487,6 +516,14 @@ def direct_ssh_host_ids(path: Path) -> list[str]:
     return [_host_id(h) for h in _load_hosts(path) if _is_ssh_host(h)]
 
 
+def hopped_ssh_host_ids(path: Path) -> list[str]:
+    """Return the ids of the lab file's hosts :func:`_is_hopped_unix` selects.
+
+    Beside :func:`direct_ssh_host_ids`: the bed reap composes the two.
+    """
+    return [_host_id(h) for h in _load_hosts(path) if _is_hopped_unix(h)]
+
+
 def _is_ssh_host(host: dict) -> bool:
     """Return True if we log in directly over SSH (the ``UnixHost`` family).
 
@@ -528,6 +565,65 @@ def _check_unix(host: dict) -> dict:
     return {"ok": True, "status": "up", "info": f"{iso}Z", "drift": drift}
 
 
+def _run_probe_on_hop(
+    hop: dict, program: str, *args: str, timeout: float = 25.0
+) -> tuple[int, str, str]:
+    """Run the python3 *program* with *args* on *hop* over SSH; the ``_run_ssh`` triple."""
+    user, password = _ssh_user_pass(hop["creds"])
+    remote_cmd = f"python3 -c {shlex.quote(program)} " + " ".join(shlex.quote(a) for a in args)
+    return _run_ssh(hop["ip"], user, password, remote_cmd, timeout=timeout)
+
+
+def _is_hopped_unix(host: dict) -> bool:
+    """Return True for a Unix host with its own creds behind a hop whose first term is ssh.
+
+    The one rule for "hopped unix host" (the chaos guest). The BusyBox guests have
+    the same hop and creds but list ``telnet`` first, so they stay on the console path.
+    """
+    return (
+        host.get("os_type", "unix") == "unix"
+        and bool(host.get("hop"))
+        and "creds" in host
+        and host.get("valid_terms", ["ssh", "telnet"])[0] == "ssh"
+    )
+
+
+def _check_hopped_unix(host: dict, hops: dict[str, dict]) -> dict:
+    """Probe a hopped Unix guest's sshd by banner, from its hop."""
+    hop_name = host["hop"]
+    hop = hops.get(hop_name)
+    if hop is None:
+        return {"ok": False, "status": "NO-HOP", "info": f"hop {hop_name!r} not in lab"}
+    rc, out, err = _run_probe_on_hop(hop, _SSH_BANNER_PROBE, host["ip"], "22")
+    if rc != 0:
+        return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
+    if out.startswith("OK"):
+        return {"ok": True, "status": "up", "info": out[3:43] or "sshd"}
+    if out.startswith("NOBANNER"):
+        return {"ok": False, "status": "WEDGED", "info": "TCP open, no SSH banner"}
+    return {"ok": False, "status": "DOWN", "info": out[:40] or "no sshd"}
+
+
+def wait_for_hopped_ssh(
+    host: dict, hops: dict[str, dict], *, timeout: float = _GUEST_BOOT_S
+) -> dict:
+    """Poll :func:`_check_hopped_unix` until ``up`` or *timeout*; the last result.
+
+    Shared by the restart path and the bed reap: a guest interrupted mid-reboot
+    is booting, not gone.
+    """
+    result: dict = {}
+
+    def booted() -> bool:
+        result.clear()
+        result.update(_check_hopped_unix(host, hops))
+        return result["status"] == "up"
+
+    with contextlib.suppress(WaitTimeoutError):
+        wait_for(booted, timeout, interval=_GUEST_POLL_S, on_timeout="guest sshd never answered")
+    return result
+
+
 def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     """Console responsiveness + uptime for a QEMU guest reached through its hop."""
     # A `term: "console"` host carries `console_options` (server + port): the
@@ -557,8 +653,7 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
         missing = f"hop {hop_name!r} not in lab"
     if hop is None:
         return {"ok": False, "status": "NO-HOP", "info": missing}
-    user, password = _ssh_user_pass(hop["creds"])
-    remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(addr)} {port}"
+    probe_args = [addr, str(port)]
     # A guest carrying creds of ITS OWN can be logged into for a real uptime;
     # that is the BusyBox bed's shape. A Zephyr console carries none (it
     # borrows its hop's, which are already in `user`/`password` above and are
@@ -570,12 +665,12 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     if host.get("creds"):
         guest_user, guest_password = _ssh_user_pass(host["creds"])
         guest_login = guest_user
-        remote_cmd += f" {shlex.quote(guest_user)} {shlex.quote(guest_password)}"
-        rc, out, err = _run_ssh(
-            hop["ip"], user, password, remote_cmd, timeout=_LOGIN_PROBE_SSH_TIMEOUT_S
+        probe_args += [guest_user, guest_password]
+        rc, out, err = _run_probe_on_hop(
+            hop, _CONSOLE_PROBE, *probe_args, timeout=_LOGIN_PROBE_SSH_TIMEOUT_S
         )
     else:
-        rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
+        rc, out, err = _run_probe_on_hop(hop, _CONSOLE_PROBE, *probe_args)
     if rc != 0:
         return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
     if out.startswith("OK"):
@@ -641,15 +736,11 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
             "info": f"console server {server_name!r} not in lab",
         }
     logs_in = bool(host.get("creds"))
-    user, password = _ssh_user_pass(server["creds"])
-    remote_cmd = (
-        f"python3 -c {shlex.quote(_CONSOLE_STATE_PROBE)} 127.0.0.1 {int(console['port'])}"
-        f" {_CONSOLE_STATE_BUDGET_S:g}"
-    )
+    probe_args = ["127.0.0.1", str(int(console["port"])), f"{_CONSOLE_STATE_BUDGET_S:g}"]
     if logout and logs_in:
-        remote_cmd += " reset"
-    rc, out, err = _run_ssh(
-        server["ip"], user, password, remote_cmd, timeout=_CONSOLE_STATE_SSH_TIMEOUT_S
+        probe_args.append("reset")
+    rc, out, err = _run_probe_on_hop(
+        server, _CONSOLE_STATE_PROBE, *probe_args, timeout=_CONSOLE_STATE_SSH_TIMEOUT_S
     )
     if rc != 0:
         return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
@@ -697,7 +788,10 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
         # every glob: on a hop with no busybox units the pattern matches
         # nothing and is a no-op, the same reason the zephyr globs are safe on
         # test1.
-        units = "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service' 'busybox-qemu-*.service'"
+        units = (
+            "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service'"
+            " 'busybox-qemu-*.service' 'chaos-qemu-*.service'"
+        )
         cmd = f"echo {shlex.quote(password)} | sudo -S systemctl restart {units}"
         rc, _out, err = _run_ssh(hop["ip"], user, password, cmd, timeout=60)
         if rc == 0:
@@ -725,7 +819,12 @@ def _print_report(hosts: list[dict], hops: dict[str, dict], *, logout: bool = Fa
     drifts: list[tuple[str, float]] = []
     for host in hosts:
         ostype = host.get("os_type", "?")
-        res = _check_unix(host) if _is_ssh_host(host) else _check_embedded(host, hops)
+        if _is_ssh_host(host):
+            res = _check_unix(host)
+        elif _is_hopped_unix(host):
+            res = _check_hopped_unix(host, hops)
+        else:
+            res = _check_embedded(host, hops)
         all_ok = all_ok and res["ok"]
 
         drift_col = "—"
@@ -771,7 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--restart-qemu",
         action="store_true",
-        help="restart Zephyr + BusyBox QEMU + relay units on each hop, then health-check",
+        help="restart Zephyr + BusyBox + chaos guest QEMU + relay units on each hop, then check",
     )
     parser.add_argument(
         "--logout-consoles",
@@ -798,8 +897,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Restarting Zephyr + BusyBox QEMU instances…")
         if _restart_qemu(hosts, hops):
             print("One or more restarts failed; health may be incomplete.\n")
-        # Give the guests time to boot and the relays to re-peer before probing.
+        # Give the guests time to boot and the relays to re-peer before probing;
+        # a hopped Unix guest is polled until its sshd answers instead.
         time.sleep(_RESTART_SETTLE_S)
+        for host in hosts:
+            if _is_hopped_unix(host):
+                wait_for_hopped_ssh(host, hops)
         print()
 
     return 0 if _print_report(hosts, hops, logout=args.logout_consoles) else 1

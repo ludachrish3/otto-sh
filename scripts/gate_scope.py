@@ -330,6 +330,7 @@ BED_SCRIPTS = frozenset(
         "scripts/gate_stamp_common.py",
         "scripts/lab_health.py",
         "scripts/process_group.py",
+        "scripts/render_chaos_guest_seed.py",
     }
 )
 """The scripts the bed half runs on: a change to one sends the tip to `make coverage-bed`.

@@ -13,24 +13,9 @@ through test1 and nothing hostless was watching which lab they aimed at.
 
 from pathlib import Path
 
-from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.labs.loader import load_lab
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import dangling_ends, lab_data_dir
 from tests.e2e.chaos._bed import closed_unix_link_target, unix_link_id
-
-
-def _dangling_ends(lab) -> list[str]:
-    """``link: host`` for every static-link endpoint the lab did not load.
-
-    The implicit hop edges end on ``local``, which is a builtin and never a
-    lab host, so it is not a dangling end.
-    """
-    return [
-        f"{link.id}: {end.host}"
-        for link in lab.static_links()
-        for end in (link.a, link.b)
-        if end.host != BUILTIN_LOCAL_HOST_ID and end.host not in lab.hosts
-    ]
 
 
 def test_the_link_chaos_lab_is_closed_and_still_declares_the_unix_link(tmp_path: Path) -> None:
@@ -48,7 +33,7 @@ def test_the_link_chaos_lab_is_closed_and_still_declares_the_unix_link(tmp_path:
 
     ids = {link.id for link in lab.static_links()}
     assert unix_link_id() in ids, ids
-    assert _dangling_ends(lab) == []
+    assert dangling_ends(lab) == []
 
 
 def test_the_bed_target_is_not_closed_which_is_why_the_scenarios_do_not_use_it() -> None:
@@ -61,4 +46,4 @@ def test_the_bed_target_is_not_closed_which_is_why_the_scenarios_do_not_use_it()
     lab = load_lab(target.lab, search_paths=[lab_data_dir() / "tech1"])
 
     assert unix_link_id() in {link.id for link in lab.static_links()}
-    assert _dangling_ends(lab) == ["bb1350-qemu--test1: bb1350-qemu"]
+    assert dangling_ends(lab) == ["bb1350-qemu--test1: bb1350-qemu"]
