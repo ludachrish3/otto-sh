@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from otto._shim_complete import CACHE_FILENAME
 from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_project import generate_project
 
@@ -43,7 +44,7 @@ def project_env(tmp_path):
 
 
 def _cache_file(env) -> Path:
-    caches = list(Path(env["OTTO_HOME"]).rglob("completion_cache.json"))
+    caches = list(Path(env["OTTO_HOME"]).rglob(CACHE_FILENAME))
     assert caches, "the first invocation wrote no cache at all"
     return caches[0]
 
@@ -279,15 +280,20 @@ def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(project_env):
 
 
 _UNCACHEABLE_INIT = '''\
-from otto.inventory import InventoryRecord, register_inventory_backend
+from otto.inventory import register_inventory_backend
+from otto.models import InventoryRecord
+from otto.models.base import OttoModel
+
+
+class UncacheableConfig(OttoModel, frozen=True):
+    pass
 
 
 class Uncacheable:
     """Cannot report freshness: the networked-CMDB case, so no entry can be stored."""
 
-    def __init__(self, **kwargs):
-        self.label = "uncacheable:test"
-        self.supplies = frozenset({"ip"})
+    label = "uncacheable:test"
+    supplies = frozenset({"ip"})
 
     def lookup(self, key):
         return InventoryRecord(ip="10.0.0.1")
@@ -299,7 +305,9 @@ class Uncacheable:
         return None
 
 
-register_inventory_backend("uncacheable", Uncacheable)
+register_inventory_backend(
+    "uncacheable", config=UncacheableConfig, factory=lambda configured: Uncacheable()
+)
 '''
 
 
@@ -340,6 +348,14 @@ def test_root_help_never_imports_test_files(tmp_path, cacheable):
     assert not sentinel.exists(), "root help imported a test file"
     if cacheable:
         _cache_file(env)  # the control: this root help did rebuild the cache
+    else:
+        # The control: the init module loaded and its backend answers, so the
+        # absence of a cache is the backend's missing fingerprint, not a broken init.
+        lookup = _run(env, argv=["inventory", "lookup", "dut-1"])
+        assert "10.0.0.1" in lookup.stdout, lookup.stdout
+        assert not list(Path(env["OTTO_HOME"]).rglob(CACHE_FILENAME)), (
+            "an inventory without a fingerprint stored a cache entry"
+        )
 
 
 _AUDITED_ENTRY = """\
