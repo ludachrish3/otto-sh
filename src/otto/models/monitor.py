@@ -40,9 +40,10 @@ already when it lived in the monitor runtime package (spec 2026-07-12
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     ConfigDict,
     Field,
@@ -54,6 +55,7 @@ from pydantic import (
 )
 from typing_extensions import final
 
+from ..utils import as_utc
 from .base import OttoModel
 from .event_style import (
     DEFAULT_EVENT_COLOR,
@@ -61,6 +63,15 @@ from .event_style import (
     check_event_dash,
     normalize_event_color,
 )
+
+AwareTimestamp = Annotated[datetime, AfterValidator(as_utc)]
+"""A ``datetime`` that is always timezone-aware: a naive input means UTC and an
+existing offset is kept (:func:`otto.utils.as_utc`). EVERY timestamp field in
+these models uses it (session bounds, samples, log events and events), so a
+legacy capture stored naive is served as UTC throughout and its events stay
+inside its own window; a span's two ends, and a stored event against a write,
+always compare as instants. Optional fields spell ``AwareTimestamp | None``: the optionality
+stays outside the alias."""
 
 
 @final
@@ -71,7 +82,7 @@ class MetricPoint(OttoModel):
     Consumers read ``.ts`` / ``.value`` / ``.meta`` instead of unpacking.
     """
 
-    ts: datetime
+    ts: AwareTimestamp
     value: float
     meta: dict[str, Any] | None = None
 
@@ -193,7 +204,7 @@ class MetricRecord(RowModel):
     emitted — empty string is not ``None``).
     """
 
-    timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
+    timestamp: AwareTimestamp = Field(validation_alias=AliasChoices("timestamp", "ts"))
     host: str = ""
     label: str
     value: float
@@ -227,8 +238,8 @@ class EventRecord(RowModel):
     """
 
     id: int | None = None
-    timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
-    end_timestamp: datetime | None = Field(
+    timestamp: AwareTimestamp = Field(validation_alias=AliasChoices("timestamp", "ts"))
+    end_timestamp: AwareTimestamp | None = Field(
         default=None, validation_alias=AliasChoices("end_timestamp", "end_ts")
     )
     label: str = ""
@@ -314,8 +325,8 @@ class EventCreateBody(OttoModel):
     model_config = ConfigDict(defer_build=False)
 
     label: str
-    timestamp: datetime | None = None
-    end_timestamp: datetime | None = None
+    timestamp: AwareTimestamp | None = None
+    end_timestamp: AwareTimestamp | None = None
     color: str = DEFAULT_EVENT_COLOR
     dash: str = DEFAULT_EVENT_DASH
 
@@ -363,8 +374,8 @@ class EventUpdateBody(OttoModel):
     model_config = ConfigDict(defer_build=False)
 
     label: str | None = None
-    timestamp: datetime | None = None
-    end_timestamp: datetime | None = None
+    timestamp: AwareTimestamp | None = None
+    end_timestamp: AwareTimestamp | None = None
     color: str | None = None
     dash: str | None = None
 
@@ -407,7 +418,7 @@ class LogEventRecord(RowModel):
     loader before validation).
     """
 
-    timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
+    timestamp: AwareTimestamp = Field(validation_alias=AliasChoices("timestamp", "ts"))
     host: str = ""
     tab: str = ""
     fields: dict[str, str] = Field(default_factory=dict)
@@ -562,8 +573,8 @@ class SessionRecord(RowModel):
     id: str
     label: str | None = None
     note: str | None = None
-    start: datetime
-    end: datetime | None = None
+    start: AwareTimestamp
+    end: AwareTimestamp | None = None
     lab: LabSnapshot = Field(default_factory=LabSnapshot)
     meta: SessionMeta = Field(default_factory=SessionMeta)
     metrics: list[MetricRecord] = Field(default_factory=list)
@@ -571,7 +582,7 @@ class SessionRecord(RowModel):
     log_events: list[LogEventRecord] = Field(default_factory=list)
     chart_map: dict[str, str] = Field(default_factory=dict)
     tunnels: list[TunnelRecord] = Field(default_factory=list)
-    observed_at: datetime | None = None
+    observed_at: AwareTimestamp | None = None
     """When the server last observed this session, on the server's clock.
 
     A live snapshot stamps it; an archive or an older document leaves it unset.
@@ -640,4 +651,4 @@ class MonitorSessionFragment(RowModel):
     chart_map: dict[str, str] = Field(default_factory=dict)
     meta: SessionMeta | None = None
     tunnels: list[TunnelRecord] | None = None
-    observed_at: datetime | None = None
+    observed_at: AwareTimestamp | None = None

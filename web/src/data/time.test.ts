@@ -4,9 +4,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { synthSession } from "../__tests__/_synth";
-import { displayEndMs, formatOutage } from "./time";
+import { observedAtMicros } from "./exportDoc";
+import { displayEndMs, formatClockTime, formatOutage, parseTs } from "./time";
 
 // #866: the live window's horizon is the later of the last metric and the
 // server's last observation. endMs stays metric-only (health reads it).
@@ -58,5 +59,42 @@ describe("formatOutage fixture parity (shared with the Python mirror)", () => {
 
   it.each(cases)("formatOutage($ms) === $text", ({ ms, text }) => {
     expect(formatOutage(ms)).toBe(text);
+  });
+});
+
+// otto's convention: a timestamp with no offset means UTC, on the server
+// (otto.utils.as_utc) and here alike, so a legacy capture stored naive reads
+// the same instant whatever the browser's zone. parseTs is the ONE place the
+// browser decides it; the zone is stubbed off UTC so a local-time read fails.
+describe("parseTs: a naive timestamp means UTC", () => {
+  beforeEach(() => {
+    vi.stubEnv("TZ", "America/Chicago");
+  });
+
+  it("runs under a zone that is not UTC", () => {
+    expect(new Date(2026, 6, 18, 12).getTime()).not.toBe(Date.UTC(2026, 6, 18, 12));
+  });
+
+  it("reads an offset-less stamp as UTC", () => {
+    expect(parseTs("2026-07-18T12:00:00")).toBe(Date.UTC(2026, 6, 18, 12));
+    expect(parseTs("2026-07-18T12:00:00.250")).toBe(Date.UTC(2026, 6, 18, 12, 0, 0, 250));
+    expect(parseTs("2026-07-18T12:00")).toBe(Date.UTC(2026, 6, 18, 12));
+  });
+
+  it("keeps an existing offset or Z", () => {
+    expect(parseTs("2026-07-18T12:00:00Z")).toBe(Date.UTC(2026, 6, 18, 12));
+    expect(parseTs("2026-07-18T12:00:00+02:00")).toBe(Date.UTC(2026, 6, 18, 10));
+    expect(parseTs("2026-07-18T12:00:00.123456-05:00")).toBe(Date.UTC(2026, 6, 18, 17, 0, 0, 123));
+  });
+
+  it("is NaN for a malformed stamp, as before", () => {
+    expect(Number.isNaN(parseTs("not a time"))).toBe(true);
+  });
+
+  it("is what observedAtMicros and formatClockTime read a stamp with", () => {
+    expect(observedAtMicros("2026-07-18T12:00:00.000007")).toBe(
+      Date.UTC(2026, 6, 18, 12) * 1000 + 7,
+    );
+    expect(formatClockTime("2026-07-18T12:00:00")).toBe(formatClockTime(Date.UTC(2026, 6, 18, 12)));
   });
 });

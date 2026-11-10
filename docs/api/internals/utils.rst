@@ -7,6 +7,8 @@ and the reference can link them. The public names are on :doc:`/api/utils`.
 
 .. currentmodule:: otto.utils
 
+.. autofunction:: otto.utils.as_utc
+
 .. autofunction:: otto.utils.anchor_path
 
 .. autofunction:: otto.utils.atomic_write_bytes

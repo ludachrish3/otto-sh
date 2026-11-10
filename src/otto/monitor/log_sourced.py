@@ -41,6 +41,7 @@ from typing import TypeVar
 
 from typing_extensions import override
 
+from ..utils import as_utc
 from .parsers import (
     LogEvent,
     MetricDataPoint,
@@ -53,11 +54,6 @@ from .parsers import (
 __all__ = ["CsvMetricParser", "RegexLogEventParser"]
 
 T = TypeVar("T")
-
-
-def _as_utc(dt: datetime) -> datetime:
-    """Apply the naive-means-UTC convention."""
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 class ProvisionalTail:
@@ -114,7 +110,7 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
                 return None
     if fmt in ("auto", "iso"):
         try:
-            return _as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+            return as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
         except ValueError:
             return None
     injected = False
@@ -126,7 +122,7 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
         fmt = f"%Y {fmt}"
         injected = True
     try:
-        parsed = _as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by _as_utc
+        parsed = as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by as_utc
     except (ValueError, re.error):
         return None
     if injected and parsed - datetime.now(tz=timezone.utc) > timedelta(days=2):

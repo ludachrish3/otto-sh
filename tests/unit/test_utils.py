@@ -7,12 +7,14 @@ cannot hide behind mocked callers.
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import pytest
 
 from otto.utils import (
     _get_literal_values,
+    as_utc,
     complete_separated_list,
     is_literal,
     name_by_reason,
@@ -207,3 +209,17 @@ def test_per_loop_keeps_one_primitive_within_a_loop():
 
 def test_name_by_reason_sorts_ids_per_group_and_keeps_group_order():
     assert name_by_reason({"b": "R", "a": "R", "c": "Q"}) == "a, b (R); c (Q)"
+
+
+class TestAsUtc:
+    def test_a_naive_value_means_utc(self) -> None:
+        naive = datetime(2026, 7, 18, 12, 0)  # noqa: DTZ001 — the naive input under test
+        assert as_utc(naive) == naive.replace(tzinfo=timezone.utc)
+        assert as_utc(naive).tzinfo is timezone.utc
+
+    def test_an_aware_value_is_returned_unchanged(self) -> None:
+        aware = datetime(2026, 7, 18, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+        assert as_utc(aware) is aware
+
+    def test_none_stays_none(self) -> None:
+        assert as_utc(None) is None

@@ -42,13 +42,13 @@ export function observedAtMicros(observedAt: string | null | undefined): number 
   if (observedAt == null) return null;
   const groups = STAMP_PARTS.exec(observedAt)?.groups;
   if (groups === undefined) return null;
-  const wholeMs = Date.parse(`${groups["seconds"] ?? ""}${groups["zone"] ?? ""}`);
+  const wholeMs = parseTs(`${groups["seconds"] ?? ""}${groups["zone"] ?? ""}`);
   if (Number.isNaN(wholeMs)) return null;
   const fraction = Number((groups["fraction"] ?? "").padEnd(6, "0").slice(0, 6));
   return wholeMs * 1000 + fraction;
 }
 
-/** An ISO stamp split at its fractional seconds (which Date.parse would
+/** An ISO stamp split at its fractional seconds (which parseTs would
  * round to milliseconds): `seconds` up to the whole second, then the
  * optional `fraction` digits, then the `zone`. */
 const STAMP_PARTS = /^(?<seconds>.*T\d{2}:\d{2}:\d{2})(?:\.(?<fraction>\d+))?(?<zone>.*)$/u;

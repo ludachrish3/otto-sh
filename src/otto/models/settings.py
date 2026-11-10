@@ -17,7 +17,7 @@ import json
 import posixpath
 import re
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -57,6 +57,7 @@ from ..host.option_specs import (
 from ..logger.levels import LEVEL_NAMES
 from ..utils import (
     anchor_path,
+    as_utc,
     collapse_path_list,
     kept_path_spelling,
     ottopath_entries,
@@ -590,10 +591,7 @@ def _iso8601_utc(value: object) -> object:
     if not isinstance(value, str):
         return value
     normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    dt = datetime.fromisoformat(normalized)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+    return as_utc(datetime.fromisoformat(normalized))
 
 
 @final

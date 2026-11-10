@@ -180,9 +180,10 @@ on the chart timeline (see
 ### Timestamps
 
 Every log-sourced row carries its own data-carried timestamp instead of
-the collector's tick time; a naive value (no timezone) is always treated
-as UTC, whether it comes from a CSV's first column or a regex's timestamp
-group. A row with no parseable timestamp is dropped — log-sourced parsers
+the collector's tick time; a naive value (no timezone) is treated as UTC,
+whether it comes from a CSV's first column or a regex's timestamp group,
+as everywhere a timestamp enters otto
+({doc}`../../architecture/subsystems/monitoring` has the rule). A row with no parseable timestamp is dropped — log-sourced parsers
 have no tick-time fallback, so an empty or unrecognized timestamp field
 means that row never appears at all.
 
