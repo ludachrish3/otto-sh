@@ -14,6 +14,7 @@ import { type TreeColumn, TreeView } from "@/ui/TreeView";
 import { AppShell } from "../chrome/AppShell";
 import { PctCell } from "../chrome/PctCell";
 import { TierChip } from "../chrome/TierChip";
+import { TintedPill } from "../chrome/TintedPill";
 import { type FocusScope, resolveScope, scopeTreeLines } from "../contexts";
 import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus, useHashLocation } from "../focus";
@@ -87,7 +88,7 @@ function buildColumns(index: IndexPayload): TreeColumn[] {
         width: "64px",
       }),
     ),
-    { id: "flags", label: "Flags", width: "170px" },
+    { id: "flags", label: "Flags", width: "200px" },
   ];
 }
 
@@ -125,20 +126,10 @@ function renderName(row: Row): ReactNode {
   );
 }
 
-/** A tinted pill whose color comes from `state_colors` (data, per the
- * Global Constraints — never hard-coded), using `color-mix` for the tint so
- * arbitrary CSS color strings (hex OR named, both appear in the data
- * contract's example) work uniformly, same technique the DOM reference
- * uses for its `.flag` pills. */
+/** A flag pill: its colour comes from `state_colors` (data, never hard-coded)
+ * and, like every data colour, only tints and dots (see `TintedPill`). */
 function FlagPill({ label, color }: { label: string; color: string }) {
-  return (
-    <span
-      className="rounded-full px-2 py-0.5 text-[10.5px] font-medium whitespace-nowrap"
-      style={{ color, backgroundColor: `color-mix(in srgb, ${color} 16%, transparent)` }}
-    >
-      {label}
-    </span>
-  );
+  return <TintedPill testId="flag-pill" size="sm" color={color} label={label} />;
 }
 
 function FlagsCell({
