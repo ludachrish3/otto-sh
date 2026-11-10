@@ -212,6 +212,44 @@ moves back. Undo leans on this ordering (spec
 `docs/superpowers/specs/2026-11-07-event-undo-design.md`, section 4); what
 undo does for a user is in [the dashboard guide](../../cli/monitor/dashboard.md#undo-and-redo).
 
+**Event writes are serialised on the server, in both modes.** Every change
+or delete runs one sequence, `event_ops.mutate_under_lock`: under the
+collector's `mutation_lock`, read the event as it stands, resolve the new
+record (a PATCH's merge or `/end`'s "already ended" refusal happens here, on
+the latest state), write the store, then apply it to what the server serves.
+Live mode writes the database and then changes memory and publishes
+(`MetricCollector.mutate_event`). In review mode of a `.db` archive the
+archive is the truth, as the collector's store is in live mode: the sequence
+reads the event's row from the archive (`archive_edit.read_event`, off the
+loop), resolves against that row, and writes it back with the row as the
+expected state, then patches the served document. The document is a snapshot
+from load, which another writer of the same archive (a second review server,
+say) can have made stale; a stale revert this server refused with
+`409 changed` is one way that shows. So it is
+repaired to the archive's row wherever the row is read: on the read, and on
+every `409 changed`, through one helper (`_sync_document_event` in
+`otto/monitor/server.py`). A row that changed between the read and the write
+is refused with `409 changed` carrying the row, exactly as a stale revert is,
+with nothing written; a row gone from the archive answers `404`, and the
+document drops it. Review mode also has a collector (one with no targets),
+and its creates and reverts take the same lock. So two requests from one
+dashboard never merge onto a stale read, and never collide on the archive's
+own `.lock`. That `.lock` still refuses an archive that a live monitor is
+writing.
+
+The locked section is cancellation-safe, in both modes and for every
+mutation: `event_ops.run_locked_in_phases` (and `run_locked`, its one-phase
+form for a create or a revert) runs it as an inner task the caller awaits
+through `asyncio.shield`. A request cancelled before its write starts, while
+it waits for the lock or reads the archive row, writes nothing. One cancelled
+once its write has started keeps the lock until the write AND the change to
+what is served have both finished, and only then sees its `CancelledError`:
+a write in a worker thread finishes regardless, so stopping earlier would
+leave the store ahead of what is served, and the next PATCH would merge onto
+the stale copy. The caller, not the inner task, holds the lock, so it is
+released in the caller's own step: no other mutation can run and publish
+before the caller's response takes its stamp.
+
 **Streams end when the server drains.** An open `/api/stream` response
 never finishes on its own, and sse_starlette notices a shutdown only through
 uvicorn's signal handlers, which the server removes so that otto's lifecycle

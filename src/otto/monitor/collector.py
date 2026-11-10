@@ -269,7 +269,7 @@ class MetricCollector:
         # In-memory series/chart-map/event bookkeeping — see MetricStore.
         self._store = MetricStore()
         # The lock that serialises every event mutation (see mutate_event),
-        # with the loop it belongs to; read only through _mutation_lock().
+        # with the loop it belongs to; read only through mutation_lock().
         self._event_lock: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 
         # SSE fan-out to subscriber queues
@@ -808,7 +808,7 @@ class MetricCollector:
     # Events
     # ------------------------------------------------------------------
 
-    def _mutation_lock(self) -> asyncio.Lock:
+    def mutation_lock(self) -> asyncio.Lock:
         """Return the lock serialising event mutations, for the running loop.
 
         One per collector, as events change at human rate. But a suite keeps
@@ -822,6 +822,11 @@ class MetricCollector:
         mutation suspended across a loop switch. A stopped loop holding a
         half-finished mutation would break that, so keep event mutations
         awaited where they are started.
+
+        Public for one other holder: a review server (``otto monitor`` on an
+        archive builds this collector with no targets) takes it around every
+        event write it makes to the archive, so its writes share this one
+        serial order rather than a second lock.
         """
         loop = asyncio.get_running_loop()
         if self._event_lock is None or self._event_lock[0] is not loop:
@@ -854,50 +859,68 @@ class MetricCollector:
             end_timestamp=end_timestamp,
         )
         # Under the same lock as every other event mutation (mutate_event),
-        # and in the same order: DB write, then memory and publish together.
-        async with self._mutation_lock():
+        # and in the same order: DB write, then memory and publish together,
+        # never parted by a cancelled caller (event_ops.run_locked).
+
+        async def commit() -> MonitorEvent:
             rowid = await self._db.write_event(event) if self._db else 0
-            event = self._store.add_event(event, rowid)
+            added = self._store.add_event(event, rowid)
             self._publish(
-                {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
+                {"format": STREAM_FORMAT, "session": self.session_id, "events": [added.to_dict()]}
             )
-        return event
+            return added
+
+        return await event_ops.run_locked(self.mutation_lock(), commit)
 
     async def mutate_event(
         self, *, event_id: int, resolve: "Callable[[MonitorEvent], MonitorEvent | None]"
     ) -> "MonitorEvent | None":
         """Change or delete a stored event: the ONE entry point for both (#868).
 
-        Under one lock, so no two mutations interleave: read the current
-        event, ``resolve`` it (current, as a copy, to the new full record, or
-        ``None`` to delete it), await the DB write, then change memory and
-        publish in one synchronous step. ``resolve`` is where a caller's
-        merge lives (a PATCH's omitted fields, an end's "already ended"
-        refusal), so it always reads the latest state; an exception it raises
-        propagates, as does a DB failure, with memory unchanged. A resolved
-        label that differs from the current one must not be blank
-        (``event_ops.EventValidationError``, a ``ValueError``): this is the
-        one place a change is checked, so ``update_event`` and a revert's
+        The sequence is ``event_ops.mutate_under_lock``'s, under
+        :meth:`mutation_lock`: read the current event, ``resolve`` it
+        (current, as a copy, to the new full record, or ``None`` to delete
+        it), await the DB write, then change memory and publish in one
+        synchronous step. ``resolve`` is where a caller's merge lives (a
+        PATCH's omitted fields, an end's "already ended" refusal), so it
+        always reads the latest state; an exception it raises propagates, as
+        does a DB failure, with memory unchanged. A resolved label that
+        differs from the current one must not be blank
+        (``event_ops.EventValidationError``, a ``ValueError``), checked by
+        that sequence for every change, so ``update_event`` and a revert's
         update leg share it. A change that keeps the label as it is passes,
-        even for a legacy blank one.
+        even for a legacy blank one. The resolved record keeps the event's
+        own ``id`` and ``source``.
 
         The DB write comes first so that the memory change and its publish
         (which stamps ``observed_at``) are one step: no snapshot sees a change
         with an earlier stamp. Releasing the lock does not yield to the loop,
-        so the route's response stamp (server.py's ``_observed``) is still read
-        in that same step.
+        so the route's response stamp (server.py's ``_observed``) is read
+        before any other mutation runs. A caller cancelled during the DB write
+        still gets its memory change and publish before the lock is released
+        (``event_ops.run_locked_in_phases``), so memory never falls behind
+        the DB.
 
         Returns the stored event after the change, the removed event for a
         delete, or ``None`` if no event has this id.
         """
-        async with self._mutation_lock():
-            current = self._store.find_event(event_id)
-            if current is None:
-                return None
+
+        def resolve_pinned(current: MonitorEvent) -> "MonitorEvent | None":
             resolved = resolve(replace(current))
             if resolved is None:
-                if self._db:
+                return None
+            return replace(resolved, id=current.id, source=current.source)
+
+        async def write(_current: MonitorEvent, edited: "MonitorEvent | None") -> bool:
+            if self._db:
+                if edited is None:
                     await self._db.delete_event(event_id)
+                else:
+                    await self._db.update_event(edited)
+            return True
+
+        def apply(current: MonitorEvent, edited: "MonitorEvent | None") -> MonitorEvent:
+            if edited is None:
                 self._store.remove_event(event_id)
                 self._publish(
                     {
@@ -907,10 +930,6 @@ class MetricCollector:
                     }
                 )
                 return current
-            edited = replace(resolved, id=current.id, source=current.source)
-            event_ops.check_label_write(current.label, edited.label)
-            if self._db:
-                await self._db.update_event(edited)
             for name, value in event_ops.editable_fields(edited).items():
                 setattr(current, name, value)
             # No separate "updated" kind: the client upserts events by id, so
@@ -919,6 +938,17 @@ class MetricCollector:
                 {"format": STREAM_FORMAT, "session": self.session_id, "events": [current.to_dict()]}
             )
             return current
+
+        async def read() -> "MonitorEvent | None":
+            return self._store.find_event(event_id)
+
+        return await event_ops.mutate_under_lock(
+            self.mutation_lock(),
+            read=read,
+            resolve=resolve_pinned,
+            write=write,
+            apply=apply,
+        )
 
     async def delete_event(self, *, event_id: int) -> "MonitorEvent | None":
         """Remove an event by id. Returns the removed event, or ``None`` if no event has this id.
@@ -947,7 +977,8 @@ class MetricCollector:
         ``auto``.
         """
         event_ops.check_label_write(None, write.label)
-        async with self._mutation_lock():
+
+        async def prepare() -> MonitorEvent:
             present = self._store.find_event(event_id)
             if present is not None:
                 raise event_ops.EventChanged(EventRecord.model_validate(present.to_dict()))
@@ -956,7 +987,7 @@ class MetricCollector:
             # A reused --db holds earlier sessions' ids inside this range.
             if self._db and await self._db.event_id_taken(event_id):
                 raise event_ops.EventChanged(None)
-            event = MonitorEvent(
+            return MonitorEvent(
                 timestamp=write.timestamp,
                 label=write.label,
                 source=write.source,
@@ -965,13 +996,19 @@ class MetricCollector:
                 id=event_id,
                 end_timestamp=write.end_timestamp,
             )
+
+        async def commit(event: MonitorEvent) -> MonitorEvent:
             if self._db:
                 await self._db.restore_event_row(event)
             self._store.note_imported_event(event)
             self._publish(
                 {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
             )
-        return event
+            return event
+
+        return await event_ops.run_locked_in_phases(
+            self.mutation_lock(), prepare=prepare, commit=commit
+        )
 
     async def revert_event(
         self, *, event_id: int, expect: EventRecord | None, write: EventRecord | None

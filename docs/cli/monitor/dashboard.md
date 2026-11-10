@@ -236,6 +236,15 @@ event?") and removes it only when you press **Delete** in the dialog.
 and leaves the editor open. Every change made here can be taken back; see
 [Undo and redo](#undo-and-redo).
 
+When you review a `.db` archive, an edit, **End now** or a delete applies to
+the event as the archive holds it, not as this tab loaded it. The colour and
+dash keep what another tab, or another `otto monitor` on the same archive,
+saved meanwhile unless you change them. The editor always sends the label,
+start and end as it shows them, so saving from a tab opened before another
+writer's change puts its values for those back. If the event changes between
+the server reading it and writing your change, nothing is written and the
+dashboard warns that the event changed. Reload to see it as it now stands.
+
 **Crowded labels.** Event labels stack in up to three rows at the top of
 each chart. Where more events crowd one spot, the earliest ones keep their
 labels and the last visible label ends in a count such as **(+2)**. Click

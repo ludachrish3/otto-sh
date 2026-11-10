@@ -211,6 +211,7 @@ _SHORT_TYPE_ALIASES = {
     # the private _frozen_importlib, so the stdlib inventory only has it here.
     "ModuleSpec": "importlib.machinery.ModuleSpec",
     "asyncio.queues.Queue": "asyncio.Queue",
+    "asyncio.locks.Lock": "asyncio.Lock",
     # A loop's class is documented at its re-export; autodoc names the defining module.
     "asyncio.events.AbstractEventLoop": "asyncio.AbstractEventLoop",
     # The C-accelerated Task's __module__ is the private _asyncio; same
