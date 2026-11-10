@@ -34,6 +34,7 @@ from otto.labs.loader import Lab
 from otto.link.derive import addressing_from_dict, raw_endpoint_host_ids, resolve_declared_links
 from otto.logger.mode import LogMode
 from otto.result import Result
+from scripts.render_chaos_guest_seed import CHAOS_GUEST
 from tests._fixtures._host_pool import DOCKER_HOST, UNIX_POOL, lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
 from tests._fixtures.labdata import (
@@ -280,6 +281,29 @@ point of naming it, the netdev its management address lives on."""
 BUSYBOX_TAP_NETDEV = f"bbeth-{BUSYBOX_CHAOS_ELEMENT.removeprefix('bb')}"
 """test1's end of the same wire. Derived from the element rather than typed,
 so the anchor and its TAP cannot drift apart."""
+
+CHAOS_GUEST_ELEMENT = CHAOS_GUEST.element
+"""The Ubuntu 24.04 QEMU reboot guest's element name. Every constant in this
+block is read off ``CHAOS_GUEST`` (``scripts/render_chaos_guest_seed.py``), the
+one definition the provisioner also renders from; none is a second spelling."""
+
+CHAOS_GUEST_HOST_ID = make_host_id(CHAOS_GUEST_ELEMENT, "qemu", None)
+"""The guest's HOST ID (``element-board``), as link endpoints and ``--from`` name
+it. ``test_chaos_guest_lab_entries`` asserts it equals ``CHAOS_GUEST.host_id``."""
+
+CHAOS_GUEST_HOP = CHAOS_GUEST.hop
+"""The lab VM the guest is reachable through (its QEMU host)."""
+
+CHAOS_LAB = CHAOS_GUEST.lab
+"""The lab holding exactly the hop and the guest, so no sweep is aimed at
+``embedded`` (which holds the hop but not the guest)."""
+
+CHAOS_GUEST_DATA_NETDEV = CHAOS_GUEST.data.netdev
+"""The guest's data-plane netdev: the one end of the declared link. The
+management netdev is never impaired."""
+
+CHAOS_HOP_DATA_TAP = CHAOS_GUEST.data.tap
+"""The hop's TAP device for the data plane: the declared link's other end."""
 
 
 def busybox_link_id() -> str:

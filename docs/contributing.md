@@ -22,11 +22,15 @@ network:
 | `test1`  | `10.10.200.11`  | no          | SSH + SCP test host; console server for `test2` and `bb1350`; hop to the BusyBox guests |
 | `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host, with a serial console served by `test1` |
 | `test3`  | `10.10.200.13`  | no          | Docker-capable test host                                  |
-| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (7 QEMU instances) + SSH hop to them |
+| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (7 QEMU instances) + the chaos reboot guest + SSH hop to them |
 
 The `zephyr` VM — otto knows it as the host `test4` — runs **seven** Zephyr
 QEMU instances concurrently, spanning three Zephyr versions and two
 transports. All of them are reached through its SSH hop (`10.10.200.14`).
+
+It also hosts the Ubuntu chaos reboot guest, an eighth QEMU instance that the
+reboot chaos reboots so no lab VM has to be: see
+{doc}`architecture/subsystems/chaos-guest`.
 
 **Four x86 instances are networked.** Each lives on its own QEMU-internal
 `/30` so the host VM's routing table holds a distinct route per TAP (a shared
@@ -1378,7 +1382,9 @@ the docker parents, a half-built coverage product on this machine, and a
 console a test left logged in. The bed reap (`scripts/bed_reap.py`) removes
 all of it through otto's own removers, judged by the hygiene oracle's probes
 (`tests/_fixtures/bed_hygiene.py`), under the lease. It never names a host:
-the cell's lab file says what the bed is.
+the cell's lab file says what the bed is. It reaches the chaos guest through
+its hop and waits for the guest to boot first
+({doc}`architecture/subsystems/chaos-guest`).
 
 Every lane that runs a suite on the bed runs the quick reap right after it
 takes the lease and again before it releases it: whatever a predecessor left

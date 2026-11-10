@@ -86,7 +86,7 @@ def test_otto_app_completes_the_root_lab_option_with_the_labs(tmp_path: Path) ->
     exit_code, exception, output = _fresh(tmp_path, _COMPLETE_LAB)
     assert [exit_code, exception] == [0, "None"]
     assert isinstance(output, str)
-    assert output.split() == ["busybox", "embedded", "unix"]
+    assert output.split() == ["busybox", "chaos", "embedded", "unix"]
 
 
 def test_selected_tests_composes_when_called_with_no_run_installed(tmp_path: Path) -> None:

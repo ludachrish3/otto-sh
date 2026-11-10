@@ -15,8 +15,9 @@ there was nothing:
 0. Under the lease, after a drain: the lease is acquired for *PID*'s run
    (re-entrant inside a lane's ``make``). A lease another live run holds is a
    refusal before any probe; so are this run's own survivors past the drain.
-1. The unix bed hosts (the loaded hosts with ``os_type`` unix and no hop),
-   each over a fresh connection, snapshotted by the hygiene oracle: the
+1. The unix bed hosts, direct or behind a hop (the chaos guest, whose sshd is
+   awaited first: a guest interrupted mid-reboot is booting, not gone), each
+   over a fresh connection, snapshotted by the hygiene oracle: the
    otto-tunnel daemons it lists (by id), otto-impair timers, otto-placed
    qdiscs, nc listeners and ``/tmp/otto*`` staging entries are removed through
    otto's own removers.
@@ -59,7 +60,13 @@ from scripts.bed_lease import (  # noqa: E402
     root_from,
     seconds_from_env,
 )
-from scripts.lab_health import direct_ssh_host_ids  # noqa: E402
+from scripts.lab_health import (  # noqa: E402
+    _hop_index,
+    _load_hosts,
+    direct_ssh_host_ids,
+    hopped_ssh_host_ids,
+    wait_for_hopped_ssh,
+)
 
 if TYPE_CHECKING:
     from tests._fixtures.bed_hygiene import HygieneSnapshot
@@ -177,8 +184,9 @@ async def _checked(host: Any, command: str) -> None:
 
 
 def unix_bed_hosts(lab: Any, lab_file: Path) -> list[Any]:
-    """Return the cell's hosts reached directly over SSH, by ``lab_health.py``'s one rule."""
-    return [lab.hosts[host_id] for host_id in direct_ssh_host_ids(lab_file) if host_id in lab.hosts]
+    """Return the cell's SSH hosts, direct then hopped, by ``lab_health.py``'s two rules."""
+    ids = [*direct_ssh_host_ids(lab_file), *hopped_ssh_host_ids(lab_file)]
+    return [lab.hosts[host_id] for host_id in ids if host_id in lab.hosts]
 
 
 @dataclass
@@ -198,6 +206,21 @@ class Outcome:
     def clean(self) -> bool:
         """Nothing left, every host reached, every step done."""
         return not (self.unreachable or self.failures or any(self.residual.values()))
+
+
+def _await_hopped_guests(lab_file: Path, hosts: list[Any], out: Outcome) -> list[Any]:
+    """Wait for each hopped host's sshd; the hosts to reap (the rest go to ``out.unreachable``)."""
+    entries = _hop_index(_load_hosts(lab_file))
+    hopped = set(hopped_ssh_host_ids(lab_file))
+    reachable: list[Any] = []
+    for host in hosts:
+        if host.id in hopped:
+            result = wait_for_hopped_ssh(entries[host.id], entries)
+            if result["status"] != "up":
+                out.unreachable.append(f"{host.id}: {result['status']}")
+                continue
+        reachable.append(host)
+    return reachable
 
 
 async def _reap_host_state(lab: Any, host: Any, snapshot: "HygieneSnapshot", out: Outcome) -> None:
@@ -346,7 +369,7 @@ def reap(cell: Cell, pid: int, *, full: bool = False, restart_qemu: bool = False
         return EXIT_DIRTY
     lab = bed_lease.load_labs(cell.lab_file, cell.labs)
     out = Outcome()
-    hosts = unix_bed_hosts(lab, cell.lab_file)
+    hosts = _await_hopped_guests(cell.lab_file, unix_bed_hosts(lab, cell.lab_file), out)
 
     async def _run() -> None:
         snapshots = await _reap_unix(lab, hosts, out)

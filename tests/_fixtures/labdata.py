@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import ConsoleOptions
@@ -21,6 +22,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.sources import PendingLabSource
 from otto.models.lab import HOISTED_HOST_KEYS
 from otto.registry import FrozenMap
+from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 _LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
 
@@ -36,6 +38,40 @@ a v1 fixture meant at the LAB level. See :func:`lab_json_v2`.
 def lab_data_dir() -> Path:
     """Directory holding the per-tech lab-data trees (``tech1``/``tech2``)."""
     return _LAB_DATA_DIR
+
+
+def register_zephyr_inline_frame() -> None:
+    """Register the frame ``tech1``'s ``zephyr27_fat`` declares (``zephyr-inline``).
+
+    ``command_frame: "zephyr-inline"`` lives in the shared ``custom_hosts``
+    package, which a real project pulls in through ``settings.toml``'s ``init``.
+    A suite that loads the ``embedded`` fixture lab directly (no project) never
+    imports it, so the lab would fail to build. Registered explicitly rather than
+    by importing ``custom_hosts`` for its side effect: the root conftest's
+    registry isolation can leave that package in ``sys.modules`` with its entry
+    already unregistered, and a second import would then be a no-op.
+    """
+    from otto.host.command_frame import FRAME_CLASSES, register_command_frame
+
+    ensure_custom_hosts_on_path()
+    from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
+
+    if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
+        register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
+
+
+def dangling_ends(lab) -> list[str]:
+    """``link: host`` for every static-link endpoint the lab did not load.
+
+    The implicit hop edges end on ``local``, which is a builtin and never a
+    lab host, so it is not a dangling end.
+    """
+    return [
+        f"{link.id}: {end.host}"
+        for link in lab.static_links()
+        for end in (link.a, link.b)
+        if end.host != BUILTIN_LOCAL_HOST_ID and end.host not in lab.hosts
+    ]
 
 
 def lab_data_path(tech: str = "tech1") -> Path:

@@ -16,9 +16,8 @@ element→host flattening lost or invented a field.
 import pytest
 
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.labs.loader import load_lab
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import lab_data_dir, register_zephyr_inline_frame
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
@@ -26,21 +25,8 @@ ensure_custom_hosts_on_path()
 
 @pytest.fixture(autouse=True)
 def _zephyr_inline_frame() -> None:
-    """Register the frame ``tech1``'s ``zephyr27_fat`` declares.
-
-    ``command_frame: "zephyr-inline"`` lives in the shared ``custom_hosts``
-    package, which a real project pulls in through ``settings.toml``'s ``init``.
-    This suite loads the fixture lab directly (no project), so nothing imports it
-    — and the ``embedded`` lab would fail to build. Registered explicitly
-    rather than by importing ``custom_hosts`` for its side effect: the root
-    conftest's registry isolation can leave that package in ``sys.modules``
-    with its entry already unregistered, and a second import would then be a
-    no-op that registers nothing.
-    """
-    from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
-
-    if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
-        register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
+    """``embedded`` declares ``zephyr-inline``; see :func:`register_zephyr_inline_frame`."""
+    register_zephyr_inline_frame()
 
 
 # (tech, lab) -> the identity tuples recorded at the v1 baseline.
@@ -68,6 +54,10 @@ _PINNED: dict[tuple[str, str], list[tuple[str, str, int | None]]] = {
         ("zephyr44-lfs", "zephyr44_lfs", None),
         ("zephyr44-llext", "zephyr44_llext", None),
     ],
+    ("tech1", "chaos"): [
+        ("test4", "test4", None),
+        ("ubu2404-qemu", "ubu2404", None),
+    ],
     ("tech2", "unix_alt"): [
         ("alt1", "alt1", None),
         ("alt2", "alt2", None),
@@ -91,6 +81,7 @@ _PINNED_RESOURCES: dict[tuple[str, str], set[str]] = {
         "zephyr44_lfs",
         "zephyr44_llext",
     },
+    ("tech1", "chaos"): {"test4", "ubu2404"},
     ("tech2", "unix_alt"): {"alt1", "alt2", "alt3"},
 }
 
@@ -111,6 +102,7 @@ _PINNED_ELEMENT_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
         "bb1350-qemu": set(),
         "test1": {"test1-chassis"},
     },
+    ("tech1", "chaos"): {"test4": set(), "ubu2404-qemu": set()},
 }
 _PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
     ("tech1", "unix"): {"test1": set(), "test2": {"test2-console"}, "test3": set()},
@@ -122,6 +114,7 @@ _PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
         "bb1350-qemu": set(),
         "test1": set(),
     },
+    ("tech1", "chaos"): {"test4": set(), "ubu2404-qemu": set()},
 }
 
 

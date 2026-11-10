@@ -633,8 +633,10 @@ Vagrant.configure("2") do |config|
         # instances: four qemu_x86 at 256 MB (v3_7 fat/lfs, v2_7 fat, v4_4 lfs)
         # plus three tiny mps2_an385 ARM serial instances (cov, cov44,
         # no_fs_arm) running on the machine's ~16 MB default — ~1.5-2 GB
-        # resident all told. 4 GB / 4 vCPU comfortably covers both the
-        # sequential build peak and the running instances. Specified AFTER
+        # resident all told. The chaos reboot guest (provision_chaos_guest)
+        # adds one 1024 MB QEMU on top: 2.6 GB was available before it,
+        # about 1 GB with it running. 4 GB / 4 vCPU comfortably covers both
+        # the sequential build peak and the running instances. Specified AFTER
         # provision_test_vm so the later provider block wins.
         zephyr.vm.provider "virtualbox" do |vb|
             vb.memory = 4096
@@ -1472,6 +1474,8 @@ EOF
             systemctl daemon-reload
             systemctl enable tftpd-hpa
         SHELL
+
+        provision_chaos_guest(zephyr)
     end
 
     # Lightweight playground VM for testing otto as a *user* would
@@ -2181,6 +2185,113 @@ EOF
                     systemctl restart busybox-qemu-${entry}.service
                 fi
             done
+        SHELL
+    end
+
+    # The Ubuntu 24.04 chaos reboot guest behind test4 (#985): a QEMU guest
+    # whose reboot cannot strand a hypervisor VM. Everything the guest IS (its
+    # MACs, addresses, TAPs, QEMU command line, firmware, seed) is printed by
+    # scripts/render_chaos_guest_seed.py; this shell only sequences the steps
+    # and restates the literals a shell provisioner cannot read off the
+    # renderer: the three it needs before any renderer call (the unit name,
+    # the directory, the overlay size) plus the wrapper path and the overlay
+    # and iso file names, each pinned against CHAOS_GUEST by
+    # tests/unit/scripts/test_render_chaos_guest_seed.py. Idempotent: a re-run
+    # repairs a crash between any two steps and restarts the guest only when
+    # the wrapper, the unit or the seed changed.
+    def provision_chaos_guest(vm)
+        vm.vm.provision "shell", name: "chaos-guest", keep_color: true, inline: <<-SHELL
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            arch=$(dpkg --print-architecture)
+            case "$arch" in
+                arm64) qemu_pkg=qemu-system-arm ;;
+                *) qemu_pkg=qemu-system-x86 ;;
+            esac
+            apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+                install cloud-image-utils qemu-utils "$qemu_pkg"
+
+            # The guest's console writes to the journal: cap it.
+            conf=/etc/systemd/journald.conf.d/otto-chaos.conf
+            want="[Journal]
+SystemMaxUse=200M"
+            if [ "$(cat "$conf" 2>/dev/null)" != "$want" ]; then
+                mkdir -p /etc/systemd/journald.conf.d
+                echo "$want" > "$conf"
+                systemctl restart systemd-journald
+            fi
+            journalctl --vacuum-size=200M
+
+            D=/home/vagrant/chaos-guest
+            U=chaos-qemu-ubu2404.service
+            install -d -o vagrant -g vagrant "$D"
+            set -- $(python3 /vagrant/scripts/render_chaos_guest_seed.py --image-pin "$arch")
+            url=$1; sha=$2; name=$3
+
+            # Disk admission, before anything is downloaded or created.
+            if [ ! -e "$D/$name" ] || [ ! -e "$D/ubu2404.qcow2" ]; then
+                avail=$(df --output=avail -m /home/vagrant | tail -1)
+                if [ "$avail" -lt 3072 ]; then
+                    echo "chaos-guest: need 3072 MB free under /home/vagrant, have ${avail} MB"
+                    exit 1
+                fi
+            fi
+
+            if [ ! -e "$D/$name" ]; then
+                curl -fL -o "$D/$name.part" "$url"
+                echo "$sha  $D/$name.part" | sha256sum -c -
+                mv "$D/$name.part" "$D/$name"
+            else
+                echo "$sha  $D/$name" | sha256sum -c - || exit 1
+            fi
+
+            # Seed, staged. A changed seed is the only way a changed identity
+            # reaches the guest: stop it, drop the overlay and iso, move the
+            # new seed in, rebuild the iso. A crash between any two of these
+            # leaves a state the next run repairs.
+            rm -rf "$D/seed.new"
+            sudo -u vagrant python3 /vagrant/scripts/render_chaos_guest_seed.py --dest "$D/seed.new"
+            reseed=0
+            if [ ! -d "$D/seed" ] || ! diff -rq "$D/seed.new" "$D/seed" >/dev/null; then
+                reseed=1
+            fi
+            if [ "$reseed" = 1 ]; then
+                systemctl stop "$U" 2>/dev/null || true
+                rm -f "$D/ubu2404.qcow2" "$D/seed.iso"
+                rm -rf "$D/seed"
+                mv "$D/seed.new" "$D/seed"
+            else
+                rm -rf "$D/seed.new"
+            fi
+            if [ ! -e "$D/seed.iso" ]; then
+                cloud-localds -N "$D/seed/network-config" "$D/seed.iso" \
+                    "$D/seed/user-data" "$D/seed/meta-data"
+            fi
+
+            if [ ! -e "$D/ubu2404.qcow2" ]; then
+                qemu-img create -f qcow2 -b "$D/$name" -F qcow2 "$D/ubu2404.qcow2" 4G
+            fi
+            chown vagrant:vagrant "$D"/*
+
+            python3 /vagrant/scripts/render_chaos_guest_seed.py --wrapper "$arch" > "$D/wrapper.new"
+            python3 /vagrant/scripts/render_chaos_guest_seed.py --unit > "$D/unit.new"
+            changed=0
+            cmp -s "$D/wrapper.new" /home/vagrant/run-chaos-qemu-ubu2404.sh || {
+                install -m 0755 -o vagrant -g vagrant "$D/wrapper.new" \
+                    /home/vagrant/run-chaos-qemu-ubu2404.sh
+                changed=1
+            }
+            cmp -s "$D/unit.new" "/etc/systemd/system/$U" || {
+                install -m 0644 "$D/unit.new" "/etc/systemd/system/$U"
+                changed=1
+            }
+            rm -f "$D/wrapper.new" "$D/unit.new"
+
+            systemctl daemon-reload
+            systemctl enable "$U"
+            if [ "$reseed" = 1 ] || [ "$changed" = 1 ] || ! systemctl is-active --quiet "$U"; then
+                systemctl restart "$U"
+            fi
         SHELL
     end
 

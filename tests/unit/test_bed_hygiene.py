@@ -534,3 +534,9 @@ def test_probe_cannot_match_its_own_wrapper_shell():
     exists for this, and widening the flag cluster must not have bypassed it.
     """
     assert not _probe_regex().search(_NC_LISTENER_PROBE)
+
+
+def test_the_staging_probe_lists_the_chaos_hold_file():
+    from tests._fixtures import bed_hygiene
+
+    assert "/run/chaos/shutdown_hold" in bed_hygiene._STAGING_PROBE

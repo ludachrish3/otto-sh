@@ -68,6 +68,7 @@ from tests.conformance._bed import (
     BED_TECH,
     BED_UNIX,
     BED_ZEPHYR,
+    LABS_NOT_CROSSED,
     bed_kind,
     bed_scratch_dir,
     bed_space,
@@ -214,19 +215,22 @@ def test_every_bed_lab_contributes_at_least_one_host():
 
 
 def test_bed_labs_names_every_lab_the_bed_data_declares():
-    """A lab added to the bed data and not crossed here is coverage nobody asked for.
+    """A lab added to the bed data and placed nowhere here is coverage nobody asked for.
 
     Reads the memberships out of the lab file rather than restating them, so
     the day a new lab appears this fails and names it instead of the venue
-    quietly continuing to cross the old three.
+    quietly continuing to cross the old three. Every declared lab is either
+    crossed (``BED_LABS``) or excluded by name (``LABS_NOT_CROSSED``), never
+    both and never neither.
     """
     # ``with_labs``: since v2 the memberships live on the ELEMENT as patterns;
     # this resolves them back against the declared lab names.
     hosts = flat_hosts(BED_TECH, with_labs=True)
     declared = {lab for host in hosts for lab in (host.get("labs") or [])}
-    assert declared == set(BED_LABS), (
+    assert LABS_NOT_CROSSED.isdisjoint(BED_LABS), sorted(LABS_NOT_CROSSED & set(BED_LABS))
+    assert declared == set(BED_LABS) | LABS_NOT_CROSSED, (
         f"{BED_TECH} lab data declares labs {sorted(declared)} but the bed venue "
-        f"crosses {sorted(BED_LABS)}"
+        f"crosses {sorted(BED_LABS)} and excludes {sorted(LABS_NOT_CROSSED)}"
     )
 
 

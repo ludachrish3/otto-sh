@@ -39,9 +39,11 @@ _EMBEDDED_TECHS = ("tech1",)
 _BUSYBOX_TECHS = ("tech1",)
 _BUSYBOX_GUESTS = ("bb1161", "bb1211", "bb1281", "bb1310", "bb1350")
 _BUSYBOX_HOP = "test1"
+_CHAOS_GUESTS = ("ubu2404",)
+_CHAOS_HOP = "test4"
 
 
-def _is_bed_guest(host: dict) -> bool:
+def _is_busybox_guest(host: dict) -> bool:
     """A BusyBox bed guest: Unix-family, but reachable only through its hop.
 
     ``labs`` is the element's resolved membership, stamped back onto the flat
@@ -49,6 +51,16 @@ def _is_bed_guest(host: dict) -> bool:
     a host field at all.
     """
     return "busybox" in host.get("labs", [])
+
+
+def _is_chaos_guest(host: dict) -> bool:
+    """The chaos reboot guest: a QEMU Ubuntu guest reachable only through test4."""
+    return "chaos" in host.get("labs", []) and "hop" in host
+
+
+def _is_bed_guest(host: dict) -> bool:
+    """The carve-out: a Unix host that may carry a hop (BusyBox or chaos guest)."""
+    return _is_busybox_guest(host) or "chaos" in host.get("labs", [])
 
 
 @pytest.mark.parametrize("tech", _TECHS)
@@ -62,8 +74,9 @@ def test_no_unix_host_defines_a_hop(tech: str) -> None:
     assert not offenders, (
         f"{tech}: Unix VMs must be directly reachable (no hop) — "
         f"hop functionality is covered by test_hop_integration.py, and the one "
-        f"legitimate Unix exception (the BusyBox bed guests) is pinned by "
-        f"test_busybox_bed_guests_hop_through_test1. Offenders: {offenders}"
+        f"legitimate Unix exceptions (the BusyBox bed guests and the chaos guest) "
+        f"are pinned by test_busybox_bed_guests_hop_through_test1 and "
+        f"test_the_chaos_guest_hops_through_test4. Offenders: {offenders}"
     )
 
 
@@ -72,13 +85,23 @@ def test_busybox_bed_guests_hop_through_test1(tech: str) -> None:
     """The carve-out above is only as honest as this pin: the Unix hosts that
     hop must be exactly the five bed guests, each through test1."""
     hosts = flat_hosts(tech, with_labs=True)
-    guests = [h for h in hosts if _is_bed_guest(h) and "hop" in h]
+    guests = [h for h in hosts if _is_busybox_guest(h) and "hop" in h]
     expected = _BUSYBOX_GUESTS if tech in _BUSYBOX_TECHS else ()
     assert tuple(h["element"] for h in guests) == expected, (
         f"{tech}: the hop-fronted BusyBox bed roster drifted — a guest lost its "
         f"hop, was renamed, or a new Unix host claimed 'busybox' lab membership"
     )
     assert {h["hop"] for h in guests} == ({_BUSYBOX_HOP} if expected else set())
+
+
+@pytest.mark.parametrize("tech", _TECHS)
+def test_the_chaos_guest_hops_through_test4(tech: str) -> None:
+    """The second carve-out: exactly the chaos guest hops, through test4."""
+    hosts = flat_hosts(tech, with_labs=True)
+    guests = [h for h in hosts if _is_chaos_guest(h)]
+    expected = _CHAOS_GUESTS if tech in _BUSYBOX_TECHS else ()
+    assert tuple(h["element"] for h in guests) == expected
+    assert {h["hop"] for h in guests} == ({_CHAOS_HOP} if expected else set())
 
 
 @pytest.mark.parametrize("tech", _TECHS)

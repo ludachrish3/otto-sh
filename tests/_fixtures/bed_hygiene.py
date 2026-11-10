@@ -75,7 +75,7 @@ _IMPAIRER = NetEmImpairer()
 # still have left on the bed. ``tests/unit/test_bed_hygiene.py`` carries all
 # three eras as rows.
 _NC_LISTENER_PROBE = f'pgrep -af "{argv_pattern("nc")} -[A-Za-z]*l[A-Za-z]*( |$)" || true'
-_STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* 2>/dev/null || true"
+_STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* /run/chaos/shutdown_hold 2>/dev/null || true"
 _HISTORY_PROBE = "cat ~/.bash_history 2>/dev/null | sha256sum || true"
 # Docker accumulation probes (Plan 5). `-a` deliberately: exited containers
 # are accumulation too (the pile-up failure mode). Tolerant of docker-less

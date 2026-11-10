@@ -64,7 +64,7 @@ def _route_probes(monkeypatch):
     recording which host each probe was asked to handle."""
     hosts = _load_hosts(DEFAULT_HOSTS)
     hops = _hop_index(hosts)
-    seen: dict[str, list[str]] = {"unix": [], "embedded": []}
+    seen: dict[str, list[str]] = {"unix": [], "embedded": [], "hopped": []}
 
     def fake_unix(host):
         seen["unix"].append(host["element"])
@@ -74,8 +74,13 @@ def _route_probes(monkeypatch):
         seen["embedded"].append(host["element"])
         return {"ok": True, "status": "up", "info": ""}
 
+    def fake_hopped(host, hops):
+        seen["hopped"].append(host["element"])
+        return {"ok": True, "status": "up", "info": ""}
+
     monkeypatch.setattr(lab_health, "_check_unix", fake_unix)
     monkeypatch.setattr(lab_health, "_check_embedded", fake_embedded)
+    monkeypatch.setattr(lab_health, "_check_hopped_unix", fake_hopped)
     monkeypatch.setattr(
         lab_health,
         "_check_console",
@@ -123,7 +128,11 @@ def test_unix_hosts_route_to_ssh_probe(monkeypatch):
     assert ssh_hosts <= set(seen["unix"])
     assert not (ssh_hosts & set(seen["embedded"]))
 
-    hop_fronted = {h["element"] for h in hosts if "creds" in h and h.get("hop")}
+    hop_fronted = {
+        h["element"]
+        for h in hosts
+        if "creds" in h and h.get("hop") and not lab_health._is_hopped_unix(h)
+    }
     assert hop_fronted, (
         "fixture sanity: expected cred-carrying hop-fronted guests (the BusyBox "
         "bed) in the lab data — with none, the routing half this test guards is "
@@ -1307,6 +1316,11 @@ def test_a_console_capable_entry_gets_its_own_row_and_a_console_row(monkeypatch,
         return {"ok": True, "status": "AT-LOGIN", "info": "login prompt"}
 
     monkeypatch.setattr(lab_health, "_check_console", fake_console)
+    monkeypatch.setattr(
+        lab_health,
+        "_check_hopped_unix",
+        lambda host, hops: {"ok": True, "status": "up", "info": ""},
+    )
     hosts = _load_hosts(DEFAULT_HOSTS)
     assert _print_report(hosts, _hop_index(hosts)) is True
     rows = _rows(capsys.readouterr().out, element)
@@ -1454,3 +1468,101 @@ def test_direct_ssh_host_ids_are_the_unix_vms_of_the_lab_file():
 
     ids = lab_health.direct_ssh_host_ids(lab_data_path("tech1"))
     assert ids == ["test1", "test2", "test3", "test4"], ids
+
+
+# ---------------------------------------------------------------------------
+# The chaos guest: a Unix host behind a hop, probed by its sshd banner
+# ---------------------------------------------------------------------------
+
+_GUEST = {
+    "element": "ubu2404",
+    "os_type": "unix",
+    "ip": "203.0.113.1",
+    "hop": "test4",
+    "valid_terms": ["ssh"],
+    "creds": [{"login": "vagrant", "password": "vagrant"}],
+}
+_TEST4 = {
+    "element": "test4",
+    "ip": "10.10.200.14",
+    "creds": [{"login": "vagrant", "password": "vagrant"}],
+}
+
+
+def test_restart_units_include_the_chaos_guest(monkeypatch):
+    captured = {}
+
+    def fake_run_ssh(ip, user, password, cmd, timeout=25.0):
+        captured["cmd"] = cmd
+        return 0, "", ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake_run_ssh)
+    hosts = [_TEST4, _GUEST]
+    rc = lab_health._restart_qemu(hosts, lab_health._hop_index(hosts))
+    assert rc == 0
+    assert "'chaos-qemu-*.service'" in captured["cmd"]
+
+
+def test_only_a_ssh_first_hopped_unix_host_is_probed_by_banner():
+    bb1350 = {**_GUEST, "element": "bb1350", "valid_terms": ["telnet", "ssh", "console"]}
+    bb1161 = {**_GUEST, "element": "bb1161", "valid_terms": ["telnet"]}
+    assert lab_health._is_hopped_unix(_GUEST)
+    assert not lab_health._is_hopped_unix(bb1350)
+    assert not lab_health._is_hopped_unix(bb1161)
+    assert not lab_health._is_ssh_host(_GUEST)
+
+
+def test_a_hopped_unix_host_is_probed_by_ssh_banner_through_its_hop(monkeypatch):
+    calls = []
+
+    def fake_run_ssh(ip, user, password, cmd, timeout=25.0):
+        calls.append((ip, cmd))
+        return 0, "OK SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\n", ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake_run_ssh)
+    res = lab_health._check_hopped_unix(_GUEST, {"test4": _TEST4})
+    assert res["status"] == "up"
+    assert calls[0][0] == "10.10.200.14"
+    assert "203.0.113.1 22" in calls[0][1]
+
+
+@pytest.mark.parametrize(
+    ("out", "status"), [("NOBANNER\n", "WEDGED"), ("CONNFAIL refused\n", "DOWN")]
+)
+def test_a_hopped_unix_probe_maps_the_probe_words_to_statuses(monkeypatch, out, status):
+    monkeypatch.setattr(lab_health, "_run_ssh", lambda *a, **k: (0, out.strip(), ""))
+    res = lab_health._check_hopped_unix(_GUEST, {"test4": _TEST4})
+    assert res["status"] == status
+    assert not res["ok"]
+
+
+def test_a_hopped_unix_probe_without_its_hop_is_no_hop():
+    assert lab_health._check_hopped_unix(_GUEST, {})["status"] == "NO-HOP"
+
+
+def test_the_tech1_lab_file_routes_the_chaos_guest_and_only_it_to_the_hopped_probe():
+    hosts = lab_health._load_hosts(lab_health.DEFAULT_HOSTS)
+    assert [h["element"] for h in hosts if lab_health._is_hopped_unix(h)] == ["ubu2404"]
+
+
+def test_hopped_ssh_host_ids_names_the_chaos_guest_and_nothing_else():
+    assert lab_health.hopped_ssh_host_ids(lab_health.DEFAULT_HOSTS) == ["ubu2404-qemu"]
+
+
+def test_after_a_restart_a_hopped_unix_row_is_polled_until_up(monkeypatch):
+    statuses = iter(["DOWN", "DOWN", "up"])
+    polled = []
+
+    def fake_check(host, hops):
+        polled.append(host["element"])
+        status = next(statuses)
+        return {"ok": status == "up", "status": status, "info": ""}
+
+    monkeypatch.setattr(lab_health, "_check_hopped_unix", fake_check)
+    monkeypatch.setattr(lab_health, "_restart_qemu", lambda hosts, hops: 0)
+    monkeypatch.setattr(lab_health, "_print_report", lambda hosts, hops, logout=False: True)
+    monkeypatch.setattr(lab_health, "_RESTART_SETTLE_S", 0)
+    monkeypatch.setattr(lab_health, "_GUEST_POLL_S", 0.01)
+    monkeypatch.setattr(lab_health.shutil, "which", lambda name: "/usr/bin/sshpass")
+    assert lab_health.main(["--restart-qemu"]) == 0
+    assert polled == ["ubu2404"] * 3

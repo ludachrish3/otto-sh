@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from otto.host.builtin_hosts import builtin_host_ids
-from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -16,6 +15,7 @@ from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import load_lab
 from otto.logger.mode import LogMode
 from tests._fixtures.gs_example import import_gs_example
+from tests._fixtures.labdata import register_zephyr_inline_frame
 from tests._fixtures.paths import CHECKOUT_ROOT, ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
@@ -46,11 +46,8 @@ _LINKED_LABS = [
 
 @pytest.fixture(autouse=True)
 def _zephyr_inline_frame() -> None:
-    """Register the frame ``tech1``'s zephyr hosts declare (see test_pinned_identities)."""
-    from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
-
-    if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
-        register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
+    """Register the frame ``tech1``'s zephyr hosts declare."""
+    register_zephyr_inline_frame()
 
 
 def _composed_ids(path: Path) -> list[str]:

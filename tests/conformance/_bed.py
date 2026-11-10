@@ -86,6 +86,15 @@ BED_TECH = "tech1"
 # sampler to spend its budget on and no new coverage at all.
 BED_LABS: list[str] = ["unix", "busybox", "embedded"]
 
+# The labs the bed data declares that this venue deliberately does NOT cross.
+# `chaos` is the reboot lane's lab: test4 and the Ubuntu 24.04 QEMU guest the
+# chaos tests reset and hold mid-shutdown (tests/e2e/chaos/_bed.py). Its guest
+# is unleased and pool-free by design, and crossing it here would put a second
+# venue through test4's hop onto a host whose whole purpose is to go down.
+# `test_bed_labs_names_every_lab_the_bed_data_declares` holds every declared
+# lab to one list or the other, so a new lab still has to be placed by hand.
+LABS_NOT_CROSSED: frozenset[str] = frozenset({"chaos"})
+
 BED_UNIX = "bed-unix"
 BED_BUSYBOX = "bed-busybox"
 BED_ZEPHYR = "bed-zephyr"

@@ -18,6 +18,10 @@
                 "zephyr37_llext",
                 "zephyr44_llext"
             ]
+        },
+        "chaos": {
+            "resources": ["test4", "ubu2404"],
+            "metadata": {"description": "reboot chaos: test4 and its QEMU Ubuntu guest"}
         }
     },
     "elements": [
@@ -101,7 +105,7 @@
         },
         {
             "name": "test4",
-            "labs": ["embedded"],
+            "labs": ["embedded", "chaos"],
             "hosts": [
                 {
                     "ip": "10.10.200.14",
@@ -114,7 +118,8 @@
                         {"login": "test", "password": "Password1"}
                     ],
                     "interfaces": {
-                        "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
+                        "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"},
+                        "ubeth-data": {"ip": "203.0.113.6", "subnet": "203.0.113.4/30"}
                     }
                 }
             ]
@@ -286,6 +291,32 @@
                         "lcov": "/usr/bin/lcov"
                     },
                     "hop": "test4"
+                }
+            ]
+        },
+        {
+            "name": "ubu2404",
+            "labs": ["chaos"],
+            "hosts": [
+                {
+                    "_comment": "The chaos reboot target: an Ubuntu 24.04 QEMU guest behind test4. CHAOS_GUEST in scripts/render_chaos_guest_seed.py is the source of truth for these literals.",
+                    "ip": "203.0.113.1",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "os_name": "ubuntu",
+                    "os_version": "24.04",
+                    "valid_terms": ["ssh"],
+                    "valid_transfers": ["scp", "sftp"],
+                    "is_virtual": true,
+                    "hop": "test4",
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ],
+                    "interfaces": {
+                        "eth1": {"ip": "203.0.113.1", "subnet": "203.0.113.0/30"},
+                        "eth2": {"ip": "203.0.113.5", "subnet": "203.0.113.4/30"}
+                    }
                 }
             ]
         },
@@ -479,6 +510,14 @@
                 {"host": "bb1350-qemu", "interface": "eth0"}
             ],
             "protocol": "tcp"
+        },
+        {
+            "_comment": "The chaos guest's data plane to its TAP on test4; eth1 (mgmt) is never impaired.",
+            "endpoints": [
+                {"host": "test4", "interface": "ubeth-data"},
+                {"host": "ubu2404-qemu", "interface": "eth2"}
+            ],
+            "protocol": "udp"
         }
     ]
 }

@@ -168,6 +168,9 @@ def doubles(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(bed_reap, "_builds", lambda: builds)
     monkeypatch.setattr(bed_lease, "drain", lambda record, budget: [])
+    monkeypatch.setattr(
+        bed_reap, "wait_for_hopped_ssh", lambda host, hops: {"ok": True, "status": "up", "info": ""}
+    )
     return d
 
 
@@ -177,6 +180,7 @@ def lab(monkeypatch):
         "test1": FakeHost("test1"),
         "test3": FakeHost("test3"),
         "hopped": FakeHost("hopped", hop="test1"),
+        "ubu2404-qemu": FakeHost("ubu2404-qemu", hop="test4"),
         "zephyr": FakeHost("zephyr", os_type="zephyr"),
     }
     fake = FakeLab(hosts)
@@ -203,7 +207,8 @@ def _names(doubles) -> list[str]:
 
 def test_unix_bed_hosts_are_the_lab_files_direct_ssh_hosts_that_loaded(lab):
     """lab_health.py's one rule over the lab file, kept to the hosts the loaded lab carries."""
-    assert [h.id for h in bed_reap.unix_bed_hosts(lab, LAB)] == ["test1", "test3"]
+    ids = [h.id for h in bed_reap.unix_bed_hosts(lab, LAB)]
+    assert ids == ["test1", "test3", "ubu2404-qemu"]
 
 
 # --- the lease --------------------------------------------------------------------
@@ -606,3 +611,42 @@ def test_main_reaps_through_the_cell_the_lab_file_names(
     assert _main(tmp_path, "--pid", str(ME), "--full") == 0
     assert doubles.calls[-1] == ("run_lab_health", False)
     assert (tmp_path / "tech1.json").exists(), "the lease the lane releases after"
+
+
+# --- the hopped guest -------------------------------------------------------------
+
+
+def test_the_reap_reaches_the_hopped_guest_after_waiting_for_its_sshd(
+    cell, doubles, lab, monkeypatch, capsys
+):
+    assert [h.id for h in bed_reap.unix_bed_hosts(lab, LAB)] == ["test1", "test3", "ubu2404-qemu"]
+    polls = []
+
+    def fake_wait(host, hops):
+        polls.append(host["element"])
+        return {"ok": True, "status": "up", "info": ""}
+
+    monkeypatch.setattr(bed_reap, "wait_for_hopped_ssh", fake_wait)
+    doubles.snapshots["ubu2404-qemu"] = [
+        _snap(staging=frozenset({"/run/chaos/shutdown_hold"})),
+        _snap(),
+    ]
+    status, out = _reap(cell, capsys)
+    assert status == 0, out
+    assert polls == ["ubu2404"]
+    assert ("remove_staging", "ubu2404-qemu", ["/run/chaos/shutdown_hold"]) in doubles.calls
+    assert lab.hosts["ubu2404-qemu"].closed
+
+
+def test_a_hopped_guest_whose_sshd_never_answers_is_unreachable(
+    cell, doubles, lab, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        bed_reap,
+        "wait_for_hopped_ssh",
+        lambda host, hops: {"ok": False, "status": "DOWN", "info": "no sshd"},
+    )
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_DIRTY
+    assert "bed-reap: unreachable ubu2404-qemu: DOWN" in out
+    assert "ubu2404-qemu" not in [c[1] for c in doubles.calls if len(c) > 1]
