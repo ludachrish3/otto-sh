@@ -49,15 +49,20 @@ async def test_serve_does_not_displace_signal_dispositions() -> None:
 @pytest.mark.asyncio
 async def test_cancellation_drains_uvicorn_and_reraises() -> None:
     server, task = await _started_server()
-    port = server._port  # rebound to the real ephemeral port during startup
+    assert server._server is not None
+    listeners = list(server._server.servers)
+    sockets = [sock for listener in listeners for sock in listener.sockets]
+    assert sockets, "a started server listens on at least one socket"
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    # The listener is really gone — a fresh connect must be refused. The
-    # drain inside serve() awaited uvicorn's shutdown, so no lingering
-    # server task exists to trip filterwarnings=error at loop close.
-    with pytest.raises(ConnectionRefusedError):
-        await asyncio.open_connection("127.0.0.1", port)
+    # The listener is really gone, judged on the server's own sockets: once
+    # released, the ephemeral port belongs to whoever asks next (a sibling
+    # xdist worker included), so dialing it proves nothing. The drain inside
+    # serve() awaited uvicorn's shutdown, so no lingering server task exists
+    # to trip filterwarnings=error at loop close.
+    assert not any(listener.is_serving() for listener in listeners)
+    assert [sock.fileno() for sock in sockets] == [-1] * len(sockets)
 
 
 # --- #784: one SIGINT with a dashboard stream open drains, never forces ------
