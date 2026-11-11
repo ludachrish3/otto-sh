@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from typing_extensions import final, override
 
-from ..models.version_format import version_re
+from ..models.base import version_re
 
 
 @final

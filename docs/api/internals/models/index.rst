@@ -12,4 +12,3 @@ models internals
    settings
    snippets
    monitor
-   version_format
