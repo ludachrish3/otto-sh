@@ -5,6 +5,7 @@ import { createEvent, deleteEvent, endEvent, revertEvent, updateEvent } from "..
 import { EventApiError } from "../data/eventApiError";
 import { EventChangedError } from "../data/eventChangedError";
 import { useReviewStore } from "../data/reviewStore";
+import { importLocalFile } from "../data/source";
 import { displayEndMs } from "../data/time";
 import { useUndoHistory } from "../data/undoHistory";
 
@@ -256,6 +257,68 @@ describe("eventApi", () => {
       `/api/session/${encodeURIComponent(sid)}/event/7/end`,
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  // #992: a write refused as `changed` carries the event as the server holds
+  // it; the shared mutation path applies it to the tab, so the tab shows the
+  // saved event instead of the stale one it sent from.
+  describe("a 409 changed applies current (#992)", () => {
+    const changed = (current: unknown) =>
+      okJson({ error: "the event was changed elsewhere", code: "changed", current }, 409);
+    const stored = (id: number) =>
+      useReviewStore.getState().sessions[0]?.events.find((e) => e.id === id);
+    function seed(sid: string): void {
+      useReviewStore.getState().actions.appendFragment({
+        format: 1,
+        session: sid,
+        events: [record(7, "stale")],
+      });
+    }
+
+    it.each([
+      ["updateEvent", (sid: string) => updateEvent(sid, 7, { color: "#2ca02c" })],
+      ["endEvent", (sid: string) => endEvent(sid, 7)],
+      ["deleteEvent", (sid: string) => deleteEvent(sid, 7)],
+    ])("%s: current is applied to the review store", async (_, call) => {
+      const sid = hydrate();
+      seed(sid);
+      vi.mocked(fetch).mockResolvedValueOnce(changed(record(7, "saved elsewhere")));
+      const err = await call(sid).catch((e) => e);
+      expect(err).toBeInstanceOf(EventChangedError);
+      expect(stored(7)?.label).toBe("saved elsewhere");
+      expect(useUndoHistory.getState().undo).toEqual([]);
+    });
+
+    it("a delete answered with current null drops the event", async () => {
+      const sid = hydrate();
+      seed(sid);
+      vi.mocked(fetch).mockResolvedValueOnce(changed(null));
+      const err = await deleteEvent(sid, 7).catch((e) => e);
+      expect(err).toBeInstanceOf(EventChangedError);
+      expect(stored(7)).toBeUndefined();
+    });
+
+    it("a 409 that lands after a source switch applies nothing", async () => {
+      const sid = hydrate();
+      seed(sid);
+      let release!: (r: Response) => void;
+      vi.mocked(fetch).mockReturnValueOnce(
+        new Promise<Response>((res) => {
+          release = res;
+        }),
+      );
+      const pending = updateEvent(sid, 7, { color: "#2ca02c" });
+      // The imported file carries a session with the same id.
+      await importLocalFile(new File([JSON.stringify(minimal)], "minimal.json"));
+      useReviewStore.getState().actions.appendFragment({
+        format: 1,
+        session: sid,
+        events: [record(7, "imported")],
+      });
+      release(changed(record(7, "saved elsewhere")));
+      expect(await pending).toEqual({ stale: true });
+      expect(stored(7)?.label).toBe("imported");
+    });
   });
 
   // #866: the response header carries the server's time, so the mutation's

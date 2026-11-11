@@ -18,14 +18,22 @@ function openingGuard(surface: Surface): () => boolean {
   return () => useUiStore.getState().openings[surface] === opening;
 }
 
+/** A failed surface mutation: the message to show, and the error itself for
+ * a surface that answers some failures differently (the editor's recovery
+ * from a write refused as `changed`). */
+export interface SurfaceFailure {
+  message: string;
+  error: unknown;
+}
+
 /** Sends one surface mutation, then settles it on the opening that sent it:
- * `done` with the result, or `fail` with the error's message, only while
- * that opening and the source are both still current. Call it before the
- * first await, so the opening captured is the sender's. */
+ * `done` with the result, or `fail` with the failure, only while that
+ * opening and the source are both still current. Call it before the first
+ * await, so the opening captured is the sender's. */
 export async function settleOnOpening<T>(
   surface: Surface,
   send: () => Promise<T | StaleResult>,
-  { done, fail }: { done: (result: T) => void; fail: (message: string) => void },
+  { done, fail }: { done: (result: T) => void; fail: (failure: SurfaceFailure) => void },
 ): Promise<void> {
   const source = sourceGuard();
   const opening = openingGuard(surface);
@@ -34,7 +42,7 @@ export async function settleOnOpening<T>(
     result = source(await send());
   } catch (err) {
     if (isStale(source(null)) || !opening()) return;
-    fail(err instanceof Error ? err.message : String(err));
+    fail({ message: err instanceof Error ? err.message : String(err), error: err });
     return;
   }
   if (isStale(result) || !opening()) return;

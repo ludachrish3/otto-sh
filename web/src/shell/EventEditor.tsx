@@ -20,17 +20,19 @@ import { InputDate } from "@/components/base/input/input-date";
 import { Select } from "@/components/base/select/select";
 import { EVENT_DASH_STYLES, type EventDash } from "../api/eventStyle.gen";
 import { createEvent, deleteEvent, type EventUpdateInput, updateEvent } from "../data/eventApi";
+import { EventChangedError } from "../data/eventChangedError";
 import { customStyleName, isEventDash } from "../data/eventStyle";
 import { storedEvent, useReviewStore } from "../data/reviewStore";
 import { parseTs } from "../data/time";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { EventColorField } from "../ui/EventColorField";
 import { TextInput } from "../ui/TextInput";
+import { useToastStore } from "../ui/Toast";
 import { type EventDraft, type EventEditorTarget, useUiStore } from "../ui/uiStore";
 import { useOpenFocus } from "../ui/useOpenFocus";
 import { ConfirmDeleteEvent } from "./ConfirmDeleteEvent";
 import { DateFieldCompleteness, type DateFill } from "./DateFieldCompleteness";
-import { settleOnOpening } from "./settleOnOpening";
+import { type SurfaceFailure, settleOnOpening } from "./settleOnOpening";
 import { editorGateKey, useMutationGate } from "./useMutationGate";
 
 // The swatches (ui/EventColorField.tsx) and the dash list are the
@@ -124,6 +126,12 @@ function changes(form: Form, touched: Touched): EventUpdateInput {
     ...(touched.dash && { dash: form.dash }),
   };
 }
+
+/** What the editor says when a Save or Delete is refused as `changed` (#992):
+ * the shared apply (data/eventApi.ts) has put the server's event in the
+ * store, and the editor now shows it, or has closed because it is gone. */
+const CHANGED_ELSEWHERE = "This event was changed elsewhere. It now shows the saved version.";
+const DELETED_ELSEWHERE = "This event was deleted elsewhere.";
 
 /** The editor's action names on its target's gate. */
 const SAVE = "save";
@@ -222,45 +230,58 @@ export function EventEditor() {
   // after the seed; re-reading the stored record when it settles is correct,
   // and harmless when it was another target's. Every field is disabled
   // meanwhile, so the form holds no edit of the user's to lose. A request
-  // sent from THIS opening never reseeds: a failed Save keeps the user's
-  // draft. A target whose record is gone (that request was a Delete) closes
-  // the editor.
+  // sent from THIS opening reseeds only when it was refused as `changed`
+  // (`recover`); any other failure keeps the user's draft. A target whose
+  // record is gone (that request was a Delete) closes the editor.
   const seeded = useRef<{ editor: EventEditorTarget | null; inherited: boolean }>({
     editor: null,
     inherited: false,
   });
+
+  // The ONE reseed: every field, the edit marks and the dialogs from the
+  // target as the STORE holds it (a draft from itself). Opening a target and
+  // recovering from a `changed` refusal both come through here. Returns
+  // false when the edited record is gone, having closed the editor.
+  const reseed = useCallback(
+    (target: EventEditorTarget | null): boolean => {
+      setError(null);
+      setConfirmOpen(false);
+      setDeleteError(null);
+      if (target === null) {
+        setForm(null);
+        return true;
+      }
+      let next: Form;
+      let legacy: string | undefined;
+      if (target.kind === "draft") {
+        next = target.draft;
+      } else {
+        const record = storedEvent(target.sessionId, target.eventId);
+        if (!record) {
+          closeEventEditor();
+          return false;
+        }
+        next = formFromRecord(target.sessionId, record);
+        legacy = record.legacyColor;
+      }
+      setForm(next);
+      setTouched(UNTOUCHED);
+      setLegacyColor(legacy);
+      setTargetKey((k) => k + 1);
+      setStartEmpty(false);
+      setFill({ start: "complete", end: next.endTimestampMs == null ? "empty" : "complete" });
+      return true;
+    },
+    [closeEventEditor],
+  );
+
   useEffect(() => {
     const fresh = seeded.current.editor !== editor;
     const inheritedSettled = seeded.current.inherited && !gate.pending;
     if (!fresh && !inheritedSettled) return;
     seeded.current = { editor, inherited: fresh && gate.pending };
-    setError(null);
-    setConfirmOpen(false);
-    setDeleteError(null);
-    if (editor === null) {
-      setForm(null);
-      return;
-    }
-    let next: Form;
-    let legacy: string | undefined;
-    if (editor.kind === "draft") {
-      next = editor.draft;
-    } else {
-      const record = storedEvent(editor.sessionId, editor.eventId);
-      if (!record) {
-        closeEventEditor();
-        return;
-      }
-      next = formFromRecord(editor.sessionId, record);
-      legacy = record.legacyColor;
-    }
-    setForm(next);
-    setTouched(UNTOUCHED);
-    setLegacyColor(legacy);
-    setTargetKey((k) => k + 1);
-    setStartEmpty(false);
-    setFill({ start: "complete", end: next.endTimestampMs == null ? "empty" : "complete" });
-  }, [editor, gate.pending, closeEventEditor]);
+    reseed(editor);
+  }, [editor, gate.pending, reseed]);
 
   // The overlay below is mounted exactly while this holds.
   const labelFocus = useOpenFocus<HTMLInputElement>(editor !== null && form !== null);
@@ -286,32 +307,50 @@ export function EventEditor() {
     setForm({ ...form, endTimestampMs: endMs });
   };
 
+  // A Save or Delete that failed. Refused as `changed` (#992), the store
+  // already holds the event as the server has it: the editor reseeds from it
+  // and says so, or closes with a toast when the event is gone. Any other
+  // failure shows its message where `show` puts it.
+  const recover = ({ message, error: err }: SurfaceFailure, show: (m: string) => void) => {
+    if (!(err instanceof EventChangedError)) {
+      show(message);
+      return;
+    }
+    if (reseed(editor)) setError(CHANGED_ELSEWHERE);
+    else useToastStore.getState().showToast(DELETED_ELSEWHERE);
+  };
+
   // Each request settles on the editor opening that sent it: a late result
   // never closes, or shows an error in, a newer opening (settleOnOpening).
   const save = () => {
-    // An edit that changed nothing has nothing to send (and nothing to undo).
-    if (editor.kind === "edit" && !Object.values(touched).some(Boolean)) {
-      closeEventEditor();
-      return;
+    let send: () => ReturnType<typeof updateEvent>;
+    if (editor.kind === "draft") {
+      send = () =>
+        createEvent(form.sessionId, {
+          label: form.label,
+          timestamp: new Date(form.timestampMs).toISOString(),
+          ...(form.endTimestampMs !== null
+            ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
+            : {}),
+          color: form.color,
+          dash: form.dash,
+        });
+    } else {
+      // The one "anything to send" decision is the PATCH itself: an edit
+      // that changed nothing has nothing to send (and nothing to undo).
+      const patch = changes(form, touched);
+      if (Object.keys(patch).length === 0) {
+        closeEventEditor();
+        return;
+      }
+      send = () => updateEvent(editor.sessionId, editor.eventId, patch);
     }
     return gate.run(
       () =>
-        settleOnOpening(
-          "eventEditor",
-          () =>
-            editor.kind === "draft"
-              ? createEvent(form.sessionId, {
-                  label: form.label,
-                  timestamp: new Date(form.timestampMs).toISOString(),
-                  ...(form.endTimestampMs !== null
-                    ? { end_timestamp: new Date(form.endTimestampMs).toISOString() }
-                    : {}),
-                  color: form.color,
-                  dash: form.dash,
-                })
-              : updateEvent(editor.sessionId, editor.eventId, changes(form, touched)),
-          { done: closeEventEditor, fail: setError },
-        ),
+        settleOnOpening("eventEditor", send, {
+          done: closeEventEditor,
+          fail: (f) => recover(f, setError),
+        }),
       SAVE,
     );
   };
@@ -324,7 +363,7 @@ export function EventEditor() {
       () =>
         settleOnOpening("eventEditor", () => deleteEvent(editor.sessionId, editor.eventId), {
           done: closeEventEditor,
-          fail: setDeleteError,
+          fail: (f) => recover(f, setDeleteError),
         }),
       DELETE,
     );

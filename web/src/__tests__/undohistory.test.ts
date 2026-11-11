@@ -3,7 +3,7 @@
 // entry in its onSuccess; undo / redo replay it through the revert route,
 // one at a time across the tab, and settle by the route's outcome.
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import type { EventRecord } from "../api/export.gen";
 import { createEvent, deleteEvent, endEvent, updateEvent } from "../data/eventApi";
@@ -209,7 +209,7 @@ describe("undo history", () => {
     expect(history().undo.map((e) => e.label)).toEqual(["b"]);
   });
 
-  it("changed with a different current drops the entry and toasts", async () => {
+  it("changed with a different current drops the entry, toasts, and the tab shows current", async () => {
     const sid = hydrate();
     vi.mocked(fetch).mockResolvedValueOnce(reply(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
@@ -218,7 +218,22 @@ describe("undo history", () => {
     expect(history().undo).toHaveLength(0);
     expect(history().redo).toHaveLength(0);
     expect(toast()?.message).toBe("Can't undo: “deploy” changed elsewhere");
-    expect(stored(7)?.label).toBe("deploy");
+    expect(stored(7)?.label).toBe("renamed elsewhere");
+  });
+
+  it("a recovered lost response applies current exactly once", async () => {
+    const sid = hydrate();
+    seed(sid, record(7, "a"));
+    vi.mocked(fetch).mockResolvedValueOnce(reply(record(7, "b")));
+    await updateEvent(sid, 7, { label: "b" });
+    vi.mocked(fetch).mockResolvedValueOnce(changed(record(7, "a")));
+    const append = vi.spyOn(useReviewStore.getState().actions, "appendFragment");
+    onTestFinished(() => append.mockRestore());
+    await undo();
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(append.mock.calls[0]?.[0]).toMatchObject({ events: [record(7, "a")] });
+    expect(history().redo).toHaveLength(1);
+    expect(stored(7)?.label).toBe("a");
   });
 
   it("changed whose current equals the target moves the entry and updates the store", async () => {
@@ -267,6 +282,27 @@ describe("undo history", () => {
     expect(history().undo).toHaveLength(1);
     expect(history().redo).toHaveLength(0);
     expect(toast()?.message).toBe("Couldn't undo — try again");
+  });
+
+  it("a revert answered 422 drops the entry, toasts the refusal, and the next undo reaches the step below", async () => {
+    const sid = hydrate();
+    vi.mocked(fetch).mockResolvedValueOnce(reply(record(7, "a"), 201));
+    await createEvent(sid, { label: "a" });
+    vi.mocked(fetch).mockResolvedValueOnce(reply(record(8, "legacy"), 201));
+    await createEvent(sid, { label: "legacy" });
+    // A refusal no retry can pass (an older capture's backward span).
+    vi.mocked(fetch).mockResolvedValueOnce(
+      reply({ error: "end_timestamp must be after timestamp", code: "invalid" }, 422),
+    );
+    await undo();
+    expect(history().undo.map((e) => e.label)).toEqual(["a"]);
+    expect(history().redo).toHaveLength(0);
+    expect(toast()?.message).toBe("Can't undo: “legacy” — end_timestamp must be after timestamp");
+    vi.mocked(fetch).mockResolvedValueOnce(reply(null));
+    await undo();
+    expect(lastUrl()).toMatch(/\/7\/revert$/u);
+    expect(history().undo).toHaveLength(0);
+    expect(history().redo.map((e) => e.label)).toEqual(["a"]);
   });
 
   it("a network error keeps the entry", async () => {

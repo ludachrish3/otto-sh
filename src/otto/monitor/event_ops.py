@@ -72,15 +72,16 @@ class EventValidationError(OttoError, ValueError):
 
 
 class EventChanged(OttoError):  # noqa: N818 — name fixed by the #929 spec: a state mismatch, not a caller error
-    """A revert found the event in a state other than the one it expected.
+    """A write found the event in a state other than the one it expected.
 
-    ``current`` is the event as it actually stands (``None`` when no event
-    has the id), so the caller can show it and the dashboard can drop the
-    step that no longer applies.
+    Raised for a revert and for an edit, ``/end`` or delete whose row changed
+    between its read and its write. ``current`` is the event as it actually
+    stands (``None`` when no event has the id), so the dashboard can show it
+    and drop an undo step that no longer applies.
     """
 
     def __init__(self, current: EventRecord | None) -> None:
-        super().__init__("the event changed since this step was recorded")
+        super().__init__("the event was changed elsewhere")
         self.current = current
 
 
