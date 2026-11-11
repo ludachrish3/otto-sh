@@ -64,10 +64,9 @@ from ..utils import (
     ottopath_entries,
     parse_cache_ttl,
 )
-from .base import OttoModel
+from .base import OttoModel, version_re
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
-from .version_format import version_re
 
 if TYPE_CHECKING:
     from ..config.scope import (

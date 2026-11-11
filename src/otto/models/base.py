@@ -14,6 +14,7 @@ classifies a stat through ``otto.config.corpus_snapshot`` when called.
 """
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,23 @@ from typing_extensions import final
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
+
+
+version_re = re.compile(
+    r"(?P<major>\d+)\."
+    r"(?P<minor>\d+)\."
+    r"(?P<patch>\d+)"
+    r"(?P<extra>[-+.][0-9A-Za-z.+-]+)?"
+)
+"""The one pattern for a product version string, ``MAJOR.MINOR.PATCH`` plus an optional tag.
+
+``otto.models.settings`` validates ``version`` with it at load and
+``otto.config.version.Version`` parses with it; both call ``fullmatch`` so a
+trailing newline is refused. The optional extra tag begins with ``-``, ``+``
+or ``.``. It lives here, not in a module of its own, because this module is
+on every command's startup path already and a leaf of its own cost every
+surface eight file operations (the import budget).
+"""
 
 
 class OttoModel(BaseModel):

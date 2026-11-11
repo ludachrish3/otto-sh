@@ -75,10 +75,10 @@ def test_version_trailing_newline_rejected():
 
 
 def test_settings_validator_shares_the_version_rule():
-    """models/settings.py and config.version share models.version_format's one pattern."""
+    """models/settings.py and config.version share models.base's one version pattern."""
     from otto.config import version as config_version
     from otto.models import settings
-    from otto.models.version_format import version_re
+    from otto.models.base import version_re
 
     assert settings.version_re is version_re
     assert config_version.version_re is version_re
