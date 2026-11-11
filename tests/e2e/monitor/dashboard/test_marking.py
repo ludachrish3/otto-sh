@@ -55,16 +55,16 @@ def _push_tick(dash, host: str, ts: datetime, value: float) -> None:
     dash.run(dash.collector.push(host, "cpu", value, ts=ts))
 
 
-def _post_json(url: str, body: dict) -> tuple[int, dict]:
-    """POST *body* as JSON to *url*, returning (status, decoded body).
+def _send_json(url: str, body: dict, *, method: str = "POST") -> tuple[int, dict]:
+    """Send *body* as JSON to *url* by *method*, returning (status, decoded body).
 
-    Used only by ``test_refused_jump_keeps_panel_open`` to plant an
-    out-of-bounds event directly through the HTTP API (bypassing the UI --
-    there is no in-UI flow to create an event far outside the session).
+    Plants or edits an event directly through the HTTP API, bypassing the
+    UI (e.g. an out-of-bounds event no in-UI flow can create, or another
+    writer's rename).
     """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url, data=data, headers={"Content-Type": "application/json"}, method=method
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:  # local test server
@@ -388,7 +388,7 @@ def test_custom_color_existing_event(page: Page, live_stream_dash) -> None:
     a label-only edit's PATCH carries no ``color`` key (#858/#859)."""
     _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
     session_id = live_stream_dash.collector.session_id
-    status, body = _post_json(
+    status, body = _send_json(
         live_stream_dash.api_url(f"/api/session/{session_id}/event"),
         {"label": "teal", "color": "#00abcd"},
     )
@@ -801,7 +801,7 @@ def test_refused_jump_keeps_panel_open(page: Page, live_stream_dash) -> None:
     _push_tick(live_stream_dash, "r1", t0, 10.0)
     session_id = live_stream_dash.collector.session_id
     far_ts = t0 - timedelta(days=2)
-    status, body = _post_json(
+    status, body = _send_json(
         live_stream_dash.api_url(f"/api/session/{session_id}/event"),
         {"label": "faraway", "timestamp": far_ts.isoformat()},
     )
@@ -844,7 +844,7 @@ def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) ->
         ("right window edge", t0),
     ]
     for label, ts in events:
-        status, body = _post_json(url, {"label": label, "timestamp": ts.isoformat()})
+        status, body = _send_json(url, {"label": label, "timestamp": ts.isoformat()})
         assert status == 201, body
     # No later tick: the snapshot's observed_at puts the window's `to` just
     # past the right-edge event (#866).
@@ -882,7 +882,7 @@ def _seed_cluster(dash) -> dict[str, int]:
     ids: dict[str, int] = {}
     for i, label in enumerate(labels):
         ts = cluster_at + timedelta(milliseconds=i)
-        status, body = _post_json(url, {"label": label, "timestamp": ts.isoformat()})
+        status, body = _send_json(url, {"label": label, "timestamp": ts.isoformat()})
         assert status == 201, body
         ids[label] = body["id"]
     return ids
@@ -948,7 +948,7 @@ def test_cluster_overflow_list_scrolls_at_a_short_viewport(page: Page, live_stre
     ids: list[int] = []
     for i in range(60):
         ts = cluster_at + timedelta(milliseconds=i)
-        status, body = _post_json(url, {"label": f"step {i:02d}", "timestamp": ts.isoformat()})
+        status, body = _send_json(url, {"label": f"step {i:02d}", "timestamp": ts.isoformat()})
         assert status == 201, body
         ids.append(body["id"])
     page.set_viewport_size({"width": 1280, "height": 600})
@@ -985,7 +985,7 @@ def _open_editor_for_seeded_event(page: Page, dash, label: str) -> int:
     events panel; returns its wire id."""
     t0 = datetime.now(tz=timezone.utc)
     _push_tick(dash, "r1", t0, 10.0)
-    status, body = _post_json(
+    status, body = _send_json(
         dash.api_url(f"/api/session/{dash.collector.session_id}/event"),
         {"label": label, "timestamp": (t0 - timedelta(seconds=30)).isoformat()},
     )
