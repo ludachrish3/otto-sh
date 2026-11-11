@@ -1,10 +1,11 @@
 // web/src/shell/EventEditor.tsx
 // The event editor slide-over (spec 2026-07-18 §UI surfaces): draft targets
-// create, edit targets send a full-field PATCH. Composed from the vendored
-// slideout-menu's individually-exported pieces (Dialog/Modal/ModalOverlay +
-// SlideoutMenu.Header/Content/Footer), same rationale as EventsPanel.tsx's
-// header comment -- the all-in-one `SlideoutMenu` wrapper puts `data-testid`
-// on the outer backdrop ModalOverlay, not the visible Dialog panel.
+// create, edit targets send a PATCH of only the fields the user changed.
+// Composed from the vendored slideout-menu's individually-exported pieces
+// (Dialog/Modal/ModalOverlay + SlideoutMenu.Header/Content/Footer), same
+// rationale as EventsPanel.tsx's header comment -- the all-in-one
+// `SlideoutMenu` wrapper puts `data-testid` on the outer backdrop
+// ModalOverlay, not the visible Dialog panel.
 import { X } from "@untitledui/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -52,12 +53,22 @@ function startMessage(fill: DateFill, startEmpty: boolean): string | null {
   return null;
 }
 
-function endMessage(form: Form, fill: Fill, startEmpty: boolean): string | null {
+function endMessage(
+  form: Form,
+  fill: Fill,
+  startEmpty: boolean,
+  checkOrder: boolean,
+): string | null {
   if (fill.end === "partial") return "Enter a complete end time, or clear it with ✕.";
   // Only judge the range against a Start the user can see: while Start is
   // incomplete its held epoch is not what the field shows.
   const startShown = !startEmpty && fill.start === "complete";
-  if (startShown && form.endTimestampMs !== null && form.endTimestampMs <= form.timestampMs) {
+  if (
+    checkOrder &&
+    startShown &&
+    form.endTimestampMs !== null &&
+    form.endTimestampMs <= form.timestampMs
+  ) {
     return "End must be after Start.";
   }
   return null;
@@ -83,21 +94,32 @@ function formFromRecord(
   };
 }
 
-/** The style fields the user chose for this target (even the value already
- * shown). */
-interface StyleTouched {
-  color: boolean;
-  dash: boolean;
-}
+/** The editable fields the user changed on this target. A key is marked only
+ * by the user editing that field's value -- never by a completeness report
+ * (DateFieldCompleteness also fires on mount and on every reseed). */
+type Touched = Record<"label" | "timestamp" | "end" | "color" | "dash", boolean>;
 
-const UNTOUCHED: StyleTouched = { color: false, dash: false };
+const UNTOUCHED: Touched = {
+  label: false,
+  timestamp: false,
+  end: false,
+  color: false,
+  dash: false,
+};
 
-/** An update PATCH's style fields: only the ones the user chose, so a
- * label-only Save leaves the stored colour and dash -- a legacy one
- * (data/eventStyle.ts) included -- untouched on the server. A create always
- * sends both. */
-function styleChanges(form: Form, touched: StyleTouched): Pick<EventUpdateInput, "color" | "dash"> {
+/** An update PATCH's fields: only the ones the user changed, so a Save
+ * leaves everything else -- a legacy colour, dash or blank label included,
+ * and whatever another tab or `otto monitor` wrote meanwhile -- as the
+ * server holds it. A cleared End (touched, null) sends `end_timestamp: null`.
+ * A create always sends every field. */
+function changes(form: Form, touched: Touched): EventUpdateInput {
   return {
+    ...(touched.label && { label: form.label }),
+    ...(touched.timestamp && { timestamp: new Date(form.timestampMs).toISOString() }),
+    ...(touched.end && {
+      end_timestamp:
+        form.endTimestampMs !== null ? new Date(form.endTimestampMs).toISOString() : null,
+    }),
     ...(touched.color && { color: form.color }),
     ...(touched.dash && { dash: form.dash }),
   };
@@ -154,8 +176,8 @@ export function EventEditor() {
   // react-stately would keep the previous target's half-typed segments.
   // A counter, not the target's ids: two drafts have no ids to tell apart.
   const [targetKey, setTargetKey] = useState(0);
-  // Which style fields the user chose for this target: styleChanges.
-  const [touched, setTouched] = useState<StyleTouched>(UNTOUCHED);
+  // Which fields the user changed on this target: `changes`.
+  const [touched, setTouched] = useState<Touched>(UNTOUCHED);
   // The edited record's non-hex stored colour (data/eventStyle.ts), if any.
   const [legacyColor, setLegacyColor] = useState<string | undefined>(undefined);
 
@@ -246,13 +268,33 @@ export function EventEditor() {
   if (editor === null || form === null) return null;
 
   const startMsg = startMessage(fill.start, startEmpty);
-  const endMsg = endMessage(form, fill, startEmpty);
-  const invalid = form.label.trim() === "" || startMsg !== null || endMsg !== null;
+  // A draft is validated whole. An edit sends only what the user changed, so
+  // it blocks on: a blank label only if the label was edited; an incomplete
+  // date field always (what the field shows is not what it holds); the
+  // start/end order only if a date was edited (the server keeps a stored
+  // pair it is not asked to change, as it keeps a stored blank label).
+  const isDraft = editor.kind === "draft";
+  const checkOrder = isDraft || touched.timestamp || touched.end;
+  const endMsg = endMessage(form, fill, startEmpty, checkOrder);
+  const invalid =
+    ((isDraft || touched.label) && form.label.trim() === "") ||
+    startMsg !== null ||
+    endMsg !== null;
+  // The one End-value edit: its field's onChange and the Clear-End button.
+  const setEnd = (endMs: number | null) => {
+    setTouched((t) => ({ ...t, end: true }));
+    setForm({ ...form, endTimestampMs: endMs });
+  };
 
   // Each request settles on the editor opening that sent it: a late result
   // never closes, or shows an error in, a newer opening (settleOnOpening).
-  const save = () =>
-    gate.run(
+  const save = () => {
+    // An edit that changed nothing has nothing to send (and nothing to undo).
+    if (editor.kind === "edit" && !Object.values(touched).some(Boolean)) {
+      closeEventEditor();
+      return;
+    }
+    return gate.run(
       () =>
         settleOnOpening(
           "eventEditor",
@@ -267,19 +309,12 @@ export function EventEditor() {
                   color: form.color,
                   dash: form.dash,
                 })
-              : updateEvent(editor.sessionId, editor.eventId, {
-                  label: form.label,
-                  timestamp: new Date(form.timestampMs).toISOString(),
-                  end_timestamp:
-                    form.endTimestampMs !== null
-                      ? new Date(form.endTimestampMs).toISOString()
-                      : null,
-                  ...styleChanges(form, touched),
-                }),
+              : updateEvent(editor.sessionId, editor.eventId, changes(form, touched)),
           { done: closeEventEditor, fail: setError },
         ),
       SAVE,
     );
+  };
 
   // Confirm runs through the same gate as Save, so the two stay exclusive.
   const confirmDelete = () => {
@@ -330,7 +365,10 @@ export function EventEditor() {
               // draft holds can change under an in-flight request.
               isDisabled={gate.pending}
               value={form.label}
-              onChange={(value) => setForm({ ...form, label: value })}
+              onChange={(value) => {
+                setTouched((t) => ({ ...t, label: true }));
+                setForm({ ...form, label: value });
+              }}
             />
             <InputDate
               key={targetKey}
@@ -345,6 +383,7 @@ export function EventEditor() {
                 // A fully cleared field reports null, then redisplays its
                 // controlled value -- so Start goes null rather than letting
                 // the old date reappear.
+                setTouched((t) => ({ ...t, timestamp: true }));
                 if (v === null) {
                   setStartEmpty(true);
                   return;
@@ -368,12 +407,7 @@ export function EventEditor() {
                 isInvalid={endMsg !== null}
                 hint={<DateFieldCompleteness onFillChange={onEndFill} message={endMsg} />}
                 // A fully cleared End is a point event, not an error.
-                onChange={(v) =>
-                  setForm({
-                    ...form,
-                    endTimestampMs: v === null ? null : calendarDateTimeToMs(v),
-                  })
-                }
+                onChange={(v) => setEnd(v === null ? null : calendarDateTimeToMs(v))}
               />
               <ButtonUtility
                 className="col-start-2 row-start-2 self-center"
@@ -386,7 +420,7 @@ export function EventEditor() {
                   gate.pending || (form.endTimestampMs === null && fill.end !== "partial")
                 }
                 onClick={() => {
-                  setForm({ ...form, endTimestampMs: null });
+                  setEnd(null);
                   setEndKey((k) => k + 1);
                 }}
               />

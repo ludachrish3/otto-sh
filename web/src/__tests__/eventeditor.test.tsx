@@ -219,7 +219,7 @@ describe("EventEditor", () => {
     });
   });
 
-  it("Save on an edit target sends a full-field PATCH", async () => {
+  it("Save on an edit target sends a PATCH of the edited field", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
@@ -237,11 +237,8 @@ describe("EventEditor", () => {
       `/api/session/${encodeURIComponent(sid)}/event/1`,
       expect.objectContaining({ method: "PATCH" }),
     );
-    const body = jsonBody(fetchMock);
-    expect(body["label"]).toBe("config reload v2");
-    // event id 1 has no end_timestamp in the fixture -- an untouched edit
-    // must still explicitly clear it (full-field PATCH), not omit the key.
-    expect(body).toHaveProperty("end_timestamp", null);
+    // Only the label was edited: the untouched dates and end are not sent.
+    expect(jsonBody(fetchMock)).toEqual({ label: "config reload v2" });
   });
 
   it("clearing the end field on an edit explicitly PATCHes end_timestamp: null", async () => {
@@ -690,6 +687,7 @@ describe("EventEditor", () => {
             );
           openEvent2();
           render(<EventEditor />);
+          fireEvent.change(screen.getByTestId("editor-label"), { target: { value: "edited" } });
           act(() => screen.getByTestId("editor-save").focus());
           press("Enter");
           act(() => screen.getByTestId("editor-cancel").focus());
@@ -994,6 +992,7 @@ describe("EventEditor", () => {
         vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409)),
       );
       render(<EventEditor />);
+      await user.type(screen.getByTestId("editor-label"), "!");
       await user.click(screen.getByTestId("editor-save"));
       await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("archive is locked"));
     });
@@ -1060,6 +1059,7 @@ describe("EventEditor pending gate (#867)", () => {
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
     vi.stubGlobal("fetch", held().fetchMock);
     render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
     await user.click(screen.getByTestId("editor-save"));
     expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
     const del = screen.getByTestId("editor-delete");
@@ -1121,6 +1121,7 @@ describe("EventEditor pending gate (#867)", () => {
     const { fetchMock, release } = held();
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
     await user.click(screen.getByTestId("editor-save"));
     expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
     act(() => {
@@ -1168,6 +1169,7 @@ describe("EventEditor and a late result (#932)", () => {
     const { fetchMock, release } = held();
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
     await user.click(screen.getByTestId("editor-save"));
     open(sid, 3);
     // Event 3's editor is shut while event 2's Save is pending, so its custom
@@ -1198,6 +1200,7 @@ describe("EventEditor and a late result (#932)", () => {
       const { fetchMock, release } = held();
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
+      await user.type(screen.getByTestId("editor-label"), "!");
       await user.click(screen.getByTestId("editor-save"));
       await user.click(screen.getByTestId("editor-cancel"));
       expect(useUiStore.getState().eventEditor).toBeNull();
@@ -1233,12 +1236,11 @@ describe("EventEditor and a late result (#932)", () => {
     await waitFor(() =>
       expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("saved"),
     );
-    fetchMock.mockResolvedValue(okJson(record({ id: 2, label: "saved" }), 200));
     await user.click(screen.getByTestId("editor-save"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
-    const body = jsonBody(fetchMock, 1);
-    expect(body["label"]).toBe("saved");
-    expect(body).toHaveProperty("end_timestamp", null);
+    // The reseed made "saved" the stored label and reset the edit marks, so
+    // this Save changes nothing: it closes without a second request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("a Delete's late success after Cancel and reopening the same event closes the editor", async () => {
@@ -1337,6 +1339,7 @@ describe("EventEditor and the tracked span (#868)", () => {
         .mockResolvedValue(okJson(record({ id: 1, end_timestamp: "2026-07-01T09:20:00Z" }), 200)),
     );
     render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
     await user.click(screen.getByTestId("editor-save"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(useUiStore.getState().openSpan).toBeNull();
@@ -1404,5 +1407,198 @@ describe("EventEditor and a pending undo (#929)", () => {
     });
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(screen.queryByTestId("event-editor")).toBeNull();
+  });
+});
+
+describe("EventEditor sends only the fields the user changed (#993)", () => {
+  // Event 2 re-imported with *patch* applied (a start/end of day 5 so one
+  // Backspace clears a day segment), opened for edit; returns the fetch mock.
+  function openEdit(patch: Record<string, unknown> = {}): ReturnType<typeof vi.fn> {
+    const doc = JSON.parse(JSON.stringify(kitchenSink)) as {
+      sessions: { events: Record<string, unknown>[] }[];
+    };
+    const ev = doc.sessions[0]?.events.find((e) => e["id"] === 2);
+    if (!ev) throw new Error("fixture has no event 2");
+    Object.assign(ev, {
+      timestamp: "2026-07-05T12:00:00Z",
+      end_timestamp: "2026-07-05T13:00:00Z",
+      ...patch,
+    });
+    for (const [k, v] of Object.entries(patch)) if (v === null) delete ev[k];
+    useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
+    useReviewStore.getState().actions.setEditable(true);
+    const sid = useReviewStore.getState().sessions[0]?.id;
+    if (!sid) throw new Error("fixture has no session");
+    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 2 }), 200));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    return fetchMock;
+  }
+
+  async function pickGreen(user: User): Promise<void> {
+    await user.click(screen.getByRole("option", { name: "Green" }));
+  }
+
+  async function save(user: User, fetchMock: ReturnType<typeof vi.fn>): Promise<void> {
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  }
+
+  it("an edit that changes only the colour sends only color", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await pickGreen(user);
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("an edit that changes only the label sends only label", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.type(screen.getByTestId("editor-label"), "!");
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ label: "stress run!" });
+  });
+
+  it("clearing every End segment sends end_timestamp null", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await clearField(user, "editor-end");
+    await waitFor(() => expect(saveDisabled()).toBe(false));
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ end_timestamp: null });
+  });
+
+  it("clicking the Clear-End button sends end_timestamp null", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.click(screen.getByTestId("editor-end-clear"));
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ end_timestamp: null });
+  });
+
+  it("a legacy blank-label event can be recoloured", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit({ label: "" });
+    expect(saveDisabled()).toBe(false);
+    await pickGreen(user);
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("Save on an edit that changed nothing closes without a request", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clearing a label blocks Save", async () => {
+    const user = userEvent.setup();
+    openEdit();
+    await user.clear(screen.getByTestId("editor-label"));
+    expect(saveDisabled()).toBe(true);
+  });
+
+  it("an untouched blank draft cannot be saved", () => {
+    const sid = hydrate();
+    useUiStore
+      .getState()
+      .actions.openEventEditor({ kind: "draft", draft: blankDraft(sid, { label: "" }) });
+    render(<EventEditor />);
+    expect(saveDisabled()).toBe(true);
+  });
+
+  it("a partially cleared start blocks Save on an edit", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.click(seg("editor-start", "day") as HTMLElement);
+    await user.keyboard("{Backspace}");
+    await waitFor(() => expect(saveDisabled()).toBe(true));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a partial end blocks Save on an edit", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.click(seg("editor-end", "day") as HTMLElement);
+    await user.keyboard("{Backspace}");
+    await waitFor(() => expect(saveDisabled()).toBe(true));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a point event can be recoloured", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit({ end_timestamp: null });
+    expect(saveDisabled()).toBe(false);
+    await pickGreen(user);
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("a colour-only save after the mount effects settle sends only color", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    // Reopen the same event: both date fields remount and report their
+    // completeness afresh (as they do on every mount); only then pick.
+    const sid = useReviewStore.getState().sessions[0]?.id ?? "";
+    act(() =>
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 }),
+    );
+    await waitFor(() => expect(screen.getByTestId("editor-start")).toBeTruthy());
+    expect(saveDisabled()).toBe(false);
+    await pickGreen(user);
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("a partial date edit restored to complete sends the date", async () => {
+    const user = userEvent.setup();
+    // A point event, so the moved start has no end to fall behind.
+    const fetchMock = openEdit({ end_timestamp: null });
+    await user.click(seg("editor-start", "day") as HTMLElement);
+    await user.keyboard("{Backspace}");
+    await waitFor(() => expect(saveDisabled()).toBe(true));
+    await user.keyboard("15");
+    await waitFor(() => expect(saveDisabled()).toBe(false));
+    await save(user, fetchMock);
+    const day15 = calendarDateTimeToMs(msToCalendarDateTime(DAY5_MS).set({ day: 15 }));
+    expect(jsonBody(fetchMock)).toEqual({ timestamp: new Date(day15).toISOString() });
+  });
+
+  it("a legacy backward span can be recoloured", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit({
+      timestamp: "2026-07-05T13:00:00Z",
+      end_timestamp: "2026-07-05T12:00:00Z",
+    });
+    expect(saveDisabled()).toBe(false);
+    expect(screen.queryByText("End must be after Start.")).toBeNull();
+    await pickGreen(user);
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("moving a legacy backward span's end keeps Save blocked", async () => {
+    const user = userEvent.setup();
+    openEdit({
+      timestamp: "2026-07-05T13:00:00Z",
+      end_timestamp: "2026-07-05T12:00:00Z",
+    });
+    await user.click(seg("editor-end", "minute") as HTMLElement);
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => expect(screen.getByText("End must be after Start.")).toBeTruthy());
+    expect(saveDisabled()).toBe(true);
+  });
+
+  it("changing a date and back still sends it", async () => {
+    const user = userEvent.setup();
+    const fetchMock = openEdit();
+    await user.click(seg("editor-start", "second") as HTMLElement);
+    await user.keyboard("{ArrowUp}{ArrowDown}");
+    await save(user, fetchMock);
+    expect(jsonBody(fetchMock)).toEqual({ timestamp: "2026-07-05T12:00:00.000Z" });
   });
 });

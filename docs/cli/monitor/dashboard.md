@@ -217,33 +217,32 @@ colour in the editor, selecting a preset swatch if it matches one;
 **Cancel**, Esc or a click outside discards it, and Esc closes only the
 popover. Nothing is sent until you press **Save**.
 
-Saving an edit sends the colour only if you picked one, so changing just the
-label never rewrites it. An event
-colour is always a hex value. An event from an older capture whose colour is
-not hex (a name such as `red`) is drawn in Grey. Its colour is kept as it
-was, in the archive and in an export, until you pick a new one: the editor
-says so under the swatches, and its **Use Grey** button picks Grey for you.
-The dash works the same way: saving sends it only if you choose one. A
-dash that is not one of the listed styles is drawn as the default dash and
-kept; the editor shows it as custom (for example **Custom — wavy**), and
-choosing any dash, the default included, replaces it.
-**Save** stays disabled until
-**Start** is complete and **End** is either complete or empty; the reason
-shows under the field. Editing or deleting an existing event reuses the
-same panel; **Delete** opens a dialog that names the event ("Delete
-event?") and removes it only when you press **Delete** in the dialog.
-**Cancel**, **Esc** or a click outside the dialog closes just the dialog
-and leaves the editor open. Every change made here can be taken back; see
-[Undo and redo](#undo-and-redo).
+Saving an edit sends only the fields you changed, so changing just the label
+never rewrites the colour, the dates or anything else; a Save that changed
+nothing just closes the editor. An event colour is always a hex value. An
+event from an older capture whose colour is not hex (a name such as `red`) is
+drawn in Grey. Its colour is kept as it was, in the archive and in an export,
+until you pick a new one: the editor says so under the swatches, and its
+**Use Grey** button picks Grey for you. A dash that is not one of the listed
+styles is drawn as the default dash and kept; the editor shows it as custom
+(for example **Custom — wavy**), and choosing any dash, the default included,
+replaces it. **Save** stays disabled until **Start** is complete and **End**
+is either complete or empty, and, when you add an event or change the label,
+until the label is filled in; the reason shows under the field. Editing or
+deleting an existing event reuses the same panel; **Delete** opens a dialog
+that names the event ("Delete event?") and removes it only when you press
+**Delete** in the dialog. **Cancel**, **Esc** or a click outside the dialog
+closes just the dialog and leaves the editor open. Every change made here can
+be taken back; see [Undo and redo](#undo-and-redo).
 
 When you review a `.db` archive, an edit, **End now** or a delete applies to
-the event as the archive holds it, not as this tab loaded it. The colour and
-dash keep what another tab, or another `otto monitor` on the same archive,
-saved meanwhile unless you change them. The editor always sends the label,
-start and end as it shows them, so saving from a tab opened before another
-writer's change puts its values for those back. If the event changes between
-the server reading it and writing your change, nothing is written and the
-dashboard warns that the event changed. Reload to see it as it now stands.
+the event as the archive holds it, not as this tab loaded it. Because the
+editor sends only the fields you changed, a field you did not change keeps
+what another tab, or another `otto monitor` on the same archive, saved
+meanwhile. If the
+event changes between the server reading it and writing your change, nothing
+is written and the dashboard warns that the event changed. Reload to see it as
+it now stands.
 
 **Crowded labels.** Event labels stack in up to three rows at the top of
 each chart. Where more events crowd one spot, the earliest ones keep their
