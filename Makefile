@@ -1221,7 +1221,9 @@ $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_
 # literal source and for the concrete incident (soak ran on every push, on
 # every engine, until nox's expression was brought back in line with this
 # one) that makes keeping them in step worth a standing comment. If this
-# expression changes, change noxfile.py's too.
+# expression changes, change noxfile.py's too. The same goes for
+# `--output reports/playwright` here and in `dashboard-soak`: noxfile.py's
+# PLAYWRIGHT_OUTPUT_DIR, which CI's failure-artifact upload reads.
 dashboard: $(DASHBOARD_DIST) $(COVAPP_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
 	@$(SAY) "playwright e2e: $(DASHBOARD_BROWSERS) — $(BROWSER_WORKERS) worker(s)"
 	@rm -rf reports/ts-e2e-cov/raw

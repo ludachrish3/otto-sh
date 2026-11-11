@@ -294,7 +294,11 @@ per-task check; needs `make browsers` once) or `make dashboard-all` for the
 full cross-engine matrix: Chromium (Blink), Firefox (Gecko), and WebKit
 (Safari). The one Safari-specific test runs on WebKit only via
 `@only_browser("webkit")`. `make release` runs all three; CI runs them as a
-parallel per-engine matrix.
+parallel per-engine matrix. A failed engine job uploads the failed tests'
+Playwright traces and screenshots as the `playwright-traces-<browser>`
+artifact; open a trace with `npx playwright show-trace <trace.zip>` (or at
+trace.playwright.dev) to step through its clicks, DOM, console and network.
+Locally, `make dashboard` leaves failure screenshots in `reports/playwright/`.
 
 ### Web quality gates
 

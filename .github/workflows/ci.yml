@@ -333,6 +333,20 @@ jobs:
           # 3GB dev VM — `make dashboard` stays -n 1 serial there.
           OTTO_BROWSER_SHARD: "1"
         run: uv run nox -k ${{ matrix.browser }}
+      # The nox session keeps each failed test's Playwright trace and
+      # screenshot under reports/playwright/ (noxfile.py's
+      # PLAYWRIGHT_OUTPUT_DIR, --tracing retain-on-failure); this is
+      # the only evidence a rare browser failure leaves (#1006). Open one with
+      # `npx playwright show-trace <trace.zip>` or at trace.playwright.dev.
+      # `ignore`: a failure before any test ran (the build step) has no trace.
+      - name: Upload failed tests' Playwright traces (${{ matrix.browser }})
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-${{ matrix.browser }}
+          path: reports/playwright/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The BusyBox ARTIFACT tier — the pinned bytes, not the behaviour. Every
   # default lane excludes `-m busybox` (G8 in
