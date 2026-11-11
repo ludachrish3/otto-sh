@@ -327,8 +327,8 @@ export interface MetricRecord {
  *
  * ``color`` and ``dash`` are lenient here, unlike every write boundary: a
  * missing or ``null`` value takes the registry default
- * (:data:`~otto.models.event_style.DEFAULT_EVENT_COLOR` /
- * :data:`~otto.models.event_style.DEFAULT_EVENT_DASH`), and a hex colour is
+ * (:data:`DEFAULT_EVENT_COLOR` /
+ * :data:`DEFAULT_EVENT_DASH`), and a hex colour is
  * normalised to lowercase ``#rrggbb``. Anything else, such as a CSS name
  * (``"red"``) an older otto wrote, is KEPT UNCHANGED: loading an old file or
  * archive must neither fail nor destroy the value. The dashboard's own

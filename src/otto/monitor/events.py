@@ -12,7 +12,7 @@ from datetime import datetime
 
 from typing_extensions import final
 
-from ..models.event_style import (
+from ..models.monitor import (
     AUTO_EVENT_COLORS,
     DEFAULT_EVENT_COLOR,
     DEFAULT_EVENT_DASH,

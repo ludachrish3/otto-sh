@@ -1,4 +1,4 @@
-/* AUTO-GENERATED from src/otto/models/event_style.py — run scripts/gen_web_types.sh; do not edit. */
+/* AUTO-GENERATED from src/otto/models/monitor.py (the event-style registry) — run scripts/gen_web_types.sh; do not edit. */
 
 export interface EventColorPreset {
   readonly id: string;

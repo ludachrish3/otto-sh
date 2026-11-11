@@ -6,7 +6,6 @@ models internals
    base
    color
    dependencies
-   event_style
    inventory
    lab
    settings
