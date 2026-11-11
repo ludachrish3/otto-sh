@@ -449,8 +449,9 @@ export interface MonitorSessionFragment {
  * ``POST /api/session/{sid}/event`` request body (spec 2026-07-18).
  *
  * ``timestamp=None`` means "server-now" (the Mark-now flow). When both
- * timestamps are present the span must be forward; the server re-checks the
- * pair after resolving a ``None`` timestamp to now.
+ * timestamps are present the span must be forward; the backend write rule
+ * ``otto.monitor.event_ops.check_event_write`` checks the pair again once a
+ * ``None`` timestamp has resolved to now.
  *
  * ``defer_build=False``, overriding :class:`~otto.models.base.OttoModel`:
  * FastAPI wraps a request-body parameter in its own
@@ -487,14 +488,13 @@ export interface EventCreateBody {
  * Every field optional; ``model_fields_set`` distinguishes "absent"
  * (unchanged) from an explicit JSON ``null``. Only ``end_timestamp`` uses
  * that distinction — an explicit null CLEARS the end (span → point); for the
- * other fields null means unchanged, same as absent. The merged
- * start/end ordering check happens in the route, where the existing event's
- * values are known. The label check likewise runs inside the mutation
- * sequence, against the current event: a blank ``label`` is refused only
- * when it differs from the event's current one
- * (``otto.monitor.event_ops.check_label_write``), the same answer a
- * library update gets: a PATCH that resends an older event's already-blank
- * label alongside a colour is accepted.
+ * other fields null means unchanged, same as absent. The write rule
+ * (``otto.monitor.event_ops.check_event_write``) runs inside the mutation
+ * sequence, against the current event, on the merged values: a blank
+ * ``label`` or a start/end pair that is not forward is refused only when
+ * it differs from the event's current one, the same answer a library
+ * update gets: a PATCH that resends an older event's already-blank label
+ * (or backward span) alongside a colour is accepted.
  *
  * ``defer_build=False``: same FastAPI request-body reason as
  * :class:`EventCreateBody` — see its docstring.

@@ -24,6 +24,7 @@ from ..models.monitor import (
     checked_label,
     span_is_forward,
 )
+from ..utils import utc_instant
 
 if TYPE_CHECKING:
     # Annotation only: event_ops sits below events in tach's layering.
@@ -87,17 +88,18 @@ def same_event(a: EventRecord | None, b: EventRecord | None) -> bool:
     """Report whether two event states are the same: the ONE "is this the expected state" test.
 
     Two ``None`` are the same (both absent); ``None`` and a record are not.
-    Timestamps compare as aware datetimes, i.e. as instants, never as text:
-    the wire's ``Z``, the store's ``+00:00`` and the browser's ``.000Z`` all
-    name one instant. ``color`` compares after ``EventRecord``'s lenient
+    Timestamps compare as UTC instants (:func:`otto.utils.utc_instant`),
+    never as text or wall time: the wire's ``Z``, the store's ``+00:00`` and
+    the browser's ``.000Z`` all name one instant, and the two passes of a DST
+    fold name two. ``color`` compares after ``EventRecord``'s lenient
     normalisation (``#ABC`` is ``#aabbcc``; a legacy ``"red"`` is itself).
     ``id`` is ignored: the caller has already chosen the event by id.
     """
     if a is None or b is None:
         return a is b
     return (
-        a.timestamp == b.timestamp
-        and a.end_timestamp == b.end_timestamp
+        utc_instant(a.timestamp) == utc_instant(b.timestamp)
+        and utc_instant(a.end_timestamp) == utc_instant(b.end_timestamp)
         and a.label == b.label
         and a.color == b.color
         and a.dash == b.dash
@@ -142,55 +144,79 @@ def id_handed_out(event_id: int, high_water: int) -> bool:
 def check_span(timestamp: datetime, end_timestamp: datetime | None) -> None:
     """Refuse a span that does not end after it starts, as :class:`EventValidationError`.
 
-    Create, a PATCH or /end merge and a revert's ``write``
-    (:func:`check_revert_write`) all call it on the
-    pair they are about to store. The rule itself is
+    Called only by :func:`check_event_write`, the one write rule every
+    stored pair reaches. The rule itself is
     ``otto.models.monitor.span_is_forward``, which the create body's own
-    validator shares.
+    validator shares; it compares the two as UTC instants
+    (:func:`otto.utils.utc_instant`).
     """
     if not span_is_forward(timestamp, end_timestamp):
         raise EventValidationError(SPAN_ORDER_ERROR)
 
 
-def check_label_write(existing: str | None, label: str) -> None:
-    """Refuse a blank label an event write introduces, as :class:`EventValidationError`.
+class _Stored(Protocol):
+    """An event as stored (``MonitorEvent``, ``EventRecord``): what the write rule reads."""
 
-    The ONE place a library, archive or revert write asks "does this label
-    need the create/update rule?" (the rule itself is
-    ``otto.models.monitor.checked_label``). ``existing`` is the label the
-    event already holds, or ``None`` when the write creates or restores one:
-    a new label is checked, as on a create. A label that equals ``existing``
-    is put back as it is, as a PATCH that omits it would leave it: an older
-    archive may hold one that is now refused.
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def timestamp(self) -> datetime: ...
+
+    @property
+    def end_timestamp(self) -> datetime | None: ...
+
+
+def check_event_write(
+    existing: _Stored | None,
+    *,
+    label: str,
+    timestamp: datetime,
+    end_timestamp: datetime | None,
+) -> None:
+    """Refuse an event write a create would refuse, as :class:`EventValidationError`.
+
+    The ONE write rule: every library, archive, HTTP and revert write asks it
+    on the values it is about to store (aware UTC: after the write's own
+    :func:`otto.utils.as_utc`). ``existing`` is the event as stored, or
+    ``None`` when the write creates or restores one.
+
+    * The label must not be blank (``otto.models.monitor.checked_label``),
+      unless it equals ``existing``'s: put back as it is, as a PATCH that
+      omits it would leave it (an older archive may hold a blank one).
+    * The span must end after it starts (:func:`check_span`), unless
+      ``existing`` holds this very pair (a legacy backward span can still be
+      recoloured or relabelled). A create, a restore, or any write that
+      changes the pair must be forward, so undoing the delete of a legacy
+      backward event is refused.
     """
-    if existing is None or label != existing:
+    if existing is None or label != existing.label:
         try:
             checked_label(label)
         except ValueError as err:
             raise EventValidationError(str(err)) from err
+    if (
+        existing is None
+        or utc_instant(timestamp) != utc_instant(existing.timestamp)
+        or utc_instant(end_timestamp) != utc_instant(existing.end_timestamp)
+    ):
+        check_span(timestamp, end_timestamp)
 
 
 def check_revert_write(expect: EventRecord | None, write: EventRecord | None) -> None:
     """Refuse a revert's ``write`` that a create or an update would refuse.
 
-    The span is checked as :func:`check_span` checks every stored pair, the
-    label as :func:`check_label_write` does: on a restore (no ``expect``, so
-    the label is new) and on an update that changes it.
+    The revert route's pre-validation: :func:`check_event_write` against
+    ``expect`` (``None`` on a restore, so label and span are both new).
     """
     if write is None:
         return
-    check_span(write.timestamp, write.end_timestamp)
-    check_label_write(None if expect is None else expect.label, write.label)
+    check_event_write(
+        expect, label=write.label, timestamp=write.timestamp, end_timestamp=write.end_timestamp
+    )
 
 
-class _Labelled(Protocol):
-    """An event record of either backend: all the core reads of it is its label."""
-
-    @property
-    def label(self) -> str: ...
-
-
-_E = TypeVar("_E", bound=_Labelled)
+_E = TypeVar("_E", bound=_Stored)
 _R = TypeVar("_R")
 _P = TypeVar("_P")
 
@@ -305,8 +331,9 @@ async def mutate_under_lock(
        it. It is where a caller's merge lives (a PATCH's omitted fields, an
        end's "already ended" refusal), so it always reads the latest state;
        an exception it raises propagates with nothing written.
-    3. A resolved label that differs from the current one must not be blank
-       (:func:`check_label_write`), checked here for every change.
+    3. The resolved record must pass :func:`check_event_write` against the
+       current one (a new blank label, a changed span that is not forward),
+       checked here for every change.
     4. ``await write(current, resolved)`` to the backend's store. ``False``
        means the store no longer holds the event: ``None`` is returned and
        nothing applied. An exception propagates, likewise.
@@ -327,7 +354,12 @@ async def mutate_under_lock(
             return None
         resolved = resolve(current)
         if resolved is not None:
-            check_label_write(current.label, resolved.label)
+            check_event_write(
+                current,
+                label=resolved.label,
+                timestamp=resolved.timestamp,
+                end_timestamp=resolved.end_timestamp,
+            )
         return _Resolution(current, resolved)
 
     async def commit(step: "_Resolution[_E] | None") -> "_R | None":
@@ -366,12 +398,11 @@ def resolve_create(body: EventCreateBody) -> tuple[datetime, datetime | None]:
     """Resolve a create body to concrete ``(timestamp, end_timestamp)``.
 
     An omitted timestamp means server-now (the Mark-now flow). The span
-    ordering is re-checked on the RESOLVED pair — the model can only validate
-    what it holds, and a body with only ``end_timestamp`` set becomes a full
-    pair here.
+    ordering of the RESOLVED pair (a body with only ``end_timestamp`` set
+    becomes a full pair here) is not checked here: the backend that stores
+    it refuses a backward pair through :func:`check_event_write`.
     """
     timestamp = body.timestamp or utc_now()
-    check_span(timestamp, body.end_timestamp)
     return timestamp, body.end_timestamp
 
 
@@ -387,8 +418,9 @@ def merge_update(
     """Merge a partial update onto an existing event's fields.
 
     ``model_fields_set`` semantics: an absent field is unchanged; an explicit
-    JSON null ``end_timestamp`` CLEARS the end (span -> point). The span
-    ordering is checked on the MERGED pair — the only place it can be.
+    JSON null ``end_timestamp`` CLEARS the end (span -> point). The MERGED
+    pair's ordering is checked where it is written
+    (:func:`check_event_write`, run by :func:`mutate_under_lock`), not here.
     Existing fields are passed explicitly (not as a model) so both backends —
     a live ``MonitorEvent`` and a review ``EventRecord`` — use this one rule
     without an adapter type.
@@ -400,7 +432,6 @@ def merge_update(
         else existing_timestamp
     )
     end_timestamp = body.end_timestamp if "end_timestamp" in provided else existing_end
-    check_span(timestamp, end_timestamp)
     return ResolvedEventFields(
         label=body.label if body.label is not None else existing_label,
         color=body.color if body.color is not None else existing_color,

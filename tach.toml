@@ -862,7 +862,7 @@ depends_on = ["otto.errors"]
 [[modules]]
 path = "otto.monitor.event_ops"
 layer = "topology"
-depends_on = ["otto.errors", "otto.models"]
+depends_on = ["otto.errors", "otto.models", "otto.utils"]
 
 [[modules]]
 path = "otto.monitor.events"

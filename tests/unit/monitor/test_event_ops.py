@@ -9,6 +9,7 @@ from otto.models.monitor import EventCreateBody, EventRecord, EventUpdateBody
 from otto.monitor.event_ops import (
     EventValidationError,
     ResolvedEventFields,
+    check_event_write,
     check_revert_write,
     editable_fields,
     merge_update,
@@ -46,9 +47,11 @@ def test_resolve_create_keeps_explicit_pair() -> None:
     assert resolve_create(EventCreateBody(label="x", timestamp=T0, end_timestamp=T1)) == (T0, T1)
 
 
-def test_resolve_create_rejects_end_before_resolved_now() -> None:
-    with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
-        resolve_create(EventCreateBody(label="x", end_timestamp=T0))  # T0 is in the past
+def test_resolve_create_resolves_without_judging_the_span() -> None:
+    """The span is the backend's write rule (``check_event_write``), not the resolver's."""
+    ts, end = resolve_create(EventCreateBody(label="x", end_timestamp=T0))  # T0 is in the past
+    assert end == T0
+    assert ts > end
 
 
 def test_merge_absent_fields_unchanged() -> None:
@@ -61,10 +64,29 @@ def test_merge_explicit_null_end_clears() -> None:
     assert fields.end_timestamp is None
 
 
-def test_merge_rejects_start_moved_past_kept_end() -> None:
-    moved = (T1 + timedelta(minutes=1)).isoformat()
+def test_merge_start_moved_past_kept_end_is_left_to_the_write_rule() -> None:
+    moved = T1 + timedelta(minutes=1)
+    update = EventUpdateBody.model_validate({"timestamp": moved.isoformat()})
+    fields = merge_update(update, **EXISTING)
+    assert (fields.timestamp, fields.end_timestamp) == (moved, T1)
+    stored = EventRecord(timestamp=T0, end_timestamp=T1, label="soak")
     with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
-        merge_update(EventUpdateBody.model_validate({"timestamp": moved}), **EXISTING)
+        check_event_write(
+            stored,
+            label=fields.label,
+            timestamp=fields.timestamp,
+            end_timestamp=fields.end_timestamp,
+        )
+
+
+def test_check_event_write_keeps_an_unchanged_span_and_checks_a_changed_one() -> None:
+    legacy = EventRecord(timestamp=T1, end_timestamp=T0, label="soak")  # backward
+    check_event_write(legacy, label="renamed", timestamp=T1, end_timestamp=T0)
+    with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
+        check_event_write(legacy, label="soak", timestamp=T1, end_timestamp=T0 - timedelta(hours=1))
+    with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
+        check_event_write(None, label="soak", timestamp=T1, end_timestamp=T0)
+    check_event_write(None, label="soak", timestamp=T0, end_timestamp=None)
 
 
 def _record(data: "dict[str, object] | None") -> EventRecord | None:

@@ -67,6 +67,25 @@ def as_utc(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=timezone.utc)
 
 
+@overload
+def utc_instant(value: datetime) -> datetime: ...
+@overload
+def utc_instant(value: None) -> None: ...
+def utc_instant(value: datetime | None) -> datetime | None:
+    """Return the UTC instant a timestamp names: the ONE way to compare two of them.
+
+    ``None`` stays ``None``; a naive *value* is read as UTC (:func:`as_utc`).
+    Python compares two datetimes that share one ``tzinfo`` by wall time and
+    ignores ``fold``, so across a DST fall-back two ``ZoneInfo`` values an
+    hour apart compare equal, and a later wall time can be the earlier
+    instant. Converting both to UTC first compares the instants. Use it to
+    compare, never to store: :func:`as_utc` keeps the offset a value carries.
+    """
+    if value is None:
+        return None
+    return as_utc(value).astimezone(timezone.utc)
+
+
 def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     """Expand ``~``, then anchor a still-relative path to *root*.
 
