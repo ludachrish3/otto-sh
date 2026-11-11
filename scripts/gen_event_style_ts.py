@@ -1,4 +1,4 @@
-"""Write ``web/src/api/eventStyle.gen.ts`` from :mod:`otto.models.event_style`.
+"""Write ``web/src/api/eventStyle.gen.ts`` from the event-style registry in models.monitor.
 
 The dashboard's event colours and dashes are the Python registry's values,
 mirrored into TypeScript so neither side restates them (#857). Values only:
@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-from otto.models.event_style import (
+from otto.models.monitor import (
     DEFAULT_EVENT_COLOR,
     DEFAULT_EVENT_DASH,
     EVENT_COLOR_PATTERN,
@@ -31,7 +31,7 @@ TS_PATH = Path("web/src/api/eventStyle.gen.ts")
 """Where the mirror lives, relative to the checkout root."""
 
 _BANNER = (
-    "/* AUTO-GENERATED from src/otto/models/event_style.py"
+    "/* AUTO-GENERATED from src/otto/models/monitor.py (the event-style registry)"
     " — run scripts/gen_web_types.sh; do not edit. */"
 )
 

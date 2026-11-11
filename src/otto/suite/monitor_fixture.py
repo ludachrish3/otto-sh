@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import final
 
-from otto.models.event_style import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
+from otto.models.monitor import DEFAULT_EVENT_COLOR, DEFAULT_EVENT_DASH
 
 if TYPE_CHECKING:
     from otto.host.remote_host import RemoteHost

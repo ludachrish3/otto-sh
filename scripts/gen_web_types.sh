@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
 # otto's live pydantic models, and web/src/api/eventStyle.gen.ts from the
-# event-style registry (otto.models.event_style, via
+# event-style registry (the registry in otto.models.monitor, via
 # scripts/gen_event_style_ts.py).
 #
 # monitor-meta.schema.json (the internal chart/tab-layout contract, see

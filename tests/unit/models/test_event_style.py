@@ -1,11 +1,11 @@
-"""otto.models.event_style — the one registry that decides event colours and dashes (#857)."""
+"""The event-style registry (otto.models.monitor): one decision on event colours and dashes."""
 
 import subprocess
 import sys
 
 import pytest
 
-from otto.models.event_style import (
+from otto.models.monitor import (
     DEFAULT_EVENT_COLOR,
     DEFAULT_EVENT_COLOR_ID,
     DEFAULT_EVENT_DASH,
@@ -71,7 +71,7 @@ def test_normalize_rejects_named_rgb_and_trailing_newline(value: str) -> None:
 
 def test_leaf_imports_no_monitor() -> None:
     code = (
-        "import sys, otto.models.event_style\n"
+        "import sys, otto.models.monitor\n"
         "bad = sorted(k for k in sys.modules if k.startswith(('otto.monitor', 'otto.suite')))\n"
         "print(','.join(bad))\n"
     )

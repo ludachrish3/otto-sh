@@ -25,12 +25,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from typing_extensions import final
 
 from ..logger.mode import LogMode
-from ..models.event_style import (
-    DEFAULT_EVENT_COLOR,
-    DEFAULT_EVENT_DASH,
-)
 from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
 from ..models.monitor import (
+    DEFAULT_EVENT_COLOR,
+    DEFAULT_EVENT_DASH,
     DEFAULT_MAX_SERIES_PER_CHART,
     ChartSpec,
     EventRecord,

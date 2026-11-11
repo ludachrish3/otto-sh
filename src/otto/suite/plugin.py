@@ -1236,7 +1236,7 @@ class OttoPlugin:
         # The lifecycle styles come from the leaf registry (stdlib-only), not
         # from the monitor package, which the suite may not import; the
         # import sits here only beside its one use.
-        from ..models.event_style import AUTO_EVENT_COLORS, LIFECYCLE_DASHES
+        from ..models.monitor import AUTO_EVENT_COLORS, LIFECYCLE_DASHES
 
         cls = getattr(request, "cls", None)
         owner = cls.__name__ if cls is not None else Path(str(node.path)).stem
