@@ -78,18 +78,22 @@ def insert_event(
 ) -> int:
     """Insert one event row for *session_id*; returns the new rowid.
 
-    A blank *label* raises :class:`~otto.monitor.event_ops.EventValidationError`
-    (a ``ValueError``) before the archive is opened.
+    A blank *label* or an *end_timestamp* not after *timestamp* raises
+    :class:`~otto.monitor.event_ops.EventValidationError` (a ``ValueError``,
+    :func:`~otto.monitor.event_ops.check_event_write`) before the archive is
+    opened. A naive datetime means UTC.
     """
-    event_ops.check_label_write(None, label)
+    timestamp = as_utc(timestamp)
+    end_timestamp = as_utc(end_timestamp)
+    event_ops.check_event_write(None, label=label, timestamp=timestamp, end_timestamp=end_timestamp)
     with _locked_connection(path) as conn:
         _require_session(conn, path, session_id)
         cursor = conn.execute(
             EVENT_INSERT_SQL,
             event_insert_params(
                 session_id,
-                timestamp=as_utc(timestamp),
-                end_timestamp=as_utc(end_timestamp),
+                timestamp=timestamp,
+                end_timestamp=end_timestamp,
                 label=label,
                 source=source,
                 color=color,
@@ -159,11 +163,22 @@ def _update_row(
 ) -> bool:
     """Run the one UPDATE of an event's editable fields (``fields`` is ``editable_fields``).
 
-    ``current`` is the row as it stands: a label that differs from it must not
-    be blank (:func:`~otto.monitor.event_ops.check_label_write`), checked
-    before the UPDATE for every caller.
+    ``current`` is the row as it stands: the write must pass
+    :func:`~otto.monitor.event_ops.check_event_write` against it (a new
+    blank label, a changed span that is not forward), on the values the
+    UPDATE stores, checked before it for every caller.
     """
-    event_ops.check_label_write(current.label, fields["label"])
+    fields = {
+        **fields,
+        "timestamp": as_utc(fields["timestamp"]),
+        "end_timestamp": as_utc(fields["end_timestamp"]),
+    }
+    event_ops.check_event_write(
+        current,
+        label=fields["label"],
+        timestamp=fields["timestamp"],
+        end_timestamp=fields["end_timestamp"],
+    )
     cursor = conn.execute(
         "UPDATE events SET label = ?, color = ?, dash = ?, ts = ?, end_ts = ? "
         "WHERE id = ? AND session_id = ?",
@@ -196,9 +211,14 @@ def _restore_row(
     """Put ``write`` back under ``event_id``, if this session may reuse that id.
 
     Refused when the id is present, held by another session, or never handed out,
-    or when ``write``'s label is blank (a restore introduces its label).
+    or when ``write``'s label is blank or its span does not end after it
+    starts (a restore introduces both: ``check_event_write(None, ...)``).
     """
-    event_ops.check_label_write(None, write.label)
+    timestamp = as_utc(write.timestamp)
+    end_timestamp = as_utc(write.end_timestamp)
+    event_ops.check_event_write(
+        None, label=write.label, timestamp=timestamp, end_timestamp=end_timestamp
+    )
     _require_session(conn, "archive", session_id)
     present = _current(conn, session_id, event_id)
     if present is not None:
@@ -214,8 +234,8 @@ def _restore_row(
         event_restore_params(
             event_id,
             session_id,
-            timestamp=write.timestamp,
-            end_timestamp=write.end_timestamp,
+            timestamp=timestamp,
+            end_timestamp=end_timestamp,
             label=write.label,
             source=write.source,
             color=write.color,
@@ -242,9 +262,12 @@ def update_event(
 ) -> bool:
     """Overwrite an event's editable fields. False if (session, id) matches nothing.
 
-    A *label* that differs from the stored one must not be blank
-    (:class:`~otto.monitor.event_ops.EventValidationError`); one that keeps it
-    passes, so a legacy blank-label row can still change colour or end.
+    A *label* that differs from the stored one must not be blank, and a span
+    that differs from it must end after it starts
+    (:class:`~otto.monitor.event_ops.EventValidationError`,
+    :func:`~otto.monitor.event_ops.check_event_write`); a write that keeps
+    them passes, so a legacy blank-label or backward-span row can still
+    change colour.
     With *expect* (the row the edit was resolved against), the row must
     still be it: otherwise :class:`~otto.monitor.event_ops.EventChanged`
     carries the row as it stands, and nothing is written.
@@ -253,8 +276,8 @@ def update_event(
         label=label,
         color=color,
         dash=dash,
-        timestamp=as_utc(timestamp),
-        end_timestamp=as_utc(end_timestamp),
+        timestamp=timestamp,
+        end_timestamp=end_timestamp,
     )
     with _locked_connection(path) as conn:
         current = _row_to_write(conn, session_id, event_id, expect)
@@ -284,8 +307,10 @@ def restore_event(path: str, session_id: str, event_id: int, write: EventRecord)
     has the id (carrying it) or the id was never handed out (the table's
     ``sqlite_sequence`` is the high-water mark), so a restore can neither
     overwrite an event nor claim an id a later create would collide with. A
-    legacy colour or dash in ``write`` is written unchanged; a blank label is
-    refused (:class:`~otto.monitor.event_ops.EventValidationError`).
+    legacy colour or dash in ``write`` is written unchanged; a blank label or
+    a span not ending after its start is refused
+    (:class:`~otto.monitor.event_ops.EventValidationError`), so the undo of
+    deleting a legacy backward-span event is refused.
     """
     with _locked_connection(path) as conn:
         return _restore_row(conn, session_id, event_id, write)
@@ -304,7 +329,8 @@ def revert_event(
     from :func:`~otto.monitor.event_ops.revert_leg`. Returns the stored row
     after an update or restore, the removed row after a delete. A missing
     event on the update or delete leg raises ``EventChanged(None)``, and a
-    blank new label on the update or restore leg raises ``EventValidationError``.
+    new blank label or span not ending after its start on the update or
+    restore leg raises ``EventValidationError``.
     """
     leg = event_ops.revert_leg(expect, write)
     with _locked_connection(path) as conn:

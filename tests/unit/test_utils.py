@@ -9,6 +9,7 @@ cannot hide behind mocked callers.
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -20,6 +21,7 @@ from otto.utils import (
     name_by_reason,
     ottopath_entries,
     split_on,
+    utc_instant,
 )
 
 # Sample Literal aliases used purely as fixtures for the utility functions
@@ -223,3 +225,27 @@ class TestAsUtc:
 
     def test_none_stays_none(self) -> None:
         assert as_utc(None) is None
+
+
+class TestUtcInstant:
+    def test_a_naive_value_means_utc(self) -> None:
+        naive = datetime(2026, 7, 18, 12, 0)  # noqa: DTZ001 — the naive input under test
+        assert utc_instant(naive) == naive.replace(tzinfo=timezone.utc)
+        assert utc_instant(naive).tzinfo is timezone.utc
+
+    def test_an_aware_value_becomes_its_utc_instant(self) -> None:
+        aware = datetime(2026, 7, 18, 14, 0, tzinfo=timezone(timedelta(hours=2)))
+        instant = utc_instant(aware)
+        assert instant.tzinfo is timezone.utc
+        assert (instant.hour, instant.minute) == (12, 0)
+
+    def test_a_fold_names_a_different_instant(self) -> None:
+        # America/Chicago falls back at 02:00 CDT on 2026-11-01: 01:15 happens twice.
+        chicago = ZoneInfo("America/Chicago")
+        first = datetime(2026, 11, 1, 1, 15, tzinfo=chicago)
+        second = first.replace(fold=1)
+        assert first == second  # same tzinfo: Python compares wall time
+        assert utc_instant(second) - utc_instant(first) == timedelta(hours=1)
+
+    def test_none_stays_none(self) -> None:
+        assert utc_instant(None) is None

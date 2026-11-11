@@ -57,7 +57,7 @@ from pydantic import (
 )
 from typing_extensions import final
 
-from ..utils import as_utc
+from ..utils import as_utc, utc_instant
 from .base import OttoModel
 
 # --- The event-style registry -------------------------------------------------
@@ -379,8 +379,9 @@ def checked_label(value: str) -> str:
     included) and every library write that stores a new or changed label (the collector's
     ``add_event``, ``mutate_event`` and ``restore_event``, the archive's
     insert, update and restore, and a revert's ``write``) reaches it through
-    ``otto.monitor.event_ops.check_label_write``. ``EventRecord`` does not
-    validate with it, so an old file still loads.
+    ``otto.monitor.event_ops.check_event_write``, which also checks the
+    span. ``EventRecord`` does not validate with it, so an old file still
+    loads.
     """
     if not value.strip():
         raise ValueError("label must not be empty")
@@ -394,20 +395,24 @@ SPAN_ORDER_ERROR = "end_timestamp must be after timestamp"
 def span_is_forward(timestamp: datetime, end_timestamp: datetime | None) -> bool:
     """Report whether a span ends after it starts: the ONE span-order rule.
 
-    A point event (no end) is always forward. ``EventCreateBody`` checks the
-    pair it holds with it, and ``otto.monitor.event_ops.check_span`` the pair
-    a create, an update merge or a revert is about to store. It lives here,
-    below both, because models never import the monitor package.
+    A point event (no end) is always forward. The two ends compare as UTC
+    instants (:func:`otto.utils.utc_instant`), so a span across a DST fold is
+    ordered by when it happens, not by its wall times. ``EventCreateBody``
+    checks the pair it holds with it, and the backend write rule
+    ``otto.monitor.event_ops.check_event_write`` every pair a write is about
+    to store. It lives here, below both, because models never import the
+    monitor package.
     """
-    return end_timestamp is None or end_timestamp > timestamp
+    return end_timestamp is None or utc_instant(end_timestamp) > utc_instant(timestamp)
 
 
 class EventCreateBody(OttoModel):
     """``POST /api/session/{sid}/event`` request body (spec 2026-07-18).
 
     ``timestamp=None`` means "server-now" (the Mark-now flow). When both
-    timestamps are present the span must be forward; the server re-checks the
-    pair after resolving a ``None`` timestamp to now.
+    timestamps are present the span must be forward; the backend write rule
+    ``otto.monitor.event_ops.check_event_write`` checks the pair again once a
+    ``None`` timestamp has resolved to now.
 
     ``defer_build=False``, overriding :class:`~otto.models.base.OttoModel`:
     FastAPI wraps a request-body parameter in its own
@@ -465,14 +470,13 @@ class EventUpdateBody(OttoModel):
     Every field optional; ``model_fields_set`` distinguishes "absent"
     (unchanged) from an explicit JSON ``null``. Only ``end_timestamp`` uses
     that distinction — an explicit null CLEARS the end (span → point); for the
-    other fields null means unchanged, same as absent. The merged
-    start/end ordering check happens in the route, where the existing event's
-    values are known. The label check likewise runs inside the mutation
-    sequence, against the current event: a blank ``label`` is refused only
-    when it differs from the event's current one
-    (``otto.monitor.event_ops.check_label_write``), the same answer a
-    library update gets: a PATCH that resends an older event's already-blank
-    label alongside a colour is accepted.
+    other fields null means unchanged, same as absent. The write rule
+    (``otto.monitor.event_ops.check_event_write``) runs inside the mutation
+    sequence, against the current event, on the merged values: a blank
+    ``label`` or a start/end pair that is not forward is refused only when
+    it differs from the event's current one, the same answer a library
+    update gets: a PATCH that resends an older event's already-blank label
+    (or backward span) alongside a colour is accepted.
 
     ``defer_build=False``: same FastAPI request-body reason as
     :class:`EventCreateBody` — see its docstring.

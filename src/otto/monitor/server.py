@@ -655,52 +655,54 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         refused = _mutation_guard(session_id)
         if refused is not None:
             return refused
+        timestamp, end_timestamp = resolve_create(body)
         try:
-            timestamp, end_timestamp = resolve_create(body)
+            if mode == "review":
+
+                async def commit() -> EventRecord:
+                    rowid = await asyncio.to_thread(
+                        archive_edit.insert_event,
+                        _review_archive(),
+                        session_id,
+                        timestamp=timestamp,
+                        end_timestamp=end_timestamp,
+                        label=body.label,
+                        source="manual",
+                        color=body.color,
+                        dash=body.dash,
+                    )
+                    created = EventRecord(
+                        id=rowid,
+                        timestamp=timestamp,
+                        end_timestamp=end_timestamp,
+                        label=body.label,
+                        source="manual",
+                        color=body.color,
+                        dash=body.dash,
+                    )
+                    _patch_document_event(session_id, created)
+                    return created
+
+                try:
+                    # Under the one mutation lock (#941), so the document patch
+                    # follows this archive write before any other write starts,
+                    # even when the request is cancelled during it.
+                    record = await event_ops.run_locked(collector.mutation_lock(), commit)
+                except archive_edit.ArchiveLockedError as err:
+                    return _archive_busy(err)
+                return _record_response(record, status_code=201)
+            event = await collector.add_event(
+                label=body.label,
+                timestamp=timestamp,
+                color=body.color,
+                dash=body.dash,
+                source="manual",
+                end_timestamp=end_timestamp,
+            )
         except EventValidationError as err:
+            # The backend's own write rule (event_ops.check_event_write): the
+            # same 422 in both modes. resolve_create does not check the span.
             return JSONResponse({"error": str(err)}, status_code=422)
-        if mode == "review":
-
-            async def commit() -> EventRecord:
-                rowid = await asyncio.to_thread(
-                    archive_edit.insert_event,
-                    _review_archive(),
-                    session_id,
-                    timestamp=timestamp,
-                    end_timestamp=end_timestamp,
-                    label=body.label,
-                    source="manual",
-                    color=body.color,
-                    dash=body.dash,
-                )
-                created = EventRecord(
-                    id=rowid,
-                    timestamp=timestamp,
-                    end_timestamp=end_timestamp,
-                    label=body.label,
-                    source="manual",
-                    color=body.color,
-                    dash=body.dash,
-                )
-                _patch_document_event(session_id, created)
-                return created
-
-            try:
-                # Under the one mutation lock (#941), so the document patch
-                # follows this archive write before any other write starts,
-                # even when the request is cancelled during it.
-                record = await event_ops.run_locked(collector.mutation_lock(), commit)
-            except archive_edit.ArchiveLockedError as err:
-                return _archive_busy(err)
-            return _record_response(record, status_code=201)
-        event = await collector.add_event(
-            label=body.label,
-            timestamp=timestamp,
-            color=body.color,
-            dash=body.dash,
-            source="manual",
-            end_timestamp=end_timestamp,
-        )
         return _event_response(event.to_dict(), status_code=201)
 
     async def _apply_update(

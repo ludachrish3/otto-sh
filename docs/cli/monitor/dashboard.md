@@ -283,7 +283,10 @@ from a `.json` file has nothing to undo, and the commands are disabled there.
 - **What is recorded.** Marks and spans started from the app bar or the Events
   panel, events added in the editor or by sweeping the chart, saving an edit,
   **End span** and **End now**, and deletes. Undoing a delete brings back the
-  same event, with the same id, label, times, colour, dash and source. An undo
+  same event, with the same id, label, times, colour, dash and source; the
+  one exception is an older event stored with its end before its
+  start, whose delete cannot be undone because no write may introduce such a
+  span (the undo answers 422). An undo
   of an edit puts back only the fields that edit sent; if anything else about
   the event changed meanwhile, the undo is skipped (next item). View actions (zoom, range, pause) are not part of the history, and
   neither is anything done by another tab, another client or a test run.

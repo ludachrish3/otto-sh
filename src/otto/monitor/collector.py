@@ -844,10 +844,10 @@ class MetricCollector:
         """Record a labeled event and push it to all dashboard subscribers.
 
         *color* is ``#rrggbb`` or ``#rgb`` (stored as lowercase ``#rrggbb``);
-        a named colour, an unknown *dash* or a blank *label* raises
-        ``ValueError`` before anything is stored or published.
+        a named colour, an unknown *dash*, a blank *label* or an *end_timestamp*
+        not after the start raises ``ValueError`` before anything is stored or
+        published (``event_ops.check_event_write``).
         """
-        event_ops.check_label_write(None, label)
         event = MonitorEvent(
             timestamp=timestamp or event_ops.utc_now(),
             label=label,
@@ -855,6 +855,9 @@ class MetricCollector:
             color=color,
             dash=dash,
             end_timestamp=end_timestamp,
+        )
+        event_ops.check_event_write(
+            None, label=event.label, timestamp=event.timestamp, end_timestamp=event.end_timestamp
         )
         # Under the same lock as every other event mutation (mutate_event),
         # and in the same order: DB write, then memory and publish together,
@@ -883,11 +886,13 @@ class MetricCollector:
         PATCH's omitted fields, an end's "already ended" refusal), so it
         always reads the latest state; an exception it raises propagates, as
         does a DB failure, with memory unchanged. A resolved label that
-        differs from the current one must not be blank
-        (``event_ops.EventValidationError``, a ``ValueError``), checked by
-        that sequence for every change, so ``update_event`` and a revert's
-        update leg share it. A change that keeps the label as it is passes,
-        even for a legacy blank one. The resolved record keeps the event's
+        differs from the current one must not be blank, and a span that
+        differs from it must end after it starts
+        (``event_ops.check_event_write``: ``EventValidationError``, a
+        ``ValueError``), checked by that sequence for every change, so
+        ``update_event`` and a revert's update leg share it. A change that
+        keeps the label and the span as they are passes, even for a legacy
+        blank label or backward span. The resolved record keeps the event's
         own ``id`` and ``source``.
 
         The DB write comes first so that the memory change and its publish
@@ -968,13 +973,27 @@ class MetricCollector:
         event), so a restore can neither overwrite an event nor claim an id
         a later create would collide with.
         ``write`` is validated strictly, as every live write is: a legacy
-        colour or dash, or a blank label (a restore introduces its label),
-        raises ``event_ops.EventValidationError`` (the route's 422) before
-        anything is written.
+        colour or dash, a blank label or a span not ending after its start (a
+        restore introduces both), raises ``event_ops.EventValidationError``
+        (the route's 422) before anything is written.
         ``source`` is kept from ``write``: a restored ``auto`` event stays
         ``auto``.
         """
-        event_ops.check_label_write(None, write.label)
+        restored = MonitorEvent(
+            timestamp=write.timestamp,
+            label=write.label,
+            source=write.source,
+            color=write.color,
+            dash=write.dash,
+            id=event_id,
+            end_timestamp=write.end_timestamp,
+        )
+        event_ops.check_event_write(
+            None,
+            label=restored.label,
+            timestamp=restored.timestamp,
+            end_timestamp=restored.end_timestamp,
+        )
 
         async def prepare() -> MonitorEvent:
             present = self._store.find_event(event_id)
@@ -985,15 +1004,7 @@ class MetricCollector:
             # A reused --db holds earlier sessions' ids inside this range.
             if self._db and await self._db.event_id_taken(event_id):
                 raise event_ops.EventChanged(None)
-            return MonitorEvent(
-                timestamp=write.timestamp,
-                label=write.label,
-                source=write.source,
-                color=write.color,
-                dash=write.dash,
-                id=event_id,
-                end_timestamp=write.end_timestamp,
-            )
+            return restored
 
         async def commit(event: MonitorEvent) -> MonitorEvent:
             if self._db:
@@ -1062,12 +1073,14 @@ class MetricCollector:
         :meth:`mutate_event` resolver instead, so it reads them under the
         lock. ``timestamp`` is REQUIRED so a call site cannot silently keep
         passing the old start while believing it edited it (the 5a
-        `interval=None` trap, made structural). A blank *label* that
-        differs from the event's own raises ``event_ops.EventValidationError``.
+        `interval=None` trap, made structural). A blank *label*, or a span, that
+        differs from the event's own and is not valid raises
+        ``event_ops.EventValidationError`` (``event_ops.check_event_write``).
         """
         # No check here: replace() runs MonitorEvent.__post_init__, which
         # normalises the colour and refuses a bad colour or dash inside the
-        # resolver -- before mutate_event writes anything.
+        # resolver, and mutate_event's sequence runs event_ops.check_event_write
+        # on the result -- both before anything is written.
         written = event_ops.ResolvedEventFields(
             label=label, color=color, dash=dash, timestamp=timestamp, end_timestamp=end_timestamp
         )
