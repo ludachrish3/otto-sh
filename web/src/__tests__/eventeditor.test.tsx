@@ -17,6 +17,7 @@ import { undo } from "../data/undoRedo";
 import { EventEditor } from "../shell/EventEditor";
 import { editorGateKey, useMutationGates } from "../shell/useMutationGate";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
+import { useToastStore } from "../ui/Toast";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
 import { installPlotSurfaceCss } from "./_plotSurfaceCss";
 
@@ -1600,5 +1601,144 @@ describe("EventEditor sends only the fields the user changed (#993)", () => {
     await user.keyboard("{ArrowUp}{ArrowDown}");
     await save(user, fetchMock);
     expect(jsonBody(fetchMock)).toEqual({ timestamp: "2026-07-05T12:00:00.000Z" });
+  });
+});
+
+describe("EventEditor and a write refused as changed (#992)", () => {
+  const CHANGED = "This event was changed elsewhere. It now shows the saved version.";
+  const DELETED = "This event was deleted elsewhere.";
+  const current = () =>
+    record({ id: 2, label: "renamed elsewhere", color: "#7c5cff", end_timestamp: null });
+  const changed = (cur: unknown) =>
+    okJson({ error: "the event was changed elsewhere", code: "changed", current: cur }, 409);
+
+  function open(sid: string): void {
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
+    });
+  }
+
+  const labelValue = () => (screen.getByTestId("editor-label") as HTMLInputElement).value;
+
+  it("Save answered changed shows the saved event and the next Save sends only the new change", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(changed(current()))
+      .mockResolvedValueOnce(okJson(current(), 200));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(screen.getByTestId("editor-error").textContent).toBe(CHANGED));
+    expect(Object.keys(jsonBody(fetchMock, 0))).toEqual(["label"]);
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 2 });
+    expect(labelValue()).toBe("renamed elsewhere");
+    expect(screen.getByTestId("editor-color-name").textContent).toBe("· Violet");
+    // Once the reseed's remount settles, nothing is marked touched: the
+    // refused label edit is not sent again with the colour.
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+    );
+    await user.click(screen.getByRole("option", { name: "Green" }));
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(jsonBody(fetchMock, 1)).toEqual({ color: "#2ca02c" });
+  });
+
+  it("an untouched Save right after a changed answer closes the editor without a request", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid);
+    const fetchMock = vi.fn().mockResolvedValueOnce(changed(current()));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(screen.getByTestId("editor-error").textContent).toBe(CHANGED));
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+    );
+    await user.click(screen.getByTestId("editor-save"));
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("Delete answered changed with a record closes the dialog, reseeds and explains", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(changed(current())));
+    render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
+    await user.click(screen.getByTestId("editor-delete"));
+    await user.click(screen.getByTestId("confirm-delete-confirm"));
+    await waitFor(() => expect(screen.queryByTestId("confirm-delete")).toBeNull());
+    expect(screen.getByTestId("editor-error").textContent).toBe(CHANGED);
+    expect(labelValue()).toBe("renamed elsewhere");
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 2 });
+  });
+
+  it.each([
+    {
+      action: "Save",
+      press: async (user: User) => {
+        await user.type(screen.getByTestId("editor-label"), "!");
+        await user.click(screen.getByTestId("editor-save"));
+      },
+    },
+    {
+      action: "Delete",
+      press: async (user: User) => {
+        await user.click(screen.getByTestId("editor-delete"));
+        await user.click(screen.getByTestId("confirm-delete-confirm"));
+      },
+    },
+  ])("$action answered changed with no event closes the editor and toasts", async ({ press }) => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(changed(null)));
+    render(<EventEditor />);
+    await press(user);
+    await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
+    expect(useToastStore.getState().toast?.message).toBe(DELETED);
+    expect(
+      useReviewStore
+        .getState()
+        .sessions.find((x) => x.id === sid)
+        ?.events.find((e) => e.id === 2),
+    ).toBeUndefined();
+  });
+
+  it("a changed answer that lands after closing and reopening leaves the new opening alone", async () => {
+    const user = userEvent.setup();
+    const sid = hydrate();
+    open(sid);
+    let release!: (r: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockReturnValueOnce(
+        new Promise<Response>((res) => {
+          release = res;
+        }),
+      ),
+    );
+    useToastStore.getState().dismissToast();
+    render(<EventEditor />);
+    await user.type(screen.getByTestId("editor-label"), "!");
+    await user.click(screen.getByTestId("editor-save"));
+    await user.click(screen.getByTestId("editor-cancel"));
+    open(sid);
+    await act(() => Promise.resolve(release(changed(current()))));
+    await waitFor(() =>
+      expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false),
+    );
+    expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 2 });
+    expect(screen.queryByTestId("editor-error")).toBeNull();
+    expect(useToastStore.getState().toast).toBeNull();
   });
 });

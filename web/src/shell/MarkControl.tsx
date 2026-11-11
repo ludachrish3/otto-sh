@@ -58,7 +58,7 @@ export function MarkControl() {
         settleOnOpening(
           "markPopover",
           () => (markPopover === "start" ? startSpan(label) : markNow(label)),
-          { done: closeMarkPopover, fail: setError },
+          { done: closeMarkPopover, fail: ({ message }) => setError(message) },
         ),
       SUBMIT,
     );

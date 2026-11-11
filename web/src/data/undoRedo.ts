@@ -9,17 +9,23 @@
 // (shell/useMutationGate.ts). Its outcomes:
 //  - 200: the entry moves to the other stack, with a toast offering the
 //    inverse;
-//  - 409 `changed` whose `current` is already the target: an earlier attempt
-//    committed and its response was lost. `current` is applied through the
-//    same success path, with the response's stamp so the store's ordering
-//    (fragment.ts) still holds, and the entry moves as on success;
+//  - 409 `changed`: revertEvent has already applied its `current` through
+//    the success path, with the response's stamp so the store's ordering
+//    (fragment.ts) still holds (eventApi.ts's mutate, the one place a
+//    conflict reaches the store). When `current` is already the target, an
+//    earlier attempt committed and its response was lost: the entry moves as
+//    on success;
 //  - 409 `changed` otherwise: the event changed elsewhere; the entry is
-//    dropped;
+//    dropped and the tab shows the event as it now stands;
+//  - 422: the server refuses the write itself (an older capture's blank
+//    label or backward span), so no retry can pass; the entry is dropped
+//    and the toast names the refusal;
 //  - `busy`, a network failure, anything else: the entry is kept to retry.
 import type { EventRecord } from "../api/export.gen";
 import { anyMutationPending, HISTORY_GATE_KEY, runGate } from "../shell/useMutationGate";
 import { useToastStore } from "../ui/Toast";
-import { applyEventResult, isStale, revertEvent, type StaleResult, sourceGuard } from "./eventApi";
+import { isStale, revertEvent, type StaleResult, sourceGuard } from "./eventApi";
+import { EventApiError } from "./eventApiError";
 import { EventChangedError } from "./eventChangedError";
 import { adoptOpenSpan } from "./openSpan";
 import { sameEvent } from "./sameEvent";
@@ -65,19 +71,25 @@ function settle(d: Direction, entry: HistoryEntry): void {
   showToast(`${d.done}: ${entry.verb} “${truncateLabel(entry.label)}”`, d.inverse);
 }
 
-/** A revert that threw: recover a lost response, drop a conflict, or keep
- * the entry to retry. */
+/** A revert that threw: recover a lost response, drop a conflict or a
+ * refusal, or keep the entry to retry. A conflict's `current` is already in
+ * the store. */
 function fail(d: Direction, entry: HistoryEntry, write: EventRecord | null, err: unknown): void {
+  const { dropTop } = useUndoHistory.getState().actions;
+  if (err instanceof EventApiError && err.status === 422) {
+    dropTop(d.name);
+    showToast(`Can't ${d.name}: “${truncateLabel(entry.label)}” — ${err.message}`);
+    return;
+  }
   if (!(err instanceof EventChangedError)) {
     showToast(`Couldn't ${d.name} — try again`);
     return;
   }
   if (sameEvent(err.current, write)) {
-    applyEventResult(entry.sessionId, entry.eventId, err.current, err.observed);
     settle(d, entry);
     return;
   }
-  useUndoHistory.getState().actions.dropTop(d.name);
+  dropTop(d.name);
   showToast(`Can't ${d.name}: “${truncateLabel(entry.label)}” changed elsewhere`);
 }
 

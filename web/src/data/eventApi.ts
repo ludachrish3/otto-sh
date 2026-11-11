@@ -4,7 +4,10 @@
 // applyFragment's existing upsert — in live mode the SSE echo then delivers
 // the same record again and the upsert-by-id makes it a no-op, so ordering
 // between response and echo cannot matter and no optimistic/rollback state
-// exists anywhere. A failed request applies nothing; callers surface the
+// exists anywhere. A failed request applies nothing, with one exception: a
+// 409 `changed` on an existing event carries the event as the server holds
+// it, and `mutate` applies that before rethrowing (#992), so the tab shows the
+// saved event rather than the stale copy it sent from. Callers surface the
 // thrown EventApiError inline at the control that issued it.
 //
 // A mutation addresses the server by session ID alone, so a response that
@@ -149,7 +152,7 @@ function observedAt(res: Response): string | null {
  * response's recovery) lands as a synthetic fragment through applyFragment's
  * upsert, or its deletion when `record` is null, stamped with the response's
  * observation so it orders against the SSE echo. */
-export function applyEventResult(
+function applyEventResult(
   sessionId: string,
   eventId: number,
   record: EventRecord | null,
@@ -171,14 +174,27 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 const base = (sessionId: string) => `/api/session/${encodeURIComponent(sessionId)}/event`;
 
+/** The existing event a mutation addresses. A create has none: it has no id
+ * yet, so it cannot be refused as `changed`. */
+interface MutationTarget {
+  sessionId: string;
+  eventId: number;
+}
+
 /** The one sequence every mutation shares: the source generation is captured
  * before the request, and the response applied only while it is still
  * current. A response, or a failure, that arrives after a source switch is
- * reported as stale: it belongs to a server the shell no longer shows. */
+ * reported as stale: it belongs to a server the shell no longer shows.
+ *
+ * The ONE place a 409 `changed` reaches the store: for a `target`, the
+ * refusal's `current` (the event as the server holds it, null when gone) is
+ * applied through the success path, with the refusal's stamp, before the
+ * error is rethrown to the caller. */
 async function mutate<T>(
   send: () => Promise<T>,
   apply: (value: T) => void,
   onSuccess?: (value: T) => void,
+  target?: MutationTarget,
 ): Promise<T | StaleResult> {
   const current = sourceGuard();
   let value: T;
@@ -186,6 +202,9 @@ async function mutate<T>(
     value = await send();
   } catch (err) {
     if (isStale(current(null))) return STALE;
+    if (target !== undefined && err instanceof EventChangedError) {
+      applyEventResult(target.sessionId, target.eventId, err.current, err.observed);
+    }
     throw err;
   }
   const result = current(value);
@@ -270,12 +289,14 @@ function editStates(
   return (record) => ({ after: record, before: { ...record, ...prior } });
 }
 
-/** A mutation whose response body is the affected event record. */
+/** A mutation whose response body is the affected event record; `eventId`
+ * names the existing event it addresses (none for a create). */
 async function mutateRecord(
   sessionId: string,
   path: string,
   init: RequestInit,
   onSuccess: (value: Recorded) => void,
+  eventId?: number,
 ): Promise<EventRecord | StaleResult> {
   const result = await mutate(
     async (): Promise<Recorded> => {
@@ -284,6 +305,7 @@ async function mutateRecord(
     },
     ({ record, observed }) => applyEventResult(sessionId, record.id, record, observed),
     onSuccess,
+    eventId === undefined ? undefined : { sessionId, eventId },
   );
   return isStale(result) ? result : result.record;
 }
@@ -322,6 +344,7 @@ export function endEvent(sessionId: string, eventId: number): Promise<EventRecor
       tracksSpan(sessionId, eventId),
       editStates(sessionId, eventId, ["end_timestamp"]),
     ),
+    eventId,
   );
 }
 
@@ -341,6 +364,7 @@ export function updateEvent(
       tracksSpan(sessionId, eventId),
       editStates(sessionId, eventId, sent),
     ),
+    eventId,
   );
 }
 
@@ -360,12 +384,14 @@ export async function deleteEvent(
       after: null,
       before: record,
     })),
+    { sessionId, eventId },
   );
   return isStale(result) ? result : result.record;
 }
 
 /** Puts the event from `expect` to `write` in one server step, refused with
- * an EventChangedError when it is no longer `expect`. Both null-or-record:
+ * an EventChangedError (its `current` already applied) when it is no longer
+ * `expect`. Both null-or-record:
  * (record, null) deletes, (null, record) restores. Resolves to the resulting
  * record, or null after a deletion. */
 export async function revertEvent(
@@ -386,6 +412,8 @@ export async function revertEvent(
       return { record, observed: observedAt(res) };
     },
     ({ record, observed }) => applyEventResult(sessionId, eventId, record, observed),
+    undefined,
+    { sessionId, eventId },
   );
   return isStale(result) ? result : result.record;
 }

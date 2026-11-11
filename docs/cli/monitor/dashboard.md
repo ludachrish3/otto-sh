@@ -239,10 +239,13 @@ When you review a `.db` archive, an edit, **End now** or a delete applies to
 the event as the archive holds it, not as this tab loaded it. Because the
 editor sends only the fields you changed, a field you did not change keeps
 what another tab, or another `otto monitor` on the same archive, saved
-meanwhile. If the
-event changes between the server reading it and writing your change, nothing
-is written and the dashboard warns that the event changed. Reload to see it as
-it now stands.
+meanwhile. If the event changes between the server reading it and writing
+your change, nothing is written and the tab shows the event as it was saved.
+The editor says "This event was changed elsewhere. It now shows the saved
+version." and stays open on that version, so you can make your change again;
+if the event was deleted meanwhile, the editor closes and a toast says so.
+**End now** in the Events panel reports the refusal as a warning at the top
+of the page.
 
 **Crowded labels.** Event labels stack in up to three rows at the top of
 each chart. Where more events crowd one spot, the earliest ones keep their
@@ -283,17 +286,19 @@ from a `.json` file has nothing to undo, and the commands are disabled there.
   panel, events added in the editor or by sweeping the chart, saving an edit,
   **End span** and **End now**, and deletes. Undoing a delete brings back the
   same event, with the same id, label, times, colour, dash and source; the
-  one exception is an older event stored with its end before its
-  start, whose delete cannot be undone because no write may introduce such a
-  span (the undo answers 422). An undo
-  of an edit puts back only the fields that edit sent; if anything else about
-  the event changed meanwhile, the undo is skipped (next item). View actions (zoom, range, pause) are not part of the history, and
+  exceptions are an event whose label is blank or whose end is not after its
+  start, both possible only in an older capture: no change may store them, so
+  undoing such an event's delete is refused and a toast says so, and the step
+  is dropped. An undo of an edit puts back only the fields that edit sent; if
+  anything else about the event changed meanwhile, the undo is skipped (next
+  item). View actions (zoom, range, pause) are not part of the history, and
   neither is anything done by another tab, another client or a test run.
 - **A conflict is skipped.** If the event was changed elsewhere since your
   change, undo will not overwrite it: a toast says "Can't undo: “test fail”
-  changed elsewhere" and that step is dropped, so the next press reaches the
-  step before it. If the archive is busy, or the request fails, a toast says
-  "Couldn't undo — try again" and the step is kept for you to retry.
+  changed elsewhere", the tab shows the event as it now stands, and that step
+  is dropped, so the next press reaches the step before it. If the archive is
+  busy, or the request fails, a toast says "Couldn't undo — try again" and
+  the step is kept for you to retry.
 - **One change at a time.** The tab sends one event change at a time. While
   one is in flight, the other event controls and the Undo and Redo commands
   are disabled, and their shortcuts do nothing. Nothing is queued: press again
