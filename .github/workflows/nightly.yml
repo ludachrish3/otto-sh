@@ -300,6 +300,15 @@ jobs:
         run: >-
           uv run nox -k ${{ matrix.browser }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
+      # The failed tests' Playwright traces — see ci.yml's dashboard job.
+      - name: Upload failed tests' Playwright traces (${{ matrix.browser }})
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-${{ matrix.browser }}
+          path: reports/playwright/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # Tier-2 real-signal chaos suite (tests/integration/chaos): real SIGINT/
   # SIGTERM delivered to real otto subprocesses (mid-run host command, login,

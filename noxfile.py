@@ -49,6 +49,11 @@ BOOKEND_PYTHONS = (PRIMARY_PYTHON, CANARY_PYTHON)
 # to avoid clobbering. With `--count=N` the repeats land in the same file, so a
 # multi-run stability pass collects every failure for a given Python in one place.
 JUNIT_DIR = Path("reports/junit")
+# Where failed browser tests leave their Playwright artifacts. MUST match the
+# Makefile's `--output reports/playwright` (`dashboard`, `dashboard-soak`) and
+# the path CI's and nightly's `dashboard` jobs upload on failure; the Makefile
+# can't read a Python constant, the same gap as DASHBOARD_MARKER_EXPR below.
+PLAYWRIGHT_OUTPUT_DIR = Path("reports/playwright")
 
 
 def _junitxml(session: nox.Session, group: str) -> str:
@@ -803,6 +808,18 @@ def dashboard(session: nox.Session, browser: str) -> None:
         # `make coverage` to fold in via --cov-append), this job stands alone
         # with nothing to combine into, so coverage stays off entirely.
         "--no-cov",
+        # A failed test keeps its Playwright trace (actions, DOM snapshots,
+        # console, network) and a screenshot, which the CI jobs upload on
+        # failure. A rare browser failure (#1006: a confirm dialog that never
+        # opened, no repro) leaves nothing else behind; a passing test keeps
+        # nothing. Each job runs one engine, and the per-test directory name
+        # already carries it, so no per-engine subdirectory.
+        "--tracing",
+        "retain-on-failure",
+        "--screenshot",
+        "only-on-failure",
+        "--output",
+        str(PLAYWRIGHT_OUTPUT_DIR),
         _junitxml(session, f"dashboard-{browser}"),
         *session.posargs,
     )
