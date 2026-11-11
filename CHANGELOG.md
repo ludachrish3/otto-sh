@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-11-11
+
+### Added
+
+- **BREAKING** **host**: reboot --wait's bounds are a per-host reboot_options table, layered like the others (#979)
+- **BREAKING** **lab**: the Ubuntu 24.04 chaos reboot guest on test4, provisioned, declared and reachable (#985)
+- **api**: the teaching check judges every taught call's shape, in code blocks and in prose spans
+- **BREAKING** **api**: the hooks a subclass must supply are declared obligations, not NotImplementedError by convention
+- **BREAKING** **api**: per-symbol manifest entries, withdrawn-right tokens, the keyword lint and the rights judge
+- **web,docs**: the otter mark for otto monitor and a hero on the docs index
+- **BREAKING** **monitor**: undo and redo for dashboard events
+- **monitor**: pick any event colour from a wheel or an exact hex
+
+
+### Changed
+
+- **models**: the event-style registry lives in models/monitor.py, not a leaf of its own
+- **models**: the version pattern lives in models/base.py, not a leaf of its own
+- **BREAKING** **api**: the public interfaces are keyword-only after their positional subjects; the CLI follows the signature
+- **BREAKING** **api**: plumbing classes nothing reaches leave the public surface
+- **BREAKING** **api**: the rights sweep — withdrawn constructors and obligations, the positional exception list, @final
+
+
+### Dependencies
+
+- **deps**: bump cffi 2.1.1 and pydantic 2.14.3 for cp315 wheels
+
+
+### Documentation
+
+- **specs**: chaos reboot guest design (#985, #979, #435)
+- **specs**: keyword-only public interfaces, and what a class lets a user do
+- **specs**: event undo and redo in the monitor dashboard (#929)
+
+
+### Fixed
+
+- **BREAKING** **host**: reboot's down phase probes through a throwaway connection, never the cache (#435)
+- **covapp**: state colours tint the flag pills and the stale row, never their text (#919)
+- **monitor**: review-mode event writes resolve and write under one lock, like live mode (#941)
+- **monitor**: a naive event timestamp means UTC, so a mixed write is no longer a 500 (#965)
+- **monitor**: every library and archive event write refuses a blank label, like the HTTP writes (#964)
+- **BREAKING** **cov**: capture.json no longer carries the unused display_name (#944)
+- **models**: a colour, max-age or version with a trailing newline is refused (#931)
+- **api**: the alias check compares implementer, and a class's members with it
+- **docs**: draw the supported-Python badge locally so the offline docs show it
+- **monitor**: overlays open with focus in their first field, so a nested popover restores focus (#957)
+- **gate**: workflow files route to the guards that pin them, not the full gate (#952)
+- **host**: the handshake reaches READY under set -e without stty or printf (#953)
+- **host**: no tail of a probe line can open a quote, a brace or feed zsh's cat (#853)
+- **monitor**: a late event result acts only in the editor or mark popover that sent it
+- **monitor**: event colour swatches are named, keyboard-friendly and show custom colours
+- **BREAKING** **monitor**: one registry decides event colours and dashes; colours must be hex
+- **test**: abort a hung group's children before their parents
+
+
+### Maintenance
+
+- **matrix**: re-measure the kmodcov matrix
+- **matrix**: re-measure the bed support matrix
+- **gate**: the chaos lanes are gate lanes again (#985)
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support and kmodcov matrices
+- **BREAKING** **gate**: the chaos lanes are suspended as gate lanes until the bed survives a warm reboot
+
+
 ## [0.19.0] - 2026-11-07
 
 ### Added
@@ -2508,7 +2574,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/ludachrish3/otto-sh/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/ludachrish3/otto-sh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/ludachrish3/otto-sh/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ludachrish3/otto-sh/compare/v0.16.1...v0.17.0

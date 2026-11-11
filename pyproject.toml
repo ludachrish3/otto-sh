@@ -1,6 +1,6 @@
 [project]
 name = "otto-sh"
-version = "0.19.0"
+version = "0.20.0"
 description = "Our Trusty Testing Orchestrator - framework and CLI for deploying, testing, and monitoring software across remote hosts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -431,7 +431,7 @@ markers = [
 # [tool.coverage.*] table in this file.
 
 [tool.bumpversion]
-current_version = "0.19.0"
+current_version = "0.20.0"
 commit = true
 # No tag at the bump: the release lands through a pull request, and `make release-tag`
 # tags main's tip after the merge (scripts/release_tag.py reads tag_name and tag_message).
