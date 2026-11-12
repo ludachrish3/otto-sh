@@ -1211,44 +1211,56 @@ def test_check_console_dials_the_servers_loopback_port_from_the_server(monkeypat
 
 
 @pytest.mark.parametrize(
-    ("creds", "out", "ok"),
+    ("out", "ok"),
     [
-        (True, "AT-LOGIN", True),
-        (True, "LOGGED-IN", False),
-        (True, "AT-PASSWORD", False),
-        (True, "SILENT", False),
-        (True, "BUSY", False),
-        (False, "LOGGED-IN", True),  # a Zephyr shell showing its prompt is healthy
-        (False, "AT-LOGIN", True),
-        (False, "SILENT", False),
-        (False, "BUSY", False),
+        ("AT-LOGIN", True),
+        ("LOGGED-IN", False),
+        ("AT-PASSWORD", False),
+        ("SILENT", False),
+        ("BUSY", False),
     ],
 )
-def test_check_console_ok_rule_depends_on_whether_the_entry_logs_in(monkeypatch, creds, out, ok):
+def test_check_console_is_healthy_only_at_login(monkeypatch, out, ok):
     _fake_ssh(monkeypatch, out)
-    res = lab_health._check_console(_console_entry(creds=creds), {"test1": _SERVER}, logout=False)
+    res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=False)
     assert res["ok"] is ok, res
     assert res["status"] == out
 
 
-def test_logout_consoles_resets_only_entries_that_log_in(monkeypatch):
-    calls = _fake_ssh(monkeypatch, "LOGGED-IN")
-    zephyr = lab_health._check_console(
-        _console_entry(creds=False, element="zephyr37_llext", server="test1", port=2323),
-        {"test1": _SERVER},
-        logout=True,
-    )
-    assert zephyr["ok"] is True
-    assert not calls[-1]["cmd"].rstrip().endswith("reset"), (
-        "a credless (Zephyr) console was sent the reset: Ctrl-D at a Zephyr shell is not a logout"
-    )
-
+def test_logout_consoles_resets_a_console_that_logs_in(monkeypatch):
+    """The Zephyr half -- never send the reset to a credential-less console --
+    is ``test_check_console_refuses_a_credless_console_without_dialling``."""
     calls = _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-OK")
     res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=True)
     assert calls[-1]["cmd"].rstrip().endswith("reset")
     assert res["ok"] is True
     assert res["status"] == "AT-LOGIN"
     assert "LOGGED-IN" in res["info"]
+
+
+@pytest.mark.parametrize("creds", [None, []])
+def test_an_empty_creds_list_reads_as_no_creds_at_every_routing_site(creds):
+    """Routing and the console-row decision share one reading of ``creds``,
+    so they cannot disagree about an entry: an empty list is no creds."""
+    entry = _console_entry(creds=False, element="zephyr37_llext", port=2323)
+    entry["valid_terms"] = ["ssh", "console"]
+    if creds is not None:
+        entry["creds"] = creds
+    assert not lab_health._is_ssh_host(entry)
+    assert not lab_health._is_hopped_unix({**entry, "hop": "test4"})
+    assert lab_health._own_row_dials_console(entry)
+    assert not lab_health._has_console_row(entry)
+
+
+def test_check_console_refuses_a_credless_console_without_dialling(monkeypatch):
+    """The never-Ctrl-D-a-Zephyr-shell guard is the routing decision itself:
+    a credential-less console reaching the state probe is a routing defect, so
+    it is refused before any SSH, reset or not."""
+    calls = _fake_ssh(monkeypatch, "LOGGED-IN")
+    zephyr = _console_entry(creds=False, element="zephyr37_llext", server="test1", port=2323)
+    with pytest.raises(ValueError, match="zephyr37_llext"):
+        lab_health._check_console(zephyr, {"test1": _SERVER}, logout=True)
+    assert calls == []
 
 
 def test_a_failed_reset_is_a_not_ok_row_that_keeps_the_state(monkeypatch):
@@ -1296,11 +1308,41 @@ def _rows(table: str, element: str) -> list[str]:
     return [line for line in table.splitlines() if line.split()[:1] == [element]]
 
 
-@pytest.mark.parametrize("element", ["bb1350", "zephyr37_llext", "test2"])
-def test_a_console_capable_entry_gets_its_own_row_and_a_console_row(monkeypatch, capsys, element):
+@pytest.mark.parametrize("logout", [False, True])
+def test_a_credless_console_is_dialled_once_per_report(monkeypatch, capsys, logout):
+    """A Zephyr console serves ONE client, and a credential-less entry's own
+    row already dials it (``_check_embedded``'s console path), so the report
+    must not dial the same port again for a separate console row: every
+    second hold is another settle-plus-budget during which any otto run sees
+    the line busy (#449). Both probes run for real here; only the SSH is
+    faked, so the count is of dials the report actually makes."""
+    calls = []
+
+    def fake(ip, user, password, cmd, timeout=25.0):
+        calls.append({"ip": ip, "user": user, "cmd": cmd, "timeout": timeout})
+        # Each probe answers in its own shape, so neither row fails on a reply
+        # meant for the other and only the dial count can fail this test.
+        return 0, ("LOGGED-IN" if "AT-PASSWORD" in cmd else "OK 1234"), ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake)
+    host = _console_entry(creds=False, element="zephyr37_llext", server="test1", port=2323)
+    assert lab_health._print_report([host], {"test1": _SERVER}, logout=logout) is True
+    # The probe's argv follows the quoted program text.
+    dials = [c["cmd"].rsplit("'", 1)[-1] for c in calls if " 127.0.0.1 2323" in c["cmd"]]
+    assert len(dials) == 1, dials
+    rows = _rows(capsys.readouterr().out, "zephyr37_llext")
+    assert len(rows) == 1, rows
+    assert "up 1s" in rows[0]
+
+
+@pytest.mark.parametrize(
+    ("element", "n_rows"), [("bb1350", 2), ("test2", 2), ("zephyr37_llext", 1)]
+)
+def test_console_rows_follow_the_entry_shape(monkeypatch, capsys, element, n_rows):
     """Over the real lab data: the console row is IN ADDITION to the entry's
-    existing probe, never instead of it, and a host without `console` in its
-    term menu gets no console row at all."""
+    existing probe, never instead of it; a host without `console` in its term
+    menu gets no console row at all, and neither does a credential-less
+    console, whose own row is the dial of that console."""
     seen: list[str] = []
     monkeypatch.setattr(
         lab_health, "_check_unix", lambda host: {"ok": True, "status": "up", "info": ""}
@@ -1324,14 +1366,15 @@ def test_a_console_capable_entry_gets_its_own_row_and_a_console_row(monkeypatch,
     hosts = _load_hosts(DEFAULT_HOSTS)
     assert _print_report(hosts, _hop_index(hosts)) is True
     rows = _rows(capsys.readouterr().out, element)
-    assert len(rows) == 2, rows
+    assert len(rows) == n_rows, rows
     assert rows[0].split()[2] != "console"
-    assert rows[1].split()[2] == "console"
-    assert "AT-LOGIN" in rows[1]
+    if n_rows == 2:
+        assert rows[1].split()[2] == "console"
+        assert "AT-LOGIN" in rows[1]
     expected = {
         h["element"]
         for h in hosts
-        if h.get("console_options") and "console" in h.get("valid_terms", [])
+        if h.get("console_options") and "console" in h.get("valid_terms", []) and h.get("creds")
     }
     assert sorted(seen) == sorted(expected)
     assert "test1" not in seen

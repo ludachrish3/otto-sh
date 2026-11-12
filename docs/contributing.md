@@ -1486,13 +1486,13 @@ returns.
 
 `uv run pytest -k <kw>` filters any run by keyword. Clean a bed a killed or
 interrupted run left dirty with `make bed-reap` ([the bed reap](#bed-reap)).
-Recover a wedged embedded bed
-with `make qemu-restart`; probe the whole lab with `make vm-health` (which also
-adds a `console` row per bed serial console: a console that logs in is healthy at
-`AT-LOGIN`, a Zephyr console at `LOGGED-IN`, its idle shell prompt; each Zephyr
-console row waits out the probe's full 10 s to tell those apart, so expect about
-35 s of apparent pause), and put a console that a run left logged in back at its
-login prompt with `make console-logout`. The 3.7
+Recover a wedged embedded bed with `make qemu-restart`; probe the whole lab with
+`make vm-health` (which also adds a `console` row per bed serial console that
+logs in, healthy at `AT-LOGIN`; a Zephyr console gets no extra row, because its
+own row is already a dial of that single-client console; that row holds the
+console about 5 s for its uptime, so about 16 s for the three), and put a
+console that a run left logged in back at its login prompt with
+`make console-logout`. The 3.7
 guests wedge by design of two upstream Zephyr bugs that are deliberately left in
 place — see "Known guest defects" in `tests/firmware/zephyr/README.md` for the
 mechanism, the tell, and why silence from a console is not evidence.
