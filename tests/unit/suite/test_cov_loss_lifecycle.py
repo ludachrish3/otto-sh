@@ -121,8 +121,10 @@ def test_two_run_tests_on_one_active_context_reach_the_real_fetcher(
     token = set_context(ctx)
     try:
         with caplog.at_level(logging.DEBUG):
-            # Run 1: present at the pre-run reset, removed by the test.
+            # Run 1: left in place by the pre-run reset (it holds a file the
+            # reset never removes; an emptied one goes), removed by the test.
             cov_dir.mkdir(parents=True)
+            (cov_dir / "notes.txt").write_text("user data")
             run_tests(
                 names=["test_loss"],
                 run_options=RunOptions(cov=True, cov_clean=True),

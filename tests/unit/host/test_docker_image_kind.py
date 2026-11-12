@@ -650,7 +650,7 @@ async def test_injection_shaped_values_are_quoted_not_executed():
     assert host.exec_calls[-1] == expected_run
     assert (await p.reset_coverage(host=host)).is_ok
     cov_q = shlex.quote(nasty_cov)
-    delete = delete_line(nasty_cov)
+    delete = delete_line(nasty_cov, keep_cov_dir=True)
     check = f"{CHECK_PREFIX}LC_ALL=C find {cov_q} -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls[-2:] == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
@@ -749,7 +749,7 @@ async def test_reset_coverage_deletes_under_sudo():
     host = _DockerHost()
     p = _build(host, image="app:1", cov_dir="/var/cov/app")
     assert (await p.reset_coverage(host=host)).is_ok
-    delete = delete_line("/var/cov/app")
+    delete = delete_line("/var/cov/app", keep_cov_dir=True)
     check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),

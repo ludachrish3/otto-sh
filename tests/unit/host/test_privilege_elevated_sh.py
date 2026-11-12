@@ -123,7 +123,7 @@ async def test_every_elevated_coverage_caller_goes_through_the_core(monkeypatch)
     # cleanup sweep sends its removal and, once the plain probe was refused,
     # its elevated re-probe.
     assert scripts == [
-        gcda_delete_cmd("/var/cov/app"),
+        gcda_delete_cmd("/var/cov/app", keep_cov_dir=True),
         gcda_check_cmd("/var/cov/app"),
         "echo 1 > /x",
         cov_sweep._remove_script(["/var/cov/app"]),

@@ -363,7 +363,7 @@ def _probed_host(host_id, *products, cls=None, present=()):
 
 
 @pytest.mark.asyncio
-async def test_record_presence_probes_before_the_reset_and_reports_it(lab):
+async def test_record_presence_probes_after_the_reset_and_reports_it(lab):
     app, lib = (
         _product("app", Result(status=Status.Success)),
         _product("lib", Result(status=Status.Success)),
@@ -371,7 +371,8 @@ async def test_record_presence_probes_before_the_reset_and_reports_it(lab):
     host = _probed_host("t1", app, lib, present={"app"})
     lab(host)
     report = await clean_coverage(projects=[_project()], record_presence=True)
-    assert host.order == ["probe", "reset app", "reset lib"]
+    # After: a cov_dir the reset emptied and removed is the clean's own doing (#722).
+    assert host.order == ["reset app", "reset lib", "probe"]
     assert report.present_at_reset == frozenset({("t1", "app")})
     assert report.ok
 

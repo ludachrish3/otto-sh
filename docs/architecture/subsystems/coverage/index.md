@@ -121,9 +121,13 @@ overrides them. `prepare_coverage` does nothing. `reset_coverage` runs
 `find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \; -print`, guarded so a
 `cov_dir` that does not exist yet is a no-op. It then tries `rmdir` on each
 printed counter's ancestor directories strictly below `cov_dir`, deepest first
-and best effort ({ref}`which directories go <coverage-clean-directories>`); a counter whose path holds
-a newline is removed but never walked. Last, a `find … -print` check fails the
-reset, naming them, when counters survive.
+and best effort, then once on `cov_dir` itself, which goes only when nothing at
+all is left in it ({ref}`which directories go <coverage-clean-directories>`); a counter whose path holds
+a newline is removed but never walked. A kind whose `cov_dir` is a running
+container's bind-mount source (`cov_dir_bind_mounted`, `docker_image`) skips
+that last `rmdir`. `otto test`'s presence probe runs after its pre-run reset,
+so a `cov_dir` the reset removed is never reported as lost. Last, a
+`find … -print` check fails the reset, naming them, when counters survive.
 The removal is POSIX `-exec`, never `-delete`, which a BusyBox build may compile
 out.
 

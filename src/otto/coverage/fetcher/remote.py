@@ -103,9 +103,10 @@ async def _fetch_one_product(
     and the host walk records it; an empty result is DEBUG,
     because an instrumented product that a run never exercised producing no
     counters (or no ``cov_dir`` at all) is ordinary and would otherwise cry
-    wolf on every collection — unless *existed_at_reset*: this invocation's
-    pre-run reset saw the ``cov_dir`` exist, so a missing one now means it
-    was removed before collection, and its coverage is lost (a WARNING).
+    wolf on every collection — unless *existed_at_reset*: the ``cov_dir``
+    still existed after this invocation's pre-run reset (which removes one
+    it leaves empty), so a missing one now means it was removed before
+    collection, and its coverage is lost (a WARNING).
 
     Raises:
         ProductFetchError: The fetch failed, as above (already logged).
@@ -347,7 +348,7 @@ async def _fetch_one_host(
 
     Each product is fetched on its own (:func:`~otto.coverage.fetcher.failures.fetch_each`):
     one that fails is recorded in *failures* and the next one is still fetched.
-    *present_at_reset* says which products' ``cov_dir`` the pre-run reset saw.
+    *present_at_reset* says which products' ``cov_dir`` the pre-run reset left in place.
     """
     if _skipped_family(host):
         return None

@@ -399,8 +399,11 @@ class Product(ABC):
     (``/tmp/x``, never ``/tmp``), and no two products on one host may share
     it or nest one inside the other: ingest refuses the lab otherwise
     (:func:`validate_cov_dir`, :func:`~otto.host.factory.check_cov_dir_overlaps`).
-    Uninstall leaves it alone; cleanup removes the ``.gcda`` counters under
-    it and the directories they leave empty (:mod:`otto.host.cov_sweep`)."""
+    Uninstall leaves it alone; the counter reset removes the ``.gcda``
+    counters under it, the directories they leave empty, and the directory
+    itself once nothing at all is left in it (:func:`gcda_prune_files`);
+    cleanup removes the counters and every empty directory
+    (:mod:`otto.host.cov_sweep`)."""
 
     build_root: PurePosixPath | None = None
     """The directory this product's build ran in, as the build machine saw it.
@@ -421,6 +424,16 @@ class Product(ABC):
     cleanup sweep both read it, so the dir has one answer to "who may delete
     here". The sweep's probe still asks unelevated first: a readable
     root-owned dir needs no sudo to look into."""
+
+    cov_dir_bind_mounted: ClassVar[bool] = False
+    """Whether this kind's :attr:`cov_dir` is the source of a running container's bind mount.
+
+    A property of the kind: ``docker_image`` sets it (its ``docker run``
+    mounts :attr:`cov_dir` at the same path). The counter reset then keeps
+    the emptied :attr:`cov_dir` instead of removing it
+    (:func:`gcda_prune_files`'s *keep_cov_dir*): removing a bind mount's
+    source leaves the container writing into a deleted directory, where
+    every counter it writes afterwards fails and is lost."""
 
     kind: str = "code"
     """The declared kind that built this product (``"shell"``, ``"kmod"``, ...),
@@ -574,8 +587,9 @@ class Product(ABC):
     async def reset_coverage(self, host: "Host") -> Result:
         """Zero this product's counters on *host*.
 
-        Default: delete every ``.gcda`` under :attr:`cov_dir` and the dirs
-        below it those deletions left empty
+        Default: delete every ``.gcda`` under :attr:`cov_dir`, the dirs
+        below it those deletions left empty, and :attr:`cov_dir` itself when
+        nothing at all is left in it
         (:func:`~otto.host.product.gcda_prune_files`), then check that none
         is left — the pre-run ``--cov-clean``, the post-fetch clean and
         ``otto cov clean`` all come through here. A :attr:`cov_dir` that does
@@ -743,8 +757,8 @@ the class and never match it (measured). Single quotes carry it through
 :func:`~otto.host.privilege.run_sh_elevated`'s :func:`shlex.quote` intact."""
 
 
-def gcda_prune_files(cov_dir: str) -> str:
-    r"""Remove every ``.gcda`` under *cov_dir*, then the dirs those removals left empty.
+def gcda_prune_files(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
+    r"""Remove every ``.gcda`` under *cov_dir*, the dirs that left empty, then *cov_dir* if empty.
 
     The counter reset's removal: :func:`gcda_remove_files` with
     ``! -path '*<newline>*' -print`` appended, which prints a counter only
@@ -759,19 +773,33 @@ def gcda_prune_files(cov_dir: str) -> str:
     ``{ __otto_gcda_rc=$( { { <gcda_remove_files> ! -path '*<newline>*'
     -print; echo "$?" >&3; } | <ancestors> | { LC_ALL=C sort -ru 2>/dev/null || <drain>; }
     | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 );
-    test "$__otto_gcda_rc" = 0; }``
+    rmdir <cov_dir> 2>/dev/null; test "$__otto_gcda_rc" = 0; }``
 
     One ``rm`` per counter, as cleanup's removal; one ``sort``, and one
     ``rmdir`` per distinct dir, per reset. ``rmdir`` refuses a dir that
     still holds anything, so a dir with a file of its own stays, and so do
     its parents. Only an ancestor of a removed counter is tried, so a dir
-    that was already empty is not removed, and the ``case`` bound keeps
-    *cov_dir* itself and everything above it out of the list for every
-    path ``find`` printed: *cov_dir* stays for the next run to write under,
-    and is what the pre-run presence probe
-    (:func:`~otto.host.cov_sweep.probe_presence`) asked about. Cleanup,
-    which owns every trace *cov_dir* included, sweeps every empty dir with
-    :func:`gcda_remove_dirs` instead.
+    below *cov_dir* that was already empty is not removed (it is content,
+    and keeps *cov_dir* too), and the ``case`` bound keeps *cov_dir* itself
+    and everything above it out of the list for every path ``find``
+    printed. Cleanup, which owns every trace *cov_dir* included, sweeps
+    every empty dir with :func:`gcda_remove_dirs` instead.
+
+    Last, once the walk has finished, one ``rmdir`` of the quoted *cov_dir*
+    itself, whatever it held before: it succeeds only when nothing at all is
+    left in it, so a *cov_dir* holding any file or dir stays, and nothing
+    above it is ever tried. Its status is never read. The next run's
+    counters recreate it (libgcov, ``otto_kmodcov`` and the kernel method's
+    copy all create the dirs they write into), and the pre-run presence
+    probe (:func:`~otto.host.cov_sweep.probe_presence`) asks after the
+    reset, so a *cov_dir* this removed is never mistaken for one lost.
+    *keep_cov_dir* leaves that ``rmdir`` out, for a kind whose *cov_dir* is
+    a running container's bind-mount source
+    (:attr:`~Product.cov_dir_bind_mounted`). The operand is *cov_dir* as
+    configured, never a line ``find`` printed, so no counter's name can
+    forge it, and ``rmdir`` (one ``rmdir(2)``) refuses a symlink with
+    ``ENOTDIR`` rather than follow it: a *cov_dir* that is a symlink stays,
+    and so does the dir it names.
 
     The bound is textual: it holds only because each line read is one path
     ``find`` printed, and ``find`` never follows a symlink below its start.
@@ -802,14 +830,15 @@ def gcda_prune_files(cov_dir: str) -> str:
     )
     order = "{ LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; }"
     prune = 'while IFS= read -r d; do rmdir "$d" 2>/dev/null; done'
+    root = "" if keep_cov_dir else f"rmdir {q} 2>/dev/null; "
     return (
         f'{{ __otto_gcda_rc=$( {{ {{ {find}; echo "$?" >&3; }} | '
         f"{ancestors} | {order} | {prune}; }} 3>&1 ); "
-        'test "$__otto_gcda_rc" = 0; }'
+        f'{root}test "$__otto_gcda_rc" = 0; }}'
     )
 
 
-def gcda_delete_cmd(cov_dir: str) -> str:
+def gcda_delete_cmd(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
     r"""Build the counter reset's removal line: :func:`gcda_prune_files`, guarded.
 
     ``! test -d <cov_dir> || <gcda_prune_files>``: a directory that does not
@@ -821,11 +850,14 @@ def gcda_delete_cmd(cov_dir: str) -> str:
     what the reset's check (:func:`gcda_check_cmd`) is for. The line uses
     ``!``, ``||`` and pipes, so it needs a shell; an elevated caller must
     wrap it whole (:func:`~otto.host.privilege.run_sh_elevated`), and the
-    emptied dirs are then removed under the same elevation as the counters.
+    emptied dirs, *cov_dir* included unless *keep_cov_dir*, are then removed
+    under the same elevation as the counters. The guard also means the
+    final ``rmdir`` of *cov_dir* never runs for one that did not exist.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
 
-    return f"! test -d {path_operand(cov_dir)} || {gcda_prune_files(cov_dir)}"
+    removal = gcda_prune_files(cov_dir, keep_cov_dir=keep_cov_dir)
+    return f"! test -d {path_operand(cov_dir)} || {removal}"
 
 
 def gcda_list_cmd(cov_dir: str) -> str:
@@ -847,7 +879,7 @@ def gcda_remove_dirs(cov_dir: str) -> str:
     a dir that still holds anything stays, and so do its parents. Cleanup
     only (:func:`~otto.host.cov_sweep.remove_coverage`), after
     :func:`gcda_remove_files`; the counter reset never runs it (it removes
-    only the dirs it emptied, below *cov_dir*: :func:`gcda_prune_files`). Its status
+    only the dirs it emptied, and *cov_dir* once empty: :func:`gcda_prune_files`). Its status
     is meaningless (every refusal fails it) and is never read.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
@@ -1034,7 +1066,7 @@ async def _clear_gcda(product: Product, host: "Host") -> Result:
         result = await host.exec(script, timeout=60)
         return None if result.status is Status.NotRun else result
 
-    removal = await _run(gcda_delete_cmd(cov_dir))
+    removal = await _run(gcda_delete_cmd(cov_dir, keep_cov_dir=type(product).cov_dir_bind_mounted))
     if removal is None:
         return Result(status=Status.NotRun)
     # No product name in the messages: every consumer prefixes `<host>/<product>: `.

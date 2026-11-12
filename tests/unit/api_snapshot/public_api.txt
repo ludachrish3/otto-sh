@@ -1078,6 +1078,7 @@ mro	otto.host.product:Product	-
 call	otto.host.product:Product	sync	-
 member	otto.host.product:Product.build_root	attribute
 member	otto.host.product:Product.cov_dir	attribute
+member	otto.host.product:Product.cov_dir_bind_mounted	attribute
 member	otto.host.product:Product.cov_dir_root_owned	attribute
 member	otto.host.product:Product.debug_log_globs	attribute
 member	otto.host.product:Product.gcov_prefix_strip	property:g--
@@ -1116,6 +1117,7 @@ member	otto.host.product:ShellProduct.__eq__	method	sync	PK:other:-
 member	otto.host.product:ShellProduct.artifact	field
 member	otto.host.product:ShellProduct.build_root	field
 member	otto.host.product:ShellProduct.cov_dir	field
+member	otto.host.product:ShellProduct.cov_dir_bind_mounted	attribute
 member	otto.host.product:ShellProduct.cov_dir_root_owned	attribute
 member	otto.host.product:ShellProduct.debug_log_globs	field
 member	otto.host.product:ShellProduct.gcov_prefix_strip	property:g--
@@ -1568,6 +1570,7 @@ member	otto.host:DeclaredProduct.artifact	field
 member	otto.host:DeclaredProduct.build_root	field
 member	otto.host:DeclaredProduct.check_cmd	field
 member	otto.host:DeclaredProduct.cov_dir	field
+member	otto.host:DeclaredProduct.cov_dir_bind_mounted	attribute
 member	otto.host:DeclaredProduct.cov_dir_root_owned	attribute
 member	otto.host:DeclaredProduct.debug_log_globs	field
 member	otto.host:DeclaredProduct.gcov_prefix_strip	property:g--
@@ -2363,6 +2366,7 @@ mro	otto.host:Product	-
 call	otto.host:Product	sync	-
 member	otto.host:Product.build_root	attribute
 member	otto.host:Product.cov_dir	attribute
+member	otto.host:Product.cov_dir_bind_mounted	attribute
 member	otto.host:Product.cov_dir_root_owned	attribute
 member	otto.host:Product.debug_log_globs	attribute
 member	otto.host:Product.gcov_prefix_strip	property:g--
@@ -2613,6 +2617,7 @@ member	otto.host:ShellProduct.__eq__	method	sync	PK:other:-
 member	otto.host:ShellProduct.artifact	field
 member	otto.host:ShellProduct.build_root	field
 member	otto.host:ShellProduct.cov_dir	field
+member	otto.host:ShellProduct.cov_dir_bind_mounted	attribute
 member	otto.host:ShellProduct.cov_dir_root_owned	attribute
 member	otto.host:ShellProduct.debug_log_globs	field
 member	otto.host:ShellProduct.gcov_prefix_strip	property:g--
