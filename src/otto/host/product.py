@@ -27,6 +27,7 @@ deliberately **not** supported.
 """
 
 import logging
+import os
 import posixpath
 import re
 from abc import ABC, abstractmethod
@@ -838,26 +839,56 @@ def gcda_prune_files(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
     )
 
 
-def gcda_delete_cmd(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
-    r"""Build the counter reset's removal line: :func:`gcda_prune_files`, guarded.
+def cov_dir_absent_test(cov_dir: str) -> str:
+    """Build the shell test that holds only when *cov_dir* provably does not exist.
 
-    ``! test -d <cov_dir> || <gcda_prune_files>``: a directory that does not
-    exist yet has nothing to clear and exits 0 — the default ``/tmp/<name>``
-    is gone after a reboot, and gcov only creates it when the product first
-    exits. A ``find`` that cannot start or walk *cov_dir* (a permission
-    error) exits non-zero, and :func:`gcda_prune_files` makes that the
-    line's status; a counter that ``rm`` could not remove does not, which is
-    what the reset's check (:func:`gcda_check_cmd`) is for. The line uses
-    ``!``, ``||`` and pipes, so it needs a shell; an elevated caller must
-    wrap it whole (:func:`~otto.host.privilege.run_sh_elevated`), and the
-    emptied dirs, *cov_dir* included unless *keep_cov_dir*, are then removed
-    under the same elevation as the counters. The guard also means the
-    final ``rmdir`` of *cov_dir* never runs for one that did not exist.
+    ``{ __otto_d=<cov_dir>; while ! test -e "$__otto_d" && ! test -L
+    "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done;
+    test "$__otto_d" != <cov_dir> && { ! test -d "$__otto_d" || test -x
+    "$__otto_d"; }; }``: climb from *cov_dir* to the nearest path that
+    exists (``/`` always does), then hold when that is not *cov_dir* itself
+    and nothing below it could be hidden: it is not a directory (a file, a
+    dangling symlink), or it is one this user may search. The one guard of
+    the counter reset's removal (:func:`gcda_delete_cmd`) and its check
+    (:func:`gcda_check_cmd`), so an absent *cov_dir* (the normal state after
+    a reset that removed it) is answered by the shell and ``find`` never
+    runs on it. ``test -d <cov_dir>`` alone would not do: it is false for a
+    dir behind an unreadable ancestor too, and a check guarded by it would
+    report "clean" for a dir nobody could look into. Here that ancestor is
+    the nearest path that exists, and it is not searchable, so the test is
+    false and ``find`` runs, and says what stopped it. Builtins only; the
+    variable keeps an ``__otto_`` prefix because it lands in the host's
+    session shell, and *cov_dir* is quoted.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
 
+    q = path_operand(cov_dir)
+    return (
+        f'{{ __otto_d={q}; while ! test -e "$__otto_d" && ! test -L "$__otto_d"; '
+        "do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; "
+        f'test "$__otto_d" != {q} && {{ ! test -d "$__otto_d" || test -x "$__otto_d"; }}; }}'
+    )
+
+
+def gcda_delete_cmd(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
+    r"""Build the counter reset's removal line: :func:`gcda_prune_files`, guarded.
+
+    ``<cov_dir_absent_test> || <gcda_prune_files>``: a directory that does
+    not exist yet has nothing to clear and exits 0 — the default
+    ``/tmp/<name>`` is gone after a reboot, and gcov only creates it when
+    the product first exits. A ``find`` that cannot start or walk *cov_dir*
+    (a permission error, an unreadable ancestor) exits non-zero, and
+    :func:`gcda_prune_files` makes that the line's status; a counter that
+    ``rm`` could not remove does not, which is what the reset's check
+    (:func:`gcda_check_cmd`) is for. The line uses ``!``, ``||`` and pipes,
+    so it needs a shell; an elevated caller must wrap it whole
+    (:func:`~otto.host.privilege.run_sh_elevated`), and the emptied dirs,
+    *cov_dir* included unless *keep_cov_dir*, are then removed under the
+    same elevation as the counters. The guard also means the final
+    ``rmdir`` of *cov_dir* never runs for one that did not exist.
+    """
     removal = gcda_prune_files(cov_dir, keep_cov_dir=keep_cov_dir)
-    return f"! test -d {path_operand(cov_dir)} || {removal}"
+    return f"{cov_dir_absent_test(cov_dir)} || {removal}"
 
 
 def gcda_list_cmd(cov_dir: str) -> str:
@@ -920,29 +951,70 @@ def failure_detail(output: str, retcode: int) -> str:
 _GCDA_CHECK_MARK = "otto-gcda-check"
 """The marker :func:`gcda_check_cmd` prints before ``find``'s answer."""
 
+_GCDA_ABSENT_MARK = "otto-gcda-absent"
+"""What :func:`gcda_check_cmd` prints, after its marker, for a provably absent ``cov_dir``."""
+
 
 def gcda_check_cmd(cov_dir: str) -> str:
     r"""Build the reset's postcondition: list the ``.gcda`` files left under *cov_dir*.
 
-    ``printf '\n%s\n' otto-gcda-check; LC_ALL=C find <cov_dir> -name '*.gcda'
-    -type f -print 2>&1``. The marker (:func:`marker_cmd`) frames the answer
-    so what the session printed first is never read as ``find``'s; the exit
-    status is still ``find``'s, the last command. There is no ``! test -d …
-    ||`` guard: ``test -d`` is false for a dir behind an unreadable ancestor
-    too, so a guarded check would report "clean" for a dir nobody could look
-    into. ``find`` itself answers, and :func:`classify_gcda_check` reads it.
-    ``LC_ALL=C`` keeps the "No such file or directory" text that
-    :func:`enoent_for_start` matches.
+    ``printf '\n%s\n' otto-gcda-check; if <cov_dir_absent_test>; then echo
+    otto-gcda-absent; else LC_ALL=C find <cov_dir> -name '*.gcda' -type f
+    -print 2>&1; fi``. The marker (:func:`marker_cmd`) frames the answer so
+    what the session printed first is never read as ``find``'s. The guard is
+    the removal's own (:func:`cov_dir_absent_test`): a *cov_dir* the reset
+    removed, or that never existed, is answered by the shell, and the exit
+    status is otherwise ``find``'s. The guard holds only when *cov_dir* is
+    provably absent, so a dir behind an unreadable ancestor still reaches
+    ``find``, which says what stopped it; :func:`classify_gcda_check` reads
+    either answer. ``LC_ALL=C`` keeps the "No such file or directory" text
+    that :func:`enoent_for_start` matches, for a *cov_dir* that vanished
+    between the guard and ``find``.
     """
-    return f"{marker_cmd(_GCDA_CHECK_MARK)}; LC_ALL=C {gcda_list_cmd(cov_dir)} 2>&1"
+    return (
+        f"{marker_cmd(_GCDA_CHECK_MARK)}; if {cov_dir_absent_test(cov_dir)}; "
+        f"then echo {_GCDA_ABSENT_MARK}; else LC_ALL=C {gcda_list_cmd(cov_dir)} 2>&1; fi"
+    )
 
 
 _FIND_ENOENT = re.compile(r"^(?P<prog>\S+): (?P<path>.*): No such file or directory$")
 
 
+_C_ESCAPES = {
+    0x07: "\\a",
+    0x08: "\\b",
+    0x09: "\\t",
+    0x0A: "\\n",
+    0x0B: "\\v",
+    0x0C: "\\f",
+    0x0D: "\\r",
+    0x27: "\\'",
+    0x5C: "\\\\",
+}
+"""The bytes GNU's C-locale quoting renders as a C escape, not as octal."""
+
+_PRINTABLE_FIRST, _PRINTABLE_LAST = 0x20, 0x7E
+"""Printable ASCII, the bytes GNU's C-locale quoting leaves as they are (space to ``~``)."""
+
+
 def _gnu_c_quoted(path: str) -> str:
-    r"""*path* as GNU findutils quotes it in a C-locale diagnostic: ``'it\'s'``, ``'a\\b'``."""
-    return "'" + path.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    r"""*path* as GNU findutils quotes it in a C-locale diagnostic, byte for byte.
+
+    gnulib's locale quoting in the C locale, measured on findutils 4.9.0:
+    single quotes around; ``'`` and ``\`` backslashed; ``\a \b \t \n \v
+    \f \r`` as C escapes; every other byte outside printable ASCII
+    (control bytes, DEL, each byte of a UTF-8 character) as a three-digit
+    octal escape, so ``café`` is ``'caf\303\251'``.
+    """
+    out = []
+    for byte in os.fsencode(path):
+        if byte in _C_ESCAPES:
+            out.append(_C_ESCAPES[byte])
+        elif _PRINTABLE_FIRST <= byte <= _PRINTABLE_LAST:
+            out.append(chr(byte))
+        else:
+            out.append(f"\\{byte:03o}")
+    return "'" + "".join(out) + "'"
 
 
 def enoent_for_start(line: str, cov_dir: str) -> bool:
@@ -1017,8 +1089,9 @@ def classify_gcda_check(
 
     Only what follows the check's marker (:func:`after_marker`) is read; no
     marker at all is a :class:`GcdaFindError` carrying the whole output, and
-    so is a zero exit otto marked failed. What follows the marker is
-    :func:`classify_gcda_listing`'s to read.
+    so is a zero exit otto marked failed. A zero exit whose one line is the
+    guard's ``otto-gcda-absent`` is ``"absent"``; anything else that follows
+    the marker is :func:`classify_gcda_listing`'s to read.
 
     A :class:`~otto.result.NotRunResult` has no output to read: the caller
     handles a decline before asking.
@@ -1028,7 +1101,10 @@ def classify_gcda_check(
         return GcdaFindError(failure_detail(cmd.value, cmd.retcode))
     if cmd.retcode == 0 and not cmd.is_ok:
         return GcdaFindError(failure_detail(body, cmd.retcode))
-    return classify_gcda_listing(cov_dir, [line for line in body.splitlines() if line], cmd.retcode)
+    lines = [line for line in body.splitlines() if line]
+    if cmd.retcode == 0 and lines == [_GCDA_ABSENT_MARK]:
+        return "absent"  # the guard's answer: never a path under cov_dir, so never a listing
+    return classify_gcda_listing(cov_dir, lines, cmd.retcode)
 
 
 LEFTOVERS_SHOWN = 3

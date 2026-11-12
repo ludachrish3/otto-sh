@@ -31,8 +31,10 @@ from otto.host import cov_sweep
 from otto.host.product import (
     GcdaFindError,
     classify_gcda_check,
+    classify_gcda_listing,
     gcda_check_cmd,
     gcda_delete_cmd,
+    gcda_list_cmd,
 )
 from otto.result import CommandResult
 from otto.utils import Status
@@ -118,6 +120,16 @@ def test_the_reset_removes_the_cov_dir_it_emptied_and_nothing_above(
     done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(cov)))
     assert done.returncode == 0, f"rc {done.returncode}: {_first_line(done)!r}"
     assert sorted(p.name for p in above.iterdir()) == ["cxy"]
+    # The check's guard answers the removed cov_dir, whatever its name.
+    assert _check(sweep_release, d, str(cov)) == "absent"
+    for name in ("caf\u00e9", "t\tab"):
+        named = above / name
+        named.mkdir()
+        (named / "a.gcda").write_bytes(b"")
+        done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(named)))
+        assert done.returncode == 0, f"rc {done.returncode}: {_first_line(done)!r}"
+        assert not named.exists()
+        assert _check(sweep_release, d, str(named)) == "absent"
 
     # A cov_dir that is a symlink: rmdir refuses it, and never follows it.
     done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(link)))
@@ -177,11 +189,16 @@ def test_the_reset_check_sees_what_the_removal_left(sweep_release, applet_dir, t
     back.write_bytes(b"")
     assert _check(sweep_release, d, str(cov)) == [str(back)]
 
-    # BusyBox's leg of the `enoent_for_start` rendering pin: an absent
-    # cov_dir, however its name must be quoted, reads as absent.
-    for name in ("plain", "with space", "it's gone"):
+    # An absent cov_dir, however its name must be quoted, reads as absent:
+    # from the check's guard, and from find's own line, BusyBox's leg of the
+    # `enoent_for_start` rendering pin (a dir that vanished between the two).
+    for name in ("plain", "with space", "it's gone", "caf\u00e9", "t\tab"):
         absent = str(tmp_path / "absent" / name)
         assert _check(sweep_release, d, absent) == "absent", (sweep_release.version, name)
+        done = run_in_busybox_sh(sweep_release, d, f"{gcda_list_cmd(absent)} 2>&1")
+        lines = [line for line in done.stdout.splitlines() if line]
+        answer = classify_gcda_listing(absent, lines, done.returncode)
+        assert answer == "absent", (sweep_release.version, name, done.stdout)
 
 
 @pytest.mark.busybox

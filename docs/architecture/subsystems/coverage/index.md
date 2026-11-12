@@ -119,17 +119,18 @@ post-fetch clean, `otto cov clean` — issues per product. The defaults are the
 user-space case; a kind whose counters live in the kernel or behind a daemon
 overrides them. `prepare_coverage` does nothing. `reset_coverage` runs
 `find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \; -print`, guarded so a
-`cov_dir` that does not exist yet is a no-op. It then tries `rmdir` on each
-printed counter's ancestor directories strictly below `cov_dir`, deepest first
-and best effort, then once on `cov_dir` itself, which goes only when nothing at
-all is left in it ({ref}`which directories go <coverage-clean-directories>`); a counter whose path holds
-a newline is removed but never walked. A kind whose `cov_dir` is a running
-container's bind-mount source (`cov_dir_bind_mounted`, `docker_image`) skips
-that last `rmdir`. `otto test`'s presence probe runs after its pre-run reset,
-so a `cov_dir` the reset removed is never reported as lost. Last, a
-`find … -print` check fails the reset, naming them, when counters survive.
+`cov_dir` that provably does not exist is a no-op. It then tries `rmdir` on each
+printed counter's ancestor directories, deepest first and best effort, and on
+`cov_dir` itself ({ref}`which directories go <coverage-clean-directories>`); a
+counter whose path holds a newline is removed but never walked. Last, a
+`find … -print` check, behind the same guard, fails the reset, naming them,
+when counters survive.
 The removal is POSIX `-exec`, never `-delete`, which a BusyBox build may compile
 out.
+
+`otto test` asks which `cov_dir` exist after its pre-run reset, not before, so
+a `cov_dir` that reset removed is never reported as lost at the fetch
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
 ## Where the code lives
 

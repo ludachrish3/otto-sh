@@ -21,7 +21,7 @@ from otto.suite.run import RunOptions, _post_run_coverage, _pre_run_cov_clean
 from otto.utils import Status
 from tests._fixtures.shell_host import ShellHost, coverage_shell_host, install_shell_lab
 
-_LOSS = "existed at run start and is gone"
+_LOSS = "survived the run-start clean and is gone"
 
 
 def _loss_warnings(caplog) -> list[logging.LogRecord]:
@@ -73,7 +73,7 @@ async def test_a_dir_present_at_reset_and_gone_at_fetch_warns(tmp_path, cov_lab,
     assert pre_clean.present_at_reset == frozenset({("t1", "app")})
     [record] = _loss_warnings(caplog)
     assert record.getMessage() == (
-        f"cov_dir {cov_dir} on t1 for app existed at run start and is gone: its coverage "
+        f"cov_dir {cov_dir} on t1 for app survived the run-start clean and is gone: its coverage "
         "is missing from this run (was it removed before collection?)"
     )
 
