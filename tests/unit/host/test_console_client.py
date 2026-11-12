@@ -248,6 +248,18 @@ class TestLoginSequence:
         assert "Password1" not in repr(c)
         assert str(ei.value).startswith("test2: console test1:4001 (dial=ssh)")
 
+    async def test_a_line_at_a_shell_raises_the_typed_refusal_with_its_scrubbed_quote(self):
+        """``ConsoleLoggedInError.seen`` is the message's quote: ANSI-stripped, scrubbed."""
+        from otto.host.errors import ConsoleLoggedInError
+
+        c = _client([(b"\r", b"\x1b[1mPassword1\x1b[0m\r\ntest@test2:~$ ")])
+        with pytest.raises(ConsoleLoggedInError) as ei:
+            await c.login_sequence()
+        assert ei.value.seen == repr("***\r\ntest@test2:~$ ")
+        assert ei.value.prompt == "test@test2:~$"
+        assert ei.value.seen in str(ei.value)
+        assert "Password1" not in str(ei.value)
+
     async def test_stuck_at_a_password_prompt_fails_loud(self):
         c = _client([(b"\r", b"Password: ")])
         with pytest.raises(ConsoleError, match="stuck at a password prompt"):

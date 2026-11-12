@@ -499,7 +499,7 @@ has a different fix:
 | `is stuck at a password prompt` | Someone typed a username and left. | `otto host <id> logout`. |
 | `is busy: the server closed the connection before any prompt — another client holds the port, or the server has no serial device behind it right now (the line is down)` | The console server allows one client and another has it (a colleague's telnet, another otto run, a stale tunnel), or the server accepted and closed at once because its serial device is gone (a USB adapter unplugged; on the bed, the socat link while its far end reboots). During `reboot --wait` this is the down phase and expected. | Find and close the other client, or wait for the device to return. |
 | `is silent: no login prompt within <N>s and no bytes received` | Nothing answered Enter. | Check the port, that a getty runs on the device's serial line, and the cable. |
-| `did not show a login prompt; it is likely already logged in. Seen: '…'` | A shell, or a program in it, was left running. The quote is the last 200 characters the line showed, escape sequences stripped and the password replaced by `***`. | Read the quote; then `otto host <id> logout` (or `login --force`). |
+| `did not show a login prompt; it is likely already logged in. Seen: '…'` | A shell, or a program in it, was left running. The quote is the last 200 characters the line showed, escape sequences stripped and the password replaced by `***`. During `reboot --wait` an up phase that ends here can mean the reboot did not take: see below. | Read the quote; then `otto host <id> logout` (or `login --force`). |
 | `login refused for '<user>'` | After the username the line showed `login:` again, or after the password it showed a login or password prompt. | Check the host's cred. |
 
 Rarer ones name their cause the same way: `showed no password prompt after
@@ -547,7 +547,36 @@ session on it:
   device is up. During `reboot`'s down phase every term follows this rule:
   each poll releases the line, then dials through a throwaway connection
   that it closes before the next poll, so a connection cached while the host
-  was shutting down never reads it as still up.
+  was shutting down never reads it as still up. Each poll waits out the
+  console's own `login_timeout` before it gives up on the line, so it can
+  tell a login prompt from a shell or a silent line.
+
+  A poll that finds output but no `login:` (the "already logged in"
+  failure) reads the device as not up: shutdown and boot messages look the
+  same as a shell. A reboot that did not take (a soft reboot the device
+  ignored, or a hard one that never cut power) therefore passes the down
+  phase at once and times out in the up phase. When the up phase runs out,
+  the reboot fails with ``was still at a logged-in shell <N>s after the
+  reboot (last seen: '…') — the reboot likely did not take; run
+  `otto host <id> logout` to log the console line out`` only when all of
+  these hold:
+
+  - every up-phase poll found output and no `login:`, all ending on the
+    same last line (the shell's prompt; a boot log's last line changes
+    between polls);
+  - no down-phase poll found anything other than a shell (busy, silent,
+    undialable, cut by its bound, …); and
+  - that prompt is the last line of the first down-phase poll that found
+    output and no `login:`.
+
+  With `--down-timeout 0` there is no down phase: the first condition
+  decides, and it needs at least two up-phase polls. A line that answers
+  every poll with only whitespace counts as a shell with an empty prompt,
+  so it can give "did not take" too. In every other case the reboot fails
+  with the plain `did not become reachable`. Either way otto never types into the console line
+  during a reboot: the shell, whatever it is, stays as it was, and you log
+  it out with `otto host <id> logout` once you have read the quote. The
+  last poll of a wait can run past `--timeout` by up to one poll's bound.
 
 When otto closes the session it logs out (per `logout`), so the next client
 finds `login:`, then waits for the line to go quiet before it releases it.

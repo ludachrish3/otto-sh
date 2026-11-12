@@ -31,7 +31,14 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .file_ops import PosixFileOps
-from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, CredentialExpect, is_dry_run
+from .host import (
+    _EXEC_REAP_TIMEOUT,
+    CONCURRENT_HELP,
+    PROBE_TIMEOUT_S,
+    BaseHost,
+    CredentialExpect,
+    is_dry_run,
+)
 from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
 from .privilege import PosixPrivilege
 from .session import (
@@ -566,7 +573,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+    async def is_reachable(self, *, timeout: float = PROBE_TIMEOUT_S, fresh: bool = False) -> bool:
         """Return ``True`` — the local machine is always reachable."""
         return True
 

@@ -1433,6 +1433,7 @@ member	otto.host:BaseHost.name	field
 member	otto.host:BaseHost.open_session	method	coroutine	PK:name:-
 member	otto.host:BaseHost.power	method	coroutine	PK:state:N
 member	otto.host:BaseHost.power_control	field
+member	otto.host:BaseHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:BaseHost.products	field
 member	otto.host:BaseHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:BaseHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
@@ -1672,6 +1673,7 @@ member	otto.host:DockerContainerHost.parent_path	method	sync	PK:container_path:-
 member	otto.host:DockerContainerHost.power	method	coroutine	PK:state:N
 member	otto.host:DockerContainerHost.power_control	field
 member	otto.host:DockerContainerHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
+member	otto.host:DockerContainerHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:DockerContainerHost.products	field
 member	otto.host:DockerContainerHost.project	field
 member	otto.host:DockerContainerHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
@@ -1804,6 +1806,7 @@ member	otto.host:EmbeddedHost.os_version	field
 member	otto.host:EmbeddedHost.power	method	coroutine	PK:state:N
 member	otto.host:EmbeddedHost.power_control	field
 member	otto.host:EmbeddedHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
+member	otto.host:EmbeddedHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:EmbeddedHost.products	field
 member	otto.host:EmbeddedHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:EmbeddedHost.rack	field
@@ -2227,6 +2230,7 @@ member	otto.host:LocalHost.open_session	method	coroutine	PK:name:-
 member	otto.host:LocalHost.power	method	coroutine	PK:state:N
 member	otto.host:LocalHost.power_control	field
 member	otto.host:LocalHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
+member	otto.host:LocalHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:LocalHost.products	field
 member	otto.host:LocalHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:LocalHost.read_file	method	coroutine	PK:path:-
@@ -2496,6 +2500,7 @@ member	otto.host:RemoteHost.os_type	field
 member	otto.host:RemoteHost.os_version	field
 member	otto.host:RemoteHost.power	method	coroutine	PK:state:N
 member	otto.host:RemoteHost.power_control	field
+member	otto.host:RemoteHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:RemoteHost.products	field
 member	otto.host:RemoteHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:RemoteHost.rack	field
@@ -2841,6 +2846,7 @@ member	otto.host:UnixHost.os_version	field
 member	otto.host:UnixHost.power	method	coroutine	PK:state:N
 member	otto.host:UnixHost.power_control	field
 member	otto.host:UnixHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
+member	otto.host:UnixHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:UnixHost.products	field
 member	otto.host:UnixHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:UnixHost.rack	field
@@ -3109,6 +3115,7 @@ member	otto.host:ZephyrHost.os_version	field
 member	otto.host:ZephyrHost.power	method	coroutine	PK:state:N
 member	otto.host:ZephyrHost.power_control	field
 member	otto.host:ZephyrHost.probe	method	coroutine	KO:user:N KO:scan_ports:N
+member	otto.host:ZephyrHost.probe_bound	method	sync	KO:timeout:F:0x1.4000000000000p+3
 member	otto.host:ZephyrHost.products	field
 member	otto.host:ZephyrHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:ZephyrHost.rack	field

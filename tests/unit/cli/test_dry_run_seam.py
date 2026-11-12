@@ -899,6 +899,42 @@ class TestProbeDialsAndNeverCommands:
         assert up.exit_code == 0, up.output
         assert "dut1: reachable" in flat(up.output)
 
+    def test_the_probe_is_bounded_by_the_hosts_own_probe_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--probe`` bounds its dial the way ``reboot``'s waits do (#451).
+
+        One helper, ``probe_bound``, lifts the bound to what the term needs
+        (a console waits out its ``login_timeout``); ``is_reachable`` itself
+        treats its ``timeout`` as hard.
+        """
+        from otto.host.host import PROBE_TIMEOUT_S
+        from otto.host.unix_host import UnixHost
+
+        host = _dialable_host()
+        lab = _lab_with(host)
+        _spy_transport_and_commands(monkeypatch)
+        asked: list[float] = []
+        bounds: list[float] = []
+
+        def probe_timeout(self: Any, timeout: float = PROBE_TIMEOUT_S) -> float:
+            asked.append(timeout)
+            return 42.0
+
+        async def reachable(self: Any, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+            bounds.append(timeout)
+            return True
+
+        monkeypatch.setattr(UnixHost, "probe_bound", probe_timeout, raising=True)
+        monkeypatch.setattr(UnixHost, "is_reachable", reachable, raising=True)
+        calls: list[str] = []
+        with active_context(lab=lab, dry_run=True):
+            res = runner.invoke(_probe_app(["dut1"], probe=True, calls=calls), ["go"])
+
+        assert res.exit_code == 0, res.output
+        assert asked == [PROBE_TIMEOUT_S]
+        assert bounds == [42.0]
+
     def test_a_family_with_no_connection_probe_is_not_called_unreachable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

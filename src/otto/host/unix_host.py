@@ -718,8 +718,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         cached client being alive says nothing about the device; the device
         counts as up only when a new client logs in through its login prompt
         again. This is what lets ``reboot(wait=True)`` see a console host go
-        down and come back. On a ``login: false`` console there is no prompt
-        to observe, so a fresh dial proves only that the server answers.
+        down and come back. A line at a running shell is not up: shutdown and
+        boot output look the same to a probe, so it reads as down; ``reboot``
+        weighs every probe's answer to tell a reboot that did not take. On a
+        ``login: false`` console there is no prompt to
+        observe, so a fresh dial proves only that the server answers.
         """
         if self.term == "console":
             await self.close()

@@ -6,6 +6,7 @@ dial seam — no real network, no wall-clock waits, and NEVER a real host.
 """
 
 import asyncio
+import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,9 +14,10 @@ import pytest
 import otto.host.connections as connections_mod
 from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
+from otto.host.host import PROBE_TIMEOUT_S, _DownWait, _ProbeAnswer, _UpWait
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
-from otto.host.options import RebootOptions
+from otto.host.options import ConsoleOptions, RebootOptions, SshOptions
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
@@ -93,13 +95,26 @@ async def test_reboot_wait_does_not_trust_the_cached_connection(monkeypatch):
 
 
 def _scripted_reachable(monkeypatch, host, sequence: "list[bool]") -> None:
-    """Drive is_reachable from a finite script; the last value repeats."""
+    """Drive every probe from a finite script; the last value repeats.
+
+    The down phase asks ``_probe_down`` and the up phase ``_probe_up`` (and
+    ``is_reachable`` for any direct caller); all draw from the one script, in
+    call order.
+    """
     seq = list(sequence)
 
-    async def fake(self, *, timeout=10.0, fresh=False):
+    def next_answer() -> bool:
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
+    async def fake(self, *, timeout=10.0, fresh=False):
+        return next_answer()
+
+    async def fake_probe(self, timeout):
+        return _ProbeAnswer(reached=next_answer())
+
     monkeypatch.setattr(type(host), "is_reachable", fake)
+    monkeypatch.setattr(type(host), "_probe_up", fake_probe)
+    monkeypatch.setattr(type(host), "_probe_down", fake_probe)
 
 
 def _reboot_ready_local(monkeypatch) -> LocalHost:
@@ -194,11 +209,14 @@ async def test_unix_recovery_fails_when_shell_never_answers(monkeypatch):
     h = _unix_host()
     monkeypatch.setattr(h, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
 
-    async def immediately_true(self, timeout, interval=2.0):
-        return True
+    async def immediately_down(self, timeout, *, interval):
+        return _DownWait(down=True, line_dropped=True, first_shell_prompt=None)
 
-    monkeypatch.setattr(type(h), "wait_until_down", immediately_true)
-    monkeypatch.setattr(type(h), "wait_until_up", immediately_true)
+    async def immediately_up(self, timeout, *, interval):
+        return _UpWait(reached=True, always_at_shell=False, last=None)
+
+    monkeypatch.setattr(type(h), "_wait_until_down", immediately_down)
+    monkeypatch.setattr(type(h), "_wait_until_up", immediately_up)
     monkeypatch.setattr(h, "exec", AsyncMock(return_value=_timed_out()))
     result = await h.reboot(wait=True, timeout=0.05, down_timeout=0.05, poll_interval=0)
     assert result.status == Status.Failed
@@ -468,6 +486,7 @@ def test_a_console_term_releases_the_line_before_a_fresh_dial(monkeypatch):
         m = MagicMock()
         m.console = AsyncMock()
         m.close = AsyncMock()
+        m.connect_allowance = MagicMock(return_value=0.0)
         return m
 
     monkeypatch.setattr(UnixHost, "close", close)
@@ -490,3 +509,354 @@ def test_embedded_hosts_build_a_throwaway_manager_too():
     m = h._build_connections()
     assert isinstance(m, ConnectionManager)
     assert m is not h._connections
+
+
+# -- a console line that still has a shell (#451) ------------------------------
+#
+# A reboot that never took leaves the abandoned client's shell running on the
+# line, so every dial finds output but no login prompt and the real
+# ``ConsoleClient.login_sequence`` refuses with "already logged in". Shutdown
+# and boot output on a console server that keeps its link through the reboot
+# look exactly the same, so a probe reads that refusal as unreachable; only a
+# wait that ENDS with the line still at a shell says the reboot did not take.
+
+
+def _console_host() -> UnixHost:
+    return UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="srv", port=4001),
+    )
+
+
+class _DialClock:
+    """The running loop's clock, advanced one second per dial and by nothing else.
+
+    A reboot wait then ends after a known number of dials, whatever the
+    machine's speed: with a down phase that ends on its first dial, a
+    ``timeout`` of ``k + 0.5`` gives the up phase exactly ``k`` dials.
+    """
+
+    def __init__(self, monkeypatch) -> None:
+        self.now = 0.0
+        monkeypatch.setattr(asyncio.get_running_loop(), "time", lambda: self.now)
+
+
+def _scripted_line(
+    monkeypatch, script: "list[str]", *, clock: "_DialClock | None" = None
+) -> "list[str]":
+    """Every manager the host builds dials one line that answers from *script*.
+
+    One entry per dial, the last repeating: ``"shell"`` is output with no
+    login prompt ending at ``u@box:~$`` (a running shell, or shutdown/boot
+    messages), refused by the real ``login_sequence``, and ``"initramfs"``
+    and ``"uboot"`` likewise end at another console's prompt, ``"boot1"``
+    and ``"boot2"`` at two different boot-log lines, ``"blank"`` with only
+    whitespace; ``"busy"`` is the server hanging up; ``"hang"``
+    never answers (the probe's bound cuts it); ``"login"`` is the device up
+    at its login prompt (the client is returned logged in). Returns the
+    answers given, in order. Each dial advances *clock*, if given.
+    """
+    from otto.host.console import ConsoleClient, ConsoleState
+    from otto.host.errors import ConsoleError
+
+    seq = list(script)
+    answered: "list[str]" = []
+
+    shown = {
+        "shell": "booting...\r\nu@box:~$ ",
+        "initramfs": "booting...\r\n(initramfs) ",
+        "uboot": "booting...\r\n=> ",
+        "boot1": "[  OK  ] Started A.\r\n",
+        "boot2": "[  OK  ] Started B.\r\n",
+        "blank": "\r\n\x00",
+    }
+    tail = [""]
+
+    async def at_a_shell(self, login_re, password_re):
+        return ConsoleState.LOGGED_IN, tail[0]
+
+    monkeypatch.setattr(ConsoleClient, "_nudge_and_classify", at_a_shell)
+
+    async def console(self):
+        answer = seq.pop(0) if len(seq) > 1 else seq[0]
+        answered.append(answer)
+        if clock is not None:
+            clock.now += 1.0
+        if answer == "busy":
+            raise ConsoleError("box: console srv:4001 (dial=ssh) is busy")
+        if answer == "hang":
+            await asyncio.Event().wait()
+        if answer == "login":
+            return MagicMock()
+        tail[0] = shown[answer]
+        client = ConsoleClient(
+            host="localhost",
+            port=4001,
+            user="u",
+            password="p",
+            options=ConsoleOptions(
+                server="srv", port=4001, login_prompt="login: ?$", password_prompt="assword: ?$"
+            ),
+            name="box",
+            server="srv",
+        )
+        await client.login_sequence()
+        return client
+
+    def build(self):
+        m = MagicMock()
+        m.console = types.MethodType(console, m)
+        m.close = AsyncMock()
+        m.connect_allowance = MagicMock(return_value=0.0)
+        return m
+
+    async def close(self):
+        pass
+
+    monkeypatch.setattr(UnixHost, "_build_connections", build)
+    monkeypatch.setattr(UnixHost, "close", close)
+    return answered
+
+
+def test_the_down_probe_reads_a_line_at_a_shell_as_down(monkeypatch):
+    host = _console_host()
+    answered = _scripted_line(monkeypatch, ["shell"])
+    assert asyncio.run(host.is_reachable(fresh=True)) is False
+    assert answered == ["shell"]
+
+
+def test_the_live_probe_reads_a_line_at_a_shell_as_unreachable(monkeypatch):
+    host = _console_host()
+    _scripted_line(monkeypatch, ["shell"])
+    host.rebuild_connections()  # the live manager is a scripted one too
+    assert asyncio.run(host.is_reachable()) is False
+
+
+def test_a_probe_names_the_shell_it_met_and_nothing_else(monkeypatch):
+    host = _console_host()
+    _scripted_line(monkeypatch, ["shell", "busy", "shell", "busy"])
+    host.rebuild_connections()
+    shell = _ProbeAnswer(reached=False, shell_seen=_SHELL_SEEN, shell_prompt="u@box:~$")
+    assert asyncio.run(host._probe_up(PROBE_TIMEOUT_S)) == shell
+    assert asyncio.run(host._probe_up(PROBE_TIMEOUT_S)) == _ProbeAnswer(reached=False)
+    assert asyncio.run(host._probe_down(PROBE_TIMEOUT_S)) == shell
+    assert asyncio.run(host._probe_down(PROBE_TIMEOUT_S)) == _ProbeAnswer(reached=False)
+
+
+def _rebooting(monkeypatch, host) -> AsyncMock:
+    """Issue a no-op reboot; returns a ``run_logout`` spy that must never be awaited.
+
+    A reboot never types into the console line, whatever its verdict.
+    """
+    monkeypatch.setattr(host, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
+    logout = AsyncMock(return_value=Result(status=Status.Success, value="reset"))
+    monkeypatch.setattr(host, "run_logout", logout)
+    return logout
+
+
+_SHELL_SEEN = repr("booting...\r\nu@box:~$ ")
+
+
+def _not_reachable(timeout: float) -> str:
+    return f"'box' did not become reachable within {timeout}s after reboot"
+
+
+def _did_not_take(timeout: float, seen: str = _SHELL_SEEN) -> str:
+    return (
+        f"'box' was still at a logged-in shell {timeout}s after the reboot (last seen: {seen}) "
+        "— the reboot likely did not take; run `otto host box logout` to log the console line out"
+    )
+
+
+# (script, down_timeout, timeout, message). On the dial clock a down phase
+# that ends on dial d leaves the up phase k dials when timeout - d is in
+# (k - 1, k]: so 2.5 is one down dial and two up dials, 2.0 with no down
+# phase two up dials, 1.0 one.
+_VERDICTS = {
+    # The shell the reboot was typed into, unchanged throughout: did not take.
+    "same-prompt": (["shell", "shell", "shell"], 5.0, 2.5, _did_not_take(2.5)),
+    "same-prompt-no-down-phase": (["shell", "shell"], 0, 2.0, _did_not_take(2.0)),
+    # Several down-phase answers before it reads down; the first shell decides.
+    "down-phase-answers-first": (
+        ["login", "login", "shell", "shell", "shell"],
+        5.0,
+        4.5,
+        _did_not_take(4.5),
+    ),
+    # Whitespace only throughout: the empty prompt is unchanged too.
+    "blank-throughout": (["blank", "blank", "blank"], 5.0, 2.5, _did_not_take(2.5, repr("\r\n"))),
+    # It went down, and came up into another console: a reboot that took.
+    "initramfs": (["shell", "initramfs", "initramfs"], 5.0, 2.5, _not_reachable(2.5)),
+    "bootloader": (["shell", "uboot", "uboot"], 5.0, 2.5, _not_reachable(2.5)),
+    # The prompt changed between up-phase probes: a log still streaming.
+    "up-prompt-changed": (["shell", "shell", "boot1"], 5.0, 2.5, _not_reachable(2.5)),
+    # It ends on the first down-phase prompt, but changed in between.
+    "up-prompt-changed-and-back": (["shell", "boot1", "shell"], 5.0, 2.5, _not_reachable(2.5)),
+    # The line dropped in the down phase, then came up chatty: it took.
+    "down-phase-saw-the-line-drop": (["busy", "shell", "shell"], 5.0, 2.5, _not_reachable(2.5)),
+    # Some up-phase probe saw something other than a shell: it may well have taken.
+    "up-busy": (["shell", "busy", "busy"], 5.0, 2.5, _not_reachable(2.5)),
+    "up-shell-then-busy": (["shell", "shell", "busy"], 5.0, 2.5, _not_reachable(2.5)),
+    "up-busy-then-shell": (["shell", "busy", "shell"], 5.0, 2.5, _not_reachable(2.5)),
+    # No down phase: the up phase must see one prompt at least twice.
+    "no-down-phase-up-busy-then-shell": (["busy", "shell"], 0, 2.0, _not_reachable(2.0)),
+    "no-down-phase-boot-lines-change": (["boot1", "boot2"], 0, 2.0, _not_reachable(2.0)),
+    "no-down-phase-one-probe": (["shell"], 0, 1.0, _not_reachable(1.0)),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("script", "down_timeout", "timeout", "msg"), list(_VERDICTS.values()), ids=list(_VERDICTS)
+)
+async def test_what_the_waits_saw_decides_the_verdict(
+    monkeypatch, script, down_timeout, timeout, msg
+):
+    """ "Did not take" only on an unchanged shell throughout; never a keystroke into the line.
+
+    The dial clock makes the counts exact (see ``_VERDICTS``): every entry
+    of *script* is dialled, no more.
+    """
+    clock = _DialClock(monkeypatch)
+    host = _console_host()
+    logout = _rebooting(monkeypatch, host)
+    answered = _scripted_line(monkeypatch, script, clock=clock)
+    result = await host.reboot(
+        wait=True, timeout=timeout, down_timeout=down_timeout, poll_interval=0
+    )
+    assert answered == script
+    assert result.status == Status.Failed
+    assert result.msg == msg, result.msg
+    logout.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_console_reboot_that_took_through_chatty_output_succeeds(monkeypatch):
+    """Boot output reads like a shell, then the prompt returns: a reboot that took."""
+    host = _console_host()
+    logout = _rebooting(monkeypatch, host)
+    answered = _scripted_line(monkeypatch, ["shell", "shell", "shell", "login"])
+    monkeypatch.setattr(host, "_confirm_recovered", AsyncMock(return_value=True))
+    result = await host.reboot(wait=True, timeout=5.0, down_timeout=5.0, poll_interval=0)
+    assert result.status == Status.Success, result.msg
+    assert answered == ["shell", "shell", "shell", "login"]
+    logout.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_up_probe_cut_by_its_bound_is_not_a_shell(monkeypatch):
+    """A probe the hard bound cuts says nothing about the line: plain "did not become reachable"."""
+    host = _console_host()
+    logout = _rebooting(monkeypatch, host)
+    _scripted_line(monkeypatch, ["shell", "hang"])
+    monkeypatch.setattr(UnixHost, "probe_bound", lambda self, timeout=PROBE_TIMEOUT_S: 0.01)
+    result = await host.reboot(wait=True, timeout=0.05, down_timeout=0.05, poll_interval=0)
+    assert result.msg == "'box' did not become reachable within 0.05s after reboot"
+    logout.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("term", ["ssh", "telnet"])
+async def test_an_ssh_or_telnet_host_that_never_comes_back_keeps_the_plain_message(
+    monkeypatch, term
+):
+    """Off the console term nothing changed: a failed up phase is "did not become reachable"."""
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        valid_terms=["ssh", "telnet"],
+        term=term,
+    )
+    logout = _rebooting(monkeypatch, host)
+
+    async def refused(self, conns):
+        raise ConnectionRefusedError("booting")
+
+    monkeypatch.setattr(UnixHost, "_probe_with", refused)
+    result = await host.reboot(wait=True, timeout=0.05, down_timeout=0.05, poll_interval=0)
+    assert result.msg == "'box' did not become reachable within 0.05s after reboot"
+    logout.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_probe_bound_that_cannot_be_sized_falls_back_and_reads_as_unreachable(
+    monkeypatch,
+):
+    """``probe_bound`` is total: a failure sizing it returns the unlifted bound.
+
+    The probe then meets the same failure and reads as unreachable, as
+    ``is_reachable`` reads every failure: the up wait never succeeds.
+    """
+    host = _console_host()
+    _scripted_line(monkeypatch, ["shell"])
+
+    from otto.host.loop_owner import HostLoopError
+
+    loop = asyncio.get_running_loop()
+
+    def owned_elsewhere(self):
+        raise HostLoopError("box", owner=loop, caller=loop)
+
+    monkeypatch.setattr(UnixHost, "_live_connections", owned_elsewhere)
+    assert host.probe_bound() == PROBE_TIMEOUT_S
+    assert host.probe_bound(timeout=3.0) == 3.0
+    assert await host.is_reachable() is False
+    assert await host.wait_until_up(0.05, interval=0) is False
+
+
+def test_any_other_failure_sizing_the_probe_bound_propagates(monkeypatch):
+    """Only a loop claim falls back; a bug in sizing the allowance must not hide as a probe."""
+    host = _console_host()
+
+    def broken(self):
+        raise ValueError("allowance arithmetic is wrong")
+
+    monkeypatch.setattr(type(host._connections), "connect_allowance", broken)
+    with pytest.raises(ValueError, match="allowance arithmetic"):
+        host.probe_bound()
+
+
+@pytest.mark.asyncio
+async def test_both_waits_bound_each_probe_by_the_hosts_probe_bound(monkeypatch):
+    """``is_reachable``'s timeout is hard; the waits lift it through ``probe_bound``."""
+    host = _console_host()
+    bounds: "list[tuple[float, bool]]" = []
+
+    async def fresh(self, timeout):
+        bounds.append((timeout, True))
+        return OSError("down")  # down at once
+
+    async def live(self, timeout):
+        bounds.append((timeout, False))
+        # up at once
+
+    monkeypatch.setattr(UnixHost, "_probe_fresh", fresh)
+    monkeypatch.setattr(UnixHost, "_probe_live", live)
+    monkeypatch.setattr(UnixHost, "probe_bound", lambda self, timeout=PROBE_TIMEOUT_S: 42.0)
+    assert await host.wait_until_down(1.0, interval=0) is True
+    assert await host.wait_until_up(1.0, interval=0) is True
+    assert bounds == [(42.0, True), (42.0, False)]
+
+
+def test_only_a_console_lifts_the_probe_bound_to_its_connect_allowance():
+    """A console needs its full login to answer; ssh keeps the hard cut even when slow."""
+    console = _console_host()
+    allowance = console._connections.connect_allowance()
+    assert allowance > PROBE_TIMEOUT_S
+    assert console.probe_bound() == allowance
+    slow_ssh = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        ssh_options=SshOptions(connect_timeout=60),
+    )
+    assert slow_ssh._connections.connect_allowance() == 60
+    assert slow_ssh.probe_bound() == PROBE_TIMEOUT_S

@@ -79,6 +79,7 @@ from otto.host.connections import TermBackendError, TermConstructionError
 from otto.host.construction import HostValidationError
 from otto.host.errors import (
     ConsoleError,
+    ConsoleLoggedInError,
     ContainerNotRunningError,
     CoverageToolMissingError,
     HostCommandError,
@@ -247,6 +248,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (KnownHostsUnwritableError, ConnectionError),
     (KnownHostsError, ConnectionError),
     (ConsoleError, ConnectionError),
+    (ConsoleLoggedInError, ConnectionError),
     (NcPortSharedError, ConnectionError),
     (ReadGateClosed, ConnectionError),
     (LabRepositoryError, Exception),
