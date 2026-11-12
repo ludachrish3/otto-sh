@@ -2859,6 +2859,10 @@ subclass = false
 construct = false
 subclass = false
 
+[symbols."otto.monitor:MetricCollector.publish"]
+positional = ["payload"]
+why = "the subject: the one frame it publishes"
+
 [symbols."otto.monitor:MetricParser.parse"]
 positional = ["output"]
 why = "implementer-facing"

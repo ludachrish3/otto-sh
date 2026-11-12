@@ -49,7 +49,7 @@ class _Script:
 def _collector(source: _Script) -> MetricCollector:
     c = MetricCollector(hosts=[], tunnel_source=source)
     c.session_id = "soak"
-    c._publish = lambda frag: None  # type: ignore[method-assign]
+    c.publish = lambda frag: None  # type: ignore[method-assign]
     return c
 
 

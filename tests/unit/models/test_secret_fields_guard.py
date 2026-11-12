@@ -26,6 +26,12 @@ NOT_SECRET: dict[str, str] = {
         "the random tag naming one object scan's staging dir, container and snapshot"
     ),
     "otto.host.daemon.DaemonProcess.token": "the sentinel tag a daemon shows in ps output",
+    "otto.models.monitor.MonitorSourceState.token": (
+        "the random tag naming the source a dashboard shows, sent to every browser"
+    ),
+    "otto.models.monitor.SourceSavedBody.token": (
+        "the source tag an export acknowledgement echoes back"
+    ),
     "otto.tunnel.check._Run.token": "the random tag a tunnel check echoes on its hosts",
     "otto.host.option_specs.ConsoleOptionsSpec.password_prompt": (
         "the prompt pattern a console login waits for"

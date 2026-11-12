@@ -1,13 +1,23 @@
 // web/src/__tests__/eventapi.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json" with { type: "json" };
-import { createEvent, deleteEvent, endEvent, revertEvent, updateEvent } from "../data/eventApi";
+import {
+  createEvent,
+  deleteEvent,
+  endEvent,
+  isStale,
+  revertEvent,
+  updateEvent,
+} from "../data/eventApi";
 import { EventApiError } from "../data/eventApiError";
 import { EventChangedError } from "../data/eventChangedError";
 import { useReviewStore } from "../data/reviewStore";
 import { importLocalFile } from "../data/source";
+import { SOURCE_TOKEN_HEADER } from "../data/sourceApi";
 import { displayEndMs } from "../data/time";
 import { useUndoHistory } from "../data/undoHistory";
+import { useToastStore } from "../ui/Toast";
+import { snapshotResponse, sourceState, stamp } from "./_sourceState";
 
 // minimal.json's first session id — see the fixture; hydrate once per test so
 // the synthetic fragments have a session to land on.
@@ -33,7 +43,10 @@ function okJson(body: unknown, status = 200): Response {
 
 describe("eventApi", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useReviewStore.setState({ sourceToken: null, mode: null });
+  });
 
   it("createEvent POSTs and upserts the response into the active session", async () => {
     const sid = hydrate();
@@ -168,6 +181,7 @@ describe("eventApi", () => {
 
   it("revertEvent applies the record with the observed stamp", async () => {
     const sid = hydrate();
+    useReviewStore.setState({ mode: "live" }); // only a live stamp moves the horizon
     const later = "2026-07-18T12:10:00+00:00";
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify(record(7, "back")), {
@@ -259,6 +273,24 @@ describe("eventApi", () => {
     );
   });
 
+  it("every mutation sends the source token", async () => {
+    const sid = hydrate();
+    useReviewStore.setState({ sourceToken: "served-source" });
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(okJson(record(7, "deploy"), 201)));
+    await createEvent(sid, { label: "deploy" });
+    await endEvent(sid, 7);
+    await updateEvent(sid, 7, { label: "renamed" });
+    await deleteEvent(sid, 7);
+    await revertEvent(sid, 7, null, record(7, "deploy"));
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls).toHaveLength(5);
+    for (const [, init] of calls) {
+      expect(new Headers(init?.headers).get(SOURCE_TOKEN_HEADER)).toBe("served-source");
+    }
+    // The JSON bodies keep their content type beside the token.
+    expect(new Headers(calls[0]?.[1]?.headers).get("Content-Type")).toBe("application/json");
+  });
+
   // #992: a write refused as `changed` carries the event as the server holds
   // it; the shared mutation path applies it to the tab, so the tab shows the
   // saved event instead of the stale one it sent from.
@@ -324,6 +356,8 @@ describe("eventApi", () => {
   // #866: the response header carries the server's time, so the mutation's
   // own applied fragment raises the horizon even with the SSE echo withheld.
   describe("X-Otto-Observed-At", () => {
+    // A live server's stamps: only those move the horizon.
+    beforeEach(() => useReviewStore.setState({ mode: "live" }));
     // minimal.json's last sample; the collector has stalled since.
     const T = Date.parse("2026-07-01T08:30:00Z");
     const later = new Date(T + 600_000).toISOString();
@@ -360,5 +394,59 @@ describe("eventApi", () => {
       await createEvent(sid, { label: "deploy" });
       expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(T);
     });
+  });
+});
+
+// A write addressed to a source the server no longer serves is refused with
+// the server's current source state; the tab moves onto it.
+describe("a source_changed refusal", () => {
+  const served = (token: string, n: number) =>
+    sourceState({
+      mode: "review",
+      kind: "json",
+      source: `${token}.json`,
+      token,
+      observed_at: stamp(n),
+    });
+
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    const { actions } = useReviewStore.getState();
+    actions.setPendingSource(null);
+    actions.setSourceState(null);
+    useReviewStore.setState({ lastSourceStamp: null });
+    useToastStore.setState({ toast: null });
+  });
+
+  it("a source_changed refusal admits the server's source and resolves stale", async () => {
+    const sid = hydrate();
+    useReviewStore.getState().actions.setSourceState(served("A", 1));
+    const before = useReviewStore.getState().sessions[0]?.events;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/monitor_sessions") {
+        return Promise.resolve(snapshotResponse(JSON.stringify(minimal), "B", stamp(3)));
+      }
+      return Promise.resolve(
+        okJson(
+          { error: "the source changed", code: "source_changed", source_state: served("B", 2) },
+          409,
+        ),
+      );
+    });
+
+    const result = await updateEvent(sid, 7, { label: "renamed" });
+
+    expect(isStale(result)).toBe(true);
+    // The write sent A's token; nothing of it applied.
+    const sent = new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers);
+    expect(sent.get(SOURCE_TOKEN_HEADER)).toBe("A");
+    await vi.waitFor(() => expect(useReviewStore.getState().sourceToken).toBe("B"));
+    const state = useReviewStore.getState();
+    expect(state.pendingSource).toBeNull();
+    expect(state.sourceName).toBe("B.json");
+    expect(state.sessions[0]?.events).toEqual(before);
+    expect(useToastStore.getState().toast?.message).toBe("Source changed to B.json");
   });
 });

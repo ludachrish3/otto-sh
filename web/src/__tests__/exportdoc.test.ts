@@ -17,6 +17,7 @@ import { eventMarkers } from "../charts/options";
 import {
   documentFromSessions,
   ExportParseError,
+  editableEventId,
   metricsForSubject,
   observedAtMicros,
   parseExportDocument,
@@ -24,6 +25,7 @@ import {
   sessionBounds,
   subjectKind,
 } from "../data/exportDoc";
+import { applyFragment } from "../data/fragment";
 import { parseTs } from "../data/time";
 
 function metric(host: string, label: string, timestamp: string, value: number) {
@@ -455,7 +457,7 @@ describe("observed_at", () => {
     const [s] = roundTrip(doc(session("a", at, [mark]))).sessions;
     const bounds = sessionBounds(s);
     expect(bounds).toEqual({ from: T - 600_000, to: at });
-    expect(eventMarkers(s.events, bounds).map((m) => m.id)).toEqual([1]);
+    expect(eventMarkers(s, bounds).map((m) => m.id)).toEqual([1]);
   });
 });
 
@@ -478,6 +480,114 @@ describe("observedAtMicros (#868)", () => {
     expect(observedAtMicros(null)).toBeNull();
     expect(observedAtMicros(undefined)).toBeNull();
     expect(observedAtMicros("not a time")).toBeNull();
+  });
+});
+
+// A served snapshot's capture stamp (X-Otto-Observed-At) is when the server
+// read it; a reviewed file's own observed_at is when it was exported, maybe
+// months ago. The capture is the ordering floor; the file's value is only its
+// horizon, and it is written back exactly as read.
+describe("the capture stamp, observed_at presence and view-only ids", () => {
+  const FILE_STAMP = "2026-07-01T08:30:00.123456+00:00";
+  const CAPTURED = "2026-11-12T10:00:00.000001+00:00";
+  const BETWEEN = "2026-09-01T00:00:00.000000+00:00";
+  const event = (id: number, label: string) => ({
+    id,
+    timestamp: "2026-07-01T08:10:00Z",
+    label,
+    source: "manual",
+    color: "#888888",
+    dash: "dash",
+  });
+  const doc = (observedAt: string | null) =>
+    JSON.stringify({
+      format: 1,
+      sessions: [
+        {
+          id: "s",
+          start: "2026-07-01T08:00:00Z",
+          end: "2026-07-01T08:20:00Z",
+          events: [event(1, "saved")],
+          ...(observedAt === null ? {} : { observed_at: observedAt }),
+        },
+      ],
+    });
+
+  it("the capture header outranks the file's observed_at for ordering", () => {
+    const [s] = parseExportDocument(doc(FILE_STAMP), CAPTURED).sessions;
+    if (s === undefined) throw new Error("no session");
+    expect(s.eventFloor).toBe(observedAtMicros(CAPTURED));
+    // The horizon is still the file's own.
+    expect(s.observedMs).toBe(Date.parse(FILE_STAMP));
+    // A delayed response stamped between the file and the capture: the
+    // snapshot already holds anything it did, so it changes nothing: no
+    // overwrite of event 1, no resurrection of event 2 (deleted before the
+    // capture, so absent from the snapshot).
+    const late = applyFragment(s, {
+      format: 1,
+      session: "s",
+      events: [event(1, "stale"), event(2, "deleted")],
+      observed_at: BETWEEN,
+    });
+    expect(late.events.map((e) => [e.id, e.label])).toEqual([[1, "saved"]]);
+    // With no capture (a file the tab loaded itself), the file's stamp is the floor.
+    const [local] = parseExportDocument(doc(FILE_STAMP)).sessions;
+    expect(local?.eventFloor).toBe(observedAtMicros(FILE_STAMP));
+  });
+
+  it("an absent observed_at stays absent through export and a present one round-trips unchanged", () => {
+    const exported = (text: string) =>
+      documentFromSessions(parseExportDocument(text, CAPTURED).sessions).sessions[0];
+    const absent = exported(doc(null));
+    expect(absent).toBeDefined();
+    expect(absent && "observed_at" in absent).toBe(false);
+    expect(exported(doc(FILE_STAMP))?.observed_at).toBe(FILE_STAMP);
+  });
+
+  it("a session's start and end round-trip exactly, microseconds and offsets included", () => {
+    const text = JSON.stringify({
+      format: 1,
+      sessions: [
+        { id: "s", start: "2026-07-01T10:00:00.123456+02:00", end: "2026-07-01T10:20:00.000001Z" },
+      ],
+    });
+    const [record] = documentFromSessions(parseExportDocument(text, CAPTURED).sessions).sessions;
+    expect(record?.start).toBe("2026-07-01T10:00:00.123456+02:00");
+    expect(record?.end).toBe("2026-07-01T10:20:00.000001Z");
+  });
+
+  it("an absent session end stays absent through export", () => {
+    const text = JSON.stringify({
+      format: 1,
+      sessions: [{ id: "s", start: "2026-07-01T08:00:00Z", metrics: [] }],
+    });
+    const [record] = documentFromSessions(parseExportDocument(text).sessions).sessions;
+    expect(record).toBeDefined();
+    expect(record && "end" in record).toBe(false);
+    expect(record?.start).toBe("2026-07-01T08:00:00Z");
+  });
+
+  const REPEATED = readFileSync(join(FIXTURES, "repeated-ids.json"), "utf-8");
+
+  it("repeated-ids.json gives viewOnlyIds {3} and editableEventId null for 3 and for the id-less row", () => {
+    const { sessions, warnings } = parseExportDocument(REPEATED);
+    expect(warnings).toEqual([]);
+    const [s] = sessions;
+    if (s === undefined) throw new Error("no session");
+    // The same literal as tests/unit/monitor/test_review.py's view_only_ids.
+    expect(s.viewOnlyIds).toEqual(new Set([3]));
+    expect(s.events.map((ev) => editableEventId(s, ev))).toEqual([1, null, null, null, 9]);
+    // The chart markers follow the same rule: every view-only row gets a
+    // synthetic id, so each marker id is unique and only 1 and 9 are wire ids.
+    const ids = eventMarkers(s, sessionBounds(s)).map((m) => m.id);
+    expect(ids.filter((id) => id >= 0)).toEqual([1, 9]);
+    expect(new Set(ids).size).toBe(5);
+  });
+
+  it("export keeps repeated-id rows and the legacy colour", () => {
+    const [record] = documentFromSessions(parseExportDocument(REPEATED).sessions).sessions;
+    expect(record?.events?.map((e) => e.id ?? null)).toEqual([1, 3, 3, null, 9]);
+    expect(record?.events?.[0]?.color).toBe("red");
   });
 });
 

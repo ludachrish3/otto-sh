@@ -89,6 +89,17 @@ export interface NormalizedSession {
   /** The server's last observation of the session (`observed_at`), else
    * `endMs`. Only `displayEndMs` (data/time.ts) reads it. */
   observedMs: number;
+  /** The session's own `observed_at`, exactly as the document or the live
+   * server sent it; null when it had none. Never a review mutation's stamp
+   * (`applyFragment`'s `advanceHorizon`), so an export writes back what was
+   * read: `observedMs` falls back to `endMs`, this does not. */
+  observedAt: string | null;
+  /** The session's own `start` and `end`, exactly as the document or the
+   * server sent them (`end` null when it had none), so an export writes
+   * back what was read: `startMs` and `endMs` are parsed (and `endMs` falls
+   * back to the last sample), these are not. */
+  startAt: string;
+  endAt: string | null;
   lab: {
     hosts: HostSnapshot[];
     links: LinkSnapshot[];
@@ -103,10 +114,16 @@ export interface NormalizedSession {
    * rolls an event back (#929). Bounded: events change at human rate. A new
    * Map whenever a fragment changes it, never mutated in place. */
   eventStamps: Map<number, number>;
-  /** The snapshot's own stamp (`observedAtMicros` of `observed_at`), or null
-   * for an unstamped document: a change no later than it is already in the
-   * snapshot or overtaken by it, even for an id the snapshot lacks. */
+  /** The snapshot's ordering floor (`observedAtMicros`): the server's
+   * capture stamp (`X-Otto-Observed-At`) whenever there is one, else the
+   * document's own `observed_at`, else null. A change no later than it is
+   * already in the snapshot or overtaken by it, even for an id the snapshot
+   * lacks. A reviewed file's `observed_at` may be months older than the
+   * capture, so it only floors a file the tab loaded itself. */
   eventFloor: number | null;
+  /** The event ids the session holds more than once: those rows are view
+   * only, since no id addresses one of them (`editableEventId`). */
+  viewOnlyIds: ReadonlySet<number>;
   logEvents: NonNullable<SessionRecord["log_events"]>;
   /** Per-series index over `metrics` — what review AND live read from instead
    * of scanning the flat array (see seriesIndex.ts). */
@@ -212,7 +229,47 @@ export function dropInvalidTimestamps<T extends { timestamp: string }>(
   return kept;
 }
 
-function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSession {
+/** The ids `events` holds more than once. */
+function repeatedIds(events: readonly { id?: number | null }[]): Set<number> {
+  const seen = new Set<number>();
+  const repeated = new Set<number>();
+  for (const e of events) {
+    if (e.id == null) continue;
+    if (seen.has(e.id)) repeated.add(e.id);
+    seen.add(e.id);
+  }
+  return repeated;
+}
+
+/** The ONE wire-id rule: the id a mutation may address `ev` by, or null for
+ * a row that cannot be edited (no id, or an id the session repeats). */
+export function editableEventId(
+  session: Pick<NormalizedSession, "viewOnlyIds">,
+  ev: { id?: number | null },
+): number | null {
+  return ev.id == null || session.viewOnlyIds.has(ev.id) ? null : ev.id;
+}
+
+/** The ONE row-id rule for every list of a session's events (the events
+ * panel, the chart markers): the row's `editableEventId`, else a negative
+ * synthetic from its `index` in `session.events`. Unique per row, and never
+ * a wire id, so only an editable row's id ever addresses a mutation. */
+export function eventRowId(
+  session: Pick<NormalizedSession, "viewOnlyIds">,
+  ev: { id?: number | null },
+  index: number,
+): number {
+  return editableEventId(session, ev) ?? -1 - index;
+}
+
+/** `captured`: the server's capture stamp of the snapshot the session came
+ * in (null for a file the tab loaded itself): the ordering floor whenever
+ * present (see `eventFloor`). */
+function normalizeSession(
+  raw: SessionRecord,
+  warnings: string[],
+  captured: string | null,
+): NormalizedSession {
   const hosts = raw.lab?.hosts ?? [];
   const links = raw.lab?.links ?? [];
   const explicitElements = raw.lab?.elements ?? [];
@@ -266,9 +323,10 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
   }
   const endMs = parsedEnd ?? lastSampleMs ?? startMs;
   // An old or imported document has no observed_at: fall back to endMs.
-  const observedMs = parseObservedAt(raw.observed_at) ?? endMs;
+  const observedAt = raw.observed_at ?? null;
+  const observedMs = parseObservedAt(observedAt) ?? endMs;
   // Every event the snapshot carries was last changed no later than its capture.
-  const eventFloor = observedAtMicros(raw.observed_at);
+  const eventFloor = observedAtMicros(captured ?? observedAt);
   const eventStamps = new Map<number, number>();
   if (eventFloor !== null) {
     for (const e of events) if (e.id != null) eventStamps.set(e.id, eventFloor);
@@ -288,6 +346,9 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     startMs,
     endMs,
     observedMs,
+    observedAt,
+    startAt: raw.start,
+    endAt: raw.end ?? null,
     lab: { hosts, links, explicitElements },
     meta: {
       interval: raw.meta?.interval ?? null,
@@ -298,6 +359,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     events,
     eventStamps,
     eventFloor,
+    viewOnlyIds: repeatedIds(events),
     logEvents,
     index: buildIndex(metrics),
     chartMap: raw.chart_map ?? {},
@@ -326,8 +388,10 @@ function sessionToRecord(session: NormalizedSession): SessionRecord {
     id: session.id,
     label: session.label,
     note: session.note,
-    start: new Date(session.startMs).toISOString(),
-    end: new Date(session.endMs).toISOString(),
+    // Written back as read, in every mode: an absent end stays absent (a
+    // session's end is the source's to state, not the tab's to compute).
+    start: session.startAt,
+    ...(session.endAt === null ? {} : { end: session.endAt }),
     lab: {
       hosts: session.lab.hosts,
       links: session.lab.links,
@@ -343,7 +407,8 @@ function sessionToRecord(session: NormalizedSession): SessionRecord {
     log_events: session.logEvents,
     chart_map: session.chartMap,
     tunnels: session.tunnels,
-    observed_at: new Date(session.observedMs).toISOString(),
+    // Absent stays absent: a fallback horizon is not an observation.
+    ...(session.observedAt === null ? {} : { observed_at: session.observedAt }),
   };
 }
 
@@ -356,7 +421,10 @@ export function documentFromSessions(
   return { format: EXPORT_FORMAT, sessions: sessions.map(sessionToRecord) };
 }
 
-export function parseExportDocument(text: string): ParseResult {
+/** `captured`: the server's capture stamp of a served snapshot
+ * (`X-Otto-Observed-At`), every session's ordering floor; null for a file
+ * the tab loaded itself. */
+export function parseExportDocument(text: string, captured: string | null = null): ParseResult {
   let doc: unknown;
   try {
     doc = JSON.parse(text);
@@ -386,7 +454,7 @@ export function parseExportDocument(text: string): ParseResult {
     if (seen.has(s.id)) warnings.push(`duplicate session id ${s.id}`);
     seen.add(s.id);
   }
-  const sessions = typed.sessions.map((s) => normalizeSession(s, warnings));
+  const sessions = typed.sessions.map((s) => normalizeSession(s, warnings, captured));
   return { document: typed, sessions, warnings };
 }
 

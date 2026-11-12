@@ -26,7 +26,7 @@
 // comparing lengths) matters: `warnings` only ever GROWS while fragments
 // accumulate onto the same document (appendFragment/appendFragments push
 // onto it — reviewStore.ts's mergeFragments), but a fresh
-// importMonitorSessions/resyncMonitorSessions REPLACES it wholesale with
+// importMonitorSessions/installSnapshot REPLACES it wholesale with
 // whatever the newly (re-)parsed document produced — which can easily be
 // SHORTER than what was already dismissed (e.g. dismiss 2 warnings, then
 // import a totally different document with only 1). A plain

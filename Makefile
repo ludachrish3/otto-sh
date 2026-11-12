@@ -2142,10 +2142,10 @@ docs-inventories:
 # scripts/check_docs_api_marks.py, which checks every page of the built site.
 #
 # The dist prerequisites are load-bearing, not decorative: docs/conf.py runs
-# scripts/capture_docs_media.py, which boots a real MonitorServer and
-# photographs the REAL frontend through headless Chromium. That server serves
-# the built dist, so without these the docs build happily photographs whatever
-# stale bundle is lying around — or, on a fresh worktree, none at all.
+# scripts/capture_docs_media.py, which serves the built dist and photographs
+# the REAL frontend through headless Chromium, so without these the docs build
+# happily photographs whatever stale bundle is lying around — or, on a fresh
+# worktree, none at all.
 docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVAPP_DIST)
 	@$(SAY) "sphinx-build html (clean rebuild, warnings are errors)"
 	@rm -rf docs/_build/html

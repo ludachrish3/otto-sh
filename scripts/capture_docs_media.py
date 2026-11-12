@@ -7,14 +7,16 @@ produced from the *live* frontend code and can never drift from what otto
 actually looks like — the same zero-rot property the architecture tree gets
 from ``inheritance_diagram``.
 
-The pipeline reuses the browser-e2e harness (``DashboardHarness`` +
-``FakeCollector`` from ``tests/_fixtures``): the real ``MonitorServer`` serves
-the real review shell (the built ``web/`` dist) with an EMPTY collector — no
-server-seeded data, no boot-time API calls, exactly the production shell's
-own boot behavior — and headless Chromium feeds it client-side through the
-Import front door with a committed ``web/fixtures/`` document, the same way
-``tests/e2e/monitor/dashboard/test_review_shell.py`` does. When the frontend
-(or the fixture) changes, the media regenerates on the next build.
+The pipeline reuses the browser-e2e harness (``StaticShellHarness`` from
+``tests/_fixtures``): the real review shell (the built ``web/`` dist) served
+with no otto server behind it, as any static host serves it — no
+server-seeded data, no ``/api/*`` at all — and headless Chromium feeds it
+client-side through the Import front door with a committed ``web/fixtures/``
+document (``import_into_shell``), the same way
+``tests/e2e/monitor/dashboard/test_review_shell.py`` does. An otto server,
+even one with nothing recording, would name its source and withhold Import.
+When the frontend (or the fixture) changes, the media regenerates on the
+next build.
 
 Live monitoring has no capture of its own: the review-first shell has no live
 page to photograph, and that mode returns at a later phase (see
@@ -61,8 +63,7 @@ STAMP = OUT_DIR / ".stamp"
 # stamp and the docs media would silently keep showing the previous build).
 _STAMP_INPUTS = [
     Path(__file__).resolve(),
-    REPO_ROOT / "tests" / "_fixtures" / "_dashboard_harness.py",
-    REPO_ROOT / "tests" / "_fixtures" / "_fake_collector.py",
+    REPO_ROOT / "tests" / "_fixtures" / "_static_shell.py",
     REPO_ROOT / "tests" / "_fixtures" / "_report_fixture.py",
     REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json",
     REPO_ROOT / "web" / "fixtures" / "isp-core.json",
@@ -457,12 +458,14 @@ def _capture_topology(browser, harness) -> None:  # noqa: ANN001 — deferred im
     and the clip is the nodes plus the key — not the empty canvas around
     them.
     """
+    from tests._fixtures._static_shell import import_into_shell
+
     fixture = REPO_ROOT / "web" / "fixtures" / "isp-core.json"
     edge_selector = '[data-testid^="topo-link-"] path.react-flow__edge-path'
     page = browser.new_page(viewport={"width": _VIEWPORT["width"], "height": 1100})
     page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
     page.goto(harness.url)
-    page.locator('[data-testid="import-input"]').set_input_files(fixture)
+    import_into_shell(page, fixture)
     page.locator('[data-testid="topology-page"]').wait_for()
     page.locator(edge_selector).first.wait_for()
     _wait_for_edges_settled(page, edge_selector)
@@ -484,10 +487,10 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
     docstring): it boots to an empty Import front door and is fed
     client-side, exactly the way the browser e2e suite does — see
     ``tests/e2e/monitor/dashboard/test_review_shell.py::_import_fixture``.
-    The harness's collector stays empty; ``web/fixtures/kitchen-sink.json``
-    supplies every session, host, element, event and metric these captures
-    show. Every later route is a same-document hash navigation, so the
-    imported data survives it. ``/`` is the topology landing (spec
+    No server stands behind it; ``web/fixtures/kitchen-sink.json`` supplies
+    every session, host, element, event and metric these captures show.
+    Every later route is a same-document hash navigation, so the imported
+    data survives it. ``/`` is the topology landing (spec
     2026-07-17 topology-default-view), so the grid needs an explicit
     ``#/hosts`` hop.
 
@@ -503,12 +506,13 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
       CPU chart, one line per member host;
     - ``dashboard-events``: the events slide-over's list.
     """
+    from tests._fixtures._static_shell import import_into_shell
+
     fixture = REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json"
     page = browser.new_page(viewport=_VIEWPORT)
     page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
     page.goto(harness.url)
-    _tid(page, "import-input").set_input_files(fixture)
-    _tid(page, "review-bar").wait_for()
+    import_into_shell(page, fixture)
     page.goto(f"{harness.url}#/hosts")
     _tid(page, "host-tile-chassis-a-lc1-1").wait_for()
     # The first three element groups — a three-host chassis and two
@@ -570,7 +574,7 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
     page.close()
 
 
-def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
+def _capture(harness) -> None:  # noqa: ANN001 — StaticShellHarness import is deferred
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright
 
@@ -618,10 +622,9 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
 
-    from tests._fixtures._dashboard_harness import DashboardHarness
-    from tests._fixtures._fake_collector import FakeCollector
+    from tests._fixtures._static_shell import StaticShellHarness
 
-    harness = DashboardHarness(FakeCollector()).start()
+    harness = StaticShellHarness().start()
     try:
         _capture(harness)
     finally:

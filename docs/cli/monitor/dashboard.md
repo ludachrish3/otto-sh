@@ -4,25 +4,33 @@ In both modes, `otto monitor` serves a web server: it binds an OS-assigned
 free port and logs the dashboard URL at startup (`Server running at
 http://<ip>:<port>`, one URL per non-loopback interface).
 
-On load, the dashboard shell asks that same server one question — `GET
-/api/mode` — then, regardless of the answer, follows up with `GET
-/api/monitor_sessions` and renders the result, exactly as if you'd used
-Import yourself: no click needed. Live and review servers answer with the
-same `format:1` shape — a live monitor session is one whose `end` is still
-open, like a crashed session found on disk — so the topology map populates
-immediately either way (as do the fleet grid and charts once you switch to
-Hosts). In live mode, once that initial load succeeds the shell also opens
-`GET /api/stream` (Server-Sent Events) and *grows* the loaded session in
-place by appending each fragment as it arrives.
+On load, the dashboard shell first opens `GET /api/stream` (Server-Sent
+Events) on that same server, so no change published from then on is missed.
+Once the stream is open, it asks the server one question — `GET /api/mode`
+— then follows up with `GET /api/monitor_sessions` and renders the result,
+exactly as if you'd used Import yourself: no click needed. Live and review
+servers answer with the same `format:1` shape — a live monitor session is
+one whose `end` is still open, like a crashed session found on disk — so the
+topology map populates immediately either way (as do the fleet grid and
+charts once you switch to Hosts). From then on the stream *grows* the loaded
+session in place, appending each fragment as it arrives.
 Served by a bare static file server with no `/api/*` routes at all, the
-dashboard still works: any failure of that boot fetch — connection refused,
-a non-JSON body, whatever a plain server hands back — falls back to the
-same empty Import screen, never a broken page.
+dashboard still works: when the stream cannot open, the boot asks nothing
+more and falls back to the same empty Import screen, never a broken page.
+Import waits until the boot knows which it is. Once an otto server's stream
+has opened, the server is there: a request that fails is retried through the
+stream's reconnect, and the page says it is waiting for the server's data
+rather than offering Import. Once `/api/mode` has answered, its source
+decides: a live run that has recorded nothing yet shows that waiting screen,
+without Import, and keeps retrying until its first data arrives, with the
+**Reconnecting…** banner up while each retry backs off.
 
-Feed it a monitor export document yourself at any time — drag a file onto
-the window, or use the **⋯** overflow menu's *Import* — and it renders
-that document entirely in the browser, exactly like a boot-fetched monitor
-session:
+You can also feed it a monitor export document yourself — drag a file onto
+the window, or use the **⋯** overflow menu's *Import* — where Import is
+offered: on a `.json` review it switches the source the server serves, and
+with no server behind the page it loads the file into the tab (see [Sources
+and saving](#sources-and-saving)). An imported document renders exactly
+like a boot-fetched monitor session:
 
 - **Fleet grid.** Element-grouped host tiles, each with a status dot, an
   element-level health-rollup bar, and a labeled headline metric; a down
@@ -73,13 +81,117 @@ session:
   tooltip is that session's `--label`/`--note`, and each session renders
   under the lab configuration it was captured under, so drift between
   sessions never bleeds into the wrong one's view.
-- **Export.** The **⋯** menu re-downloads whatever document is currently
-  loaded, unchanged.
+- **Export.** The **⋯** menu's *Export* (**⌘S** / **Ctrl S**) downloads the
+  data the tab shows as a `.json` document, edits included, under a name
+  you confirm; see [Saving a `.json`: export](#saving-a-json-export).
 
-Importing a file while connected to a server (live, or an editable review
-served by `otto monitor`) disconnects from that server and shows the file
-read-only: the stream stops and the marking controls go away. There is no
-in-app way back; reload the page to return to the server's data.
+## Sources and saving
+
+Each URL — each running `otto monitor` — serves one source at a time, and
+every tab open on it shows that source and the same data. Every source the
+server serves takes the same event edits (see [Marking
+events](#marking-events)); they differ only in where an edit goes and how
+you keep it:
+
+| | Live | `.db` review | `.json` review |
+|---|---|---|---|
+| Started by | `otto monitor --live` | `otto monitor F.db` | `otto monitor F.json`, or an Import on a `.json` URL |
+| An edit goes to | the running session, and its `--db` file when given | the `.db` file, at once | the server's copy of the document; the file itself is never written |
+| Every tab shows it, and a reload keeps it | yes | yes | yes, until `otto monitor` stops |
+| How you keep it | run with `--db` (see [Persisting data](live.md#persisting-data--sessions)), or Export before it stops | nothing to do | Export (**⌘S** / **Ctrl S**) |
+| Import another file | not offered | not offered | yes, after a prompt; every tab moves to that file |
+| Unsaved-changes marker | never | never | from the first edit until an export |
+| Edits are lost by | stopping a run started without `--db` | — | switching source (asks first); stopping `otto monitor` (warns in its terminal) |
+
+An edit made in one tab shows in every other tab on the same URL at once,
+with no reload; this holds for a `.db` review as much as a `.json` one. An
+edit is data, nothing more: an event added or changed in review carries no
+mark of having been edited, so whoever reads the exported file sees it
+exactly like one recorded live. An event the file holds without an id (or
+with an id another event in its session repeats) stays view-only: it is
+listed and drawn, but nothing can edit, end or delete it.
+
+### Saving a `.json`: export
+
+**Export** — the **⋯** menu's *Export*, the command palette's, or **⌘S** /
+**Ctrl S**, which replaces the browser's own "save page" — opens a small
+dialog with the file name filled in and its stem selected, so typing
+replaces the name and keeps `.json`; **Enter** exports. The name offered is
+the source's name with `.json` as its extension (`metrics.db` becomes
+`metrics.json`), and `-edited` before it when the source has unsaved
+changes (`metrics.json` becomes `metrics-edited.json`, and
+`metrics-edited.json` stays as it is); in live mode it is
+`otto-monitor-export.json`. Confirming downloads the file where your
+browser saves downloads; **Cancel** or **Esc** closes the dialog and saves
+nothing. The export holds every edit in every field (id, label, times,
+colour, dash, and origin: manual or test), so importing it again gives back
+exactly what you saw; an older capture's non-hex colour or unknown dash is
+kept as it was unless you changed it.
+
+**Confirming counts as saved.** On a `.json` review the review bar shows a
+badge such as **3 changes since export** (**1 change since export** for
+one) in every tab, from the first edit until an export. It counts writes,
+not differences: an edit you then undo still counts, and so does the undo.
+Once you confirm an export the badge clears in every tab; a change that
+lands from another tab while the export is on its way stays counted. A
+`.db` review never shows it: its edits are already in the file. Neither
+does a live run: with `--db` its edits are in the archive; without it
+nothing is kept on disk, so Export before stopping it.
+
+**Stopping `otto monitor` with unsaved changes** goes ahead, and prints a
+warning in its terminal naming the file it served and the count:
+
+```text
+Warning: 3 unsaved changes to metrics.json since the last export are lost.
+```
+
+(`1 unsaved change … is lost.` for one.) Export from any open tab first to
+keep them. Export before starting `otto monitor` again, too: a restarted
+server serves the file as it is on disk, without the edits, at a new URL
+with a new [access key](serving.md#access-key). A tab still open on the old
+URL never reaches it: it keeps what it shows behind the **Reconnecting…**
+banner (Export still works there), and the restart's own printed URL is
+the one to open.
+
+### Switching source
+
+Only a `.json` URL switches source. On one, every Import (the **⋯** menu,
+**⌘I** / **Ctrl I**, the palette, or a file dropped on the window) first
+asks: the dialog **Open new.json?** says either "Opening new.json closes
+metrics.json." or, with unsaved changes, "Opening new.json discards 3
+unsaved changes to metrics.json. Export first to keep them." **Cancel** has
+the focus, so **Enter** never discards anything; **Open** asks the server to
+serve the file. If another tab edits the source while the dialog is open,
+pressing **Open** is refused and the dialog opens again with the current
+count; if another tab switches the source, the dialog closes. A file that
+is not a monitor export, or that repeats a session id, is refused ("Import
+failed: could not open new.json: …"), and the current source and its
+unsaved changes stay as they were.
+
+A switch moves every tab on the URL to the new file. Every other tab shows
+the toast "Source changed to new.json", and every tab's [undo
+history](#undo-and-redo) starts again empty, since nothing in it applies to
+the new file.
+
+A live URL and a `.db` URL never switch: neither offers Import, and a file
+dropped on one is ignored. To look at a file while a live run goes on, start
+a second `otto monitor F.json`; it prints its own URL.
+
+With no server behind the page (a bare static file server, see above),
+Import loads the file into the tab only: it is view-only, with no marking
+controls and no stream, and nothing is shared with other tabs. Reload the
+page to return to the empty Import screen.
+
+### While the server is gone
+
+If `otto monitor` stops, or the connection to it drops, while a tab is open,
+the tab keeps what it shows and the [**Reconnecting…**
+banner](#live-status-pause-and-reconnect) appears, in review as in live
+mode. Updates from other tabs stop arriving until the connection is back.
+Export still works: the tab builds the file from the data it holds, so you
+can still save a `.json` review's edits after the server has stopped, but
+the badge stays, since no server hears the export. An Import on a `.json`
+URL needs the server, and fails until it is back.
 
 ## Topology view
 
@@ -152,10 +264,11 @@ zooming.
 
 ## Marking events
 
-Any **editable** session — a live run, or a review opened from a `.db`
-session archive (see [Reviewing a capture](review.md#reviewing-a-capture)) —
-can mark events directly from the dashboard; a `.json` export has no
-marking controls at all.
+Every source the server serves — a live run, or a `.db` or `.json` review
+(see [Reviewing a capture](review.md#reviewing-a-capture)) — is **editable**:
+you can mark events directly from the dashboard, and [Sources and
+saving](#sources-and-saving) says where each one keeps them. Only a file
+loaded into a tab with no server behind it has no marking controls.
 
 **From the app bar.** The **Mark now…** button (**⌘E** / **Ctrl E**) opens
 a small popover for a label and stamps a point event at the current time.
@@ -184,9 +297,10 @@ single **Add event…** button instead. On an editable session the
 slide-over opens with focus on the compose row's first control (live: the
 label field; review: **Add event…**). Each row also grows **Edit** and
 **End now** controls once the session is editable — **End now** stamps an
-open span's end without opening the editor. Both disappear entirely (not
-just disabled) on a read-only source, since there's nothing on the server
-for them to persist to.
+open span's end without opening the editor. Both are absent entirely (not
+just disabled) on a file loaded with no server behind it, since there's
+nothing on a server for them to persist to, and on a [view-only
+event](#sources-and-saving).
 
 **The event editor**, opened from any of the flows above, has a **Label**,
 second-granularity **Start**/**End** date-time fields (clearing **End**
@@ -235,11 +349,12 @@ that names the event ("Delete event?") and removes it only when you press
 closes just the dialog and leaves the editor open. Every change made here can
 be taken back; see [Undo and redo](#undo-and-redo).
 
-When you review a `.db` archive, an edit, **End now** or a delete applies to
-the event as the archive holds it, not as this tab loaded it. Because the
+When you review a `.db` or `.json` source, an edit, **End now** or a delete
+applies to the event as the server holds it now (the archive's row, or the
+server's copy of the document), not as this tab loaded it. Because the
 editor sends only the fields you changed, a field you did not change keeps
-what another tab, or another `otto monitor` on the same archive, saved
-meanwhile. If the event changes between the server reading it and writing
+what another tab, or another `otto monitor` on the same `.db` archive,
+saved meanwhile. If the event changes between the server reading it and writing
 your change, nothing is written and the tab shows the event as it was saved.
 The editor says "This event was changed elsewhere. It now shows the saved
 version." and stays open on that version, so you can make your change again;
@@ -265,8 +380,9 @@ capture](review.md#reviewing-a-capture).
 
 The dashboard remembers the event changes you make in this tab, so a mistaken
 mark, edit, end or delete can be taken back. It works on every editable
-session: a live run, or a review opened from a `.db` archive. A review opened
-from a `.json` file has nothing to undo, and the commands are disabled there.
+source: a live run, and a `.db` or `.json` review. A file loaded into a tab
+with no server behind it takes no changes, so it has nothing to undo and the
+commands are disabled there.
 
 - **Shortcuts.** **Ctrl Z** undoes the latest change and **Ctrl Y** redoes
   it; on a Mac they are **⌘Z** and **⌘Y**, and **⌘⇧Z** (**Ctrl Shift Z**)
@@ -308,9 +424,12 @@ from a `.json` file has nothing to undo, and the commands are disabled there.
   menu, and while the event editor, the mark popover, the palette or the
   delete dialog is open, keeps its ordinary meaning; the Events panel is not
   one of those, so undo works from it.
-- **When it is forgotten.** The history lives in the tab only. A reload or a
-  new tab starts empty, and so does importing or opening another file, or the
-  tab becoming read-only.
+- **When it is forgotten.** The history lives in the tab only: each tab has
+  its own, even on the same URL. A reload or a new tab starts empty. A change
+  of source empties it too: in every tab on the URL when an Import switches
+  a `.json` review, whichever tab made it (see [Switching
+  source](#switching-source)), and in the tab itself when it loads a file
+  with no server behind it.
 
 ## Live status, pause, and reconnect
 
@@ -318,7 +437,10 @@ While `--live`, a healthy session shows no connection chrome at all — the
 app bar stays quiet as long as the stream is open and receiving fragments.
 If the SSE connection drops, a slim amber **Reconnecting…** banner appears
 directly under the app bar for as long as the retry-with-backoff loop is
-unresolved, and disappears the moment the stream reconnects. **Pause/Resume**
+unresolved, and disappears the moment the stream reconnects. The same banner
+shows while reviewing a source the server serves (`otto monitor <source>`),
+whose stream carries other tabs' changes; a file loaded into a tab with no
+server behind it has no stream and never shows it. **Pause/Resume**
 is the icon button in the app bar's right-hand cluster (its `aria-label`
 reads "Pause" or "Resume" to match); review/historical context — including a
 client-side Import with no backing server — is carried entirely by the

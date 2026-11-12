@@ -104,7 +104,8 @@ def test_stale_tab_recolour_keeps_other_writers_label(
 
     _open_editor(page, server_b, event_id)
     status, body = _send_json(
-        server_a.api_url(f"/api/session/{sid}/event/{event_id}"),
+        server_a,
+        f"/api/session/{sid}/event/{event_id}",
         {"label": "renamed by A"},
         method="PATCH",
     )

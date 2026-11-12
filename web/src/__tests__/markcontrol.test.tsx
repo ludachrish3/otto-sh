@@ -23,13 +23,12 @@ if (typeof globalThis.CSS === "undefined") {
 }
 
 // minimal.json's first session id — hydrate once per test so marking.ts's
-// requireActiveSessionId has a session to land on; setMode/setEditable put
+// requireActiveSessionId has a session to land on; `mode` and `editable` put
 // the store in the state AppBar would gate MarkControl's mount behind
 // (MarkControl itself does not re-check mode — that's AppBar's job).
 function hydrate(): string {
   useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(minimal), "test");
-  useReviewStore.getState().actions.setMode("live");
-  useReviewStore.getState().actions.setEditable(true);
+  useReviewStore.setState({ mode: "live", editable: true });
   const id = useReviewStore.getState().sessions[0]?.id;
   if (!id) throw new Error("fixture has no session");
   return id;

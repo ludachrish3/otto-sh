@@ -53,7 +53,7 @@ def _collector(source: _Script, log: list[str] | None = None) -> MetricCollector
     c.session_id = "s1"
     if log is not None:
         c._db = _SpyDB(log)  # type: ignore[assignment]
-        c._publish = lambda frag: log.append(f"sse:{sorted(frag)}")  # type: ignore[method-assign]
+        c.publish = lambda frag: log.append(f"sse:{sorted(frag)}")  # type: ignore[method-assign]
     return c
 
 

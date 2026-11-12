@@ -7,7 +7,12 @@ import pytest
 
 from otto.models.monitor import EventCreateBody, EventRecord, EventUpdateBody
 from otto.monitor.event_ops import (
+    FIRST_EVENT_ID,
+    MAX_SAFE_EVENT_ID,
+    EventChanged,
+    EventIdCounter,
     EventValidationError,
+    IdsExhausted,
     ResolvedEventFields,
     check_event_write,
     check_revert_write,
@@ -15,6 +20,7 @@ from otto.monitor.event_ops import (
     merge_update,
     resolve_create,
     revert_leg,
+    revert_via,
     same_event,
 )
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -154,3 +160,105 @@ def test_editable_fields_reads_the_one_field_list_from_every_shape() -> None:
     moved = replace(base, **editable_fields(resolved))
     assert (moved.id, moved.source) == (3, "user_code")  # identity is never an edit
     assert editable_fields(moved) == expected
+
+
+def test_counter_take_starts_at_first_id_and_advances() -> None:
+    counter = EventIdCounter()
+    assert counter.take() == FIRST_EVENT_ID
+    assert counter.take() == FIRST_EVENT_ID + 1
+
+
+def test_counter_note_keeps_it_ahead_and_never_lowers() -> None:
+    counter = EventIdCounter()
+    counter.note(7)
+    assert counter.take() == 8
+    counter.note(3)
+    assert counter.take() == 9
+
+
+def test_counter_allocated_is_id_handed_out() -> None:
+    counter = EventIdCounter()
+    assert not counter.allocated(1)
+    counter.note(5)
+    assert counter.high_water == 5
+    assert counter.allocated(1)
+    assert counter.allocated(5)
+    assert not counter.allocated(6)
+    assert not counter.allocated(0)
+
+
+def test_counter_refuses_past_the_browser_ceiling() -> None:
+    counter = EventIdCounter()
+    counter.note(MAX_SAFE_EVENT_ID)
+    with pytest.raises(IdsExhausted):
+        counter.take()
+    assert counter.high_water == MAX_SAFE_EVENT_ID
+    assert issubclass(IdsExhausted, EventValidationError)
+
+
+def _stored(label: str, color: str = "#888888", source: str = "user") -> EventRecord:
+    return EventRecord(id=4, timestamp=T0, label=label, color=color, dash="dash", source=source)
+
+
+@pytest.mark.asyncio
+async def test_revert_via_restore_leg_calls_restore_only() -> None:
+    write = _stored("back")
+    calls: list[str] = []
+
+    async def restore(record: EventRecord) -> str:
+        calls.append(f"restore:{record.label}")
+        return "restored"
+
+    async def mutate(_resolver) -> str | None:  # type: ignore[no-untyped-def]
+        calls.append("mutate")
+        return "mutated"
+
+    assert await revert_via(None, write, restore=restore, mutate=mutate) == "restored"
+    assert calls == ["restore:back"]
+
+
+@pytest.mark.asyncio
+async def test_revert_via_update_leg_refuses_a_changed_event() -> None:
+    current = _stored("now", source="auto")
+
+    async def restore(_unused: EventRecord) -> str:
+        raise AssertionError("not a restore")
+
+    async def mutate(resolver) -> str | None:  # type: ignore[no-untyped-def]
+        return resolver(current)
+
+    with pytest.raises(EventChanged) as raised:
+        await revert_via(_stored("other"), _stored("new"), restore=restore, mutate=mutate)
+    assert raised.value.current == current
+
+    async def mutate_ok(resolver) -> EventRecord | None:  # type: ignore[no-untyped-def]
+        return resolver(current)
+
+    result = await revert_via(
+        _stored("now", source="auto"),
+        _stored("new", color="#112233", source="user"),
+        restore=restore,
+        mutate=mutate_ok,
+    )
+    assert (result.label, result.color, result.source, result.id) == ("new", "#112233", "auto", 4)
+
+    async def mutate_delete(resolver) -> str | None:  # type: ignore[no-untyped-def]
+        return "gone" if resolver(current) is None else None
+
+    assert (
+        await revert_via(_stored("now", source="auto"), None, restore=restore, mutate=mutate_delete)
+        == "gone"
+    )
+
+
+@pytest.mark.asyncio
+async def test_revert_via_missing_event_raises_changed_none() -> None:
+    async def restore(_unused: EventRecord) -> str:
+        raise AssertionError("not a restore")
+
+    async def mutate(_resolver) -> str | None:  # type: ignore[no-untyped-def]
+        return None
+
+    with pytest.raises(EventChanged) as raised:
+        await revert_via(_stored("a"), _stored("b"), restore=restore, mutate=mutate)
+    assert raised.value.current is None

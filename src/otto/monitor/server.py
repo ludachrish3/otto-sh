@@ -5,12 +5,17 @@ Endpoints
 ---------
 GET  /              Serves the React dashboard's built index.html (``web/``, via ``make web``)
 GET  /static/...    Serves the built dist/ assets (JS/CSS bundles, etc.)
-GET  /api/mode      JSON ``{"mode": "live"|"review", "source": str|None, "editable": bool}``
+GET  /api/mode      The served source's state, a ``MonitorSourceState``: its mode,
+kind (``live``, ``db`` or ``json``), name, token, whether it is editable, and
+its write counts, stamped with the server's time
 GET  /api/monitor_sessions  The ``format:1`` payload: the loaded archive in
 review mode, or a snapshot of the running session in live mode (a live
 session is just one whose ``end`` is still open). Both modes hydrate
-through this one endpoint.
-GET  /api/stream    SSE stream — pushes metric updates and events in real time
+through this one endpoint. The response names the source it was read from
+(``X-Otto-Source``) and the time it was read (``X-Otto-Observed-At``).
+GET  /api/stream    SSE stream, in both modes: live pushes metric updates and
+events in real time; review pushes every event change and the source's state
+(a switch, the unsaved count), so every tab on the URL shows the same data
 POST /api/session/{session_id}/event          Record a manual event
 POST /api/session/{session_id}/event/{id}/end Stamp a span event's end (server clock)
 PATCH /api/session/{session_id}/event/{id}    Edit an event's fields
@@ -21,6 +26,22 @@ after a delete); 409 ``{code: "changed", current}`` when it is not (or is gone).
 DELETE /api/session/{session_id}/event/{id}   Remove an event: 200 with the
 deleted record (not 204), so a client can restore it
 GET  /api/export/json  Download the current data as a ``format:1`` document
+POST /api/source    Switch a ``.json`` review to an uploaded ``.json`` (the raw
+body), confirmed with the token and unsaved count the tab was shown
+(``X-Otto-Source``, ``X-Otto-Unsaved``) and named by ``X-Otto-Source-Name``:
+200 with the new source's state. 403 ``not_switchable`` for a live or ``.db``
+source, 413 ``too_large``, 409 ``source_changed`` for a stale confirmation,
+422 for a document that is not an editable export
+POST /api/source/saved  Acknowledge an export (body ``{token, revision}``): the
+unsaved count drops by the writes the file covered (a source whose writes no
+export saves keeps its count); 200 with the state
+
+Every event write carries the token of the source it was made against, in
+``X-Otto-Source``. A write with a missing or different token is refused
+with 409 ``{code: "source_changed", source_state}``, the source as it is now.
+A review write is checked under the mutation lock, so a write that queued
+behind a source switch is refused too. A review edit streams its session
+fragment, and a ``.json`` one then a source frame with the new counts.
 """
 
 import asyncio
@@ -34,6 +55,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
 from typing import Any, Literal, ParamSpec, TypeVar
+from urllib.parse import unquote
 
 import uvicorn
 from fastapi import FastAPI
@@ -55,15 +77,31 @@ from ..models.monitor import (
     EventUpdateBody,
     LabSnapshot,
     MonitorExport,
-    SessionRecord,
+    MonitorSourceState,
+    SourceSavedBody,
 )
 from ..utils import wait_for_async
-from . import archive_edit, event_ops
+from . import event_ops, review_source
+from .archive_edit import ArchiveLockedError
 from .broadcast import ENDED, LAPSED, end_queue
 from .collector import MetricCollector, observed_now
+from .errors import ReviewSourceError
 from .event_ops import EventValidationError, merge_update, resolve_create
 from .events import MonitorEvent
 from .export import build_live_export, document_json
+from .review_source import (
+    NotSwitchable,
+    ReviewEvents,
+    ReviewSource,
+    SourceChanged,
+    SourceSlot,
+    UnknownSessionError,
+    UploadGate,
+    UploadTooLarge,
+    ViewOnly,
+    new_source_token,
+    switch_source,
+)
 from .session import SessionFrame
 
 _STATIC_DIR = MONITOR
@@ -99,17 +137,59 @@ def _resolve_update(
 
 
 OBSERVED_AT_HEADER = "X-Otto-Observed-At"
-"""The response header that carries the server's time on every live event mutation.
+"""The response header that carries the server's time on every event mutation, in both modes.
 
-The dashboard (``web/src/data/eventApi.ts``, which spells the name again;
+The dashboard (``web/src/data/sourceApi.ts`` spells the name again;
 tests/unit/models/test_browser_format_mirrors.py holds the two equal)
 puts it on the fragment it applies from the response, so a mark raises the
 live window's horizon at once even when the stream's echo is withheld (#866).
+``/api/monitor_sessions`` answers it too, in both modes: the time its body
+was read, which the dashboard replays later pushes against.
 """
+
+SOURCE_TOKEN_HEADER = "X-Otto-Source"  # noqa: S105 — a header name, not a secret
+"""The header that names a source by its token.
+
+``/api/monitor_sessions`` answers it with the token of the source its body was
+read from, and every event write sends it with the token of the source it was
+made against. ``web/src/data/sourceApi.ts`` spells the name again;
+tests/unit/models/test_browser_format_mirrors.py holds the two equal.
+"""
+
+UNSAVED_HEADER = "X-Otto-Unsaved"
+"""The unsaved count a source switch confirmation was shown, in decimal, as a header.
+
+The compare is exact: the value must be the exact decimal string of the
+served source's count (``str(count)``), so a leading zero, a sign or any
+padding (``03``, ``+3``) is refused as ``source_changed``, like a stale count.
+
+Mirrored by ``web/src/data/sourceApi.ts`` (see :data:`SOURCE_TOKEN_HEADER`).
+"""
+
+SOURCE_NAME_HEADER = "X-Otto-Source-Name"
+"""The header that carries an uploaded source's file name (percent-encoded UTF-8).
+
+Mirrored by ``web/src/data/sourceApi.ts`` (see :data:`SOURCE_TOKEN_HEADER`).
+"""
+
+_UPLOAD_NAME = "upload.json"
+"""The name an upload whose :data:`SOURCE_NAME_HEADER` is absent or empty is served under."""
+
+
+def _upload_name(request: Request) -> str:
+    """Return the name an upload is served under: its decoded :data:`SOURCE_NAME_HEADER`.
+
+    Every non-printable character is dropped, so the name the dashboard and
+    the terminal's unsaved-changes warning show carries no control sequence.
+    A header that is absent, empty, or empty once dropped gives
+    :data:`_UPLOAD_NAME`.
+    """
+    decoded = unquote(request.headers.get(SOURCE_NAME_HEADER, ""))
+    return "".join(ch for ch in decoded if ch.isprintable()) or _UPLOAD_NAME
+
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R", bound=Response)
-_T = TypeVar("_T")
 
 
 def _dist_index_path() -> Path:
@@ -297,11 +377,9 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     key: str,
     secure_cookie: bool = False,
     mode: Literal["live", "review"] = "live",
-    document: MonitorExport | None = None,
-    source_name: str | None = None,
+    slot: SourceSlot | None = None,
     frame: SessionFrame | None = None,
     lab: LabSnapshot | None = None,
-    archive_path: Path | None = None,
     drain: "_StreamDrain | None" = None,
 ) -> FastAPI:
     dist_index = _dist_index_path()
@@ -315,68 +393,63 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-    # The served review body is cached (a --db archive's document can hold many
-    # sessions; re-serializing per request is waste) but no longer immutable:
-    # a review-mode event mutation patches `document` in place and refreshes
-    # this cache. A dict holder rather than a bare nonlocal keeps the closure
-    # reads/writes obvious.
-    _document_state: dict[str, str | None] = {
-        "body": document_json(document) if document is not None else None
-    }
+    # The review source this app serves (`slot.current`; None for a live
+    # server). A bare app gets an empty slot of its own.
+    source_slot = slot if slot is not None else SourceSlot(None)
+    # A live server's one source never changes, so its token is made once.
+    live_token = new_source_token()
 
-    def _require_document_body() -> str:
-        body = _document_state["body"]
-        if body is None:
+    def _review_source() -> ReviewSource:
+        current = source_slot.current
+        if current is None:
             raise RuntimeError(
                 "MonitorServer built with mode='review' but no document — this "
                 "is a programming error: the CLI always supplies one for "
                 "review mode."
             )
-        return body
+        return current
 
-    def _document_session(session_id: str) -> "SessionRecord | None":
-        if document is None:
-            return None
-        return next((s for s in document.sessions if s.id == session_id), None)
+    def _source_state() -> MonitorSourceState:
+        """Return the served source's state, stamped now: the ONE answer of ``/api/mode``."""
+        stamp = observed_now()
+        if mode == "live":
+            return MonitorSourceState(
+                mode="live",
+                kind="live",
+                source=None,
+                token=live_token,
+                editable=True,
+                observed_at=stamp,
+            )
+        return _review_source().state(stamp)
 
-    def _find_document_event(session_id: str, event_id: int) -> EventRecord | None:
-        session = _document_session(session_id)
-        if session is None:
-            return None
-        return next((e for e in session.events if e.id == event_id), None)
+    def _source_changed(err: SourceChanged) -> JSONResponse:
+        """409 for a write aimed at a source this server no longer serves: the ONE shape.
 
-    def _patch_document_event(session_id: str, record: EventRecord) -> None:
-        """Upsert *record* into the served document and refresh the cached body."""
-        session = _document_session(session_id)
-        assert session is not None  # noqa: S101 — guard ran before any write
-        assert document is not None  # noqa: S101 — a session was found on it above
-        for i, existing in enumerate(session.events):
-            if existing.id == record.id:
-                session.events[i] = record
-                break
-        else:
-            session.events.append(record)
-        _document_state["body"] = document_json(document)
+        ``err.state`` is the source the server serves now.
+        """
+        return JSONResponse(
+            {
+                "error": str(err),
+                "code": "source_changed",
+                "source_state": err.state.model_dump(mode="json"),
+            },
+            status_code=409,
+        )
 
-    def _drop_document_event(session_id: str, event_id: int) -> None:
-        session = _document_session(session_id)
-        assert session is not None  # noqa: S101 — guard ran before any write
-        assert document is not None  # noqa: S101 — a session was found on it above
-        session.events = [e for e in session.events if e.id != event_id]
-        _document_state["body"] = document_json(document)
+    review_events = ReviewEvents(source_slot, collector.mutation_lock)
+    upload_gate = UploadGate()
 
-    def _require_live_snapshot_body() -> str:
-        """Build the current live-session document body, or fail loud.
+    def _live_snapshot_body(observed_at: str) -> str:
+        """Build the current live-session document body, stamped *observed_at*, or fail loud.
 
-        Mirrors ``_require_document_body()``'s "the caller broke the contract"
-        framing: a ``mode="live"`` server with no ``frame``/``lab`` has no
-        session to build a snapshot from, which is a programming error here —
-        the CLI always supplies both for live mode. Only ``/api/export/json``
-        calls this directly; ``/api/monitor_sessions`` hits the identical
+        A ``mode="live"`` server with no ``frame``/``lab`` has no session to
+        build a snapshot from, which is a programming error here — the CLI
+        always supplies both for live mode. Only ``/api/export/json`` reaches
+        this without checking; ``/api/monitor_sessions`` hits the identical
         missing-frame/lab state during ordinary page loads (see its
-        docstring) and so must check ``frame``/``lab`` itself first to return
-        its softer 404 instead of raising — it then calls this for the
-        build once it knows both are present.
+        docstring) and so checks ``frame``/``lab`` itself first to return its
+        softer 404 instead of raising.
         """
         if frame is None or lab is None:
             raise RuntimeError(
@@ -384,7 +457,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 "is a programming error: the CLI always supplies both for "
                 "live mode."
             )
-        return document_json(build_live_export(frame, collector, lab, observed_at=observed_now()))
+        return document_json(build_live_export(frame, collector, lab, observed_at=observed_at))
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
@@ -393,21 +466,16 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     @app.get("/api/mode")
     async def get_mode() -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        """Report whether this server serves live data or a loaded review document.
+        """Report the served source's state (:class:`~otto.models.monitor.MonitorSourceState`).
 
         ``editable`` tells the UI whether marking is possible at all: live
-        mode always is, and a review document is only if it was loaded from a
-        ``--db`` archive — an ``archive_path`` is set so a mutation
-        has somewhere to persist. A ``.json`` review has no such target and
-        stays permanently read-only.
+        mode always is, and so is every review source
+        (:meth:`~otto.monitor.review_source.ReviewSource.state`). ``token`` is
+        what every write sends back.
+        Every field is sent, defaults included: the dashboard reads the whole
+        state.
         """
-        return JSONResponse(
-            {
-                "mode": mode,
-                "source": source_name,
-                "editable": mode == "live" or archive_path is not None,
-            }
-        )
+        return JSONResponse(_source_state().model_dump(mode="json"))
 
     @app.get("/api/monitor_sessions")
     async def monitor_sessions() -> Response:  # type: ignore[reportUnusedFunction]
@@ -419,21 +487,35 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         crashed session on disk.
 
         A ``mode="live"`` server that isn't recording a session (``frame``/
-        ``lab`` unset — e.g. a bare ``DashboardHarness`` used only to serve the
-        Import shell, or a dashboard opened before ``otto monitor --live`` has
-        attached one) has no session to serve. That's a legitimate "nothing
-        here", not a programming error: it 404s rather than raising, so the
-        client's soft-fail boot contract (bootstrap.ts) sees an ordinary failed
-        hydrate instead of a 500 + server traceback on every such page load.
+        ``lab`` unset — e.g. a bare ``DashboardHarness``, or a dashboard opened
+        before ``otto monitor --live`` has attached one) has no session to
+        serve. That's a legitimate "nothing here", not a programming error: it
+        404s rather than raising, so the client (bootstrap.ts) sees an ordinary
+        failed hydrate, keeps the live source pending with Import withheld, and
+        retries through its stream's reconnect, instead of a 500 + server
+        traceback on every such attempt.
         """
         if mode == "review":
-            return Response(content=_require_document_body(), media_type="application/json")
-        if frame is None or lab is None:
-            return JSONResponse(
-                {"error": "no monitor session is being recorded"},
-                status_code=404,
-            )
-        return Response(content=_require_live_snapshot_body(), media_type="application/json")
+            source = _review_source()
+            # No await between the body read and the stamp: the stamp is when
+            # this body was the served one.
+            body = source.body()
+            stamp = observed_now()
+            token = source.token
+        else:
+            if frame is None or lab is None:
+                return JSONResponse(
+                    {"error": "no monitor session is being recorded"},
+                    status_code=404,
+                )
+            stamp = observed_now()
+            body = _live_snapshot_body(stamp)
+            token = live_token
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={SOURCE_TOKEN_HEADER: token, OBSERVED_AT_HEADER: stamp},
+        )
 
     @app.get("/api/stream")
     async def stream(request: Request) -> Response:  # type: ignore[reportUnusedFunction]
@@ -502,107 +584,6 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             record.model_dump(mode="json", exclude_none=True), status_code=status_code
         )
 
-    def _review_archive() -> str:
-        """Return the review archive's path (``_mutation_guard`` refused a review without one)."""
-        assert archive_path is not None  # noqa: S101 — guard enforced this
-        return str(archive_path)
-
-    def _sync_document_event(session_id: str, event_id: int, row: EventRecord | None) -> None:
-        """Repair the served document's copy of one event to the archive's row (#941).
-
-        The ONE repair: the archive is the truth in review mode, and the
-        document a snapshot from load that another writer of the archive (a
-        second review server, a revert's write) can have made stale. A copy
-        that differs from *row* becomes it; a *row* of ``None`` (gone from the
-        archive) drops the copy. A copy that already matches is left alone, so
-        the cached body is rebuilt only when something changed.
-        """
-        copy = _find_document_event(session_id, event_id)
-        if row is None:
-            if copy is not None:
-                _drop_document_event(session_id, event_id)
-        elif copy != row:
-            _patch_document_event(session_id, row)
-
-    async def _archive_write(session_id: str, event_id: int, write: "Callable[[], _T]") -> "_T":
-        """Run one archive write off the loop; a refusal as changed repairs the document first.
-
-        ``archive_edit`` raises :class:`~otto.monitor.event_ops.EventChanged`
-        when the row is no longer the one the write expected; the document's
-        copy is synced to the row it carries (:func:`_sync_document_event`)
-        before the refusal reaches the route's 409.
-        """
-        try:
-            return await asyncio.to_thread(write)
-        except event_ops.EventChanged as err:
-            _sync_document_event(session_id, event_id, err.current)
-            raise
-
-    async def _mutate_review_event(
-        session_id: str,
-        event_id: int,
-        resolve: "Callable[[EventRecord], EventRecord | None]",
-    ) -> EventRecord | None:
-        """Review mode's ``collector.mutate_event``: one sequence, over the archive and document.
-
-        ``event_ops.mutate_under_lock`` under the collector's
-        ``mutation_lock`` (#941). The archive is the truth, as the
-        collector's store is in live mode: read the event's ROW from the
-        archive (``archive_edit.read_event``, off the loop) and repair the
-        document's copy to it, ``resolve`` against that row, write the
-        archive with the row as the expected state, then patch the document.
-        Another writer that changed the row between the read and the write
-        makes the write raise :class:`~otto.monitor.event_ops.EventChanged`
-        (the route's 409 ``changed``), with nothing written and the document
-        repaired to the row as it stands. Returns the stored record after a
-        change, the removed row after a delete, or ``None`` when the archive
-        holds no such event (the document drops its copy).
-        """
-        path = _review_archive()
-        removed: EventRecord | None = None
-
-        async def read() -> EventRecord | None:
-            row = await asyncio.to_thread(archive_edit.read_event, path, session_id, event_id)
-            _sync_document_event(session_id, event_id, row)
-            return row
-
-        async def write(current: EventRecord, resolved: EventRecord | None) -> bool:
-            nonlocal removed
-            if resolved is None:
-                removed = await _archive_write(
-                    session_id,
-                    event_id,
-                    lambda: archive_edit.delete_event(path, session_id, event_id, expect=current),
-                )
-                return removed is not None
-            return await _archive_write(
-                session_id,
-                event_id,
-                lambda: archive_edit.update_event(
-                    path,
-                    session_id,
-                    event_id,
-                    expect=current,
-                    **event_ops.editable_fields(resolved),
-                ),
-            )
-
-        def apply(_current: EventRecord, resolved: EventRecord | None) -> EventRecord:
-            if resolved is None:
-                assert removed is not None  # noqa: S101 — write returned True only with the row
-                _drop_document_event(session_id, event_id)
-                return removed
-            _patch_document_event(session_id, resolved)
-            return resolved
-
-        return await event_ops.mutate_under_lock(
-            collector.mutation_lock(),
-            read=read,
-            resolve=resolve,
-            write=write,
-            apply=apply,
-        )
-
     def _event_changed(err: event_ops.EventChanged) -> JSONResponse:
         """409 ``changed`` carrying the event as it stands: the ONE shape a stale write answers."""
         current = (
@@ -612,85 +593,100 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             {"error": str(err), "code": "changed", "current": current}, status_code=409
         )
 
-    def _archive_busy(err: archive_edit.ArchiveLockedError) -> JSONResponse:
-        """409 for an archive another otto holds: the ONE busy shape every event route sends."""
-        return JSONResponse({"error": str(err), "code": "busy"}, status_code=409)
+    # Every refusal an event or source route answers, and its response: the
+    # ONE list, for both modes. Checked in order, so a subclass (IdsExhausted, an
+    # EventValidationError) takes its base's answer unless listed first.
+    refusals: "dict[type[Exception], Callable[[Any], JSONResponse]]" = {
+        _AlreadyEndedError: lambda _err: JSONResponse(
+            {"error": "Event already ended"}, status_code=409
+        ),
+        # The backend's own write rule (event_ops.check_event_write), or a
+        # .json source out of ids: the same 422 in both modes.
+        EventValidationError: lambda err: JSONResponse({"error": str(err)}, status_code=422),
+        event_ops.EventChanged: _event_changed,
+        # An archive another otto holds: the ONE busy shape.
+        ArchiveLockedError: lambda err: JSONResponse(
+            {"error": str(err), "code": "busy"}, status_code=409
+        ),
+        SourceChanged: _source_changed,
+        ViewOnly: lambda err: JSONResponse(
+            {"error": str(err), "code": "view_only"}, status_code=403
+        ),
+        UnknownSessionError: lambda err: JSONResponse({"error": str(err)}, status_code=404),
+        NotSwitchable: lambda err: JSONResponse(
+            {"error": str(err), "code": "not_switchable"}, status_code=403
+        ),
+        UploadTooLarge: lambda err: JSONResponse(
+            {"error": str(err), "code": "too_large"}, status_code=413
+        ),
+        # An uploaded document that is not an editable export.
+        ReviewSourceError: lambda err: JSONResponse({"error": str(err)}, status_code=422),
+    }
+    refused_types = tuple(refusals)
 
-    def _mutation_guard(session_id: str) -> JSONResponse | None:
-        """404 for a session this server doesn't hold; 403 where editing is impossible."""
-        if mode == "live":
-            if frame is None or session_id != collector.session_id:
-                return JSONResponse({"error": "unknown session"}, status_code=404)
-            return None
-        if archive_path is None:
-            # A .json source has no persistence target (spec: .json review is
-            # read-only); the UI hides marking via /api/mode's editable flag.
-            return JSONResponse({"error": "this monitor source is read-only"}, status_code=403)
-        if _document_session(session_id) is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
+    def _refused(err: Exception) -> JSONResponse:
+        """Answer a refused event write with the first ``refusals`` entry it is an instance of."""
+        return next(answer(err) for kind, answer in refusals.items() if isinstance(err, kind))
+
+    def _live_guard(session_id: str, request: Request) -> JSONResponse | None:
+        """Refuse a live write this server cannot take: 409 or 404.
+
+        A live write whose ``SOURCE_TOKEN_HEADER`` is missing or names another
+        source is refused as ``source_changed``. The live source never
+        changes, so this check, outside the mutation lock, is exact. Then 404
+        for a session this server doesn't hold. A review write is checked by
+        :class:`~otto.monitor.review_source.ReviewEvents`, under the lock.
+        """
+        if _token(request) != live_token:
+            return _refused(SourceChanged(_source_state()))
+        if frame is None or session_id != collector.session_id:
+            return _refused(UnknownSessionError(session_id))
         return None
+
+    def _token(request: Request) -> str | None:
+        """Return the token of the source a write was made against."""
+        return request.headers.get(SOURCE_TOKEN_HEADER)
 
     def _observed(
         route: Callable[_P, Awaitable[_R]],
     ) -> Callable[_P, Awaitable[_R]]:
-        """Stamp a live event route's response, whatever its status, with server time.
+        """Stamp an event route's response, whatever its status, with server time.
 
-        One wrapper for create, end, update and delete, so no route can forget
-        the header. Review mode has no live window, so its responses go out
-        unstamped: an edit to an archive must not move its horizon to today.
+        One wrapper for every event route in both modes, so no route can
+        forget the header. The stamp follows the publish of the response's
+        own change, so the dashboard can order the two.
         """
 
         @functools.wraps(route)
         async def stamped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             response = await route(*args, **kwargs)
-            if mode == "live":
-                response.headers[OBSERVED_AT_HEADER] = observed_now()
+            response.headers[OBSERVED_AT_HEADER] = observed_now()
             return response
 
         return stamped
 
     @app.post("/api/session/{session_id}/event")
     @_observed
-    async def create_event(session_id: str, body: EventCreateBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        refused = _mutation_guard(session_id)
-        if refused is not None:
-            return refused
-        timestamp, end_timestamp = resolve_create(body)
+    async def create_event(  # type: ignore[reportUnusedFunction]
+        session_id: str, body: EventCreateBody, request: Request
+    ) -> JSONResponse:
         try:
             if mode == "review":
-
-                async def commit() -> EventRecord:
-                    rowid = await asyncio.to_thread(
-                        archive_edit.insert_event,
-                        _review_archive(),
-                        session_id,
-                        timestamp=timestamp,
-                        end_timestamp=end_timestamp,
-                        label=body.label,
-                        source="manual",
-                        color=body.color,
-                        dash=body.dash,
-                    )
-                    created = EventRecord(
-                        id=rowid,
-                        timestamp=timestamp,
-                        end_timestamp=end_timestamp,
-                        label=body.label,
-                        source="manual",
-                        color=body.color,
-                        dash=body.dash,
-                    )
-                    _patch_document_event(session_id, created)
-                    return created
-
-                try:
-                    # Under the one mutation lock (#941), so the document patch
-                    # follows this archive write before any other write starts,
-                    # even when the request is cancelled during it.
-                    record = await event_ops.run_locked(collector.mutation_lock(), commit)
-                except archive_edit.ArchiveLockedError as err:
-                    return _archive_busy(err)
+                timestamp, end_timestamp = resolve_create(body)
+                new = EventRecord(
+                    timestamp=timestamp,
+                    end_timestamp=end_timestamp,
+                    label=body.label,
+                    source="manual",
+                    color=body.color,
+                    dash=body.dash,
+                )
+                record = await review_events.create(_token(request), session_id, new)
                 return _record_response(record, status_code=201)
+            refused = _live_guard(session_id, request)
+            if refused is not None:
+                return refused
+            timestamp, end_timestamp = resolve_create(body)
             event = await collector.add_event(
                 label=body.label,
                 timestamp=timestamp,
@@ -699,26 +695,30 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 source="manual",
                 end_timestamp=end_timestamp,
             )
-        except EventValidationError as err:
-            # The backend's own write rule (event_ops.check_event_write): the
-            # same 422 in both modes. resolve_create does not check the span.
-            return JSONResponse({"error": str(err)}, status_code=422)
+        except refused_types as err:
+            return _refused(err)
         return _event_response(event.to_dict(), status_code=201)
 
     async def _apply_update(
-        session_id: str, event_id: int, body: EventUpdateBody, *, refuse_ended: bool = False
+        request: Request,
+        session_id: str,
+        event_id: int,
+        body: EventUpdateBody,
+        *,
+        refuse_ended: bool = False,
     ) -> JSONResponse:
         """One merge rule for PATCH and /end in both modes: ``_resolve_update`` inside the sequence.
 
         The merge runs INSIDE each mode's one mutation entry point
-        (``collector.mutate_event`` live, ``_mutate_review_event`` in
+        (``collector.mutate_event`` live, ``ReviewEvents.mutate`` in
         review), onto the event as it stands under the lock: a PATCH racing
         an /end (or a delete) can never merge onto fields read before the
         other landed. Only the record each backend builds differs.
         """
         try:
             if mode == "review":
-                record = await _mutate_review_event(
+                record = await review_events.mutate(
+                    _token(request),
                     session_id,
                     event_id,
                     lambda current: EventRecord(
@@ -730,6 +730,9 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     ),
                 )
             else:
+                refused = _live_guard(session_id, request)
+                if refused is not None:
+                    return refused
                 event = await collector.mutate_event(
                     event_id=event_id,
                     resolve=lambda current: dataclasses.replace(
@@ -740,126 +743,158 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                     ),
                 )
                 record = None if event is None else EventRecord.model_validate(event.to_dict())
-        except EventValidationError as err:
-            return JSONResponse({"error": str(err)}, status_code=422)
-        except _AlreadyEndedError:
-            return JSONResponse({"error": "Event already ended"}, status_code=409)
-        except event_ops.EventChanged as err:
-            return _event_changed(err)
-        except archive_edit.ArchiveLockedError as err:
-            return _archive_busy(err)
+        except refused_types as err:
+            return _refused(err)
         if record is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
         return _record_response(record)
 
     @app.post("/api/session/{session_id}/event/{event_id}/end")
     @_observed
-    async def end_event(session_id: str, event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+    async def end_event(  # type: ignore[reportUnusedFunction]
+        session_id: str, event_id: int, request: Request
+    ) -> JSONResponse:
         """Stamp a span's end with the server clock (the live Stop button)."""
-        refused = _mutation_guard(session_id)
-        if refused is not None:
-            return refused
         # Ending IS a partial update (end_timestamp only) — same seam, not a
         # second resolution path, in either mode.
         stamp_end = EventUpdateBody(end_timestamp=event_ops.utc_now())
-        return await _apply_update(session_id, event_id, stamp_end, refuse_ended=True)
+        return await _apply_update(request, session_id, event_id, stamp_end, refuse_ended=True)
 
     @app.patch("/api/session/{session_id}/event/{event_id}")
     @_observed
     async def update_event(  # type: ignore[reportUnusedFunction]
-        session_id: str, event_id: int, body: EventUpdateBody
+        session_id: str, event_id: int, body: EventUpdateBody, request: Request
     ) -> JSONResponse:
-        refused = _mutation_guard(session_id)
-        if refused is not None:
-            return refused
-        return await _apply_update(session_id, event_id, body)
+        return await _apply_update(request, session_id, event_id, body)
 
     @app.delete("/api/session/{session_id}/event/{event_id}")
     @_observed
-    async def delete_event(session_id: str, event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+    async def delete_event(  # type: ignore[reportUnusedFunction]
+        session_id: str, event_id: int, request: Request
+    ) -> JSONResponse:
         """Remove an event, answering with the record removed (the undo of it restores that)."""
-        refused = _mutation_guard(session_id)
-        if refused is not None:
-            return refused
-        if mode == "review":
-            try:
-                deleted = await _mutate_review_event(session_id, event_id, lambda _current: None)
-            except event_ops.EventChanged as err:
-                return _event_changed(err)
-            except archive_edit.ArchiveLockedError as err:
-                return _archive_busy(err)
-            if deleted is None:
-                return JSONResponse({"error": "Event not found"}, status_code=404)
-            return _record_response(deleted)
-        removed = await collector.delete_event(event_id=event_id)
-        if removed is None:
+        try:
+            if mode == "review":
+                deleted = await review_events.mutate(
+                    _token(request), session_id, event_id, lambda _current: None
+                )
+            else:
+                refused = _live_guard(session_id, request)
+                if refused is not None:
+                    return refused
+                removed = await collector.delete_event(event_id=event_id)
+                deleted = None if removed is None else EventRecord.model_validate(removed.to_dict())
+        except refused_types as err:
+            return _refused(err)
+        if deleted is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
-        return _event_response(removed.to_dict())
+        return _record_response(deleted)
 
     @app.post("/api/session/{session_id}/event/{event_id}/revert")
     @_observed
     async def revert_event(  # type: ignore[reportUnusedFunction]
-        session_id: str, event_id: int, body: EventRevertBody
+        session_id: str, event_id: int, body: EventRevertBody, request: Request
     ) -> JSONResponse:
         """Move an event from ``expect`` to ``write`` only if it is still ``expect`` (#929)."""
-        refused = _mutation_guard(session_id)
-        if refused is not None:
-            return refused
-        try:
-            leg = event_ops.revert_leg(body.expect, body.write)
-            event_ops.check_revert_write(body.expect, body.write)
-        except EventValidationError as err:
-            return JSONResponse({"error": str(err)}, status_code=422)
+        # Both modes refuse in one order: the token, the session, then the
+        # body (event_ops.check_revert_write). A review revert checks all
+        # three under one acquisition of the mutation lock, with the leg's
+        # compare against the store, the write and the document change
+        # (ReviewEvents.revert).
         try:
             if mode == "review":
-
-                async def commit() -> EventRecord | None:
-                    reverted = await _archive_write(
-                        session_id,
-                        event_id,
-                        lambda: archive_edit.revert_event(
-                            _review_archive(), session_id, event_id, body.expect, body.write
-                        ),
-                    )
-                    if leg == "delete":
-                        _drop_document_event(session_id, event_id)
-                    else:
-                        assert reverted is not None  # noqa: S101 — only the delete leg returns no record to keep
-                        _patch_document_event(session_id, reverted)
-                    return reverted
-
-                # archive_edit.revert_event is review's whole revert decision
-                # (leg, compare against the archive row, write) under its
-                # flock; the mutation lock (#941) orders it, and the document
-                # patch after it, against this server's other writes, even
-                # when the request is cancelled during it. A refusal as
-                # changed repairs the document to the row (_archive_write).
-                record = await event_ops.run_locked(collector.mutation_lock(), commit)
+                record = await review_events.revert(
+                    _token(request), session_id, event_id, body.expect, body.write
+                )
             else:
+                refused = _live_guard(session_id, request)
+                if refused is not None:
+                    return refused
+                event_ops.check_revert_write(body.expect, body.write)
                 event = await collector.revert_event(
                     event_id=event_id, expect=body.expect, write=body.write
                 )
                 record = EventRecord.model_validate(event.to_dict())
-        except event_ops.EventChanged as err:
-            return _event_changed(err)
-        except archive_edit.ArchiveLockedError as err:
-            return _archive_busy(err)
-        except LookupError:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        except EventValidationError as err:
-            return JSONResponse({"error": str(err)}, status_code=422)
-        if leg == "delete" or record is None:
+        except refused_types as err:
+            return _refused(err)
+        if event_ops.revert_leg(body.expect, body.write) == "delete":
             return JSONResponse(None)
         return _record_response(record)
+
+    def _switchable() -> bool:
+        """Report whether an upload may replace the served source: only a ``.json`` one may.
+
+        Exact outside the lock: a switch serves a ``.json`` in place of a
+        ``.json``, so a source's kind never changes under a request.
+        """
+        return mode == "review" and _review_source().kind == "json"
+
+    @app.post("/api/source")
+    async def upload_source(request: Request) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        """Switch to the uploaded ``.json`` (the raw body), as a tab's confirmation names it.
+
+        A live or ``.db`` source is refused at once, the body unread. Then
+        the :class:`~otto.monitor.review_source.UploadGate` is taken before
+        the body is read (one upload body at a time), and the switch
+        (:func:`~otto.monitor.review_source.switch_source`) runs under the
+        mutation lock every write takes. The answer's state is stamped after
+        the new source's frame, so it is the later of the two.
+        """
+        name = _upload_name(request)
+        try:
+            if not _switchable():
+                raise NotSwitchable("only a .json review source can be switched to an upload")
+            async with upload_gate:
+                # Read through the module, so a test can wrap the reader.
+                data = await review_source.read_upload(request)
+
+                async def commit() -> MonitorSourceState:
+                    new = switch_source(
+                        source_slot,
+                        token=_token(request),
+                        unsaved=request.headers.get(UNSAVED_HEADER),
+                        data=data,
+                        name=name,
+                        publish=collector.publish,
+                    )
+                    return new.state(observed_now())
+
+                state = await event_ops.run_locked(collector.mutation_lock(), commit)
+        except refused_types as err:
+            return _refused(err)
+        return JSONResponse(state.model_dump(mode="json"))
+
+    @app.post("/api/source/saved")
+    async def source_saved(body: SourceSavedBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        """Acknowledge an export that holds every write up to ``body.revision``.
+
+        Whether a source holds writes an export saves is its backend's
+        ``counts_writes``: a ``.db`` source counts none, so its revision stays
+        0 and the acknowledgement clamps to a no-op. A live server has no
+        review source, and answers its unchanged state.
+        """
+        if mode == "live":
+            return JSONResponse(_source_state().model_dump(mode="json"))
+
+        async def commit() -> MonitorSourceState:
+            source = source_slot.require(body.token)
+            source.acknowledge(body.revision)
+            return source.state(observed_now())
+
+        try:
+            state = await event_ops.run_locked(collector.mutation_lock(), commit)
+        except refused_types as err:
+            return _refused(err)
+        return JSONResponse(state.model_dump(mode="json"))
 
     @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]
         """Download the current data as a ``format:1`` document.
 
-        Review mode re-serves the loaded document verbatim; live mode builds
+        Review mode re-serves the served source's document; live mode builds
         a fresh single-session document from *frame*/*collector*/*lab*.
         """
-        body = _require_document_body() if mode == "review" else _require_live_snapshot_body()
+        body = _review_source().body() if mode == "review" else _live_snapshot_body(observed_now())
         return Response(
             content=body,
             media_type="application/json",
@@ -1054,9 +1089,13 @@ class MonitorServer:
       ``format:1`` :class:`~otto.models.monitor.MonitorExport`, e.g. read back
       from a ``--db`` session archive). ``source_name`` is the human-facing
       origin (a file path) reported by ``/api/mode``. ``archive_path``, when
-      given, is a ``.db`` archive event mutations persist to and patch
-      ``document`` in place for; omitted (the ``.json`` case) leaves review
-      mode permanently read-only.
+      given, is a ``.db`` archive event mutations persist to; omitted (the
+      ``.json`` case), the served document is itself the store, and its
+      edits are held until an export saves them; ``POST /api/source``
+      can switch it to an uploaded ``.json``. The server serves its own
+      copy of ``document``
+      (``otto.monitor.review_source.ReviewSource``), held in
+      :attr:`source_slot`; the caller's document is never changed.
 
     Call ``await serve()`` from an async context to run the server.
     Call ``stop()`` from any thread to trigger a graceful shutdown, or
@@ -1083,14 +1122,23 @@ class MonitorServer:
         self._bind_host = host
         self._port = port
         self._mode = mode
-        self._document = document
-        self._source_name = source_name
         self._frame = frame
         self._lab = lab
         self._tls_cert = tls_cert
         self._tls_key = tls_key
-        self._archive_path = archive_path
         self._key = secrets.token_urlsafe(16)
+        review = None
+        if mode == "review" and document is not None:
+            if source_name is None:
+                raise ValueError("a review-mode MonitorServer needs the source_name it serves")
+            review = ReviewSource(
+                document,
+                name=source_name,
+                archive_path=archive_path,
+                publish=collector.publish,
+            )
+        self.source_slot = SourceSlot(review)
+        """The review source this server serves (``current`` is ``None`` for a live server)."""
         # The collector has no notion of sessions; the server holds the frame, so
         # it stamps the id here — one place, so no construction site can forget.
         if frame is not None:
@@ -1101,11 +1149,9 @@ class MonitorServer:
             key=self._key,
             secure_cookie=tls_cert is not None,
             mode=mode,
-            document=document,
-            source_name=source_name,
+            slot=self.source_slot,
             frame=frame,
             lab=lab,
-            archive_path=archive_path,
             drain=self._drain,
         )
         self._server: uvicorn.Server | None = None
@@ -1113,6 +1159,18 @@ class MonitorServer:
         self._ready = asyncio.Event()
         self._startup_error: BaseException | None = None
         self._serve_entered = False
+
+    @property
+    def unsaved_changes(self) -> int:
+        """The writes the served source's last export does not hold (0 for live and ``.db``)."""
+        current = self.source_slot.current
+        return current.unsaved if current is not None else 0
+
+    @property
+    def source_name(self) -> str | None:
+        """The human-facing name of the served review source (``None`` for a live server)."""
+        current = self.source_slot.current
+        return current.name if current is not None else None
 
     @property
     def key(self) -> str:

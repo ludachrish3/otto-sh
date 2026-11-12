@@ -4,7 +4,7 @@
 // hairline recessive grid, axis text in muted ink (never series colors),
 // one y-axis per chart, crosshair tooltip on by default.
 import type { EventDash } from "../api/eventStyle.gen";
-import type { NormalizedSession, TimeRange } from "../data/exportDoc";
+import { eventRowId, type NormalizedSession, type TimeRange } from "../data/exportDoc";
 import { parseTs } from "../data/time";
 import { dashType, MARKER_LINE_WIDTH, SPAN_FILL_ALPHA, withAlpha } from "./markerStyle";
 import { MUTED_SERIES_DARK, MUTED_SERIES_LIGHT, SERIES_DARK, SERIES_LIGHT } from "./palette";
@@ -67,13 +67,15 @@ export interface EventMarker {
   dash: EventDash;
 }
 
-/** Window-overlap filter over the session's wire event rows. */
+/** Window-overlap filter over the session's wire event rows. Each marker's
+ * id is the row's `eventRowId`, the same id the events panel lists it under:
+ * unique, and a wire id only for an editable row. */
 export function eventMarkers(
-  events: NormalizedSession["events"],
+  session: Pick<NormalizedSession, "events" | "viewOnlyIds">,
   window: TimeRange,
 ): EventMarker[] {
   const out: EventMarker[] = [];
-  for (const ev of events) {
+  for (const [index, ev] of session.events.entries()) {
     const fromMs = parseTs(ev.timestamp);
     const toMs = ev.end_timestamp != null ? parseTs(ev.end_timestamp) : null;
     const overlaps =
@@ -82,8 +84,7 @@ export function eventMarkers(
         : fromMs <= window.to && toMs >= window.from;
     if (!overlaps) continue;
     out.push({
-      // Real wire ids are non-negative; negative synthetics can't collide.
-      id: ev.id ?? -1 - out.length,
+      id: eventRowId(session, ev, index),
       label: ev.label ?? "",
       color: ev.color,
       fromMs,

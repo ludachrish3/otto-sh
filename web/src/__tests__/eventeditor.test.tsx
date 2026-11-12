@@ -57,7 +57,7 @@ afterEach(() => {
 // edit-mode has real events (ids 1-4) to resolve by id.
 function hydrate(): string {
   useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(kitchenSink), "test");
-  useReviewStore.getState().actions.setEditable(true);
+  useReviewStore.setState({ editable: true });
   const id = useReviewStore.getState().sessions[0]?.id;
   if (!id) throw new Error("fixture has no session");
   return id;
@@ -442,7 +442,7 @@ describe("EventEditor", () => {
         ev.color = c;
       }
       useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
-      useReviewStore.getState().actions.setEditable(true);
+      useReviewStore.setState({ editable: true });
       const id = useReviewStore.getState().sessions[0]?.id;
       if (!id) throw new Error("fixture has no session");
       return id;
@@ -518,7 +518,7 @@ describe("EventEditor", () => {
       if (!ev1) throw new Error("fixture has no event 1");
       ev1.dash = "wavy";
       useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
-      useReviewStore.getState().actions.setEditable(true);
+      useReviewStore.setState({ editable: true });
       const sid = useReviewStore.getState().sessions[0]?.id ?? "";
       const body = await editAndSave(sid, async () => {
         const trigger = within(screen.getByTestId("editor-dash")).getByRole("button");
@@ -1427,7 +1427,7 @@ describe("EventEditor sends only the fields the user changed (#993)", () => {
     });
     for (const [k, v] of Object.entries(patch)) if (v === null) delete ev[k];
     useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(doc), "test");
-    useReviewStore.getState().actions.setEditable(true);
+    useReviewStore.setState({ editable: true });
     const sid = useReviewStore.getState().sessions[0]?.id;
     if (!sid) throw new Error("fixture has no session");
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });

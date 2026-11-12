@@ -3,7 +3,15 @@
 import pytest
 from pydantic import ValidationError
 
-from otto.models.monitor import EventRecord, MetricRecord, MonitorSessionFragment, SessionRecord
+from otto.models.monitor import (
+    EventRecord,
+    MetricRecord,
+    MonitorSessionFragment,
+    MonitorSourceFrame,
+    MonitorSourceState,
+    SessionRecord,
+    SourceSavedBody,
+)
 
 
 class TestFragmentSpeaksFormat1:
@@ -79,3 +87,37 @@ class TestFragmentSpeaksFormat1:
     def test_session_is_required(self) -> None:
         with pytest.raises(ValidationError, match=r"\nsession\n\s*Field required"):
             MonitorSessionFragment.model_validate({"format": 1})
+
+
+_STATE = {
+    "mode": "review",
+    "kind": "json",
+    "source": "export.json",
+    "token": "abc123",
+    "editable": True,
+    "unsaved": 2,
+    "revision": 3,
+    "observed_at": "2026-07-12T10:00:00Z",
+}
+
+
+class TestSourceStateFrame:
+    def test_source_frame_has_no_session_and_validates(self) -> None:
+        frame = MonitorSourceFrame.model_validate({"source_state": _STATE})
+        assert frame.format == 1
+        assert "session" not in MonitorSourceFrame.model_fields
+        assert frame.source_state.unsaved == 2
+        assert frame.source_state.revision == 3
+
+    def test_source_state_refuses_negative_unsaved(self) -> None:
+        with pytest.raises(ValidationError, match=r"\nunsaved\n"):
+            MonitorSourceState.model_validate({**_STATE, "unsaved": -1})
+
+    def test_source_saved_body_refuses_negative_revision(self) -> None:
+        with pytest.raises(ValidationError, match=r"\nrevision\n"):
+            SourceSavedBody.model_validate({"token": "t", "revision": -1})
+
+    def test_source_state_requires_observed_at(self) -> None:
+        state = {k: v for k, v in _STATE.items() if k != "observed_at"}
+        with pytest.raises(ValidationError, match=r"\nobserved_at\n\s*Field required"):
+            MonitorSourceState.model_validate(state)

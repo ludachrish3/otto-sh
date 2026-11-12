@@ -32,6 +32,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from otto.monitor.server import SOURCE_TOKEN_HEADER
+from tests._fixtures._static_shell import import_into_shell
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
@@ -55,17 +57,17 @@ def _push_tick(dash, host: str, ts: datetime, value: float) -> None:
     dash.run(dash.collector.push(host, "cpu", value, ts=ts))
 
 
-def _send_json(url: str, body: dict, *, method: str = "POST") -> tuple[int, dict]:
-    """Send *body* as JSON to *url* by *method*, returning (status, decoded body).
+def _send_json(dash, path: str, body: dict, *, method: str = "POST") -> tuple[int, dict]:
+    """Send *body* as JSON to *dash*'s *path* by *method*, returning (status, decoded body).
 
     Plants or edits an event directly through the HTTP API, bypassing the
     UI (e.g. an out-of-bounds event no in-UI flow can create, or another
-    writer's rename).
+    writer's rename). The write names the served source by its token, as a
+    tab's does.
     """
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method=method
-    )
+    headers = {"Content-Type": "application/json", SOURCE_TOKEN_HEADER: dash.source_token()}
+    req = urllib.request.Request(dash.api_url(path), data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:  # local test server
             return resp.status, json.load(resp)
@@ -389,7 +391,8 @@ def test_custom_color_existing_event(page: Page, live_stream_dash) -> None:
     _push_tick(live_stream_dash, "r1", datetime.now(tz=timezone.utc), 10.0)
     session_id = live_stream_dash.collector.session_id
     status, body = _send_json(
-        live_stream_dash.api_url(f"/api/session/{session_id}/event"),
+        live_stream_dash,
+        f"/api/session/{session_id}/event",
         {"label": "teal", "color": "#00abcd"},
     )
     assert status == 201, body
@@ -764,20 +767,16 @@ def test_db_review_edit_persists_across_restart(page: Page, db_review_dash) -> N
     expect(row).to_be_visible()
 
 
-def test_json_review_has_no_marking_chrome(page: Page, review_dash) -> None:
-    """A ``.json`` review (``review_dash``: ``archive_path=None``, so
-    ``editable`` is false) has NO reachable marking chrome at all.
+def test_json_review_has_marking_chrome(page: Page, review_dash) -> None:
+    """A ``.json`` review (``review_dash``: ``archive_path=None``) is editable:
+    its events panel composes an event and the server holds it.
 
     ``review_dash``'s document (both sessions built from ``minimal.json``,
     which carries no events -- see conftest.py's ``_review_boot_document``)
-    has zero events, so SubjectPage's own gate
-    (``session.events.length > 0 || editable``) means ``events-button``
-    itself never renders -- the strongest form of "no marking chrome": there
-    is nothing here for a user to even find, let alone use. ``mark-button``
-    is gone too (AppBar only mounts ``MarkControl`` in live mode). The
-    events-panel/compose/row-edit testids are asserted absent as well, for
-    the exact claim the spec names, even though their absence follows
-    structurally from the button that would reveal them being gone.
+    has zero events, so ``events-button`` renders only through SubjectPage's
+    ``editable`` gate (``session.events.length > 0 || editable``).
+    ``mark-button`` stays live-only (AppBar mounts ``MarkControl`` in live
+    mode alone).
     """
     page.goto(review_dash.url)
     page.locator('[data-testid="review-bar"]').wait_for()
@@ -786,11 +785,21 @@ def test_json_review_has_no_marking_chrome(page: Page, review_dash) -> None:
     page.locator('[data-testid="subject-page"]').wait_for()
 
     assert _tid(page, "mark-button").count() == 0
-    assert _tid(page, "events-button").count() == 0
-    assert _tid(page, "events-panel").count() == 0
-    assert _tid(page, "events-compose").count() == 0
-    assert page.locator('[data-testid^="event-edit-"]').count() == 0
-    assert page.locator('[data-testid^="event-endnow-"]').count() == 0
+    _tid(page, "events-button").click()
+    _tid(page, "events-panel").wait_for()
+    _tid(page, "events-compose-add").click()
+    editor = _tid(page, "event-editor")
+    editor.wait_for()
+    _tid(page, "editor-label").fill("json note")
+    _tid(page, "editor-save").click()
+    editor.wait_for(state="detached")
+
+    row = page.locator('[data-testid^="event-row-"]', has_text="json note")
+    expect(row).to_be_visible()
+    source = review_dash.server.source_slot.current
+    assert source is not None
+    assert "json note" in source.body()
+    assert source.unsaved == 1
 
 
 def test_refused_jump_keeps_panel_open(page: Page, live_stream_dash) -> None:
@@ -802,7 +811,8 @@ def test_refused_jump_keeps_panel_open(page: Page, live_stream_dash) -> None:
     session_id = live_stream_dash.collector.session_id
     far_ts = t0 - timedelta(days=2)
     status, body = _send_json(
-        live_stream_dash.api_url(f"/api/session/{session_id}/event"),
+        live_stream_dash,
+        f"/api/session/{session_id}/event",
         {"label": "faraway", "timestamp": far_ts.isoformat()},
     )
     assert status == 201, body
@@ -835,7 +845,7 @@ def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) ->
     for mins in (14, 10, 5, 0):
         _push_tick(live_stream_dash, "r1", t0 - timedelta(minutes=mins), 10.0)
     session_id = live_stream_dash.collector.session_id
-    url = live_stream_dash.api_url(f"/api/session/{session_id}/event")
+    path = f"/api/session/{session_id}/event"
     cluster_at = t0 - timedelta(minutes=5)
     events = [
         ("test start", cluster_at),
@@ -844,7 +854,9 @@ def test_clustered_and_edge_labels_stay_in_plot(page: Page, live_stream_dash) ->
         ("right window edge", t0),
     ]
     for label, ts in events:
-        status, body = _send_json(url, {"label": label, "timestamp": ts.isoformat()})
+        status, body = _send_json(
+            live_stream_dash, path, {"label": label, "timestamp": ts.isoformat()}
+        )
         assert status == 201, body
     # No later tick: the snapshot's observed_at puts the window's `to` just
     # past the right-edge event (#866).
@@ -876,13 +888,13 @@ def _seed_cluster(dash) -> dict[str, int]:
     t0 = datetime.now(tz=timezone.utc)
     for mins in (14, 10, 5, 0):
         _push_tick(dash, "r1", t0 - timedelta(minutes=mins), 10.0)
-    url = dash.api_url(f"/api/session/{dash.collector.session_id}/event")
+    path = f"/api/session/{dash.collector.session_id}/event"
     cluster_at = t0 - timedelta(minutes=5)
     labels = ["test start", "collect logs and more", "test pass", "test fail", "teardown"]
     ids: dict[str, int] = {}
     for i, label in enumerate(labels):
         ts = cluster_at + timedelta(milliseconds=i)
-        status, body = _send_json(url, {"label": label, "timestamp": ts.isoformat()})
+        status, body = _send_json(dash, path, {"label": label, "timestamp": ts.isoformat()})
         assert status == 201, body
         ids[label] = body["id"]
     return ids
@@ -943,12 +955,14 @@ def test_cluster_overflow_list_scrolls_at_a_short_viewport(page: Page, live_stre
     t0 = datetime.now(tz=timezone.utc)
     for mins in (14, 10, 5, 0):
         _push_tick(dash, "r1", t0 - timedelta(minutes=mins), 10.0)
-    url = dash.api_url(f"/api/session/{dash.collector.session_id}/event")
+    path = f"/api/session/{dash.collector.session_id}/event"
     cluster_at = t0 - timedelta(minutes=5)
     ids: list[int] = []
     for i in range(60):
         ts = cluster_at + timedelta(milliseconds=i)
-        status, body = _send_json(url, {"label": f"step {i:02d}", "timestamp": ts.isoformat()})
+        status, body = _send_json(
+            dash, path, {"label": f"step {i:02d}", "timestamp": ts.isoformat()}
+        )
         assert status == 201, body
         ids.append(body["id"])
     page.set_viewport_size({"width": 1280, "height": 600})
@@ -986,7 +1000,8 @@ def _open_editor_for_seeded_event(page: Page, dash, label: str) -> int:
     t0 = datetime.now(tz=timezone.utc)
     _push_tick(dash, "r1", t0, 10.0)
     status, body = _send_json(
-        dash.api_url(f"/api/session/{dash.collector.session_id}/event"),
+        dash,
+        f"/api/session/{dash.collector.session_id}/event",
         {"label": label, "timestamp": (t0 - timedelta(seconds=30)).isoformat()},
     )
     assert status == 201, body
@@ -1059,8 +1074,7 @@ def test_zz_shot_span_labels_both_themes(page: Page, shell_dash, tmp_path) -> No
     """
     page.set_viewport_size({"width": 1280, "height": 900})
     page.goto(shell_dash.url)
-    page.locator('[data-testid="import-input"]').set_input_files(_FIXTURES / "kitchen-sink.json")
-    page.locator('[data-testid="review-bar"]').wait_for()
+    import_into_shell(page, _FIXTURES / "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/host/chassis-a-lc1-1")
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
 
@@ -1109,8 +1123,7 @@ def test_zz_shot_span_labels_both_themes(page: Page, shell_dash, tmp_path) -> No
         fixture = tmp_path / f"{name}.json"
         fixture.write_text(json.dumps(doc))
         page.goto(shell_dash.url)
-        page.locator('[data-testid="import-input"]').set_input_files(fixture)
-        page.locator('[data-testid="review-bar"]').wait_for()
+        import_into_shell(page, fixture)
         page.goto(f"{shell_dash.url}#/host/chassis-a-lc1-1")
         panel = page.locator('[data-testid="chart-panel-cpu"]')
         panel.locator("canvas").wait_for()

@@ -10,9 +10,9 @@ response, from a non-root subpath (``SUBPATH``), so the suite exercises the
 real constraint instead of assuming it.
 """
 
-import threading
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
+
+from tests._fixtures._static_server import ThreadedStaticServer
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -35,21 +35,10 @@ class _Handler(SimpleHTTPRequestHandler):
         pass
 
 
-class CspReportServer:
+class CspReportServer(ThreadedStaticServer):
     def __init__(self, directory):
-        handler = partial(_Handler, directory=str(directory))
-        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        super().__init__(_Handler, directory)
 
     @property
     def url(self):
-        return f"http://127.0.0.1:{self._httpd.server_port}{SUBPATH}/index.html"
-
-    def start(self):
-        self._thread.start()
-        return self
-
-    def stop(self):
-        self._httpd.shutdown()
-        self._httpd.server_close()
-        self._thread.join(timeout=5)
+        return f"{self.origin}{SUBPATH}/index.html"

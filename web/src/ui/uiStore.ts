@@ -29,6 +29,16 @@ export type EventEditorTarget =
   | { kind: "edit"; sessionId: string; eventId: number }
   | { kind: "draft"; draft: EventDraft };
 
+/** An Import on a `.json` source waiting for the user's confirmation
+ * (shell/ConfirmSwitchSource.tsx): the file read, and the source as the
+ * prompt showed it. `shown`'s token and unsaved count are what the switch
+ * request confirms, so the server refuses it once either has moved on. */
+export interface SwitchPrompt {
+  name: string;
+  text: string;
+  shown: { token: string; unsaved: number; source: string };
+}
+
 /** The surfaces a request can outlive: a late result must tell their
  * openings apart (shell/settleOnOpening.ts). */
 export type Surface = "eventEditor" | "markPopover";
@@ -51,6 +61,10 @@ interface UiState {
   /** Bumped by every open and close of each surface, so an opening is told
    * apart from the next one even on the same target. */
   openings: Readonly<Record<Surface, number>>;
+  /** Whether the export name dialog (shell/ExportDialog.tsx) is open. */
+  exportDialogOpen: boolean;
+  /** The source switch awaiting confirmation, or null. */
+  switchPrompt: SwitchPrompt | null;
   actions: {
     openPalette: () => void;
     closePalette: () => void;
@@ -63,6 +77,10 @@ interface UiState {
     setOpenSpan: (span: { sessionId: string; eventId: number } | null) => void;
     openMarkPopover: (kind: "mark" | "start") => void;
     closeMarkPopover: () => void;
+    openExportDialog: () => void;
+    closeExportDialog: () => void;
+    openSwitchPrompt: (prompt: SwitchPrompt) => void;
+    closeSwitchPrompt: () => void;
   };
 }
 
@@ -79,6 +97,8 @@ export const useUiStore = create<UiState>()((set, get) => ({
   openSpan: null,
   markPopover: null,
   openings: { eventEditor: 0, markPopover: 0 },
+  exportDialogOpen: false,
+  switchPrompt: null,
   actions: {
     openPalette: () => set({ paletteOpen: true }),
     closePalette: () => set({ paletteOpen: false }),
@@ -95,5 +115,9 @@ export const useUiStore = create<UiState>()((set, get) => ({
     setOpenSpan: (span) => set({ openSpan: span }),
     openMarkPopover: (kind) => set((s) => reopen(s, "markPopover", kind)),
     closeMarkPopover: () => set((s) => reopen(s, "markPopover", null)),
+    openExportDialog: () => set({ exportDialogOpen: true }),
+    closeExportDialog: () => set({ exportDialogOpen: false }),
+    openSwitchPrompt: (prompt) => set({ switchPrompt: prompt }),
+    closeSwitchPrompt: () => set({ switchPrompt: null }),
   },
 }));

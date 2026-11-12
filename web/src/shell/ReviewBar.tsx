@@ -2,6 +2,7 @@
 // session picker (only >1) · the range picker card.
 import { Badge } from "@/components/base/badges/badges";
 import { Select } from "@/components/base/select/select";
+import { changeNoun } from "../data/changeNoun";
 import { sessionBounds } from "../data/exportDoc";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { RangePicker } from "../ui/RangePicker";
@@ -10,6 +11,7 @@ export function ReviewBar() {
   const sessions = useReviewStore((s) => s.sessions);
   const sourceName = useReviewStore((s) => s.sourceName);
   const activeSessionId = useReviewStore((s) => s.activeSessionId);
+  const unsaved = useReviewStore((s) => s.unsaved);
   const range = useReviewStore((s) => s.range);
   const mode = useReviewStore((s) => s.mode);
   const { selectSession, setRange } = useReviewStore((s) => s.actions);
@@ -41,6 +43,13 @@ export function ReviewBar() {
       <span data-testid="source-name" className="text-sm text-tertiary">
         {sourceName}
       </span>
+      {unsaved > 0 && (
+        <span data-testid="unsaved-marker">
+          <Badge type="color" size="sm" color="warning">
+            {`${unsaved} ${changeNoun(unsaved)} since export`}
+          </Badge>
+        </span>
+      )}
       {sessions.length > 1 && (
         <Select
           aria-label="Session"

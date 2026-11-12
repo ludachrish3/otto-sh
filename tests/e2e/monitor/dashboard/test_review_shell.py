@@ -12,13 +12,20 @@ Plan 5b Task 3), with no Import interaction.
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect
 
+from tests._fixtures._static_shell import import_into_shell
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.e2e.monitor.dashboard._date_fields import (
+    DATE_TIME_INPUT,
+    read_date_field,
+    set_date_field,
+)
 
 pytestmark = [
     pytest.mark.hostless,
@@ -29,8 +36,7 @@ FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page, name: str) -> None:
-    page.locator('[data-testid="import-input"]').set_input_files(FIXTURES / name)
-    page.locator('[data-testid="review-bar"]').wait_for()
+    import_into_shell(page, FIXTURES / name)
 
 
 # --- RangePicker (Task 7) driving helpers -----------------------------
@@ -71,55 +77,15 @@ def _range_picker_label(page) -> str:
     return page.locator('[data-testid="range-picker"]').inner_text()
 
 
-def _read_range_field(page, field_index: int) -> datetime:
-    """Read one of the open popover's two date fields (0=from, 1=to) back
-    into a naive local-wall-clock `datetime` — the segment-typing analogue
-    of the old idiom of reading `range-from`'s pre-populated value instead
-    of hardcoding a window against the fixture's UTC timestamps (a
-    UTC-derived window would land outside the session on a non-UTC host).
+def _range_field(page, field_index: int):
+    """One of the open popover's two date fields (0=from, 1=to).
+
+    Read and typed through ``_date_fields``: reading the field's own
+    pre-populated value, rather than hardcoding a window against the
+    fixture's UTC timestamps, keeps a window inside the session on a
+    non-UTC host.
     """
-
-    def seg(kind: str) -> str:
-        return page.locator(f'[data-type="{kind}"]').nth(field_index).inner_text()
-
-    month, day, year = int(seg("month")), int(seg("day")), int(seg("year"))
-    hour12, minute = int(seg("hour")), int(seg("minute"))
-    is_pm = seg("dayPeriod").strip().upper() == "PM"
-    hour = (hour12 % 12) + (12 if is_pm else 0)
-    return datetime(year, month, day, hour, minute)  # noqa: DTZ001 — naive local wall-clock by design
-
-
-def _set_range_field(page, field_index: int, dt: datetime) -> None:
-    """Type an exact local wall-clock instant into one of the popover's two
-    date fields (0=from, 1=to).
-
-    These are react-aria date SEGMENTS (`<span role="spinbutton">`, one per
-    `data-type` — month/day/year/hour/minute/dayPeriod), not `<input>`
-    elements, so `.fill()` doesn't apply. react-aria segments DO auto-advance
-    focus when typed into continuously (like a native `<input type="date">`'s
-    constituent parts), but that auto-advance is driven by a React state
-    update between keystrokes — `page.keyboard.type()`'s keypresses land
-    faster than that round-trip, so later digits land on whichever segment
-    was focused when they were sent, not on the segment the earlier digits'
-    auto-advance was heading for. Targeting each segment by its own
-    `data-type` selector sidesteps the timing question entirely: every
-    keystroke goes exactly where intended regardless of auto-advance.
-    """
-    hour12 = dt.hour % 12 or 12
-    for kind, value, width in (
-        ("month", dt.month, 2),
-        ("day", dt.day, 2),
-        ("year", dt.year, 4),
-        ("hour", hour12, 2),
-        ("minute", dt.minute, 2),
-    ):
-        page.locator(f'[data-type="{kind}"]').nth(field_index).click()
-        page.keyboard.type(str(value).zfill(width))
-    period_seg = page.locator('[data-type="dayPeriod"]').nth(field_index)
-    want = "PM" if dt.hour >= 12 else "AM"
-    if period_seg.inner_text().strip().upper() != want:
-        period_seg.click()
-        page.keyboard.press("ArrowUp")
+    return page.locator(DATE_TIME_INPUT).nth(field_index)
 
 
 def _point_on_edge(page, edge_id: str) -> dict:
@@ -386,9 +352,9 @@ def test_custom_range_apply_and_reset(page, shell_dash):
     # a window off the fixture's UTC timestamps — on a non-UTC host a
     # UTC-derived window would land outside the session entirely.
     _open_range_picker(page)
-    t0 = _read_range_field(page, 0)
-    _set_range_field(page, 0, t0 + timedelta(minutes=10))
-    _set_range_field(page, 1, t0 + timedelta(minutes=20))
+    t0 = read_date_field(_range_field(page, 0))
+    set_date_field(_range_field(page, 0), t0 + timedelta(minutes=10))
+    set_date_field(_range_field(page, 1), t0 + timedelta(minutes=20))
     _apply_range_picker(page)
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"series-summary\"]').innerText !== prev",
@@ -543,8 +509,7 @@ def test_dropped_row_surfaces_data_warnings_banner(page, shell_dash, tmp_path):
         ),
         encoding="utf-8",
     )
-    page.locator('[data-testid="import-input"]').set_input_files(with_bad_row)
-    page.locator('[data-testid="review-bar"]').wait_for()
+    import_into_shell(page, with_bad_row)
 
     banner = page.locator('[data-testid="data-warnings-banner"]')
     banner.wait_for()
@@ -598,8 +563,11 @@ def test_export_downloads_loaded_set(page, shell_dash):
     page.goto(shell_dash.url)
     _import_fixture(page, "minimal.json")
     page.locator('[data-testid="overflow-menu"]').click()
+    page.locator('[data-testid="menu-export"]').click()
+    assert page.locator('[data-testid="export-name"]').input_value() == "minimal.json"
     with page.expect_download() as download_info:
-        page.locator('[data-testid="menu-export"]').click()
+        page.locator('[data-testid="export-confirm"]').click()
+    assert download_info.value.suggested_filename == "minimal.json"
     path = download_info.value.path()
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     assert doc["format"] == 1
@@ -627,8 +595,8 @@ def test_grid_health_tiles_and_headline(shell_dash, page):
     # the popover's pre-seeded "from" field (same derivation the custom-range
     # spec uses).
     _open_range_picker(page)
-    start = _read_range_field(page, 0)
-    _set_range_field(page, 1, start + timedelta(minutes=70))
+    start = read_date_field(_range_field(page, 0))
+    set_date_field(_range_field(page, 1), start + timedelta(minutes=70))
     _apply_range_picker(page)
     page.wait_for_function(
         "() => document.querySelector('[data-testid=\"host-tile-workers-w2\"]')"
@@ -1139,9 +1107,9 @@ def test_link_inspector_survives_range_change(shell_dash, page):
     # popover's pre-seeded "from" field.
     before_label = _range_picker_label(page)
     _open_range_picker(page)
-    t0 = _read_range_field(page, 0)
-    _set_range_field(page, 0, t0 + timedelta(minutes=10))
-    _set_range_field(page, 1, t0 + timedelta(minutes=20))
+    t0 = read_date_field(_range_field(page, 0))
+    set_date_field(_range_field(page, 0), t0 + timedelta(minutes=10))
+    set_date_field(_range_field(page, 1), t0 + timedelta(minutes=20))
     _apply_range_picker(page)
     # Discriminating proof the apply actually landed (not just that the
     # fields hold the typed text): the trigger label is derived straight
@@ -1276,11 +1244,22 @@ def test_review_mode_boots_hydrated(review_dash, page):
     assert page.locator('[data-testid="review-bar"]').is_visible()
 
 
-def test_live_mode_still_boots_empty(shell_dash, page):
-    """Pin: in live mode (``/api/mode`` -> ``"live"``), Task 6's boot fetch
-    is a no-op — the shell still opens to the Import front door exactly as
-    it did before that fetch existed."""
-    page.goto(shell_dash.url)
+def test_live_mode_still_boots_empty(bare_live_dash, page):
+    """Pin: a live server with nothing recording yet (``/api/mode`` ->
+    ``"live"``, the snapshot a 404) opens to the empty shell, with no review
+    bar, and offers no Import: its mode named a live source (#958).
+
+    Import is also withheld before ``/api/mode`` answers, so its absence
+    alone proves nothing: the settle point is the reconnect banner, which
+    shows only once the tab knows a server source (the pending live one) and
+    is retrying it after its snapshot's 404.
+    """
+    page.goto(bare_live_dash.url)
     page.locator('[data-testid="empty-review"]').wait_for()
+    expect(page.locator('[data-testid="reconnecting-banner"]')).to_be_visible()
     page.locator('[data-testid="import-input"]').wait_for(state="attached")
     assert page.locator('[data-testid="review-bar"]').count() == 0
+    expect(page.locator('[data-testid="empty-import-btn"]')).to_have_count(0)
+    expect(page.locator('[data-testid="empty-review-text"]')).to_have_text(
+        "Waiting for the server's data…"
+    )

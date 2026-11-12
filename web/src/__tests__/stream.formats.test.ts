@@ -47,7 +47,7 @@ const emit = (payload: unknown) =>
 
 /** Stream *frags* through the real reader into an empty held session; return it. */
 function streamed(frags: readonly unknown[]): NormalizedSession {
-  const stop = startStream();
+  const { stop } = startStream();
   for (const frag of frags) emit(frag);
   vi.advanceTimersByTime(20); // one flush
   stop();
@@ -108,7 +108,7 @@ describe("monitor-live-stream versions (browser)", () => {
     const newest = Math.max(...MONITOR_STREAM_READ_VERSIONS);
     const next = newest + 1;
     const [first, second, ...rest] = sample(newest);
-    const stop = startStream();
+    const { stop } = startStream();
     // three unreadable fragments in one frame, then two more in the next
     for (const frag of [first, second, ...rest].slice(0, 3)) emit({ ...frag, format: next });
     vi.advanceTimersByTime(20);

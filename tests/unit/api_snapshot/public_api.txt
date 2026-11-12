@@ -4416,6 +4416,7 @@ member	otto.monitor:MetricCollector.get_tunnel_records	method	sync	-
 member	otto.monitor:MetricCollector.init_db	method	coroutine	-
 member	otto.monitor:MetricCollector.mutate_event	method	coroutine	KO:event_id:- KO:resolve:-
 member	otto.monitor:MetricCollector.mutation_lock	method	sync	-
+member	otto.monitor:MetricCollector.publish	method	sync	PK:payload:- KO:observed_at:N
 member	otto.monitor:MetricCollector.restore_event	method	coroutine	KO:event_id:- KO:write:-
 member	otto.monitor:MetricCollector.revert_event	method	coroutine	KO:event_id:- KO:expect:- KO:write:-
 member	otto.monitor:MetricCollector.run	method	coroutine	KO:interval:O KO:duration:N
@@ -4467,8 +4468,10 @@ member	otto.monitor:MonitorServer.force_stop	method	sync	-
 member	otto.monitor:MonitorServer.key	property:g--
 member	otto.monitor:MonitorServer.origin	property:g--
 member	otto.monitor:MonitorServer.serve	method	coroutine	-
+member	otto.monitor:MonitorServer.source_name	property:g--
 member	otto.monitor:MonitorServer.started	property:g--
 member	otto.monitor:MonitorServer.stop	method	sync	-
+member	otto.monitor:MonitorServer.unsaved_changes	property:g--
 member	otto.monitor:MonitorServer.url	property:g--
 member	otto.monitor:MonitorServer.urls	property:g--
 member	otto.monitor:MonitorServer.wait_started	method	coroutine	-

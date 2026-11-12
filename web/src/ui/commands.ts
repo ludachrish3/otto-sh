@@ -25,9 +25,10 @@ import { useMemo } from "react";
 import { useHashLocation } from "wouter/use-hash-location";
 
 import { useActiveSession, useIsPaused, useReviewStore } from "../data/reviewStore";
+import { importOffered } from "../data/source";
 import { type HistoryEntry, truncateLabel, useUndoHistory } from "../data/undoHistory";
 import { redo, undo } from "../data/undoRedo";
-import { exportLoadedDocument, openImportPicker } from "../shell/ImportExport";
+import { openExportDialog, openImportPicker } from "../shell/ImportExport";
 import { blankDraft, endSpanReporting } from "../shell/marking";
 import { markGateKey, useMutationGate } from "../shell/useMutationGate";
 import {
@@ -92,6 +93,7 @@ export function useCommands(): Command[] {
   const windowMs = useReviewStore((s) => s.windowMs);
   const hasData = useReviewStore((s) => s.rawMonitorSessions !== null);
   const editable = useReviewStore((s) => s.editable);
+  const canImport = useReviewStore(importOffered);
   const togglePause = useReviewStore((s) => s.actions.togglePause);
   const setWindow = useReviewStore((s) => s.actions.setWindow);
   const paused = useIsPaused();
@@ -153,8 +155,8 @@ export function useCommands(): Command[] {
         run: () => navigate(`/topology/${el.id}`),
       });
     }
-    commands.push(
-      {
+    if (canImport) {
+      commands.push({
         id: "action-import",
         label: "Import…",
         section: "Actions",
@@ -162,7 +164,9 @@ export function useCommands(): Command[] {
         binding: IMPORT_BINDING,
         enabled: true,
         run: openImportPicker,
-      },
+      });
+    }
+    commands.push(
       {
         id: "action-export",
         label: "Export",
@@ -170,7 +174,7 @@ export function useCommands(): Command[] {
         icon: Download01,
         binding: EXPORT_BINDING,
         enabled: hasData,
-        run: exportLoadedDocument,
+        run: openExportDialog,
       },
       {
         id: "action-theme",
@@ -209,8 +213,8 @@ export function useCommands(): Command[] {
     // mode (both just prep a draft/gesture); mark-now/start-span/end-span
     // are live-only (a review session has no "now" to mark and no in-flight
     // span to start/end). Every row is gated on `editable` (spec §Marking) —
-    // a read-only server (or a review session opened from a plain export,
-    // not a .db) must not offer affordances it cannot fulfil.
+    // a tab that cannot write (a file it loaded itself, or a source still
+    // being installed) must not offer affordances it cannot fulfil.
     if (editable && session) {
       commands.push(
         {
@@ -309,5 +313,6 @@ export function useCommands(): Command[] {
     pending,
     undoTop,
     redoTop,
+    canImport,
   ]);
 }

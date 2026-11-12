@@ -116,7 +116,7 @@ describe("DataWarningsBanner", () => {
   it("works for warnings pushed by the live-fragment path just as it does for import (both modes read the same channel)", () => {
     // No mode-specific branching in the component: it reads reviewStore's
     // one shared `warnings` field regardless of how it was populated
-    // (importMonitorSessions/resyncMonitorSessions replace it wholesale;
+    // (importMonitorSessions/installSnapshot replace it wholesale;
     // appendFragment/appendFragments append to it — see reviewStore.ts).
     useReviewStore.setState({
       mode: "live",

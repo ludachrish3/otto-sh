@@ -14,13 +14,14 @@ from zoneinfo import ZoneInfo
 import pytest
 from _archive import _make_archive
 from _events import BLANKS
-from test_event_mutation_races import _asgi, _live, _review
+from _requests import asgi
+from test_event_mutation_races import _live, _review
 
 from otto.models.monitor import SPAN_ORDER_ERROR, EventRecord
 from otto.monitor import archive_edit
 from otto.monitor.collector import MetricCollector
 from otto.monitor.db import event_row_record, read_sessions
-from otto.monitor.event_ops import EventValidationError, same_event
+from otto.monitor.event_ops import EventValidationError, editable_fields, same_event
 from otto.monitor.events import MonitorEvent
 from otto.utils import utc_instant
 
@@ -40,7 +41,7 @@ def _seeded_collector(label: str) -> MetricCollector:
 
 def _published(collector: MetricCollector) -> list[object]:
     seen: list[object] = []
-    collector._publish = seen.append  # type: ignore[method-assign]  # capture
+    collector.publish = seen.append  # type: ignore[method-assign]  # capture
     return seen
 
 
@@ -161,19 +162,17 @@ class TestArchiveRefusesBlankLabels:
             archive_edit.restore_event(path, sid, rowid, _record(blank))
         assert _labels(path) == []
 
-    def test_revert_restore_leg(self, tmp_path, blank: str) -> None:
-        path, sid, rowid = _archive_with_event(tmp_path)
-        archive_edit.delete_event(path, sid, rowid)
-        with pytest.raises(EventValidationError, match=REFUSED):
-            archive_edit.revert_event(path, sid, rowid, None, _record(blank))
-        assert _labels(path) == []
-
-    def test_revert_update_leg(self, tmp_path, blank: str) -> None:
+    def test_guarded_update(self, tmp_path, blank: str) -> None:
+        """An update guarded by the row it read (a revert's update leg) shares the rule."""
         path, sid, rowid = _archive_with_event(tmp_path)
         [current] = [event_row_record(e) for e in read_sessions(path)[0].events]
         with pytest.raises(EventValidationError, match=REFUSED):
-            archive_edit.revert_event(
-                path, sid, rowid, current, current.model_copy(update={"label": blank})
+            archive_edit.update_event(
+                path,
+                sid,
+                rowid,
+                expect=current,
+                **editable_fields(current.model_copy(update={"label": blank})),
             )
         assert _labels(path) == ["x"]
 
@@ -336,20 +335,18 @@ def _a_update(path: str, sid: str, rowid: int) -> object:
     )
 
 
-def _a_revert_update(path: str, sid: str, rowid: int) -> object:
-    return archive_edit.revert_event(path, sid, rowid, _stored(path), _backward_record())
-
-
-def _a_revert_restore(path: str, sid: str, rowid: int) -> object:
-    return archive_edit.revert_event(path, sid, rowid, None, _backward_record())
+def _a_guarded_update(path: str, sid: str, rowid: int) -> object:
+    """An update guarded by the row it read, as a review revert's update leg writes."""
+    return archive_edit.update_event(
+        path, sid, rowid, expect=_stored(path), **editable_fields(_backward_record())
+    )
 
 
 ARCHIVE_FAMILIES: dict[str, tuple[bool, Callable[[str, str, int], object]]] = {
     "insert_event": (False, _a_insert),
     "restore_event": (True, _a_restore),
     "update_event": (False, _a_update),
-    "revert_update_leg": (False, _a_revert_update),
-    "revert_restore_leg": (True, _a_revert_restore),
+    "guarded_update_event": (False, _a_guarded_update),
 }
 
 
@@ -464,7 +461,7 @@ async def test_http_create_backend_refusal_is_422_in_live_mode() -> None:
     live = await _live()
     before = _collector_state(live.collector)
     create = f"/api/session/{live.collector.session_id}/event"
-    status, body = await _asgi(live.app, "POST", create, _past_end_body())
+    status, body = await asgi(live.app, "POST", create, _past_end_body())
     assert status == 422
     assert SPAN_ORDER_ERROR in str(body)
     assert _collector_state(live.collector) == before
@@ -476,7 +473,7 @@ async def test_http_create_backend_refusal_is_422_in_review_mode(
 ) -> None:
     review = await _review(tmp_path, monkeypatch)
     before = _rows(review.path)
-    status, body = await _asgi(review.app, "POST", review.base, _past_end_body())
+    status, body = await asgi(review.app, "POST", review.base, _past_end_body())
     assert status == 422
     assert SPAN_ORDER_ERROR in str(body)
     assert _rows(review.path) == before
@@ -559,7 +556,7 @@ def test_legacy_backward_span_keeps_on_recolour_on_the_archive(tmp_path: Path) -
 async def test_http_patch_moving_the_end_backward_is_422_in_live_mode() -> None:
     live = await _live()
     before = _collector_state(live.collector)
-    status, body = await _asgi(
+    status, body = await asgi(
         live.app, "PATCH", live.base, {"end_timestamp": "2000-01-01T00:00:00Z"}
     )
     assert status == 422
@@ -574,7 +571,7 @@ async def test_http_patch_moving_the_end_backward_is_422_in_review_mode(
     review = await _review(tmp_path, monkeypatch)
     before = _rows(review.path)
     one = f"{review.base}/{review.event_id}"
-    status, body = await _asgi(review.app, "PATCH", one, {"end_timestamp": "2000-01-01T00:00:00Z"})
+    status, body = await asgi(review.app, "PATCH", one, {"end_timestamp": "2000-01-01T00:00:00Z"})
     assert status == 422
     assert SPAN_ORDER_ERROR in str(body)
     assert _rows(review.path) == before

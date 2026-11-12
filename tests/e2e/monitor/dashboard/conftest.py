@@ -18,6 +18,11 @@ document, while every other module here (test_review_shell.py) gets this
 one — a *renderable* document (built from the committed
 web/fixtures/minimal.json) for driving the real built page through
 Playwright, matching this file's own dist-serving ``shell_dash`` idiom.
+
+``shell_dash`` is the dashboard with NO otto server behind it (a plain
+static file server), the one shell where Import loads a file into the tab;
+``bare_live_dash`` is a live otto server with nothing recording yet, whose
+``/api/mode`` answers, so its URL never offers Import.
 """
 
 import asyncio
@@ -39,6 +44,7 @@ from otto.monitor.session import new_frame
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures._static_shell import StaticShellHarness
 from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -242,9 +248,25 @@ def live_stream_dash() -> Iterator[DashboardHarness[FakeCollector]]:
 
 
 @pytest.fixture
-def shell_dash() -> Iterator[DashboardHarness[FakeCollector]]:
-    """A dist-serving harness with an empty collector — the review shell
-    makes no boot-time API calls; data arrives via client-side Import."""
+def shell_dash() -> Iterator[StaticShellHarness]:
+    """The built dashboard with no otto server behind it: a plain static file server.
+
+    The shell's boot finds no stream and no ``/api/mode``, leaving the
+    Import shell; data arrives via client-side Import, a load into the tab.
+    """
+    harness = StaticShellHarness().start()
+    yield harness
+    harness.stop()
+
+
+@pytest.fixture
+def bare_live_dash() -> Iterator[DashboardHarness[FakeCollector]]:
+    """A live otto server with an empty collector and nothing recording.
+
+    ``/api/mode`` answers live, so the URL's source is known and Import is
+    not offered; the snapshot answers 404, so nothing installs and the shell
+    stays empty, retrying through the stream's reconnect.
+    """
     harness = DashboardHarness(FakeCollector())
     harness.start()
     yield harness
@@ -270,21 +292,64 @@ def _review_boot_document() -> MonitorExport:
     return MonitorExport(format=1, sessions=[first, second])
 
 
+EDITABLE_HOST = "h1"
+"""The one host :func:`_editable_review_document` declares in each session."""
+
+
+def _editable_review_document() -> MonitorExport:
+    """A two-session document over ``web/fixtures/repeated-ids.json``.
+
+    Session 1 is the fixture's own session: event ids ``1, 3, 3, (none), 9``,
+    event 1 with the legacy colour ``"red"``. The fixture declares no hosts,
+    and the events panel lives on a subject page, so each session gains one
+    host, ``h1``, to open it from. Session 2 is a ``model_copy(deep=True)`` of
+    session 1 under a new id, so each session owns its own events list.
+    """
+    raw = json.loads((_FIXTURES / "repeated-ids.json").read_text(encoding="utf-8"))
+    doc = MonitorExport.model_validate(raw)
+    first = doc.sessions[0].model_copy(
+        update={"lab": LabSnapshot(hosts=[HostSnapshot(id=EDITABLE_HOST, element=EDITABLE_HOST)])}
+    )
+    second = first.model_copy(
+        update={"id": f"{first.id}-2", "label": "second", "note": "second run"}, deep=True
+    )
+    return MonitorExport(format=1, sessions=[first, second])
+
+
+@dataclass(frozen=True)
+class ReviewBoot:
+    """What ``review_dash`` serves: a document and the source name it travels with."""
+
+    document: Callable[[], MonitorExport]
+    source_name: str
+
+
+DEFAULT_BOOT = ReviewBoot(_review_boot_document, "minimal.json")
+"""``review_dash``'s boot when a test does not choose one."""
+
+EDITABLE_BOOT = ReviewBoot(_editable_review_document, "repeated-ids.json")
+"""The editable ``.json`` boot: pass it by indirect parametrize,
+``@pytest.mark.parametrize("review_dash", [EDITABLE_BOOT], indirect=True)``."""
+
+
 @pytest.fixture
-def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
+def review_dash(request: pytest.FixtureRequest) -> Iterator[DashboardHarness[MetricCollector]]:
     """A dist-serving, review-mode harness that boots already hydrated.
 
-    Unlike ``shell_dash`` (empty collector; data arrives via client-side
+    Unlike ``shell_dash`` (no server; data arrives via client-side
     Import), this server answers ``/api/mode``/``/api/monitor_sessions``
     (Task 6, endpoint renamed in Plan 5b Task 3) with a real two-session
     document — the browser-lane proof that ``otto monitor <source>`` opens
-    straight into the dashboard with no Import interaction.
+    straight into the dashboard with no Import interaction. The document
+    and its source name are a :class:`ReviewBoot`, :data:`DEFAULT_BOOT`
+    unless the test parametrizes the fixture indirectly.
     """
+    boot: ReviewBoot = getattr(request, "param", DEFAULT_BOOT)
     harness = DashboardHarness(
         MetricCollector(hosts=[], parsers=[]),
         mode="review",
-        document=_review_boot_document(),
-        source_name="minimal.json",
+        document=boot.document(),
+        source_name=boot.source_name,
     )
     harness.start()
     yield harness

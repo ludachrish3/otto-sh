@@ -491,6 +491,36 @@ def minimal() -> MonitorExport:
     return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
+def repeated_ids() -> MonitorExport:
+    """Build the view-only case: one session whose event ids repeat.
+
+    Ids ``1, 3, 3, (none), 9``: the pair of ``3`` makes the session view-only
+    (an edit cannot name one of them), the idless event is a legacy row, and
+    event 1 carries the legacy colour ``"red"`` an older otto wrote.
+    """
+    start = BASE
+
+    def event(event_id: int | None, offset_s: float, label: str, **extra: str) -> EventRecord:
+        return EventRecord(
+            id=event_id, timestamp=start + timedelta(seconds=offset_s), label=label, **extra
+        )
+
+    session = SessionRecord(
+        id="2026-07-01T08-00-00-repeated",
+        label="repeated ids",
+        start=start,
+        end=start + timedelta(seconds=600.0),
+        events=[
+            event(1, 60.0, "first", color="red"),
+            event(3, 120.0, "third"),
+            event(3, 180.0, "third again"),
+            event(None, 240.0, "no id"),
+            event(9, 300.0, "ninth"),
+        ],
+    )
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
+
+
 def cascade() -> MonitorExport:
     """Dead-gateway reachability scenario (topology spec 2026-07-11).
 
@@ -1177,6 +1207,7 @@ def build_all() -> dict[str, MonitorExport]:
         "cascade": cascade(),
         "sprawl": sprawl(),
         "isp-core": isp_core(),
+        "repeated-ids": repeated_ids(),
     }
 
 

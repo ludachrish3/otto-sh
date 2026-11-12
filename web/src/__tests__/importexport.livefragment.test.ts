@@ -2,14 +2,14 @@
 // everything streamed in, not just metrics (which happen to survive only by
 // accidental array aliasing between the raw boot document and the
 // NormalizedSession — see exportDoc.ts's sessionToRecord). This drives the
-// REAL exportLoadedDocument() call site (not just the pure data-layer
+// REAL downloadExport() call site (not just the pure data-layer
 // helper), so a regression back to serializing the stale rawMonitorSessions
 // document fails here even if sessionToRecord itself still exists unused.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { MonitorSessionFragment } from "../api/export.gen";
 import { useReviewStore } from "../data/reviewStore";
-import { exportLoadedDocument } from "../shell/ImportExport";
+import { downloadExport } from "../shell/ImportExport";
 import { synthSession } from "./_synth";
 
 interface ExportedSessionDoc {
@@ -31,7 +31,7 @@ function captureExportedDocument(): () => Promise<ExportedSessionDoc> {
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   return async () => {
-    if (captured === null) throw new Error("exportLoadedDocument never called URL.createObjectURL");
+    if (captured === null) throw new Error("downloadExport never called URL.createObjectURL");
     const text = await (captured as Blob).text();
     return JSON.parse(text) as ExportedSessionDoc;
   };
@@ -85,7 +85,7 @@ describe("live export truthfulness", () => {
     useReviewStore.getState().actions.appendFragment(frag);
 
     const readExported = captureExportedDocument();
-    exportLoadedDocument();
+    downloadExport("live.json");
     const doc = await readExported();
 
     expect(doc.format).toBe(1);

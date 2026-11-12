@@ -7,6 +7,7 @@ import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { adoptOpenSpan, installOpenSpanReconciler, isTrackedSpanLive } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { useUiStore } from "../ui/uiStore";
+import { sourceState } from "./_sourceState";
 
 const START = "2026-07-18T12:01:00+00:00";
 const END = "2026-07-18T12:05:00+00:00";
@@ -70,6 +71,22 @@ afterEach(() => {
   useUiStore.setState({ openSpan: null });
 });
 
+/** A reconnect resync of `text` (installSnapshot, not fresh) whose
+ * snapshot was captured at `captured`, spending the replay `token`. */
+function resync(
+  text: string,
+  captured: string | null = null,
+  token: number = useReviewStore.getState().actions.beginResync(),
+): void {
+  useReviewStore.getState().actions.installSnapshot(text, "live", {
+    replayToken: token,
+    captured,
+    fresh: false,
+    state: sourceState(),
+    holds: 0,
+  });
+}
+
 describe("open-span reconciler", () => {
   it("an HTTP end of the open span clears it", () => {
     const sid = openSpan();
@@ -107,27 +124,25 @@ describe("open-span reconciler", () => {
 
   it("a reconnect resync where it ended clears it", () => {
     const sid = openSpan();
-    useReviewStore.getState().actions.resyncMonitorSessions(docWith(sid, [record(9, END)]), "live");
+    resync(docWith(sid, [record(9, END)]));
     expect(useUiStore.getState().openSpan).toBeNull();
   });
 
   it("a reconnect resync where it was deleted clears it", () => {
     const sid = openSpan();
-    useReviewStore.getState().actions.resyncMonitorSessions(docWith(sid, []), "live");
+    resync(docWith(sid, []));
     expect(useUiStore.getState().openSpan).toBeNull();
   });
 
   it("a reconnect resync where its session is missing clears it", () => {
     const sid = openSpan();
-    useReviewStore
-      .getState()
-      .actions.resyncMonitorSessions(docWith(sid, [record(9)], false), "live");
+    resync(docWith(sid, [record(9)], false));
     expect(useUiStore.getState().openSpan).toBeNull();
   });
 
   it("a reconnect resync where it is still open leaves it", () => {
     const sid = openSpan();
-    useReviewStore.getState().actions.resyncMonitorSessions(docWith(sid, [record(9)]), "live");
+    resync(docWith(sid, [record(9)]));
     expect(useUiStore.getState().openSpan).toEqual({ sessionId: sid, eventId: 9 });
   });
 
@@ -177,8 +192,7 @@ describe("open-span reconciler across a resync that raced a Start span", () => {
 
   it("(a) a remote end before capture: the snapshot's end stands and the span clears", () => {
     const { sid, token } = startDuringResync(STARTED_AT);
-    const text = snapshot(sid, [record(9, END)], CAPTURED_AT);
-    useReviewStore.getState().actions.resyncMonitorSessions(text, "live", token);
+    resync(snapshot(sid, [record(9, END)], CAPTURED_AT), CAPTURED_AT, token);
     const ev = useReviewStore.getState().sessions[0]?.events.find((e) => e.id === 9);
     expect(ev?.end_timestamp).toBe(END);
     expect(useUiStore.getState().openSpan).toBeNull();
@@ -186,16 +200,14 @@ describe("open-span reconciler across a resync that raced a Start span", () => {
 
   it("(b) a remote delete before capture: the event stays gone and the span clears", () => {
     const { sid, token } = startDuringResync(STARTED_AT);
-    const text = snapshot(sid, [], CAPTURED_AT);
-    useReviewStore.getState().actions.resyncMonitorSessions(text, "live", token);
+    resync(snapshot(sid, [], CAPTURED_AT), CAPTURED_AT, token);
     expect(ids()).not.toContain(9);
     expect(useUiStore.getState().openSpan).toBeNull();
   });
 
   it("(c) a Start ordered after capture is replayed, and the span is kept", () => {
     const { sid, token } = startDuringResync(CAPTURED_AT);
-    const text = snapshot(sid, [], STARTED_AT);
-    useReviewStore.getState().actions.resyncMonitorSessions(text, "live", token);
+    resync(snapshot(sid, [], STARTED_AT), STARTED_AT, token);
     expect(ids()).toContain(9);
     expect(useUiStore.getState().openSpan).toEqual({ sessionId: sid, eventId: 9 });
   });
@@ -205,8 +217,7 @@ describe("open-span reconciler across a resync that raced a Start span", () => {
     ["no snapshot stamp", STARTED_AT, null],
   ])("(d) %s: the snapshot wins", (_name, fragStamp, snapStamp) => {
     const { sid, token } = startDuringResync(fragStamp);
-    const text = snapshot(sid, [], snapStamp);
-    useReviewStore.getState().actions.resyncMonitorSessions(text, "live", token);
+    resync(snapshot(sid, [], snapStamp), snapStamp, token);
     expect(ids()).not.toContain(9);
     expect(useUiStore.getState().openSpan).toBeNull();
   });
@@ -216,7 +227,7 @@ describe("open-span reconciler across a resync that raced a Start span", () => {
     const { actions } = useReviewStore.getState();
     const token = actions.beginResync();
     actions.appendFragment({ format: 1, session: sid, events: [record(9)] });
-    actions.resyncMonitorSessions(snapshot(sid, [], CAPTURED_AT), "live", token);
+    resync(snapshot(sid, [], CAPTURED_AT), CAPTURED_AT, token);
     expect(ids()).not.toContain(9);
   });
 });

@@ -25,7 +25,12 @@ import {
 } from "../charts/options";
 import { MAX_SERIES_PER_CHART, SERIES_DARK, SERIES_LIGHT } from "../charts/palette";
 import { normalizeEventStyle } from "../data/eventStyle";
-import { parseExportDocument } from "../data/exportDoc";
+import { type NormalizedSession, parseExportDocument } from "../data/exportDoc";
+
+/** A session holding just `events`, with no repeated ids. */
+const rowsOf = (
+  events: NormalizedSession["events"],
+): Pick<NormalizedSession, "events" | "viewOnlyIds"> => ({ events, viewOnlyIds: new Set() });
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
 const theme = chartTheme(false);
@@ -262,7 +267,7 @@ describe("eventMarkers", () => {
         color: "#333333",
       },
     ];
-    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW); // 1_000_000..2_000_000 ms
+    const marks = eventMarkers(rowsOf(rows.map(normalizeEventStyle)), WINDOW); // 1_000_000..2_000_000 ms
     expect(marks.map((m) => m.id)).toEqual([1, 3]);
     expect(marks[1].toMs).toBe(1_500_000);
   });
@@ -272,7 +277,7 @@ describe("eventMarkers", () => {
       { id: 1, timestamp: "1970-01-01T00:20:00Z", label: "dotted", color: "#111111", dash: "dot" },
       { id: 2, timestamp: "1970-01-01T00:21:00Z", label: "default", color: "#222222" },
     ];
-    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW);
+    const marks = eventMarkers(rowsOf(rows.map(normalizeEventStyle)), WINDOW);
     expect(marks[0].dash).toBe("dot");
     expect(marks[1].dash).toBe("dash");
   });
@@ -284,7 +289,7 @@ describe("eventMarkers", () => {
       { id: 1, timestamp: "1970-01-01T00:20:00Z", label: "real-id-1", color: "#111111" },
       { id: null, timestamp: "1970-01-01T00:21:00Z", label: "id-less-second", color: "#222222" },
     ];
-    const marks = eventMarkers(rows.map(normalizeEventStyle), WINDOW);
+    const marks = eventMarkers(rowsOf(rows.map(normalizeEventStyle)), WINDOW);
     const ids = marks.map((m) => m.id);
     // All ids must be unique
     expect(new Set(ids).size).toBe(ids.length);
@@ -319,7 +324,7 @@ describe("legacy colour is preserved and drawn as the default (#857)", () => {
     const [event] = nth(sessions).events;
     expect(event?.color).toBe(DEFAULT_EVENT_COLOR);
     expect(event?.legacyColor).toBe("red");
-    const markers = eventMarkers(nth(sessions).events, LAYOUT.window);
+    const markers = eventMarkers(nth(sessions), LAYOUT.window);
     const { markArea } = eventOverlay(
       markers,
       { muted: "#999", ink: "#eee", surface: "#fff" },
@@ -812,14 +817,14 @@ describe("layoutWith (#863)", () => {
             },
           ]),
     ];
-    const tied = eventMarkers(rows(null), WIN15);
+    const tied = eventMarkers(rowsOf(rows(null)), WIN15);
     const synthetic = nth(tied.filter((m) => m.id < 0));
     const tiedLayout = layoutPlacements(tied, WIN15, 1000, measure6);
     const lane = (ps: LabelPlacement[], id: number) => ps.find((p) => p.id === id)?.lane;
     expect(lane(tiedLayout, 7)).toBe(0); // the wire id wins the tie
     expect(lane(tiedLayout, synthetic.id)).toBe(1);
     // Earliest in time, an id-less marker goes first: the order is chronological.
-    const early = eventMarkers(rows("1970-01-01T00:04:59.999Z"), WIN15);
+    const early = eventMarkers(rowsOf(rows("1970-01-01T00:04:59.999Z")), WIN15);
     const earliest = nth(early.filter((m) => m.label === "early no id"));
     expect(earliest.id).toBeLessThan(0);
     expect(lane(layoutPlacements(early, WIN15, 1000, measure6), earliest.id)).toBe(0);

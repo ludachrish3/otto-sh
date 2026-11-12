@@ -32,7 +32,7 @@ from .db import (
     event_restore_params,
     event_row_record,
 )
-from .event_ops import EventChanged, same_event
+from .event_ops import EventChanged
 
 
 class ArchiveLockedError(OttoError, RuntimeError):
@@ -120,8 +120,7 @@ def _require_expected(
 ) -> EventRecord | None:
     """Return the event's current state, raising :class:`EventChanged` unless it is ``expect``."""
     current = _current(conn, session_id, event_id)
-    if not same_event(current, expect):
-        raise EventChanged(current)
+    event_ops.require_expected(current, expect)
     return current
 
 
@@ -314,34 +313,3 @@ def restore_event(path: str, session_id: str, event_id: int, write: EventRecord)
     """
     with _locked_connection(path) as conn:
         return _restore_row(conn, session_id, event_id, write)
-
-
-def revert_event(
-    path: str,
-    session_id: str,
-    event_id: int,
-    expect: EventRecord | None,
-    write: EventRecord | None,
-) -> EventRecord | None:
-    """Move an event from ``expect`` to ``write``, only if it is still ``expect`` (#929).
-
-    The review-mode twin of ``MetricCollector.revert_event``; the leg comes
-    from :func:`~otto.monitor.event_ops.revert_leg`. Returns the stored row
-    after an update or restore, the removed row after a delete. A missing
-    event on the update or delete leg raises ``EventChanged(None)``, and a
-    new blank label or span not ending after its start on the update or
-    restore leg raises ``EventValidationError``.
-    """
-    leg = event_ops.revert_leg(expect, write)
-    with _locked_connection(path) as conn:
-        if leg == "restore":
-            assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
-            return _restore_row(conn, session_id, event_id, write)
-        current = _require_expected(conn, session_id, event_id, expect)
-        if current is None:
-            raise EventChanged(None)
-        if write is None:
-            _delete_row(conn, session_id, event_id)
-            return current
-        _update_row(conn, session_id, event_id, event_ops.editable_fields(write), current)
-        return _current(conn, session_id, event_id)

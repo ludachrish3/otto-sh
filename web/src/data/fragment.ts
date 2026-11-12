@@ -6,6 +6,7 @@ import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
 import { normalizeEventStyle } from "./eventStyle";
 import {
   dropInvalidTimestamps,
+  editableEventId,
   type NormalizedSession,
   observedAtMicros,
   parseObservedAt,
@@ -49,11 +50,19 @@ import { parseTs } from "./time";
  *    selector below closes that gap too, on both boundaries.
  * Filtered ONCE here — the point a fragment enters the store — rather than
  * in every reader.
+ *
+ * `opts.advanceHorizon` (default true): whether the fragment's
+ * `observed_at` may raise the display horizon (`observedMs`, `observedAt`).
+ * A review source stamps its mutation responses too; that stamp orders the
+ * event changes exactly as a live one does, but it is not an observation of
+ * the session, so it never moves the horizon. reviewStore.ts's
+ * mergeFragments is the one caller that decides it.
  */
 export function applyFragment(
   session: NormalizedSession,
   frag: MonitorSessionFragment,
   warnings: string[] = [],
+  opts: { advanceHorizon?: boolean } = {},
 ): NormalizedSession {
   if (frag.session !== session.id) return session;
 
@@ -77,12 +86,10 @@ export function applyFragment(
   const hasTunnels = frag.tunnels != null;
   // The server's clock (#866) only ever raises the display horizon; it never
   // touches endMs, which stays metric-only for health.
-  const fragObservedMs = parseObservedAt(frag.observed_at);
-  const observedMs =
-    fragObservedMs !== null && fragObservedMs > session.observedMs
-      ? fragObservedMs
-      : session.observedMs;
-  const hasObservation = observedMs !== session.observedMs;
+  const fragObservedMs = (opts.advanceHorizon ?? true) ? parseObservedAt(frag.observed_at) : null;
+  const hasObservation = fragObservedMs !== null && fragObservedMs > session.observedMs;
+  const observedMs = hasObservation ? fragObservedMs : session.observedMs;
+  const observedAt = hasObservation ? (frag.observed_at ?? null) : session.observedAt;
 
   // A heartbeat/no-op fragment (right session, nothing else set, or only
   // event changes that admitEventChanges found overtaken) has nothing
@@ -130,17 +137,43 @@ export function applyFragment(
     // `e.id` for id-less rows would collapse every one of them onto the same
     // `null`/`undefined` key, silently dropping all but the last. id-less rows are
     // never edits (there's nothing to address them by), so they're just appended.
-    const idless = events.filter((e) => e.id == null);
-    const byId = new Map(events.filter((e) => e.id != null).map((e) => [e.id, e]));
+    // A repeated id (a view-only row) addresses no single row either, so those
+    // rows stay, every copy. An edit replaces its row where it stands and a new
+    // row goes last, so the rows keep the order the server's document holds
+    // them in, and an export from this tab matches one from a reloaded tab.
+    const held = new Set(events.flatMap((e) => editableEventId(session, e) ?? []));
+    const edits = new Map<number, (typeof fragEvents)[number]>();
+    const added: (typeof fragEvents)[number][] = [];
+    const addedAt = new Map<number, number>();
     for (const e of fragEvents) {
-      if (e.id == null) idless.push(e);
-      else byId.set(e.id, e); // upsert: add AND edit
+      if (e.id == null) {
+        added.push(e);
+      } else if (held.has(e.id)) {
+        edits.set(e.id, e);
+      } else {
+        const at = addedAt.get(e.id);
+        if (at === undefined) {
+          addedAt.set(e.id, added.length);
+          added.push(e);
+        } else {
+          added[at] = e;
+        }
+      }
     }
-    events = [...idless, ...byId.values()];
+    events = [
+      ...events.map((e) => {
+        const id = editableEventId(session, e);
+        return (id !== null ? edits.get(id) : undefined) ?? e;
+      }),
+      ...added,
+    ];
   }
   if (deletedIds.length > 0) {
     const gone = new Set(deletedIds);
-    events = events.filter((e) => e.id == null || !gone.has(e.id));
+    events = events.filter((e) => {
+      const id = editableEventId(session, e);
+      return id === null || !gone.has(id);
+    });
   }
 
   let endMs = session.endMs;
@@ -167,6 +200,7 @@ export function applyFragment(
     eventStamps: stamped.eventStamps,
     endMs,
     observedMs,
+    observedAt,
     meta,
     chartMap,
     tunnels,
@@ -177,8 +211,9 @@ export function applyFragment(
  * already holds (#929 §4): a late echo must never roll an event back. With a
  * server `stamp`, an upsert or deletion for id X is dropped when the stamp is
  * no later than the session's snapshot floor or than X's last applied stamp;
- * what is kept records the stamp, tombstones included. Without one (review
- * mode, an older server), every change applies and no stamp is recorded.
+ * what is kept records the stamp, tombstones included. Without one (a file
+ * the tab loaded itself, an older server), every change applies and no
+ * stamp is recorded.
  * Every change in the fragment is judged against the stamps BEFORE it, so
  * one fragment's upsert and delete of the same id both stand, as before.
  * O(changes in the fragment); the Map is copied only when a change is kept,

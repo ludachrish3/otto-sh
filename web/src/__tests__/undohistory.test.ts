@@ -552,7 +552,7 @@ describe("the history's lifetime", () => {
 
   it("a file import clears both stacks, and a following Ctrl+Z sends nothing", async () => {
     const sid = hydrate();
-    useReviewStore.getState().actions.setEditable(true);
+    useReviewStore.setState({ editable: true });
     await bothStacks(sid);
     renderHook(() => useGlobalShortcuts(useCommands()));
     await act(() => importLocalFile(new File([JSON.stringify(minimal)], "imported.json")));
@@ -566,15 +566,6 @@ describe("the history's lifetime", () => {
     await Promise.resolve();
     expect(fetch).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(false);
-  });
-
-  it("the tab dropping to read-only clears both stacks", async () => {
-    const sid = hydrate();
-    useReviewStore.getState().actions.setEditable(true);
-    await bothStacks(sid);
-    useReviewStore.getState().actions.setEditable(false);
-    expect(history().undo).toHaveLength(0);
-    expect(history().redo).toHaveLength(0);
   });
 
   it("selecting another session keeps the history and the undo addresses the entry's session", async () => {

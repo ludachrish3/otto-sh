@@ -90,12 +90,71 @@ describe("startStream", () => {
     expect(useReviewStore.getState().connection).toBe("disconnected");
   });
 
-  it("resyncs on reconnect instead of replaying missed deltas", async () => {
-    const resync = vi.fn().mockResolvedValue(undefined);
-    startStream({ resync });
-    FakeEventSource.last?.onerror?.();
+  it("reconnects with backoff and reports each open, the reconnect's included", async () => {
+    const onOpen = vi.fn();
+    startStream({ onOpen });
+    const first = FakeEventSource.last;
+    first?.onopen?.();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    first?.onerror?.();
+    expect(first?.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(1000); // first backoff
-    expect(resync).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.last).not.toBe(first); // resubscribed
+    expect(onOpen).toHaveBeenCalledTimes(1); // not before the new connection opens
+    FakeEventSource.last?.onopen?.();
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("an error before the first open stops the stream: no reconnect", async () => {
+    const onFirstError = vi.fn();
+    startStream({ onFirstError });
+    const first = FakeEventSource.last;
+    first?.onerror?.();
+    expect(onFirstError).toHaveBeenCalledTimes(1);
+    expect(first?.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.last).toBe(first);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a constructor that throws is a failure before the first open, not an exception", () => {
+    vi.stubGlobal("EventSource", undefined);
+    const onFirstError = vi.fn();
+    expect(() => startStream({ onFirstError })).not.toThrow();
+    expect(onFirstError).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("source frames are delivered in arrival order between fragments", () => {
+    const order: string[] = [];
+    const actions = useReviewStore.getState().actions;
+    const append = vi.spyOn(actions, "appendFragments").mockImplementation((frags) => {
+      order.push(`fragments:${frags.map((f) => f.observed_at).join(",")}`);
+      return true;
+    });
+    const state = (token: string) => ({
+      mode: "review",
+      kind: "json",
+      source: `${token}.json`,
+      token,
+      editable: true,
+      unsaved: 0,
+      revision: 0,
+      observed_at: `2026-07-12T00:00:0${token === "a" ? 2 : 4}Z`,
+    });
+    startStream({ onSource: (s) => order.push(`source:${s.token}`) });
+    FakeEventSource.last?.onopen?.();
+    const frag = (t: string) => ({ format: 1, session: "s", observed_at: t });
+    emit(frag("t1"));
+    emit({ format: 1, source_state: state("a"), observed_at: state("a").observed_at });
+    emit(frag("t3"));
+    emit(frag("t3b"));
+    emit({ format: 1, source_state: state("b"), observed_at: state("b").observed_at });
+    // Neither a session-addressed frame nor a valid source state: dropped.
+    emit({ format: 1, source_state: { token: "c" } });
+    vi.advanceTimersByTime(20); // one frame
+    expect(order).toEqual(["fragments:t1", "source:a", "fragments:t3,t3b", "source:b"]);
+    append.mockRestore();
   });
 
   it("drops an invalid fragment without killing the stream", () => {
@@ -135,23 +194,145 @@ describe("startStream", () => {
   // stream yet), but real for HMR and any future mode-switch teardown.
   describe("stop()", () => {
     it("cancels a pending reconnect timer — leaves no timer scheduled", () => {
-      const stop = startStream();
+      const { stop } = startStream();
+      FakeEventSource.last?.onopen?.();
       FakeEventSource.last?.onerror?.(); // schedules the backoff-delayed reconnect
       expect(vi.getTimerCount()).toBeGreaterThan(0); // the reconnect timer is pending
       stop();
       expect(vi.getTimerCount()).toBe(0); // no leaked timer after stop()
     });
 
-    it("a stopped stream performs no hydrate, even once every backoff tier has elapsed", async () => {
-      const resync = vi.fn().mockResolvedValue(undefined);
-      const stop = startStream({ resync });
-      FakeEventSource.last?.onerror?.(); // schedules the first backoff-delayed reconnect
+    it("a stopped stream never reconnects, even once every backoff tier has elapsed", async () => {
+      const { stop } = startStream();
+      const first = FakeEventSource.last;
+      first?.onopen?.();
+      first?.onerror?.(); // schedules the first backoff-delayed reconnect
       stop(); // stop BEFORE the backoff elapses
       // Exhaust every backoff tier (1000+2000+5000+10000+30000ms) — if the
-      // timer had survived stop(), or the reconnect path hydrated before
-      // checking `stopped`, resync would fire somewhere in this window.
+      // timer had survived stop(), a new EventSource would open in this window.
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(resync).not.toHaveBeenCalled();
+      expect(FakeEventSource.last).toBe(first);
+    });
+  });
+
+  // The caller's retry of a sync that could not install (data/source.ts).
+  describe("reconnect()", () => {
+    it("drops the open connection at once, and the new connection's open runs onOpen", async () => {
+      const onOpen = vi.fn();
+      const { reconnect } = startStream({ onOpen });
+      const first = FakeEventSource.last;
+      first?.onopen?.();
+      reconnect();
+      expect(first?.closed).toBe(true);
+      expect(useReviewStore.getState().connection).toBe("disconnected");
+      reconnect(); // already scheduled: a no-op
+      await vi.advanceTimersByTimeAsync(1000); // the first backoff step
+      const second = FakeEventSource.last;
+      expect(second).not.toBe(first);
+      expect(onOpen).toHaveBeenCalledTimes(1); // not before the new connection opens
+      second?.onopen?.();
+      expect(onOpen).toHaveBeenCalledTimes(2);
+      expect(useReviewStore.getState().connection).toBe("live");
+    });
+
+    it("backs off while the open's resync fails, and resets once one succeeds", async () => {
+      // Each open's resync result, in order: the boot's, two failed retries, a success.
+      const results = [true, false, true];
+      const onOpen = vi.fn(() => Promise.resolve(results.shift() ?? true));
+      const { reconnect } = startStream({ onOpen });
+      const opened = async () => {
+        FakeEventSource.last?.onopen?.();
+        await vi.advanceTimersByTimeAsync(0); // settle the resync
+      };
+      await opened();
+      reconnect(); // the boot's sync could not install
+      await vi.advanceTimersByTimeAsync(1000);
+      await opened(); // its resync fails
+      const failing = FakeEventSource.last;
+      reconnect();
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(FakeEventSource.last).toBe(failing); // backed off to 2 s
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeEventSource.last).not.toBe(failing);
+      await opened(); // this resync installs
+      // A later natural drop starts the backoff again from its first step.
+      const healthy = FakeEventSource.last;
+      healthy?.onerror?.();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(FakeEventSource.last).not.toBe(healthy);
+    });
+
+    // A connection that lost a frame does not reset the backoff, though its
+    // resync installed: a server that keeps sending what the tab cannot
+    // apply is retried at a growing delay, not at the first step forever.
+    it("repeated losses back off, though each reconnect's resync installs", async () => {
+      const onOpen = vi.fn(() => Promise.resolve(true));
+      startStream({ onOpen });
+      const opened = async () => {
+        FakeEventSource.last?.onopen?.();
+        await vi.advanceTimersByTimeAsync(0); // settle the resync
+      };
+      await opened();
+      for (const delay of [1000, 2000, 5000, 10_000, 30_000]) {
+        const lossy = FakeEventSource.last;
+        emit({ format: 1, session: "not-held", events: [] });
+        await vi.advanceTimersByTimeAsync(16); // the flush: the fragment is lost
+        expect(lossy?.closed).toBe(true);
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(FakeEventSource.last).toBe(lossy);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(FakeEventSource.last).not.toBe(lossy);
+        await opened();
+      }
+      // A connection that ends clean starts over.
+      const clean = FakeEventSource.last;
+      clean?.onerror?.();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(FakeEventSource.last).not.toBe(clean);
+    });
+
+    // An unreadable-format frame is a loss without a reconnect of its own:
+    // when its connection drops, it does not reset the backoff either.
+    it("a connection that dropped an unreadable frame does not reset the backoff when it ends", async () => {
+      const onOpen = vi.fn(() => Promise.resolve(true));
+      const { reconnect } = startStream({ onOpen });
+      const opened = async () => {
+        FakeEventSource.last?.onopen?.();
+        await vi.advanceTimersByTimeAsync(0); // settle the resync
+      };
+      await opened();
+      reconnect(); // a clean connection: the first step
+      await vi.advanceTimersByTimeAsync(1000);
+      await opened();
+      const lossy = FakeEventSource.last;
+      emit({ format: 2, session: "s", events: [] });
+      await vi.advanceTimersByTimeAsync(16); // the flush
+      expect(lossy?.closed).toBe(false); // no reconnect for an unreadable format
+      lossy?.onerror?.();
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(FakeEventSource.last).toBe(lossy); // backed off to 2 s, not reset
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeEventSource.last).not.toBe(lossy);
+    });
+
+    it("a later forced reconnect after a successful resync also starts from the first step", async () => {
+      const results = [true, false, false, true];
+      const onOpen = vi.fn(() => Promise.resolve(results.shift() ?? true));
+      const { reconnect } = startStream({ onOpen });
+      const opened = async () => {
+        FakeEventSource.last?.onopen?.();
+        await vi.advanceTimersByTimeAsync(0);
+      };
+      await opened();
+      for (const delay of [1000, 2000, 5000]) {
+        reconnect();
+        await vi.advanceTimersByTimeAsync(delay);
+        await opened();
+      }
+      const healthy = FakeEventSource.last;
+      reconnect(); // a later admission's snapshot failed
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(FakeEventSource.last).not.toBe(healthy);
     });
   });
 });

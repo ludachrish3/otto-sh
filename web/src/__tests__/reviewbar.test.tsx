@@ -105,6 +105,18 @@ async function openSessionPicker(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("ReviewBar", () => {
+  it("shows the unsaved marker with the count, and drops it at 0", async () => {
+    render(<App />);
+    await importText(MINIMAL, "minimal.json");
+    expect(screen.queryByTestId("unsaved-marker")).toBeNull();
+    act(() => useReviewStore.setState({ unsaved: 1 }));
+    expect(screen.getByTestId("unsaved-marker").textContent).toBe("1 change since export");
+    act(() => useReviewStore.setState({ unsaved: 3 }));
+    expect(screen.getByTestId("unsaved-marker").textContent).toBe("3 changes since export");
+    act(() => useReviewStore.setState({ unsaved: 0 }));
+    expect(screen.queryByTestId("unsaved-marker")).toBeNull();
+  });
+
   it("shows tag + source, hides the session picker for single-session files", async () => {
     render(<App />);
     await importText(MINIMAL, "minimal.json");

@@ -91,7 +91,7 @@ class FakeCollector(MetricCollector):
         payload = [r.model_dump(mode="json") for r in self._tunnels]
         if self._db:
             await self._db.write_tunnels(json.dumps(payload))
-        self._publish({"format": STREAM_FORMAT, "session": self.session_id, "tunnels": payload})
+        self.publish({"format": STREAM_FORMAT, "session": self.session_id, "tunnels": payload})
 
     async def push_log_events(
         self, host: str, *, tab: str, rows: "list[tuple[datetime, dict[str, str]]]"

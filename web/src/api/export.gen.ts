@@ -106,6 +106,18 @@ export type Timestamp4 = string | null;
 export type EndTimestamp2 = string | null;
 export type Color2 = string | null;
 export type Dash2 = string | null;
+export type Mode = "live" | "review";
+export type Kind1 = "live" | "db" | "json";
+export type Source2 = string | null;
+export type Token = string;
+export type Editable = boolean;
+export type Unsaved = number;
+export type Revision = number;
+export type ObservedAt2 = string;
+export type Format2 = 1;
+export type ObservedAt3 = string | null;
+export type Token1 = string;
+export type Revision1 = number;
 
 /**
  * The versioned historical-export document (spec 2026-07-10 §3).
@@ -526,4 +538,58 @@ export interface EventUpdateBody {
 export interface EventRevertBody {
   expect: EventRecord | null;
   write: EventRecord | null;
+}
+/**
+ * What the dashboard is showing and whether it may be edited.
+ *
+ * The answer of ``GET /api/mode`` and the payload of a source frame.
+ * ``token`` names the source: it changes whenever the served source does, so
+ * a browser can tell a write aimed at a stale source from one aimed at this
+ * one. ``revision`` counts the writes since the load. ``unsaved`` is
+ * ``revision`` minus the highest revision an export acknowledged, so it is the
+ * number of changes the last export does not hold. ``observed_at`` is the
+ * server's stamp when the state was read, and it is what orders two states in
+ * the browser.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "MonitorSourceState".
+ */
+export interface MonitorSourceState {
+  mode: Mode;
+  kind: Kind1;
+  source: Source2;
+  token: Token;
+  editable: Editable;
+  unsaved?: Unsaved;
+  revision?: Revision;
+  observed_at: ObservedAt2;
+}
+/**
+ * A document-level stream frame carrying the source state.
+ *
+ * It names no session: it is about the source, not one of its sessions. Its
+ * ``observed_at`` equals the state's. The stream stays format 1; a reader that
+ * does not know the frame ignores it.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "MonitorSourceFrame".
+ */
+export interface MonitorSourceFrame {
+  format?: Format2;
+  source_state: MonitorSourceState;
+  observed_at?: ObservedAt3;
+  [k: string]: unknown;
+}
+/**
+ * The body of ``POST /api/source/saved``: an export acknowledged ``revision`` of ``token``.
+ *
+ * ``defer_build=False``: same FastAPI request-body reason as
+ * :class:`EventCreateBody`.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "SourceSavedBody".
+ */
+export interface SourceSavedBody {
+  token: Token1;
+  revision: Revision1;
 }

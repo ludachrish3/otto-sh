@@ -41,9 +41,9 @@ captured by a pre-release build of `--live --db` replays with no chart specs
 and a null interval: the dashboard renders it as one ungrouped, unit-less
 chart per series. Re-capture it too.
 
-**Editing.** A `.db` session archive opened this way is editable — the
-dashboard's marking controls write mutations straight back into the same
-file. A `.json` export has nowhere to persist a mutation, so it stays
-permanently read-only and those controls simply don't render for it; see
-[Marking events](dashboard.md#marking-events).
+**Editing.** Both kinds of source take event edits in the dashboard: a `.db`
+archive saves them into the file as you go, and a `.json` keeps them in the
+running `otto monitor` only, and Export saves an edited copy. Which saves how,
+the unsaved-changes marker and the warning on stop are in [Sources and
+saving](dashboard.md#sources-and-saving).
 

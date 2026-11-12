@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from otto.models import MetricPoint
+from otto.monitor.event_ops import MAX_SAFE_EVENT_ID, IdsExhausted
 from otto.monitor.events import MonitorEvent
 from otto.monitor.parsers import LogEvent
 from otto.monitor.store import MetricStore
@@ -131,3 +134,11 @@ class TestSeriesBound:
         assert len(pts) == _SERIES_POINTS_MAX
         assert pts[0].value == 10.0, "oldest ten aged out"
         assert pts[-1].value == float(_SERIES_POINTS_MAX + 9)
+
+
+def test_add_event_refuses_once_ids_are_exhausted() -> None:
+    store = MetricStore()
+    store.add_event(MonitorEvent(timestamp=TS, label="a"), rowid=MAX_SAFE_EVENT_ID)
+    with pytest.raises(IdsExhausted):
+        store.add_event(MonitorEvent(timestamp=TS, label="b"), rowid=0)
+    assert [e.label for e in store.events()] == ["a"]

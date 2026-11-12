@@ -286,7 +286,7 @@ class TestEvent:
         Unlike the MagicMock arrangement above (which only proves
         ``add_event`` was *called* the right way), this uses a REAL
         ``MetricCollector`` so the assertion runs through its actual
-        ``subscribe()``/``_publish()`` plumbing -- the same path a real
+        ``subscribe()``/``publish()`` plumbing -- the same path a real
         dashboard SSE client reads from.
         """
         handle = MonitorHandle(plugin=None)
