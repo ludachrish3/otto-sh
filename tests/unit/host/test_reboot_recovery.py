@@ -14,6 +14,7 @@ import pytest
 import otto.host.connections as connections_mod
 from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
+from otto.host.errors import ConsoleError
 from otto.host.host import PROBE_TIMEOUT_S, _DownWait, _ProbeAnswer, _UpWait
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
@@ -518,7 +519,10 @@ def test_embedded_hosts_build_a_throwaway_manager_too():
 # ``ConsoleClient.login_sequence`` refuses with "already logged in". Shutdown
 # and boot output on a console server that keeps its link through the reboot
 # look exactly the same, so a probe reads that refusal as unreachable; only a
-# wait that ENDS with the line still at a shell says the reboot did not take.
+# wait that ENDS with the line still at a shell says the reboot did not take,
+# and only then does otto log the line out (through ``logout``, the path
+# ``otto host <id> logout`` takes). The ambiguous ending types nothing: the
+# line may be at an initramfs shell or a bootloader prompt.
 
 
 def _console_host() -> UnixHost:
@@ -562,7 +566,6 @@ def _scripted_line(
     answers given, in order. Each dial advances *clock*, if given.
     """
     from otto.host.console import ConsoleClient, ConsoleState
-    from otto.host.errors import ConsoleError
 
     seq = list(script)
     answered: "list[str]" = []
@@ -648,13 +651,15 @@ def test_a_probe_names_the_shell_it_met_and_nothing_else(monkeypatch):
     assert asyncio.run(host._probe_down(PROBE_TIMEOUT_S)) == _ProbeAnswer(reached=False)
 
 
-def _rebooting(monkeypatch, host) -> AsyncMock:
-    """Issue a no-op reboot; returns a ``run_logout`` spy that must never be awaited.
+def _rebooting(monkeypatch, host, logout: "AsyncMock | None" = None) -> AsyncMock:
+    """Issue a no-op reboot; returns the ``run_logout`` spy (*logout*, or one that succeeds).
 
-    A reboot never types into the console line, whatever its verdict.
+    ``run_logout`` is the hook only :meth:`~otto.host.host.BaseHost.logout`
+    calls, so an awaited spy proves the reboot went through ``logout``.
     """
     monkeypatch.setattr(host, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
-    logout = AsyncMock(return_value=Result(status=Status.Success, value="reset"))
+    if logout is None:
+        logout = AsyncMock(return_value=Result(status=Status.Success, value="reset"))
     monkeypatch.setattr(host, "run_logout", logout)
     return logout
 
@@ -666,10 +671,13 @@ def _not_reachable(timeout: float) -> str:
     return f"'box' did not become reachable within {timeout}s after reboot"
 
 
-def _did_not_take(timeout: float, seen: str = _SHELL_SEEN) -> str:
+def _did_not_take(timeout: float, seen: str = _SHELL_SEEN, outcome: str | None = None) -> str:
+    """The "did not take" message; *outcome* is what came of the logout (logged out by default)."""
+    if outcome is None:
+        outcome = "; otto logged the console line out"
     return (
         f"'box' was still at a logged-in shell {timeout}s after the reboot (last seen: {seen}) "
-        "— the reboot likely did not take; run `otto host box logout` to log the console line out"
+        f"— the reboot likely did not take{outcome}"
     )
 
 
@@ -717,10 +725,11 @@ _VERDICTS = {
 async def test_what_the_waits_saw_decides_the_verdict(
     monkeypatch, script, down_timeout, timeout, msg
 ):
-    """ "Did not take" only on an unchanged shell throughout; never a keystroke into the line.
+    """ "Did not take" only on an unchanged shell throughout, and only then a logout.
 
     The dial clock makes the counts exact (see ``_VERDICTS``): every entry
-    of *script* is dialled, no more.
+    of *script* is dialled, no more. Every "did not become reachable"
+    leaves the line alone.
     """
     clock = _DialClock(monkeypatch)
     host = _console_host()
@@ -732,7 +741,57 @@ async def test_what_the_waits_saw_decides_the_verdict(
     assert answered == script
     assert result.status == Status.Failed
     assert result.msg == msg, result.msg
-    logout.assert_not_awaited()
+    assert logout.await_count == (0 if msg.startswith("'box' did not become reachable") else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("logout", "reason"),
+    [
+        pytest.param(
+            AsyncMock(side_effect=ConsoleError("box: console srv:4001 (dial=ssh) is busy")),
+            "box: console srv:4001 (dial=ssh) is busy",
+            id="raises",
+        ),
+        pytest.param(AsyncMock(side_effect=TimeoutError()), "TimeoutError", id="raises-bare"),
+        pytest.param(
+            AsyncMock(return_value=Result(status=Status.Error, msg="reset gave up")),
+            "reset gave up",
+            id="not-ok",
+        ),
+    ],
+)
+async def test_a_logout_that_fails_keeps_the_verdict_and_the_hint(
+    monkeypatch, caplog, logout, reason
+):
+    """The logout failing never masks "did not take": it says so and keeps the manual hint."""
+    clock = _DialClock(monkeypatch)
+    host = _console_host()
+    _rebooting(monkeypatch, host, logout)
+    _scripted_line(monkeypatch, ["shell", "shell", "shell"], clock=clock)
+    with caplog.at_level("WARNING", logger="otto"):
+        result = await host.reboot(wait=True, timeout=2.5, down_timeout=5.0, poll_interval=0)
+    assert result.status == Status.Failed
+    assert result.msg == _did_not_take(
+        2.5,
+        outcome=(
+            f"; otto could not log the console line out ({reason}); "
+            "run `otto host box logout` to log it out"
+        ),
+    ), result.msg
+    logout.assert_awaited_once()
+    assert any("could not log the console line out" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_logout_that_is_cancelled_is_not_swallowed(monkeypatch):
+    """Cancellation is not a logout failure: it propagates out of the reboot."""
+    clock = _DialClock(monkeypatch)
+    host = _console_host()
+    _rebooting(monkeypatch, host, AsyncMock(side_effect=asyncio.CancelledError()))
+    _scripted_line(monkeypatch, ["shell", "shell", "shell"], clock=clock)
+    with pytest.raises(asyncio.CancelledError):
+        await host.reboot(wait=True, timeout=2.5, down_timeout=5.0, poll_interval=0)
 
 
 @pytest.mark.asyncio

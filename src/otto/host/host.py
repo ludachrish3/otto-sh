@@ -3602,8 +3602,12 @@ class BaseHost(ABC):
         anything other than a shell (busy, silent, undialable, cut by its
         bound, …), and that prompt is the first down-phase shell prompt (with
         the down phase skipped, at least two up-phase probes at one prompt).
-        It quotes what the line last showed and says to run ``otto host <id>
-        logout``: a reboot never types into the line itself.
+        It quotes what the line last showed, and otto then logs the console
+        line out through :meth:`logout` (what ``otto host <id> logout``
+        runs) and says so; if that logout fails the result says so too and
+        keeps the hint to run ``otto host <id> logout``. Only this verdict
+        logs out: a plain "did not become reachable" never types into the
+        line, which may be at an ``(initramfs)`` shell or a bootloader prompt.
         Each probe is bounded by :meth:`probe_bound`, so the last one may
         overrun *timeout* by up to that bound.
 
@@ -3726,7 +3730,7 @@ class BaseHost(ABC):
                         msg=self._reboot_did_not_take(
                             f"was still at a logged-in shell {opts.timeout}s after the reboot "
                             f"(last seen: {seen})",
-                            f"; run `otto host {self.id} logout` to log the console line out",
+                            await self._log_out_line_left_at_shell(),
                         ),
                     )
                 return Result(
@@ -3745,6 +3749,40 @@ class BaseHost(ABC):
                     ),
                 )
         return result
+
+    async def _log_out_line_left_at_shell(self) -> str:
+        """Log out the console line a reboot that did not take left at a shell; say how it went.
+
+        Called only on the "did not take" verdict: every probe met one
+        unchanged shell, so the line is at the shell the reboot was typed
+        into. The ambiguous ending ("did not become reachable") never comes
+        here: that line may be at boot output, an ``(initramfs)`` shell or a
+        bootloader prompt, where a Ctrl-D does harm. The logout is
+        :meth:`logout`, the path ``otto host <id> logout`` takes; it closes
+        this host's (rebuilt) connections and dials its own client. Its
+        failure is logged and worded into the result, keeping the manual
+        hint, and never replaces the reboot's verdict.
+        """
+        why: str | None = None
+        try:
+            reset = await self.logout()
+        except Exception as exc:  # the reboot's verdict must survive any logout failure
+            logger.warning(
+                "%s: could not log the console line out after the reboot", self.name, exc_info=True
+            )
+            why = str(exc) or type(exc).__name__
+        else:
+            if not reset.is_ok:
+                why = reset.msg or str(reset.status)
+                logger.warning(
+                    "%s: could not log the console line out after the reboot: %s", self.name, why
+                )
+        if why is None:
+            return "; otto logged the console line out"
+        return (
+            f"; otto could not log the console line out ({why}); "
+            f"run `otto host {self.id} logout` to log it out"
+        )
 
     def _reboot_did_not_take(self, what: str, hint: str = "") -> str:
         """Word the failure of a reboot whose wait shows it never happened.
