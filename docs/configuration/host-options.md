@@ -577,7 +577,12 @@ session on it:
 
   On "did not take", and only then, otto logs the console line out before
   it returns: it runs exactly what `otto host <id> logout` runs, so the
-  line is back at `login:`. If that logout fails, the message says so
+  line is back at `login:`, and the message ends with that command's
+  outcome in parentheses. If the reset finds the line already at
+  `login:`, the device got there after the last poll, so the reboot may
+  have taken late: the reboot still fails, saying ``the console line was
+  already back at its login prompt when otto went to log it out (…) — the
+  reboot may have taken late``. If the logout fails, the message says so
   instead (``otto could not log the console line out (<why>); run `otto
   host <id> logout` to log it out``); the reboot's verdict stands either
   way. On `did not become reachable` otto types nothing into the line:
@@ -586,7 +591,8 @@ session on it:
   telling those apart from the shell the reboot was typed into is what
   the conditions above are for. Read what the line shows before running
   `otto host <id> logout` yourself. The last poll of a wait can run past
-  `--timeout` by up to one poll's bound.
+  `--timeout` by up to one poll's bound, and on "did not take" the logout
+  runs after it, within {ref}`its own bounds <host-logout>`.
 
 When otto closes the session it logs out (per `logout`), so the next client
 finds `login:`, then waits for the line to go quiet before it releases it.

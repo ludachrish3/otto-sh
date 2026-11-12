@@ -210,6 +210,18 @@ class _UpWait:
     """How many probes the up phase ran."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ConsoleReset(Result):
+    """What a console logout (:meth:`BaseHost.logout`) did.
+
+    :attr:`~otto.result.Result.value` is the line the CLI prints, the
+    reset's outcome in words.
+    """
+
+    already_at_login: bool = False
+    """Whether the line was already at its login prompt, so the reset sent only nudges."""
+
+
 @dataclass(frozen=True)
 class _DownWait:
     """How ``reboot``'s down phase ended, and what it saw of the line."""
@@ -3604,12 +3616,16 @@ class BaseHost(ABC):
         the down phase skipped, at least two up-phase probes at one prompt).
         It quotes what the line last showed, and otto then logs the console
         line out through :meth:`logout` (what ``otto host <id> logout``
-        runs) and says so; if that logout fails the result says so too and
-        keeps the hint to run ``otto host <id> logout``. Only this verdict
-        logs out: a plain "did not become reachable" never types into the
-        line, which may be at an ``(initramfs)`` shell or a bootloader prompt.
+        runs) and quotes the reset's outcome; if that logout fails the
+        result says so too and keeps the hint to run ``otto host <id>
+        logout``. A reset that finds the line already at its login prompt
+        fails the reboot still, saying it may have taken late rather than
+        that it did not take. Only this verdict logs out: a plain "did not
+        become reachable" never types into the line, which may be at an
+        ``(initramfs)`` shell or a bootloader prompt.
         Each probe is bounded by :meth:`probe_bound`, so the last one may
-        overrun *timeout* by up to that bound.
+        overrun *timeout* by up to that bound; on "did not take" the
+        logout runs after *timeout* too, within its own bounds.
 
         **Under a dry run this reports the plan and does nothing at all** —
         ``Status.NotRun``, ``is_ok`` False. THE HARD ARM IS WHY THE ARM IS AT
@@ -3727,10 +3743,9 @@ class BaseHost(ABC):
                 if seen is not None:
                     return Result(
                         status=Status.Failed,
-                        msg=self._reboot_did_not_take(
+                        msg=await self._log_out_line_left_at_shell(
                             f"was still at a logged-in shell {opts.timeout}s after the reboot "
-                            f"(last seen: {seen})",
-                            await self._log_out_line_left_at_shell(),
+                            f"(last seen: {seen})"
                         ),
                     )
                 return Result(
@@ -3750,8 +3765,8 @@ class BaseHost(ABC):
                 )
         return result
 
-    async def _log_out_line_left_at_shell(self) -> str:
-        """Log out the console line a reboot that did not take left at a shell; say how it went.
+    async def _log_out_line_left_at_shell(self, what: str) -> str:
+        """Log out the console line a reboot that did not take left at a shell; word the failure.
 
         Called only on the "did not take" verdict: every probe met one
         unchanged shell, so the line is at the shell the reboot was typed
@@ -3759,29 +3774,44 @@ class BaseHost(ABC):
         here: that line may be at boot output, an ``(initramfs)`` shell or a
         bootloader prompt, where a Ctrl-D does harm. The logout is
         :meth:`logout`, the path ``otto host <id> logout`` takes; it closes
-        this host's (rebuilt) connections and dials its own client. Its
-        failure is logged and worded into the result, keeping the manual
-        hint, and never replaces the reboot's verdict.
+        this host's (rebuilt) connections and dials its own client.
+
+        *what* says what the wait saw. The message quotes the reset's own
+        outcome. A reset that found the line already at its login prompt
+        means the device got there after the last probe, so the reboot may
+        have taken late, and the message says that instead of "did not
+        take". A failed logout is logged and worded into the message,
+        keeping the manual hint; it never replaces the reboot's verdict.
         """
-        why: str | None = None
         try:
             reset = await self.logout()
         except Exception as exc:  # the reboot's verdict must survive any logout failure
             logger.warning(
                 "%s: could not log the console line out after the reboot", self.name, exc_info=True
             )
-            why = str(exc) or type(exc).__name__
-        else:
-            if not reset.is_ok:
-                why = reset.msg or str(reset.status)
-                logger.warning(
-                    "%s: could not log the console line out after the reboot: %s", self.name, why
-                )
-        if why is None:
-            return "; otto logged the console line out"
-        return (
+            return self._logout_failed(what, str(exc) or type(exc).__name__)
+        if not reset.is_ok:
+            why = reset.msg or str(reset.status)
+            logger.warning(
+                "%s: could not log the console line out after the reboot: %s", self.name, why
+            )
+            return self._logout_failed(what, why)
+        if isinstance(reset, _ConsoleReset) and reset.already_at_login:
+            return (
+                f"{self.name!r} {what}, but the console line was already back at its login "
+                f"prompt when otto went to log it out ({reset.value}) — the reboot may have "
+                "taken late"
+            )
+        return self._reboot_did_not_take(
+            what, f"; otto logged the console line out ({reset.value})"
+        )
+
+    def _logout_failed(self, what: str, why: str) -> str:
+        """Word "did not take" when the logout after it failed: why, and the manual hint."""
+        return self._reboot_did_not_take(
+            what,
             f"; otto could not log the console line out ({why}); "
-            f"run `otto host {self.id} logout` to log it out"
+            f"run `otto host {self.id} logout` to log it out",
         )
 
     def _reboot_did_not_take(self, what: str, hint: str = "") -> str:
