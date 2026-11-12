@@ -60,7 +60,6 @@ from ..utils import (
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
-from .errors import ConsoleLoggedInError
 from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
@@ -181,6 +180,8 @@ class _ProbeAnswer:
     @classmethod
     def of(cls, failure: Exception | None) -> "_ProbeAnswer":
         """Read one probe's outcome (``None``, or why it failed), keeping only the quote."""
+        from .errors import ConsoleLoggedInError  # a reboot wait only: off the startup graph
+
         if isinstance(failure, ConsoleLoggedInError):
             return cls(reached=False, shell_seen=failure.seen, shell_prompt=failure.prompt)
         return cls(reached=failure is None)
