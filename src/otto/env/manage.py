@@ -147,7 +147,7 @@ def virtual_reason(project: "Project") -> "VirtualReason | None":
     project means the same thing to ``otto env`` as to ``uv sync`` run inside
     it: an explicit ``[tool.uv] package`` decides, and without one a project
     that declares no ``[build-system]`` is virtual. That is the single-project
-    layout docs/installation.md recommends. Building one anyway falls back to
+    layout :doc:`/installation` recommends. Building one anyway falls back to
     setuptools, whose auto-discovery refuses any layout with more than one
     top-level directory, and which an offline wheel directory does not hold.
 
