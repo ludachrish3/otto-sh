@@ -440,7 +440,7 @@ async def remove(
     del bootstrap
     from ..declared import get_projects
     from ..fleet import get_lab
-    from ..logger.management import direct_terminal
+    from ..lifecycle import interruptible_prompt
 
     # These two usage-error exits are deliberately kept OUT of the try/except
     # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``
@@ -450,9 +450,9 @@ async def remove(
     if all_:
         if not yes:
             # The question holds the terminal, so it is on screen, after
-            # everything printed before it, when input() waits.
-            with direct_terminal():
-                confirmed = typer.confirm("Reap ALL otto tunnels?")
+            # everything printed before it, when input() waits; and a Ctrl+C
+            # there ends the command before anything is reaped (#1003).
+            confirmed = await interruptible_prompt(typer.confirm, "Reap ALL otto tunnels?")
             if not confirmed:
                 raise typer.Exit(1)
     elif not tunnel_id:

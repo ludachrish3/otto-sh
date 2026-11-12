@@ -286,6 +286,43 @@ that blocks the loop (a bare `subprocess.run`, a `time.sleep`) is exactly as
 uninterruptible as a synchronous one, and neither stage can fire until it
 returns. Local blocking work belongs in {func}`asyncio.to_thread`.
 
+A prompt is the one exception, because a thread blocked in `input()` can be
+neither cancelled nor joined, and the default executor is joined when the
+loop shuts down: an interrupted prompt there would hold the exit until someone
+pressed Enter. So `typer.prompt`/`typer.confirm` in an async command is
+awaited through {func}`otto.lifecycle.interruptible_prompt`:
+
+```python
+name = await interruptible_prompt(typer.prompt, "Product name", default=root.name)
+```
+
+It runs the prompt on a daemon thread with the terminal handed over
+({func}`~otto.logger.management.direct_terminal`), and the command awaits the
+answer. The loop stays free, so a Ctrl-C is the run's ordinary interrupt: the
+body is cancelled at that await, and the two stages and the exit code are
+exactly the ones above. The signal travels on the loop's own wakeup fd, so a
+press is never lost, even one that lands before the read has started. A Ctrl-C
+at `otto init`'s questions therefore ends the command before anything is
+written (#1003). Nothing joins the abandoned thread; the process exits around
+it.
+
+That exit is why the thread does not read through `input()` itself. On a
+console, `input()` reads with C stdio, holding the C `stdin` lock while it
+waits, and C `exit()` takes every stdio lock to flush, so an abandoned prompt
+would hang the exit after Python's own cleanup had finished. For the prompt's
+duration, the thread points click's visible-prompt reader at `input()`'s own
+non-console branch, a line read from `sys.stdin`. The thread sets that reader
+and puts it back itself: click looks the reader up only when it reads, after
+echoing the question. `tests/unit/test_no_prompt_blocks_an_async_command.py`
+fails on a prompt called directly inside an `async def`.
+
+Two limits follow from the abandoned thread. Only one prompt runs at a time:
+a prompt the command gave up on is still the terminal's reader until its
+thread returns, so a second call meanwhile raises `RuntimeError`. A hidden
+prompt (`hide_input=True`) is refused with `ValueError`, because
+{func}`getpass.getpass` restores echo in a `finally` that an abandoned thread
+never reaches, and an interrupt would leave the terminal silent.
+
 ## OttoContext: the per-invocation runtime
 
 {class}`~otto.context.OttoContext` holds exactly what one invocation needs:
