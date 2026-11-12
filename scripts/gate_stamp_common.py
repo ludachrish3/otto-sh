@@ -147,11 +147,6 @@ def tree_hash(repo: Path, rev: str = "HEAD") -> str:
     return _git(repo, "rev-parse", f"{rev}^{{tree}}").strip()
 
 
-def blob_sha(repo: Path, path: str) -> str:
-    """Return the blob id of the working-tree file at *path* (what a commit of it would record)."""
-    return _git(repo, "hash-object", "--", path).strip()
-
-
 def test_roots(repo: Path) -> "list[str]":
     """Return pyproject's ``testpaths``: the roots the live checkout collects from."""
     try:

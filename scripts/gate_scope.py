@@ -367,8 +367,8 @@ MEASURED_ROWS = {
     "schemas/support_matrix.json": MATRIX_READERS,
     "schemas/kmodcov_matrix.json": MATRIX_READERS,
 }
-"""The bed and kmodcov lanes rewrite these with what they measured (the Makefile says review
-and commit the diff); the commit is a tests-leaf change over the readers, never a full gate."""
+"""The release's matrix stages (`make release-matrix`, `make release-kmodcov-matrix`) are the
+writers of these; a commit of one is a tests-leaf change over the readers, never a full gate."""
 WORKFLOW_READERS = [
     "tests/unit/api_snapshot/test_api_gate_wiring.py",
     "tests/unit/host/test_busybox_artifacts.py",

@@ -1087,3 +1087,60 @@ def test_release_tag_is_phony_and_locked():
     assert (
         _recipe("release-tag") == "@uv run --locked python scripts/release_tag.py --remote origin"
     )
+
+
+def test_the_verify_macro_folds_into_a_candidate_and_judges_it():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    (body,) = re.findall(r"^verify_matrix = (.+)$", text, re.MULTILINE)
+    assert body == (
+        "mkdir -p $(dir $(3)) && cp $(1) $(3)"
+        " && uv run python -m $(2) --matrix $(3) --write"
+        " && uv run python scripts/check_matrix_downgrades.py --baseline $(1) --candidate $(3)"
+    )
+    assert "schemas/" not in body
+
+
+@pytest.mark.parametrize(
+    ("target", "matrix", "module", "candidate"),
+    [
+        (
+            "conformance-bed",
+            "schemas/support_matrix.json",
+            "scripts.collate_support_matrix",
+            "$(MATRIX_CANDIDATE)",
+        ),
+        (
+            "kmodcov",
+            "schemas/kmodcov_matrix.json",
+            "scripts.collate_kmodcov_matrix",
+            "$(KMODCOV_MATRIX_CANDIDATE)",
+        ),
+    ],
+)
+def test_the_verify_lanes_call_the_verify_macro_after_the_lane_and_exit_on_it(
+    target, matrix, module, candidate
+):
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    _, recipe = _rule(text, target)
+    joined = " ".join(recipe)
+    assert f"$(call verify_matrix,{matrix},{module},{candidate})" in joined
+    assert joined.index("lane=$$?") < joined.index("$(call verify_matrix")
+    assert joined.index("exit $$lane") < joined.index("exit $$verify")
+    assert "$(MAKE)" not in joined
+    assert "schemas/" not in joined.replace(matrix, "")
+
+
+@pytest.mark.parametrize(
+    ("target", "matrix", "candidate"),
+    [
+        ("release-matrix", "schemas/support_matrix.json", "$(MATRIX_CANDIDATE)"),
+        ("release-kmodcov-matrix", "schemas/kmodcov_matrix.json", "$(KMODCOV_MATRIX_CANDIDATE)"),
+    ],
+)
+def test_the_release_matrix_stages_copy_the_judged_candidate_then_commit(target, matrix, candidate):
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    _, recipe = _rule(text, target)
+    joined = " ".join(recipe)
+    assert f"cp {candidate} {matrix}" in joined
+    assert "check_matrix_downgrades" not in joined
+    assert "BASELINE" not in joined

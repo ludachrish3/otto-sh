@@ -106,7 +106,7 @@ def _stamp_tip(repo: Path, remote_sha: str, tip_sha: str) -> None:
     root = gt.stamps_root(repo, gt.STORE)
     tree = gt.tree_hash(repo, tip_sha)
     for key in gs.plan(repo, remote_sha, tip_sha).stamped:
-        gt.write_stamp(root, tree=tree, key=key, base=remote_sha, measured={}, checkout=str(repo))
+        gt.write_stamp(root, tree=tree, key=key, base=remote_sha, checkout=str(repo))
 
 
 @dataclass(frozen=True)

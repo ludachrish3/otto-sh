@@ -984,20 +984,7 @@ environment reaches the lanes undetected (`CONFORMANCE_CELLS=1 make gate-tip`
 stamps a sampled bed run as the bed lane): the same boundary the coverage stamp
 has, and you are trusted on it as on intermediate commits.
 
-Two lanes **measure**: the conformance bed rewrites `schemas/support_matrix.json`
-and `kmodcov` rewrites `schemas/kmodcov_matrix.json`. Commit exactly what the
-run produced and the stamps follow: a measured matrix committed as the lane
-wrote it is witnessed by blob, so every stamp of that run is promoted to the
-new tree. Two consequences. A second measuring lane needs the first one's
-commit before it runs, since the first rewrote a tracked file. And a red
-measuring lane still rewrites the matrix, so restore it or review the diff
-before you go on.
-
-This has one accepted imprecision. Under a promoted stamp, a test that *reads*
-a measured matrix ran against the pre-measurement matrix, at the tree that was
-stamped; CI runs it again at the committed one. The oracle's row for the
-matrices is what a measurement commit owes locally: the reader modules, through
-`make quick-guards` for the family modules and `make quick` for the rest.
+No lane in a landing's gate writes a tracked file: the conformance bed and `kmodcov` verify against the committed matrices and leave the tree clean; the release's matrix stages are the only writers (`make release-matrix`, `make release-kmodcov-matrix`).
 
 A release's own commits need no stamp. `make release` re-dates the two
 matrices and bumps the version in `pyproject.toml` and `uv.lock` after its
@@ -1032,7 +1019,7 @@ run: make gate-tip   (on commit 3f9a1c2d4e5b), then push again.
 git push --no-verify skips this check; the local-gate status then stays absent and gate-admission holds the pull request's CI.
 ```
 
-Each lane's reason is one of `no stamp`, `the lane went red on this tree (…)`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the moved-`main` case below. `make gate-status` refuses with the same lines, `gate-status: refusing HEAD …`.
+Each lane's reason is one of `no stamp`, `the lane went red on this tree (…)`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's (…)` or `stamped for a different path list (…)`; the last is the moved-`main` case below. `make gate-status` refuses with the same lines, `gate-status: refusing HEAD …`.
 
 The check fetches the remote's `main` and recomputes the tip list over the
 range the push really carries, so a `main` that moved after your gate
