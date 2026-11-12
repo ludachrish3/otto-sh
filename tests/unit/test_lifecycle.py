@@ -574,3 +574,350 @@ async def test_external_cancellation_body_translating_cancel_still_sweeps():
     with pytest.raises(asyncio.CancelledError):
         await main
     assert closed == ["h1"], "the sweep was skipped when the body translated its cancellation"
+
+
+# ── interruptible_prompt (#1003) ─────────────────────────────────────────────
+# The prompt runs on a daemon thread while the command awaits its answer, so a
+# signal is the run's ordinary loop-callback interrupt. Tier 1 delivers it the
+# way this module always does, by calling _CommandRun._on_signal on the loop.
+# Real delivery at a real prompt: tests/unit/test_lifecycle_prompt_signals.py
+# and tests/e2e/cli/test_prompt_interrupt_e2e.py.
+
+
+@pytest.fixture(autouse=True)
+def _abandoned_prompts_finish():
+    """An abandoned prompt holds the one-prompt lock until its thread returns."""
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name == "otto-prompt":
+            thread.join(timeout=5)
+            assert not thread.is_alive(), "a test left its prompt thread blocked"
+
+
+def test_an_answered_prompt_returns_its_answer():
+    from otto.lifecycle import interruptible_prompt
+
+    def prompt(text: str, *, default: str) -> str:
+        return f"{text}={default}"
+
+    async def body() -> str:
+        return await interruptible_prompt(prompt, "Name", default="x")
+
+    assert run_command(body(), _controller=_controller()) == "Name=x"
+
+
+def test_what_the_prompt_raises_is_raised_to_the_command():
+    """click.Abort (end of input) and the like surface where the command awaits."""
+    from otto.lifecycle import interruptible_prompt
+
+    def prompt() -> str:
+        raise EOFError
+
+    async def body() -> str:
+        return await interruptible_prompt(prompt)
+
+    with pytest.raises(EOFError):
+        run_command(body(), _controller=_controller())
+
+
+@pytest.mark.parametrize(
+    ("signum", "expected_code"),
+    [(signal.SIGINT, 130), (signal.SIGTERM, 143)],
+)
+def test_a_signal_while_the_prompt_waits_cancels_the_command_there(capsys, signum, expected_code):
+    """The command stops at the await, swept and unforced, while the prompt still waits."""
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+
+    ctrl = _controller()
+    release = threading.Event()  # the prompt's "person": never answers here
+    reached: "list[str]" = []
+
+    def prompt() -> str:
+        release.wait()
+        return "too late"
+
+    async def body() -> None:
+        asyncio.get_running_loop().call_later(0.05, ctrl._on_signal, signum)
+        await interruptible_prompt(prompt)
+        reached.append("after the prompt")
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            run_command(body(), _controller=ctrl)
+    finally:
+        release.set()  # let the abandoned thread finish
+
+    assert exc_info.value.code == expected_code
+    assert reached == []
+    assert ctrl.forced is False
+    assert "cleaning up" in capsys.readouterr().err
+
+
+def test_an_answer_after_the_command_gave_up_is_dropped():
+    """The abandoned thread's late answer finds the loop gone and is discarded quietly."""
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+
+    ctrl = _controller()
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def prompt() -> str:
+        started.set()
+        release.wait()
+        finished.set()
+        return "too late"
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(prompt)
+
+    with pytest.raises(SystemExit):
+        run_command(body(), _controller=ctrl)
+    assert started.is_set()
+    release.set()
+    assert finished.wait(timeout=5)
+
+
+def test_the_console_reader_is_swapped_for_the_python_line_read_while_the_prompt_waits(
+    monkeypatch,
+):
+    """On a console input() holds the C stdin lock, which an abandoned prompt keeps past exit()."""
+    import sys
+    import types
+
+    from otto.lifecycle import _read_prompt_line, interruptible_prompt
+
+    termui = types.ModuleType("fake_termui")
+    termui.visible_prompt_func = input
+    monkeypatch.setitem(sys.modules, "fake_termui", termui)
+    seen: "list[object]" = []
+
+    def prompt() -> str:
+        seen.append(termui.visible_prompt_func)
+        return "ok"
+
+    prompt.__module__ = "fake_termui"
+
+    async def body() -> str:
+        return await interruptible_prompt(prompt)
+
+    assert run_command(body(), _controller=_controller()) == "ok"
+    assert seen == [_read_prompt_line]
+    assert termui.visible_prompt_func is input  # put back
+
+
+def test_a_reader_someone_else_installed_is_left_alone(monkeypatch):
+    """click's CliRunner installs an echoing reader; that one stays."""
+    import sys
+    import types
+
+    from otto.lifecycle import interruptible_prompt
+
+    def theirs(_prompt: str = "") -> str:
+        return "theirs"
+
+    termui = types.ModuleType("fake_termui")
+    termui.visible_prompt_func = theirs
+    monkeypatch.setitem(sys.modules, "fake_termui", termui)
+    seen: "list[object]" = []
+
+    def prompt() -> str:
+        seen.append(termui.visible_prompt_func)
+        return "ok"
+
+    prompt.__module__ = "fake_termui"
+
+    async def body() -> str:
+        return await interruptible_prompt(prompt)
+
+    run_command(body(), _controller=_controller())
+    assert seen == [theirs]
+    assert termui.visible_prompt_func is theirs
+
+
+def test_typer_prompts_reader_is_the_one_swapped():
+    """typer.prompt is typer's own click fork, whose termui holds the reader to swap."""
+    import sys
+
+    import typer
+
+    termui = sys.modules[typer.prompt.__module__]
+    assert termui.visible_prompt_func is input
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [("widget\n", "widget"), ("no newline", "no newline"), ("\n", "")],
+)
+def test_the_python_line_read_is_inputs(monkeypatch, capsys, typed, expected):
+    import io
+    import sys
+
+    from otto.lifecycle import _read_prompt_line
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(typed))
+    assert _read_prompt_line(": ") == expected
+    assert capsys.readouterr().out == ": "
+
+
+def test_the_python_line_read_raises_eof_at_end_of_input(monkeypatch):
+    import io
+    import sys
+
+    from otto.lifecycle import _read_prompt_line
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    with pytest.raises(EOFError):
+        _read_prompt_line()
+
+
+def test_a_prompt_that_reads_after_the_command_gave_up_still_gets_the_python_reader(
+    monkeypatch,
+):
+    """click looks the reader up when it reads, which can be after the cancel.
+
+    Restoring ``input`` from the command's side at that point would hand the
+    late read the console path, and its C stdin lock would hold the exit.
+    """
+    import sys
+    import threading
+    import types
+
+    from otto.lifecycle import _read_prompt_line, interruptible_prompt
+
+    termui = types.ModuleType("fake_termui")
+    termui.visible_prompt_func = input
+    monkeypatch.setitem(sys.modules, "fake_termui", termui)
+    gave_up, looked_up = threading.Event(), threading.Event()
+    seen: "list[object]" = []
+
+    def prompt() -> str:
+        gave_up.wait()  # the question is on screen; the read comes later
+        seen.append(termui.visible_prompt_func)
+        looked_up.set()
+        return "late"
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    async def body() -> None:
+        asyncio.get_running_loop().call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(prompt)
+
+    with pytest.raises(SystemExit):
+        run_command(body(), _controller=ctrl)
+    gave_up.set()
+    assert looked_up.wait(timeout=5)
+    assert seen == [_read_prompt_line]
+
+
+def test_a_hidden_prompt_is_refused_before_it_starts():
+    """getpass restores echo in a finally an abandoned thread never reaches."""
+    from otto.lifecycle import interruptible_prompt
+
+    asked: "list[str]" = []
+
+    def prompt(text: str, *, hide_input: bool) -> str:
+        asked.append(text)
+        return "secret"
+
+    async def body() -> str:
+        return await interruptible_prompt(prompt, "Password", hide_input=True)
+
+    with pytest.raises(ValueError, match="hidden prompt"):
+        run_command(body(), _controller=_controller())
+    assert asked == []
+
+
+def test_a_second_prompt_while_an_abandoned_one_still_reads_is_refused():
+    """One reader per terminal: the first prompt's thread still owns the reader swap.
+
+    Let in, the second prompt would find the Python reader already installed,
+    and the first thread's return would put ``input`` back under it.
+    """
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+
+    started, release = threading.Event(), threading.Event()
+    asked: "list[str]" = []
+
+    def first() -> str:
+        started.set()
+        release.wait()
+        return "too late"
+
+    def second() -> str:
+        asked.append("second")
+        return "ok"
+
+    ctrl = _controller()
+
+    async def abandon() -> None:
+        asyncio.get_running_loop().call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(first)
+
+    async def ask_second() -> str:
+        return await interruptible_prompt(second)
+
+    try:
+        with pytest.raises(SystemExit):
+            run_command(abandon(), _controller=ctrl)
+        assert started.is_set()
+        with pytest.raises(RuntimeError, match="still reading"):
+            run_command(ask_second(), _controller=_controller())
+        assert asked == []
+    finally:
+        release.set()
+    for thread in threading.enumerate():
+        if thread.name == "otto-prompt":
+            thread.join(timeout=5)
+    assert run_command(ask_second(), _controller=_controller()) == "ok"
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [(("Password",), {"hide_input": True}), (("Password", None, True), {})],
+    ids=["keyword", "positional"],
+)
+def test_typer_prompts_hidden_input_is_refused_however_it_is_passed(args, kwargs):
+    """typer.prompt(text, default, hide_input, ...) takes hide_input by position too."""
+    import typer
+
+    from otto.lifecycle import interruptible_prompt
+
+    async def body() -> str:
+        return await interruptible_prompt(typer.prompt, *args, **kwargs)
+
+    with pytest.raises(ValueError, match="hidden prompt"):
+        run_command(body(), _controller=_controller())
+
+
+def test_hidden_input_through_a_forwarding_wrapper_or_a_partial_is_refused():
+    """A wrapper's **kwargs hides the keyword from the signature; a partial presets it."""
+    import functools
+
+    import typer
+
+    from otto.lifecycle import interruptible_prompt
+
+    def wrapper(*args: object, **kwargs: object) -> object:
+        return typer.prompt(*args, **kwargs)
+
+    calls = [
+        (wrapper, ("Password",), {"hide_input": True}),
+        (functools.partial(typer.prompt, hide_input=True), ("Password",), {}),
+    ]
+    for prompt, args, kwargs in calls:
+
+        async def body(prompt=prompt, args=args, kwargs=kwargs) -> object:
+            return await interruptible_prompt(prompt, *args, **kwargs)
+
+        with pytest.raises(ValueError, match="hidden prompt"):
+            run_command(body(), _controller=_controller())

@@ -244,8 +244,10 @@ def test_no_allowed_entry_is_stale() -> None:
 def test_the_covered_sites_are_seen_and_read_as_covered() -> None:
     """The calls this guard exists for are read, and read as covered."""
     for rel, function in [
-        ("cli/init.py", "_ask"),
-        ("cli/tunnel.py", "remove"),
+        # The prompts in init and tunnel remove pass the prompt to
+        # otto.lifecycle.interruptible_prompt, which hands the terminal over for
+        # the wait (#1003); tests/unit/test_no_prompt_blocks_an_async_command.py
+        # keeps every prompt there.
         ("host/interact.py", "_pump_remote_to_stdout"),
         ("host/interact.py", "_run_bridge"),
     ]:

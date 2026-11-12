@@ -168,7 +168,7 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
             inline_hosts=inline_hosts,
         )
         if interactive:
-            answers = _ask(config, candidates, name_given=bool(name))
+            answers = await _ask(config, candidates, name_given=bool(name))
             config, candidates = answers.config, answers.areas
         report = scaffold(config, areas=candidates)
         doctor = check_project(config.root)
@@ -205,17 +205,18 @@ class _Answers:
     areas: list[str]
 
 
-def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _Answers:
+async def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _Answers:
     """Ask every question before anything is written.
 
     The product name and version only when settings will be scaffolded; then
     one confirmation per candidate, skipping an area a chosen one already
-    pulls in (the library scaffolds it as a prerequisite). Each question holds
-    the terminal (:func:`~otto.logger.management.direct_terminal`), so it is
-    on screen, after everything printed before it, when ``input()`` waits.
+    pulls in (the library scaffolds it as a prerequisite). Each question goes
+    through :func:`~otto.lifecycle.interruptible_prompt`, so it is on screen,
+    after everything printed before it, when ``input()`` waits, and a Ctrl+C
+    there ends the command before anything is written (#1003).
     """
     from ..init.scaffolder import scaffold_prerequisites
-    from ..logger.management import direct_terminal
+    from ..lifecycle import interruptible_prompt
 
     if "settings" in candidates:
         if name_given:
@@ -223,17 +224,18 @@ def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _A
         else:
             # str() pins what click already guarantees: with a str default and
             # no ``type=``, prompt returns str — but its declared return type is Any.
-            with direct_terminal():
-                name = str(typer.prompt("Product name", default=config.root.name))
-        with direct_terminal():
-            version = str(typer.prompt("Version", default=config.version))
+            name = str(
+                await interruptible_prompt(typer.prompt, "Product name", default=config.root.name)
+            )
+        version = str(await interruptible_prompt(typer.prompt, "Version", default=config.version))
         config = dataclasses.replace(config, name=name, version=version)
     chosen: list[str] = []
     for area in candidates:
         if area in scaffold_prerequisites(root=config.root, areas=chosen):
             continue
-        with direct_terminal():
-            wanted = typer.confirm(f"Scaffold the {area} area?", default=True)
+        wanted = await interruptible_prompt(
+            typer.confirm, f"Scaffold the {area} area?", default=True
+        )
         if wanted:
             chosen.append(area)
     return _Answers(config, chosen)

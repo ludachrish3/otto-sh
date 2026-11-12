@@ -77,7 +77,7 @@ REF_OVER_LITERAL_TABLE = "registry Ref over a literal table"
 REF_ENGINE = "Ref engine"
 """``Ref.resolve`` itself; every target it imports was audited where its ``Ref`` was built."""
 LOADED_MODULE_LOOKUP = "loaded-module lookup"
-"""``import_module`` of a class's own ``__module__``: a cached lookup that imports nothing."""
+"""``import_module`` of a class's or function's own ``__module__``: imports nothing."""
 
 # Every site that resolves a computed target: (file under src/, enclosing scope, class).
 # Keyed by scope, not line, so an edit elsewhere in the file does not move it.
@@ -116,6 +116,7 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/kmodcov/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/lab/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/labs/__init__.py", "__getattr__", FACADE_RESOLVER),
+    ("otto/lifecycle.py", "interruptible_prompt", LOADED_MODULE_LOOKUP),
     ("otto/link/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/logger/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/logger/__init__.py", "__getattr__", FACADE_RESOLVER),

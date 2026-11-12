@@ -19,6 +19,9 @@ sshd rather than calling the handler.
 
 import asyncio
 import contextlib
+import functools
+import importlib
+import inspect
 import logging
 import os
 import select
@@ -80,6 +83,152 @@ there, and a nested command on a worker thread already declines to install
 def _phase_owns_signals() -> bool:
     """Report whether a handler-installing :func:`sync_phase` is in force."""
     return bool(_phase_guards)
+
+
+async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs: Any) -> R:
+    """Ask *prompt* (``typer.prompt``, ``typer.confirm``) so that Ctrl+C ends the command there.
+
+    For a prompt inside an ``async def`` command (#1003). Called directly, the
+    prompt would block the command loop's only thread in ``input()``, and
+    :func:`run_command`'s signal handlers are loop callbacks, so a Ctrl+C would
+    wait for the person to answer and land after the command had done what the
+    answer authorised.
+
+    So the prompt runs on a daemon thread, and the command AWAITS its answer.
+    The loop stays free, and a signal is the run's ordinary interrupt: the
+    body is cancelled at this await, with the usual status line, sweep, second-
+    press force and exit 128 + signum. Nothing about signals is decided here;
+    the loop's own wakeup fd carries the delivery, so a press can land at any
+    instant, before the read starts included, and is never lost.
+
+    The terminal is handed over for the wait
+    (:func:`~otto.logger.management.direct_terminal`, which applies to every
+    thread), so the question is on screen before ``input()`` waits. What the
+    prompt raises (``click.Abort`` on end of input) is raised here.
+
+    The thread is a DAEMON, deliberately, and not ``asyncio.to_thread``'s: an
+    interrupted prompt's thread stays blocked in its read, and the default
+    executor is joined when the loop shuts down, which would hold the exit
+    until someone pressed Enter. Nothing joins a daemon thread; the process
+    exits around it, which is what an interrupted command does next.
+
+    For the same reason the thread does not read through ``input()``. On a
+    console, ``input()`` reads with C stdio (``fgets``), holding the C
+    ``stdin`` lock while it waits, and C ``exit()`` takes every stdio lock to
+    flush: an abandoned prompt would hang the exit after all of Python's own
+    cleanup. So while the prompt waits, the visible-prompt reader of the click
+    *prompt* comes from (typer's own fork, ``typer._click``, for
+    ``typer.prompt``) is ``_read_prompt_line``: the line read ``input()``
+    itself falls back to when stdin is not the console. A reader someone else
+    installed (click's ``CliRunner`` echoes the input it feeds) is left alone.
+
+    One prompt at a time: the terminal has one reader, and a prompt the
+    command gave up on is still that reader until its thread returns, so a
+    second call while any prompt thread lives raises :class:`RuntimeError`
+    (it would also find the swapped reader and could put ``input`` back under
+    the first). A hidden prompt (``hide_input=True``) raises
+    :class:`ValueError` before anything starts: :func:`getpass.getpass`
+    turns echo off and restores it in a ``finally`` that an abandoned thread
+    never reaches, so an interrupt would leave the person's terminal silent.
+    """
+    from .logger.management import direct_terminal
+
+    if _asks_hidden(prompt, args, kwargs):
+        raise ValueError("cannot ask a hidden prompt: an interrupt would leave echo off")
+    loop = asyncio.get_running_loop()
+    answer: "asyncio.Future[R]" = loop.create_future()  # ty: ignore[unsound-assignment] — typeshed types create_future() as Future[Any]
+    # The prompt's OWN module: typer ships a fork of click (typer._click), whose
+    # termui has its own reader, so `click.termui` is not necessarily it. That
+    # module defined the prompt, so it is loaded: importing it by name hands it
+    # back and imports nothing.
+    module_name = getattr(prompt, "__module__", None)
+    termui: Any = importlib.import_module(module_name) if module_name else None
+
+    def ask() -> None:
+        # The THREAD owns the swap, both ways, and puts the reader back BEFORE
+        # the command hears the answer, so the next prompt finds `input` and
+        # swaps in turn. click looks the reader up when it reads, after echoing
+        # the question, so a command that stopped waiting must not put `input`
+        # back under a prompt that has not read yet: that read would then hold
+        # the C stdin lock through exit(). A prompt the command gave up on keeps
+        # the Python reader until it returns, which on the command line is
+        # never: the process exits first.
+        swap = getattr(termui, "visible_prompt_func", None) is input
+        if swap:
+            termui.visible_prompt_func = _read_prompt_line
+        outcome: "Callable[[], None]"
+        try:
+            result = prompt(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the command's side
+            outcome = functools.partial(answer.set_exception, exc)
+        else:
+            outcome = functools.partial(answer.set_result, result)
+        finally:
+            if swap:
+                termui.visible_prompt_func = input
+            _PROMPTING.release()  # the reader is back: the next prompt may start
+
+        def settle() -> None:
+            if not answer.done():  # done: the command stopped waiting
+                outcome()
+
+        # The loop may be gone by the time a prompt the command gave up on is
+        # answered: then there is nobody to tell.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(settle)
+
+    with direct_terminal():
+        if not _PROMPTING.acquire(blocking=False):
+            raise RuntimeError("another prompt is still reading the terminal")
+        try:
+            threading.Thread(target=ask, name="otto-prompt", daemon=True).start()
+        except BaseException:
+            _PROMPTING.release()  # no thread to release it
+            raise
+        return await answer
+
+
+# Held from a prompt's start until its THREAD returns (released there, which a
+# plain Lock allows): see interruptible_prompt's "one prompt at a time".
+_PROMPTING = threading.Lock()
+
+
+def _asks_hidden(
+    prompt: "Callable[..., Any]", args: "tuple[Any, ...]", kwargs: "dict[str, Any]"
+) -> bool:
+    """Whether this call of *prompt* sets ``hide_input``, by keyword or by position.
+
+    The keyword is checked as given (a forwarding wrapper's ``**kwargs``
+    hides it from the signature), and the call is also bound against the
+    prompt's own signature with its defaults applied: ``typer.prompt`` takes
+    ``hide_input`` positionally, and a ``functools.partial`` can preset it.
+    A call that does not bind is left for the prompt itself to reject.
+    """
+    if kwargs.get("hide_input"):
+        return True
+    try:
+        bound = inspect.signature(prompt).bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        return False
+    bound.apply_defaults()
+    return bool(bound.arguments.get("hide_input"))
+
+
+def _read_prompt_line(prompt: str = "") -> str:
+    """Write *prompt* and read one line from ``sys.stdin``: ``input()``'s non-console branch.
+
+    What :func:`input` does when stdin or stdout is not the console. On the
+    console it would read through C stdio instead, whose lock an abandoned
+    prompt thread would hold through C ``exit()`` (see
+    :func:`interruptible_prompt`). End of input is :class:`EOFError`, as from
+    ``input()``, which click turns into its ``Abort``.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise EOFError
+    return line.removesuffix("\n")
 
 
 # Deliberately NOT rooted on otto.errors.OttoError: re-parenting onto an

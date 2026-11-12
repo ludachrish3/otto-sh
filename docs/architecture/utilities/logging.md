@@ -64,7 +64,10 @@ stops draining for the session once a drain gives up, so a stuck sink costs
 one bounded wait rather than one per keystroke. Run a prompt inside
 {func}`~otto.logger.management.direct_terminal`: it drains, and then, until
 the block ends, the proxies stop queueing and write straight to the terminal,
-so the question is on screen before `input()` waits. That direct writing
+so the question is on screen before `input()` waits. In an `async def` command
+await {func}`~otto.lifecycle.interruptible_prompt` instead, which holds this
+block while the prompt waits on its own thread, so Ctrl-C can end it
+([Interrupts](../lifecycle.md#interrupts-two-stages-one-exit-code)). That direct writing
 applies to every thread while the block lasts, so each block wraps only the
 prompt call itself. `tests/unit/test_raw_terminal_writers_drain_first.py`
 fails on a site that does neither and is not listed with its reason. The
