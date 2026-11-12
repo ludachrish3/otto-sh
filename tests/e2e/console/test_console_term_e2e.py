@@ -3,7 +3,8 @@
 Login and run over both dial modes, the ``shell`` transfer on the one
 session, logout on close, and the failures a console must raise loudly
 (already logged in, a refused login, a busy line), ``exec`` on the one
-session with a named session still refused, and a reboot that never takes.
+session with a named session still refused, and a reboot that never takes
+(otto logs the line out).
 
 Every test releases the line and leaves it at its login prompt; the
 ``test2_console`` fixture (``conftest.py``) checks that after each test and,
@@ -94,17 +95,16 @@ async def test_already_logged_in_fails_loud():
         await h.close()
 
 
-async def test_a_reboot_that_never_takes_says_so_and_leaves_the_line_alone(monkeypatch):
+async def test_a_reboot_that_never_takes_says_so_and_logs_the_line_out(monkeypatch):
     """#451: a soft reboot that never takes effect, on a console host.
 
     NOTHING REBOOTS: the in-shell reboot is replaced by a no-op on this host
     object, and checked to be replaced before the call. The abandoned
     client's shell then answers every poll with output and no login prompt,
     which reads as not up, so the up phase runs out. Every poll met the same
-    prompt, so the result says the reboot did not take, quoting it, and says
-    how to log the line out; otto types nothing into the line. The test then
-    logs it out through ``otto host <id> logout``'s path and proves it is
-    back at ``login:``.
+    prompt, so the result says the reboot did not take, quoting it, and otto
+    logs the line out through ``otto host <id> logout``'s path: the line is
+    back at ``login:`` before the host is closed, and the message says so.
     """
     h = make_console_host("test2")
     try:
@@ -122,15 +122,11 @@ async def test_a_reboot_that_never_takes_says_so_and_leaves_the_line_alone(monke
         # whose password is the login name: the quote scrubs the password).
         assert "@test2:~$ ')" in msg, msg
         assert "the reboot likely did not take" in msg, msg
-        assert msg.endswith("; run `otto host test2 logout` to log the console line out"), msg
-        still = await console_answer(_OPTS.server, _OPTS.port)
-        assert not ends_at_login(still), f"otto logged the line out by itself: {still!r}"
-        reset = await h.logout()
-        assert reset.is_ok, reset
+        assert msg.endswith("; otto logged the console line out"), msg
+        answer = await console_answer(_OPTS.server, _OPTS.port)
+        assert ends_at_login(answer), f"the reboot left the line logged in: {answer!r}"
     finally:
         await h.close()
-    answer = await console_answer(_OPTS.server, _OPTS.port)
-    assert ends_at_login(answer), answer
 
 
 @pytest.mark.parametrize("host1", ["console"], indirect=True)

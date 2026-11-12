@@ -77,7 +77,10 @@ was left on it, and print the outcome:
 
 **What it does to a shared line.**  It ends *whatever* is on the line — a
 colleague's shell as readily as one a crashed run left behind — so it is a
-command you choose to run; otto never runs it on its own. It never types a
+command you choose to run. otto runs it on its own in one case only: a
+console `reboot --wait` that did not take, where every poll met the shell
+the reboot was typed into
+({ref}`the conditions <console-failures>`). It never types a
 credential. Otto's own session on the host is closed first, and reconnects
 on its next command.
 

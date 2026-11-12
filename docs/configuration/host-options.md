@@ -480,12 +480,13 @@ login happens before anything else runs on the line — see
 there is no login step; the readiness handshake that follows is the check
 that a shell answers.
 
-Anything but a `login:` prompt is an error. otto never resets a console on
-its own and never proceeds on a session it did not open — **a console that
-is already logged in always fails**, even if the session left on it is
-otto's own from an earlier run. Resetting the line is an operator's
-decision: {doc}`../cli/host/login` covers `otto host <id> logout` and
-`login --force`.
+Anything but a `login:` prompt is an error. otto never resets a console
+when it connects and never proceeds on a session it did not open — **a
+console that is already logged in always fails**, even if the session left
+on it is otto's own from an earlier run. Resetting the line is an
+operator's decision: {doc}`../cli/host/login` covers `otto host <id> logout`
+and `login --force`. The one reset otto makes on its own is after a
+`reboot --wait` that did not take ({ref}`below <console-failures>`).
 
 (console-failures)=
 
@@ -557,9 +558,8 @@ session on it:
   ignored, or a hard one that never cut power) therefore passes the down
   phase at once and times out in the up phase. When the up phase runs out,
   the reboot fails with ``was still at a logged-in shell <N>s after the
-  reboot (last seen: '…') — the reboot likely did not take; run
-  `otto host <id> logout` to log the console line out`` only when all of
-  these hold:
+  reboot (last seen: '…') — the reboot likely did not take; otto logged the
+  console line out`` only when all of these hold:
 
   - every up-phase poll found output and no `login:`, all ending on the
     same last line (the shell's prompt; a boot log's last line changes
@@ -573,10 +573,20 @@ session on it:
   decides, and it needs at least two up-phase polls. A line that answers
   every poll with only whitespace counts as a shell with an empty prompt,
   so it can give "did not take" too. In every other case the reboot fails
-  with the plain `did not become reachable`. Either way otto never types into the console line
-  during a reboot: the shell, whatever it is, stays as it was, and you log
-  it out with `otto host <id> logout` once you have read the quote. The
-  last poll of a wait can run past `--timeout` by up to one poll's bound.
+  with the plain `did not become reachable`.
+
+  On "did not take", and only then, otto logs the console line out before
+  it returns: it runs exactly what `otto host <id> logout` runs, so the
+  line is back at `login:`. If that logout fails, the message says so
+  instead (``otto could not log the console line out (<why>); run `otto
+  host <id> logout` to log it out``); the reboot's verdict stands either
+  way. On `did not become reachable` otto types nothing into the line:
+  there it may be showing boot output, an `(initramfs)` shell or a
+  bootloader prompt, where the logout's Ctrl-C and Ctrl-D do harm, and
+  telling those apart from the shell the reboot was typed into is what
+  the conditions above are for. Read what the line shows before running
+  `otto host <id> logout` yourself. The last poll of a wait can run past
+  `--timeout` by up to one poll's bound.
 
 When otto closes the session it logs out (per `logout`), so the next client
 finds `login:`, then waits for the line to go quiet before it releases it.
