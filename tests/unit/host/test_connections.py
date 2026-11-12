@@ -359,6 +359,9 @@ class _FakeHop:
     async def close(self):
         self.closed = True
 
+    def abort(self):
+        pass
+
 
 def _console_mgr(dial, hop, **opts):
     from otto.host.connections import ConsoleEndpoint, TermContext

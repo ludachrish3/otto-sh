@@ -247,13 +247,15 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         :meth:`~otto.host.host.BaseHost.rebuild_connections` calls: how a host
         moves to another event loop (or a rebooted board). The old
         manager's transports may belong to a dead loop, so they are abandoned
-        rather than closed, except a cached console client, whose line is
-        released at once: the console server serves one client, so a client
-        left holding it would refuse every dial the new manager makes.
+        rather than closed, except for what it holds beyond the board,
+        released at once (``ConnectionManager.abandon``): a cached console
+        client, since the console server serves one client and a client left
+        holding it would refuse every dial the new manager makes, and its hop
+        transports, which nothing else would close.
         """
-        abandon_console = getattr(self._connections, "abandon_console", None)
-        if abandon_console is not None:
-            abandon_console()
+        abandon = getattr(self._connections, "abandon", None)
+        if abandon is not None:
+            abandon()
         self._build_connection_state()
 
     @override

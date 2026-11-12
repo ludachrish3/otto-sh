@@ -73,6 +73,9 @@ class _FakeHop:
     async def close(self) -> None:
         await self._points.point("hop", surface=Surface.NETWORK)
 
+    def abort(self) -> None:
+        pass
+
 
 def _manager(points: ChaosPoints) -> ConnectionManager:
     """A REAL ConnectionManager (the chain under test) over instrumented fakes."""
@@ -275,6 +278,68 @@ async def test_telnet_and_console_close_before_any_other_teardown():
         "console hop",
         "hop",
     ]
+
+
+def _manager_with_hops(order: list[str]) -> ConnectionManager:
+    mgr = ConnectionManager(ip="10.0.0.1", creds=[], term="console", name="box", host_id="box")
+    mgr._console_conn = _RecordingStep(order, "console")
+    mgr._console_endpoint = ConsoleEndpoint(
+        server_ip="10.0.0.2", hop=_RecordingStep(order, "console hop")
+    )
+    mgr._hop = _RecordingStep(order, "hop")
+    return mgr
+
+
+def test_abandon_releases_the_line_then_every_hop():
+    """A manager dropped unclosed lets go of what reaches past its target (#451).
+
+    The console server's hop and the host's own outlive a reboot of the
+    target, and nothing closes a dropped manager: unreleased, each leaks an
+    open ssh connection and a forward listener.
+    """
+    order: list[str] = []
+    mgr = _manager_with_hops(order)
+
+    mgr.abandon()
+
+    assert order == ["abort:console", "abort:console hop", "abort:hop"]
+    assert mgr._console_conn is None
+
+
+def test_abandon_with_nothing_dialed_is_a_no_op():
+    ConnectionManager(ip="10.0.0.1", creds=[], term="ssh", name="box", host_id="box").abandon()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_close_aborts_the_hops_it_never_reached():
+    """Cancelled mid-teardown of the target, the hops are aborted, not left open (#999).
+
+    The close chain tears the target down before the hops, so a cancel there
+    never reaches the hop steps; only the cancel arm can release them.
+    """
+    order: list[str] = []
+    reached, never = asyncio.Event(), asyncio.Event()
+
+    class _StalledSsh:
+        _transport = None
+
+        def close(self) -> None:
+            pass
+
+        async def wait_closed(self) -> None:
+            reached.set()
+            await never.wait()
+
+    mgr = _manager_with_hops(order)
+    mgr._console_conn = None
+    mgr._ssh_conn = _StalledSsh()
+    task = asyncio.ensure_future(mgr.close())
+    await reached.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert order == ["abort:console hop", "abort:hop"]
 
 
 @pytest.fixture

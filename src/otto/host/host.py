@@ -2618,6 +2618,10 @@ class BaseHost(ABC):
     def rebuild_connections(self) -> None:
         """Replace this host's connection managers, dropping the old ones unclosed.
 
+        What the old ones hold beyond the device, a console line and hop
+        transports, is released at once, synchronously; the rest is left to
+        die with the device or its loop.
+
         How a host moves to another event loop or past a rebooted device, and
         what to call after changing its ``hop``: the next use dials fresh.
         Bumps the host's connection epoch first, so a close still running

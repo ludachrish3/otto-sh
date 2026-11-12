@@ -12,6 +12,7 @@ import pytest
 
 import otto.host.connections as connections_mod
 from otto.host.element import Element
+from otto.host.embedded_host import ZephyrHost
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.options import RebootOptions
@@ -316,16 +317,57 @@ def test_a_fresh_probe_closes_its_throwaway_manager_every_poll(monkeypatch):
 
 
 class _RecordingHop:
-    """A hop transport stand-in: hands out a tunnel object and counts its closes."""
+    """A hop transport stand-in: hands out a tunnel object and counts its closes and aborts."""
 
     def __init__(self) -> None:
         self.closes = 0
+        self.aborts = 0
 
     async def get_tunnel(self):
         return MagicMock()
 
     async def close(self) -> None:
         self.closes += 1
+
+    def abort(self) -> None:
+        self.aborts += 1
+
+
+def _hopped(monkeypatch, family: str) -> "tuple[UnixHost | ZephyrHost, list[_RecordingHop]]":
+    """A *family* host behind hop ``h``, every hop transport it builds recorded."""
+    hops: "list[_RecordingHop]" = []
+
+    def build_hop(self, hop_id=None):
+        hop = _RecordingHop()
+        hops.append(hop)
+        return hop
+
+    cls = UnixHost if family == "unix" else ZephyrHost
+    monkeypatch.setattr(cls, "_build_hop_transport", build_hop)
+    kwargs = {"creds": [Cred(login="u", password="p")]} if family == "unix" else {}
+    host = cls(ip="10.0.0.1", element=Element(name="box"), log=LogMode.QUIET, hop="h", **kwargs)
+    return host, hops
+
+
+@pytest.mark.parametrize("family", ["unix", "embedded"])
+def test_a_rebuild_releases_the_dropped_managers_hops(monkeypatch, family):
+    """A rebuild drops the old manager unclosed, but not its hops (#1023).
+
+    A hop reaches a box a reboot does not touch, so it is still open; left
+    to the dropped manager, its ssh connection and forward listener leak.
+    Both families' rebuilds go through ``ConnectionManager.abandon``.
+    """
+    host, hops = _hopped(monkeypatch, family)
+    old = host._connections
+    console_hop = _RecordingHop()
+    old._console_endpoint = connections_mod.ConsoleEndpoint(server_ip="10.0.0.2", hop=console_hop)
+
+    host.rebuild_connections()
+
+    assert host._connections is not old
+    assert [hops[0].aborts, console_hop.aborts] == [1, 1]
+    assert [h.aborts for h in hops[1:]] == [0] * len(hops[1:])  # the new manager's hop is live
+    assert len(hops) == 2
 
 
 @pytest.mark.parametrize("outcome", ["succeeds", "refused", "hangs"])

@@ -517,14 +517,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         on the loop it runs on.
 
         The old manager is dropped, not closed (its transports may belong to
-        a dead loop or a rebooted device), except for a cached console
-        client, whose line is released at once: the console server serves
-        one client, so a client left holding it would refuse every dial the
-        new manager makes.
+        a dead loop or a rebooted device), except for what it holds beyond
+        the device, released at once (``ConnectionManager.abandon``): a
+        cached console client, since the console server serves one client
+        and a client left holding it would refuse every dial the new manager
+        makes, and its hop transports, which nothing else would close.
         """
-        abandon_console = getattr(self._connections, "abandon_console", None)
-        if abandon_console is not None:
-            abandon_console()
+        abandon = getattr(self._connections, "abandon", None)
+        if abandon is not None:
+            abandon()
         # The line lock binds to the loop that first contends it; a rebuild
         # is how a host moves to a fresh loop, so it starts a fresh lock.
         self._console_exec_lock = None

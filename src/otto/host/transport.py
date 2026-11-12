@@ -58,6 +58,32 @@ async def teardown_ssh_connection(conn: "SSHClientConnection") -> None:
             asyncio_transport.close()
 
 
+def abort_ssh_connection(conn: "SSHClientConnection") -> None:
+    """Abort an asyncssh connection now, synchronously. Never raises.
+
+    The synchronous counterpart of :func:`teardown_ssh_connection`, for a
+    caller that cannot await (a manager dropped on a rebuild, a cancelled
+    teardown). The asyncio transport is aborted directly as well: asyncssh's
+    ``abort()`` only schedules that abort, and skips it altogether once
+    asyncssh has dropped its transport reference, which is the zombie
+    :func:`teardown_ssh_connection` exists for. On a running loop the socket
+    closes on the loop's next turn. On a closed loop either step may raise;
+    that is logged, and the socket is closed when it is garbage-collected,
+    with a ``ResourceWarning``.
+    """
+    asyncio_transport = getattr(conn, "_transport", None)
+    for what, abort in (
+        ("ssh connection", conn.abort),
+        ("asyncio transport", getattr(asyncio_transport, "abort", None)),
+    ):
+        if abort is None:
+            continue
+        try:
+            abort()
+        except Exception as exc:  # noqa: BLE001 — best-effort abort, never raises
+            logger.debug(f"{what} abort failed (non-fatal): {exc!r}")
+
+
 class HopTransportTornDownError(OttoError, RuntimeError):
     """A ``close()`` overtook this operation while it was still building.
 
@@ -98,6 +124,14 @@ class HopTransport(Protocol):
 
     async def close(self) -> None:
         """Close the transport and release all forwarded ports."""
+        ...
+
+    def abort(self) -> None:
+        """Release the transport and its forwarded ports now, synchronously. Never raises.
+
+        For a caller that cannot await. Like :meth:`close`, it leaves the
+        transport usable: a later call builds a fresh tunnel.
+        """
         ...
 
 
@@ -325,14 +359,27 @@ class _SshHopTransport:
         GENERATION of resources, so anything still being built for the old one
         is released by its own creation path instead of being handed over.
         """
-        # The generation ends FIRST, before anything below can yield. This is
-        # the whole mechanism: each creation path compares the generation it
+        conn = self._end_generation()
+        if conn is not None:
+            await teardown_ssh_connection(conn)
+
+        if self._parent is not None:
+            await self._parent.close()
+
+    def _end_generation(self) -> "SSHClientConnection | None":
+        """End the current generation without yielding; close its listeners, return its tunnel.
+
+        The first half of both :meth:`close` and :meth:`abort`; each then
+        releases the returned tunnel its own way and cascades to the parent.
+        """
+        # The generation ends FIRST, before anything can yield. This is the
+        # whole mechanism: each creation path compares the generation it
         # started in against this one after its await, so a resource that
-        # finishes building during this teardown releases itself rather than
+        # finishes building during a teardown releases itself rather than
         # registering with an owner that is gone. Pinned by
         # ``test_the_generation_ends_before_close_can_yield`` — the mocked
         # ``wait_closed`` in the other window tests never yields, so they cannot
-        # see this ordering and a bump moved to the end of the method passes
+        # see this ordering and a bump moved to the end of ``close`` passes
         # every one of them.
         self._generation += 1
         # Take-then-clear, as in ``ConnectionManager.close``: the resource stops
@@ -342,9 +389,9 @@ class _SshHopTransport:
         conn, self._conn = self._conn, None
 
         # Each listener in its own guard. Unguarded, one raising ``close()``
-        # would skip every remaining listener AND the tunnel teardown below
-        # AND the parent cascade — the cleanup path of a leak fix becoming the
-        # largest leak in the file. Same reasoning as ``teardown_step`` in
+        # would skip every remaining listener AND the tunnel teardown AND the
+        # parent cascade — the cleanup path of a leak fix becoming the largest
+        # leak in the file. Same reasoning as ``teardown_step`` in
         # ``ConnectionManager.close``, which exists for this; imported inside
         # the method because ``connections`` imports this module for typing,
         # and a module-level import back would be a cycle waiting to become
@@ -355,9 +402,21 @@ class _SshHopTransport:
         for (dest_host, dest_port), listener in forwards.items():
             with teardown_step(f"{dest_host}:{dest_port}", "port forward"):
                 listener.close()
+        return conn
 
+    def abort(self) -> None:
+        """Release the forwards, the tunnel and the parent now, synchronously. Never raises.
+
+        The synchronous counterpart of :meth:`close`, ending the generation
+        the same way, so a creation path still in flight releases its own
+        result. The listeners close on the spot and the tunnel is aborted
+        (:func:`abort_ssh_connection`), its socket going on the loop's next
+        turn. A ``ConnectionManager`` dropped by a rebuild, or whose close is
+        cancelled, calls it: its hops reach a box the rebuild did not touch,
+        so nothing else would ever close them.
+        """
+        conn = self._end_generation()
         if conn is not None:
-            await teardown_ssh_connection(conn)
-
+            abort_ssh_connection(conn)
         if self._parent is not None:
-            await self._parent.close()
+            self._parent.abort()
