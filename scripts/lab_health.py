@@ -16,22 +16,22 @@ each defined host, reports reachability and a timestamp:
   + console responsiveness rather than wall-clock drift; a BusyBox guest
   answers its telnet ``login:`` prompt and is reported as such.
 
-* **Serial consoles.** Every entry that offers ``console`` in its term menu
-  (``valid_terms``) and carries ``console_options`` gets a SECOND row, of
-  TYPE ``console``, in addition to its own: the state that console line is in
-  right now, read from the console server exactly the way otto's console term
-  reads it (nudge Enter, classify the tail) — ``AT-LOGIN``, ``AT-PASSWORD``,
-  ``LOGGED-IN``, ``SILENT`` or ``BUSY``. A console that logs in (the entry has
-  creds) is healthy only ``AT-LOGIN``; a credential-less one (Zephyr) is
-  healthy ``LOGGED-IN`` too, since its shell prompt IS its idle state. With
-  ``--logout-consoles`` a login console found ``LOGGED-IN`` or ``AT-PASSWORD``
-  is reset (Ctrl-C at a password prompt; up to three rounds of Ctrl-C, a
-  wait for it to land, then Ctrl-D and Enter) and its row reports where the
-  reset left it. No password is ever
-  typed. A credential-less console's row takes the probe's full 10 s wait —
-  a shell prompt that is not a login prompt is only knowable by waiting out
-  the budget — so the three Zephyr rows add about 35 s to a run; that pause
-  is the probe working, not a hang.
+* **Serial consoles.** Every entry that logs in (has creds), offers
+  ``console`` in its term menu (``valid_terms``) and carries
+  ``console_options`` gets a SECOND row, of TYPE ``console``, in addition to
+  its own: the state that console line is in right now, read from the
+  console server exactly the way otto's console term reads it (nudge Enter,
+  classify the tail) — ``AT-LOGIN``, ``AT-PASSWORD``, ``LOGGED-IN``,
+  ``SILENT`` or ``BUSY``. It is healthy only ``AT-LOGIN``. With
+  ``--logout-consoles`` a console found ``LOGGED-IN`` or ``AT-PASSWORD`` is
+  reset (Ctrl-C at a password prompt; up to three rounds of Ctrl-C, a wait
+  for it to land, then Ctrl-D and Enter) and its row reports where the reset
+  left it. No password is ever typed. A credential-less console (Zephyr) gets
+  no second row: its own row already dials that console for the uptime, and
+  a serial console serves one client, so a second dial would only hold the
+  line busy again (its state row would also wait out the full 10 s budget,
+  since a shell prompt that is not a login prompt is only knowable that
+  way).
 
 With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*``,
 ``zephyr-snmp-relay-*`` and ``busybox-qemu-*`` systemd units on each hop VM,
@@ -527,6 +527,15 @@ def hopped_ssh_host_ids(path: Path) -> list[str]:
     return [_host_id(h) for h in _load_hosts(path) if _is_hopped_unix(h)]
 
 
+def _has_creds(host: dict) -> bool:
+    """Say whether *host* carries login credentials of its own.
+
+    The one reading of ``creds`` that routing and the console-row decision
+    share: an absent key and an empty list both mean none.
+    """
+    return bool(host.get("creds"))
+
+
 def _is_ssh_host(host: dict) -> bool:
     """Return True if we log in directly over SSH (the ``UnixHost`` family).
 
@@ -546,7 +555,7 @@ def _is_ssh_host(host: dict) -> bool:
     it is also why the BusyBox guests, which ARE ``os_type: "unix"``, need no
     new literal here — their hop is what routes them.
     """
-    return "creds" in host and not host.get("hop")
+    return _has_creds(host) and not host.get("hop")
 
 
 def _check_unix(host: dict) -> dict:
@@ -586,7 +595,7 @@ def _is_hopped_unix(host: dict) -> bool:
     return (
         host.get("os_type", "unix") == "unix"
         and bool(host.get("hop"))
-        and "creds" in host
+        and _has_creds(host)
         and (host.get("valid_terms") or ["ssh", "telnet"])[0] == "ssh"
     )
 
@@ -627,6 +636,17 @@ def wait_for_hopped_ssh(
     return result
 
 
+def _own_row_dials_console(host: dict) -> bool:
+    """Say whether *host*'s own row probes its serial console rather than an in-guest telnetd.
+
+    True for a credential-less entry with ``console_options`` (the Zephyr
+    consoles): it has no telnetd of its own, so :func:`_check_embedded` dials
+    the console port itself. A serial console serves ONE client, so such an
+    entry gets no separate console row — see :func:`_has_console_row`.
+    """
+    return bool(host.get("console_options")) and not _has_creds(host)
+
+
 def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     """Console responsiveness + uptime for a QEMU guest reached through its hop."""
     # A `term: "console"` host carries `console_options` (server + port): the
@@ -639,9 +659,11 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     # telnetd probe here and gets a separate console row from
     # `_check_console`. Creds is what discriminates the shapes, same as
     # `_is_ssh_host`'s rule: both entries list `console` in `valid_terms`, so
-    # the term menu cannot tell them apart.
-    console = host.get("console_options")
-    if console and not host.get("creds"):
+    # the term menu cannot tell them apart. `_own_row_dials_console` is that
+    # rule, and `_has_console_row` reads it too, so the credential-less
+    # console this row dials is never dialled a second time.
+    if _own_row_dials_console(host):
+        console = host["console_options"]
         hop_name = console["server"]
         hop = hops.get(hop_name)
         addr, port = "127.0.0.1", console["port"]
@@ -665,7 +687,7 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     # existed. Read off the entry's shape, never an os_type literal, for the
     # same reason `_is_ssh_host` does.
     guest_login = ""
-    if host.get("creds"):
+    if _has_creds(host):
         guest_user, guest_password = _ssh_user_pass(host["creds"])
         guest_login = guest_user
         probe_args += [guest_user, guest_password]
@@ -702,8 +724,20 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
 
 
 def _has_console_row(host: dict) -> bool:
-    """Say whether *host* offers ``console`` in its term menu and names where it is served."""
-    return bool(host.get("console_options")) and "console" in host.get("valid_terms", [])
+    """Say whether *host* gets a second, TYPE ``console``, row from :func:`_check_console`.
+
+    It must offer ``console`` in its term menu and name where it is served,
+    and its own row must not already have dialled that console
+    (:func:`_own_row_dials_console`): a second dial of a single-client port
+    would hold it for another settle plus the full budget, during which any
+    otto run sees the line busy, to report nothing the own row's uptime did
+    not already show.
+    """
+    return (
+        bool(host.get("console_options"))
+        and "console" in host.get("valid_terms", [])
+        and not _own_row_dials_console(host)
+    )
 
 
 # What each console state means in the report's info column.
@@ -721,14 +755,23 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
 
     SSHes to the console SERVER (``console_options.server``) and runs
     :data:`_CONSOLE_STATE_PROBE` against that server's ``127.0.0.1`` at
-    ``console_options.port`` — the address otto's ``dial: ssh`` mode uses. An
-    entry that logs in (carries its own ``creds``) is healthy only
-    ``AT-LOGIN``; a credential-less console (Zephyr) is healthy ``LOGGED-IN``
-    too, because its shell prompt is its idle state. *logout* asks the probe
-    to reset a ``LOGGED-IN`` / ``AT-PASSWORD`` line — only ever on an entry
-    with creds: Ctrl-D at a Zephyr shell is not a logout, and there is no
-    login prompt to go back to. No password is sent to the probe.
+    ``console_options.port`` — the address otto's ``dial: ssh`` mode uses.
+    Only an entry that logs in (carries its own ``creds``) reaches here — a
+    credential-less console is its own row's probe (see
+    :func:`_has_console_row`), so a Zephyr shell is never sent the reset,
+    where Ctrl-D is not a logout — and it is healthy only ``AT-LOGIN``.
+    *logout* asks the probe to reset a ``LOGGED-IN`` / ``AT-PASSWORD`` line.
+    No password is sent to the probe.
+
+    Raises:
+        ValueError: *host* is a credential-less console. Its own row already
+            holds that line, and the reset would send Ctrl-D to a Zephyr
+            shell; :func:`_has_console_row` never routes one here, so a call
+            that does is a routing defect to fix, not a row to report.
     """
+    if _own_row_dials_console(host):
+        msg = f"{host.get('element', '?')}: a credential-less console is probed by its own row"
+        raise ValueError(msg)
     console = host["console_options"]
     server_name = console["server"]
     server = hops.get(server_name)
@@ -738,9 +781,8 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
             "status": "NO-HOP",
             "info": f"console server {server_name!r} not in lab",
         }
-    logs_in = bool(host.get("creds"))
     probe_args = ["127.0.0.1", str(int(console["port"])), f"{_CONSOLE_STATE_BUDGET_S:g}"]
-    if logout and logs_in:
+    if logout:
         probe_args.append("reset")
     rc, out, err = _run_probe_on_hop(
         server, _CONSOLE_STATE_PROBE, *probe_args, timeout=_CONSOLE_STATE_SSH_TIMEOUT_S
@@ -762,8 +804,7 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
             "info": "reset failed",
             "detail": lines[1][len("RESET-FAILED") :].strip(),
         }
-    ok = state == "AT-LOGIN" or (state == "LOGGED-IN" and not logs_in)
-    return {"ok": ok, "status": state, "info": _CONSOLE_STATE_INFO[state]}
+    return {"ok": state == "AT-LOGIN", "status": state, "info": _CONSOLE_STATE_INFO[state]}
 
 
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
@@ -808,7 +849,7 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
 def _print_report(hosts: list[dict], hops: dict[str, dict], *, logout: bool = False) -> bool:
     """Probe every host, print the table, and return True iff all are healthy.
 
-    A console-capable entry (see :func:`_has_console_row`) prints a second row,
+    An entry :func:`_has_console_row` selects prints a second row,
     TYPE ``console``, right after its own; *logout* is handed to
     :func:`_check_console`.
     """
