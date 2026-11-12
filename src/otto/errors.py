@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 117 NAMED failures", not "anything otto
+therefore means "one of otto's 123 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,11 +24,11 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 71 of the 117 named classes. Of the other 46, thirty are rooted at
+  and 72 of the 123 named classes. Of the other 51, thirty-four are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-repository, term-backend, transfer-backend,
-  inventory, creds, reservation, power-controller, field, monitor, init and
-  gcov stamp-guard errors, and the session errors
+  inventory, creds, reservation, power-controller, field, monitor,
+  review-source refusal, init and gcov stamp-guard errors, and the session errors
   other than ``ProjectSelectionError`` and ``LoggingLevelsConflictError``,
   which are ``ValueError`` subclasses), fifteen sit under
   ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``HostKeyChangedError``,
@@ -37,9 +37,10 @@ rather than offering a comforting near-miss:
   ``NcPortSharedError``, ``ReadGateClosed``,
   ``RetryAttemptTimeoutError``, ``SessionSetupError``, ``UvNotFoundError``,
   ``WaitTimeoutError``), and
-  one sits under ``LookupError``
+  two sit under ``LookupError``
   (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
-  with no bound value) — 71 + 30 + 15 + 1 = 117, so the split accounts for
+  with no bound value, and ``UnknownSessionError``, for a monitor write
+  naming a session its source does not hold) — 72 + 34 + 15 + 2 = 123, so the split accounts for
   every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated

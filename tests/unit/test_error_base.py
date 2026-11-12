@@ -117,7 +117,14 @@ from otto.monitor.errors import (
     NoMonitorableHostsError,
     ReviewSourceError,
 )
-from otto.monitor.event_ops import EventChanged, EventValidationError
+from otto.monitor.event_ops import EventChanged, EventValidationError, IdsExhausted
+from otto.monitor.review_source import (
+    NotSwitchable,
+    SourceChanged,
+    UnknownSessionError,
+    UploadTooLarge,
+    ViewOnly,
+)
 from otto.params import (
     OptionsCollisionError,
     OptionsNotAvailableError,
@@ -252,6 +259,12 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (UnsupportedDBError, RuntimeError),
     (EventValidationError, ValueError),
     (EventChanged, Exception),
+    (IdsExhausted, ValueError),
+    (SourceChanged, Exception),
+    (ViewOnly, Exception),
+    (NotSwitchable, Exception),
+    (UploadTooLarge, Exception),
+    (UnknownSessionError, LookupError),
     (ReservationBackendError, Exception),
     (ReservationConstructionError, ValueError),
     (MissingReservationError, Exception),
@@ -307,6 +320,15 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # (#929): otto's own compare-then-write verdict, answered as a 409 by
         # the dashboard route, never a stdlib type a caller was already catching.
         EventChanged,
+        # A review source's write and upload refusals (#958): a write against a
+        # source the server no longer serves, an event id two events share, an
+        # upload to a source no upload replaces, an upload past the limit. Each
+        # is otto's own verdict on its served source, answered by its own
+        # dashboard status, never a stdlib type a caller was already catching.
+        SourceChanged,
+        ViewOnly,
+        NotSwitchable,
+        UploadTooLarge,
         # The init library's input refusal: a FieldError subclass, rootless like its base.
         InitInputError,
         # otto.session's refusals: a run that cannot start because of otto's

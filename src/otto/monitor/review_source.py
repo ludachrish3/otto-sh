@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from starlette.requests import Request
 
+from ..errors import OttoError
 from ..models.monitor import (
     EventRecord,
     MonitorExport,
@@ -53,7 +54,7 @@ def new_source_token() -> str:
     return secrets.token_urlsafe(9)
 
 
-class SourceChanged(Exception):  # noqa: N818 — named by the spec: a state, not a caller error
+class SourceChanged(OttoError):  # noqa: N818 — named by the spec: a state, not a caller error
     """A write named a source this server no longer serves; ``state`` is the one it serves now."""
 
     def __init__(self, state: MonitorSourceState) -> None:
@@ -61,11 +62,11 @@ class SourceChanged(Exception):  # noqa: N818 — named by the spec: a state, no
         self.state = state
 
 
-class ViewOnly(Exception):  # noqa: N818 — named by the spec: a state, not a caller error
+class ViewOnly(OttoError):  # noqa: N818 — named by the spec: a state, not a caller error
     """A write named an event id two events of the session share, so it names neither."""
 
 
-class UnknownSessionError(LookupError):
+class UnknownSessionError(OttoError, LookupError):
     """A write named a session the served source does not hold: the ONE spelling of that refusal."""
 
     def __init__(self, session_id: str) -> None:
@@ -73,11 +74,11 @@ class UnknownSessionError(LookupError):
         self.session_id = session_id
 
 
-class NotSwitchable(Exception):  # noqa: N818 — named by the spec: a state, not a caller error
+class NotSwitchable(OttoError):  # noqa: N818 — named by the spec: a state, not a caller error
     """An upload to a server whose source no upload replaces: a live run or a ``.db`` archive."""
 
 
-class UploadTooLarge(Exception):  # noqa: N818 — named by the spec: a state, not a caller error
+class UploadTooLarge(OttoError):  # noqa: N818 — named by the spec: a state, not a caller error
     """An upload larger than the limit :func:`read_upload` was given."""
 
     def __init__(self, limit: int) -> None:
