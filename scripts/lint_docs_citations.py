@@ -300,7 +300,7 @@ MAINTAINER_TARGETS = frozenset(
         "validate-ts",
         "vm-health",
         "web",
-        "web-clean",
+        "clean-web-assets",
         "web-dev",
         "web-install",
         "wheel-check",

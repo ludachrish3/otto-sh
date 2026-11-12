@@ -52,9 +52,8 @@ PY="$REPO/.venv/bin/python"
 
 # The gates of the `release` target, in the order the recipe chains them
 # (its `$(MAKE) <goal>` words; pinned by tests/unit/scripts/test_watch_release.py).
-STAGES=(release-preflight clean-dist web-install docs check-python budget-delta coverage nox-release \
-        web dashboard-all validate-ts release-matrix release-kmodcov-matrix release-campaign docs \
-        wheel-check gate-tip gate-status)
+STAGES=(release-preflight clean-dist clean-web-assets web-install budget-delta coverage nox-release \
+        release-matrix release-kmodcov-matrix release-campaign docs wheel-check gate-tip gate-status)
 
 usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 

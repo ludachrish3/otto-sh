@@ -2299,34 +2299,32 @@ def test_release_invokes_the_campaign_which_runs_every_excluded_lane_once():
     )
 
 
-def test_the_release_campaign_runs_after_the_matrices_and_before_the_docs():
+def test_the_release_campaign_runs_after_the_matrices():
     """G13b: the matrices commit, so they follow the functional legs; the campaign holds the bed.
 
-    The docs render the matrices, so the LAST docs build comes after both
-    (an early one runs among the cheap first stages to fail fast, #660).
+    The single docs build after the matrices and the campaign is pinned in
+    tests/unit/test_make_release_lanes.py
+    (test_the_release_builds_the_docs_once_after_the_matrices_and_the_campaign).
     """
     order = _make_invocations(_makefile_recipes()["release"])
-    last_docs = len(order) - 1 - order[::-1].index("docs")
     for earlier, later in (
         ("nox-release", "release-matrix"),
-        ("validate-ts", "release-matrix"),
         ("release-matrix", "release-kmodcov-matrix"),
         ("release-kmodcov-matrix", "release-campaign"),
     ):
         assert order.index(earlier) < order.index(later), (
             f"{earlier} must precede {later}; stages: {order}"
         )
-    assert order.index("release-campaign") < last_docs, (
-        f"the final docs build must follow the campaign; stages: {order}"
-    )
 
 
 def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
-    """G13c: the stamp check's fallback is `coverage`, and three stages are gone.
+    """G13c: the stamp check decides the coverage stage, and three stages are gone.
 
-    #660 moved the cheap stages (docs, check-python, budget-delta) ahead of
-    the stamp check, so a cheap failure costs minutes; the stamp's refusals
-    (exit 2) still come first, from an earlier probe of the same check.
+    The cheap stages run ahead of the coverage stage, so a cheap failure
+    costs minutes; the stamp's refusals (exit 2) still come first, from an
+    earlier probe of the same check. (The stages main's CI proves, the
+    budget-delta's place and the single docs build are pinned in
+    tests/unit/test_make_release_lanes.py, not restated here.)
 
     #566 C2/C4: `nox` (whose 3.10 session repeated `make coverage`'s
     selection) is `nox-release` (3.11 to 3.14 only); `profile` (its 38 checks
@@ -2373,17 +2371,10 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
         "the coverage stage must run `[ stamp = 0 ] || { make coverage && check; }` — the "
         "second check is what refuses a run the stamp withheld"
     )
-    for earlier, later in (
-        ("docs", "coverage"),
-        ("check-python", "coverage"),
-        ("budget-delta", "coverage"),
-        ("coverage", "nox-release"),
-        ("nox-release", "web"),
-        ("coverage", "release-matrix"),
-    ):
-        assert order.index(earlier) < order.index(later), (
-            f"{earlier} must precede {later}; stages: {order}"
-        )
+    # The fallback runs before any stage that commits (Q5).
+    assert order.index("coverage") < order.index("release-matrix"), (
+        f"coverage must precede release-matrix; stages: {order}"
+    )
 
 
 def _marker_lanes_a_stage_misses(stage: str, marker: str) -> "list[str]":

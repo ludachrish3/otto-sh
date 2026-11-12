@@ -49,7 +49,7 @@ from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_FULL_COVERAGE_FLOOR = 95.5
+_FULL_COVERAGE_FLOOR = 96.0
 _HOSTLESS_COVERAGE_FLOOR = 94.75
 
 
@@ -234,8 +234,9 @@ def test_the_floor_readers_fail_loud_on_the_shapes_they_must_not_guess() -> None
     )
     # The `?=` idiom this Makefile uses elsewhere is a declaration too.
     assert makefile_threshold("COVERAGE_THRESHOLD ?= 96\n", "COVERAGE_THRESHOLD") == 96
-    # A decimal floor reads as its own number, not truncated to the integer part.
-    assert makefile_threshold("COVERAGE_THRESHOLD := 95.5\n", "COVERAGE_THRESHOLD") == 95.5
+    # A decimal floor reads as its own number, not truncated to the integer part
+    # (a synthetic value, independent of the production floor).
+    assert makefile_threshold("COVERAGE_THRESHOLD := 95.25\n", "COVERAGE_THRESHOLD") == 95.25
     # Two live declarations: Make takes the last, a first-match reader the first; refuse both.
     with pytest.raises(AssertionError, match="2 times"):
         makefile_threshold(

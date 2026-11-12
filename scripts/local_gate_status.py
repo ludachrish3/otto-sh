@@ -254,9 +254,47 @@ class Verdict:
     """No run was read: none exists yet, or ``gh`` could not list or view it (``detail`` says)."""
 
 
+def ci_refusal(verdict: Verdict, main_sha: str, wait_s: int) -> str:
+    """Why *verdict* does not certify main's tip, or ``""`` when it is green.
+
+    *wait_s* is how long the caller waited for the verdict; under a minute
+    (``0`` is a single read) drops the "after N minutes" clause and a pending
+    run names the run to wait for.
+    """
+    on = f"main's CI on {main_sha[:12]}"
+    minutes = wait_s // 60
+    after = f" after {minutes} minutes" if minutes else ""
+    if verdict.unread:
+        return f"{on} cannot be read{after}: {'; '.join(verdict.detail)}"
+    if verdict.pending:
+        if minutes:
+            return f"{on} is still running{after}: {verdict.run_url}"
+        return f"{on} is still running; wait for {verdict.run_url}"
+    if not verdict.green:
+        return f"{on} is not green: {', '.join(verdict.detail)}; {verdict.run_url}"
+    return ""
+
+
 def required_contexts(path: Path) -> "list[str]":
     """Return the required check names, from the committed JSON list at *path*."""
     return json.loads(path.read_text())
+
+
+class RequiredContextsError(ValueError):
+    """The required-contexts file cannot be read or parsed."""
+
+
+def required_contexts_under(repo: Path, path: Path) -> "list[str]":
+    """Return the required check names at *path*, resolved against *repo* when relative.
+
+    A file that cannot be read or parsed raises :class:`RequiredContextsError`:
+    ``cannot read the required contexts <path>: <cause>``.
+    """
+    resolved = path if path.is_absolute() else repo / path
+    try:
+        return required_contexts(resolved)
+    except (OSError, ValueError) as exc:
+        raise RequiredContextsError(f"cannot read the required contexts {resolved}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -509,7 +547,11 @@ def _await_command(args: argparse.Namespace) -> int:
 
 
 def _ci_verdict_command(args: argparse.Namespace) -> int:
-    required = required_contexts(Path(args.required))
+    try:
+        required = required_contexts_under(REPO_ROOT, Path(args.required))
+    except RequiredContextsError as err:
+        print(f"ci-verdict: {err}", file=sys.stderr)
+        return 1
     verdict = await_verdict(
         args.repo_slug,
         args.sha,

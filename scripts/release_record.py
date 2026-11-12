@@ -5,7 +5,11 @@
 
 ``pending``
     The run has started (``write_pending``). Written first, over whatever an
-    earlier run left, so a certificate never outlives the run that earned it.
+    earlier run left, so a certificate never outlives the run that earned it,
+    and only once ``main``'s CI is green on HEAD (``read_verdict``, one read
+    through ``local_gate_status.ci_verdict``): a red, pending or absent run is
+    refused before any work, and the run it trusted (``trusted_run`` on
+    ``trusted_head``) rides every later state.
 ``certified``
     The run's tip passed its gates (``certify``): the commit, the tree and the
     version the gates certified. Needs the record ``pending`` by the same run.
@@ -39,14 +43,25 @@ import tomli
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))  # run by path, only scripts/ is on sys.path
-from scripts import process_group  # noqa: E402
+from scripts import process_group, release_stages  # noqa: E402
 from scripts.gate_stamp_common import (  # noqa: E402
     GateError,
     _git,
     at_main_tip,
+    remote_slug,
     tree_hash,
     utc_now,
     write_atomically,
+)
+from scripts.local_gate_status import (  # noqa: E402
+    REQUIRED_CONTEXTS_FILE,
+    GhRunner,
+    RequiredContextsError,
+    Verdict,
+    ci_refusal,
+    ci_verdict,
+    required_contexts_under,
+    run_gh,
 )
 
 RECORD = Path("reports/release/record.json")
@@ -77,6 +92,10 @@ class Record:
     version: "str | None"
     url: "str | None"
     written_at: str
+    trusted_run: "str | None" = None
+    """The URL of main's green CI run the release trusts (absent from older records)."""
+    trusted_head: "str | None" = None
+    """The commit that run certified: HEAD when the record went pending."""
 
 
 def identity(pid: int) -> RunIdentity:
@@ -110,8 +129,10 @@ def _write(
     tree: "str | None" = None,
     version: "str | None" = None,
     url: "str | None" = None,
+    trusted_run: "str | None" = None,
+    trusted_head: "str | None" = None,
 ) -> None:
-    record = Record(state, run, head, tree, version, url, utc_now())
+    record = Record(state, run, head, tree, version, url, utc_now(), trusted_run, trusted_head)
     write_atomically(repo / RECORD, json.dumps(asdict(record), indent=2) + "\n")
 
 
@@ -124,15 +145,32 @@ def _require(repo: Path, run: RunIdentity, state: str) -> Record:
     return current
 
 
-def write_pending(repo: Path, run: RunIdentity) -> None:
+def read_verdict(
+    repo: Path, *, remote: str, required: "list[str]", gh: GhRunner = run_gh
+) -> "tuple[str, Verdict]":
+    """Return HEAD's sha and *remote*'s CI verdict on it, read once (no wait for a run)."""
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    return head, ci_verdict(remote_slug(repo, remote), head, required, gh=gh, appear_s=0)
+
+
+def write_pending(repo: Path, run: RunIdentity, *, trusted_run: str, trusted_head: str) -> None:
     """Start *run*'s record, discarding whatever an earlier run certified."""
-    _write(repo, PENDING, run)
+    _write(repo, PENDING, run, trusted_run=trusted_run, trusted_head=trusted_head)
 
 
 def certify(repo: Path, run: RunIdentity, *, head: str, tree: str, version: str) -> None:
     """Record what *run*'s gates certified; the record must be its own ``pending``."""
-    _require(repo, run, PENDING)
-    _write(repo, CERTIFIED, run, head=head, tree=tree, version=version)
+    current = _require(repo, run, PENDING)
+    _write(
+        repo,
+        CERTIFIED,
+        run,
+        head=head,
+        tree=tree,
+        version=version,
+        trusted_run=current.trusted_run,
+        trusted_head=current.trusted_head,
+    )
 
 
 def mark_landed(repo: Path, run: RunIdentity, *, url: str) -> None:
@@ -146,13 +184,24 @@ def mark_landed(repo: Path, run: RunIdentity, *, url: str) -> None:
         tree=current.tree,
         version=current.version,
         url=url,
+        trusted_run=current.trusted_run,
+        trusted_head=current.trusted_head,
     )
 
 
 def tip_certified(repo: Path, run: RunIdentity, *, head: str, tree: str, version: str) -> None:
     """Record that *run* certified main's own tip, the bump already on it."""
-    _require(repo, run, CERTIFIED)
-    _write(repo, TIP_CERTIFIED, run, head=head, tree=tree, version=version)
+    current = _require(repo, run, CERTIFIED)
+    _write(
+        repo,
+        TIP_CERTIFIED,
+        run,
+        head=head,
+        tree=tree,
+        version=version,
+        trusted_run=current.trusted_run,
+        trusted_head=current.trusted_head,
+    )
 
 
 def current_version(repo: Path) -> str:
@@ -237,6 +286,9 @@ def _parser() -> argparse.ArgumentParser:
             verb.add_argument("--version", required=True)
         if name == "landed":
             verb.add_argument("--url", required=True)
+        if name == "pending":
+            verb.add_argument("--remote", required=True)
+            verb.add_argument("--required", type=Path, default=Path(REQUIRED_CONTEXTS_FILE))
     verb = sub.add_parser("mode")
     verb.add_argument("--remote", required=True)
     verb.add_argument("--census", required=True)
@@ -250,7 +302,20 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run(args: argparse.Namespace) -> int:
+def _pending(args: argparse.Namespace, run: RunIdentity, gh: GhRunner) -> None:
+    """Write *run*'s pending record once main's CI is green on HEAD; refused otherwise."""
+    repo: Path = args.repo
+    required = required_contexts_under(repo, args.required)
+    head, verdict = read_verdict(repo, remote=args.remote, required=required, gh=gh)
+    refusal = ci_refusal(verdict, head, 0)
+    if refusal:
+        raise ReleaseError(refusal)
+    write_pending(repo, run, trusted_run=verdict.run_url, trusted_head=head)
+    for line in release_stages.skip_lines(verdict.run_url):
+        print(line)
+
+
+def _run(args: argparse.Namespace, gh: GhRunner) -> int:
     repo: Path = args.repo
     command: str = args.command
     if command == "read":
@@ -266,7 +331,7 @@ def _run(args: argparse.Namespace) -> int:
     else:
         run = identity(args.pid)
         if command == "pending":
-            write_pending(repo, run)
+            _pending(args, run, gh)
         elif command == "landed":
             mark_landed(repo, run, url=args.url)
         else:
@@ -276,12 +341,12 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: "list[str] | None" = None) -> int:
+def main(argv: "list[str] | None" = None, *, gh: GhRunner = run_gh) -> int:
     """Run one verb; a refusal prints ``release-record: <reason>`` and exits 1."""
     args = _parser().parse_args(argv)
     try:
-        return _run(args)
-    except (ReleaseError, GateError) as exc:
+        return _run(args, gh)
+    except (ReleaseError, GateError, RequiredContextsError) as exc:
         print(f"release-record: {exc}", file=sys.stderr)
         return 1
 

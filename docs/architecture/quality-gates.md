@@ -26,9 +26,9 @@ on that side.
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` (role layers, every dependency declared) + the import-string audit | — none today |
 | Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-four Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
-| Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; `scripts/import_budget_delta.py` — the release's delta against the previous tag (`make budget-delta`); import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
+| Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; `scripts/import_budget_delta.py` — the delta against the previous tag, per pull request in CI (the required job `import-budget` over its `import-budget-delta (<minor>)` legs) and in the release (`make budget-delta`); import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
-| Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 95.5 for the full local run, 94.75 for the hostless CI slice, judged on the fold of the primary's three sessions (96.43 on the landing's pull request, run 41596661346, against the 94.75 floor; both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
+| Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 96 for the full local run (96 since 2026-11-11, from 95.5; 96.92 % measured at 0.20.0), 94.75 for the hostless CI slice, judged on the fold of the primary's three sessions (96.43 on the landing's pull request, run 41596661346, against the 94.75 floor; both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
 | Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
 | Installed package | `make wheel-smoke` (`nox -s wheel_smoke`, CI's `wheel-smoke` job, and the release build) — the built wheel over the locked runtime dependencies alone, no dev group, nothing from `src/`; `scripts/wheel_smoke.py` imports every module and runs `otto test` with pytest's plugin autoload on and off. The one lane that runs otto as a user installs it ([#593](https://github.com/ludachrish3/otto-sh/issues/593)) | — |
 | Cross-language contract | `tests/_fixtures/covapp_contract.json`, asserted from both sides; `types.gen.ts` **and** `export.gen.ts` codegen + `git diff --exit-code` | (same two mechanisms) |
@@ -274,6 +274,7 @@ job that enforces it on the pull request and again on the push to `main`.
 | public callables take keywords only, except the positional parameters `api/public.toml`'s `[symbols]` table lists; a class is `@final` exactly when its subclass right is withdrawn (`scripts/check_api_keywords.py`) | `check-api-keywords` (inside `make lint-python`, so `make check-python` runs it) | `lint` | `lint-python` |
 | test-isolation leak guard | `nox-unit-repeat` (by hand only; `make gate-scope` never names it) | `tests_unit_repeat` | `unit-repeat` — a nightly lane (since #795; it was CI's longest job by a factor of two): a leak shows up there, never in a local lane or a PR check |
 | import budget | `profile` — gates each gated surface's file operations against its per-interpreter ceilings and target ratio, and prints the tracked surfaces (see {doc}`startup-performance`); never wall-clock, which fails for reasons outside the change | via `tests_hostless_unit` | `tests-primary`, `tests-canary`, `tests` — enforced by `tests/unit/import_budget/` |
+| import-budget delta: the release tag nearest the merge base against the head, file operations per surface, unapproved growth fails (see [the release process](../release_process.md#the-import-budget-delta)) | `budget-delta` (a `make release` stage) | — | `budget-scope` (does the diff reach the budget: `scripts/gate_scope.py --budget-eligible`; the base tag), `import-budget-delta (3.10)`…`(3.14)` (only when it does), `import-budget` — the one required context, green when the legs passed or were skipped |
 | build-lane invariants: an `addopts` override keeps `-p no:tach`; every lane that excludes `serial_timing` re-appends it in a paired `-n0` leg (an exclusion without its leg makes the discriminators CI-invisible). **Not attempted:** the complement — that no lane running under xdist *selects* a `serial_timing` test — is not gated. The leg check can only audit lanes that *spell* an exclusion, and resource markers like `integration` and `browser` are applied by conftest hooks at collection, so no source scan can see them; asking pytest per lane (`--collect-only -m "<expr> and serial_timing"`) was run once as a hand audit when the marker was introduced, and never wired up as a standing check. The protection in force is the root conftest, which errors any `serial_timing` test that reaches an xdist worker. Make macros in a lane's `-m` are expanded first; an unexpanded one is reported, never handed to pytest | via `coverage*` | via `tests_hostless_guards` | `tests-primary` — enforced by `tests/unit/test_lane_invariants.py` |
 | declared harness bounds: each lane must *declare* its runaway guard rather than inherit a library default (vitest `testTimeout`/`hookTimeout`, Playwright's `expect.set_options` ceiling, pytest's `timeout`), each at or above a floor drawn from measured contention. A runaway guard discriminates nothing, so the gate does not care what the number is — only that a human wrote it, since a library default never appears in a diff. The vitest configs are discovered, not listed. **Not attempted:** finding a wall-clock bound written *into* an assertion (`assert elapsed < 5.0`). No gate looks for those; they are found by review and by the `serial_timing` marker's runtime backstop below | via `coverage*` | via `tests_hostless_unit` | `tests-primary`, `tests-canary`, `tests` — enforced by `tests/unit/test_declared_harness_bounds.py` |
 | probe-status honesty at the bed-probe helpers (`run_probe`/`probe_text`/`snapshot_host` raise on non-ok), plus AST scans banning the two consumer shapes found live: a factory unwrapping `.value` before the check can vet it (chaos lanes, where `run_probe` lives), and a `pkill`/`pgrep -f` pattern not built by `argv_pattern` — tree-wide over `tests/` since Wave 14, after the class regrew outside the lane scope (a self-killing cancel under a `suppress`, four `grep -v "$$"` probe mirrors). Stated blind spots: factories imported from other modules; patterns assembled outside literals/f-strings, including a pattern bound to a variable before the f-string (call `argv_pattern(...)` inline); exec-style list argv is out of scope (no wrapper shell to self-match) | via `coverage*` | via `tests_hostless_guards` | `tests-primary` — enforced by `tests/unit/test_bed_oracle_honesty.py` |
@@ -285,11 +286,31 @@ job that enforces it on the pull request and again on the push to `main`.
 | browser e2e | `dashboard` (Chromium; `dashboard-all` for all three) | `dashboard` (all three, serially) | `dashboard` (one parallel job per engine) |
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
-| Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
+| Python coverage floor (96, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
 | the bed half of the coverage selection (`(integration or embedded) and` `make coverage`'s markers), uninstrumented, pass/fail | `coverage-bed` | — | **not in CI** — every `BED_REACH` tip's stamped lane; the pull request's CI runs the hostless half |
 | The landing's gate: the oracle's tip lanes, stamped per lane on the committed tree | `gate-tip` (`make gate-scope` names the lanes) | — | the `local-gate` status on the head, required by `main`'s ruleset and verified by CI's `gate-admission`; the pre-push hook refuses an unstamped tip on every branch push |
 | the `local-gate` commit status: the head's tree, its merge base and the digest of its tip lanes, posted once every stamped lane is green (`scripts/local_gate_status.py`) | `gate-status` (and `gate-tip` on green) | — | `gate-admission` + the ruleset |
 | chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes; `make gate-scope` names a single pass of a stability tier in the tip a link, tunnel or console change earns, and for a stability test change ({ref}`the rule <gate-stability-lanes>`) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
+
+### What the release trusts CI for
+
+`make release` does not re-run a leg that a required job of `main`'s green
+CI run on the same tree already proved (the pending record reads that
+verdict; `scripts/release_stages.py` is the one map, and `release_record.py
+pending` prints one skip line per row):
+
+| Release leg | Evidence |
+|---|---|
+| Makefile:check-python | lint-python, typecheck-python |
+| Makefile:lint-arch | tests_hostless-3.10 |
+| Makefile:docs@first | docs |
+| noxfile.py:tests_hostless_unit@3.11 | tests_hostless-3.11 |
+| noxfile.py:tests_hostless_unit@3.12 | tests_hostless-3.12 |
+| noxfile.py:tests_hostless_unit@3.13 | tests_hostless-3.13 |
+| noxfile.py:tests_all@3.14:hostless | tests_hostless-3.14 |
+| Makefile:dashboard-all | dashboard-e2e (firefox), dashboard-e2e (webkit) |
+| Makefile:check-ts | check-ts |
+| Makefile:coverage-ts | coverage stamp |
 
 ### The hostless wall clock
 
@@ -306,11 +327,11 @@ rows are the pull request's own measurements (the session shapes are in
 ### The last two rows are the point
 
 **`make coverage` is not in CI, and not in the landing either.** It is the
-full pytest run at the 95.5 floor (a combined line+branch number, like every
+full pytest run at the 96 floor (a combined line+branch number, like every
 Python floor here), plus the merged TypeScript floor, and no workflow runs
 it. CI gates the *hostless* slice at 94.75 (`make coverage-hostless-fold`, the
 `coverage-hostless` job), because the full run needs lab VMs. A contributor reading only
-`.github/workflows/ci.yml` would conclude the 95.5 floor is enforced on push.
+`.github/workflows/ci.yml` would conclude the 96 floor is enforced on push.
 It is the release's: `make release` reaches it through the **coverage
 stamp**, and runs `make coverage` itself when the tip has none.
 
@@ -341,10 +362,13 @@ selection, against the built web assets; `make release` checks that stamp
 first, before anything is built, and keeps the answer. Finding none for HEAD's
 tree (or one written under another patch release of the primary, other assets,
 or a different gate), it runs `make coverage` itself once its cheap stages
-(docs, the static checks, the budget delta) have passed — before any other test
+(the preflight, `main`'s CI verdict, the budget delta) have passed — before any other test
 stage, and before any stage that commits — then checks again,
 so a run the stamp refused ends the release there. The release's own matrix,
-`make nox-release`, then runs the canary and the middle versions only: the
+`make nox-release`, then runs only the canary's bed half (`tests_bed`; the
+non-primary hostless halves are main's CI, and
+`test_the_canary_s_hostless_sessions_and_the_bed_leg_partition_tests_all` pins
+that together they select what `tests_all` did). The
 primary's session was the selection the stamp already proves (it used to run
 again under a lower 92 floor nobody read,
 [#566](https://github.com/ludachrish3/otto-sh/issues/566)). A run over a
@@ -358,17 +382,18 @@ dirty tree, a non-primary venv or a command-line variable stops the release
 at once; only a missing or mismatched stamp runs `make coverage`. So
 `make release` with any other command-line variable is refused before any
 test stage, rather than run unstamped and stopped at the re-check. Outside the
-release, the 95.5 floor is also reached through `make validate` / `make all`,
+release, the 96 floor is also reached through `make validate` / `make all`,
 which invoke it via `COVERAGE_TARGET` (default `coverage-python`; `make ci`
-overrides it to `coverage-hostless`). So the 95.5 floor is enforced by you
+overrides it to `coverage-hostless`). So the 96 floor is enforced by you
 before you hand the work over, and the release will not take your word for
 it.
 
 The ceilings catch a surface that grew past its baseline plus 10 %; the
-release catches what the headroom let through. `make budget-delta` stops
-`make release` on any surface that costs more file operations than it did at
-the previous tag unless the command line names it with the buckets it moved
-by — see [Contributing](../contributing.md#the-import-budget).
+delta catches what the headroom let through. The `import-budget` CI job
+fails a pull request, and `make budget-delta` stops `make release`, on any
+surface that costs more file operations than it did at the previous tag
+unless the committed approvals file approves it — see
+[the release process](../release_process.md#the-import-budget-delta).
 
 **The chaos and stability lanes are not in CI either.** They are bed-hostile
 by construction — they SIGKILL sessions, reboot hosts, and hold a lease on

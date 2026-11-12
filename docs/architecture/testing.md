@@ -59,7 +59,7 @@ full list, from `pyproject.toml`:
 | `chaos` | Tier-3 chaos-lane scenario; bed-hostile like `stability`, excluded from every default gate and from the release — `make chaos` / `make chaos-embedded` are on demand only (why, and how the census accounts for them: [the last two rows are the point](quality-gates.md#the-last-two-rows-are-the-point)). |
 | `soak` | The heavy browser-driven replay stress test; chromium-only, excluded even from `make dashboard`'s default selection. Runs once in every release (`make release-campaign`). |
 | `busybox` | Needs a real BusyBox artifact (fetched, SHA-256-verified and cached; qemu-user-static on non-x86_64); excluded from every default lane, opt-in via `make busybox`. Runs once in every release (`make release-campaign`). |
-| `conformance` | A host-contract conformance cell. In the default hermetic venue it stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses; under `OTTO_CONFORMANCE_BED=1` the same tests resolve against real bed hosts instead. Excluded from every default lane; opt-in via `make conformance` (hermetic) or `make conformance-bed` (real bed, dev VM only) — see below. The hermetic venue runs once, over every cell, in every release (`make release-campaign`); the bed venue runs in `make release-matrix`. |
+| `conformance` | A host-contract conformance cell. In the default hermetic venue it stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses; under `OTTO_CONFORMANCE_BED=1` the same tests resolve against real bed hosts instead. Excluded from every default lane; opt-in via `make conformance` (hermetic) or `make conformance-bed` (real bed, dev VM only) — see below. The hermetic venue runs once, over every cell, in every release (`make release-campaign`); the bed venue verifies against the committed matrix wherever it runs, and `make release-matrix` certifies it (see below). |
 | `conformance_bed` | Carried *in addition* to `conformance` by the few tests in that tree which reach the real lab bed on **every** run, whichever venue is selected — today, the bed openers' witness. `make conformance` subtracts it, because that lane is hermetic and runs nightly in CI with no lab |
 | `release_proof` | The bed proof of a fix, run by its own lease-taking target and by nothing else: excluded from every default lane, tip and soak, and run once in every release (`make release-campaign`). Today, the #386 console-release arms (`make console-release-bed`). |
 | `no_bundle_page` / `no_hygiene_bracket` | Narrow opt-outs for two specific autouse guards (a browser test that renders no bundle; a chaos test that manages its own hygiene bracket) |
@@ -463,8 +463,21 @@ than taking the draw.
 The otto_kmodcov toolchain proofs keep a sibling of the host support matrix with
 the same rules — only a run writes a verdict, every verdict carries provenance,
 a lost verdict stops the release: the
-{ref}`kmodcov compatibility matrix <kmodcov-matrix>`, folded by `make kmodcov` and
-re-measured by `make release-kmodcov-matrix`.
+{ref}`kmodcov compatibility matrix <kmodcov-matrix>`, verified by `make kmodcov` and
+certified by `make release-kmodcov-matrix`.
+
+**Verify everywhere, certify at the release.** `make conformance-bed` and
+`make kmodcov` only verify: each folds what it measured into a candidate under
+`reports/` (`reports/.support-matrix-candidate.json`,
+`reports/.kmodcov-matrix-candidate.json`), fails on a downgrade against the
+matrix committed at that head (`scripts/check_matrix_downgrades.py`), and
+leaves the tree clean, so no landing's gate writes a tracked file. Only the
+release's two matrix stages, `make release-matrix` and
+`make release-kmodcov-matrix`, copy the judged candidate over
+`schemas/support_matrix.json` or `schemas/kmodcov_matrix.json` and commit it.
+A cell's `as_of` is the date the cell was last measured; since only the release's matrix stages write a matrix on their own, that is normally the release that certified it (a by-hand fold or edit re-dates it in its own commit). A pull request may still edit a matrix by hand,
+and `make support-matrix` and `make kmodcov-matrix` remain the by-hand folds
+for accepting a measured change in a commit of your own.
 
 **Not to be confused with `otto.testing.conformance`.** otto ships a second
 thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
@@ -680,7 +693,7 @@ the refusal's integration test are all deleted
 (`docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
 
 **What the bed venue owed this, it paid on 2026-08-26 UTC** (the `as_of`
-stamp in `schemas/support_matrix.json`): the five `bed-busybox[*:telnet:nc]`
+stamp in `schemas/support_matrix.json` at the time): the five `bed-busybox[*:telnet:nc]`
 cells are where otto's `nc` backend meets a real BusyBox applet end to end,
 and that run was the first with the universal spelling in it. It came back
 565 passed, 0 failed, 0 xfailed; the ten BusyBox `nc` cells — the five
@@ -795,7 +808,7 @@ and lab growth.
 
 ## Coverage: a floor, not a scorecard
 
-`make coverage` enforces `--cov-fail-under=95.5` over the whole default run
+`make coverage` enforces `--cov-fail-under=96` over the whole default run
 (the `dashboard` browser lane's Python-side coverage folds in via
 `--cov-append` first); the hostless CI gate enforces a lower 94.75, because it deliberately
 exercises only the slice of otto that needs no VM at all and can't reach

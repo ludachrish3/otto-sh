@@ -396,6 +396,33 @@ def test_the_cli_ci_verdict_prints_a_failed_listing_s_cause_and_exits_1(
     assert "HTTP 403: Resource not accessible" in capsys.readouterr().out
 
 
+def test_the_cli_ci_verdict_green_path_needs_no_third_party_module(tmp_path):
+    """release.yml runs ci-verdict on the runner's bare python: no tomli, no uv."""
+    green = {n: "success" for n in REQ if n not in lgs.EXCLUDED_FROM_VERDICT}
+    bin_dir = fg.install_fake_gh(
+        tmp_path / "bin",
+        [
+            fg.GhReply(["run", "list"], stdout=_runs((1, "completed", "success"))),
+            fg.GhReply(["run", "view"], stdout=_jobs(**green)),
+        ],
+    )
+    required = tmp_path / "required.json"
+    required.write_text(json.dumps(REQ))
+    args = ["ci-verdict", "--repo-slug", "o/r", "--sha", SHA, "--required", str(required)]
+    code = (
+        "import sys\n"
+        "sys.modules['tomli'] = None\n"
+        f"sys.path.insert(0, {str(CHECKOUT_ROOT)!r})\n"
+        "from scripts import local_gate_status\n"
+        f"raise SystemExit(local_gate_status.main({args!r}))\n"
+    )
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
 def test_admit_reports_a_failed_run_listing_and_exits_1(capsys):
     gh = fg.scripted_gh(
         [fg.GhReply(["run", "list"], status=1, stderr="HTTP 403: Resource not accessible")]
@@ -481,7 +508,8 @@ def test_the_cli_post_uses_gh_on_path(tmp_path):
 
 def test_required_contexts_is_the_committed_list():
     got = lgs.required_contexts(CHECKOUT_ROOT / ".github/required_contexts.json")
-    assert len(got) == 21
+    assert len(got) == 22
+    assert "import-budget" in got
     assert "local-gate" in got
     assert "gate-admission" in got
     assert "uv-floor" in got
@@ -812,3 +840,30 @@ def test_await_verdict_returns_a_listing_that_kept_failing_with_its_cause():
     assert v.unread
     assert _FORBIDDEN in v.detail
     assert clock.slept == [10, 10, 10]
+
+
+def test_ci_refusal_is_empty_for_green_and_names_unread_pending_and_red():
+    sha = "abc123def456"
+    assert lgs.ci_refusal(lgs.Verdict(True, False, "https://r/1", []), sha, 0) == ""
+    unread = lgs.Verdict(False, False, "", ["no ci.yml push run on abc123def456"], unread=True)
+    assert (
+        lgs.ci_refusal(unread, sha, 0)
+        == "main's CI on abc123def456 cannot be read: no ci.yml push run on abc123def456"
+    )
+    pending = lgs.Verdict(False, True, "https://r/2", [])
+    assert (
+        lgs.ci_refusal(pending, sha, 0)
+        == "main's CI on abc123def456 is still running; wait for https://r/2"
+    )
+    red = lgs.Verdict(False, False, "https://r/3", ["docs: failure"])
+    assert (
+        lgs.ci_refusal(red, sha, 0)
+        == "main's CI on abc123def456 is not green: docs: failure; https://r/3"
+    )
+
+
+def test_ci_refusal_with_a_wait_says_after_how_long():
+    pending = lgs.Verdict(False, True, "https://r/2", [])
+    assert "is still running after 70 minutes: https://r/2" in lgs.ci_refusal(
+        pending, "abc123def456", 70 * 60
+    )

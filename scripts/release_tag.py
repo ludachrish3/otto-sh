@@ -52,9 +52,10 @@ from scripts.gate_stamp_common import (  # noqa: E402
 from scripts.local_gate_status import (  # noqa: E402
     REQUIRED_CONTEXTS_FILE,
     GhRunner,
-    Verdict,
+    RequiredContextsError,
     await_verdict,
-    required_contexts,
+    ci_refusal,
+    required_contexts_under,
     run_gh,
 )
 
@@ -129,18 +130,6 @@ def _stale_tag(existing: "_LocalTag | None", name: str, message: str, main_sha: 
     return ""
 
 
-def _ci_refusal(verdict: Verdict, main_sha: str, wait_s: int) -> str:
-    """Why *verdict* does not let main's tip be tagged, or ``""`` when it is green."""
-    on = f"main's CI on {main_sha[:12]}"
-    if verdict.unread:
-        return f"{on} cannot be read after {wait_s // 60} minutes: {'; '.join(verdict.detail)}"
-    if verdict.pending:
-        return f"{on} is still running after {wait_s // 60} minutes: {verdict.run_url}"
-    if not verdict.green:
-        return f"{on} is not green: {', '.join(verdict.detail)}; {verdict.run_url}"
-    return ""
-
-
 def _refuse(message: str) -> int:
     print(f"release-tag: {message}", file=sys.stderr)
     return 1
@@ -190,7 +179,7 @@ def release_tag(
     verdict = await_verdict(
         slug, main_sha, required, wait_s=wait_s, interval=interval, gh=gh, sleep=sleep, clock=clock
     )
-    unsettled = _ci_refusal(verdict, main_sha, wait_s)
+    unsettled = ci_refusal(verdict, main_sha, wait_s)
     if unsettled:
         return _refuse(unsettled)
     again = fetch_main(repo, remote)
@@ -218,12 +207,8 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--interval", type=int, default=INTERVAL_S)
     args = parser.parse_args(argv)
     repo: Path = args.repo.resolve()
-    required_path: Path = args.required if args.required.is_absolute() else repo / args.required
     try:
-        required = required_contexts(required_path)
-    except (OSError, ValueError) as exc:
-        return _refuse(f"cannot read the required contexts {required_path}: {exc}")
-    try:
+        required = required_contexts_under(repo, args.required)
         return release_tag(
             repo,
             remote=args.remote,
@@ -231,7 +216,7 @@ def main(argv: "list[str] | None" = None) -> int:
             wait_s=args.wait_minutes * 60,
             interval=args.interval,
         )
-    except (release_record.ReleaseError, GateError) as exc:
+    except (release_record.ReleaseError, GateError, RequiredContextsError) as exc:
         return _refuse(str(exc))
 
 

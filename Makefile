@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke check-api-keywords
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts wheel-check wheel-smoke check-api-keywords
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -109,8 +109,8 @@ COVERAGE_TARGET ?= coverage-python
 # sheds covered lines or branches argues with the gate rather than ratcheting
 # the number down — and .coveragerc sets `precision = 2` so the comparison
 # is to the number written here, not to a rounding of it (coverage's default
-# precision of 0 would accept 95.00 against a floor of 95.5).
-COVERAGE_THRESHOLD := 95.5
+# precision of 0 would accept 95.60 against a floor of 96).
+COVERAGE_THRESHOLD := 96
 # CI runs the hostless selection only (integration/hops markers need Vagrant
 # VMs that don't exist in GitHub Actions), so its achievable number is lower.
 # The floor lives only here. Two recipes read it: `coverage-hostless` (by
@@ -492,11 +492,11 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 #
 # The check runs ONCE, first of all, and the release reuses its answer
 # ($$stamp) at the coverage stage (#660). It must not be repeated there: the
-# cheap stages that now run in between include `make docs`, whose
-# prerequisites rebuild the web assets, and the stamp records an assets
-# digest. So 0 skips `make coverage`; 1 runs it and checks again; any other
-# status (2, or a crash) is printed by a second, visible check and stops the
-# release before release-preflight touches anything. Both checks
+# cheap stages that run in between (clean-dist, web-install) can change what
+# the web assets digest reads, and the stamp records that digest. So 0 skips
+# `make coverage`; 1 runs it and checks again; any other status (2, or a
+# crash) is printed by a second, visible check and stops the release before
+# release-preflight touches anything. Both checks
 # are told the command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp
 # vouches for the declared gate, not for a release whose later stages a
 # `PYTEST_ADDOPTS=-k …` would narrow.
@@ -511,21 +511,17 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # to merge) and pull-request otherwise, and a fetch it cannot make exits 1, so
 # the chain stops with the record certified instead of guessing.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses main, a detached HEAD, a branch that is not main's tip, unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless tests/unit/import_budget/approved_growth.json approves it). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump (no tag), wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused), then it certifies the head in reports/release/record.json and lands through a pull request: gate-tip, push the branch, gate-status, gh pr create (a recertification whose branch holds no commit certifies main's tip instead and opens nothing). Runs on a release branch at main's tip, never on main. After the merge, `make release-tag` tags main's tip
+release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses main, a detached HEAD, a branch that is not main's tip, unpushed commits and untracked sources the release would read, clears stale run output), the pending record (release_record.py pending reads main's CI verdict on this tree once and refuses a red, running or missing run), clean-dist, clean-web-assets (the release tree's bundles are rebuilt once, through the dist rule), npm ci web/, the import-budget delta against the previous tag (budget-delta — growth stops the release unless tests/unit/import_budget/approved_growth.json approves it). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (the primary's session is what the stamp proves), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs (built once, so it renders the matrices the release just certified), then changelog, bump (no tag), wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused), then it certifies the head in reports/release/record.json and lands through a pull request: gate-tip, push the branch, gate-status, gh pr create (a recertification whose branch holds no commit certifies main's tip instead and opens nothing). The stages main's CI already proved on this tree (Python static checks, the first docs build, the hostless suites, the all-browser dashboard e2e, the TS gate) are not run again: the pending record reads main's verdict and scripts/release_stages.py names the evidence per leg, printing one skip line each. Runs on a release branch at main's tip, never on main. After the merge, `make release-tag` tags main's tip
 	$(call bed_acquire,release)
 	@{ $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) >/dev/null 2>&1; stamp=$$?; [ $$stamp -ne 1 ] || echo "release: HEAD's tree has no valid coverage stamp, so make coverage runs after the cheap stages"; [ $$stamp -le 1 ] || $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || exit $$?; } \
 		&& $(MAKE) release-preflight \
-		&& uv run python scripts/release_record.py pending --pid $$PPID \
+		&& uv run python scripts/release_record.py pending --pid $$PPID --remote origin \
 		&& $(MAKE) clean-dist \
+		&& $(MAKE) clean-web-assets \
 		&& $(MAKE) web-install \
-		&& $(MAKE) docs \
-		&& $(MAKE) check-python \
 		&& $(MAKE) budget-delta \
 		&& { [ $$stamp -eq 0 ] || { $(MAKE) coverage && $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES); }; } \
 		&& $(LEAK_DETECT) $(MAKE) nox-release \
-		&& $(MAKE) web \
-		&& $(MAKE) dashboard-all \
-		&& $(MAKE) validate-ts \
 		&& $(MAKE) release-matrix \
 		&& $(MAKE) release-kmodcov-matrix \
 		&& $(MAKE) release-campaign \
@@ -585,6 +581,37 @@ nox-unit-repeat: ## Repeat the tests/unit tree (minus the stateless `interpreter
 	@$(SAY) "nox: tests/unit twice in one process (isolation-leak guard)"
 	@uv run nox -s tests_unit_repeat
 
+# npm ci writes node_modules/.package-lock.json, so it doubles as the install
+# stamp: gating on it re-runs `npm ci` when (and only when) the lockfile moves.
+# That is what a checkout predating a new dependency needs — @xyflow landing
+# with the topology work left `make web` dying on an unresolved import until
+# node_modules caught up. Depending on the phony `web-install` directly would
+# instead pay a full wipe-and-reinstall on every single build.
+# (Defined here, ahead of its first use as a prerequisite: GNU Make expands
+# prerequisites when the rule is READ, so a later definition would expand to
+# nothing here and silently drop the dependency.)
+WEB_NODE_MODULES := web/node_modules/.package-lock.json
+
+DASHBOARD_DIST := src/otto/_webassets/monitor/dist/index.html
+COVAPP_DIST := src/otto/_webassets/covapp/index.html
+
+# Everything vite feeds into the two bundles: the app sources (including the
+# committed api/*.gen.ts, which is the seam through which a pydantic-model
+# change reaches the frontend — `make web` regenerates and diff-gates them),
+# the html entries, the tsc/vite configs, and the dependency manifests. Biome's
+# config and web/fixtures/ are deliberately absent: neither is a build input.
+WEB_SRCS := $(shell find web/src -type f) \
+            web/index.html               \
+            web/covapp.html              \
+            web/tsconfig.json            \
+            web/vite.config.ts           \
+            web/vite.covapp.config.ts    \
+            web/package.json             \
+            web/package-lock.json
+
+$(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
+	@$(MAKE) web
+
 # Interpreters for the tiered `nox` lane. PRIMARY (mirrors noxfile.py's
 # PRIMARY_PYTHON — hand-kept pair) is the floor: the oldest supported
 # interpreter, which the dev venv and release/build jobs run — its FULL-suite
@@ -630,11 +657,11 @@ nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interprete
 	$(call bed_reap)
 	$(call bed_release)
 
-nox-release: ## (Build & Release) The release's cross-version matrix, once `make coverage` has stamped the tree: every product test minus the `interpreter_agnostic` family, uninstrumented, on the CANARY ($(NOX_CANARY)); the trimmed hostless slice on $(NOX_MIDDLE). Never the primary — the stamp is its evidence (scripts/coverage_stamp.py). Dev VM only (Vagrant hosts up). Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+nox-release: $(COVAPP_DIST) ## (Build & Release) The release's canary bed leg: the bed half of `make coverage`'s selection on $(NOX_CANARY), uninstrumented, pass/fail; the canary's and the middle Pythons' hostless halves are CI's (`tests_hostless-3.1x`). Never the primary — the stamp is its evidence (scripts/coverage_stamp.py). Dev VM only (Vagrant hosts up). Override COUNT=N (default 1); JUnit XML in reports/junit/nox-bed/ + reports/junit/nox-bed-serial/.
 	$(call bed_acquire,nox-release)
 	$(call bed_reap)
-	@$(SAY) "nox (release): full suite on $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
-	@uv run nox -s tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless_unit-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox (release): the bed half on $(NOX_CANARY) (x$(NOX_COUNT))"
+	@uv run nox -s tests_bed-$(NOX_CANARY) -- --count=$(NOX_COUNT) --repeat-scope=session
 	$(call bed_reap)
 	$(call bed_release)
 
@@ -660,6 +687,11 @@ clean-dist:
 	@$(SAY) "removing dist/"
 	@rm -rf dist
 
+.PHONY: clean-web-assets
+clean-web-assets: ## (Build & Release) Remove the built web bundles (src/otto/_webassets/monitor, src/otto/_webassets/covapp) so the next consumer rebuilds them once through the dist rule; clean-dist leaves them alone
+	@$(SAY) "removing the built web bundles"
+	@rm -rf src/otto/_webassets/monitor src/otto/_webassets/covapp
+
 # ═══ Dev environment ════════════════════════════════════════════════════════
 
 dev: ## (Dev) Set up the dev environment (uv sync, git hooks, Chromium, web/ deps)
@@ -681,7 +713,7 @@ browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries
 # now the ONLY frontend and stays in place once built; the browser pin suite
 # (tests/e2e/monitor/dashboard) runs against it. (Pre-cutover, a stray dist/
 # left behind by a smoke build used to shadow the legacy dashboard.html —
-# that's why `make web-clean` exists, but it's no longer required after
+# that's why `make clean-web-assets` exists, but it's no longer required after
 # every build.)
 # npm ci occasionally hits a transient registry ECONNRESET mid-download in CI
 # (issue #107) that npm's own fetch-retries don't catch. Retry ONLY on
@@ -715,17 +747,6 @@ web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfil
 	  echo "web-install: npm ci hit a network error (attempt $$n); retrying in $$((n * 5))s" >&2; \
 	  sleep $$((n * 5)); n=$$((n + 1)); \
 	done
-
-# npm ci writes node_modules/.package-lock.json, so it doubles as the install
-# stamp: gating on it re-runs `npm ci` when (and only when) the lockfile moves.
-# That is what a checkout predating a new dependency needs — @xyflow landing
-# with the topology work left `make web` dying on an unresolved import until
-# node_modules caught up. Depending on the phony `web-install` directly would
-# instead pay a full wipe-and-reinstall on every single build.
-# (Defined here, ahead of its first use as a prerequisite: GNU Make expands
-# prerequisites when the rule is READ, so a later definition would expand to
-# nothing here and silently drop the dependency.)
-WEB_NODE_MODULES := web/node_modules/.package-lock.json
 
 # Pure delegation, so no banner of its own (rule 5) — and the recipe must stay
 # a lone `$(MAKE)` line: make runs `$(MAKE)` lines even under -n, and -n rides
@@ -768,17 +789,12 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 
 # web/ quality lanes moved to the language-parity family (lint-ts /
 # typecheck-ts / coverage-ts-unit / test-ts) in the Quality section below —
-# one name per aspect, no web-* aliases. web-install/web/web-dev/web-clean
+# one name per aspect, no web-* aliases. web-install/web/web-dev/clean-web-assets
 # stay here: they are artifact/dev targets, not language-parity gates.
 
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
 	@$(SAY) "vitest (web/) — no coverage (warnings are errors)"
 	@scripts/build_web_no_warnings.sh test
-
-web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp) from src/otto/_webassets/
-	@$(SAY) "removing built web/ dist (monitor + covapp)"
-	@rm -rf src/otto/_webassets/monitor
-	@rm -rf src/otto/_webassets/covapp
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
 # the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
@@ -790,13 +806,13 @@ web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + cova
 # `**/*.map` exclude exists deliberately, see pyproject.toml — or a uv_build
 # default change). Deliberately NOT wired into `coverage` — it rebuilds the frontend
 # and a real wheel, which is release-flow overhead, not a per-commit gate.
-# Prerequisite composition (clean-dist web build), not $(MAKE) calls in the
+# Prerequisite composition (clean-dist, the dist rule's bundles, build), not $(MAKE) calls in the
 # recipe: `make -n wheel-check` must stay dry-run-safe, and GNU make only
 # honors -n for prerequisite recursion, not for $(MAKE) invoked from inside a
 # recipe line (see the release: warning above for what happens when that rule
 # is violated).
 # NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
-wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement) and the PEP 561 py.typed marker
+wheel-check: clean-dist $(DASHBOARD_DIST) $(COVAPP_DIST) build ## (Build & Release) Build the wheel from the dist rule's dashboard and coverage-app outputs (rebuilt only when stale; the release forces a rebuild through clean-web-assets) and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement) and the PEP 561 py.typed marker
 	@$(SAY) "asserting dist/*.whl embeds the web assets"
 	@for entry in monitor/dist/index.html covapp/index.html; do \
 		dir="otto/_webassets/$${entry%%/*}/"; \
@@ -890,7 +906,7 @@ profile: ## (Dev) Enforce the import budget (per-surface file-operation ceilings
 BUDGET_DELTA := uv run python scripts/import_budget_delta.py
 BUDGET_DELTA_MINORS := $(NOX_PRIMARY) $(NOX_MIDDLE) $(NOX_CANARY)
 
-budget-delta: ## (Build & Release) The import-budget delta: the previous release tag vs HEAD, file operations per surface on every nox interpreter (primary first), in pristine worktrees; judges every interpreter, then STOPS once on growth that tests/unit/import_budget/approved_growth.json does not approve, printing the complete file to commit. A stage of `make release`, right after check-python. Two `uv sync`es per minor per pair (the base's skipped while its cache matches), up to three pairs per minor, each in $TMPDIR/otto-budget-delta/<side>-<minor>/ (removed per measurement; the harness's bytecode cache ~/.cache/otto/import-budget-pycache keeps one mirror per side and minor); elapsed seconds per step in reports/budget/run.log.
+budget-delta: ## (Build & Release) The import-budget delta: the previous release tag vs HEAD, file operations per surface on every nox interpreter (primary first), in pristine worktrees; judges every interpreter, then STOPS once on growth that tests/unit/import_budget/approved_growth.json does not approve, printing the complete file to commit. A stage of `make release`, after web-install. Two `uv sync`es per minor per pair (the base's skipped while its cache matches), up to three pairs per minor, each in $TMPDIR/otto-budget-delta/<side>-<minor>/ (removed per measurement; the harness's bytecode cache ~/.cache/otto/import-budget-pycache keeps one mirror per side and minor); elapsed seconds per step in reports/budget/run.log.
 	@$(SAY) "import-budget delta ($(BUDGET_DELTA_MINORS))"
 	@$(BUDGET_DELTA) measure --minors $(BUDGET_DELTA_MINORS)
 
@@ -970,7 +986,7 @@ build: ## (Build & Release) Build the project with uv
 # reports/coverage/html is written once per coverage-* target rather than by
 # every pytest invocation in the tree (each nox leg, each ad-hoc run).
 # Pinned by tests/unit/test_coverage_html_placement.py.
-coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
+coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 96 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	$(call bed_acquire,coverage-python)
 	$(call bed_reap)
 	@$(COVERAGE_STAMP) mark dashboard
@@ -1052,7 +1068,7 @@ COVERAGE_STAMP_OVERRIDE_NAMES := $(sort $(foreach v,$(.VARIABLES),$(if $(filter 
 COVERAGE_STAMP_OVERRIDES = $(foreach n,$(filter-out $(COVERAGE_STAMP_HARMLESS),$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
 
 coverage: export override PYTEST_ADDOPTS :=
-coverage: coverage-stamp-start coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor), then STAMP the committed tree (scripts/coverage_stamp.py) so `make release` can trust this run instead of repeating its primary nox session. The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+coverage: coverage-stamp-start coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 96 floor over lines and branches) + coverage-ts (merged vitest+e2e floor), then STAMP the committed tree (scripts/coverage_stamp.py) so `make release` can trust this run instead of repeating its primary nox session. The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 	@$(COVERAGE_STAMP) mark coverage-ts
 	@$(COVERAGE_STAMP) finish
 
@@ -1137,26 +1153,6 @@ BROWSER_WORKERS ?= $(shell if [ "$$(nproc)" -ge 2 ] && [ "$$(awk '/MemTotal/ {pr
 # suites share one serial xdist group and extra workers would sit idle.
 # Recursive (=), not :=, so a command-line BROWSER_WORKERS override flows in.
 BROWSER_SHARD_ENV = $(if $(filter-out 1,$(BROWSER_WORKERS)),OTTO_BROWSER_SHARD=1,)
-DASHBOARD_DIST := src/otto/_webassets/monitor/dist/index.html
-COVAPP_DIST := src/otto/_webassets/covapp/index.html
-
-# Everything vite feeds into the two bundles: the app sources (including the
-# committed api/*.gen.ts, which is the seam through which a pydantic-model
-# change reaches the frontend — `make web` regenerates and diff-gates them),
-# the html entries, the tsc/vite configs, and the dependency manifests. Biome's
-# config and web/fixtures/ are deliberately absent: neither is a build input.
-WEB_SRCS := $(shell find web/src -type f) \
-            web/index.html               \
-            web/covapp.html              \
-            web/tsconfig.json            \
-            web/vite.config.ts           \
-            web/vite.covapp.config.ts    \
-            web/package.json             \
-            web/package-lock.json
-
-$(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
-	@$(MAKE) web
-
 # The bed half of `make coverage`'s selection, $(M_COVERAGE_BED) (#797; the
 # partition note is at the variable). Uninstrumented like `quick` (`--no-cov` stops pytest-cov before the tracer
 # starts, so pyproject's --cov addopts are inert; the otto subprocesses the
@@ -1241,7 +1237,7 @@ dashboard: $(DASHBOARD_DIST) $(COVAPP_DIST) ## Run the browser e2e suites (monit
 	@$(BROWSER_SHARD_ENV) OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n $(BROWSER_WORKERS) --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 	@mkdir -p reports/ts-e2e-cov/raw && touch $(TS_E2E_RAW_STAMP)
 
-dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
+dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit) by hand; CI's dashboard-e2e jobs run every engine and the release trusts them (the leg is named in scripts/release_stages.py). Needs `make browsers` once.
 	@$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
 
 # --browser chromium is intentionally hardcoded, not DASHBOARD_BROWSERS:
@@ -1478,9 +1474,9 @@ kmodcov-matrix: ## Fold the kmodcov run's observation records into schemas/kmodc
 	@$(SAY) "collate: folding the kmodcov run's observations into schemas/kmodcov_matrix.json"
 	@uv run python -m scripts.collate_kmodcov_matrix --write
 
-release-kmodcov-matrix: ## (Build & Release) Run the kmodcov lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/kmodcov_matrix.json and commit it; `as_of` is the date of the release that certified the cell. The release's kmodcov stage; dev VM only.
+release-kmodcov-matrix: ## (Build & Release) Run the kmodcov lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/kmodcov_matrix.json and commit it; `as_of` is the date the cell was last measured; since only the release's matrix stages write a matrix on their own, that is normally the release that certified it (a by-hand fold or edit re-dates it in its own commit). The release's kmodcov stage; dev VM only.
 	$(call bed_acquire,release-kmodcov-matrix)
-	@$(SAY) "release: re-measuring the kmodcov compatibility matrix"
+	@$(SAY) "release: certifying the kmodcov compatibility matrix"
 	@$(MAKE) --no-print-directory kmodcov
 	@cp $(KMODCOV_MATRIX_CANDIDATE) schemas/kmodcov_matrix.json
 	@if git diff --quiet -- schemas/kmodcov_matrix.json; then \
@@ -1555,9 +1551,9 @@ support-matrix: ## Fold the conformance run's observation records into schemas/s
 # IDEMPOTENT: run it by hand, review, commit, and the release's stage finds
 # nothing to do. If the release aborts later, this commit stays -- it is a true
 # statement about the bed either way.
-release-matrix: ## (Build & Release) Run the conformance-bed lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/support_matrix.json and commit it; `as_of` is the date of the release that certified the cell. The release's matrix stage; needs the lab VMs (dev VM only).
+release-matrix: ## (Build & Release) Run the conformance-bed lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/support_matrix.json and commit it; `as_of` is the date the cell was last measured; since only the release's matrix stages write a matrix on their own, that is normally the release that certified it (a by-hand fold or edit re-dates it in its own commit). The release's matrix stage; needs the lab VMs (dev VM only).
 	$(call bed_acquire,release-matrix)
-	@$(SAY) "release: re-measuring the bed support matrix"
+	@$(SAY) "release: certifying the bed support matrix"
 	@$(MAKE) --no-print-directory conformance-bed
 	@cp $(MATRIX_CANDIDATE) schemas/support_matrix.json
 	@if git diff --quiet -- schemas/support_matrix.json; then 	    $(SAY) "release: the support matrix was already current"; 	  else 	    git add schemas/support_matrix.json 	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the bed support matrix" 	    && $(SAY) "release: committed a refreshed support matrix"; 	  fi
@@ -2191,7 +2187,7 @@ docs-captures-check: ## (Docs) Diff EVERY docs example capture against the bed -
 	$(call bed_reap)
 	$(call bed_release)
 
-# web-clean is a prerequisite because the built frontend IS a generated
+# clean-web-assets is a prerequisite because the built frontend IS a generated
 # artifact, and omitting it made this target quietly dishonest: a `make clean`
 # followed by `make docs` used to keep serving a stale dashboard dist, because
 # nothing in the clean removed it and the dist rule (see DASHBOARD_DIST) only
@@ -2199,7 +2195,7 @@ docs-captures-check: ## (Docs) Diff EVERY docs example capture against the bed -
 # case on their own, but "all generated artifacts" should still mean all of
 # them. docs/_static/generated/ is the media capture's own output and is
 # stamp-managed (it regenerates when its inputs move), so it stays.
-clean: web-clean ## (Dev) Remove all generated artifacts
+clean: clean-web-assets ## (Dev) Remove all generated artifacts
 	@$(SAY) "removing dist/ reports/ docs/_build/"
 	@rm -rf dist
 	@rm -rf reports
@@ -2215,7 +2211,7 @@ clean: web-clean ## (Dev) Remove all generated artifacts
 help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'
 	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
-	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 95.5, + coverage-ts merged; hostless gated 94.75; coverage-bed = the bed half, uninstrumented pass/fail)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 96, + coverage-ts merged; hostless gated 94.75; coverage-bed = the bed half, uninstrumented pass/fail)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full on primary + hostless on rest; nox-full = full matrix)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'chaos / chaos-embedded' 'tier-3 chaos lane (opt-in, bed-hostile; unix legs · zephyr console)'

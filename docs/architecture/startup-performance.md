@@ -322,8 +322,13 @@ no regeneration.
 **The release's delta.** A ceiling pins today's cost with 10 % of room, so
 a surface can grow by a few operations a release and never trip it; the
 release therefore also compares every surface, tracked ones included, with
-the previous tag and stops on growth (`make budget-delta`, in
-[Contributing](../contributing.md#the-import-budget)).
+the previous tag and stops on growth the committed approvals file does not
+approve: per pull request in CI (the `import-budget` job) and in the release
+(`make budget-delta`). Every interpreter is judged before the one stop, which
+names the paths that moved and prints the complete approvals file to commit
+(the file is described in
+[the release process](../release_process.md#the-import-budget-delta); running
+the delta, in [Contributing](../contributing.md#the-import-budget)).
 
 **Gated and tracked surfaces.** A gated surface has baselines and is
 enforced. A tracked surface (its key starts with `tracked_`) is measured and
