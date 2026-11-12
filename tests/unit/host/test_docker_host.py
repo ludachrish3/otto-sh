@@ -93,14 +93,9 @@ def _build_fake_ssh_remote_host():
     from otto.host.unix_host import UnixHost
 
     class FakeConnections(ConnectionManager):
-        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            super().__init__(**kwargs)  # no I/O: every slot starts empty
             self._ssh_conn = MagicMock()  # not awaited in unit tests
-            self._sftp_conn = None
-            self._ftp_conn = None
-            self._telnet_conn = None
-            self._name = kwargs.get("name", "fake")
-            self._term = kwargs.get("term", "ssh")
-            self._hop = None
 
         async def ssh(self):
             return self._ssh_conn
@@ -2036,14 +2031,9 @@ async def test_login_rejects_non_ssh_parent():
     from otto.host.unix_host import UnixHost
 
     class FakeTelnetConnections(ConnectionManager):
-        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-            self._ssh_conn = None
-            self._sftp_conn = None
-            self._ftp_conn = None
-            self._telnet_conn = None
-            self._name = kwargs.get("name", "fake")
+        def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            super().__init__(**kwargs)  # no I/O: every slot starts empty
             self._term = "telnet"
-            self._hop = None
 
     register_term_backend(
         "telnet",

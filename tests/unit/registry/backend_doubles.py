@@ -51,15 +51,9 @@ def _record_term_backend(
 class _OfflineConnections(ConnectionManager):
     """ConnectionManager double that yields a session without touching the network."""
 
-    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)  # no I/O: every slot starts empty
         self._ssh_conn = object()
-        self._sftp_conn = None
-        self._ftp_conn = None
-        self._telnet_conn = None
-        self._console_conn = None
-        self._name = kwargs.get("name", "fake")
-        self._term = kwargs.get("term", "ssh")
-        self._hop = None
 
     async def ssh(self):
         return self._ssh_conn
