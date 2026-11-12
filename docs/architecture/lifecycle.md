@@ -318,10 +318,31 @@ fails on a prompt called directly inside an `async def`.
 
 Two limits follow from the abandoned thread. Only one prompt runs at a time:
 a prompt the command gave up on is still the terminal's reader until its
-thread returns, so a second call meanwhile raises `RuntimeError`. A hidden
+thread returns or parks, so a second call meanwhile raises `RuntimeError`. A hidden
 prompt (`hide_input=True`) is refused with `ValueError`, because
 {func}`getpass.getpass` restores echo in a `finally` that an abandoned thread
 never reaches, and an interrupt would leave the terminal silent.
+
+An interrupted prompt finishes writing before the command goes on, and then it
+never writes again. If the interpreter shuts down while a daemon thread is
+inside a stdout or stderr write, that thread never gets the GIL back and keeps
+the stream's lock. Shutdown's own flush of that stream then aborts the process
+(`Fatal Python error: _enter_buffered_busy`, exit -6) instead of exiting
+128 + signum (#1026). A thread blocked in its read holds only stdin's lock,
+which shutdown never takes.
+
+So the reader marks the thread *quiet* while it reads. A cancelled wait
+abandons the prompt and awaits quiet on the loop, so a second press or the
+teardown deadline still forces the run as usual, with no timer of its own. An
+abandoned thread's next turn to write retires it instead: it gives the reader
+and the one-prompt lock back and parks for good. That turn comes when a line
+arrives after the command gave up, or when click would re-ask the question. A
+prompt that does not read through the swapped reader is quiet from the start:
+its writes cannot be seen, so the cancel does not wait for them.
+
+A *forced* run (a second press, or the teardown deadline) stops waiting for
+quiet, because it abandons cleanup by design. A thread caught mid-write at that
+instant can still abort the exit.
 
 ## OttoContext: the per-invocation runtime
 
