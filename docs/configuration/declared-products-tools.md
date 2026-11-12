@@ -137,11 +137,12 @@ on the `[coverage] hosts` at these points, and at no other:
 | `otto run cleanup`, `ensure("clean")`, `Host.cleanup()` | remove its counters and the directories they leave empty |
 
 Counters add up between the two `otto test` rows, across every install and
-uninstall the tests do. A `cov_dir` that existed when the run started and is
-gone at collection loses that product's coverage, and otto logs a WARNING
-naming the directory, the host and the product. A `cov_dir` that did not exist
-at the start stays quiet: gcov creates it the first time the product exits, so
-a product the tests never ran has none. With `--no-cov-clean`, and for a
+uninstall the tests do. A `cov_dir` that existed when the run started (after
+the first row's clear, which removes a `cov_dir` it leaves empty) and is gone
+at collection loses that product's coverage, and otto logs a WARNING naming
+the directory, the host and the product. A `cov_dir` that did not exist at the
+start stays quiet: gcov creates it the first time the product exits, so a
+product the tests never ran has none. With `--no-cov-clean`, and for a
 standalone `otto cov get`, otto has no record of what existed, and a missing
 directory is only a DEBUG line.
 

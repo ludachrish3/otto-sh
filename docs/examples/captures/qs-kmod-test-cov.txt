@@ -1,23 +1,25 @@
 $ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-kmod/e2e --no-random TestWordcount
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
-INFO     @dut   | printf '\n%s\n' otto-cov-presence
-         if test -d /tmp/qs_wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0
-         absent'; fi
-INFO
-INFO     @dut > | otto-cov-presence
-INFO     @dut > | otto-cov 0 present
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
          /tmp/qs_wordcount || { __otto_gcda_rc=$( { { find /tmp/qs_wordcount -name '"'"'*.gcda'"'"'
          -type f -exec rm -f {} \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/qs_wordcount/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*};
          done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while
-         IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }'
+         IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/qs_wordcount
+         2>/dev/null; test "$__otto_gcda_rc" = 0; }'
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n%s\n'"'"'
          otto-gcda-check; LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -print
          2>&1'
 INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/qs_wordcount': No such file or directory
+INFO     @dut   | printf '\n%s\n' otto-cov-presence
+         if test -d /tmp/qs_wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0
+         absent'; fi
+INFO
+INFO     @dut > | otto-cov-presence
+INFO     @dut > | otto-cov 0 absent
 INFO     coverage counters cleared before the run on 1 product(s) across 1 host(s)
 INFO     === test_counts_words[one-1] ===
 INFO     @dut   | qs_wordcount: staged
@@ -63,11 +65,13 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/qs_wordcount/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*};
          done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while
-         IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }'
+         IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/qs_wordcount
+         2>/dev/null; test "$__otto_gcda_rc" = 0; }'
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n%s\n'"'"'
          otto-gcda-check; LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -print
          2>&1'
 INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/qs_wordcount': No such file or directory
 INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
 
 Output directory: /tmp/otto-gs/xdir/test/<run>

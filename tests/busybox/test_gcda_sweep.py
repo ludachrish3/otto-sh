@@ -94,8 +94,36 @@ def test_the_reset_removes_every_counter_without_find_delete(sweep_release, appl
     assert _gcda_left(cov) == [], f"counters survived under BusyBox {sweep_release.version}"
     assert (cov / "sub" / "keep.txt").read_text() == "user data"
     # The dir it emptied goes (#722); the one holding a user file, and the
-    # cov_dir itself, stay.
+    # cov_dir holding it, stay.
     assert sorted(str(p.relative_to(cov)) for p in cov.rglob("*")) == ["sub", "sub/keep.txt"]
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize("sweep_release", _SWEEP_ROWS, indirect=True)
+def test_the_reset_removes_the_cov_dir_it_emptied_and_nothing_above(
+    sweep_release, applet_dir, tmp_path
+):
+    # The quoting is load-bearing: an unquoted `rmdir c[x]*` would also take
+    # the empty sibling `cxy`.
+    above = tmp_path / "above"
+    cov = above / "c[x]*"
+    (cov / "sub").mkdir(parents=True)
+    (cov / "sub" / "a.gcda").write_bytes(b"")
+    (above / "cxy").mkdir()
+    link = tmp_path / "link"
+    (tmp_path / "target").mkdir()
+    link.symlink_to(tmp_path / "target")
+    d = applet_dir(sweep_release, SWEEP_APPLETS)
+
+    done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(cov)))
+    assert done.returncode == 0, f"rc {done.returncode}: {_first_line(done)!r}"
+    assert sorted(p.name for p in above.iterdir()) == ["cxy"]
+
+    # A cov_dir that is a symlink: rmdir refuses it, and never follows it.
+    done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(link)))
+    assert done.returncode == 0, f"rc {done.returncode}: {_first_line(done)!r}"
+    assert link.is_symlink()
+    assert (tmp_path / "target").is_dir()
 
 
 @pytest.mark.busybox
@@ -181,8 +209,8 @@ def test_the_reset_survives_more_paths_than_one_command_line_holds(
     assert rc == 0, f"rc {rc}: {_first_line(done)!r}"
     left = _gcda_left(cov)
     assert left == [], f"{len(left)} of 22000 counters survived ({elapsed:.0f}s)"
-    # Every dir the removal emptied went too (#722); the cov_dir stays.
-    assert sorted(cov.iterdir()) == []
+    # Every dir the removal emptied went too (#722), the cov_dir included.
+    assert not cov.exists()
 
 
 # ── the cleanup sweep (#777): the probe and the removal scripts, verbatim ─────

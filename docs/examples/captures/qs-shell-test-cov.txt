@@ -1,20 +1,13 @@
 $ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/e2e --no-random TestTools
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 ======================================= test session starts ========================================
-INFO     @dut   | printf '\n%s\n' otto-cov-presence
-         if test -d /tmp/wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0 absent';
-         fi
-         if test -d /tmp/shout; then echo 'otto-cov 1 present'; else echo 'otto-cov 1 absent'; fi
-INFO
-INFO     @dut > | otto-cov-presence
-INFO     @dut > | otto-cov 0 absent
-INFO     @dut > | otto-cov 1 present
 INFO     @dut   | ! test -d /tmp/wordcount || { __otto_gcda_rc=$( { { find /tmp/wordcount -name
          '*.gcda' -type f -exec rm -f {} \; ! -path '*
          *' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/wordcount/*) true;; *) false;; esac; do printf '%s\n' "$d"; d=${d%/*}; done; done | {
          LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read -r
-         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }
+         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/wordcount 2>/dev/null; test
+         "$__otto_gcda_rc" = 0; }
 INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '*.gcda' -type
          f -print 2>&1
 INFO
@@ -25,11 +18,21 @@ INFO     @dut   | ! test -d /tmp/shout || { __otto_gcda_rc=$( { { find /tmp/shou
          *' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/shout/*) true;; *) false;; esac; do printf '%s\n' "$d"; d=${d%/*}; done; done | {
          LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read -r
-         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }
+         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/shout 2>/dev/null; test
+         "$__otto_gcda_rc" = 0; }
 INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/shout -name '*.gcda' -type f
          -print 2>&1
 INFO
 INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/shout': No such file or directory
+INFO     @dut   | printf '\n%s\n' otto-cov-presence
+         if test -d /tmp/wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0 absent';
+         fi
+         if test -d /tmp/shout; then echo 'otto-cov 1 present'; else echo 'otto-cov 1 absent'; fi
+INFO
+INFO     @dut > | otto-cov-presence
+INFO     @dut > | otto-cov 0 absent
+INFO     @dut > | otto-cov 1 absent
 INFO     coverage counters cleared before the run on 2 product(s) across 1 host(s)
 INFO     === test_wordcount_counts_words[one-1] ===
 INFO     @dut   | GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /tmp/quickstart/wordcount one
@@ -72,21 +75,25 @@ INFO     @dut   | ! test -d /tmp/wordcount || { __otto_gcda_rc=$( { { find /tmp/
          *' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/wordcount/*) true;; *) false;; esac; do printf '%s\n' "$d"; d=${d%/*}; done; done | {
          LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read -r
-         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }
+         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/wordcount 2>/dev/null; test
+         "$__otto_gcda_rc" = 0; }
 INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '*.gcda' -type
          f -print 2>&1
 INFO
 INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/wordcount': No such file or directory
 INFO     @dut   | ! test -d /tmp/shout || { __otto_gcda_rc=$( { { find /tmp/shout -name '*.gcda'
          -type f -exec rm -f {} \; ! -path '*
          *' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/shout/*) true;; *) false;; esac; do printf '%s\n' "$d"; d=${d%/*}; done; done | {
          LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read -r
-         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test "$__otto_gcda_rc" = 0; }
+         d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/shout 2>/dev/null; test
+         "$__otto_gcda_rc" = 0; }
 INFO     @dut   | printf '\n%s\n' otto-gcda-check; LC_ALL=C find /tmp/shout -name '*.gcda' -type f
          -print 2>&1
 INFO
 INFO     @dut > | otto-gcda-check
+INFO     @dut > | find: '/tmp/shout': No such file or directory
 INFO     coverage counters cleared after collection on 2 product(s) across 1 host(s)
 
 Output directory: /tmp/otto-gs/xdir/test/<run>

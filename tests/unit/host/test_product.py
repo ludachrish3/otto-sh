@@ -995,8 +995,8 @@ async def test_reset_removes_the_dirs_it_emptied_and_nothing_else(tmp_path, path
     assert result.status is Status.Success, result.msg
     # An emptied subtree goes, deepest first; a dir holding an unrelated
     # file stays (its emptied child goes); a dir that was already empty is
-    # not one the reset emptied, so it stays; the cov_dir itself and
-    # everything above it are never touched.
+    # not one the reset emptied, so it stays; the cov_dir, still holding
+    # both, stays; and nothing above it is ever touched.
     assert _tree(above) == [
         name,
         f"{name}/mixed",
@@ -1007,18 +1007,93 @@ async def test_reset_removes_the_dirs_it_emptied_and_nothing_else(tmp_path, path
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", _COV_NAMES)
 @pytest.mark.parametrize("path", _PATHS)
-async def test_reset_keeps_the_cov_dir_it_emptied(tmp_path, path):
-    cov = tmp_path / "cov"
+async def test_reset_removes_the_cov_dir_it_emptied(tmp_path, path, name):
+    cov = tmp_path / name
     (cov / "a" / "b").mkdir(parents=True)
     (cov / "a" / "b" / "c.gcda").write_bytes(b"")
+    (cov / "top.gcda").write_bytes(b"")
+    # A sibling an unquoted `rmdir c[x]*` would also match: never touched.
+    (tmp_path / "cxy").mkdir()
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     assert (await _reset(p, ShellHost(), path)).status is Status.Success
-    # Emptied up to, never including, the cov_dir: what the next run writes
-    # under, and what the pre-run presence probe asked about.
+    # Emptied up to and including the cov_dir; nothing above it is touched.
+    assert not cov.exists()
+    assert sorted(q.name for q in tmp_path.iterdir()) == ["cxy"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_removes_a_cov_dir_that_was_already_empty(tmp_path, path):
+    # Whatever it held before: an empty cov_dir after the clean goes.
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await _reset(p, ShellHost(), path)).status is Status.Success
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["file", "empty subdir"])
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_keeps_a_cov_dir_holding_anything(tmp_path, path, content):
+    # Any content at all keeps the cov_dir: an unrelated file, or an empty
+    # dir that never held a counter (the reset did not empty it).
+    cov = tmp_path / "cov"
+    cov.mkdir()
+    (cov / "a.gcda").write_bytes(b"")
+    if content == "file":
+        (cov / "notes.txt").write_text("user data")
+    else:
+        (cov / "spare").mkdir()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await _reset(p, ShellHost(), path)).status is Status.Success
+    assert [q.name for q in cov.iterdir()] == ["notes.txt" if content == "file" else "spare"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_never_removes_through_a_symlinked_cov_dir(tmp_path, path):
+    # rmdir(2) refuses a symlink (ENOTDIR) and never follows it: neither the
+    # link nor the empty dir it names is removed.
+    target = tmp_path / "target"
+    target.mkdir()
+    cov = tmp_path / "cov"
+    cov.symlink_to(target)
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await _reset(p, ShellHost(), path)).status is Status.Success
+    assert cov.is_symlink()
+    assert target.is_dir()
+
+
+class _BindMountedShellProduct(_RootOwnedShellProduct):
+    """A kind whose ``cov_dir`` is a live container's bind-mount source, as ``docker_image``'s."""
+
+    cov_dir_bind_mounted = True
+
+
+@pytest.mark.asyncio
+async def test_reset_keeps_a_bind_mounted_cov_dir_it_emptied(tmp_path):
+    # Removing a bind-mount source orphans the container's view of it: every
+    # counter the container writes afterwards fails ENOENT and is lost.
+    cov = tmp_path / "cov"
+    (cov / "sub").mkdir(parents=True)
+    (cov / "sub" / "a.gcda").write_bytes(b"")
+    p = _BindMountedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await p.reset_coverage(host=ShellHost())).status is Status.Success
     assert cov.is_dir()
     assert list(cov.iterdir()) == []
-    assert sorted(q.name for q in tmp_path.iterdir()) == ["cov"]
+
+
+def test_only_the_docker_image_kind_keeps_its_cov_dir():
+    from otto.host.docker_image_kind import DockerImageProduct
+    from otto.host.kmod_kind import KmodProduct
+
+    assert DockerImageProduct.cov_dir_bind_mounted is True
+    assert KmodProduct.cov_dir_bind_mounted is False
+    assert ShellProduct.cov_dir_bind_mounted is False
+    assert Product.cov_dir_bind_mounted is False
 
 
 @pytest.mark.asyncio
@@ -1094,8 +1169,7 @@ async def test_reset_removes_the_emptied_dirs_through_the_same_elevation(tmp_pat
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Success, result.msg
-    assert not (cov / "sub").exists()
-    assert cov.is_dir()
+    assert not cov.exists()  # the emptied cov_dir too, under the same elevation
 
 
 @pytest.mark.asyncio
@@ -1145,12 +1219,13 @@ async def test_reset_ignores_what_the_session_printed_before_the_check_ran(tmp_p
     (cov / "a.gcda").write_bytes(b"")
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     assert (await _reset(p, host, path)).status is Status.Success
-    assert not (cov / "a.gcda").exists()
+    assert not cov.exists()  # emptied, so removed with its last counter
     absent = _DummyShellProduct(
         artifact=Path("/b/app"), name="app", cov_dir=str(tmp_path / "never-created")
     )
     assert (await _reset(absent, host, path)).status is Status.Success
     # A real survivor is still named, and the noise is never counted as one.
+    cov.mkdir()
     survivor = cov / "b.gcda"
     survivor.write_bytes(b"")
     noisy_rm = ShellHost(bin_dir=fake_bin(tmp_path, "rm", "exit 1"), noise=_SUDO_NOISE)

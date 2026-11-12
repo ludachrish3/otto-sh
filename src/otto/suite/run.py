@@ -598,7 +598,8 @@ async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> "Cl
     carries it out).
 
     Returns the clean's report, ``None`` when no clean ran. It records which
-    ``cov_dir`` existed just before the reset
+    ``cov_dir`` still existed just after the reset (one the reset emptied is
+    removed, and is not a loss)
     (:attr:`~otto.coverage.reports.CleanReport.present_at_reset`): the
     invocation's ``_Sessions`` keeps it (:attr:`_Sessions.pre_clean`) and
     hands it to the post-run collection, which warns for a dir that was

@@ -4,9 +4,11 @@ The host-layer half of "cleanup owns coverage data": one command per host
 and elevation, whatever the number of products, answering per product.
 
 - :func:`probe_presence`: which ``cov_dir`` exists right now. The pre-run
-  counter reset records it (:func:`otto.coverage.collect.clean_coverage`'s
-  ``record_presence``), so a dir that existed at run start and is gone at
-  the fetch is a loud loss, not a quiet "never exercised".
+  counter reset records it once it has run
+  (:func:`otto.coverage.collect.clean_coverage`'s ``record_presence``), so
+  a dir that survived the reset (it still held something) and is gone at
+  the fetch is a loud loss, not a quiet "never exercised"; a dir the reset
+  itself emptied and removed is neither.
 - :func:`coverage_left`: what coverage left under each ``cov_dir`` — its
   ``.gcda`` counters and the directories that are empty. Any of either
   means "not clean" (``is_clean``).

@@ -26,8 +26,12 @@ def framed(cmd: str, output: str) -> str:
     return CHECK_FRAME + output if CHECK_MARK in cmd else output
 
 
-def delete_line(cov_dir: str) -> str:
-    """The reset's guarded removal line for *cov_dir*, as the pins spell it."""
+def delete_line(cov_dir: str, *, keep_cov_dir: bool = False) -> str:
+    """The reset's guarded removal line for *cov_dir*, as the pins spell it.
+
+    The emptied *cov_dir* itself is removed last, unless *keep_cov_dir* (a
+    kind whose ``cov_dir`` is a live container's bind-mount source).
+    """
     q = shlex.quote(cov_dir)
     find = f"find {q} -name '*.gcda' -type f -exec rm -f {{}} \\; ! -path '*\n*' -print"
     ancestors = (
@@ -36,9 +40,10 @@ def delete_line(cov_dir: str) -> str:
         "do printf '%s\\n' \"$d\"; d=${d%/*}; done; done"
     )
     prune = 'while IFS= read -r d; do rmdir "$d" 2>/dev/null; done'
+    root = "" if keep_cov_dir else f"rmdir {q} 2>/dev/null; "
     return (
         f"! test -d {q} || "
         f'{{ __otto_gcda_rc=$( {{ {{ {find}; echo "$?" >&3; }} | {ancestors} | '
         "{ LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | "
-        f'{prune}; }} 3>&1 ); test "$__otto_gcda_rc" = 0; }}'
+        f'{prune}; }} 3>&1 ); {root}test "$__otto_gcda_rc" = 0; }}'
     )

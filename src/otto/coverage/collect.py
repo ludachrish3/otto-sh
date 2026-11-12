@@ -123,14 +123,16 @@ async def clean_coverage(
     instrumented product is reported failed, never skipped. An empty *pairs*
     is nothing to clean: an empty report, no host touched.
 
-    *record_presence* asks each host, before its reset, which of those
-    products' ``cov_dir`` exist (one unelevated batched ``test -d``,
+    *record_presence* asks each host, after its reset, which of those
+    products' ``cov_dir`` still exist (one unelevated batched ``test -d``,
     :func:`~otto.host.cov_sweep.probe_presence`), and returns the answer as
     :attr:`~otto.coverage.reports.CleanReport.present_at_reset`. Only the
     pre-run reset of ``otto test --cov`` asks: that evidence is what makes a
-    ``cov_dir`` gone at the fetch a WARNING rather than a quiet DEBUG. An
-    embedded host is reset but never probed, and a host whose probe fails
-    contributes no evidence.
+    ``cov_dir`` gone at the fetch a WARNING rather than a quiet DEBUG. After,
+    never before: the reset removes a ``cov_dir`` it leaves empty
+    (:func:`~otto.host.product.gcda_prune_files`), and that removal is
+    the clean's own, never a loss. An embedded host is reset but never
+    probed, and a host whose probe fails contributes no evidence.
 
     Raises:
         CoverageConfigError: no ``[coverage]`` section, or a malformed
@@ -250,10 +252,11 @@ async def _reset_products(
 
     With *named*, only the products it names for this host; a named product
     the host does not carry instrumented is reported failed. With
-    *record_presence*, the products about to be reset that have a host
+    *record_presence*, the products just reset that have a host
     ``cov_dir`` (:func:`~otto.host.product.cov_dir_products`) are probed
-    first, and the names whose dir exists come back beside the results; a
-    probe that gives no answer is no evidence (an empty set).
+    once every reset has run, and the names whose dir still exists come
+    back beside the results; a probe that gives no answer is no evidence
+    (an empty set).
     """
     from .. import layout
     from ..host.cov_sweep import probe_presence
@@ -267,12 +270,13 @@ async def _reset_products(
         # Before any command: a name that is not a single safe path segment
         # must never reach a host.
         layout.validate_product_name(product.name)
-    evidence: frozenset[str] = frozenset[str]()
-    if record_presence:
-        evidence = await probe_presence(host, cov_dir_products(host, products)) or frozenset[str]()
     results = {}
     for product in products:
         results[product.name] = await product.reset_coverage(host)
+    evidence: frozenset[str] = frozenset[str]()
+    if record_presence:
+        # After the resets: a cov_dir the reset emptied and removed is not a loss.
+        evidence = await probe_presence(host, cov_dir_products(host, products)) or frozenset[str]()
     for name in sorted((wanted or set()) - set(results)):
         results[name] = Result(
             status=Status.Error, msg=f"{name!r} is not an instrumented product on {host.id!r}"

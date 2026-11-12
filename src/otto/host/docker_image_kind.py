@@ -29,7 +29,11 @@ bind-mount source directory itself, root-owned, so the kind's ``cov_dir``
 is root-owned (:attr:`~otto.host.product.Product.cov_dir_root_owned`):
 the reset's delete and cleanup's sweep run elevated, and a non-root
 container image needs its ``cov_dir`` pre-created and writable (the
-fixture suite's own install does this) or nothing lands in it.
+fixture suite's own install does this) or nothing lands in it. The
+counter reset keeps that dir even when it empties it
+(:attr:`~otto.host.product.Product.cov_dir_bind_mounted`): removing a
+bind mount's source leaves the running container writing into a deleted
+directory, and every counter it wrote afterwards would be lost.
 ``docker logs`` is hauled as ``debug/container.log`` — that is PID 1's
 output only; anything a suite runs via ``docker exec`` never reaches it.
 Products only.
@@ -113,6 +117,9 @@ class DockerImageProduct(ShellProduct):
 
     cov_dir_root_owned: ClassVar[bool] = True
     """docker creates the bind-mount source as root, and the container writes as its own user."""
+
+    cov_dir_bind_mounted: ClassVar[bool] = True
+    """``docker run`` mounts the cov_dir: the reset keeps it, emptied, for the running container."""
 
     image: str = ""
     """The reference to run, or the tarball path as declared (see :attr:`is_tarball`)."""

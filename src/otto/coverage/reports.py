@@ -51,7 +51,7 @@ class CleanReport:
     """Host id -> product name -> that product's counter reset, in walk order."""
 
     present_at_reset: frozenset[tuple[str, str]] = field(default_factory=frozenset)
-    """``(host id, product name)`` for every ``cov_dir`` that existed just before the reset.
+    """``(host id, product name)`` for every ``cov_dir`` that still existed just after the reset.
 
     Recorded only when the clean was asked to (``record_presence=True``, the
     pre-run reset of ``otto test --cov``), and only for hosts whose presence

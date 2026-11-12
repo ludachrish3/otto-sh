@@ -1,4 +1,4 @@
-"""A ``cov_dir`` that existed at the pre-run reset and is gone at the fetch is a WARNING (#777 §3).
+"""A ``cov_dir`` the pre-run reset left in place and gone at the fetch is a WARNING (#777 §3).
 
 Through the real functions: the pre-run clean (``_pre_run_cov_clean``) and
 the post-run collection (``_post_run_coverage``) over a host double that
@@ -57,10 +57,16 @@ async def _pair(tmp_path: Path, *, cov_clean=True, remove_after_reset=True, cov_
     return pre_clean
 
 
+def _kept(cov_dir: Path) -> None:
+    """Make *cov_dir* hold content the reset never removes, so the reset keeps it."""
+    cov_dir.mkdir(parents=True)
+    (cov_dir / "notes.txt").write_text("user data")
+
+
 @pytest.mark.asyncio
 async def test_a_dir_present_at_reset_and_gone_at_fetch_warns(tmp_path, cov_lab, caplog):
     _host, cov_dir = cov_lab
-    cov_dir.mkdir(parents=True)
+    _kept(cov_dir)
     with caplog.at_level(logging.DEBUG):
         pre_clean = await _pair(tmp_path, cov_dir=cov_dir)
     assert pre_clean is not None
@@ -70,6 +76,23 @@ async def test_a_dir_present_at_reset_and_gone_at_fetch_warns(tmp_path, cov_lab,
         f"cov_dir {cov_dir} on t1 for app existed at run start and is gone: its coverage "
         "is missing from this run (was it removed before collection?)"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_dir_the_reset_emptied_and_removed_stays_debug(tmp_path, cov_lab, caplog):
+    # The reset's own removal of an emptied cov_dir is never a loss: the
+    # product simply wrote nothing this run (#722).
+    _host, cov_dir = cov_lab
+    (cov_dir / "sub").mkdir(parents=True)
+    (cov_dir / "sub" / "a.gcda").write_bytes(b"")
+    with caplog.at_level(logging.DEBUG):
+        pre_clean = await _pair(tmp_path, remove_after_reset=False, cov_dir=cov_dir)
+    assert not cov_dir.exists()
+    assert pre_clean is not None
+    assert pre_clean.ok
+    assert pre_clean.present_at_reset == frozenset()
+    assert _loss_warnings(caplog) == []
+    assert any("No cov_dir for app on t1" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -96,7 +119,7 @@ class _FailingProbeHost(ShellHost):
 @pytest.mark.asyncio
 async def test_a_probe_error_gives_no_evidence_and_stays_debug(tmp_path, monkeypatch, caplog):
     cov_dir = tmp_path / "remote" / "app-cov"
-    cov_dir.mkdir(parents=True)
+    _kept(cov_dir)
     host = coverage_shell_host("t1", {"app": cov_dir})
     failing = _FailingProbeHost(host_id="t1")
     failing.products = host.products
@@ -135,7 +158,7 @@ async def test_a_standalone_collection_has_no_evidence_and_stays_debug(tmp_path,
 @pytest.mark.asyncio
 async def test_a_second_invocation_inherits_no_evidence(tmp_path, cov_lab, caplog):
     _host, cov_dir = cov_lab
-    cov_dir.mkdir(parents=True)
+    _kept(cov_dir)
     with caplog.at_level(logging.DEBUG):
         first = await _pair(tmp_path, cov_dir=cov_dir)
         second = await _pair(tmp_path, cov_dir=cov_dir)
