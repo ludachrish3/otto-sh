@@ -78,12 +78,12 @@ class PreflightResult:
     """One line per project that could not be checked, already phrased for a user."""
 
 
-def read_project_table(project: Any) -> "dict[str, Any] | None":
-    """Return *project*'s pyproject ``[project]`` table, or None if there isn't one.
+def read_pyproject(project: Any) -> "dict[str, Any] | None":
+    """Return *project*'s whole parsed pyproject, or None if it has no readable one.
 
-    None covers three shapes on purpose -- no pyproject, an unreadable one, and
-    one with no ``[project]`` table -- because every caller here treats them
-    identically: there is nothing to check, and no verdict to render.
+    THE pyproject reader of :mod:`otto.env`: :func:`read_project_table` and
+    every ``otto env`` question about a project's pyproject go through it, so
+    there is one answer to what an unreadable file means.
 
     Unreadable is NOT an error this module reports. A malformed pyproject
     already has an owner: discovery frames a broken project, and an installer
@@ -96,10 +96,19 @@ def read_project_table(project: Any) -> "dict[str, Any] | None":
     if not pyproject.is_file():
         return None
     try:
-        data = tomli.loads(pyproject.read_text())
+        return tomli.loads(pyproject.read_text())
     except (OSError, ValueError):  # tomli.TOMLDecodeError subclasses ValueError
         return None
-    pyproject_table = data.get("project")
+
+
+def read_project_table(project: Any) -> "dict[str, Any] | None":
+    """Return *project*'s pyproject ``[project]`` table, or None if there isn't one.
+
+    None covers three shapes on purpose -- no pyproject, an unreadable one, and
+    one with no ``[project]`` table -- because every caller here treats them
+    identically: there is nothing to check, and no verdict to render.
+    """
+    pyproject_table = (read_pyproject(project) or {}).get("project")
     return pyproject_table if isinstance(pyproject_table, dict) else None
 
 
@@ -146,6 +155,50 @@ class _Environment:
         return self._dists
 
 
+def _is_dynamic(pyproject_table: "dict[str, Any]", field: str) -> bool:
+    """Whether a ``[project]`` table lists *field* in its ``dynamic``.
+
+    THE one reading of ``dynamic``, so :func:`static_dependencies` and
+    :func:`dynamic_fields_needing_build` cannot disagree about it. Only a
+    LIST counts: a string ``dynamic = "optional-dependencies"`` would otherwise be
+    substring-matched, and uv already refuses it in its own words ("expected
+    a sequence").
+    """
+    dynamic = pyproject_table.get("dynamic")
+    return isinstance(dynamic, list) and field in dynamic
+
+
+def static_dependencies(pyproject_table: "dict[str, Any]") -> "list[str] | None":
+    """Return a ``[project]`` table's static ``dependencies``, or None when they are dynamic.
+
+    The preflight's reading of what a pyproject declares it depends on, for a
+    project that is not installed. None, not an empty list, because "declared
+    nothing" and "declared that only a build can say" are different answers.
+    ``otto env`` decides what it refuses with :func:`dynamic_fields_needing_build`,
+    which reads ``dynamic`` through the same :func:`_is_dynamic`.
+    """
+    if _is_dynamic(pyproject_table, "dependencies"):
+        return None
+    return [str(d) for d in (pyproject_table.get("dependencies") or [])]
+
+
+_BUILT_FIELDS = ("dependencies", "optional-dependencies")
+"""The ``[project]`` fields an installer cannot read from the file once they are
+dynamic: uv needs a build to compute either. ``version``, ``requires-python``,
+``scripts`` and ``entry-points`` being dynamic does not stop it reading the
+dependencies statically."""
+
+
+def dynamic_fields_needing_build(pyproject_table: "dict[str, Any]") -> "list[str]":
+    """Return the dynamic ``[project]`` fields an installer would need a BUILD to read.
+
+    Empty means uv can read the project's requirements straight from its
+    pyproject, which is what ``otto env`` relies on for a project it never
+    builds.
+    """
+    return [f for f in _BUILT_FIELDS if _is_dynamic(pyproject_table, f)]
+
+
 def _requirements(
     project: Any, pyproject_table: "dict[str, Any]", env: _Environment
 ) -> "tuple[list[str], str | None]":
@@ -162,16 +215,23 @@ def _requirements(
     dist = env.dists.get(normalize_name(str(name))) if name else None
     if dist is not None:
         return [str(r) for r in (dist.requires or [])], None
-    if "dependencies" in (pyproject_table.get("dynamic") or []):
+    declared = static_dependencies(pyproject_table)
+    if declared is None:
         return [], (
             f"cannot preflight {project.name}: dependencies are dynamic and "
             f"{project.name} is not installed in this environment"
         )
-    return [str(d) for d in (pyproject_table.get("dependencies") or [])], None
+    return declared, None
 
 
-def _check(project: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None]":
-    """Evaluate one project's requirements, returning its findings and any warning."""
+def _check(
+    project: Any, env: _Environment, marker_env: "dict[str, str] | None" = None
+) -> "tuple[list[Unsatisfied], str | None]":
+    """Evaluate one project's requirements, returning its findings and any warning.
+
+    *marker_env* is the PEP 508 marker environment to judge markers in, None
+    for this interpreter's own.
+    """
     pyproject_table = read_project_table(project)
     if pyproject_table is None:
         return [], None
@@ -197,7 +257,7 @@ def _check(project: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | N
         # `extra == "..."` evaluates False with no extra in context, which is
         # exactly how base-dependencies-only stays true for an installed
         # dist's `Requires-Dist`, where extras and base deps share one list.
-        if req.marker is not None and not req.marker.evaluate():
+        if req.marker is not None and not req.marker.evaluate(environment=marker_env):
             continue
         dist = env.dists.get(normalize_name(req.name))
         if dist is None:
@@ -238,19 +298,27 @@ def check_project(project: Any, site_dirs: "Iterable[Path] | None" = None) -> "l
 
 
 def preflight(
-    projects: "Iterable[Any]", site_dirs: "Iterable[Path] | None" = None
+    projects: "Iterable[Any]",
+    site_dirs: "Iterable[Path] | None" = None,
+    marker_env: "dict[str, str] | None" = None,
 ) -> PreflightResult:
     """Check every project and report what this environment does not meet.
 
     Raises nothing. The caller decides what a finding costs -- severity is an
     activation question, and this module deliberately knows nothing about
     activation.
+
+    *site_dirs* and *marker_env* point the check at ANOTHER interpreter's
+    environment (``otto env show`` judging the orchestration venv): its
+    installed distributions and its PEP 508 marker values, which differ from
+    this interpreter's whenever the venv runs a different Python. None for
+    either means this interpreter's own.
     """
     env = _Environment(site_dirs)
     unsatisfied: "list[Unsatisfied]" = []
     warnings: "list[str]" = []
     for project in projects:
-        found, warning = _check(project, env)
+        found, warning = _check(project, env, marker_env)
         unsatisfied.extend(found)
         if warning is not None:
             warnings.append(warning)

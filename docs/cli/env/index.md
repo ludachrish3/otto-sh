@@ -67,17 +67,58 @@ Activate it with:
   source ~/.otto/134b91c0-project1-project4/env/bin/activate
 ```
 
+(env-what-goes-in)=
+
 ## What goes in
 
-- **Every discovered project that has a `pyproject.toml`**, installed *editable*,
-  so your live checkouts stay live.
-- **Projects without one are skipped**, with a notice naming them. That is not an
-  error: their `libs` ride `sys.path` at bootstrap. A workspace made entirely
-  of such projects still gets an environment, because otto itself goes into it.
+- **Every discovered project that has a `pyproject.toml`**, in one of two ways.
+  Which way is uv's own rule, so a project means the same thing here as to
+  `uv sync` run inside it: `[tool.uv] package` decides when it is set, and
+  otherwise a project is a package exactly when it declares a `[build-system]`.
+  - **A package** is built and installed *editable*, so your live checkout
+    stays live.
+  - **A virtual project** is never built. uv reads its `pyproject.toml` as a
+    requirements file, so its `[project] dependencies` go in, each resolved
+    through the project's own `[tool.uv.sources]` (a path, editable or git
+    source that `uv add` wrote). Its own code is not installed and needs no
+    install: its `libs` reach `sys.path` at bootstrap. This is the layout the
+    [recommended setup](../../installation.md#with-uv-recommended) writes, so
+    that setup needs no build configuration in a workspace either. Its console
+    scripts (`[project.scripts]`) are not installed, since only a build
+    installs them; declare a `[build-system]` if you need them. Its
+    `[dependency-groups]` (`uv add --dev`) are not installed either: they are
+    the project's own development tools, not what its glue imports.
+- **Projects with nothing to install are skipped**, with a notice naming each
+  and why: `no pyproject.toml`, or a virtual project's `no [project] table`.
+  That is not an error: their `libs` ride `sys.path` at bootstrap. A workspace
+  made entirely of such projects still gets an environment, because otto
+  itself goes into it.
+- **Two virtual-project declarations are refused**
+  (`otto.env.EnvUninstallableProjectError`). Reading a requirements file, uv
+  would otherwise build the project or install it on the wrong Python:
+  - `dynamic = ["dependencies"]` or `dynamic = ["optional-dependencies"]`.
+    uv can only compute either by building the project, which a virtual
+    project never gets. If the project is virtual because of
+    `[tool.uv] package = false`, drop that (and declare a `[build-system]` if it
+    has none); if it simply has no `[build-system]`, declare one. Or list the
+    fields statically in `[project]`. This is refused before anything is removed or
+    built, so an existing environment, even under `create --force`, is left
+    standing.
+  - a `requires-python` that the environment's Python does not satisfy. uv
+    checks it when it installs a package, but not when it reads a requirements
+    file, so otto checks it instead, comparing the interpreter's release
+    (`3.15.0` on a `3.15.0a5`, as pip does). It needs the new venv's
+    interpreter, so it runs after the venv is created and before any project
+    is installed: like an installer failure on `create`, it leaves that new,
+    empty venv behind, and with `--force` the old one is already gone. uv
+    picks the environment's Python when it creates it;
+    `UV_PYTHON=<version> otto env create --force` rebuilds it on another.
 - **otto**, at whatever version you are running — and *the way* you are running
   it. If your otto is an editable install from a checkout, the environment gets
   that same checkout; if it came from a wheel, the environment pins that
   version.
+
+(env-dependency-preflight)=
 
 ## The dependency preflight
 
@@ -167,8 +208,9 @@ $ otto env sync -- --find-links ../wheels
 ```
 
 Use it for hermetic index pins. Note that `--no-index` applies to the
-*entire* install, including building any project that needs a build backend — so
-an air-gapped run has to supply those wheels too.
+*entire* install, including building any package project — so an air-gapped run
+has to supply its build backend's wheels too. A virtual project needs only the
+wheels of its dependencies, since it is never built.
 
 ## Resolver failures
 

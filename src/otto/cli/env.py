@@ -49,8 +49,10 @@ def _report(build: "EnvBuild", *, verb: str) -> None:
     typer.echo(f"{verb} {build.env}")
     for name in build.installed:
         typer.echo(f"  installed (editable): {name}")
-    for name in build.skipped:
-        typer.echo(f"  skipped, no pyproject.toml: {name}")
+    for name in build.virtual:
+        typer.echo(f"  installed dependencies (virtual, not built): {name}")
+    for skipped in build.skipped:
+        typer.echo(f"  skipped, {skipped.reason}: {skipped.name}")
     typer.echo(_last_sync(build.meta))
     typer.echo(f"\nActivate it with:\n  {activation_line(build.env)}")
 
@@ -111,10 +113,15 @@ def show() -> None:
     table.add_column("installed")
     table.add_column("state")
     for project in status.projects:
-        if project.dist_name is None:
-            installed, state = "—", "no pyproject (libs ride sys.path)"
+        if project.skipped is not None:
+            installed, state = "—", f"{project.skipped} (libs ride sys.path)"
         else:
-            installed = {True: "yes", False: "no", None: "?"}[project.installed]
+            answers = (
+                {True: "deps met", False: "deps missing", None: "?"}
+                if project.virtual
+                else {True: "yes", False: "no", None: "?"}
+            )
+            installed = answers[project.installed]
             state = "stale — run `otto env sync`" if project.stale else "current"
         table.add_row(
             literal_cell(project.name), literal_cell(project.dist_name or "—"), installed, state

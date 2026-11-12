@@ -17,7 +17,9 @@ if merely looking at the env throws.
 """
 
 import dataclasses
+import enum
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -34,15 +36,30 @@ from ..version import get_version
 if TYPE_CHECKING:
     from ..config.project import Project
 
+logger = logging.getLogger(__name__)
+
 META_FILENAME = ".otto-env.json"
 
-_LIST_DISTS = (
-    "import importlib.metadata as m\n"
-    "print('\\n'.join(d.metadata['Name'] or '' for d in m.distributions()))"
-)
-"""One-liner run INSIDE the env to enumerate what it holds. Asking the env's
-own interpreter answers from the installed dist-info itself, not from what otto
-believes it asked uv to install."""
+_PROBE_ENV = """\
+import importlib.metadata as m, json, sys, sysconfig
+try:
+    from packaging.markers import default_environment
+    marker_env = default_environment()
+except ImportError:
+    marker_env = None
+print(json.dumps({
+    "site": sorted({sysconfig.get_path(k) for k in ("purelib", "platlib")}),
+    "dists": [d.metadata["Name"] or "" for d in m.distributions()],
+    "python": ".".join(str(n) for n in sys.version_info[:3]),
+    "markers": marker_env,
+}))
+"""
+"""Run INSIDE the env to report what it holds, where, and on which Python. Asking
+the env's own interpreter answers from the installed dist-info itself, not from
+what otto believes it asked uv to install, and gives the env's own PEP 508
+marker values: the env runs whatever Python uv picked, not otto's. The marker
+values come from ``packaging`` IN the env (otto depends on it, so it is there
+once otto is), and are None in a venv that does not hold it yet."""
 
 _ATTRIBUTABLE = 2
 """How many project names a resolver message must implicate before otto adds its
@@ -99,17 +116,201 @@ class EnvSelfRebuildError(OttoError, RuntimeError):
     """otto is running from inside the environment it was asked to rebuild or sync."""
 
 
-def _installable(projects: "list[Project]") -> "tuple[list[Project], list[Project]]":
-    """Split discovered projects into (installable, skipped).
+class EnvUninstallableProjectError(OttoError, ValueError):
+    """A project's pyproject asks for an install that otto cannot honour as declared."""
 
-    Installable means "has a pyproject.toml". A project without one is not an
-    error and never has been: its ``libs`` ride ``sys.path`` at bootstrap, and
-    that is still correct. Every sample project but project4 is in the skipped half,
-    so a workspace of them must still build a working env.
+
+class VirtualReason(enum.Enum):
+    """Why a project is virtual -- which decides what un-virtualizes it."""
+
+    EXPLICIT = "[tool.uv] package = false"
+    """``[tool.uv] package = false``, which wins over any ``[build-system]``."""
+
+    NO_BUILD_SYSTEM = "no [build-system]"
+    """No ``[tool.uv] package`` and no ``[build-system]``."""
+
+
+def is_virtual(project: "Project") -> bool:
+    """Whether *project* is VIRTUAL: a pyproject that uv would not build as a package.
+
+    :func:`virtual_reason` decides; this is its yes/no.
     """
-    installable = [r for r in projects if (r.root / "pyproject.toml").is_file()]
-    skipped = [r for r in projects if r not in installable]
-    return installable, skipped
+    return virtual_reason(project) is not None
+
+
+def virtual_reason(project: "Project") -> "VirtualReason | None":
+    """Why *project* is VIRTUAL, or None when it is a package (or has no pyproject).
+
+    THE one place ``otto env`` decides whether a project is a package to build
+    or a virtual project whose dependencies are all there is to install; the
+    install plan, its refusals and ``env show`` all ask here. The rule is uv's own, so a
+    project means the same thing to ``otto env`` as to ``uv sync`` run inside
+    it: an explicit ``[tool.uv] package`` decides, and without one a project
+    that declares no ``[build-system]`` is virtual. That is the single-project
+    layout docs/installation.md recommends. Building one anyway falls back to
+    setuptools, whose auto-discovery refuses any layout with more than one
+    top-level directory, and which an offline wheel directory does not hold.
+
+    An UNREADABLE pyproject is not virtual, and neither is one whose
+    ``[tool.uv] package`` is not a boolean: both are installed like a package,
+    so uv refuses them in its own words (see
+    :func:`otto.env.preflight.read_pyproject`).
+    """
+    from .preflight import read_pyproject
+
+    pyproject = read_pyproject(project)
+    if pyproject is None:
+        return None
+    tool = pyproject.get("tool")
+    uv_table = tool.get("uv") if isinstance(tool, dict) else None
+    explicit = uv_table.get("package") if isinstance(uv_table, dict) else None
+    if explicit is not None:
+        return VirtualReason.EXPLICIT if explicit is False else None
+    return VirtualReason.NO_BUILD_SYSTEM if "build-system" not in pyproject else None
+
+
+@dataclasses.dataclass(frozen=True)
+class SkippedProject:
+    """A discovered project that ``otto env`` does not install, and why."""
+
+    name: str
+    reason: str
+    """Already phrased for the operator: ``no pyproject.toml``, ``no [project] table``."""
+
+
+def _skip_reason(project: "Project") -> "str | None":
+    """Return why *project* is not installed at all, or None when it is installable.
+
+    Shared by the install plan and ``env show`` so the two cannot disagree.
+    A project without a pyproject.toml is not an error and never has been: its
+    ``libs`` ride ``sys.path`` at bootstrap. A virtual project with no
+    ``[project]`` table declares no dependencies to install, so it is the same
+    case. A PACKAGE without one is not skipped: a build backend can still build
+    it (a ``setup.py`` project, say).
+    """
+    from .preflight import PYPROJECT, read_project_table
+
+    if not (project.root / PYPROJECT).is_file():
+        return "no pyproject.toml"
+    if is_virtual(project) and read_project_table(project) is None:
+        return "no [project] table"
+    return None
+
+
+def _refuse_dynamic(project: "Project", reason: "VirtualReason") -> None:
+    """Refuse a virtual project whose requirements only a build could compute.
+
+    *reason* is :func:`virtual_reason`'s answer, asked once by the caller; it
+    picks the advice.
+
+    Handing its pyproject to uv as a requirements file would not do instead:
+    with dynamic ``dependencies`` or ``optional-dependencies`` uv falls back to
+    building it with setuptools, which is exactly the build a virtual project
+    must never get.
+    """
+    from .preflight import PYPROJECT, dynamic_fields_needing_build, read_project_table
+
+    fields = dynamic_fields_needing_build(read_project_table(project) or {})
+    if not fields:
+        return
+    fix = (
+        "drop `package = false` (and declare a build backend if it has none)"
+        if reason is VirtualReason.EXPLICIT
+        else "declare a build backend"
+    )
+    raise EnvUninstallableProjectError(
+        f"cannot install {project.name}: {project.root / PYPROJECT} declares "
+        f"{' and '.join(fields)} as dynamic, but it is a virtual project "
+        f"({reason.value}) and otto never builds one — {fix} so they can be "
+        "computed, or list them statically in [project]"
+    )
+
+
+def _refuse_unsupported_python(projects: "list[Project]", python_version: str) -> None:
+    """Refuse a virtual project whose ``requires-python`` the env's interpreter fails.
+
+    The asymmetry is uv's: it enforces ``requires-python`` when it installs a
+    package project (``-e``), and not when it reads a virtual project's
+    pyproject as a requirements file (``-r``), and the uv otto runs has no flag
+    that would make it -- so for a virtual project otto is the only one who
+    can. *python_version* is the interpreter's ``sys.version_info[:3]``, as
+    pip compares it, so a pre-release ``3.15.0a5`` satisfies ``>=3.15``. An
+    unparseable specifier or version is left alone: the installer and
+    discovery own that diagnosis.
+    """
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from packaging.version import InvalidVersion, Version
+
+    from .preflight import PYPROJECT, read_project_table
+
+    for project in projects:
+        spec = (read_project_table(project) or {}).get("requires-python")
+        if not spec:
+            continue
+        try:
+            satisfied = SpecifierSet(str(spec)).contains(Version(python_version), prereleases=True)
+        except (InvalidSpecifier, InvalidVersion):
+            continue
+        if not satisfied:
+            raise EnvUninstallableProjectError(
+                f"cannot install {project.name}: {project.root / PYPROJECT} declares "
+                f"requires-python = {str(spec)!r}, and the environment runs Python "
+                f"{python_version} — rebuild it on a Python that satisfies it, for "
+                "example `UV_PYTHON=<version> otto env create --force`"
+            )
+
+
+@dataclasses.dataclass(frozen=True)
+class _InstallPlan:
+    """What one ``create``/``sync`` installs for the projects, decided before anything changes."""
+
+    projects: "list[Project]"
+    """Every discovered project, for attributing a resolver conflict."""
+
+    targets: "list[str]"
+    """Installer arguments for the projects' single install call; empty means none."""
+
+    editable: "list[str]"
+    """Package projects, installed editable."""
+
+    virtual: "list[Project]"
+    """Virtual projects: their dependencies installed, the project never built."""
+
+    skipped: "list[SkippedProject]"
+    """Projects with nothing to install (:func:`_skip_reason`)."""
+
+
+def _plan(projects: "list[Project]") -> "_InstallPlan":
+    """Decide how each discovered project goes into the env, refusing before any change.
+
+    A package goes in as ``-e <root>``. A virtual project (:func:`is_virtual`)
+    goes in as ``-r <root>/pyproject.toml``: uv reads its static dependencies
+    from the file without building it, and resolves each through the
+    project's own ``[tool.uv.sources]`` -- a path, git or editable source that
+    a bare requirement string would send to an index instead. Its own code
+    needs no install: its ``libs`` ride ``sys.path`` at bootstrap.
+    """
+    from .preflight import PYPROJECT
+
+    targets: "list[str]" = []
+    editable: "list[str]" = []
+    virtual: "list[Project]" = []
+    skipped: "list[SkippedProject]" = []
+    for project in projects:
+        skip = _skip_reason(project)
+        reason = None if skip is not None else virtual_reason(project)
+        if skip is not None:
+            skipped.append(SkippedProject(name=project.name, reason=skip))
+        elif reason is not None:
+            _refuse_dynamic(project, reason)
+            targets += ["-r", str(project.root / PYPROJECT)]
+            virtual.append(project)
+        else:
+            targets += ["-e", str(project.root)]
+            editable.append(project.name)
+    return _InstallPlan(
+        projects=projects, targets=targets, editable=editable, virtual=virtual, skipped=skipped
+    )
 
 
 def _otto_target() -> "list[str]":
@@ -183,7 +384,12 @@ class EnvBuild:
     env: Path
     meta: EnvMeta
     installed: "list[str]"
-    skipped: "list[str]"
+    """Package projects, installed editable."""
+
+    virtual: "list[str]"
+    """Virtual projects (:func:`is_virtual`): dependencies installed, never built."""
+
+    skipped: "list[SkippedProject]"
 
 
 def _relay(
@@ -248,31 +454,38 @@ def _acquire_uv(env: Path) -> "tuple[Path, str]":
 
 
 def _fill(
-    env: Path, uv: Path, version: str, projects: "list[Project]", passthrough: "list[str]"
+    env: Path, uv: Path, version: str, plan: "_InstallPlan", passthrough: "list[str]"
 ) -> "EnvBuild":
-    """Install every installable project plus otto itself into the venv at *env*."""
+    """Install *plan*'s project targets plus otto itself into the venv at *env*."""
     from .backends import install
 
-    installable, skipped = _installable(projects)
-    if installable:
-        targets: "list[str]" = []
-        for project in installable:
-            targets += ["-e", str(project.root)]
-        _relay(install(uv, env, targets, passthrough), projects, "installing projects")
-    _relay(install(uv, env, _otto_target(), passthrough), projects, "installing otto")
+    if plan.virtual:
+        contents = _env_contents(env)
+        if contents is None:
+            logger.warning(
+                "could not ask the environment's interpreter for its Python version; "
+                "the requires-python check for %s was skipped",
+                ", ".join(p.name for p in plan.virtual),
+            )
+        else:
+            _refuse_unsupported_python(plan.virtual, contents.python_version)
+    if plan.targets:
+        _relay(install(uv, env, plan.targets, passthrough), plan.projects, "installing projects")
+    _relay(install(uv, env, _otto_target(), passthrough), plan.projects, "installing otto")
     meta = EnvMeta(uv_version=version, otto_version=get_version())
     write_meta(env, meta)
     return EnvBuild(
         env=env,
         meta=meta,
-        installed=[r.name for r in installable],
-        skipped=[r.name for r in skipped],
+        installed=plan.editable,
+        virtual=[p.name for p in plan.virtual],
+        skipped=plan.skipped,
     )
 
 
 def _create(
     env: Path,
-    projects: "list[Project]",
+    plan: "_InstallPlan",
     uv: Path,
     version: str,
     *,
@@ -289,8 +502,8 @@ def _create(
                 "rebuild it, or run `otto env sync` to update it in place"
             )
         shutil.rmtree(env)
-    _relay(create_venv(uv, env), projects, "creating the venv")
-    return _fill(env, uv, version, projects, passthrough)
+    _relay(create_venv(uv, env), plan.projects, "creating the venv")
+    return _fill(env, uv, version, plan, passthrough)
 
 
 def create_env(
@@ -303,12 +516,16 @@ def create_env(
     Refuses an existing env naming ``--force``; ``--force`` removes it first,
     which is the recovery story for a wedged env. otto's uv is acquired BEFORE
     that removal, so a missing uv or a self-rebuild is refused with the old env
-    still standing.
+    still standing -- and so is the install plan, so a virtual project with
+    dynamic requirements is refused with it standing too. Everything after
+    the removal runs in the NEW venv: a ``requires-python`` refusal (it needs
+    that venv's interpreter) and any installer failure leave the new, partly
+    filled venv behind, and with ``--force`` the old one is already gone.
     """
-    projects = _discovered_projects()
+    plan = _plan(_discovered_projects())
     env = env_path()
     uv, version = _acquire_uv(env)
-    return _create(env, projects, uv, version, force=force, passthrough=passthrough or [])
+    return _create(env, plan, uv, version, force=force, passthrough=passthrough or [])
 
 
 def sync_env(*, passthrough: "list[str] | None" = None) -> "EnvBuild":
@@ -323,12 +540,12 @@ def sync_env(*, passthrough: "list[str] | None" = None) -> "EnvBuild":
     Nothing is read from the existing metadata: a record from an older otto,
     or none at all, is simply re-stamped when the installs succeed.
     """
-    projects = _discovered_projects()
+    plan = _plan(_discovered_projects())
     env = env_path()
     uv, version = _acquire_uv(env)
     if not env.exists():
-        return _create(env, projects, uv, version, force=False, passthrough=passthrough or [])
-    return _fill(env, uv, version, projects, passthrough or [])
+        return _create(env, plan, uv, version, force=False, passthrough=passthrough or [])
+    return _fill(env, uv, version, plan, passthrough or [])
 
 
 def _discovered_projects() -> "list[Project]":
@@ -352,7 +569,15 @@ class ProjectState:
     is not installable at all)."""
 
     installed: "bool | None"
-    """True/False when the env could be asked, None when it could not."""
+    """True/False when the env could be asked, None when it could not. For a
+    virtual project (:func:`is_virtual`), which never has a distribution of its
+    own, whether the env satisfies its declared dependencies instead."""
+
+    virtual: bool
+    """It is a virtual project, so ``installed`` answers for its dependencies."""
+
+    skipped: "str | None"
+    """Why it is not installed at all (:class:`SkippedProject`'s reason), or None."""
 
     stale: bool
     """Its pyproject is newer than the env's metadata -- the env was built
@@ -386,32 +611,79 @@ def _dist_name(project: "Project") -> "str | None":
     return str(name) if name else None
 
 
-def _installed_dists(env: Path) -> "set[str] | None":
-    """Return the normalized distribution names inside *env*, or None if unaskable.
+@dataclasses.dataclass(frozen=True)
+class _EnvContents:
+    """What the env's own interpreter reports it holds."""
+
+    dists: "set[str]"
+    """Normalized distribution names."""
+
+    site_dirs: "list[Path]"
+    """Its site-packages directories, for checking requirements against it."""
+
+    python_version: str
+    """Its interpreter's ``sys.version_info[:3]``, for checking ``requires-python``."""
+
+    marker_env: "dict[str, str] | None"
+    """Its PEP 508 marker values, or None when it cannot compute them."""
+
+
+def _env_contents(env: Path) -> "_EnvContents | None":
+    """Return what *env* holds, or None if its interpreter cannot answer.
 
     One subprocess for the whole env rather than one per project, and None rather
     than an exception when the env's interpreter cannot answer -- ``show`` is
     the DIAGNOSTIC verb, so a half-broken env has to be describable.
     """
-    from ..models.dependencies import normalize_name
     from .backends import venv_python
 
     python = venv_python(env)
     if not python.is_file():
         return None
     probe = subprocess.run(  # noqa: S603 — fixed argv, path derived from the env we own
-        [
-            str(python),
-            "-c",
-            _LIST_DISTS,
-        ],
+        [str(python), "-c", _PROBE_ENV],
         capture_output=True,
         text=True,
         check=False,
     )
     if probe.returncode != 0:
         return None
-    return {normalize_name(line) for line in probe.stdout.split() if line}
+    try:
+        raw = json.loads(probe.stdout)
+        return _EnvContents(
+            dists={_norm(name) for name in raw["dists"] if name},
+            site_dirs=[Path(d) for d in raw["site"]],
+            python_version=str(raw["python"]),
+            marker_env=raw["markers"],
+        )
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _installed(
+    project: "Project", dist: "str | None", virtual: bool, contents: "_EnvContents | None"
+) -> "bool | None":
+    """Answer ``env show``'s installed column for one project against *contents*.
+
+    A package project is installed when its distribution is present. A virtual
+    one never has a distribution, so it is "installed" when the env satisfies
+    its dependencies -- answered by the dependency preflight itself, pointed at
+    the env's site directories, so ``show`` and the preflight cannot disagree.
+    Markers are judged in the ENV's marker environment, not otto's. A
+    preflight that cannot judge (dynamic dependencies, or no marker values from
+    the env) answers None.
+    *virtual* is :func:`is_virtual`'s answer, asked once by the caller.
+    """
+    if contents is None or dist is None:
+        return None
+    if not virtual:
+        return _norm(dist) in contents.dists
+    from .preflight import preflight
+
+    if contents.marker_env is None:
+        return None
+    result = preflight([project], site_dirs=contents.site_dirs, marker_env=contents.marker_env)
+    return None if result.warnings else not result.unsatisfied
 
 
 def env_status() -> "EnvStatus":
@@ -421,25 +693,30 @@ def env_status() -> "EnvStatus":
     diagnostic that fails when things are broken is the one you needed most --
     so a missing env is a described state, not an error.
     """
+    from .preflight import PYPROJECT
+
     env = env_path()
     projects = _discovered_projects()
     if not env.exists():
         return EnvStatus(env=env, exists=False, meta=None, projects=[])
 
     meta = read_meta(env)
-    present = _installed_dists(env)
+    contents = _env_contents(env)
     stamp = meta_path(env)
     built_at = stamp.stat().st_mtime if stamp.is_file() else 0.0
 
     states: "list[ProjectState]" = []
     for project in projects:
         dist = _dist_name(project)
-        pyproject = project.root / "pyproject.toml"
+        virtual = is_virtual(project)
+        pyproject = project.root / PYPROJECT
         states.append(
             ProjectState(
                 name=project.name,
                 dist_name=dist,
-                installed=None if present is None or dist is None else _norm(dist) in present,
+                installed=_installed(project, dist, virtual, contents),
+                virtual=virtual,
+                skipped=_skip_reason(project),
                 stale=pyproject.is_file() and pyproject.stat().st_mtime > built_at,
             )
         )
