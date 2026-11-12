@@ -794,6 +794,19 @@ def _sanitized_env() -> dict[str, str]:
 
 
 _STRACE_CALL = re.compile(r"^(\d+)\s+([a-z_0-9]+)\((.*)$")
+_BYTECODE = re.compile(r"(?:__pycache__/)?([^/]+)\.cpython-3\d+(?:\.opt-\d+)?\.pyc$")
+"""A ``.pyc`` name (in or out of ``__pycache__``): group 1 is its source module's stem."""
+
+
+def _source_path(below: str) -> str:
+    """Return *below* with a bytecode file named as its source, ``<dir>/<name>.py``.
+
+    by_path only: the spec attributes a ``.pyc`` to the source it caches;
+    buckets and totals read the path as opened.
+    """
+    return _BYTECODE.sub(r"\1.py", below)
+
+
 _FIRST_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
@@ -958,16 +971,40 @@ class PathBuckets:
         the stdlib directory alone. Such a stat names no module, so under
         ``otto`` and ``site`` it is charged to the pseudo-name ``*``.
         """
-        if _root_of(path, self.workspace) is not None:
-            return "workspace"
+        return self._locate(path)[0]
+
+    def relative(self, path: str) -> "tuple[str, str]":
+        """Return the group :meth:`bucket` charges *path* to, and *path* below that group's root.
+
+        The second item is ``""`` for a root directory itself, and the whole
+        *path* for one under no root (``other``). It is what a per-path
+        breakdown keys on, so two reads of ``os.py`` are one entry however
+        the interpreter is installed.
+        """
+        name, root = self._locate(path)
+        if root is None:
+            return name, path
+        return name, path[len(root) :]
+
+    def _locate(self, path: str) -> "tuple[str, str | None]":
+        """Return :meth:`bucket`'s group for *path* and the root it matched (``None``: no root).
+
+        The one place the root order is decided, so :meth:`bucket` and
+        :meth:`relative` cannot disagree.
+        """
+        root = _root_of(path, self.workspace)
+        if root is not None:
+            return "workspace", root
         if _root_of(path, [self.otto_src]) is not None:
-            return "otto:" + _first_component(path, self.otto_src).removesuffix(".py")
+            name = "otto:" + _first_component(path, self.otto_src).removesuffix(".py")
+            return name, self.otto_src
         root = _root_of(path, self.site_packages)
         if root is not None:
-            return "site:" + _import_name(_first_component(path, root))
-        if _root_of(path, self.stdlib) is not None:
-            return "stdlib"
-        return "other"
+            return "site:" + _import_name(_first_component(path, root)), root
+        root = _root_of(path, self.stdlib)
+        if root is not None:
+            return "stdlib", root
+        return "other", None
 
 
 def _root_of(path: str, roots: list[str]) -> str | None:
@@ -1010,6 +1047,11 @@ class FileOps:
     by_process: dict[str, int] = field(default_factory=dict)
     """Calls per program, keyed by the basename a child ``execve``d (``python``
     for the measured interpreter), summed over every tid running it."""
+    by_path: dict[str, int] = field(default_factory=dict)
+    """Calls per path, keyed ``<bucket>:<path below the bucket's root>`` (the
+    whole path under ``other``; ``""`` for the root itself), or ``fd`` for a
+    call that names no path. Bytecode-mirror paths are charged to the source
+    they mirror. Report-only: no ceiling stores it."""
 
 
 def parse_file_ops(
@@ -1061,8 +1103,10 @@ def parse_file_ops(
         if path.startswith(excluded):
             continue
         ops.total += 1
-        bucket = buckets.bucket(path) if path else "fd"
+        bucket, below = buckets.relative(path) if path else ("fd", "")
         ops.by_bucket[bucket] = ops.by_bucket.get(bucket, 0) + 1
+        key = f"{bucket}:{_source_path(below)}" if path else "fd"
+        ops.by_path[key] = ops.by_path.get(key, 0) + 1
         if _root_of(path, workspace_prefixes) is not None:
             ops.workspace += 1
         name = program.get(tid, "python")
@@ -2036,6 +2080,7 @@ def report_row(surface: Surface, result: dict) -> dict:
         "ending": check_exit(surface, result),
         "by_bucket": ops["by_bucket"],
         "by_process": ops["by_process"],
+        "by_path": ops["by_path"],
     }
 
 

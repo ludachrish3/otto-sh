@@ -196,7 +196,7 @@ def test_a_red_or_empty_lane_aborts_the_campaign_and_nothing_after_it_runs(
 # ANY command-line variable marks the run (the legs expand far more than the
 # four gate variables — junitxml, LEAK_DETECT, TIMEOUT_CMD, …), so the
 # samples are a few gate variables, two recipe fragments and an arbitrary
-# name; BUMP, NEW_VERSION and BUDGET_APPROVE, the release's own knobs, are the
+# name; BUMP and NEW_VERSION, the release's own knobs, are the
 # allowlist.
 _OVERRIDE_SAMPLES = (
     "COVERAGE_THRESHOLD",
@@ -289,7 +289,7 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
     # as a split of $(MAKEOVERRIDES) does; MAKEFLAGS carries the names into the
     # `$(MAKE) coverage` fallback.
     for line in (
-        r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION BUDGET_APPROVE\s*$",
+        r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION\s*$",
         (
             r"^COVERAGE_STAMP_OVERRIDE_NAMES := \$\(sort \$\(foreach v,\$\(\.VARIABLES\),"
             r"\$\(if \$\(filter command line,\$\(origin \$\(v\)\)\),\$\(v\)\)\)\)\s*$"
@@ -511,30 +511,19 @@ def test_budget_delta_measures_the_nox_interpreters_primary_first(tmp_path: Path
     assert "--approve" not in line
 
 
-def test_the_approval_variable_reaches_the_script_quoted_from_the_command_line_only(
-    tmp_path: Path, monkeypatch
-):
+def test_budget_delta_takes_no_command_line_approval(tmp_path: Path):
+    """Approvals are the committed file's: no variable reaches the script, none is the release's."""
     stub, _log = _stub_make(tmp_path, {})
-    given = _run_make(stub, "-n", "budget-delta", "BUDGET_APPROVE=help@3.14=stdlib+4 run=otto:*+1")
-    assert "--approve 'help@3.14=stdlib+4' 'run=otto:*+1'" in _delta_line(given.stdout)
-    monkeypatch.setenv("BUDGET_APPROVE", "help")
-    assert "--approve" not in _delta_line(_run_make(stub, "-n", "budget-delta").stdout), (
-        "an environment value is not an approval"
+    given = _run_make(stub, "-n", "budget-delta", "BUDGET_APPROVE=x")
+    assert "--approve" not in _delta_line(given.stdout)
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    assert re.search(r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION\s*$", text, re.MULTILINE)
+    [release] = [ln for ln in text.splitlines() if ln.startswith("release: ## ")]
+    assert "BUDGET_APPROVE" not in release
+    stamped = _run_make(stub, "-n", "coverage-stamp-start", "BUDGET_APPROVE=x")
+    assert _overridden(stamped.stdout) == ["BUDGET_APPROVE", "MAKE"], (
+        "a leftover BUDGET_APPROVE is an ordinary override now"
     )
-    empty = _run_make(stub, "-n", "budget-delta", "BUDGET_APPROVE=")
-    assert "--approve" not in _delta_line(empty.stdout), (
-        "an empty command-line value approves nothing"
-    )
-
-
-def test_the_approval_variable_is_the_release_s_own_knob_even_with_spaces(tmp_path: Path):
-    """`make release BUDGET_APPROVE="a=x+4 b=y+1"` must still trust (and make) the stamp."""
-    stub, _log = _stub_make(tmp_path, {})
-    completed = _run_make(
-        stub, "-n", "coverage-stamp-start", "BUDGET_APPROVE=help=stdlib+4 run=otto:*+1"
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert _overridden(completed.stdout) == ["MAKE"], completed.stdout
 
 
 def test_a_multi_word_override_of_any_other_name_is_marked_once(tmp_path: Path):

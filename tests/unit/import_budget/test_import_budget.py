@@ -4,6 +4,7 @@ See ``docs/superpowers/specs/2026-06-29-import-budget-guard-design.md``.
 """
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -215,7 +216,7 @@ def test_measure_reports_io_counts():
     """The payload's I/O is strace's file operations, in the shape the ceilings store."""
     result = harness.measure(["python"])
     ops = result["file_ops"]
-    assert set(ops) == {"total", "workspace", "by_bucket", "by_process"}
+    assert set(ops) == {"total", "workspace", "by_bucket", "by_process", "by_path"}
     assert isinstance(ops["total"], int)
     assert isinstance(ops["workspace"], int)
     # Importing otto touches files. Zero here means strace observed nothing.
@@ -224,6 +225,7 @@ def test_measure_reports_io_counts():
     # one bucket and one process.
     assert sum(ops["by_bucket"].values()) == ops["total"]
     assert sum(ops["by_process"].values()) == ops["total"]
+    assert sum(ops["by_path"].values()) == ops["total"]
     # ...and this child has neither a fixture nor an OTTO_HOME (a bare
     # `measure` call passes the sanitized env, which carries no OTTO_*), so
     # there is no workspace to count.
@@ -1072,3 +1074,21 @@ def test_env_extra_is_applied_after_the_sanitizer(monkeypatch):
         base, key="env_extra_probe", env_extra=(("OTTO_ENV_EXTRA_PROBE", "from-env-extra"),)
     )
     assert harness.surface_env(override)["OTTO_ENV_EXTRA_PROBE"] == "from-env-extra"
+
+
+def test_the_report_rows_carry_by_path_and_the_ceilings_do_not(tmp_path, monkeypatch):
+    ops = harness.FileOps(
+        total=3,
+        workspace=0,
+        by_bucket={"stdlib": 3},
+        by_process={"python": 3},
+        by_path={"stdlib:os.py": 2, "stdlib:": 1},
+    )
+    gated = next(s for s in harness.SURFACES if not s.tracked)
+    row = harness.report_row(gated, {"file_ops": asdict(ops), "exit_code": 0})
+    assert row["by_path"] == {"stdlib:os.py": 2, "stdlib:": 1}
+    monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
+    harness.write_ceilings({gated.key: ops})
+    stored = json.loads(harness.ceilings_path().read_text())["surfaces"][gated.key]
+    assert "by_path" not in stored
+    assert stored["by_bucket"] == {"stdlib": 3}

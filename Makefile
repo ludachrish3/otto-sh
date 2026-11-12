@@ -479,8 +479,8 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # 0 — HEAD's tree carries a valid stamp, trust it; 1 — no stamp, or one that
 # does not match (tree, assets, gate), so run `make coverage` and check
 # again; 2 — a refusal no stamp can cure (a dirty tree, a venv on anything
-# but the primary, a command-line variable other than BUMP=, NEW_VERSION= or
-# BUDGET_APPROVE=), so `[ $$? -eq 1 ]` is false and the release stops at
+# but the primary, a command-line variable other than BUMP= or NEW_VERSION=),
+# so `[ $$? -eq 1 ]` is false and the release stops at
 # once, before forty minutes of a run that could not be stamped.
 #
 # The check runs ONCE, first of all, and the release reuses its answer
@@ -504,7 +504,7 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # to merge) and pull-request otherwise, and a fetch it cannot make exits 1, so
 # the chain stops with the record certified instead of guessing.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses main, a detached HEAD, a branch that is not main's tip, unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump (no tag), wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused), then it certifies the head in reports/release/record.json and lands through a pull request: gate-tip, push the branch, gate-status, gh pr create (a recertification whose branch holds no commit certifies main's tip instead and opens nothing). Runs on a release branch at main's tip, never on main. After the merge, `make release-tag` tags main's tip
+release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses main, a detached HEAD, a branch that is not main's tip, unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless tests/unit/import_budget/approved_growth.json approves it). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump (no tag), wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused), then it certifies the head in reports/release/record.json and lands through a pull request: gate-tip, push the branch, gate-status, gh pr create (a recertification whose branch holds no commit certifies main's tip instead and opens nothing). Runs on a release branch at main's tip, never on main. After the merge, `make release-tag` tags main's tip
 	$(call bed_acquire,release)
 	@{ $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) >/dev/null 2>&1; stamp=$$?; [ $$stamp -ne 1 ] || echo "release: HEAD's tree has no valid coverage stamp, so make coverage runs after the cheap stages"; [ $$stamp -le 1 ] || $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || exit $$?; } \
 		&& $(MAKE) release-preflight \
@@ -867,11 +867,11 @@ profile: ## (Dev) Enforce the import budget (per-surface file-operation ceilings
 # The release's import-budget delta: the previous tag against HEAD, in file
 # operations per surface and per Python minor, measured in pristine worktrees
 # by the tip's scripts/import_budget.py over each tree's own venv. Growth
-# stops the release unless the owner names the surface AND the buckets it
-# moved by on the command line — BUDGET_APPROVE="help@3.14=stdlib+4,otto:*+1
-# run=otto:*+1" — read from the command line only ($(origin)), so an
-# environment value approves nothing; each word is quoted for the shell
-# (`otto:*` is a glob). The base's records are cached under
+# stops the release unless the committed approvals file
+# (tests/unit/import_budget/approved_growth.json) approves it: each entry
+# names the surface, the buckets and the amount each may grow by, and why;
+# it holds until the next release tag. A stop prints the complete file to
+# commit. The base's records are cached under
 # reports/budget/<tag>/ (per checkout); the tip is measured on every run.
 # Each side and minor is measured in $TMPDIR/otto-budget-delta/<side>-<minor>/
 # (two worktrees and a venv, ~0.5 GB, removed before and after every
@@ -882,11 +882,10 @@ profile: ## (Dev) Enforce the import budget (per-surface file-operation ceilings
 # tests/unit/scripts/test_import_budget_delta.py.
 BUDGET_DELTA := uv run python scripts/import_budget_delta.py
 BUDGET_DELTA_MINORS := $(NOX_PRIMARY) $(NOX_MIDDLE) $(NOX_CANARY)
-BUDGET_DELTA_APPROVE = $(if $(and $(filter command line,$(origin BUDGET_APPROVE)),$(BUDGET_APPROVE)),--approve $(foreach a,$(BUDGET_APPROVE),'$(subst ','"'"',$(a))'))
 
-budget-delta: ## (Build & Release) The import-budget delta: the previous release tag vs HEAD, file operations per surface on every nox interpreter (primary first), in pristine worktrees; STOPS on growth unless BUDGET_APPROVE="surface[@minor]=bucket+N,… …" names the surface and the buckets it moved by (a growth stop prints the entry to paste whenever the moved buckets can be written as a word). A stage of `make release`, right after check-python. Two `uv sync`es per minor per pair (the base's skipped while its cache matches), up to three pairs per minor, each in $TMPDIR/otto-budget-delta/<side>-<minor>/ (removed per measurement; the harness's bytecode cache ~/.cache/otto/import-budget-pycache keeps one mirror per side and minor); elapsed seconds per step in reports/budget/run.log.
+budget-delta: ## (Build & Release) The import-budget delta: the previous release tag vs HEAD, file operations per surface on every nox interpreter (primary first), in pristine worktrees; judges every interpreter, then STOPS once on growth that tests/unit/import_budget/approved_growth.json does not approve, printing the complete file to commit. A stage of `make release`, right after check-python. Two `uv sync`es per minor per pair (the base's skipped while its cache matches), up to three pairs per minor, each in $TMPDIR/otto-budget-delta/<side>-<minor>/ (removed per measurement; the harness's bytecode cache ~/.cache/otto/import-budget-pycache keeps one mirror per side and minor); elapsed seconds per step in reports/budget/run.log.
 	@$(SAY) "import-budget delta ($(BUDGET_DELTA_MINORS))"
-	@$(BUDGET_DELTA) measure --minors $(BUDGET_DELTA_MINORS) $(BUDGET_DELTA_APPROVE)
+	@$(BUDGET_DELTA) measure --minors $(BUDGET_DELTA_MINORS)
 
 build: ## (Build & Release) Build the project with uv
 	@$(SAY) "uv build → dist/"
@@ -1004,7 +1003,7 @@ unit-outliers: ## (Quality) Report the unit tree's slow tests (>= UNIT_OUTLIERS_
 # the epilogue is the one recipe line, reached only when every prerequisite
 # passed, and it requires tree, dirt, interpreter and assets to equal the
 # prologue's. A run over a dirty tree, or with ANY variable on the make
-# command line but the release's own BUMP=, NEW_VERSION= and BUDGET_APPROVE=
+# command line but the release's own BUMP= and NEW_VERSION=
 # (the command-line names read from .VARIABLES below; MAKEFLAGS carries them
 # into the `$(MAKE) coverage` fallback), still runs every leg and is simply
 # not stamped — the stamp describes the declared gate on a committed tree,
@@ -1034,12 +1033,12 @@ COVERAGE_STAMP_GATE = --threshold "$(COVERAGE_THRESHOLD)" --selection "$(M_COVER
 # allowlist for the release's own knobs: the version it bumps to, and the
 # import-budget approvals (they change what the delta accepts, never what
 # `make coverage` gated).
-COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION BUDGET_APPROVE
+COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION
 # Every variable whose $(origin) is `command line`, read from .VARIABLES at
 # parse time — before a target-specific `export override` (coverage's
 # PYTEST_ADDOPTS) turns an origin into `override`, and unlike a split of
 # $(MAKEOVERRIDES), which cuts a multi-word value
-# (`BUDGET_APPROVE="a=x b=y"`) into a bogus second name. Reaches the
+# (`PYTEST_ADDOPTS="-k x y=z"`) into a bogus second name. Reaches the
 # `$(MAKE) coverage` fallback through MAKEFLAGS; an environment value never
 # has this origin.
 COVERAGE_STAMP_OVERRIDE_NAMES := $(sort $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v))))
@@ -1178,7 +1177,7 @@ coverage-bed: $(COVAPP_DIST) ## Run the bed half of `make coverage`'s selection 
 # The stamp's prologue runs after the dist rules (its prerequisites) so the
 # assets digest it records is the one the Python legs import; `coverage`
 # lists it first, before coverage-python. See the stamp note above `coverage`.
-coverage-stamp-start: $(DASHBOARD_DIST) $(COVAPP_DIST) ## (internal) The stamped run's prologue: drop the tree's previous stamp, record the tree, the interpreter, the built assets, and anything that forbids stamping it (dirt, a foreign interpreter, any command-line variable but BUMP=, NEW_VERSION= and BUDGET_APPROVE=)
+coverage-stamp-start: $(DASHBOARD_DIST) $(COVAPP_DIST) ## (internal) The stamped run's prologue: drop the tree's previous stamp, record the tree, the interpreter, the built assets, and anything that forbids stamping it (dirt, a foreign interpreter, any command-line variable but BUMP= and NEW_VERSION=)
 	@$(COVERAGE_STAMP) start $(COVERAGE_STAMP_GATE) --workers "$(COVERAGE_WORKERS)" $(COVERAGE_STAMP_OVERRIDES)
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium

@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -36,23 +37,27 @@ from scripts.import_budget_delta import (
     main,
     measure,
     measure_side,
-    parse_approvals,
     reproduced,
     stale_approvals,
     validate_side,
     within_noise,
 )
 from tests._fixtures.gitrepo import TmpGitRepo
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
 SHA, TREE, PY, INSTR = "a" * 40, "b" * 40, "3.10.14", "c" * 40 + ":" + "d" * 40
-PROV = Provenance(sha=SHA, tree=TREE, python=PY, instrument=INSTR)
+PROV = Provenance(tree=TREE, python=PY, instrument=INSTR)
 META = {s.key: s for s in import_budget.SURFACES}
 REAL = next(s.key for s in import_budget.SURFACES if s.real_entry and not s.tracked)
 PLAIN = next(s.key for s in import_budget.SURFACES if not s.real_entry and not s.tracked)
 TRACKED = next(s.key for s in import_budget.SURFACES if s.tracked)
 NONE: "list[Approval]" = []
+BASE_TAG = "v0.20.0"
+WHY = "the new lock-file read"
+STDLIB4 = [Approval(PLAIN, None, {"stdlib": 4}, WHY)]
+EMPTY = delta.Approvals(base=BASE_TAG, in_force=[], spent=[])
 GROWN = {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 500, "stdlib": 4}}}
 SHUFFLED = {"buckets": {PLAIN: {"otto:*": 497, "otto:x": 3}}}
 WOBBLE = {"fd": 111, "other": 173, "otto:*": 216}
@@ -66,6 +71,7 @@ def _row(
     buckets: "dict[str, int] | None" = None,
     exit_code: "int | None" = None,
     ending: "list[str] | None" = None,
+    by_path: "dict[str, int] | None" = None,
 ) -> dict:
     meta = META[key]
     expected = meta.expect_exit if meta.real_entry else None
@@ -78,6 +84,7 @@ def _row(
         "ending": [] if ending is None else ending,
         "by_bucket": buckets if buckets is not None else {"otto:*": ops},
         "by_process": {"python": ops},
+        "by_path": by_path if by_path is not None else {"fd": ops},
     }
 
 
@@ -89,6 +96,7 @@ def _side(
     buckets: "dict[str, dict[str, int]] | None" = None,
     exits: "dict[str, int] | None" = None,
     endings: "dict[str, list[str]] | None" = None,
+    paths: "dict[str, dict[str, int]] | None" = None,
 ) -> Path:
     """A complete record directory: every known surface at 500 ops unless *ops* says otherwise."""
     side = root / name
@@ -101,11 +109,12 @@ def _side(
                 (buckets or {}).get(k),
                 (exits or {}).get(k),
                 (endings or {}).get(k),
+                (paths or {}).get(k),
             )
             for k in KNOWN_SURFACES
         ]
         (side / f"{minor}.json").write_text(json.dumps(table))
-        status = {"sha": SHA, "tree": TREE, "instrument": INSTR, "minor": minor,
+        status = {"sha": SHA, "measured_tree": TREE, "instrument": INSTR, "minor": minor,
                   "python": f"{minor}.14", "sync": 0, "version": 0, "report": 0,
                   "elapsed": {"sync": 1.0, "version": 0.1, "report": 2.0}}  # fmt: skip
         (side / f"{minor}.status.json").write_text(json.dumps(status))
@@ -183,8 +192,7 @@ def test_a_status_without_a_step_is_refused(tmp_path: Path):
 @pytest.mark.parametrize(
     ("field", "value", "problem"),
     [
-        ("sha", "e" * 40, f"sha {'e' * 40}, not {SHA}"),
-        ("tree", "e" * 40, f"tree {'e' * 40}, not {TREE}"),
+        ("measured_tree", "e" * 40, f"measured_tree {'e' * 40}, not {TREE}"),
         ("python", "3.10.15", "python 3.10.15, not 3.10.14"),
         ("instrument", "e" * 40, f"instrument {'e' * 40}, not {INSTR}"),
     ],
@@ -279,57 +287,189 @@ def test_a_wrong_exit_is_not_a_validation_problem(tmp_path: Path):
 # --- approvals --------------------------------------------------------------
 
 
-def test_parse_approvals_reads_every_shape():
-    assert parse_approvals(["help"]) == [Approval("help", None, None)]
-    assert parse_approvals(["help@3.14"]) == [Approval("help", "3.14", None)]
-    assert parse_approvals(["help=stdlib+4,otto:__pycache__+1,otto:*-2"]) == [
-        Approval("help", None, {"stdlib": 4, "otto:__pycache__": 1, "otto:*": -2})
+def _entry(surface: str, buckets: dict, minor: "str | None" = None, why: str = WHY) -> dict:
+    return {"surface": surface, "minor": minor, "buckets": buckets, "why": why}
+
+
+def _approvals_path(tmp_path: Path, entries, base: str = BASE_TAG) -> Path:
+    path = tmp_path / "approved_growth.json"
+    path.write_text(json.dumps({"base": base, "entries": list(entries)}))
+    return path
+
+
+def _approvals(tmp_path: Path, entries, base: str = BASE_TAG, base_tag: str = BASE_TAG):
+    path = _approvals_path(tmp_path, entries, base)
+    return delta.load_approvals(path, base_tag)
+
+
+def _judge_args(tmp_path: Path, entries=(), base: str = BASE_TAG) -> "list[str]":
+    """The `judge` arguments naming an approvals file and the base tag."""
+    return ["--approvals", str(_approvals_path(tmp_path, entries, base)), "--base-tag", BASE_TAG]
+
+
+def test_load_approvals_reads_in_force_entries_and_refuses_by_entry(tmp_path: Path):
+    got = _approvals(
+        tmp_path, [_entry(PLAIN, {"stdlib": 4}), _entry(PLAIN, {"fd": 1}, "3.14", "x")]
+    )
+    assert (got.base, got.spent) == (BASE_TAG, [])
+    assert got.in_force == [
+        Approval(PLAIN, None, {"stdlib": 4}, WHY),
+        Approval(PLAIN, "3.14", {"fd": 1}, "x"),
     ]
-    assert parse_approvals(["run@3.10=site:sphinxcontrib_jsmath-1+2"]) == [
-        Approval("run", "3.10", {"site:sphinxcontrib_jsmath-1": 2})
-    ]
+    assert got.in_force[0].entry() == _entry(PLAIN, {"stdlib": 4})
+    assert str(delta.APPROVALS_PATH) == "tests/unit/import_budget/approved_growth.json"
 
 
 @pytest.mark.parametrize(
-    ("words", "why"),
+    ("entries", "why"),
     [
-        (["nope"], "--approve nope: not a known surface"),
-        (["help@3.9"], "--approve help@3.9: not a measured minor"),
-        (["help=stdlib"], "--approve help=stdlib: bucket 'stdlib' has no +N/-N"),
-        (["help=stdlib+x"], "--approve help=stdlib+x: bucket 'stdlib+x' has no +N/-N"),
-        (["help="], "--approve help=: names no bucket"),
-        (["help=otto:*+0"], "--approve help=otto:*+0: bucket 'otto:*+0' moves nothing"),
+        ([_entry("nope", {"a": 1})], "entry 0: 'nope' is not a known surface"),
+        ([_entry(PLAIN, {"a": 1}, "3.9")], f"entry 0 ({PLAIN}@3.9): not a supported minor"),
+        ([{"surface": PLAIN, "buckets": {"a": 1}}], f"entry 0 ({PLAIN}): why is missing or empty"),
+        ([_entry(PLAIN, {"a": 1}, why="  ")], f"entry 0 ({PLAIN}): why is missing or empty"),
         (
-            ["help=stdlib+1,stdlib+2"],
-            "--approve help=stdlib+1,stdlib+2: bucket 'stdlib' named twice",
+            [_entry(PLAIN, {"a": 1}, why=delta.WARRANTED_WHY)],
+            f"entry 0 ({PLAIN}): why is still the placeholder",
         ),
-        (["help=stdlib+1", "help=stdlib+2"], "--approve help=stdlib+2: a second entry for help"),
+        ([_entry(PLAIN, {})], f"entry 0 ({PLAIN}): buckets is not a non-empty object"),
+        *[
+            (
+                [_entry(PLAIN, {"stdlib": bad})],
+                f"entry 0 ({PLAIN}): bucket 'stdlib' is not a positive int",
+            )
+            for bad in (0, -1, "4", True, 1.5)
+        ],
         (
-            ["help@3.10", "help@3.10=stdlib+1"],
-            "--approve help@3.10=stdlib+1: a second entry for help@3.10",
+            [_entry(PLAIN, {"a": 1}), _entry(PLAIN, {"a": 2})],
+            f"entry 1 ({PLAIN}): a second entry for {PLAIN}",
+        ),
+        (
+            [_entry(PLAIN, {"a": 1}, "3.10"), _entry(PLAIN, {"a": 2}, "3.10")],
+            f"entry 1 ({PLAIN}@3.10): a second entry for {PLAIN}@3.10",
         ),
     ],
 )
-def test_parse_approvals_refuses_by_word(words: "list[str]", why: str):
-    with pytest.raises(ValueError, match="^" + re.escape(why) + "$"):
-        parse_approvals(words, minors=["3.10", "3.14"])
+def test_load_approvals_refuses_the_entry_it_names(tmp_path: Path, entries, why: str):
+    with pytest.raises(ValueError, match=re.escape(why)):
+        _approvals(tmp_path, entries)
 
 
-def test_an_approval_renders_back_to_its_word():
-    assert (
-        Approval("help", "3.14", {"stdlib": 4, "otto:*": -1}).word()
-        == "help@3.14=otto:*-1,stdlib+4"
-    )
-    assert Approval("help", None, None).word() == "help"
+@pytest.mark.parametrize("base", [BASE_TAG, "v0.19.0"])
+def test_an_entry_for_a_supported_minor_this_run_does_not_measure_loads(tmp_path: Path, base):
+    """CI runs one minor per leg: a 3.14 entry must not turn the 3.10 leg red."""
+    got = _approvals(tmp_path, [_entry(PLAIN, {"fd": 1}, "3.14")], base=base)
+    if base == BASE_TAG:
+        assert got.in_force == [Approval(PLAIN, "3.14", {"fd": 1}, WHY)]
+    else:
+        assert got.in_force == []
+        assert len(got.spent) == 1
+
+
+def test_the_supported_minors_are_the_makefile_s_nox_minors():
+    """One list: the script's SUPPORTED_MINORS is the Makefile's primary + middle + canary."""
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    var = {
+        k: re.search(rf"^{k} := (.*)$", text, re.MULTILINE).group(1).split()
+        for k in ("NOX_PRIMARY", "NOX_MIDDLE", "NOX_CANARY")
+    }
+    assert var["NOX_PRIMARY"] + var["NOX_MIDDLE"] + var["NOX_CANARY"] == delta.SUPPORTED_MINORS
+
+
+def test_load_approvals_refuses_a_file_that_is_not_one(tmp_path: Path):
+    path = tmp_path / "approved_growth.json"
+    with pytest.raises(ValueError, match="unparsable"):
+        delta.load_approvals(path, BASE_TAG)  # no such file
+    path.write_text("{not json")
+    with pytest.raises(ValueError, match="unparsable"):
+        delta.load_approvals(path, BASE_TAG)
+    path.write_text(json.dumps({"entries": []}))
+    with pytest.raises(ValueError, match="no base"):
+        delta.load_approvals(path, BASE_TAG)
+
+
+def test_entries_for_another_base_are_spent_notes_not_evidence(tmp_path: Path):
+    entries = [_entry(PLAIN, {"stdlib": 4}), _entry(PLAIN, {"fd": 1}, "3.14")]
+    got = _approvals(tmp_path, entries, base="v0.19.0")
+    assert got.in_force == []
+    assert got.spent == [
+        f"{PLAIN}: approved for v0.19.0, the base is {BASE_TAG} (spent)",
+        f"{PLAIN}@3.14: approved for v0.19.0, the base is {BASE_TAG} (spent)",
+    ]
+    with pytest.raises(ValueError, match="not a known surface"):
+        _approvals(tmp_path, [_entry("nope", {"a": 1})], base="v0.19.0")
+
+
+# --- by_path: the paths a growth moved ---------------------------------------
+
+
+def test_a_record_without_by_path_is_refused_by_name(tmp_path: Path):
+    side = _side(tmp_path, "s")
+    _edit(side / "3.10.json", lambda d: [r.pop("by_path") for r in d if r["surface"] == PLAIN])
+    problems = validate_side(side, "3.10", None)
+    assert len(problems) == 1
+    assert f"{PLAIN}: no by_path" in problems[0]
+
+
+def _rec(by_path: "dict[str, int]") -> delta.Record:
+    return delta.Record(PLAIN, sum(by_path.values()), 0, None, {}, [], by_path)
+
+
+def test_path_attribution_orders_new_vanished_then_by_size():
+    before = _rec({"a": 5, "b": 3, "gone": 2, "gone2": 4, "same": 1})
+    after = _rec({"a": 9, "b": 2, "new": 3, "new2": 1, "same": 1})
+    assert delta.path_attribution(before, after) == [
+        "- gone2 4",
+        "+ new 3",
+        "- gone 2",
+        "+ new2 1",
+        "  a 5 -> 9",
+        "  b 3 -> 2",
+    ]
+    assert delta.path_attribution(before, before) == []
+
+
+def test_the_stop_prints_each_grown_surface_s_paths(tmp_path: Path, capsys):
+    tip = {
+        "ops": {PLAIN: 504},
+        "buckets": {PLAIN: {"otto:*": 500, "stdlib": 4}},
+        "paths": {PLAIN: {"fd": 500, "stdlib:os.py": 3, "stdlib:": 1}},
+    }
+    pairs = _pairs(tmp_path, tip, tip)
+    args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
+    assert main(["judge", *args, "--minors", "3.10", *_judge_args(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert f"{PLAIN} paths:\n  + stdlib:os.py 3\n  + stdlib: 1\n" in out
+    v = decide(pairs, "3.10", NONE)
+    assert v.attribution == {PLAIN: ["+ stdlib:os.py 3", "+ stdlib: 1"]}
+
+
+def test_growth_with_no_path_change_says_so(tmp_path: Path, capsys):
+    tip = {
+        "ops": {PLAIN: 504},
+        "buckets": {PLAIN: {"otto:*": 500, "stdlib": 4}},
+        "paths": {PLAIN: {"fd": 500}},
+    }
+    pairs = _pairs(tmp_path, tip, tip)
+    args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
+    assert main(["judge", *args, "--minors", "3.10", *_judge_args(tmp_path)]) == 1
+    assert f"{PLAIN}: the same paths, more operations" in capsys.readouterr().out
+
+
+def test_reproduced_ignores_by_path(tmp_path: Path):
+    one = _side(tmp_path, "one", paths={PLAIN: {"fd": 500}})
+    two = _side(tmp_path, "two", paths={PLAIN: {"a": 300, "b": 200}})
+    assert reproduced(one, two, "3.10") == []
+    assert judge_minor(one, two, "3.10", NONE).reason is None
+    assert decide([(one, two), (one, two)], "3.10", NONE).stop == []
 
 
 # --- judge_minor ------------------------------------------------------------
 
 
-def _judge(tmp_path: Path, tip_kw: dict, approve: "list[str]" = (), minor: str = "3.10"):
+def _judge(tmp_path: Path, tip_kw: dict, approvals=EMPTY, minor: str = "3.10"):
     base = _side(tmp_path, "base")
     tip = _side(tmp_path, "tip", **tip_kw)
-    return judge_minor(base, tip, minor, parse_approvals(list(approve)))
+    return judge_minor(base, tip, minor, approvals.in_force)
 
 
 def test_nothing_changed_is_quiet(tmp_path: Path):
@@ -346,14 +486,10 @@ def test_nothing_changed_is_quiet(tmp_path: Path):
     assert v.reason is None
 
 
-def test_growth_on_an_unapproved_surface_stops_and_prints_the_entry_to_paste(tmp_path: Path):
+def test_growth_on_an_unapproved_surface_stops_and_records_the_warranted_entry(tmp_path: Path):
     v = _judge(tmp_path, {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 500, "otto:x": 4}}})
-    assert v.stop == [
-        (
-            f"3.10 {PLAIN} 500 -> 504 {{'otto:x': 4}}: grew and is not approved; "
-            f'to approve and attribute: BUDGET_APPROVE="{PLAIN}@3.10=otto:x+4"'
-        )
-    ]
+    assert v.stop == [f"3.10 {PLAIN} 500 -> 504 {{'otto:x': 4}}: grew and is not approved"]
+    assert v.warranted == [Approval(PLAIN, "3.10", {"otto:x": 4}, delta.WARRANTED_WHY).entry()]
     assert v.reason == "growth"
     assert v.grown == [(PLAIN, "3.10")]
 
@@ -364,70 +500,109 @@ def test_growth_on_a_tracked_surface_is_judged_like_any_other(tmp_path: Path):
     assert v.stop[0].startswith(f"3.10 {TRACKED} 500 -> 501")
 
 
-def test_an_approved_surface_without_buckets_is_unattributed(tmp_path: Path):
-    v = _judge(tmp_path, GROWN, [PLAIN])
+def test_growth_within_the_amounts_is_approved_and_says_why(tmp_path: Path):
+    for amount in (4, 9):
+        entry = Approval(PLAIN, None, {"stdlib": amount}, WHY)
+        v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [entry], []))
+        assert v.stop == []
+        assert v.named == [
+            (
+                f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: "
+                f"approved up to {{'stdlib': {amount}}} ({WHY})"
+            )
+        ]
+        assert v.used == [entry]
+        assert v.grown == [(PLAIN, "3.10")], "growth is growth whatever the approval said"
+        assert v.warranted == []
+    generic = Approval(PLAIN, None, {"stdlib": 9}, "generic")
+    exact = Approval(PLAIN, "3.10", {"stdlib": 4}, "exact")
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [generic, exact], []))
+    assert v.used == [exact], "a minor-specific entry wins over the generic one"
+
+
+def test_growth_over_an_amount_or_in_an_unnamed_bucket_stops(tmp_path: Path):
+    over = Approval(PLAIN, None, {"stdlib": 3}, WHY)
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [over], []))
     assert v.stop == [
-        (
-            f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved but not attributed; "
-            f'to attribute: BUDGET_APPROVE="{PLAIN}@3.10=stdlib+4"'
-        )
+        f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: grew beyond {{'stdlib': 3}} ({WHY})"
     ]
-    assert v.grown == [(PLAIN, "3.10")], "growth is growth whatever the approval said"
-
-
-def test_an_approval_with_the_measured_buckets_is_named_and_used(tmp_path: Path):
-    v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+4"])
-    assert v.stop == []
-    assert v.named == [f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=stdlib+4"]
-    assert v.used == [Approval(PLAIN, None, {"stdlib": 4})]
-
-
-def test_an_approval_within_the_noise_of_the_measurement_is_named_and_used(tmp_path: Path):
-    """The word was printed by a run whose `fd`/`other` wobble went the other way."""
-    v = _judge(tmp_path, GROWN, [f"{PLAIN}=fd+1,other-1,stdlib+4"])
-    assert v.stop == []
-    assert v.named == [
-        f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=fd+1,other-1,stdlib+4"
-    ]
-
-
-def test_an_approval_whose_total_differs_from_the_growth_stops(tmp_path: Path):
-    """Buckets within the noise do not stretch the total: +3 does not approve +4."""
-    v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+3"])
-    assert len(v.stop) == 1
-    assert f"approved as {PLAIN}=stdlib+3 but moved {{'stdlib': 4}}" in v.stop[0]
-
-
-def test_an_approval_whose_buckets_differ_beyond_the_noise_stops(tmp_path: Path):
-    v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+1"])
+    assert v.warranted == [Approval(PLAIN, "3.10", {"stdlib": 4}, delta.WARRANTED_WHY).entry()]
+    assert v.used == []
+    unnamed = Approval(PLAIN, None, {"otto:x": 9}, WHY)
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [unnamed], []))
     assert v.stop == [
-        (
-            f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=stdlib+1 but moved "
-            f"{{'stdlib': 4}} (the tip is not the tree that was approved); "
-            f'to attribute: BUDGET_APPROVE="{PLAIN}@3.10=stdlib+4"'
-        )
+        f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: grew beyond {{'otto:x': 9}} ({WHY})"
     ]
-
-
-def test_a_minor_specific_entry_wins_over_the_generic_one(tmp_path: Path):
-    v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+9", f"{PLAIN}@3.10=stdlib+4"])
-    assert v.stop == []
-    assert v.used == [Approval(PLAIN, "3.10", {"stdlib": 4})]
-    other = _judge(tmp_path, GROWN, [f"{PLAIN}@3.14=stdlib+4"])
-    assert len(other.stop) == 1
-    assert "grew and is not approved" in other.stop[0], "an entry for another minor does not apply"
-
-
-def test_a_bucket_name_a_word_cannot_hold_stops_by_name(tmp_path: Path):
-    v = _judge(
-        tmp_path, {"ops": {PLAIN: 501}, "buckets": {PLAIN: {"otto:*": 500, "otto:a,b": 1}}}, [PLAIN]
+    other = Approval(PLAIN, "3.14", {"stdlib": 4}, WHY)
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [other], []))
+    assert v.stop == [f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: grew and is not approved"], (
+        "an entry for another minor does not apply"
     )
-    assert v.stop == [
-        (
-            f"3.10 {PLAIN} 500 -> 501 {{'otto:a,b': 1}}: bucket 'otto:a,b' cannot be written as an "
-            "approval word (it holds ',' or '='); rename the path"
-        )
+
+
+def test_a_warranted_replacement_keeps_the_standing_entry_s_buckets(tmp_path: Path):
+    """Raising one bucket keeps the others: the other environment's allowance is not lost."""
+    standing = Approval(PLAIN, "3.10", {"stdlib": 3, "site:yaml": 14}, WHY)
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [standing], []))
+    assert v.warranted == [
+        Approval(PLAIN, "3.10", {"stdlib": 4, "site:yaml": 14}, delta.WARRANTED_WHY).entry()
     ]
+    file = delta.approval_file(BASE_TAG, [v], [standing])
+    assert file["entries"] == v.warranted
+
+
+def test_a_per_minor_replacement_of_a_generic_entry_carries_its_buckets(tmp_path: Path):
+    """The new 3.10 entry shadows the generic one there, so it must carry what that allowed."""
+    generic = Approval(PLAIN, None, {"stdlib": 2, "site:yaml": 14}, WHY)
+    v = _judge(tmp_path, GROWN, delta.Approvals(BASE_TAG, [generic], []))
+    assert v.warranted == [
+        Approval(PLAIN, "3.10", {"stdlib": 4, "site:yaml": 14}, delta.WARRANTED_WHY).entry()
+    ]
+    file = delta.approval_file(BASE_TAG, [v], [generic])
+    assert file["entries"] == [generic.entry(), *v.warranted], "the generic one holds elsewhere"
+
+
+def test_an_unnamed_bucket_may_move_within_the_noise(tmp_path: Path):
+    near = {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 499, "stdlib": 4, "fd": 1}}}
+    v = _judge(tmp_path, near, delta.Approvals(BASE_TAG, STDLIB4, []))
+    assert v.stop == []
+    assert len(v.named) == 1
+    far = {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 497, "stdlib": 4, "fd": 3}}}
+    v = _judge(tmp_path, far, delta.Approvals(BASE_TAG, STDLIB4, []))
+    assert len(v.stop) == 1
+    assert "grew beyond {'stdlib': 4}" in v.stop[0]
+
+
+def test_a_stop_records_the_warranted_entry_and_judge_prints_it_as_json(tmp_path: Path, capsys):
+    pairs = _pairs(tmp_path, GROWN, GROWN)
+    args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
+    assert main(["judge", *args, "--minors", "3.10", *_judge_args(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    entry = Approval(PLAIN, "3.10", {"stdlib": 4}, delta.WARRANTED_WHY).entry()
+    block = json.dumps({"base": BASE_TAG, "entries": [entry]}, indent=2)
+    assert ("to approve, write tests/unit/import_budget/approved_growth.json:\n" + block) in out
+
+
+def test_a_spent_file_still_stops_on_growth_and_prints_the_notes(tmp_path: Path, capsys):
+    pairs = _pairs(tmp_path, GROWN, GROWN)
+    args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
+    spent = _judge_args(tmp_path, [_entry(PLAIN, {"stdlib": 4})], base="v0.19.0")
+    assert main(["judge", *args, "--minors", "3.10", *spent]) == 1
+    out = capsys.readouterr().out
+    assert f"NOTE:\n  {PLAIN}: approved for v0.19.0, the base is {BASE_TAG} (spent)" in out
+    assert "grew and is not approved" in out
+
+
+def test_an_unused_entry_is_a_note_never_a_stop(tmp_path: Path, capsys):
+    base, tip = _side(tmp_path, "base"), _side(tmp_path, "tip")
+    inforce = _judge_args(tmp_path, [_entry(PLAIN, {"stdlib": 4}), _entry(REAL, {"fd": 1}, "3.10")])
+    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10", *inforce]) == 0
+    out = capsys.readouterr().out
+    assert (
+        f"NOTE:\n  {PLAIN}: approved but did not grow on any measured minor (unused)\n"
+        f"  {REAL}@3.10: approved but did not grow on 3.10 (unused)"
+    ) in out
+    assert "STOP" not in out
 
 
 def test_a_decline_is_reported_and_never_stops(tmp_path: Path):
@@ -485,7 +660,10 @@ def test_a_canary_the_base_cannot_run_lists_every_repo_surface(tmp_path: Path, c
     because = f"the generated repo does not run at base: {canary}: {BOOM}"
     assert v.unmeasurable == {k: (BOOM if k == canary else because) for k in REPO_SURFACES}
     assert (v.stop, v.grown) == ([], [])
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 0
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 0
+    )
     out = capsys.readouterr().out
     assert f"not measurable at base:\n  {min(REPO_SURFACES)}: " in out
     assert f"  help_project: {because}" in out
@@ -528,7 +706,7 @@ def test_a_base_that_could_not_run_a_surface_once_does_not_confirm_the_pair(tmp_
         (_side(tmp_path, "b0", exits={REAL: 9}), _side(tmp_path, "t0", **tip)),
         (_side(tmp_path, "b1"), _side(tmp_path, "t1", **tip)),
     ]
-    v = decide(pairs, "3.10", parse_approvals([f"{PLAIN}=stdlib+4"]))
+    v = decide(pairs, "3.10", STDLIB4)
     assert v.confirmed is None
     assert v.more
     assert f"base {REAL}: ended differently (9 vs {META[REAL].expect_exit})" in v.stop[0]
@@ -547,7 +725,7 @@ def test_a_surface_neither_measurement_could_run_confirms_despite_a_temp_path(tm
         for i in range(2)
     ]  # fmt: skip
     assert reproduced(pairs[0][0], pairs[1][0], "3.10") == []
-    v = decide(pairs, "3.10", parse_approvals([f"{PLAIN}=stdlib+4"]))
+    v = decide(pairs, "3.10", STDLIB4)
     assert (v.confirmed, v.more) == (2, False)
     assert v.stop == []
 
@@ -608,7 +786,7 @@ def test_pairs_that_disagree_on_a_shuffle_do_not_reproduce_it(tmp_path: Path):
 def test_decide_confirms_growth_whose_pairs_differ_within_the_noise(tmp_path: Path):
     """The 0.18.0 release stopped inconclusive on this wobble at an unchanged total."""
     wobbled = {"ops": GROWN["ops"], "buckets": {PLAIN: {"otto:*": 499, "stdlib": 4, "fd": 1}}}
-    v = decide(_pairs(tmp_path, GROWN, wobbled), "3.10", parse_approvals([f"{PLAIN}=stdlib+4"]))
+    v = decide(_pairs(tmp_path, GROWN, wobbled), "3.10", STDLIB4)
     assert v.stop == []
     assert (v.confirmed, v.evidence, v.grown) == (2, 0, [(PLAIN, "3.10")])
 
@@ -629,7 +807,7 @@ def test_decide_asks_for_a_second_pair_for_growth_or_a_shuffle(tmp_path: Path):
 
 
 def test_two_agreeing_pairs_confirm_the_first_verdict(tmp_path: Path):
-    approve = parse_approvals([f"{PLAIN}=stdlib+4"])
+    approve = STDLIB4
     v = decide(_pairs(tmp_path, GROWN, GROWN), "3.10", approve)
     assert v.stop == []
     assert (v.confirmed, v.evidence, v.more) == (2, 0, False)
@@ -698,20 +876,20 @@ def test_decide_refuses_more_than_three_pairs(tmp_path: Path):
 
 def test_stale_approvals_are_growth_based_and_span_wide():
     grown = [(PLAIN, "3.14"), (REAL, "3.10")]
-    approvals = parse_approvals(
-        [f"{PLAIN}@3.14=stdlib+4", f"{REAL}=otto:*+9", "help@3.10", f"{PLAIN}=stdlib+1"]
-    )
+    approvals = [
+        Approval(PLAIN, "3.14", {"stdlib": 4}, WHY),
+        Approval(REAL, None, {"otto:*": 9}, WHY),
+        Approval("help", "3.10", {"fd": 1}, WHY),
+        Approval(PLAIN, None, {"stdlib": 1}, WHY),
+    ]
     assert stale_approvals(approvals, grown) == [
-        "help@3.10: approved but help did not grow on 3.10 (stale BUDGET_APPROVE)",
+        "help@3.10: approved but did not grow on 3.10 (unused)",
     ]
     assert stale_approvals(approvals[:1], []) == [
-        f"{PLAIN}@3.14=stdlib+4: approved but {PLAIN} did not grow on 3.14 (stale BUDGET_APPROVE)"
+        f"{PLAIN}@3.14: approved but did not grow on 3.14 (unused)"
     ]
     assert stale_approvals(approvals[3:], []) == [
-        (
-            f"{PLAIN}=stdlib+1: approved but {PLAIN} did not grow on any measured minor "
-            "(stale BUDGET_APPROVE)"
-        )
+        f"{PLAIN}: approved but did not grow on any measured minor (unused)"
     ]
     assert stale_approvals(approvals[3:], [], unresolved=["3.14"]) == [], (
         "a generic entry waits on every minor"
@@ -735,6 +913,7 @@ def test_judge_exits_one_on_a_stop_and_prints_the_tables(tmp_path: Path, capsys)
     rc = main(
         [
             "judge",
+            *_judge_args(tmp_path),
             "--pair",
             str(base),
             str(tip),
@@ -758,7 +937,7 @@ def test_judge_exits_one_on_a_stop_and_prints_the_tables(tmp_path: Path, capsys)
 def test_judge_prints_the_deciding_pair_s_tables(tmp_path: Path, capsys):
     pairs = _pairs(tmp_path, GROWN, QUIET, QUIET)
     args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
-    assert main(["judge", *args, "--minors", "3.10"]) == 0
+    assert main(["judge", *_judge_args(tmp_path), *args, "--minors", "3.10"]) == 0
     out = capsys.readouterr().out
     assert f"| {PLAIN} | 500 | 500 | +0 |" in out
     assert "| 504 |" not in out, "the discarded first pair's growth is not shown as evidence"
@@ -769,7 +948,7 @@ def test_judge_labels_every_pair_s_tables_when_inconclusive(tmp_path: Path, caps
     other = {"ops": {PLAIN: 503}, "buckets": {PLAIN: {"otto:*": 503}}}
     pairs = _pairs(tmp_path, GROWN, QUIET, other)
     args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
-    assert main(["judge", *args, "--minors", "3.10"]) == 1
+    assert main(["judge", *_judge_args(tmp_path), *args, "--minors", "3.10"]) == 1
     out = capsys.readouterr().out
     assert "CPython 3.10 (pair 1)" in out
     assert "CPython 3.10 (pair 2)" in out
@@ -779,7 +958,10 @@ def test_judge_labels_every_pair_s_tables_when_inconclusive(tmp_path: Path, caps
 def test_judge_exits_zero_when_nothing_grew_and_reports_declines(tmp_path: Path, capsys):
     base = _side(tmp_path, "base")
     tip = _side(tmp_path, "tip", ops={PLAIN: 499}, buckets={PLAIN: {"otto:*": 499}})
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 0
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 0
+    )
     assert f"DECLINED:\n  3.10 {PLAIN} 500 -> 499" in capsys.readouterr().out
 
 
@@ -787,7 +969,10 @@ def test_judge_lists_what_the_base_cannot_run_with_the_reason(tmp_path: Path, ca
     expected = META[REAL].expect_exit
     base = _side(tmp_path, "base", exits={REAL: expected + 1}, endings={PLAIN: [BOOM]})
     tip = _side(tmp_path, "tip")
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 0
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 0
+    )
     listed = f"  {PLAIN}: {BOOM}\n  {REAL}: exited {expected + 1}, not {expected}"
     assert f"not measurable at base:\n{listed}" in capsys.readouterr().out
 
@@ -795,7 +980,10 @@ def test_judge_lists_what_the_base_cannot_run_with_the_reason(tmp_path: Path, ca
 def test_judge_refuses_a_tip_that_cannot_run_a_surface(tmp_path: Path, capsys):
     base = _side(tmp_path, "base")
     tip = _side(tmp_path, "tip", exits={REAL: META[REAL].expect_exit + 1})
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 2
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 2
+    )
     assert (
         f"3.10 {REAL} exited {META[REAL].expect_exit + 1}, not {META[REAL].expect_exit}"
         in capsys.readouterr().out
@@ -806,7 +994,10 @@ def test_judge_refuses_a_tip_row_that_did_not_end_as_expected(tmp_path: Path, ca
     """The expected exit is not enough at the tip either: the harness's verdict is the rule."""
     base = _side(tmp_path, "base")
     tip = _side(tmp_path, "tip", endings={REAL: [BOOM, "and more"]})
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 2
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 2
+    )
     assert (
         f"{tip}: 3.10 {REAL} did not end as expected: {BOOM}; and more" in capsys.readouterr().out
     )
@@ -819,7 +1010,21 @@ def test_judge_names_every_invalid_side_not_only_the_first(tmp_path: Path, capsy
     )
     (base / "3.10.status.json").unlink()
     _edit(tip / "3.11.json", lambda d: [r.update(exit=99) for r in d if r["surface"] == REAL])
-    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10", "3.11"]) == 2
+    assert (
+        main(
+            [
+                "judge",
+                *_judge_args(tmp_path),
+                "--pair",
+                str(base),
+                str(tip),
+                "--minors",
+                "3.10",
+                "3.11",
+            ]
+        )
+        == 2
+    )
     out = capsys.readouterr().out
     assert "3.10 not measured (no status)" in out
     assert f"3.11 {REAL} exited 99" in out
@@ -828,49 +1033,24 @@ def test_judge_names_every_invalid_side_not_only_the_first(tmp_path: Path, capsy
 def test_judge_refuses_a_bad_approval_before_reading_any_record(tmp_path: Path, capsys):
     base, tip = _side(tmp_path, "base"), _side(tmp_path, "tip")
     (tip / "3.10.json").write_text("{not json")  # would be a different message if read
-    assert (
-        main(["judge", "--pair", str(base), str(tip), "--minors", "3.10", "--approve", "nope"]) == 2
-    )
+    bad = _judge_args(tmp_path, [_entry("nope", {"a": 1})])
+    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10", *bad]) == 2
     out = capsys.readouterr().out
-    assert "--approve nope: not a known surface" in out
+    assert "'nope' is not a known surface" in out
     assert "unreadable" not in out
 
 
 def test_judge_refuses_a_fourth_pair(tmp_path: Path, capsys):
     base, tip = _side(tmp_path, "base"), _side(tmp_path, "tip")
     args = ["--pair", str(base), str(tip)] * 4
-    assert main(["judge", *args, "--minors", "3.10"]) == 2
+    assert main(["judge", *_judge_args(tmp_path), *args, "--minors", "3.10"]) == 2
     assert "at most 3 pairs" in capsys.readouterr().out
 
 
-def test_judge_reports_a_stale_approval_at_the_end(tmp_path: Path, capsys):
-    base, tip = _side(tmp_path, "base"), _side(tmp_path, "tip")
-    assert (
-        main(
-            [
-                "judge",
-                "--pair",
-                str(base),
-                str(tip),
-                "--minors",
-                "3.10",
-                "--approve",
-                f"{PLAIN}=otto:*+1",
-            ]
-        )
-        == 1
-    )
-    assert (
-        f"STOP:\n  {PLAIN}=otto:*+1: approved but {PLAIN} did not grow on any measured minor"
-        in capsys.readouterr().out
-    )
-
-
-def test_judge_does_not_call_an_approval_stale_while_its_minor_is_unresolved(
-    tmp_path: Path, capsys
-):
+def test_judge_does_not_call_an_entry_unused_while_its_minor_is_unresolved(tmp_path: Path, capsys):
     """A pending or inconclusive minor has not shown the surface did NOT grow."""
     base, tip = _side(tmp_path, "base"), _side(tmp_path, "tip", **GROWN)
+    entries = [_entry(PLAIN, {"stdlib": 4})]
     assert (
         main(
             [
@@ -880,22 +1060,22 @@ def test_judge_does_not_call_an_approval_stale_while_its_minor_is_unresolved(
                 str(tip),
                 "--minors",
                 "3.10",
-                "--approve",
-                f"{PLAIN}=stdlib+4",
+                *_judge_args(tmp_path, entries),
             ]
         )
         == 1
     )
     out = capsys.readouterr().out
     assert "needs a second measurement" in out
-    assert "stale" not in out
+    assert "unused" not in out
     other = {"ops": {PLAIN: 503}, "buckets": {PLAIN: {"otto:*": 503}}}
     pairs = _pairs(tmp_path, GROWN, QUIET, other)
     args = [a for b, t in pairs for a in ("--pair", str(b), str(t))]
-    assert main(["judge", *args, "--minors", "3.10", "--approve", f"{PLAIN}@3.10=stdlib+4"]) == 1
+    entries = [_entry(PLAIN, {"stdlib": 4}, "3.10")]
+    assert main(["judge", *args, "--minors", "3.10", *_judge_args(tmp_path, entries)]) == 1
     out = capsys.readouterr().out
     assert "inconclusive" in out
-    assert "stale" not in out
+    assert "unused" not in out
 
 
 def test_validate_prints_valid_or_every_problem(tmp_path: Path, capsys):
@@ -1024,16 +1204,159 @@ class FakeRunner:
 
 
 def _settings(
-    repo: TmpGitRepo, out: Path, minors=("3.10",), approve=(), base=None, tip="HEAD"
+    repo: TmpGitRepo, out: Path, minors=("3.10",), approve=(), base=None, tip="HEAD", file_base=None
 ) -> Settings:
+    """*approve* is the entries of an approvals file naming the repo's tag as its base."""
+    approvals = _approvals_path(repo.root.parent, approve, file_base or base_ref(repo.root))
     return Settings(
         repo=repo.root, out=out, base=base or base_ref(repo.root), tip=tip,
-        minors=list(minors), approve=list(approve), holder_root=out.parent / "holders",
+        minors=list(minors), approvals=approvals, holder_root=out.parent / "holders",
     )  # fmt: skip
 
 
 def _steps(runner: FakeRunner, tree: str, minor: str = "3.10") -> "list[str]":
     return [s for s, t, m in runner.calls if t == tree and m == minor]
+
+
+def _approvals_only_repo(tmp_path: Path) -> "tuple[TmpGitRepo, str, str]":
+    """A tagged base commit and a tip that adds only the approvals file."""
+    repo = TmpGitRepo(tmp_path / "repo")
+    repo.write("scripts/import_budget.py", "# tip\n")
+    repo.write("tests/_fixtures/generated_project.py", "# fixtures v1\n")
+    base = repo.commit("base")
+    repo.git("tag", "v1.0.0")
+    repo.write(delta.APPROVALS_PATH.as_posix(), json.dumps({"base": "v1.0.0", "entries": []}))
+    return repo, base, repo.commit("approvals only")
+
+
+def test_measured_tree_ignores_the_approvals_file_and_nothing_else(tmp_path: Path):
+    repo, base_sha, tip_sha = _repo(tmp_path)
+    approvals = delta.APPROVALS_PATH.as_posix()
+    repo.write(approvals, "{}")
+    added = repo.commit("add the approvals file")
+    repo.write(approvals, '{"edited": true}')
+    edited = repo.commit("edit it")
+    repo.write("other.txt", "x")
+    other = repo.commit("another file")
+    index = repo.root / ".git" / "index"
+    before = index.read_bytes()
+    tree = delta.measured_tree
+    assert tree(repo.root, added) == tree(repo.root, tip_sha) == tree(repo.root, edited)
+    assert tree(repo.root, other) != tree(repo.root, edited)
+    assert tree(repo.root, base_sha) != tree(repo.root, tip_sha)
+    assert repo.git("rev-parse", f"{added}^{{tree}}") != repo.git(
+        "rev-parse", f"{tip_sha}^{{tree}}"
+    )
+    assert index.read_bytes() == before, "the repository's own index is never touched"
+
+
+def test_a_tip_side_that_validates_is_reused_and_logged(tmp_path: Path, capsys):
+    repo, _b, tip_sha = _repo(tmp_path)
+    out = tmp_path / "out"
+    assert measure(_settings(repo, out), FakeRunner()) == 0
+    capsys.readouterr()
+    second = FakeRunner()
+    assert measure(_settings(repo, out), second) == 0
+    assert second.calls == [], "neither side is measured again"
+    tip_dir = out / delta.measured_tree(repo.root, tip_sha)
+    assert f"reusing HEAD on 3.10 from {tip_dir}" in capsys.readouterr().out
+
+
+def test_an_approvals_only_tip_judges_a_zero_delta_and_exits_zero(tmp_path: Path, capsys):
+    repo, _b, _t = _approvals_only_repo(tmp_path)
+    runner = FakeRunner()
+    unused = [_entry(PLAIN, {"stdlib": 1})]
+    assert measure(_settings(repo, tmp_path / "out", approve=unused), runner) == 0
+    out = capsys.readouterr().out
+    assert "measure the same tree (only the approvals file differs); nothing grew" in out
+    assert f"| {PLAIN} | 500 | 500 | +0 |" in out
+    assert "approved but did not grow on any measured minor (unused)" in out
+    assert len(runner.calls) == 3, "the base is measured once and is both sides"
+
+
+def test_other_tips_are_pruned_and_the_base_cache_is_kept(tmp_path: Path):
+    repo, _b, tip_sha = _repo(tmp_path)
+    out = tmp_path / "out"
+    assert measure(_settings(repo, out), FakeRunner()) == 0
+    for stale in ("a" * 40, "b" * 40):
+        (out / stale).mkdir()
+        (out / stale / "3.10.json").write_text("[]")
+    (out / "notes").mkdir()
+    assert measure(_settings(repo, out), FakeRunner()) == 0
+    kept = sorted(p.name for p in out.iterdir())
+    assert delta.measured_tree(repo.root, tip_sha) in kept
+    assert "v1.0.0" in kept
+    assert "notes" in kept
+    assert not {"a" * 40, "b" * 40} & set(kept)
+
+
+def test_provenance_no_longer_compares_the_sha(tmp_path: Path):
+    assert "sha" not in {f.name for f in fields(Provenance)}
+    side = _side(tmp_path, "s")
+    _edit(side / "3.10.status.json", lambda d: d.update({"sha": "e" * 40}))
+    assert validate_side(side, "3.10", PROV) == []
+
+
+def test_base_ref_resolves_at_the_given_revision_and_the_verb_prints_it(tmp_path: Path, capsys):
+    repo, base_sha, _t = _repo(tmp_path)
+    repo.git("tag", "v2.0.0")
+    assert base_ref(repo.root) == "v2.0.0"
+    assert base_ref(repo.root, base_sha) == "v1.0.0"
+    assert main(["base-tag", "--repo", str(repo.root), "--rev", base_sha]) == 0
+    assert capsys.readouterr().out == "v1.0.0\n"
+    assert main(["base-tag", "--repo", str(repo.root), "--rev", "no-such-rev"]) == 2
+    assert "git describe" in capsys.readouterr().out
+
+
+def test_measure_base_rev_names_the_base_and_excludes_base(tmp_path: Path, monkeypatch, capsys):
+    repo, base_sha, _t = _repo(tmp_path)
+    repo.git("tag", "v2.0.0")
+    fake = FakeRunner()
+    monkeypatch.setattr(delta, "_run", fake)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    fake.ops = {("tip", PLAIN): 504}
+    held = [_entry(PLAIN, {"otto:*": 1})]
+    approvals = _approvals_path(repo.root.parent, held, "v1.0.0")
+    argv = ["measure", "--repo", str(repo.root), "--out", str(tmp_path / "out")]
+    argv += ["--minors", "3.10", "--approvals", str(approvals)]
+    assert main([*argv, "--base-rev", base_sha]) == 1
+    out = capsys.readouterr().out
+    assert "budget-delta: v1.0.0 (" in out
+    assert "grew beyond" in out, "the file for v1.0.0 is in force, not spent, at the base's tag"
+    assert "(spent)" not in out
+    assert '"base": "v1.0.0"' in out
+    with pytest.raises(SystemExit):
+        main([*argv, "--base", "v1.0.0", "--base-rev", base_sha])
+
+
+def test_the_base_is_resolved_once_and_names_the_records_and_the_approvals(
+    tmp_path: Path, monkeypatch, capsys
+):
+    """`Settings.base` is the tag: measure never resolves it again, so one name keys both."""
+    repo, base_sha, _t = _repo(tmp_path)
+    fake = FakeRunner()
+    monkeypatch.setattr(delta, "_run", fake)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    calls = []
+    real = delta.base_ref
+    monkeypatch.setattr(delta, "base_ref", lambda *a: calls.append(a) or real(*a))
+    out = tmp_path / "out"
+    argv = ["measure", "--repo", str(repo.root), "--out", str(out), "--minors", "3.10"]
+    argv += ["--approvals", str(_approvals_path(repo.root.parent, [], "v1.0.0"))]
+    assert main([*argv, "--base-rev", base_sha]) == 0
+    assert len(calls) == 1
+    assert (out / "v1.0.0").is_dir()
+    assert main([*argv, "--base", "v1.0.0"]) == 0
+    assert len(calls) == 2, "--base is validated as a tag, once"
+    capsys.readouterr()
+    assert main([*argv, "--base", base_sha]) == 2
+    assert (
+        f"--base {base_sha} is not a release tag (it describes as v1.0.0)"
+        in capsys.readouterr().out
+    )
+    assert base_sha not in {p.name for p in out.iterdir()}
 
 
 def test_base_ref_is_the_nearest_tag(tmp_path: Path):
@@ -1062,16 +1385,16 @@ def test_a_quiet_pair_passes_and_leaves_base_and_head_records(tmp_path: Path, ca
     runner = FakeRunner()
     out = tmp_path / "out"
     assert measure(_settings(repo, out), runner) == 0
-    base, head = out / "v1.0.0", out / "head"
+    base_tree = delta.measured_tree(repo.root, base_sha)
+    tip_tree = delta.measured_tree(repo.root, tip_sha)
+    base, head = out / "v1.0.0", out / tip_tree
     instrument = instrument_id(repo.root, tip_sha)
-    base_tree = repo.git("rev-parse", "v1.0.0^{tree}").strip()
-    tip_tree = repo.git("rev-parse", "HEAD^{tree}").strip()
-    assert validate_side(base, "3.10", Provenance(base_sha, base_tree, "3.10.14", instrument)) == []
-    assert validate_side(head, "3.10", Provenance(tip_sha, tip_tree, "3.10.14", instrument)) == []
+    assert validate_side(base, "3.10", Provenance(base_tree, "3.10.14", instrument)) == []
+    assert validate_side(head, "3.10", Provenance(tip_tree, "3.10.14", instrument)) == []
     assert _steps(runner, "base") == ["sync", "version", "report"]
     assert _steps(runner, "tip") == ["sync", "version", "report"]
     assert runner.probes == ["3.10"]
-    assert not (out / "again-1").exists(), "a quiet pair is measured once"
+    assert not (head / "again-1").exists(), "a quiet pair is measured once"
     assert "| 3.10 |" in capsys.readouterr().out
     assert repo.git("worktree", "list").count("\n") == 1, "every throwaway worktree is removed"
     assert _holders_empty(tmp_path / "holders"), "every holder is removed"
@@ -1096,22 +1419,11 @@ def test_a_quiet_run_over_two_minors_measures_each_minor_once_per_side(tmp_path:
     ]  # fmt: skip
 
 
-def test_the_base_cache_is_reused_and_the_tip_is_measured_again(tmp_path: Path):
-    repo, _b, _t = _repo(tmp_path)
-    out = tmp_path / "out"
-    assert measure(_settings(repo, out), FakeRunner()) == 0
-    second = FakeRunner()
-    assert measure(_settings(repo, out), second) == 0
-    assert _steps(second, "base") == [], "the cached base is not measured again"
-    assert _steps(second, "tip") == ["sync", "version", "report"]
-
-
 @pytest.mark.parametrize(
     "break_it",
     [
         "no_status",
         "failed_step",
-        "other_sha",
         "other_tree",
         "other_patch",
         "other_instrument",
@@ -1130,10 +1442,8 @@ def test_a_base_cache_that_is_not_the_base_or_not_this_instrument_is_measured_ag
         (base / "3.10.status.json").unlink()
     elif break_it == "failed_step":
         _edit(base / "3.10.status.json", lambda d: d.update({"report": 1}))
-    elif break_it == "other_sha":
-        _edit(base / "3.10.status.json", lambda d: d.update({"sha": "0" * 40}))
     elif break_it == "other_tree":
-        _edit(base / "3.10.status.json", lambda d: d.update({"tree": "0" * 40}))
+        _edit(base / "3.10.status.json", lambda d: d.update({"measured_tree": "0" * 40}))
     elif break_it == "other_patch":
         # The interpreter uv finds today is another patch.
         again = FakeRunner(versions={"3.10": "3.10.15"})
@@ -1162,7 +1472,7 @@ def test_an_interpreter_uv_cannot_find_says_the_cache_cannot_be_reused(tmp_path:
     runner = NoProbe()
     assert measure(_settings(repo, out), runner) == 0
     text = capsys.readouterr().out
-    assert "interpreter for 3.10 not found by uv; the base cache cannot be reused" in text
+    assert "interpreter for 3.10 not found by uv; the cache cannot be reused" in text
     assert _steps(runner, "base") == ["sync", "version", "report"], "the base is measured"
 
 
@@ -1170,6 +1480,8 @@ def test_a_cache_hit_still_confirms_growth_with_a_fresh_base_pair(tmp_path: Path
     repo, _b, _t = _repo(tmp_path)
     out = tmp_path / "out"
     assert measure(_settings(repo, out), FakeRunner()) == 0
+    repo.write("more.txt", "a new tip tree\n")
+    repo.commit("a new tip")
     runner = FakeRunner(ops={("tip", PLAIN): 504})
     assert measure(_settings(repo, out), runner) == 1
     assert _steps(runner, "base") == ["sync", "version", "report"], (
@@ -1188,19 +1500,53 @@ def test_growth_is_confirmed_by_a_second_pair_and_stops_with_the_entry_to_paste(
     assert measure(_settings(repo, out), runner) == 1
     assert _steps(runner, "base") == ["sync", "version", "report"] * 2
     assert _steps(runner, "tip") == ["sync", "version", "report"] * 2
-    assert validate_side(out / "again-1" / "v1.0.0", "3.10", None) == []
-    assert validate_side(out / "again-1" / "head", "3.10", None) == []
+    tip_tree = delta.measured_tree(repo.root, _t)
+    again = out / tip_tree / "again-1"
+    assert validate_side(again / "v1.0.0", "3.10", None) == []
+    assert validate_side(again / tip_tree, "3.10", None) == []
     text = capsys.readouterr().out
     assert "confirming 3.10: growth appeared; measuring the pair again (2 of 3)" in text
     assert "confirmed by pair 2 (tables: pair 1)" in text
-    assert f'BUDGET_APPROVE="{PLAIN}@3.10=otto:*+4"' in text
+    entry = Approval(PLAIN, "3.10", {"otto:*": 4}, delta.WARRANTED_WHY).entry()
+    block = json.dumps({"base": "v1.0.0", "entries": [entry]}, indent=2)
+    assert ("to approve, write tests/unit/import_budget/approved_growth.json:\n" + block) in text
     assert "STOP:" in text
+
+
+def test_an_approvals_only_retry_after_a_growth_stop_measures_nothing(tmp_path: Path, capsys):
+    """The confirming pair lives beneath its tip's records and is reused like the first."""
+    repo, _b, _t = _repo(tmp_path)
+    out = tmp_path / "out"
+    assert measure(_settings(repo, out), FakeRunner(ops={("tip", PLAIN): 504})) == 1
+    repo.write(delta.APPROVALS_PATH.as_posix(), json.dumps({"base": "v1.0.0", "entries": []}))
+    repo.commit("approve the growth")
+    retry = FakeRunner(ops={("tip", PLAIN): 504})
+    approve = [_entry(PLAIN, {"otto:*": 4})]
+    assert measure(_settings(repo, out, approve=approve), retry) == 0
+    assert retry.calls == [], "neither pair is measured again"
+    assert "confirmed by pair 2 (tables: pair 1)" in capsys.readouterr().out
+
+
+def test_a_pruned_tip_takes_its_confirming_pairs_with_it(tmp_path: Path):
+    repo, _b, _t = _repo(tmp_path)
+    out = tmp_path / "out"
+    assert measure(_settings(repo, out), FakeRunner(ops={("tip", PLAIN): 504})) == 1
+    old = delta.measured_tree(repo.root, _t)
+    assert (out / old / "again-1").is_dir()
+    repo.write("other.txt", "x")
+    repo.commit("another tree")
+    assert measure(_settings(repo, out), FakeRunner()) == 0
+    assert not (out / old).exists()
+    assert not list(out.glob("again-*"))
 
 
 def test_approved_and_attributed_growth_passes_after_confirmation(tmp_path: Path, capsys):
     repo, _b, _t = _repo(tmp_path)
     runner = FakeRunner(ops={("tip", PLAIN): 504})
-    assert measure(_settings(repo, tmp_path / "out", approve=[f"{PLAIN}=otto:*+4"]), runner) == 0
+    assert (
+        measure(_settings(repo, tmp_path / "out", approve=[_entry(PLAIN, {"otto:*": 4})]), runner)
+        == 0
+    )
     assert "APPROVED GROWTH" in capsys.readouterr().out
 
 
@@ -1215,11 +1561,14 @@ def test_growth_on_the_canary_only_passes_with_a_canary_entry_and_no_stale_stop(
 
     repo, _b, _t = _repo(tmp_path)
     settings = _settings(
-        repo, tmp_path / "out", minors=("3.10", "3.14"), approve=[f"{PLAIN}@3.14=otto:*+4"]
+        repo,
+        tmp_path / "out",
+        minors=("3.10", "3.14"),
+        approve=[_entry(PLAIN, {"otto:*": 4}, "3.14")],
     )
     assert measure(settings, CanaryGrows()) == 0
     text = capsys.readouterr().out
-    assert "stale" not in text
+    assert "unused" not in text
     assert "APPROVED GROWTH" in text
     unapproved = _settings(repo, tmp_path / "out2", minors=("3.10", "3.14"))
     assert measure(unapproved, CanaryGrows()) == 1
@@ -1270,22 +1619,124 @@ def test_a_shuffle_that_reproduces_stops(tmp_path: Path, capsys):
     assert f"STOP:\n  3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}: reproduced" in text
 
 
-def test_the_primary_stops_before_the_other_minors_are_measured(tmp_path: Path):
+def _grows(*minors: str, ops: "dict[str, int] | None" = None) -> FakeRunner:
+    """A runner whose tip grows by *ops* (default PLAIN +4) on *minors*, in every pair."""
+    grown = ops or {PLAIN: 504}
+    return FakeRunner(series={("tip", m): [grown] * 3 for m in minors})
+
+
+def test_measure_judges_every_minor_before_it_stops(tmp_path: Path, capsys):
     repo, _b, _t = _repo(tmp_path)
-    runner = FakeRunner(ops={("tip", PLAIN): 501})
+    runner = _grows("3.10")
     assert measure(_settings(repo, tmp_path / "out", minors=("3.10", "3.11")), runner) == 1
-    assert {m for _s, _t, m in runner.calls} == {"3.10"}, "3.11 never ran"
+    out = capsys.readouterr().out
+    assert "CPython 3.10" in out
+    assert "CPython 3.11" in out, "the quiet minor after the growing one is still judged"
+    assert {m for _s, _t, m in runner.calls} == {"3.10", "3.11"}
+    assert "other environment" not in out
 
 
-def test_a_stale_approval_is_reported_after_every_minor(tmp_path: Path, capsys):
+def test_the_stop_block_is_one_complete_approvals_file(tmp_path: Path, capsys):
     repo, _b, _t = _repo(tmp_path)
-    assert (
-        measure(_settings(repo, tmp_path / "out", approve=[f"{PLAIN}=otto:*+1"]), FakeRunner()) == 1
+    runner = _grows("3.10", ops={PLAIN: 504, REAL: 501})
+    runner.series[("tip", "3.14")] = [{PLAIN: 506, REAL: 501}] * 3
+    held = [
+        _entry(REAL, {"otto:*": 1}),
+        _entry(PLAIN, {"otto:*": 2}, "3.10"),
+        _entry("help", {"fd": 1}, "3.11", "only the other environment needs it"),
+    ]
+    minors = ("3.10", "3.11", "3.14")
+    settings = _settings(repo, tmp_path / "out", minors=minors, approve=held)
+    assert measure(settings, runner) == 1
+    out = capsys.readouterr().out
+    head = "to approve, write tests/unit/import_budget/approved_growth.json:\n"
+    assert out.count(head) == 1
+    written = json.loads(out.split(head)[1])
+    assert written["base"] == "v1.0.0"
+    entries = written["entries"]
+    assert [(e["surface"], e["minor"], e["buckets"]) for e in entries] == [
+        (REAL, None, {"otto:*": 1}),
+        ("help", "3.11", {"fd": 1}),
+        (PLAIN, "3.10", {"otto:*": 4}),
+        (PLAIN, "3.14", {"otto:*": 6}),
+    ], "the exceeded entry appears once, with the new amount; every other in-force entry survives"
+    assert [e["why"] for e in entries] == [
+        WHY,
+        "only the other environment needs it",
+        delta.WARRANTED_WHY,
+        delta.WARRANTED_WHY,
+    ]
+    assert "help@3.11: approved but did not grow on 3.11 (unused)" in out, "still NOTEd, not pruned"
+    for e in entries[2:]:
+        e["why"] = "worth it"
+    target = tmp_path / "written.json"
+    target.write_text(json.dumps(written))
+    assert len(delta.load_approvals(target, "v1.0.0").in_force) == 4, (
+        "the printed file is loadable as it stands, once the whys are written"
     )
+
+
+def test_a_per_minor_entry_decides_on_its_minor_and_the_all_minors_one_elsewhere(tmp_path: Path):
+    entries = [_entry(PLAIN, {"stdlib": 9}, why="everywhere"), _entry(PLAIN, {"fd": 1}, "3.10")]
+    got = _approvals(tmp_path, entries)
+    assert [a.why for a in got.in_force] == ["everywhere", WHY], "both are loadable together"
+    assert delta._applicable(got.in_force, PLAIN, "3.10") is got.in_force[1]
+    assert delta._applicable(got.in_force, PLAIN, "3.14") is got.in_force[0]
+
+
+def test_an_operational_failure_on_one_minor_still_judges_the_others_and_exits_2(
+    tmp_path: Path, capsys
+):
+    class SyncFailsOn311(FakeRunner):
+        def __call__(self, argv, cwd, env, out):
+            minor = env.get("UV_PROJECT_ENVIRONMENT", "").rsplit("venv-", 1)[-1]
+            self.fail = {"sync": 3} if minor == "3.11" else {}
+            return super().__call__(argv, cwd, env, out)
+
+    repo, _b, _t = _repo(tmp_path)
+    runner = SyncFailsOn311(series={("tip", "3.12"): [{PLAIN: 504}] * 3})
+    settings = _settings(repo, tmp_path / "out", minors=("3.10", "3.11", "3.12"))
+    assert measure(settings, runner) == 2, "the worst status over the minors"
+    out = capsys.readouterr().out
+    assert "step sync exited 3" in out
+    assert "CPython 3.10" in out
+    assert "CPython 3.12" in out, "the minor after the failed one is judged"
+    assert "grew and is not approved" in out
+
+
+def test_the_other_environment_s_numbers_print_when_its_records_exist(tmp_path: Path, capsys):
+    repo, _b, _t = _repo(tmp_path)
+    out_dir = tmp_path / "out"
+    (out_dir / "other").mkdir(parents=True)
+    table = [
+        _row(k, 777 if k == PLAIN else 500, {"stdlib": 777} if k == PLAIN else None)
+        for k in KNOWN_SURFACES
+    ]
+    (out_dir / "other" / "3.10.json").write_text(json.dumps(table))
+    assert measure(_settings(repo, out_dir), _grows("3.10")) == 1
+    text = capsys.readouterr().out
+    assert "grew and is not approved\n    other environment: 777 {'stdlib': 777}" in text
+
+
+def test_an_unused_entry_is_a_note_after_every_minor_never_a_stop(tmp_path: Path, capsys):
+    repo, _b, _t = _repo(tmp_path)
+    settings = _settings(repo, tmp_path / "out", approve=[_entry(PLAIN, {"otto:*": 1})])
+    assert measure(settings, FakeRunner()) == 0
     assert (
-        f"{PLAIN}=otto:*+1: approved but {PLAIN} did not grow on any measured minor"
+        f"NOTE:\n  {PLAIN}: approved but did not grow on any measured minor (unused)"
         in capsys.readouterr().out
     )
+
+
+def test_a_spent_file_is_a_note_and_growth_still_stops_in_measure(tmp_path: Path, capsys):
+    repo, _b, _t = _repo(tmp_path)
+    settings = _settings(
+        repo, tmp_path / "out", approve=[_entry(PLAIN, {"otto:*": 4})], file_base="v0.19.0"
+    )
+    assert measure(settings, FakeRunner(ops={("tip", PLAIN): 504})) == 1
+    out = capsys.readouterr().out
+    assert f"NOTE:\n  {PLAIN}: approved for v0.19.0, the base is v1.0.0 (spent)" in out
+    assert "grew and is not approved" in out
 
 
 @pytest.mark.parametrize("step", ["sync", "version", "report"])
@@ -1295,18 +1746,22 @@ def test_a_failed_step_is_two_and_names_the_step(tmp_path: Path, step: str, caps
     assert f"step {step} exited 3" in capsys.readouterr().out
 
 
-def test_the_same_tree_on_both_sides_is_two_before_any_worktree(tmp_path: Path, capsys):
+def test_the_same_tree_on_both_sides_judges_the_base_against_itself(tmp_path: Path, capsys):
     repo, _b, _t = _repo(tmp_path)
+    repo.git("tag", "v1.1.0")
     runner = FakeRunner()
-    assert measure(_settings(repo, tmp_path / "out", base="HEAD"), runner) == 2
-    assert "same tree" in capsys.readouterr().out
-    assert runner.calls == []
+    assert measure(_settings(repo, tmp_path / "out", base="v1.1.0"), runner) == 0
+    out = capsys.readouterr().out
+    assert "measure the same tree (only the approvals file differs); nothing grew" in out
+    assert len(runner.calls) == 3, "one measurement: the base is both sides"
 
 
 def test_a_bad_approval_is_two_before_any_measurement(tmp_path: Path, capsys):
     repo, _b, _t = _repo(tmp_path)
     runner = FakeRunner()
-    assert measure(_settings(repo, tmp_path / "out", approve=["nope"]), runner) == 2
+    assert (
+        measure(_settings(repo, tmp_path / "out", approve=[_entry("nope", {"a": 1})]), runner) == 2
+    )
     assert runner.calls == []
 
 
@@ -1378,17 +1833,17 @@ def _job(repo: TmpGitRepo, tmp_path: Path, sha: str, harness_sha: str) -> SideJo
 def _git_failing_on(real_git, *verbs: str):
     """A `_git` double that raises MeasureError on any call whose first two words are in *verbs*."""
 
-    def fake(repo_path, *args):
+    def fake(repo_path, *args, **kw):
         if " ".join(args[:2]) in verbs:
             raise MeasureError(f"git {' '.join(args[:2])} failed: simulated")
-        return real_git(repo_path, *args)
+        return real_git(repo_path, *args, **kw)
 
     return fake
 
 
 def test_a_bad_sha_is_refused_before_any_holder_is_made(tmp_path: Path):
     repo, _base_sha, tip_sha = _repo(tmp_path)
-    with pytest.raises(MeasureError, match="git rev-parse"):
+    with pytest.raises(MeasureError, match="git read-tree"):
         measure_side(_job(repo, tmp_path, "0" * 40, tip_sha), FakeRunner())
     assert not (tmp_path / "holders").exists(), "nothing was allocated"
 
@@ -1407,12 +1862,12 @@ def test_a_failed_prune_is_reported_beside_the_failed_remove(tmp_path: Path, mon
     repo, base_sha, tip_sha = _repo(tmp_path)
     real, calls = delta._git, []
 
-    def fake(repo_path, *args):
+    def fake(repo_path, *args, **kw):
         """Let the holder's opening prune through; fail the remove and the prune after it."""
         calls.append(" ".join(args[:2]))
         if calls.count("worktree prune") > 1 or args[:2] == ("worktree", "remove"):
             raise MeasureError(f"git {' '.join(args[:2])} failed: simulated")
-        return real(repo_path, *args)
+        return real(repo_path, *args, **kw)
 
     monkeypatch.setattr(delta, "_git", fake)
     with pytest.raises(MeasureError) as info:
@@ -1424,7 +1879,11 @@ def test_a_failed_prune_is_reported_beside_the_failed_remove(tmp_path: Path, mon
 def test_a_holder_that_cannot_be_deleted_is_reported(tmp_path: Path, monkeypatch):
     repo, base_sha, tip_sha = _repo(tmp_path)
 
+    real = delta.shutil.rmtree
+
     def refuse(path, *args, **kwargs):
+        if "otto-budget-delta" not in str(path):  # the scratch index's own cleanup is not tested
+            return real(path, *args, **kwargs)
         raise OSError(f"simulated: {path}")
 
     monkeypatch.setattr(delta.shutil, "rmtree", refuse)
@@ -1526,6 +1985,9 @@ def test_the_cli_measure_verb_wires_the_default_runner(tmp_path: Path, monkeypat
     monkeypatch.setattr(delta, "_run", fake)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
     (tmp_path / "tmp").mkdir()
+    default = repo.root / delta.APPROVALS_PATH
+    default.parent.mkdir(parents=True)
+    default.write_text(json.dumps({"base": "v1.0.0", "entries": []}))
     rc = main(
         ["measure", "--repo", str(repo.root), "--out", str(tmp_path / "out"), "--minors", "3.10"]
     )
