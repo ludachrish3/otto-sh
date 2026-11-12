@@ -93,6 +93,37 @@ def test_the_reset_removes_every_counter_without_find_delete(sweep_release, appl
     )
     assert _gcda_left(cov) == [], f"counters survived under BusyBox {sweep_release.version}"
     assert (cov / "sub" / "keep.txt").read_text() == "user data"
+    # The dir it emptied goes (#722); the one holding a user file, and the
+    # cov_dir itself, stay.
+    assert sorted(str(p.relative_to(cov)) for p in cov.rglob("*")) == ["sub", "sub/keep.txt"]
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize("sweep_release", _SWEEP_ROWS, indirect=True)
+def test_the_reset_never_walks_a_counter_path_holding_a_newline(
+    sweep_release, applet_dir, tmp_path
+):
+    # Every row's find must honour `! -path '*<newline>*'` (a literal newline:
+    # 1.16.1 and 1.21.1 accept `[[:cntrl:]]` and never match it): a forged
+    # second line through a symlink would otherwise rmdir a dir outside cov_dir.
+    cov = tmp_path / "cov"
+    outside = tmp_path / "outside"
+    (outside / "victim").mkdir(parents=True)
+    cov.mkdir()
+    (cov / "link").symlink_to(outside)
+    forged = Path(f"{cov}/x\n{cov}/link/victim/z.gcda")
+    forged.parent.mkdir(parents=True)
+    forged.write_bytes(b"")
+    (cov / "plain").mkdir()
+    (cov / "plain" / "a.gcda").write_bytes(b"")
+    d = applet_dir(sweep_release, SWEEP_APPLETS)
+
+    done = run_in_busybox_sh(sweep_release, d, gcda_delete_cmd(str(cov)))
+
+    assert done.returncode == 0, f"rc {done.returncode}: {_first_line(done)!r}"
+    assert not forged.exists()
+    assert (outside / "victim").is_dir()
+    assert not (cov / "plain").exists()  # an ordinary counter's dir still goes
 
 
 def _check(release, applets: Path, cov_dir: str):
@@ -150,6 +181,8 @@ def test_the_reset_survives_more_paths_than_one_command_line_holds(
     assert rc == 0, f"rc {rc}: {_first_line(done)!r}"
     left = _gcda_left(cov)
     assert left == [], f"{len(left)} of 22000 counters survived ({elapsed:.0f}s)"
+    # Every dir the removal emptied went too (#722); the cov_dir stays.
+    assert sorted(cov.iterdir()) == []
 
 
 # ── the cleanup sweep (#777): the probe and the removal scripts, verbatim ─────

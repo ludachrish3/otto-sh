@@ -13,12 +13,28 @@ instrumented product on every host `[coverage].hosts` matches — containers
 included, the otto runner itself excluded — one product at a time, so a
 product that is not a coverage build is left alone. Each product kind resets
 its own way: a Unix or container product deletes the counters under its own
-`cov_dir`; a {doc}`kernel-module product <instrumenting/kernel-modules>`
+`cov_dir`, then the directories that removal left empty; a {doc}`kernel-module product <instrumenting/kernel-modules>`
 writes its sysfs `reset` file; an embedded board calls its exported
 `reset_fn` over the console (see {ref}`coverage-embedded-reset` for what
 that export looks like and the two rules the real boards forced on it). A
 host with no instrumented product at all is printed, not silently skipped —
 `test1: no instrumented products`.
+
+(coverage-clean-directories)=
+Once the counters are gone, the clean tries to remove every directory below
+the `cov_dir` that is an ancestor of a counter it removed: deleting
+`<cov_dir>/a/b/c.gcda` makes it try `a/b`, then `a`. It goes deepest first,
+and a directory that still holds anything stays: a directory holding a file
+of your own is kept, and so is every directory above it. A directory that was
+already empty, or that held no counter, is not the clean's to remove, and the
+`cov_dir` itself is always kept, empty or not, together with everything above
+it: it is where the next run writes. The removal runs with the privilege that
+wrote the counters, so a kernel module's root-owned tree (written with sudo)
+is removed with sudo too. Removing a directory is best effort: one the clean
+cannot remove (a permission error, say) is left in place and does not fail
+the clean, since the counters are already gone. `otto run cleanup` goes
+further and removes the empty `cov_dir` as well
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
 
 (coverage-clean-running-process)=
 Deleting `.gcda` files does not zero a process that is still running. It
@@ -33,7 +49,10 @@ long-running Unix or container product in this order:
 3. Start the process again.
 
 Restarting it after the clean instead (`docker restart`, say) does not work:
-the stop writes the old counts into the directory the clean just emptied.
+the stop writes the old counts into the directory the clean just emptied. A
+process that exits while the clean runs can also lose its counts outright: if
+the clean removes a directory between gcov recreating it and opening the
+counter inside it, that counter is never written.
 Around `otto test`, stop the process before the run and start it in a
 fixture's setup, which runs after the run's clean. On a compose container
 host the clean runs inside the container, so stop the product's process

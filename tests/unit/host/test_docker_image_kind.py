@@ -17,7 +17,7 @@ from otto.host.docker_image_kind import DockerImageProduct, _loaded_reference
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
-from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
+from tests.unit.host._gcda_frame import CHECK_MARK, CHECK_PREFIX, delete_line, framed
 
 
 def _entry(**params):
@@ -650,7 +650,7 @@ async def test_injection_shaped_values_are_quoted_not_executed():
     assert host.exec_calls[-1] == expected_run
     assert (await p.reset_coverage(host=host)).is_ok
     cov_q = shlex.quote(nasty_cov)
-    delete = f"! test -d {cov_q} || find {cov_q} -name '*.gcda' -type f -exec rm -f {{}} \\;"
+    delete = delete_line(nasty_cov)
     check = f"{CHECK_PREFIX}LC_ALL=C find {cov_q} -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls[-2:] == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
@@ -749,7 +749,7 @@ async def test_reset_coverage_deletes_under_sudo():
     host = _DockerHost()
     p = _build(host, image="app:1", cov_dir="/var/cov/app")
     assert (await p.reset_coverage(host=host)).is_ok
-    delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
+    delete = delete_line("/var/cov/app")
     check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
@@ -760,7 +760,7 @@ async def test_reset_coverage_deletes_under_sudo():
 
 @pytest.mark.asyncio
 async def test_reset_coverage_fails_when_the_check_fails_after_a_successful_removal():
-    host = _DockerHost(answers={"-print": (Status.Error, "find: '/var/cov': Permission denied")})
+    host = _DockerHost(answers={CHECK_MARK: (Status.Error, "find: '/var/cov': Permission denied")})
     result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host=host)
     assert result.status is Status.Error
     assert result.msg == (
@@ -770,7 +770,7 @@ async def test_reset_coverage_fails_when_the_check_fails_after_a_successful_remo
 
 @pytest.mark.asyncio
 async def test_reset_coverage_fails_naming_a_counter_the_removal_left():
-    host = _DockerHost(answers={"-print": (Status.Success, "/var/cov/app/a.gcda")})
+    host = _DockerHost(answers={CHECK_MARK: (Status.Success, "/var/cov/app/a.gcda")})
     result = await _build(host, image="app:1", cov_dir="/var/cov/app").reset_coverage(host=host)
     assert result.status is Status.Error
     assert result.msg == "deleting .gcda under /var/cov/app left 1 file(s): /var/cov/app/a.gcda"

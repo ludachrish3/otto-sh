@@ -574,8 +574,10 @@ class Product(ABC):
     async def reset_coverage(self, host: "Host") -> Result:
         """Zero this product's counters on *host*.
 
-        Default: delete every ``.gcda`` under :attr:`cov_dir`, then check that
-        none is left — the pre-run ``--cov-clean``, the post-fetch clean and
+        Default: delete every ``.gcda`` under :attr:`cov_dir` and the dirs
+        below it those deletions left empty
+        (:func:`~otto.host.product.gcda_prune_files`), then check that none
+        is left — the pre-run ``--cov-clean``, the post-fetch clean and
         ``otto cov clean`` all come through here. A :attr:`cov_dir` that does
         not exist yet has nothing to clear and succeeds (see
         :func:`~otto.host.product.gcda_delete_cmd`); a counter that survives
@@ -707,8 +709,9 @@ def gcda_find_cmd(cov_dir: str) -> str:
     """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
 
     The one spelling of "the counters under *cov_dir*": the removal
-    (:func:`gcda_remove_files`) appends ``-exec rm``, the reset's check
-    (:func:`gcda_check_cmd`) appends ``-print``. The quoting is load-bearing:
+    (:func:`gcda_remove_files`) appends ``-exec rm``, which the reset's
+    removal (:func:`gcda_prune_files`) extends to prune the dirs it emptied,
+    and the listing (:func:`gcda_list_cmd`) appends ``-print``. The quoting is load-bearing:
     an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
     the second of them relative to the shell's cwd.
     """
@@ -732,22 +735,97 @@ def gcda_remove_files(cov_dir: str) -> str:
     return f"{gcda_find_cmd(cov_dir)} -exec rm -f {{}} \\;"
 
 
-def gcda_delete_cmd(cov_dir: str) -> str:
-    r"""Build the counter reset's removal line: :func:`gcda_remove_files`, guarded.
+_NEWLINE_GLOB = "'*\n*'"
+"""``find -path``'s pattern for "a path holding a newline", single-quoted with a literal newline.
 
-    ``! test -d <cov_dir> || find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \;``:
-    a directory that does not exist yet has nothing to clear and exits 0 —
-    the default ``/tmp/<name>`` is gone after a reboot, and gcov only creates
-    it when the product first exits. A ``find`` that cannot start (a
-    permission error on *cov_dir*) still exits non-zero; a counter that
-    ``rm`` could not remove does not, which is what the reset's check
-    (:func:`gcda_check_cmd`) is for. The line uses ``!`` and ``||``, so it
-    needs a shell; an elevated caller must wrap it whole
-    (:func:`~otto.host.privilege.run_sh_elevated`).
+A literal newline, never ``[[:cntrl:]]``: BusyBox 1.16.1 and 1.21.1 accept
+the class and never match it (measured). Single quotes carry it through
+:func:`~otto.host.privilege.run_sh_elevated`'s :func:`shlex.quote` intact."""
+
+
+def gcda_prune_files(cov_dir: str) -> str:
+    r"""Remove every ``.gcda`` under *cov_dir*, then the dirs those removals left empty.
+
+    The counter reset's removal: :func:`gcda_remove_files` with
+    ``! -path '*<newline>*' -print`` appended, which prints a counter only
+    once its ``rm`` succeeded, and never one whose path holds a newline.
+    Each printed path's ancestor dirs strictly below *cov_dir* are listed by
+    shell builtins alone (``case`` against the quoted *cov_dir*, the test
+    :func:`path_under` makes, which relies on :func:`validate_cov_dir`
+    refusing a trailing ``/`` that ``path_under`` strips and ``case`` does not, then
+    ``${d%/*}``), sorted once with ``LC_ALL=C sort -ru`` so a child comes
+    before its parent, and ``rmdir`` is tried on each:
+
+    ``{ __otto_gcda_rc=$( { { <gcda_remove_files> ! -path '*<newline>*'
+    -print; echo "$?" >&3; } | <ancestors> | { LC_ALL=C sort -ru 2>/dev/null || <drain>; }
+    | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 );
+    test "$__otto_gcda_rc" = 0; }``
+
+    One ``rm`` per counter, as cleanup's removal; one ``sort``, and one
+    ``rmdir`` per distinct dir, per reset. ``rmdir`` refuses a dir that
+    still holds anything, so a dir with a file of its own stays, and so do
+    its parents. Only an ancestor of a removed counter is tried, so a dir
+    that was already empty is not removed, and the ``case`` bound keeps
+    *cov_dir* itself and everything above it out of the list for every
+    path ``find`` printed: *cov_dir* stays for the next run to write under,
+    and is what the pre-run presence probe
+    (:func:`~otto.host.cov_sweep.probe_presence`) asked about. Cleanup,
+    which owns every trace *cov_dir* included, sweeps every empty dir with
+    :func:`gcda_remove_dirs` instead.
+
+    The bound is textual: it holds only because each line read is one path
+    ``find`` printed, and ``find`` never follows a symlink below its start.
+    A counter whose path holds a newline would be read as two lines, the
+    second a forged path that could lead ``rmdir`` through a symlink to an
+    empty dir anywhere on the host (as root, for an elevated kind). So a
+    counter whose path holds a newline (``_NEWLINE_GLOB``) is removed but
+    never printed, and its dirs are left for cleanup.
+
+    Removing a dir is best effort and never stops the counter removal: an
+    ``rmdir`` that fails (a permission error, a dir something wrote into
+    meanwhile) is silent, and a ``sort`` that fails is silent too and
+    followed by a builtin-only drain of its input, so nothing upstream is killed by
+    ``SIGPIPE`` with counters left to remove. A POSIX ``sh`` pipeline exits
+    with its last stage's status, so ``find``'s own status is carried out
+    on fd 3 and is the line's status: a ``find`` that cannot start or walk
+    *cov_dir* still fails the removal. The variable that carries it keeps
+    an ``__otto_`` prefix because it lands in the host's session shell.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
 
-    return f"! test -d {path_operand(cov_dir)} || {gcda_remove_files(cov_dir)}"
+    q = path_operand(cov_dir)
+    find = f"{gcda_remove_files(cov_dir)} ! -path {_NEWLINE_GLOB} -print"
+    ancestors = (
+        "while IFS= read -r f; do d=${f%/*}; "
+        f"while case $d in {q}/*) true;; *) false;; esac; "
+        "do printf '%s\\n' \"$d\"; d=${d%/*}; done; done"
+    )
+    order = "{ LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; }"
+    prune = 'while IFS= read -r d; do rmdir "$d" 2>/dev/null; done'
+    return (
+        f'{{ __otto_gcda_rc=$( {{ {{ {find}; echo "$?" >&3; }} | '
+        f"{ancestors} | {order} | {prune}; }} 3>&1 ); "
+        'test "$__otto_gcda_rc" = 0; }'
+    )
+
+
+def gcda_delete_cmd(cov_dir: str) -> str:
+    r"""Build the counter reset's removal line: :func:`gcda_prune_files`, guarded.
+
+    ``! test -d <cov_dir> || <gcda_prune_files>``: a directory that does not
+    exist yet has nothing to clear and exits 0 — the default ``/tmp/<name>``
+    is gone after a reboot, and gcov only creates it when the product first
+    exits. A ``find`` that cannot start or walk *cov_dir* (a permission
+    error) exits non-zero, and :func:`gcda_prune_files` makes that the
+    line's status; a counter that ``rm`` could not remove does not, which is
+    what the reset's check (:func:`gcda_check_cmd`) is for. The line uses
+    ``!``, ``||`` and pipes, so it needs a shell; an elevated caller must
+    wrap it whole (:func:`~otto.host.privilege.run_sh_elevated`), and the
+    emptied dirs are then removed under the same elevation as the counters.
+    """
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    return f"! test -d {path_operand(cov_dir)} || {gcda_prune_files(cov_dir)}"
 
 
 def gcda_list_cmd(cov_dir: str) -> str:
@@ -768,7 +846,8 @@ def gcda_remove_dirs(cov_dir: str) -> str:
     *cov_dir*. ``rmdir`` refuses a non-empty directory, which is the point:
     a dir that still holds anything stays, and so do its parents. Cleanup
     only (:func:`~otto.host.cov_sweep.remove_coverage`), after
-    :func:`gcda_remove_files`; the counter reset never runs it. Its status
+    :func:`gcda_remove_files`; the counter reset never runs it (it removes
+    only the dirs it emptied, below *cov_dir*: :func:`gcda_prune_files`). Its status
     is meaningless (every refusal fails it) and is never read.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
