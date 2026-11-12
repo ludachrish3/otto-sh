@@ -1,7 +1,9 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Command } from "./commands";
+import minimal from "../../fixtures/minimal.json" with { type: "json" };
+import { useReviewStore } from "../data/reviewStore";
+import { type Command, useCommands } from "./commands";
 import { registerSearchInput } from "./searchFocus";
 import { useUiStore } from "./uiStore";
 import { useGlobalShortcuts } from "./useGlobalShortcuts";
@@ -30,7 +32,13 @@ afterEach(() => {
   // never kicks in — without this, hook state and DOM fragments from one
   // test can leak into the next.
   cleanup();
-  useUiStore.setState({ paletteOpen: false, theme: "light", sweepArmed: false });
+  useUiStore.setState({
+    paletteOpen: false,
+    theme: "light",
+    sweepArmed: false,
+    exportDialogOpen: false,
+  });
+  useReviewStore.setState({ sessions: [], rawMonitorSessions: null, sourceName: null });
   registerSearchInput(null);
   document.body.innerHTML = "";
 });
@@ -82,6 +90,19 @@ describe("useGlobalShortcuts — action chords", () => {
     const e = press({ key: "s", ctrlKey: true });
     expect(run).toHaveBeenCalledOnce();
     expect(useUiStore.getState().paletteOpen).toBe(false);
+    expect(e.defaultPrevented).toBe(true);
+  });
+});
+
+describe("useGlobalShortcuts — the Export chord", () => {
+  it("Ctrl+S opens the export dialog and prevents the browser default", () => {
+    useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(minimal), "run.json");
+    renderHook(() => useGlobalShortcuts(useCommands()));
+    let e!: KeyboardEvent;
+    act(() => {
+      e = press({ key: "s", ctrlKey: true });
+    });
+    expect(useUiStore.getState().exportDialogOpen).toBe(true);
     expect(e.defaultPrevented).toBe(true);
   });
 });

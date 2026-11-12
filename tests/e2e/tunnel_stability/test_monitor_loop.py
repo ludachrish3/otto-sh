@@ -47,7 +47,7 @@ def _spy_collector(lab) -> tuple[MetricCollector, list[dict]]:
     published: list[dict] = []
     c = MetricCollector(hosts=[], tunnel_source=lambda: discover_tunnel_records(lab))
     c.session_id = "tunnel-soak"
-    c._publish = published.append  # type: ignore[method-assign]
+    c.publish = published.append  # type: ignore[method-assign]
     return c, published
 
 

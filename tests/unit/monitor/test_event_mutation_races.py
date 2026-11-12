@@ -25,7 +25,6 @@ row, not the served document's snapshot, is what an edit resolves against.
 import asyncio
 import contextlib
 import dataclasses
-import json
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -35,6 +34,7 @@ from pathlib import Path
 
 import pytest
 from _archive import _make_archive
+from _requests import asgi, settle
 
 from otto.models import LabSnapshot
 from otto.models.monitor import MonitorSessionFragment
@@ -42,6 +42,7 @@ from otto.monitor import archive_edit
 from otto.monitor.collector import MetricCollector
 from otto.monitor.events import MonitorEvent
 from otto.monitor.export import build_db_export
+from otto.monitor.review_source import ReviewSource, SourceSlot
 from otto.monitor.server import _build_app
 from otto.monitor.session import new_frame
 
@@ -106,43 +107,17 @@ class _ArchiveSpy(_Hold):
         await self._write(event_id, None)
 
 
-async def _asgi(app, method: str, path: str, body: dict[str, object] | None = None):
-    """One in-loop request against *app*: ``(status, json-or-None)``."""
-    payload = json.dumps(body).encode() if body is not None else b""
-    status: int | None = None
-    chunks: list[bytes] = []
-
-    async def receive():
-        return {"type": "http.request", "body": payload, "more_body": False}
-
-    async def send(message):
-        nonlocal status
-        if message["type"] == "http.response.start":
-            status = message["status"]
-        elif message["type"] == "http.response.body":
-            chunks.append(message.get("body", b""))
-
-    headers = [(b"content-type", b"application/json")] if body is not None else []
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": method,
-        "path": path,
-        "query_string": b"key=k",
-        "headers": headers,
-        "root_path": "",
-        "server": ("127.0.0.1", 8000),
-    }
-    await app(scope, receive, send)
-    raw = b"".join(chunks)
-    return status, (json.loads(raw) if raw else None)
-
-
-async def _settle() -> None:
-    """Let every runnable task advance as far as it can (no I/O in play)."""
-    for _ in range(50):
-        await asyncio.sleep(0)
+def _db_slot(path: str, collector: MetricCollector) -> SourceSlot:
+    """The slot a review server of the ``.db`` archive at *path* serves from."""
+    archive = Path(path)
+    return SourceSlot(
+        ReviewSource(
+            build_db_export(path),
+            name=archive.name,
+            archive_path=archive,
+            publish=collector.publish,
+        )
+    )
 
 
 @dataclass
@@ -184,11 +159,11 @@ async def _live() -> _Live:
 async def test_a_label_patch_racing_a_pending_end_keeps_the_end() -> None:
     live = await _live()
     live.archive.hold()
-    end = asyncio.create_task(_asgi(live.app, "POST", f"{live.base}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(live.app, "POST", f"{live.base}/end", {}))
+    await settle()
     assert live.archive.pending == 1  # /end now waits on its archive write
-    patch = asyncio.create_task(_asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
+    await settle()
     live.archive.release()
     (end_status, _), (patch_status, patched) = await asyncio.gather(end, patch)
 
@@ -212,11 +187,11 @@ async def test_a_label_patch_racing_a_pending_end_keeps_the_end() -> None:
 async def test_an_end_racing_a_pending_label_patch_keeps_both() -> None:
     live = await _live()
     live.archive.hold()
-    patch = asyncio.create_task(_asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
+    await settle()
     assert live.archive.pending == 1
-    end = asyncio.create_task(_asgi(live.app, "POST", f"{live.base}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(live.app, "POST", f"{live.base}/end", {}))
+    await settle()
     live.archive.release()
     (patch_status, _), (end_status, _) = await asyncio.gather(patch, end)
 
@@ -238,11 +213,11 @@ async def test_an_end_racing_a_pending_label_patch_keeps_both() -> None:
 async def test_a_patch_racing_a_pending_delete_does_not_resurrect_it() -> None:
     live = await _live()
     live.archive.hold()
-    delete = asyncio.create_task(_asgi(live.app, "DELETE", live.base))
-    await _settle()
+    delete = asyncio.create_task(asgi(live.app, "DELETE", live.base))
+    await settle()
     assert live.archive.pending == 1
-    patch = asyncio.create_task(_asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(live.app, "PATCH", live.base, {"label": "renamed"}))
+    await settle()
     live.archive.release()
     (delete_status, _), (patch_status, _) = await asyncio.gather(delete, patch)
 
@@ -272,7 +247,7 @@ async def test_a_failed_archive_write_releases_the_entry_point_and_leaves_memory
     assert live.published_events() == []
     # The next mutation proceeds: the failure released the serialisation.
     status, body = await asyncio.wait_for(
-        _asgi(live.app, "PATCH", live.base, {"label": "kept"}), timeout=5
+        asgi(live.app, "PATCH", live.base, {"label": "kept"}), timeout=5
     )
     assert status == 200
     assert body is not None
@@ -335,7 +310,7 @@ class _Review:
 
     async def served(self) -> dict[int, dict[str, object]]:
         """Return the session's events by id, as the review document's endpoint serves them."""
-        status, doc = await _asgi(self.app, "GET", "/api/monitor_sessions")
+        status, doc = await asgi(self.app, "GET", "/api/monitor_sessions")
         assert status == 200
         assert doc is not None
         (session,) = [s for s in doc["sessions"] if s["id"] == self.session_id]
@@ -380,13 +355,7 @@ async def _review(
     if inline:
         monkeypatch.setattr(asyncio, "to_thread", held_inline)
     collector = MetricCollector(hosts=[])
-    app = _build_app(
-        collector,
-        key="k",
-        mode="review",
-        document=build_db_export(path),
-        archive_path=Path(path),
-    )
+    app = _build_app(collector, key="k", mode="review", slot=_db_slot(path, collector))
     base = f"/api/session/{sid}/event"
     return _Review(app, path, sid, base, event_id, write, collector, read)
 
@@ -397,11 +366,11 @@ _Request = tuple[str, str, "dict[str, object] | None"]
 async def _race(review: _Review, first: _Request, second: _Request):
     """Hold ``first``'s archive write, send ``second`` into the window, release; both answers."""
     review.write.hold()
-    a = asyncio.create_task(_asgi(review.app, *first))
-    await _settle()
+    a = asyncio.create_task(asgi(review.app, *first))
+    await settle()
     assert review.write.pending == 1, "the first request never reached its archive write"
-    b = asyncio.create_task(_asgi(review.app, *second))
-    await _settle()
+    b = asyncio.create_task(asgi(review.app, *second))
+    await settle()
     review.write.release()
     return await asyncio.gather(a, b)
 
@@ -459,7 +428,7 @@ async def test_review_delete_answers_the_archive_row_not_the_loaded_document(
         conn.commit()
     finally:
         conn.close()
-    status, deleted = await _asgi(review.app, "DELETE", f"{review.base}/{review.event_id}")
+    status, deleted = await asgi(review.app, "DELETE", f"{review.base}/{review.event_id}")
 
     assert status == 200
     assert deleted is not None
@@ -547,11 +516,11 @@ async def test_review_concurrent_writes_never_report_archive_busy(
             yield conn
 
     monkeypatch.setattr(archive_edit, "_locked_connection", held)
-    a = asyncio.create_task(_asgi(review.app, "PATCH", one, {"label": "first"}))
+    a = asyncio.create_task(asgi(review.app, "PATCH", one, {"label": "first"}))
     try:
         await asyncio.wait_for(entered.wait(), timeout=10)
-        b = asyncio.create_task(_asgi(review.app, "PATCH", one, {"color": "#112233"}))
-        await _settle()
+        b = asyncio.create_task(asgi(review.app, "PATCH", one, {"color": "#112233"}))
+        await settle()
         # The second write is parked on the entry point, not at the flock.
         assert not b.done(), "the second write answered while the first held the flock"
         assert review.collector.mutation_lock().locked()
@@ -583,11 +552,11 @@ async def test_review_end_cancelled_during_its_archive_write_still_patches_the_d
     review = await _review(tmp_path, monkeypatch)
     one = f"{review.base}/{review.event_id}"
     review.write.hold()
-    end = asyncio.create_task(_asgi(review.app, "POST", f"{one}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(review.app, "POST", f"{one}/end", {}))
+    await settle()
     assert review.write.pending == 1, "the /end never reached its archive write"
     end.cancel()
-    await _settle()
+    await settle()
     # The write landed in the archive; the lock is still held for its apply.
     assert review.collector.mutation_lock().locked(), "cancellation released the lock early"
     review.write.release()
@@ -601,7 +570,7 @@ async def test_review_end_cancelled_during_its_archive_write_still_patches_the_d
         "the document missed the end the archive holds"
     )
 
-    status, _ = await _asgi(review.app, "PATCH", one, {"label": "renamed"})
+    status, _ = await asgi(review.app, "PATCH", one, {"label": "renamed"})
     assert status == 200
     row = review.row()
     assert row is not None
@@ -627,11 +596,11 @@ async def test_live_end_cancelled_during_its_db_write_still_changes_memory() -> 
     spy = _LandedArchiveSpy()
     live.collector._db = spy  # type: ignore[assignment]
     spy.hold()
-    end = asyncio.create_task(_asgi(live.app, "POST", f"{live.base}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(live.app, "POST", f"{live.base}/end", {}))
+    await settle()
     assert spy.pending == 1
     end.cancel()
-    await _settle()
+    await settle()
     assert live.collector.mutation_lock().locked(), "cancellation released the lock early"
     spy.release()
     with pytest.raises(asyncio.CancelledError):
@@ -641,7 +610,7 @@ async def test_live_end_cancelled_during_its_db_write_still_changes_memory() -> 
     assert stored.end_timestamp is not None, "memory missed the end the DB holds"
     assert live.published_events()[-1]["end_timestamp"] is not None
 
-    status, _ = await _asgi(live.app, "PATCH", live.base, {"label": "renamed"})
+    status, _ = await asgi(live.app, "PATCH", live.base, {"label": "renamed"})
     assert status == 200
     row = spy.rows[live.event_id]
     assert row is not None
@@ -656,11 +625,11 @@ async def test_review_create_cancelled_during_its_archive_write_still_serves_the
     review = await _review(tmp_path, monkeypatch)
     created_id = review.event_id + 1
     review.write.hold()
-    create = asyncio.create_task(_asgi(review.app, "POST", review.base, {"label": "new"}))
-    await _settle()
+    create = asyncio.create_task(asgi(review.app, "POST", review.base, {"label": "new"}))
+    await settle()
     assert review.write.pending == 1
     create.cancel()
-    await _settle()
+    await settle()
     review.write.release()
     with pytest.raises(asyncio.CancelledError):
         await create
@@ -677,17 +646,17 @@ async def test_review_revert_cancelled_during_its_archive_write_still_patches_th
     expect = (await review.served())[review.event_id]
     review.write.hold()
     revert = asyncio.create_task(
-        _asgi(
+        asgi(
             review.app,
             "POST",
             f"{one}/revert",
             {"expect": expect, "write": {**expect, "label": "reverted"}},
         )
     )
-    await _settle()
+    await settle()
     assert review.write.pending == 1
     revert.cancel()
-    await _settle()
+    await settle()
     review.write.release()
     with pytest.raises(asyncio.CancelledError):
         await revert
@@ -702,19 +671,19 @@ async def test_review_end_cancelled_while_waiting_for_the_lock_writes_nothing(
     review = await _review(tmp_path, monkeypatch)
     one = f"{review.base}/{review.event_id}"
     review.write.hold()
-    patch = asyncio.create_task(_asgi(review.app, "PATCH", one, {"label": "first"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(review.app, "PATCH", one, {"label": "first"}))
+    await settle()
     assert review.write.pending == 1
-    end = asyncio.create_task(_asgi(review.app, "POST", f"{one}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(review.app, "POST", f"{one}/end", {}))
+    await settle()
     end.cancel()
-    await _settle()
+    await settle()
     review.write.release()
     with pytest.raises(asyncio.CancelledError):
         await end
     status, _ = await patch
     assert status == 200
-    await _settle()
+    await settle()
     assert review.row() == ("first", None), "a cancelled /end still wrote its end"
     assert (await review.served())[review.event_id].get("end_timestamp") is None
     assert not review.collector.mutation_lock().locked()
@@ -724,19 +693,19 @@ async def test_review_end_cancelled_while_waiting_for_the_lock_writes_nothing(
 async def test_live_end_cancelled_while_waiting_for_the_lock_writes_nothing() -> None:
     live = await _live()
     live.archive.hold()
-    patch = asyncio.create_task(_asgi(live.app, "PATCH", live.base, {"label": "first"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(live.app, "PATCH", live.base, {"label": "first"}))
+    await settle()
     assert live.archive.pending == 1
-    end = asyncio.create_task(_asgi(live.app, "POST", f"{live.base}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(live.app, "POST", f"{live.base}/end", {}))
+    await settle()
     end.cancel()
-    await _settle()
+    await settle()
     live.archive.release()
     with pytest.raises(asyncio.CancelledError):
         await end
     status, _ = await patch
     assert status == 200
-    await _settle()
+    await settle()
     stored = live.stored()
     assert stored is not None
     assert (stored.label, stored.end_timestamp) == ("first", None)
@@ -755,13 +724,7 @@ async def test_live_end_cancelled_while_waiting_for_the_lock_writes_nothing() ->
 def _second_server(review: _Review) -> _Review:
     """A second review server opened on the SAME archive, with its own document."""
     collector = MetricCollector(hosts=[])
-    app = _build_app(
-        collector,
-        key="k",
-        mode="review",
-        document=build_db_export(review.path),
-        archive_path=Path(review.path),
-    )
+    app = _build_app(collector, key="k", mode="review", slot=_db_slot(review.path, collector))
     return _Review(
         app,
         review.path,
@@ -791,9 +754,9 @@ async def test_two_review_servers_a_colour_patch_keeps_the_other_servers_label(
     a = await _review(tmp_path, monkeypatch)
     b = _second_server(a)
     one = f"{a.base}/{a.event_id}"
-    status, _ = await _asgi(a.app, "PATCH", one, {"label": "renamed-by-a"})
+    status, _ = await asgi(a.app, "PATCH", one, {"label": "renamed-by-a"})
     assert status == 200
-    status, patched = await _asgi(b.app, "PATCH", one, {"color": "#112233"})
+    status, patched = await asgi(b.app, "PATCH", one, {"color": "#112233"})
 
     assert status == 200
     assert patched is not None
@@ -810,9 +773,9 @@ async def test_two_review_servers_an_end_keeps_the_other_servers_label(
     a = await _review(tmp_path, monkeypatch)
     b = _second_server(a)
     one = f"{a.base}/{a.event_id}"
-    status, _ = await _asgi(a.app, "PATCH", one, {"label": "renamed-by-a"})
+    status, _ = await asgi(a.app, "PATCH", one, {"label": "renamed-by-a"})
     assert status == 200
-    status, ended = await _asgi(b.app, "POST", f"{one}/end", {})
+    status, ended = await asgi(b.app, "POST", f"{one}/end", {})
 
     assert status == 200
     assert ended is not None
@@ -834,7 +797,7 @@ async def test_a_changed_revert_repairs_the_document_so_a_colour_patch_keeps_the
     one = f"{review.base}/{review.event_id}"
     expect = (await review.served())[review.event_id]
     _edit_elsewhere(review, "edited-elsewhere")
-    status, body = await _asgi(
+    status, body = await asgi(
         review.app,
         "POST",
         f"{one}/revert",
@@ -848,7 +811,7 @@ async def test_a_changed_revert_repairs_the_document_so_a_colour_patch_keeps_the
         "the 409 left the document's stale copy"
     )
 
-    status, _ = await _asgi(review.app, "PATCH", one, {"color": "#112233"})
+    status, _ = await asgi(review.app, "PATCH", one, {"color": "#112233"})
     assert status == 200
     assert review.row() == ("edited-elsewhere", None), "the colour PATCH restored a stale label"
 
@@ -860,8 +823,8 @@ async def test_a_change_between_read_and_write_answers_changed_and_writes_nothin
     review = await _review(tmp_path, monkeypatch)
     one = f"{review.base}/{review.event_id}"
     review.read.hold()
-    patch = asyncio.create_task(_asgi(review.app, "PATCH", one, {"color": "#112233"}))
-    await _settle()
+    patch = asyncio.create_task(asgi(review.app, "PATCH", one, {"color": "#112233"}))
+    await settle()
     assert review.read.pending == 1, "the PATCH never read the archive row"
     _edit_elsewhere(review, "edited-between")
     review.read.release()
@@ -895,7 +858,7 @@ async def test_a_row_gone_from_the_archive_answers_404_and_drops_it_from_the_doc
         conn.commit()
     finally:
         conn.close()
-    status, _ = await _asgi(review.app, "PATCH", f"{review.base}/{review.event_id}", {"label": "x"})
+    status, _ = await asgi(review.app, "PATCH", f"{review.base}/{review.event_id}", {"label": "x"})
 
     assert status == 404
     assert review.event_id not in await review.served()
@@ -908,11 +871,11 @@ async def test_review_end_cancelled_during_its_archive_read_writes_nothing(
     review = await _review(tmp_path, monkeypatch)
     one = f"{review.base}/{review.event_id}"
     review.read.hold()
-    end = asyncio.create_task(_asgi(review.app, "POST", f"{one}/end", {}))
-    await _settle()
+    end = asyncio.create_task(asgi(review.app, "POST", f"{one}/end", {}))
+    await settle()
     assert review.read.pending == 1
     end.cancel()
-    await _settle()
+    await settle()
     review.read.release()
     with pytest.raises(asyncio.CancelledError):
         await end

@@ -18,8 +18,8 @@ pytestmark = [
 
 
 @pytest.mark.no_bundle_page  # renders the script-free 403 hint HTML, not the app bundle
-def test_bare_url_renders_403_hint_not_dashboard(shell_dash, page) -> None:
-    parts = urlsplit(shell_dash.url)
+def test_bare_url_renders_403_hint_not_dashboard(bare_live_dash, page) -> None:
+    parts = urlsplit(bare_live_dash.url)
     bare = urlunsplit((parts.scheme, parts.netloc, "/", "", ""))
     response = page.goto(bare)
     assert response is not None
@@ -29,19 +29,19 @@ def test_bare_url_renders_403_hint_not_dashboard(shell_dash, page) -> None:
     assert "Access key required" in content
 
 
-def test_keyed_url_boots_the_shell_and_cookie_covers_reload(shell_dash, page) -> None:
+def test_keyed_url_boots_the_shell_and_cookie_covers_reload(bare_live_dash, page) -> None:
     """One keyed navigation, then a BARE reload must still work via the cookie.
 
     Waits on the Import front door's own testids (the idiom
     ``test_review_shell.py::test_live_mode_still_boots_empty`` uses against
-    this same ``shell_dash`` fixture) rather than the static ``#root`` mount
+    this same ``bare_live_dash`` fixture) rather than the static ``#root`` mount
     point — that proves the React app actually mounted, not merely that the
     HTML skeleton arrived.
     """
-    page.goto(shell_dash.url)
+    page.goto(bare_live_dash.url)
     page.locator('[data-testid="empty-review"]').wait_for()
     page.locator('[data-testid="import-input"]').wait_for(state="attached")
-    parts = urlsplit(shell_dash.url)
+    parts = urlsplit(bare_live_dash.url)
     response = page.goto(urlunsplit((parts.scheme, parts.netloc, "/", "", "")))
     assert response is not None
     assert response.status == 200

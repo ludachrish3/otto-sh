@@ -175,7 +175,7 @@ export function SubjectPage() {
   // `data-point-count` report total-ever rather than points-in-window (the
   // browser lane asserts chart growth/freezing through that attribute).
   const points = collectSeriesPoints(session, tree, checked, window_);
-  const markers = eventMarkers(session.events, window_);
+  const markers = eventMarkers(session, window_);
 
   const host = session.lab.hosts.find((h) => h.id === id);
   // Pass the DERIVED window, not the raw (possibly-null) `range` — same fix
@@ -196,7 +196,8 @@ export function SubjectPage() {
   };
 
   // A crowded label cluster's overflow list opens the editor on a listed
-  // event — only where events can be edited at all (#920).
+  // event — only where events can be edited at all (#920). A view-only row's
+  // marker carries a synthetic id (eventMarkers), so it is never offered.
   const onEventOpen = editable
     ? (eventId: number) => openEventEditor({ kind: "edit", sessionId: session.id, eventId })
     : undefined;

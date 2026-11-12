@@ -71,6 +71,9 @@ from .monitor import (
     MonitorExport,
     MonitorMeta,
     MonitorSessionFragment,
+    MonitorSourceFrame,
+    MonitorSourceState,
+    SourceSavedBody,
 )
 from .settings import ReservationFile, SettingsModel
 
@@ -350,7 +353,14 @@ def _monitor_export_schema() -> dict[str, Any]:
     for key, value in frag_defs.items():
         defs.setdefault(key, value)
     defs["MonitorSessionFragment"] = frag
-    for body_model in (EventCreateBody, EventUpdateBody, EventRevertBody):
+    for body_model in (
+        EventCreateBody,
+        EventUpdateBody,
+        EventRevertBody,
+        MonitorSourceState,
+        MonitorSourceFrame,
+        SourceSavedBody,
+    ):
         body = body_model.model_json_schema()
         for key, value in body.pop("$defs", {}).items():
             defs.setdefault(key, value)

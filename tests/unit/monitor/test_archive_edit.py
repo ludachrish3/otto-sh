@@ -10,7 +10,7 @@ from _archive import _add_session, _make_archive
 from otto.models.monitor import EventRecord
 from otto.monitor import archive_edit
 from otto.monitor.db import event_row_record, read_sessions
-from otto.monitor.event_ops import EventChanged
+from otto.monitor.event_ops import EventChanged, editable_fields
 
 T0 = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
 
@@ -148,19 +148,21 @@ def _edit_behind_the_servers_back(path, label) -> None:
     conn.close()
 
 
-def test_revert_update_compares_the_actual_row(tmp_path) -> None:
+def test_guarded_update_compares_the_actual_row(tmp_path) -> None:
     path, sid = _make_archive(tmp_path)
     rowid = _mark(path, sid)
     old = _record(path, sid, rowid)
     _edit_behind_the_servers_back(path, "elsewhere")
     with pytest.raises(EventChanged) as caught:
-        archive_edit.revert_event(path, sid, rowid, old, old.model_copy(update={"label": "w"}))
+        archive_edit.update_event(
+            path, sid, rowid, expect=old, **editable_fields(old.model_copy(update={"label": "w"}))
+        )
     assert caught.value.current is not None
     assert caught.value.current.label == "elsewhere"
     assert _record(path, sid, rowid).label == "elsewhere"
 
 
-def test_revert_restores_a_legacy_colour(tmp_path) -> None:
+def test_guarded_update_puts_back_a_legacy_colour(tmp_path) -> None:
     path, sid = _make_archive(tmp_path)
     rowid = _mark(path, sid, color="red")
     legacy = _record(path, sid, rowid)
@@ -175,9 +177,7 @@ def test_revert_restores_a_legacy_colour(tmp_path) -> None:
         dash="dash",
     )
     edited = _record(path, sid, rowid)
-    result = archive_edit.revert_event(path, sid, rowid, edited, legacy)
-    assert result is not None
-    assert result.color == "red"
+    assert archive_edit.update_event(path, sid, rowid, expect=edited, **editable_fields(legacy))
     assert _record(path, sid, rowid).color == "red"
 
 
@@ -189,23 +189,23 @@ def test_delete_returns_the_removed_row(tmp_path) -> None:
     assert archive_edit.delete_event(path, sid, rowid) is None
 
 
-def test_revert_delete_leg_with_a_stale_expect_refuses(tmp_path) -> None:
+def test_guarded_delete_with_a_stale_expect_refuses(tmp_path) -> None:
     path, sid = _make_archive(tmp_path)
     rowid = _mark(path, sid)
     old = _record(path, sid, rowid)
     _edit_behind_the_servers_back(path, "elsewhere")
     with pytest.raises(EventChanged):
-        archive_edit.revert_event(path, sid, rowid, old, None)
+        archive_edit.delete_event(path, sid, rowid, expect=old)
     assert _record(path, sid, rowid).label == "elsewhere"
 
 
-def test_revert_delete_then_restore_round_trips(tmp_path) -> None:
+def test_guarded_delete_then_restore_round_trips(tmp_path) -> None:
     path, sid = _make_archive(tmp_path)
     rowid = _mark(path, sid)
     row = _record(path, sid, rowid)
-    assert archive_edit.revert_event(path, sid, rowid, row, None) == row
+    assert archive_edit.delete_event(path, sid, rowid, expect=row) == row
     assert read_sessions(path)[0].events == []
-    assert archive_edit.revert_event(path, sid, rowid, None, row) == row
+    assert archive_edit.restore_event(path, sid, rowid, row) == row
     assert _record(path, sid, rowid) == row
 
 
@@ -242,13 +242,13 @@ def test_restore_refuses_an_id_another_session_holds(tmp_path) -> None:
     assert {s.id: s.events for s in read_sessions(path)} == before
 
 
-def test_revert_of_a_missing_event_raises_changed_none(tmp_path) -> None:
+def test_guarded_update_of_a_missing_event_raises_changed_none(tmp_path) -> None:
     path, sid = _make_archive(tmp_path)
     rowid = _mark(path, sid)
     row = _record(path, sid, rowid)
     archive_edit.delete_event(path, sid, rowid)
     with pytest.raises(EventChanged) as caught:
-        archive_edit.revert_event(path, sid, rowid, row, row)
+        archive_edit.update_event(path, sid, rowid, expect=row, **editable_fields(row))
     assert caught.value.current is None
 
 
@@ -260,6 +260,6 @@ def test_locked_archive_raises_archive_locked(tmp_path) -> None:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(archive_edit.ArchiveLockedError):
-            archive_edit.revert_event(path, sid, rowid, row, None)
+            archive_edit.delete_event(path, sid, rowid, expect=row)
     finally:
         os.close(fd)

@@ -42,7 +42,7 @@ const metric = (format: number) => ({
 });
 
 function streamed(frags: readonly unknown[]) {
-  const stop = startStream();
+  const { stop } = startStream();
   for (const frag of frags)
     FakeEventSource.last?.onmessage?.({
       data: JSON.stringify(frag),

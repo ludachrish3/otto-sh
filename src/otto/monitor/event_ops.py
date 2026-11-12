@@ -108,6 +108,16 @@ def same_event(a: EventRecord | None, b: EventRecord | None) -> bool:
     )
 
 
+def require_expected(current: EventRecord | None, expect: EventRecord | None) -> None:
+    """Raise :class:`EventChanged` carrying ``current`` unless it is the ``expect`` state.
+
+    The ONE "the event is still what the caller saw" refusal: every backend's
+    revert and guarded edit calls it with the event as it stands.
+    """
+    if not same_event(current, expect):
+        raise EventChanged(current)
+
+
 def revert_leg(
     expect: EventRecord | None, write: EventRecord | None
 ) -> Literal["update", "delete", "restore"]:
@@ -140,6 +150,48 @@ def id_handed_out(event_id: int, high_water: int) -> bool:
     never anybody's. The live collector and the review archive both call it.
     """
     return FIRST_EVENT_ID <= event_id <= high_water
+
+
+MAX_SAFE_EVENT_ID = 2**53 - 1
+"""The highest id a browser holds exactly (``Number.MAX_SAFE_INTEGER``): the
+validator of an imported document and the id counter both read it."""
+
+
+class IdsExhausted(EventValidationError):  # noqa: N818 — name fixed by the #958 spec: a state, not a caller error
+    """Every id up to :data:`MAX_SAFE_EVENT_ID` has been handed out."""
+
+
+class EventIdCounter:
+    """The ONE event-id allocation rule: the next id stays above every id seen.
+
+    The live store, and every review source that creates events, own one.
+    """
+
+    def __init__(self) -> None:
+        self._next = FIRST_EVENT_ID
+
+    @property
+    def high_water(self) -> int:
+        """The highest id handed out or noted (``0`` when none)."""
+        return self._next - 1
+
+    def note(self, event_id: int) -> None:
+        """Keep the next id above ``event_id``; never lower it."""
+        self._next = max(self._next, event_id + 1)
+
+    def take(self) -> int:
+        """Return the next id and advance, or raise :class:`IdsExhausted` past the ceiling."""
+        if self._next > MAX_SAFE_EVENT_ID:
+            raise IdsExhausted(
+                f"no event id is left: ids stop at {MAX_SAFE_EVENT_ID}, the browser's limit"
+            )
+        taken = self._next
+        self._next += 1
+        return taken
+
+    def allocated(self, event_id: int) -> bool:
+        """Report whether ``event_id`` was handed out or noted (:func:`id_handed_out`)."""
+        return id_handed_out(event_id, high_water=self.high_water)
 
 
 def check_span(timestamp: datetime, end_timestamp: datetime | None) -> None:
@@ -300,34 +352,78 @@ async def run_locked(lock: asyncio.Lock, commit: "Callable[[], Awaitable[_R]]") 
     return await run_locked_in_phases(lock, prepare=_nothing_to_prepare, commit=commit_prepared)
 
 
+async def revert_via(
+    expect: EventRecord | None,
+    write: EventRecord | None,
+    *,
+    restore: "Callable[[EventRecord], Awaitable[_R]]",
+    mutate: "Callable[[Callable[[EventRecord], EventRecord | None]], Awaitable[_R | None]]",
+) -> _R:
+    """Move an event from ``expect`` to ``write``: the ONE revert dispatch.
+
+    :func:`revert_leg` picks the leg. A restore calls ``restore(write)``. An
+    update or delete calls ``mutate(resolver)``, the backend's own locked
+    change, whose resolver compares the event as it stands with ``expect``
+    (:func:`require_expected`) and returns ``None`` for a delete, else
+    ``write``'s editable fields over the current id and source. ``mutate``
+    returning ``None`` means no event has the id: :class:`EventChanged`
+    with ``None``.
+    """
+    if revert_leg(expect, write) == "restore":
+        assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
+        return await restore(write)
+
+    def resolve(current: EventRecord) -> EventRecord | None:
+        require_expected(current, expect)
+        if write is None:
+            return None
+        return current.model_copy(update=editable_fields(write))
+
+    result = await mutate(resolve)
+    if result is None:
+        raise EventChanged(None)
+    return result
+
+
 @dataclass
 class _Resolution(Generic[_E]):
-    """What :func:`mutate_under_lock`'s read and resolve decided: the event, and its new record."""
+    """What a mutation's read and resolve decided: the event, and its new record."""
 
     current: _E
     resolved: _E | None
 
 
-async def mutate_under_lock(
-    lock: asyncio.Lock,
+@dataclass(frozen=True)
+class MutationPhases(Generic[_E, _R]):
+    """One event change's two phases, as :func:`mutation_phases` builds them.
+
+    ``prepare`` reads and decides; ``commit`` writes the store and changes what
+    is served. Run them under a lock with :func:`run_locked_in_phases` (what
+    :func:`mutate_under_lock` does), or with :func:`run_phases` inside a
+    section that already holds it.
+    """
+
+    prepare: "Callable[[], Awaitable[_Resolution[_E] | None]]"
+    commit: "Callable[[_Resolution[_E] | None], Awaitable[_R | None]]"
+
+
+def mutation_phases(
     *,
     read: "Callable[[], Awaitable[_E | None]]",
     resolve: "Callable[[_E], _E | None]",
     write: "Callable[[_E, _E | None], Awaitable[bool]]",
     apply: "Callable[[_E, _E | None], _R]",
-) -> "_R | None":
-    """Change or delete one event: the ONE "lock, read, resolve, write, apply" sequence (#941).
+) -> "MutationPhases[_E, _R]":
+    """Build the "read, resolve, check, write, apply" sequence: the ONE place its steps live (#941).
 
-    Both backends run every change and delete through it, with their own
+    Every change and delete of both backends runs these steps, with its own
     callables: the live collector (``MetricCollector.mutate_event``: its
-    store, its DB, its publish) and a review server (its archive, the
-    served document). Under ``lock``, so no two mutations interleave, and
-    through :func:`run_locked_in_phases`, so a cancelled request never leaves
-    the store and what is served apart:
+    store, its DB, its publish) and a review source (``ReviewEvents``: its
+    archive or its document, and what it serves).
 
     1. ``await read()`` the event as it stands in the backend's store (the
-       live store, or the review archive's row); ``None`` (no such event)
-       returns ``None`` with nothing written.
+       live store, the review archive's row, a ``.json`` source's document);
+       ``None`` (no such event) returns ``None`` with nothing written.
     2. ``resolve(current)`` it to the new full record, or ``None`` to delete
        it. It is where a caller's merge lives (a PATCH's omitted fields, an
        end's "already ended" refusal), so it always reads the latest state;
@@ -341,12 +437,7 @@ async def mutate_under_lock(
     5. ``apply(current, resolved)`` to what the backend serves, in one
        synchronous step, and return its result.
 
-    Steps 1-3 are the section's ``prepare``, steps 4-5 its ``commit``: a
-    request cancelled before its write starts writes nothing, and one
-    cancelled after runs its write AND its apply before the lock is released
-    and the cancellation re-raised. ``apply`` follows its own ``write`` in
-    order, and the lock is released in the caller's own step, so the
-    caller's response is built before any other mutation runs.
+    Steps 1-3 are the ``prepare`` phase, steps 4-5 the ``commit`` phase.
     """
 
     async def prepare() -> "_Resolution[_E] | None":
@@ -368,7 +459,41 @@ async def mutate_under_lock(
             return None
         return apply(step.current, step.resolved)
 
-    return await run_locked_in_phases(lock, prepare=prepare, commit=commit)
+    return MutationPhases(prepare=prepare, commit=commit)
+
+
+async def run_phases(phases: "MutationPhases[_E, _R]") -> "_R | None":
+    """Run a mutation's phases with no lock of their own: for a section already under it.
+
+    A review revert holds the mutation lock once for its whole decision
+    (``ReviewEvents.revert``), and its update or delete leg runs the shared
+    sequence through here; acquiring the lock again would deadlock, as
+    ``asyncio.Lock`` is not re-entrant.
+    """
+    return await phases.commit(await phases.prepare())
+
+
+async def mutate_under_lock(
+    lock: asyncio.Lock,
+    *,
+    read: "Callable[[], Awaitable[_E | None]]",
+    resolve: "Callable[[_E], _E | None]",
+    write: "Callable[[_E, _E | None], Awaitable[bool]]",
+    apply: "Callable[[_E, _E | None], _R]",
+) -> "_R | None":
+    """Change or delete one event under ``lock``: :func:`mutation_phases`'s sequence, locked once.
+
+    Under ``lock``, so no two mutations interleave, and through
+    :func:`run_locked_in_phases`, so a cancelled request never leaves the
+    store and what is served apart: a request cancelled before its write
+    starts writes nothing, and one cancelled after runs its write AND its
+    apply before the lock is released and the cancellation re-raised.
+    ``apply`` follows its own ``write`` in order, and the lock is released in
+    the caller's own step, so the caller's response is built before any other
+    mutation runs.
+    """
+    phases = mutation_phases(read=read, resolve=resolve, write=write, apply=apply)
+    return await run_locked_in_phases(lock, prepare=phases.prepare, commit=phases.commit)
 
 
 @dataclass
@@ -421,7 +546,7 @@ def merge_update(
     ``model_fields_set`` semantics: an absent field is unchanged; an explicit
     JSON null ``end_timestamp`` CLEARS the end (span -> point). The MERGED
     pair's ordering is checked where it is written
-    (:func:`check_event_write`, run by :func:`mutate_under_lock`), not here.
+    (:func:`check_event_write`, run by :func:`mutation_phases`), not here.
     Existing fields are passed explicitly (not as a model) so both backends —
     a live ``MonitorEvent`` and a review ``EventRecord`` — use this one rule
     without an adapter type.

@@ -95,6 +95,10 @@ function liveSession(): NormalizedSession {
     events: [],
     eventStamps: new Map(),
     eventFloor: null,
+    viewOnlyIds: new Set(),
+    observedAt: null,
+    startAt: new Date(T0 - SESSION_AGE_MS).toISOString(),
+    endAt: null,
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: { cpu: "CPU" },
@@ -229,6 +233,7 @@ describe("SubjectPage bounds past a stalled collector", () => {
     const stalled: NormalizedSession = {
       ...liveSession(),
       observedMs: at,
+      observedAt: new Date(at).toISOString(),
       events: [
         {
           id: 1,
@@ -275,6 +280,7 @@ describe("SubjectPage live window past a stall longer than the window", () => {
     const stalled: NormalizedSession = {
       ...liveSession(),
       observedMs: at,
+      observedAt: new Date(at).toISOString(),
       events: [
         {
           id: 1,

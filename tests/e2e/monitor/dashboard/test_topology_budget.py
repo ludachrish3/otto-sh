@@ -37,6 +37,7 @@ layout work ratchets them down (Task 7) rather than rewriting this test.
 
 import pytest
 
+from tests._fixtures._static_shell import import_into_shell
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
@@ -156,8 +157,7 @@ TOTAL_EDGES = {
 
 
 def _import_fixture(page, name: str) -> None:
-    page.locator('[data-testid="import-input"]').set_input_files(FIXTURES / name)
-    page.locator('[data-testid="review-bar"]').wait_for()
+    import_into_shell(page, FIXTURES / name)
 
 
 def _wait_for_links(page, exactly: int) -> None:

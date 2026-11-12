@@ -61,7 +61,8 @@ if TYPE_CHECKING:
 """The ``format`` every live-stream fragment this collector publishes is stamped with.
 
 It is the one declared ``monitor-live-stream`` write version, a format of its
-own and not the export document's. Every ``_publish`` payload carries it.
+own and not the export document's. Every session fragment published through
+:meth:`MetricCollector.publish` carries it.
 """
 
 
@@ -69,7 +70,7 @@ def observed_now() -> str:
     """Return the server's current time as the UTC ISO string the live channels carry.
 
     The ONE stamp for server-observed time (#866): every published fragment
-    (``MetricCollector._publish``), every live event-mutation response
+    (:meth:`MetricCollector.publish`), every event-mutation response
     header, and the live snapshot's per-session ``observed_at`` all read it
     here. It formats ``event_ops.utc_now()``, the one clock.
     """
@@ -563,7 +564,7 @@ class MetricCollector:
         # hydrate FRESHER than the stream, never staler (spec §2).
         if self._db:
             await self._db.write_tunnels(json.dumps(payload))
-        self._publish({"format": STREAM_FORMAT, "session": self.session_id, "tunnels": payload})
+        self.publish({"format": STREAM_FORMAT, "session": self.session_id, "tunnels": payload})
 
     async def _tunnel_loop(
         self, secs: float, start: datetime, duration: "timedelta | None"
@@ -628,7 +629,7 @@ class MetricCollector:
             frag["meta"] = session_meta(self, interval=self._global_interval).model_dump(
                 mode="json"
             )
-        self._publish(frag)
+        self.publish(frag)
 
     async def _record_log_events(self, host_name: str, tab: str, events: "list[LogEvent]") -> None:
         """Store, persist, and publish one tick's log-event rows.
@@ -640,7 +641,7 @@ class MetricCollector:
             self._store.append_log_event(host_name, tab, ev)
             if self._db:
                 await self._db.write_log_event(ev.ts, host_name, tab, ev.fields)
-        self._publish(
+        self.publish(
             {
                 "format": STREAM_FORMAT,
                 "session": self.session_id,
@@ -866,7 +867,7 @@ class MetricCollector:
         async def commit() -> MonitorEvent:
             rowid = await self._db.write_event(event) if self._db else 0
             added = self._store.add_event(event, rowid)
-            self._publish(
+            self.publish(
                 {"format": STREAM_FORMAT, "session": self.session_id, "events": [added.to_dict()]}
             )
             return added
@@ -925,7 +926,7 @@ class MetricCollector:
         def apply(current: MonitorEvent, edited: "MonitorEvent | None") -> MonitorEvent:
             if edited is None:
                 self._store.remove_event(event_id)
-                self._publish(
+                self.publish(
                     {
                         "format": STREAM_FORMAT,
                         "session": self.session_id,
@@ -937,7 +938,7 @@ class MetricCollector:
                 setattr(current, name, value)
             # No separate "updated" kind: the client upserts events by id, so
             # an edited event is just an event. One merge rule, not two.
-            self._publish(
+            self.publish(
                 {"format": STREAM_FORMAT, "session": self.session_id, "events": [current.to_dict()]}
             )
             return current
@@ -1010,7 +1011,7 @@ class MetricCollector:
             if self._db:
                 await self._db.restore_event_row(event)
             self._store.note_imported_event(event)
-            self._publish(
+            self.publish(
                 {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
             )
             return event
@@ -1039,22 +1040,22 @@ class MetricCollector:
         Returns the stored event after an update or restore, or the removed
         event after a delete.
         """
-        if event_ops.revert_leg(expect, write) == "restore":
-            assert write is not None  # noqa: S101 — revert_leg's "restore" means write is set
-            return await self.restore_event(event_id=event_id, write=write)
 
-        def resolve(current: MonitorEvent) -> "MonitorEvent | None":
-            current_record = EventRecord.model_validate(current.to_dict())
-            if not event_ops.same_event(current_record, expect):
-                raise event_ops.EventChanged(current_record)
-            if write is None:
-                return None
-            return replace(current, **event_ops.editable_fields(write))
+        async def mutate(
+            resolver: Callable[[EventRecord], EventRecord | None],
+        ) -> MonitorEvent | None:
+            def resolve(current: MonitorEvent) -> "MonitorEvent | None":
+                resolved = resolver(EventRecord.model_validate(current.to_dict()))
+                if resolved is None:
+                    return None
+                return replace(current, **event_ops.editable_fields(resolved))
 
-        result = await self.mutate_event(event_id=event_id, resolve=resolve)
-        if result is None:
-            raise event_ops.EventChanged(None)
-        return result
+            return await self.mutate_event(event_id=event_id, resolve=resolve)
+
+        async def restore(record: EventRecord) -> MonitorEvent:
+            return await self.restore_event(event_id=event_id, write=record)
+
+        return await event_ops.revert_via(expect, write, restore=restore, mutate=mutate)
 
     async def update_event(
         self,
@@ -1211,6 +1212,15 @@ class MetricCollector:
         """Remove ``q`` from the SSE subscriber list so it receives no further pushes."""
         self._broadcast.unsubscribe(q)
 
-    def _publish(self, payload: dict[str, Any]) -> None:
-        # Stamped here, once, so no publish site can forget it.
-        self._broadcast.publish({**payload, "observed_at": observed_now()})
+    def publish(self, payload: dict[str, Any], *, observed_at: str | None = None) -> str:
+        """Push *payload* to every SSE subscriber, stamped: the ONE publish.
+
+        Every frame goes out through here, live and review alike, so no
+        publish site can forget the stamp. ``observed_at`` defaults to
+        :func:`observed_now`; a caller passes its own when the payload
+        already carries the same stamp inside it (a review source frame's
+        state), so the two are one read. Returns the stamp.
+        """
+        stamp = observed_now() if observed_at is None else observed_at
+        self._broadcast.publish({**payload, "observed_at": stamp})
+        return stamp

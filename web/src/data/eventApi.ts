@@ -20,11 +20,14 @@
 // switch may land after the mutation's check and before the caller resumes.
 import type { EventCreateBody, EventRecord, EventUpdateBody } from "../api/export.gen";
 import { useUiStore } from "../ui/uiStore";
-import { EventApiError } from "./eventApiError";
+import { EventApiError, errorMessage, networkErrorMessage } from "./eventApiError";
 import { EventChangedError } from "./eventChangedError";
 import { storedEventStyle } from "./eventStyle";
 import { storedEvent, useReviewStore } from "./reviewStore";
-import { isCurrentSource, sourceGeneration } from "./source";
+import { admitSource } from "./source";
+import { OBSERVED_AT_HEADER, refusedSourceState, SOURCE_TOKEN_HEADER } from "./sourceApi";
+import { SourceChangedError } from "./sourceChangedError";
+import { isCurrentSource, sourceGeneration } from "./sourceGeneration";
 import { STREAM_FORMAT } from "./streamFormat";
 import { type HistoryEntry, useUndoHistory } from "./undoHistory";
 
@@ -73,12 +76,18 @@ export type EventCreateInput = Omit<EventCreateBody, "timestamp" | "end_timestam
 /** `end_timestamp: null` (explicit) clears the end — span becomes a point. */
 export type EventUpdateInput = EventUpdateBody;
 
+/** Every mutation's one request: it names the served source by its token
+ * (SOURCE_TOKEN_HEADER), so the server can refuse a write made against a
+ * source it no longer serves. */
 async function request(path: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = useReviewStore.getState().sourceToken;
+  if (token !== null) headers.set(SOURCE_TOKEN_HEADER, token);
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(path, { ...init, headers });
   } catch (err) {
-    throw new EventApiError(`Network error: ${String(err)}`, { cause: err });
+    throw new EventApiError(networkErrorMessage(err), { cause: err });
   }
   if (!res.ok) throw await errorFor(res);
   return res;
@@ -89,11 +98,13 @@ interface ErrorBody {
   detail?: unknown;
   code?: unknown;
   current?: unknown;
+  source_state?: unknown;
 }
 
 /** The error a non-2xx response stands for: its message, status, 409 code
  * and observed stamp; a well-formed `changed` 409 becomes an
- * EventChangedError. */
+ * EventChangedError, a well-formed `source_changed` 409 a
+ * SourceChangedError. */
 async function errorFor(res: Response): Promise<EventApiError> {
   const init = { status: res.status, observed: observedAt(res) };
   let body: ErrorBody = {};
@@ -107,6 +118,14 @@ async function errorFor(res: Response): Promise<EventApiError> {
     // fall through to the status-based message
   }
   const message = errorMessage(body, res.status);
+  if (body.code === "source_changed") {
+    // A refusal without a readable state names no source to move onto: it
+    // stays a plain failure.
+    const state = refusedSourceState(body);
+    return state !== null
+      ? new SourceChangedError(message, state, init)
+      : new EventApiError("the server's source_changed refusal has no source state", init);
+  }
   if (body.code === "changed") {
     // The server always sends `current`; null means the event is gone. A
     // missing key is a broken response, not a deletion, and a record goes
@@ -124,26 +143,12 @@ async function errorFor(res: Response): Promise<EventApiError> {
   return new EventApiError(message, init);
 }
 
-function errorMessage(body: ErrorBody | null, status: number): string {
-  if (typeof body?.error === "string") return body.error;
-  // FastAPI body-validation failures arrive as {"detail": [{msg, ...}]}.
-  if (typeof body?.detail === "string") return body.detail;
-  if (Array.isArray(body?.detail)) {
-    const msg = (body.detail[0] as { msg?: unknown } | undefined)?.msg;
-    if (typeof msg === "string") return msg;
-  }
-  return `Request failed (${status})`;
-}
-
-/** The response header carrying the server's clock; OBSERVED_AT_HEADER in
- * src/otto/monitor/server.py names it on the other side, and
- * tests/unit/models/test_browser_format_mirrors.py holds the two equal. */
-const OBSERVED_AT_HEADER = "X-Otto-Observed-At";
-
 /** The server's time a mutation's response reports, for the fragment it
- * applies: the shared apply path raises the live horizon with it, so a mark
- * on a stalled collector shows at once even with the SSE echo withheld
- * (#866). Absent (review mode, an older server) means no observation. */
+ * applies: every event route stamps it, in both modes. It orders the change
+ * against the SSE echo, and in live mode the shared apply path also raises
+ * the horizon with it, so a mark on a stalled collector shows at once even
+ * with the echo withheld (#866). Absent (an older server) means no
+ * observation. */
 function observedAt(res: Response): string | null {
   return res.headers.get(OBSERVED_AT_HEADER);
 }
@@ -189,7 +194,13 @@ interface MutationTarget {
  * The ONE place a 409 `changed` reaches the store: for a `target`, the
  * refusal's `current` (the event as the server holds it, null when gone) is
  * applied through the success path, with the refusal's stamp, before the
- * error is rethrown to the caller. */
+ * error is rethrown to the caller.
+ *
+ * The ONE place a 409 `source_changed` reaches the tab: the write named a
+ * source the server no longer serves, so the tab admits the one it serves
+ * now (data/source.ts's admitSource), and the mutation is stale. It
+ * belongs to a source the tab is leaving, so nothing is applied, recorded or
+ * reported as a failure. */
 async function mutate<T>(
   send: () => Promise<T>,
   apply: (value: T) => void,
@@ -202,6 +213,10 @@ async function mutate<T>(
     value = await send();
   } catch (err) {
     if (isStale(current(null))) return STALE;
+    if (err instanceof SourceChangedError) {
+      void admitSource(err.state);
+      return STALE;
+    }
     if (target !== undefined && err instanceof EventChangedError) {
       applyEventResult(target.sessionId, target.eventId, err.current, err.observed);
     }

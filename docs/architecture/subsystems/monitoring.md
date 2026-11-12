@@ -109,16 +109,26 @@ export's vocabulary, but the stream is a versioned format of its own,
 `monitor-live-stream` in `api/public.toml`, numbered apart from the export
 document's `format`. The server stamps its own clock as `observed_at` on every
 fragment, on each session of the live snapshot and, as the
-`X-Otto-Observed-At` header, on every live event-mutation response (review mode,
-an archive with no live window, sends none). One clock feeds them all:
+`X-Otto-Observed-At` header, on every event-mutation response and every
+`/api/monitor_sessions` answer, in both modes (only a live stamp moves the
+dashboard's horizon; a review stamp orders event changes). That answer also names the source it was read from by its
+token (`X-Otto-Source`, also reported by `GET /api/mode`), and every event
+write sends the token back: a live write without it, or with another, is
+refused as `source_changed`. The refusal carries the source the server serves
+now, and the tab moves onto it (`admitSource` in `web/src/data/source.ts`),
+with a `Source changed to <name>` toast. One clock feeds them all:
 `otto.monitor.event_ops.utc_now`, which also stamps a Mark-now timestamp and a
 Stop; `otto.monitor.collector.observed_now` is its ISO string. The dashboard's live
 window ends at the later of that time and the last metric, so a new mark shows
 at once even while the collector is stalled; health still reads the last
 metric alone. Because the dashboard boots from that
 snapshot fetch in live and review mode alike, it also runs from a bare static
-file server with no `/api/*` routes (the docs screenshots and ad-hoc demos):
-any failure falls back to the empty Import screen. With `--db`, each run's
+file server with no `/api/*` routes (the docs screenshots and ad-hoc demos): a
+boot whose stream never opens falls back to the empty Import screen. A stream
+that opened is an otto server, so a `GET /api/mode` or a snapshot that fails
+is retried through the stream's reconnect, with Import withheld until a mode
+answers. Once `/api/mode` has answered, the source it names decides Import (a
+live or `.db` URL never offers it) even before its snapshot installs. With `--db`, each run's
 samples persist as one session in a SQLite archive — WAL journaling on local
 disks, DELETE on network filesystems ({doc}`data-boundary`); running against
 the same `--db` path again appends another session rather than overwriting the
@@ -156,19 +166,20 @@ live bed's ~90 fragments per tick; each
 `_SERIES_POINTS_MAX` (50,000 points, roughly 27 hours at two-second ticks).
 What happens at the queue's bound is a **lapse, not a drop**: the queue is
 emptied and handed a single {data}`~otto.monitor.broadcast.LAPSED` sentinel,
-the `/api/stream` route ends that subscriber's response when it reads it,
-and the browser's `EventSource` reports the close as `onerror` — which runs
-the client's existing resync-then-reopen path (`web/src/data/stream.ts`),
-re-hydrating from `GET /api/monitor_sessions`. The first cut dropped the
-oldest frame instead, on the argument that the reconnect resync would
-recover the gap; an eviction never causes a reconnect, so nothing ever
-resynced, and a tab that lost the once-emitted `chart_map` frame drew
+the `/api/stream` route ends that subscriber's response when it reads it, and
+the browser's `EventSource` reports the close as `onerror` — which runs the
+client's existing reconnect path (`web/src/data/stream.ts`): it reopens the
+stream and, once the new connection is subscribed, re-hydrates from `GET
+/api/monitor_sessions` (`syncFromServer` in `web/src/data/source.ts`). The
+first cut dropped the oldest frame instead, on the argument that the reconnect
+resync would recover the gap; an eviction never causes a reconnect, so nothing
+ever resynced, and a tab that lost the once-emitted `chart_map` frame drew
 ungrouped charts until reload. A gap is now announced, then recovered by
 resync, never replayed. The cost is deliberate: a tab that is alive but
 sustainedly slower than the stream lapses, resyncs and lapses again rather
-than silently showing stale data. Only the live view and live exports age
-out — the DB keeps everything, so a review opened from a `.db` archive is
-always complete.
+than silently showing stale data. Only the live view and live exports age out
+— the DB keeps everything, so a review opened from a `.db` archive is always
+complete.
 
 **A timestamp with no offset means UTC, everywhere one enters otto.** The
 server decides it once, in `otto.utils.as_utc`, and every timestamp field of
@@ -182,60 +193,71 @@ browser zone, and its events stay inside its own window. The one deliberate
 exception is a time the user types into a date field: that is local wall-clock
 time (`web/src/ui/calendarTime.ts`).
 
-**Event changes are ordered by the server's stamp.** An event can reach a
-tab by three routes that race: the HTTP response to the tab's own mutation,
-the SSE echo of that mutation or of another actor's, and a bootstrap or
-resync snapshot. Every one of them lands through the one merge path,
-`applyFragment` (`web/src/data/fragment.ts`), and its `admitEventChanges`
-decides, per event id, whether the change is newer than what the session
-holds. The order is the server's own: every SSE fragment, every live
-mutation response (the `X-Otto-Observed-At` header) and every snapshot
-carries an `observed_at` from `event_ops.utc_now`, which is strictly
-increasing at microsecond resolution, and each stamp is read in the same
-synchronous step as the state it describes (the collector writes an event to
-the database first, then changes memory and publishes). The session keeps
-the stamp of the last change it applied to each id, deletions included, so
-a deleted id keeps a tombstone; a snapshot seeds every id it carries and
-sets the session's floor from its own `observed_at`. An upsert or a deletion
+**Event changes are ordered by the server's stamp.** An event can reach a tab
+by three routes that race: the HTTP response to the tab's own mutation, the
+SSE echo of that mutation or of another actor's, and a bootstrap or resync
+snapshot. Every one of them lands through the one merge path, `applyFragment`
+(`web/src/data/fragment.ts`), and its `admitEventChanges` decides, per event
+id, whether the change is newer than what the session holds. The order is the
+server's own: every SSE fragment, every live mutation response (the
+`X-Otto-Observed-At` header) and every snapshot carries an `observed_at` from
+`event_ops.utc_now`, which is strictly increasing at microsecond resolution,
+and each stamp is read in the same synchronous step as the state it describes
+(the collector writes an event to the database first, then changes memory and
+publishes). The session keeps the stamp of the last change it applied to each
+id, deletions included, so a deleted id keeps a tombstone; a snapshot seeds
+every id it carries and sets every session's floor from its capture stamp
+(`X-Otto-Observed-At`). Only a file the tab loaded itself, which has no
+capture, is floored at its own `observed_at`: a reviewed file's stamp is when
+it was exported, maybe months before the capture. An upsert or a deletion
 applies only when its stamp is strictly later than both the floor and that
-id's stamp: a late echo never rolls an event back, in either direction, and
-a delayed response never resurrects an event a later snapshot showed
-deleted. A mutation's response stamp is read after its publish stamp, so the
-tab's own echo is always older than the response it already applied and is
-dropped; its content is identical. Review mode has no stamps, so every change
-applies there. A resync is one caller of this rule: its snapshot is captured
-somewhere between request and response, so the review store logs the event
-changes applied meanwhile (`beginResync` in `web/src/data/reviewStore.ts`)
-and replays them onto the snapshot through `applyFragment`, which keeps only
-those ordered after the capture. A session's server-observed horizon never
-moves back. Undo leans on this ordering (spec
+id's stamp: a late echo never rolls an event back, in either direction, and a
+delayed response never resurrects an event a later snapshot showed deleted. A
+mutation's response stamp is read after its publish stamp, so the tab's own
+echo is always older than the response it already applied and is dropped; its
+content is identical. Review mode is stamped the same way: its mutation
+responses, its pushes and its snapshots all carry the server's `observed_at`,
+so the same rule orders them. Only a live stamp moves a session's display
+horizon, though (`mergeFragments` in `web/src/data/reviewStore.ts`): a review
+stamp orders the change and nothing else. An export writes each session's
+`observed_at` back exactly as it was read, and leaves an absent one absent. A
+change with no stamp at all (an older server) cannot be ordered and simply
+applies. A snapshot install (the boot, a resync, a move onto another source)
+is one caller of this rule. The stream is open before the snapshot is
+requested, and the server captures the snapshot somewhere between request and
+response, stamping it with `X-Otto-Observed-At`. So the review store logs
+every fragment applied meanwhile (`beginResync` in
+`web/src/data/reviewStore.ts`) and replays, through `applyFragment`, the ones
+stamped strictly after the capture, metric rows included; one stamped at or
+before it is already in the snapshot and is dropped. A session's
+server-observed horizon never moves back. Undo leans on this ordering (spec
 `docs/superpowers/specs/2026-11-07-event-undo-design.md`, section 4); what
-undo does for a user is in [the dashboard guide](../../cli/monitor/dashboard.md#undo-and-redo).
+undo does for a user is in [the dashboard
+guide](../../cli/monitor/dashboard.md#undo-and-redo).
 
-**Event writes are serialised on the server, in both modes.** Every change
-or delete runs one sequence, `event_ops.mutate_under_lock`: under the
-collector's `mutation_lock`, read the event as it stands, resolve the new
-record (a PATCH's merge or `/end`'s "already ended" refusal happens here, on
-the latest state), write the store, then apply it to what the server serves.
-Live mode writes the database and then changes memory and publishes
+**Event writes are serialised on the server, in both modes.** Every change or
+delete runs one sequence, `event_ops.mutate_under_lock`: under the collector's
+`mutation_lock`, read the event as it stands, resolve the new record (a
+PATCH's merge or `/end`'s "already ended" refusal happens here, on the latest
+state), write the store, then apply it to what the server serves. Live mode
+writes the database and then changes memory and publishes
 (`MetricCollector.mutate_event`). In review mode of a `.db` archive the
 archive is the truth, as the collector's store is in live mode: the sequence
 reads the event's row from the archive (`archive_edit.read_event`, off the
 loop), resolves against that row, and writes it back with the row as the
 expected state, then patches the served document. The document is a snapshot
 from load, which another writer of the same archive (a second review server,
-say) can have made stale; a stale revert this server refused with
-`409 changed` is one way that shows. So it is
-repaired to the archive's row wherever the row is read: on the read, and on
-every `409 changed`, through one helper (`_sync_document_event` in
-`otto/monitor/server.py`). A row that changed between the read and the write
-is refused with `409 changed` carrying the row, exactly as a stale revert is,
-with nothing written; a row gone from the archive answers `404`, and the
-document drops it. Review mode also has a collector (one with no targets),
-and its creates and reverts take the same lock. So two requests from one
-dashboard never merge onto a stale read, and never collide on the archive's
-own `.lock`. That `.lock` still refuses an archive that a live monitor is
-writing.
+say) can have made stale; a stale revert this server refused with `409
+changed` is one way that shows. So it is repaired to the archive's row
+wherever the row is read: on the read, and on every `409 changed`, through one
+helper (`_repair` in `otto/monitor/review_source.py`, which `DbBackend`
+calls). A row that changed between the read and the write is refused with `409
+changed` carrying the row, exactly as a stale revert is, with nothing written;
+a row gone from the archive answers `404`, and the document drops it. Review
+mode also has a collector (one with no targets), and its creates and reverts
+take the same lock. So two requests from one dashboard never merge onto a
+stale read, and never collide on the archive's own `.lock`. That `.lock` still
+refuses an archive that a live monitor is writing.
 
 The locked section is cancellation-safe, in both modes and for every
 mutation: `event_ops.run_locked_in_phases` (and `run_locked`, its one-phase

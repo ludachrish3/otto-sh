@@ -40,23 +40,6 @@ def test_the_browser_list_mirrors_the_declared_one(ts, name):
     assert _ts_list(DATA / ts, name) == getattr(formats, name)
 
 
-def test_the_browser_observed_at_header_mirrors_the_server_one():
-    """``eventApi.ts`` reads the header ``otto.monitor.server`` stamps (#866).
-
-    The browser cannot import the Python constant, so it spells the name
-    again; a rename on one side alone would silently drop the observation.
-    """
-    from otto.monitor.server import OBSERVED_AT_HEADER
-
-    found = re.search(
-        r'^const OBSERVED_AT_HEADER = "([^"]+)";',
-        (DATA / "eventApi.ts").read_text(),
-        re.MULTILINE,
-    )
-    assert found, "OBSERVED_AT_HEADER is not declared in eventApi.ts"
-    assert found.group(1) == OBSERVED_AT_HEADER
-
-
 def test_the_browser_same_event_runs_the_shared_cases_file():
     """``sameevent.test.ts`` drives the SAME cases file ``same_event`` is tested on.
 
@@ -66,3 +49,25 @@ def test_the_browser_same_event_runs_the_shared_cases_file():
     source = (DATA.parent / "__tests__" / "sameevent.test.ts").read_text()
     assert "tests/_fixtures/same_event_cases.json" in source
     assert (CHECKOUT_ROOT / "tests" / "_fixtures" / "same_event_cases.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "name", ["SOURCE_TOKEN_HEADER", "OBSERVED_AT_HEADER", "UNSAVED_HEADER", "SOURCE_NAME_HEADER"]
+)
+def test_the_browser_source_headers_mirror_the_server_ones(name):
+    """``sourceApi.ts`` spells the headers ``otto.monitor.server`` declares (#866, #958).
+
+    The browser cannot import the Python constants, so it spells each name
+    again. A rename on one side alone would send every write without its
+    token, and refuse it as aimed at another source, or silently drop the
+    server's stamps.
+    """
+    from otto.monitor import server
+
+    found = re.search(
+        rf'^export const {name} = "([^"]+)";',
+        (DATA / "sourceApi.ts").read_text(),
+        re.MULTILINE,
+    )
+    assert found, f"{name} is not declared in sourceApi.ts"
+    assert found.group(1) == getattr(server, name)

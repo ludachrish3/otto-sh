@@ -7,7 +7,9 @@ the collector is only ever touched from one loop.
 
 import asyncio
 import gc
+import json
 import threading
+import urllib.request
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
@@ -17,6 +19,7 @@ from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer
 from otto.monitor.session import SessionFrame
 from otto.utils import WaitTimeoutError, wait_for
+from tests._fixtures._source_token import MODE_PATH, mode_token
 
 C = TypeVar("C", bound=MetricCollector)
 T = TypeVar("T")
@@ -153,6 +156,15 @@ class DashboardHarness(Generic[C]):
         ``origin`` + path and re-attach the key explicitly.
         """
         return f"{self.server.origin}{path}?key={self.server.key}"
+
+    def source_token(self) -> str:
+        """The served source's token, as ``/api/mode`` reports it to a tab.
+
+        The ONE way a test that posts a write names the source: every event
+        write sends it in ``SOURCE_TOKEN_HEADER``.
+        """
+        with urllib.request.urlopen(self.api_url(MODE_PATH), timeout=10) as resp:  # local server
+            return mode_token(json.load(resp))
 
     @property
     def thread_alive(self) -> bool:

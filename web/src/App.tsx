@@ -1,15 +1,15 @@
 // The redesigned shell. Review-first: the Import front door hydrates the
 // review store, same as always. The one addition is a single soft-failing
-// boot fetch — see data/bootstrap.ts's header for the full contract — that
-// hydrates from a same-origin otto monitor server already sitting on a
-// review document (or a running live session — both modes hydrate through
-// the same /api/monitor_sessions endpoint and format:1 shape), so an `otto
-// monitor <source>` review server, or an `otto monitor --live` server,
-// opens straight into the dashboard. In live mode the shell then attaches
-// data/stream.ts's SSE client (/api/stream) to grow that same session in
-// place — a streaming layer built against the format:1 session shape, not
-// a revival of the legacy Plotly-era live data layer (the zustand store,
-// SSE client, and REST client), which was deleted.
+// boot — see data/bootstrap.ts's header for the full contract — that opens
+// data/stream.ts's SSE client (/api/stream) and then hydrates from a
+// same-origin otto monitor server already sitting on a review document (or
+// a running live session — both modes hydrate through the same
+// /api/monitor_sessions endpoint and format:1 shape), so an `otto monitor
+// <source>` review server, or an `otto monitor --live` server, opens
+// straight into the dashboard. The stream keeps every open tab current in
+// both modes — a streaming layer built against the format:1 session shape,
+// not a revival of the legacy Plotly-era live data layer (the zustand
+// store, SSE client, and REST client), which was deleted.
 
 import { useEffect } from "react";
 import { Route, Router, Switch } from "wouter";
@@ -21,9 +21,11 @@ import { useReviewStore } from "./data/reviewStore";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SubjectPage } from "./pages/SubjectPage";
 import { AppBar } from "./shell/AppBar";
+import { ConfirmSwitchSource } from "./shell/ConfirmSwitchSource";
 import { DataWarningsBanner } from "./shell/DataWarningsBanner";
 import { EmptyState } from "./shell/EmptyState";
 import { EventEditor } from "./shell/EventEditor";
+import { ExportDialog } from "./shell/ExportDialog";
 import { ImportProvider } from "./shell/ImportExport";
 import { ReconnectingBanner } from "./shell/ReconnectingBanner";
 import { ReviewBar } from "./shell/ReviewBar";
@@ -36,7 +38,8 @@ function App() {
   const importError = useReviewStore((s) => s.importError);
   const setImportError = useReviewStore((s) => s.actions.setImportError);
   // One-shot, fire-and-forget: bootstrapFromServer never throws (see its
-  // header) and Import remains available whether or not it finds anything.
+  // header); what it finds decides whether Import is offered
+  // (data/source.ts's importOffered).
   // The open-span reconciler is installed first, so the tracked span follows
   // every store change from the boot hydrate onward (data/openSpan.ts).
   useEffect(() => {
@@ -89,6 +92,8 @@ function App() {
         ) : (
           <EmptyState />
         )}
+        <ExportDialog />
+        <ConfirmSwitchSource />
         <ToastViewport />
       </div>
     </ImportProvider>

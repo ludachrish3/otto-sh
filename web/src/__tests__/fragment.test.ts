@@ -468,7 +468,7 @@ describe("applyFragment observed_at", () => {
     const windowMs = 5 * 60_000;
     const at = T + 10 * 60_000;
     const next = applyFragment(s, frag({ events: [event(1, at)], observed_at: iso(at) }));
-    const markers = eventMarkers(next.events, liveRange(displayEndMs(next), windowMs));
+    const markers = eventMarkers(next, liveRange(displayEndMs(next), windowMs));
     expect(markers.map((m) => m.id)).toEqual([1]);
   });
 
@@ -480,7 +480,7 @@ describe("applyFragment observed_at", () => {
       frag({ events: [event(1, T + 86_400_000)], observed_at: iso(T + 1000) }),
     );
     expect(displayEndMs(next)).toBe(T + 1000);
-    expect(eventMarkers(next.events, liveRange(displayEndMs(next), 5 * 60_000))).toEqual([]);
+    expect(eventMarkers(next, liveRange(displayEndMs(next), 5 * 60_000))).toEqual([]);
   });
 });
 
@@ -571,5 +571,89 @@ describe("applyFragment event ordering", () => {
       }),
     );
     expect(tick.eventStamps).toBe(touched.eventStamps);
+  });
+});
+
+// Review mode stamps its mutation responses too: the stamp orders event
+// changes, but only the live server's clock moves the display horizon.
+describe("applyFragment advanceHorizon", () => {
+  const base = () => synthSession({ hosts: 1, seriesPerHost: 1, ticks: 2, intervalS: 5 });
+  const at = (us: number) => `2026-07-12T01:00:00.${String(us).padStart(6, "0")}+00:00`;
+  const event = (id: number, label: string) => ({
+    id,
+    timestamp: "2026-07-12T00:00:01Z",
+    label,
+    source: "manual",
+    color: "#888888",
+    dash: "dash",
+  });
+
+  it("a review-mode stamp orders events but does not move the horizon", () => {
+    const s = base();
+    const review = { advanceHorizon: false };
+    let next = applyFragment(
+      s,
+      frag({ events: [event(7, "new")] as never, observed_at: at(3) }),
+      [],
+      review,
+    );
+    expect(next.events.map((e) => e.label)).toEqual(["new"]);
+    expect(next.observedMs).toBe(s.observedMs);
+    expect(next.observedAt).toBeNull();
+    // An older change is still overtaken by the newer stamp.
+    next = applyFragment(
+      next,
+      frag({ events: [event(7, "old")] as never, observed_at: at(2) }),
+      [],
+      review,
+    );
+    expect(next.events.map((e) => e.label)).toEqual(["new"]);
+    // A stamp-only fragment is a no-op in review.
+    expect(applyFragment(next, frag({ observed_at: at(9) }), [], review)).toBe(next);
+    // The default (live) raises both the horizon and the observed value.
+    const live = applyFragment(next, frag({ observed_at: at(9) }));
+    expect(live.observedMs).toBe(Date.parse(at(9)));
+    expect(live.observedAt).toBe(at(9));
+  });
+
+  it("an edit keeps every row in place and a new row goes last", () => {
+    const idless = { ...event(0, "no id"), id: undefined };
+    const s = {
+      ...base(),
+      events: [
+        event(1, "first"),
+        event(3, "third"),
+        event(3, "third again"),
+        idless,
+        event(9, "ninth"),
+      ] as never,
+      viewOnlyIds: new Set([3]),
+    };
+    const next = applyFragment(
+      s,
+      frag({
+        events: [event(10, "added"), event(9, "edited"), event(10, "added again")] as never,
+      }),
+    );
+    expect(next.events.map((e) => [e.id, e.label])).toEqual([
+      [1, "first"],
+      [3, "third"],
+      [3, "third again"],
+      [undefined, "no id"],
+      [9, "edited"],
+      [10, "added again"],
+    ]);
+  });
+
+  it("repeated-id rows survive an unrelated upsert", () => {
+    const s = {
+      ...base(),
+      events: [event(3, "third"), event(3, "third again"), event(4, "fourth")] as never,
+      viewOnlyIds: new Set([3]),
+    };
+    const next = applyFragment(s, frag({ events: [event(4, "edited")] as never }));
+    expect(next.events.map((e) => e.label)).toEqual(["third", "third again", "edited"]);
+    const deleted = applyFragment(next, frag({ deleted_event_ids: [4] }));
+    expect(deleted.events.map((e) => e.label)).toEqual(["third", "third again"]);
   });
 });

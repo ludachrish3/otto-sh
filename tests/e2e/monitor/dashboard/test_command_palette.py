@@ -4,16 +4,15 @@ the click-only theme toggle, and the ``/`` in-page search-focus routing.
 Contract: ``data-testid`` attributes only.
 
 Fixtures import through the client-side Import front door against
-``shell_dash`` (an empty-collector, dist-serving harness), zero backend --
-same idiom as ``test_review_shell.py``'s ``_import_fixture``, mirrored here
-rather than imported, matching this directory's existing per-module-helper
-convention (``test_live_shell.py``, ``test_topology_tunnels.py`` each keep
-their own copy too).
+``shell_dash`` (the dashboard with no otto server behind it), zero backend --
+through the one shared ``import_into_shell``, as ``test_review_shell.py``'s
+``_import_fixture`` does.
 """
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from tests._fixtures._static_shell import import_into_shell
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
@@ -25,8 +24,7 @@ FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page: Page, name: str) -> None:
-    page.locator('[data-testid="import-input"]').set_input_files(FIXTURES / name)
-    page.locator('[data-testid="review-bar"]').wait_for()
+    import_into_shell(page, FIXTURES / name)
 
 
 def _tid(page: Page, test_id: str) -> Locator:

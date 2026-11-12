@@ -6,11 +6,19 @@
 import { AlertTriangle } from "@untitledui/icons";
 
 import { useReviewStore } from "../data/reviewStore";
+import { servedSource } from "../data/source";
 
 export function ReconnectingBanner() {
-  const mode = useReviewStore((s) => s.mode);
+  const streaming = useReviewStore((s) => servedSource(s) !== null);
   const connection = useReviewStore((s) => s.connection);
-  if (mode !== "live" || connection === "live") return null;
+  // One rule for every streamed mode (#958): review streams too, so a lost
+  // connection there stops other tabs' changes reaching this one. A server
+  // source the tab knows counts whether it is installed or only pending (a
+  // live run with nothing recorded yet retries through the reconnect: this
+  // is how the tab shows it is retrying). With none (the static shell, a
+  // file loaded in the tab, a boot no `/api/mode` has answered yet) nothing
+  // is known to be streaming, so nothing is reconnecting.
+  if (!streaming || connection === "live") return null;
   return (
     <div
       data-testid="reconnecting-banner"

@@ -36,7 +36,13 @@ import {
   type StaleResult,
   sourceGuard,
 } from "../data/eventApi";
-import { clampRange, type NormalizedSession, sessionBounds } from "../data/exportDoc";
+import {
+  clampRange,
+  editableEventId,
+  eventRowId,
+  type NormalizedSession,
+  sessionBounds,
+} from "../data/exportDoc";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatClockTime, formatSpan, parseTs } from "../data/time";
 import { TextInput } from "../ui/TextInput";
@@ -233,9 +239,9 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
 
   const rows = session.events
     .map((ev, i) => ({
-      // Wire ids are non-negative; negative synthetics can't collide (matches eventMarkers).
-      id: ev.id ?? -1 - i,
-      wireId: ev.id ?? null,
+      // The same id the chart markers use (eventRowId): unique per row.
+      id: eventRowId(session, ev, i),
+      wireId: editableEventId(session, ev),
       label: ev.label ?? "",
       color: ev.color,
       source: ev.source ?? "manual",
@@ -334,8 +340,8 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
                     </button>
                     {/* Every mutation affordance is gated on `editable` (spec
                         §Marking, same rule commands.ts applies to its own
-                        rows) -- a read-only server, or a review session
-                        opened from a plain export (not a .db), must not
+                        rows) -- a tab that cannot write (a file it loaded
+                        itself, or a source still being installed) must not
                         offer an edit/End-now control it cannot fulfil. */}
                     {editable && wireId !== null && (
                       <ButtonUtility

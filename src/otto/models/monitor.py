@@ -763,3 +763,52 @@ class MonitorSessionFragment(RowModel):
     meta: SessionMeta | None = None
     tunnels: list[TunnelRecord] | None = None
     observed_at: AwareTimestamp | None = None
+
+
+class MonitorSourceState(OttoModel):
+    """What the dashboard is showing and whether it may be edited.
+
+    The answer of ``GET /api/mode`` and the payload of a source frame.
+    ``token`` names the source: it changes whenever the served source does, so
+    a browser can tell a write aimed at a stale source from one aimed at this
+    one. ``revision`` counts the writes since the load. ``unsaved`` is
+    ``revision`` minus the highest revision an export acknowledged, so it is the
+    number of changes the last export does not hold. ``observed_at`` is the
+    server's stamp when the state was read, and it is what orders two states in
+    the browser.
+    """
+
+    mode: Literal["live", "review"]
+    kind: Literal["live", "db", "json"]
+    source: str | None
+    token: str
+    editable: bool
+    unsaved: int = Field(default=0, ge=0)
+    revision: int = Field(default=0, ge=0)
+    observed_at: AwareTimestamp
+
+
+class MonitorSourceFrame(RowModel):
+    """A document-level stream frame carrying the source state.
+
+    It names no session: it is about the source, not one of its sessions. Its
+    ``observed_at`` equals the state's. The stream stays format 1; a reader that
+    does not know the frame ignores it.
+    """
+
+    format: Literal[1] = 1
+    source_state: MonitorSourceState
+    observed_at: AwareTimestamp | None = None
+
+
+class SourceSavedBody(OttoModel):
+    """The body of ``POST /api/source/saved``: an export acknowledged ``revision`` of ``token``.
+
+    ``defer_build=False``: same FastAPI request-body reason as
+    :class:`EventCreateBody`.
+    """
+
+    model_config = ConfigDict(defer_build=False)
+
+    token: str
+    revision: int = Field(ge=0)

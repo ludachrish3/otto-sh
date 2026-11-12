@@ -1,177 +1,101 @@
-// The shell's ONLY boot fetch. On mount, ask a same-origin otto monitor
-// server which mode it's running in (`otto monitor <source>`, the
-// positional review path over a saved .json/.db export; or `otto monitor
-// --live`, the live-collecting path) and hydrate the review store from
-// `/api/monitor_sessions` exactly as the Import front door would — the live
-// server serves a snapshot of the running session, so this is valid in both
-// modes. In live mode, if that hydrate actually succeeded, also attach the
-// SSE stream (data/stream.ts) so further points arrive without a page
-// reload; on every reconnect the stream re-fetches the whole snapshot (a
-// resync, never a delta replay — see stream.ts's header) via `resync`
-// below, a sibling of `hydrate` that replaces
-// sessions/rawMonitorSessions/warnings the same way but — unlike a fresh
-// hydrate/Import — leaves range/activeSessionId untouched, so a transient
-// reconnect can't silently discard a user's paused/pinned view. A live
-// server with nothing recording yet (e.g. shell_dash's bare harness, or the
-// docs-capture script) 404s the hydrate — opening a stream against it would
-// sit idle forever, and shell_dash's own contract is "no boot-time API
-// calls" for exactly that case, so the stream stays closed too.
+// The shell's boot against a same-origin otto monitor server, in every
+// streamed mode (`otto monitor --live`, or `otto monitor <source>` over a
+// saved .json/.db export). In order:
+//
+//  1. Open the SSE stream (data/stream.ts) FIRST, and wait for its first
+//     open: the server subscribes a connection before its first byte, so
+//     from then on every push reaches the tab.
+//  2. Run the one server sync (data/source.ts's syncFromServer, fresh):
+//     `/api/mode`, then `/api/monitor_sessions`, installed with every push
+//     stamped after the snapshot's capture replayed onto it. Nothing
+//     published between the snapshot and the stream is lost, because there
+//     is no such gap: the stream was open before the snapshot was read.
+//  3. Every later open (a reconnect) runs the same sync, not fresh, so the
+//     user's paused/pinned view survives it (data/source.ts's resyncOnOpen,
+//     which also forces the next reconnect when that sync could not
+//     install); a source frame is admitted through admitSourceFrame.
+//
+// Until the boot learns what serves the URL, the URL's source is unresolved
+// (the store's `sourceKindUnresolved`) and Import is withheld: the first
+// `/api/mode` answer names the source (it is pending from then on, whatever
+// its snapshot does), and a stream that fails before it ever opened means
+// no otto server serves the URL: no server source, where Import loads a
+// file in the tab.
 //
 // Soft-fail contract (binding): the built dist/ is also served by dumb
-// static file servers with no /api/* routes at all (the docs-capture
-// script, ad-hoc demo serving), and the offline Playwright pin blocks
-// every non-local request outright. Both depend on this module leaving the
-// shell exactly as it behaves without it whenever a fetch can't succeed.
-// So ANY transport failure — a rejected fetch, a non-200 response, or a
-// body that isn't JSON/text — is swallowed and returns silently, before
-// importMonitorSessions/resyncMonitorSessions is ever called. Either one
-// only ever sees a 200 `/api/monitor_sessions` body; ITS validation
-// failures are not swallowed — they surface through the store's existing
-// `importError`, the same as a bad file chosen through Import.
+// static file servers with no /api/* routes at all (ad-hoc demo serving,
+// the e2e suite's no-server shell, the docs-capture script), and the offline
+// Playwright pin blocks every non-local request outright. Both depend on
+// this module leaving the shell exactly as it behaves without it whenever a
+// fetch can't succeed. So a stream that fails before it ever opens (no
+// /api/stream) stops, with no reconnect, nothing is fetched, and the empty
+// Import shell stays. That is the ONE "no server" outcome.
 //
-// A file import supersedes all of this (#873; see data/source.ts). Each
-// entry point here — the boot below and every `resync` — captures the
-// source generation before its first await and gives up, silently, the
-// moment it is no longer current: a late /api/mode answer, snapshot body or
-// hydrate never overwrites an imported file, flips the shell back to live,
-// or opens a stream. The check sits after EVERY await, in the continuation
-// that then writes state: a helper's own check does not cover its caller.
-// The stopper startStream returns is registered with source.ts, which closes
-// it on the switch.
+// A stream that opened is an otto server, so nothing it does after that
+// closes the stream: a `/api/mode` or a snapshot that could not be read (a
+// live server with nothing recording yet answers the snapshot with a 404)
+// or a snapshot that named another source twice is retried through the
+// stream's reconnect, whose open syncs again, and `mode` stays null
+// meanwhile: a shell that never got any data must not claim it is live. A
+// 200 snapshot whose body fails validation is not a transport failure: it
+// surfaces through the store's `importError`, like a bad file chosen
+// through Import, and the stream stays open for the next reconnect or
+// source frame to recover.
+//
+// A source frame admitted during the boot sync supersedes it (see
+// data/source.ts): it bumps the source generation, so every step here in
+// flight gives up silently; the admission installs, and the boot leaves the
+// stream open for it.
 
 import { useReviewStore } from "./reviewStore";
-import { isCurrentSource, registerStreamStop, sourceGeneration } from "./source";
+import {
+  admitSourceFrame,
+  registerStream,
+  resyncOnOpen,
+  retriesSync,
+  syncFromServer,
+} from "./source";
+import { isCurrentSource, sourceGeneration } from "./sourceGeneration";
 import { startStream } from "./stream";
 
-interface ModePayload {
-  mode: "live" | "review";
-  source: string | null;
-  /** Whether this server accepts event mutations (live, or a
-   * .db-sourced review) — gates every marking affordance in the shell. */
-  editable: boolean;
-}
-
-function isModePayload(value: unknown): value is ModePayload {
-  if (typeof value !== "object" || value === null) return false;
-  const rec = value as Record<string, unknown>;
-  return (
-    (rec["mode"] === "live" || rec["mode"] === "review") &&
-    (typeof rec["source"] === "string" || rec["source"] === null) &&
-    typeof rec["editable"] === "boolean"
-  );
-}
-
 export async function bootstrapFromServer(): Promise<void> {
+  const review = useReviewStore.getState().actions;
+  review.setSourceKindUnresolved(true);
   const generation = sourceGeneration();
-  let modeRes: Response;
-  try {
-    modeRes = await fetch("/api/mode");
-  } catch {
-    return;
-  }
-  if (!modeRes.ok || !isCurrentSource(generation)) return;
-  let modeBody: unknown;
-  try {
-    modeBody = await modeRes.json();
-  } catch {
-    return;
-  }
-  if (!isModePayload(modeBody) || !isCurrentSource(generation)) return;
-
-  // Same soft-fail rules as the mode fetch above: a transport failure here
-  // is swallowed silently too (the Import shell stays exactly as it was);
-  // only a 200-but-unparseable body reaches the store and its existing
-  // importError surface. Shared by `hydrate` (the initial load) and
-  // `resync` (the stream's resync-on-reconnect) below. Also null once
-  // `gen` is no longer the current source: a file was imported meanwhile.
-  const fetchDocumentText = async (gen: number): Promise<string | null> => {
-    let docRes: Response;
-    try {
-      docRes = await fetch("/api/monitor_sessions");
-    } catch {
-      return null;
-    }
-    if (!docRes.ok || !isCurrentSource(gen)) return null;
-    let text: string;
-    try {
-      text = await docRes.text();
-    } catch {
-      return null;
-    }
-    return isCurrentSource(gen) ? text : null;
+  let opened = false;
+  let settleFirstOpen!: (opened: boolean) => void;
+  const firstOpen = new Promise<boolean>((resolve) => {
+    settleFirstOpen = resolve;
+  });
+  // The first open's sync is the boot's own, below; the open itself is
+  // healthy.
+  const firstOpened = (): undefined => {
+    opened = true;
+    settleFirstOpen(true);
   };
-
-  // The initial boot load. Fresh state: sessions[0] becomes active and any
-  // view (range) resets, exactly like a user-chosen Import. Returns whether
-  // the fetch actually reached the store (true) or bailed out early on a
-  // transport failure (false) — used below to decide whether starting the
-  // stream is even worthwhile.
-  const hydrate = async (): Promise<boolean> => {
-    const bodyText = await fetchDocumentText(generation);
-    // Re-checked here, not only inside the helper: an import can land
-    // between the helper's last check and this continuation.
-    if (bodyText === null || !isCurrentSource(generation)) return false;
-    useReviewStore.getState().actions.importMonitorSessions(bodyText, modeBody.source ?? "server");
-    return true;
+  const control = startStream({
+    // A reconnect's open is healthy once its resync installs (the stream
+    // resets its backoff when such a connection ends having lost no frame).
+    onOpen: () => (opened ? resyncOnOpen() : firstOpened()),
+    // No otto server serves the URL: the one way the boot concludes that.
+    onFirstError: () => {
+      review.setSourceKindUnresolved(false);
+      settleFirstOpen(false);
+    },
+    onSource: admitSourceFrame,
+  });
+  // A stream closed before its first open ends the boot too.
+  const stop = () => {
+    control.stop();
+    settleFirstOpen(false);
   };
+  registerStream({ stop, reconnect: control.reconnect, lost: control.lost });
 
-  // The stream's resync-on-reconnect (data/stream.ts's onerror -> resync ->
-  // reopen). Unlike `hydrate` above, this must NOT reset `range`/
-  // `activeSessionId` — a transient network blip resyncing the whole
-  // snapshot must not silently discard a user's paused/pinned view (see
-  // reviewStore.ts's resyncMonitorSessions). The resync's token is taken
-  // BEFORE the snapshot request starts: every fragment applied from then on
-  // (a mutation answered while the snapshot is in flight) is newer than the
-  // snapshot, and the store replays it onto the snapshot (#868). Ended in
-  // `finally`, so a failed or stale attempt never keeps logging.
-  const resync = async (): Promise<boolean> => {
-    const gen = sourceGeneration();
-    const { actions } = useReviewStore.getState();
-    const token = actions.beginResync();
-    try {
-      const bodyText = await fetchDocumentText(gen);
-      if (bodyText === null || !isCurrentSource(gen)) return false;
-      actions.resyncMonitorSessions(bodyText, modeBody.source ?? "server", token);
-      return true;
-    } finally {
-      actions.endResync(token);
-    }
-  };
-
-  const hydrated = await hydrate();
-  if (!isCurrentSource(generation)) return;
-
-  // The shell is LIVE only if it actually hydrated a live session and
-  // started streaming — never before knowing that. A live server with
-  // nothing recording yet (e.g. shell_dash's bare harness) 404s the
-  // hydrate above; setting mode="live" regardless would make a shell that
-  // never got any data claim it's live (hiding the review bar, reading
-  // "Reconnecting…" instead of "No data", etc.) when it is, in truth, the
-  // same Import/static state as any other empty shell. Review mode carries
-  // no such ambiguity (a review-mode server always already holds the
-  // document it announced), so it's set unconditionally as before.
-  if (modeBody.mode === "live") {
-    if (hydrated) {
-      useReviewStore.getState().actions.setMode("live");
-      useReviewStore.getState().actions.setEditable(modeBody.editable);
-      // Known, deliberately documented gap: any point the server publishes
-      // strictly between `hydrate()`'s response above and this
-      // `startStream` call's `new EventSource(url)` actually opening
-      // (stream.ts's `connect`) is neither in that response NOR replayed by
-      // the stream — the stream only carries what's published AFTER it
-      // opens, and the snapshot only carries what existed as of its own
-      // request. The window is a handful of event-loop turns, and `resync`
-      // (below, stream.ts's onerror -> resync -> reopen) reopens through
-      // this exact same shape on every reconnect, not just at boot.
-      // Small and real, not zero: the spec's "provably correct" framing
-      // overstated it. Left open — closing it needs either a
-      // sequence-numbered replay buffer or a shared server-side cursor
-      // between the snapshot fetch and the stream open, neither of which
-      // exists today.
-      registerStreamStop(startStream({ resync }));
-    }
-  } else {
-    useReviewStore.getState().actions.setMode(modeBody.mode);
-    useReviewStore.getState().actions.setEditable(modeBody.editable);
-  }
+  if (!(await firstOpen) || !isCurrentSource(generation)) return;
+  const result = await syncFromServer({ fresh: true });
+  // `stale`: the tab moved on meanwhile (a source frame's admission, which
+  // now owns the install). Any failure is a server that is there: retry
+  // through the stream's reconnect, whose open resyncs, or (`invalid`) keep
+  // the stream open.
+  if (retriesSync(result)) control.reconnect();
 }

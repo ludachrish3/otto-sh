@@ -66,10 +66,10 @@ async def _run_stream(app, collector: MetricCollector, *, overflow: bool) -> lis
         await asyncio.wait_for(first_chunk.wait(), timeout=5.0)
         if overflow:
             for i in range(SUBSCRIBER_QUEUE_MAX + 1):
-                collector._publish({"seq": i})
+                collector.publish({"seq": i})
             await asyncio.wait_for(ended.wait(), timeout=5.0)
         else:
-            collector._publish({"seq": 0})
+            collector.publish({"seq": 0})
             # Wait for the FRAME, not for a slice of wall clock: a loaded box
             # must not turn "the route had no turn yet" into a red control.
             await asyncio.wait_for(second_chunk.wait(), timeout=5.0)

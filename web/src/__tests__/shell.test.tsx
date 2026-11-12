@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import App from "../App";
+import type { MonitorSourceState } from "../api/export.gen";
 import { useReviewStore } from "../data/reviewStore";
 import { useUiStore } from "../ui/uiStore";
 
@@ -43,7 +43,36 @@ function resetStore() {
     importError: null,
     activeSessionId: null,
     range: null,
+    mode: null,
+    source: null,
+    pendingSource: null,
+    lastSourceStamp: null,
+    sourceKindUnresolved: false,
+    resyncUnresolved: false,
+    covered: null,
   });
+}
+
+/** A server source the tab has installed, as /api/mode answers it. */
+function serverSource(kind: "live" | "db" | "json", unsaved = 0): MonitorSourceState {
+  return {
+    mode: kind === "live" ? "live" : "review",
+    kind,
+    source: kind === "live" ? null : `a.${kind}`,
+    token: "A",
+    editable: true,
+    unsaved,
+    revision: 0,
+    observed_at: "2026-07-18T12:00:00+00:00",
+  };
+}
+
+/** Dispatches a window drop of `file`; returns whether it was prevented. */
+function dropFile(file: File): boolean {
+  const drop = new Event("drop", { cancelable: true });
+  Object.defineProperty(drop, "dataTransfer", { value: { files: [file] } });
+  window.dispatchEvent(drop);
+  return drop.defaultPrevented;
 }
 
 beforeEach(() => {
@@ -63,7 +92,13 @@ afterEach(() => {
   // lingers in the document for the next test's queries.
   cleanup();
   resetStore();
-  useUiStore.setState({ paletteOpen: false, theme: "light" });
+  useUiStore.setState({
+    paletteOpen: false,
+    theme: "light",
+    switchPrompt: null,
+    exportDialogOpen: false,
+  });
+  vi.unstubAllGlobals();
   localStorage.clear();
   document.documentElement.classList.remove("dark", "dark-mode");
 });
@@ -277,5 +312,52 @@ describe("App shell", () => {
     await user.keyboard("{Escape}");
     await importMinimal();
     expect(screen.getByTestId("search-trigger")).toBeTruthy();
+  });
+
+  it("a drop on a live source is ignored", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+    useReviewStore.setState({ source: serverSource("live"), mode: "live" });
+    render(<App />);
+    const file = new File([MINIMAL], "minimal.json", { type: "application/json" });
+    const read = vi.spyOn(file, "text");
+
+    expect(dropFile(file)).toBe(true);
+    // The drop is refused before the file is read: nothing is left to settle.
+    expect(read).not.toHaveBeenCalled();
+
+    expect(useReviewStore.getState().sourceName).toBeNull();
+    expect(useReviewStore.getState().sessions).toHaveLength(0);
+    expect(useUiStore.getState().switchPrompt).toBeNull();
+    expect(useReviewStore.getState().source?.kind).toBe("live");
+    // Nor does the overflow menu offer Import there.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overflow-menu"));
+    await screen.findByTestId("menu-theme");
+    expect(screen.queryByTestId("menu-import")).toBeNull();
+  });
+
+  it("a drop on a .json source opens the switch prompt; Cancel closes it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+    useReviewStore.setState({ source: serverSource("json", 1), mode: "review" });
+    render(<App />);
+
+    dropFile(new File([MINIMAL], "b.json", { type: "application/json" }));
+
+    const dialog = await screen.findByTestId("confirm-switch");
+    expect(dialog.textContent).toContain(
+      "Opening b.json discards 1 unsaved change to a.json. Export first to keep them.",
+    );
+    // Cancel holds focus: Enter never discards the unsaved change.
+    expect(document.activeElement).toBe(screen.getByTestId("confirm-switch-cancel"));
+    fireEvent.click(screen.getByTestId("confirm-switch-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("confirm-switch")).toBeNull());
+    expect(useUiStore.getState().switchPrompt).toBeNull();
+    expect(useReviewStore.getState().source?.token).toBe("A");
   });
 });

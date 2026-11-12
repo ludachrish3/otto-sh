@@ -12,10 +12,12 @@ Covers:
 import asyncio
 import contextlib
 import fcntl
+import functools
 import json
 import logging
 import os
 import socket
+import sqlite3
 import ssl
 import urllib.error
 import urllib.request
@@ -23,26 +25,49 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
 import pytest
 import pytest_asyncio
 from _archive import _make_archive
 from _events import BLANKS
+from _requests import asgi, settle
 
 from otto.models import LabSnapshot, MonitorExport, SessionRecord
 from otto.models.monitor import EventRecord
-from otto.monitor import event_ops
+from otto.monitor import archive_edit, event_ops, review_source
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from otto.monitor.events import MonitorEvent
-from otto.monitor.export import build_db_export
-from otto.monitor.server import OBSERVED_AT_HEADER, MonitorServer, _build_app
+from otto.monitor.export import build_db_export, document_json
+from otto.monitor.review import parse_review_json
+from otto.monitor.review_source import (
+    MAX_SOURCE_UPLOAD_BYTES,
+    ReviewSource,
+    SourceSlot,
+    UnknownSessionError,
+    UploadTooLarge,
+)
+from otto.monitor.server import (
+    OBSERVED_AT_HEADER,
+    SOURCE_NAME_HEADER,
+    SOURCE_TOKEN_HEADER,
+    UNSAVED_HEADER,
+    MonitorServer,
+    _build_app,
+)
 from otto.monitor.session import new_frame
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures._source_token import FROM_MODE, MODE_PATH, FromMode, resolve_token
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.ports import reserved_port
 
 _FIXED_NOW = datetime(2030, 6, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
 """A fixed server clock for patching :func:`otto.monitor.event_ops.utc_now`."""
+
+_ARCHIVED_START = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
+"""The start of the ``.json`` review's one session, where the ``_make_archive`` one starts."""
 
 
 def _empty_collector() -> MetricCollector:
@@ -94,12 +119,21 @@ async def _request_json(
 
 
 async def _request(
-    handle: _RunningServer, method: str, path: str, payload: dict[str, object] | None
+    handle: _RunningServer,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None,
+    *,
+    token: "str | FromMode | None" = FROM_MODE,
 ) -> tuple[int, dict[str, str], dict[str, object]]:
     """POST/PATCH/DELETE against *handle*'s server: ``(status, headers, json-body)``.
 
     Header names are lowercased: HTTP names are case-insensitive, and the
     server sends them lowercase.
+
+    A write (any method but GET) carries ``SOURCE_TOKEN_HEADER``: by default
+    the token ``/api/mode`` reports for the served source, as a tab sends it;
+    ``token=None`` omits the header and a string sends that token.
 
     Every route sits behind the access-key middleware (``?key=``), attached
     here so call sites never repeat it. ``urllib`` raises ``HTTPError`` for
@@ -107,8 +141,16 @@ async def _request(
     shape instead of forcing every caller to catch it individually — these
     tests assert 2xx *and* 404/409/422/403 bodies alike.
     """
+
+    async def get_mode() -> object:
+        _, _, mode = await _request(handle, "GET", MODE_PATH, None)
+        return mode
+
+    token = await resolve_token(token, method, get_mode)
     url = f"http://127.0.0.1:{handle.port}{path}?key={handle.key}"
     headers = {"Content-Type": "application/json"} if payload is not None else {}
+    if token is not None:
+        headers[SOURCE_TOKEN_HEADER] = token
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
 
@@ -211,7 +253,7 @@ async def live_server() -> AsyncGenerator[_RunningServer, None]:
 
 @pytest_asyncio.fixture
 async def review_server() -> AsyncGenerator[_RunningServer, None]:
-    """A booted review-mode ``MonitorServer`` serving a one-session document (read-only)."""
+    """A booted review-mode ``MonitorServer`` serving a one-session ``.json`` document."""
     collector = _empty_collector()
     document = MonitorExport(
         format=1,
@@ -224,7 +266,7 @@ async def review_server() -> AsyncGenerator[_RunningServer, None]:
         mode="review",
         document=document,
         source_name="archive.json",
-        archive_path=None,  # a .json review: Task 5 keeps this permanently read-only
+        archive_path=None,  # a .json review: the document is the store
     )
     task = asyncio.create_task(server.serve())
     await server.wait_started()
@@ -325,7 +367,7 @@ class TestDeleteEndpoint:
         what ``MonitorServer.__init__`` does for a live server) and stamps
         ``collector.session_id`` itself since ``_build_app`` is called
         directly here, bypassing that constructor step — the path must
-        match for ``_mutation_guard`` to let the request through.
+        match for ``_live_guard`` to let the request through.
         """
         collector = _empty_collector()
         frame = new_frame(label=None, note=None)
@@ -334,34 +376,11 @@ class TestDeleteEndpoint:
 
         app = _build_app(collector, key="k", frame=frame, lab=LabSnapshot())
 
-        status_code = None
-        body_chunks: list[bytes] = []
-
-        async def receive():
-            return {"type": "http.request", "body": b""}
-
-        async def send(message):
-            nonlocal status_code
-            if message["type"] == "http.response.start":
-                status_code = message["status"]
-            elif message["type"] == "http.response.body":
-                body_chunks.append(message.get("body", b""))
-
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": "DELETE",
-            "path": f"/api/session/{frame.id}/event/{event.id}",
-            "query_string": b"key=k",
-            "headers": [],
-            "root_path": "",
-            "server": ("127.0.0.1", 8000),
-        }
-        await app(scope, receive, send)
+        path = f"/api/session/{frame.id}/event/{event.id}"
+        status_code, record = await asgi(app, "DELETE", path)
 
         assert status_code == 200
-        record = json.loads(b"".join(body_chunks))
+        assert record is not None
         assert record["id"] == event.id
         assert record["label"] == "test-event"
 
@@ -373,19 +392,13 @@ class TestDeleteEndpoint:
         server = MonitorServer(
             collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
         )
-        task = asyncio.create_task(server.serve())
-        await server.wait_started()
-
+        handle = await _boot(server, collector=collector)
         try:
-            url = f"http://127.0.0.1:{server._port}/api/session/{frame.id}/event/9999?key={server.key}"
-            req = urllib.request.Request(url, method="DELETE")
-            with pytest.raises(urllib.error.HTTPError) as exc_info:
-                await asyncio.to_thread(urllib.request.urlopen, req)
-            assert exc_info.value.code == 404
-            exc_info.value.close()
+            status, body = await delete_(handle, f"/api/session/{frame.id}/event/9999")
+            assert status == 404
+            assert body["error"]
         finally:
-            server.stop()
-            await task
+            await handle.aclose()
 
 
 class TestSessionEventRoutes:
@@ -568,39 +581,120 @@ class TestSessionEventRoutes:
         assert_stamped(headers)
 
     @pytest.mark.asyncio
-    async def test_review_mode_responses_carry_no_observed_at(
-        self, review_server: _RunningServer
-    ) -> None:
-        """An archive has no live window: its edits must not move its horizon to today."""
+    async def test_review_responses_carry_the_stamp(self, review_server: _RunningServer) -> None:
+        """A review write is stamped like a live one: the stamp orders it against a snapshot."""
         assert review_server.document is not None
         sid = review_server.document.sessions[0].id
-        _, headers, _ = await _request(
+        status, headers, _ = await _request(
             review_server, "POST", f"/api/session/{sid}/event", {"label": "x"}
         )
-        assert OBSERVED_AT_HEADER.lower() not in headers
+        assert status == 201
+        assert _instant(headers[OBSERVED_AT_HEADER.lower()]).tzinfo is not None
+
+
+class TestSourceState:
+    """``/api/mode`` reports the served source; a live write must name it by its token."""
 
     @pytest.mark.asyncio
-    async def test_review_mode_mutations_403(self, review_server: _RunningServer) -> None:
-        assert review_server.document is not None
-        sid = review_server.document.sessions[0].id
-        status, _ = await post_json(review_server, f"/api/session/{sid}/event", {"label": "x"})
-        assert status == 403
+    async def test_mode_reports_the_source_state(
+        self, live_server: _RunningServer, review_server: _RunningServer
+    ) -> None:
+        status, review = await _request_json(review_server, "GET", "/api/mode", None)
+        assert status == 200
+        assert (review["mode"], review["kind"], review["source"]) == (
+            "review",
+            "json",
+            "archive.json",
+        )
+        assert review["editable"] is True
+        assert (review["unsaved"], review["revision"]) == (0, 0)
+        status, live = await _request_json(live_server, "GET", "/api/mode", None)
+        assert status == 200
+        assert (live["mode"], live["kind"], live["source"]) == ("live", "live", None)
+        assert live["editable"] is True
+        for body in (review, live):
+            assert isinstance(body["token"], str)
+            assert body["token"]
+            assert _instant(body["observed_at"]).tzinfo is not None
+        assert review["token"] != live["token"]
+
+    @pytest.mark.asyncio
+    async def test_live_token_is_stable_for_the_server(self, live_server: _RunningServer) -> None:
+        _, first = await _request_json(live_server, "GET", "/api/mode", None)
+        _, again = await _request_json(live_server, "GET", "/api/mode", None)
+        assert first["token"] == again["token"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token", [None, "wrong"])
+    async def test_live_write_without_or_with_a_wrong_token_409s_source_changed(
+        self, live_server: _RunningServer, token: str | None
+    ) -> None:
+        sid = live_server.collector.session_id
+        _, mode = await _request_json(live_server, "GET", "/api/mode", None)
+        status, _, body = await _request(
+            live_server, "POST", f"/api/session/{sid}/event", {"label": "x"}, token=token
+        )
+        assert status == 409
+        assert body["code"] == "source_changed"
+        assert isinstance(body["error"], str)
+        state = body["source_state"]
+        assert isinstance(state, dict)
+        assert state["token"] == mode["token"]
+        assert state["kind"] == "live"
+        assert live_server.collector.get_events() == []
+
+    @pytest.mark.asyncio
+    async def test_live_write_with_the_token_is_accepted(self, live_server: _RunningServer) -> None:
+        sid = live_server.collector.session_id
+        status, _ = await post_json(live_server, f"/api/session/{sid}/event", {"label": "x"})
+        assert status == 201
+
+    @pytest.mark.asyncio
+    async def test_snapshot_answers_token_and_capture_headers(
+        self, live_server: _RunningServer, review_server: _RunningServer
+    ) -> None:
+        for handle in (live_server, review_server):
+            _, mode = await _request_json(handle, "GET", "/api/mode", None)
+            status, headers, body = await _request(handle, "GET", "/api/monitor_sessions", None)
+            assert status == 200
+            assert body["format"] == 1
+            assert headers[SOURCE_TOKEN_HEADER.lower()] == mode["token"]
+            stamp = _instant(headers[OBSERVED_AT_HEADER.lower()])
+            assert stamp.tzinfo is not None
+
+    @pytest.mark.asyncio
+    async def test_live_snapshot_stamp_is_the_sessions_observed_at(
+        self, live_server: _RunningServer
+    ) -> None:
+        """The header is the stamp the snapshot itself was built with, not a second read."""
+        _, headers, body = await _request(live_server, "GET", "/api/monitor_sessions", None)
+        sessions = body["sessions"]
+        assert isinstance(sessions, list)
+        assert _instant(sessions[0]["observed_at"]) == _instant(headers[OBSERVED_AT_HEADER.lower()])
+
+    @pytest.mark.asyncio
+    async def test_server_exposes_its_source_slot(
+        self, live_server: _RunningServer, review_server: _RunningServer
+    ) -> None:
+        assert live_server.server.source_slot.current is None
+        current = review_server.server.source_slot.current
+        assert current is not None
+        _, mode = await _request_json(review_server, "GET", "/api/mode", None)
+        assert current.token == mode["token"]
 
 
 class TestReviewDbEditing:
-    """Plan 5c Task 5: a review-mode ``.db`` archive is event-editable.
+    """A review-mode ``.db`` archive is event-editable.
 
-    A ``.json`` review source has no persistence target, so it stays
-    read-only (``TestSessionEventRoutes.test_review_mode_mutations_403``
-    above pins that with ``archive_path=None``); a ``.db`` source gets a
-    real archive built via ``_make_archive`` and mutations both patch the
-    served document in place (no restart needed) and persist to the archive
-    file itself (verified by re-reading it with ``build_db_export``).
+    A ``.db`` source gets a real archive built via ``_make_archive`` and
+    mutations both patch the served document in place (no restart needed)
+    and persist to the archive file itself (verified by re-reading it with
+    ``build_db_export``).
     """
 
     @pytest.mark.asyncio
     async def test_mode_advertises_editable(self, tmp_path: Path) -> None:
-        """live -> editable; .db review -> editable; .json review -> read-only."""
+        """Every source is editable: live, a .db review and a .json review."""
         collector = _empty_collector()
         frame = new_frame(label=None, note=None)
         live = MonitorServer(
@@ -623,7 +717,7 @@ class TestReviewDbEditing:
             for handle, expected in (
                 (live_handle, True),
                 (db_handle, True),
-                (json_handle, False),
+                (json_handle, True),
             ):
                 status, body = await _request_json(handle, "GET", "/api/mode", None)
                 assert status == 200
@@ -711,7 +805,7 @@ class TestReviewDbEditing:
 
 @dataclass
 class _Served:
-    """A booted server in one of the two modes, with the ids a revert test needs."""
+    """A booted server over one of the three backends, with the ids a revert test needs."""
 
     handle: _RunningServer
     sid: str
@@ -750,9 +844,9 @@ class _Served:
         )
 
 
-@pytest_asyncio.fixture(params=["live", "review"])
+@pytest_asyncio.fixture(params=["live", "db", "json"])
 async def served(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncGenerator[_Served, None]:
-    """The revert route's two backends behind one handle: live, and a ``.db`` review."""
+    """The event routes' three backends behind one handle: live, a ``.db``, a ``.json`` review."""
     if request.param == "live":
         collector = FakeCollector()
         frame = new_frame(label=None, note=None)
@@ -761,12 +855,18 @@ async def served(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncGenerat
         )
         handle = await _boot(server, collector=collector)
         yield _Served(handle, collector.session_id, "live")
-    else:
+    elif request.param == "db":
         path, sid = await asyncio.to_thread(_make_archive, tmp_path)
         handle = await _review_server(
             document=build_db_export(path), source=path, archive_path=Path(path)
         )
-        yield _Served(handle, sid, "review", archive=path)
+        yield _Served(handle, sid, "db", archive=path)
+    else:
+        document = MonitorExport(
+            format=1, sessions=[SessionRecord(id="archived", start=_ARCHIVED_START)]
+        )
+        handle = await _review_server(document=document, source="x.json", archive_path=None)
+        yield _Served(handle, "archived", "json")
     await handle.aclose()
 
 
@@ -815,7 +915,7 @@ class TestEventRevertRoute:
         handle = await _review_server(
             document=build_db_export(path), source=path, archive_path=Path(path)
         )
-        served = _Served(handle, sid, "review", archive=path)
+        served = _Served(handle, sid, "db", archive=path)
         try:
             created = await served.create()
             with _held_archive_lock(path):
@@ -832,7 +932,7 @@ class TestEventRevertRoute:
         handle = await _review_server(
             document=build_db_export(path), source=path, archive_path=Path(path)
         )
-        served = _Served(handle, sid, "review", archive=path)
+        served = _Served(handle, sid, "db", archive=path)
         try:
             created = await served.create()
             eid = created["id"]
@@ -854,7 +954,24 @@ class TestEventRevertRoute:
         created = await served.create()
         status, headers, _ = await served.revert(created["id"], created, None)
         assert status == 200
-        assert (OBSERVED_AT_HEADER.lower() in headers) == (served.mode == "live")
+        assert OBSERVED_AT_HEADER.lower() in headers
+
+    @pytest.mark.asyncio
+    async def test_delete_then_create_then_undo_delete_keeps_both(self, served: _Served) -> None:
+        """Undoing a delete after a later create puts the deleted event back beside it."""
+        a = await served.create(label="a")
+        status, deleted = await delete_(served.handle, f"{served.base}/{a['id']}")
+        assert status == 200
+        b = await served.create(label="b")
+        assert isinstance(a["id"], int)
+        assert isinstance(b["id"], int)
+        assert b["id"] > a["id"]
+        status, _, restored = await served.revert(a["id"], None, deleted)
+        assert status == 200
+        assert isinstance(restored, dict)
+        assert restored["id"] == a["id"]
+        events = await served.events()
+        assert {events[a["id"]]["label"], events[b["id"]]["label"]} == {"a", "b"}
 
     @pytest.mark.asyncio
     async def test_revert_update_publishes(self, live_server: _RunningServer) -> None:
@@ -1048,6 +1165,24 @@ class TestEventRevertRoute:
         assert status == 422
 
     @pytest.mark.asyncio
+    async def test_a_stale_token_is_refused_before_an_invalid_body(self, served: _Served) -> None:
+        """Every backend refuses in one order: the token first, then the body. The same
+        stale-token write with a body the write rule refuses answers 409 everywhere."""
+        backward = {"label": "s", "timestamp": "2026-07-18T12:01:00+00:00"}
+        backward["end_timestamp"] = "2026-07-18T12:00:00+00:00"
+        # An end with no start passes the body model; the write rule refuses
+        # it once the start resolves to now.
+        ends_in_the_past = {"label": "s", "end_timestamp": "2000-01-01T00:00:00+00:00"}
+        writes = [
+            ("POST", served.base, ends_in_the_past),
+            ("POST", f"{served.base}/1/revert", {"expect": None, "write": None}),
+            ("POST", f"{served.base}/1/revert", {"expect": None, "write": {"id": 1, **backward}}),
+        ]
+        for method, path, body in writes:
+            status, _, refused = await _request(served.handle, method, path, body, token="stale")
+            assert (status, refused["code"]) == (409, "source_changed"), (path, body)
+
+    @pytest.mark.asyncio
     async def test_revert_restore_into_unknown_session_404s(self, tmp_path: Path) -> None:
         path, _sid = await asyncio.to_thread(_make_archive, tmp_path)
         handle = await _review_server(
@@ -1064,9 +1199,525 @@ class TestEventRevertRoute:
                 },
             )
             assert status == 404
-            assert body["error"] == "unknown session"
+            assert body["error"] == str(UnknownSessionError("nope"))
         finally:
             await handle.aclose()
+
+
+@dataclass
+class _InLoop:
+    """A review app served in the test's own loop, with the collector its frames go out on."""
+
+    app: Any
+    collector: MetricCollector
+    slot: SourceSlot
+
+    @property
+    def source(self) -> ReviewSource:
+        current = self.slot.current
+        assert current is not None
+        return current
+
+
+def _in_loop(
+    document: MonitorExport, *, name: str = "x.json", archive_path: Path | None = None
+) -> _InLoop:
+    collector = _empty_collector()
+    source = ReviewSource(document, name=name, archive_path=archive_path, publish=collector.publish)
+    slot = SourceSlot(source)
+    return _InLoop(_build_app(collector, key="k", mode="review", slot=slot), collector, slot)
+
+
+def _one_event_document(event_id: int = 1) -> MonitorExport:
+    return MonitorExport(
+        format=1,
+        sessions=[
+            SessionRecord(
+                id="a",
+                start=_ARCHIVED_START,
+                events=[EventRecord(id=event_id, timestamp=_ARCHIVED_START, label="first")],
+            )
+        ],
+    )
+
+
+def _drain(queue: "asyncio.Queue[dict[str, Any]]") -> list[dict[str, Any]]:
+    frames: list[dict[str, Any]] = []
+    while not queue.empty():
+        frames.append(queue.get_nowait())
+    return frames
+
+
+SOURCE_PATH = "/api/source"
+SAVED_PATH = "/api/source/saved"
+
+_REPEATED_IDS = CHECKOUT_ROOT / "web" / "fixtures" / "repeated-ids.json"
+_REPEATED_SID = "2026-07-01T08-00-00-repeated"
+
+
+class TestReviewEvents:
+    """Event writes to a review source: one sequence over the ``.db`` and ``.json`` backends."""
+
+    @pytest.mark.asyncio
+    async def test_json_revert_takes_the_lock_once(self) -> None:
+        """Both revert legs run under ONE acquisition: a second would deadlock (asyncio's
+        lock is not re-entrant), and the bounded wait fails the test instead of hanging."""
+        rig = _in_loop(_one_event_document())
+        base = "/api/session/a/event"
+        first = rig.source.find_event("a", 1)
+        assert first is not None
+        stored = first.model_dump(mode="json")
+
+        async def bounded(body: dict[str, object]) -> tuple[int | None, Any]:
+            task = asyncio.ensure_future(asgi(rig.app, "POST", f"{base}/1/revert", body))
+            # shield: a deadlocked section never ends, so the timeout must not wait on it.
+            return await asyncio.wait_for(asyncio.shield(task), timeout=5)
+
+        status, updated = await bounded({"expect": stored, "write": {**stored, "label": "y"}})
+        assert status == 200
+        assert updated["label"] == "y"
+        status, deleted = await asgi(rig.app, "DELETE", f"{base}/1")
+        assert status == 200
+        status, restored = await bounded({"expect": None, "write": deleted})
+        assert status == 200
+        assert restored["id"] == 1
+        assert not rig.collector.mutation_lock().locked()
+
+    @pytest.mark.asyncio
+    async def test_json_edit_counts_and_publishes_in_order(self) -> None:
+        rig = _in_loop(_one_event_document())
+        queue = rig.collector.subscribe()
+        status, _ = await asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": "renamed"})
+        assert status == 200
+        fragment, frame = _drain(queue)
+        assert fragment["session"] == "a"
+        assert [e["label"] for e in fragment["events"]] == ["renamed"]
+        assert "session" not in frame
+        state = frame["source_state"]
+        assert (state["unsaved"], state["revision"]) == (1, 1)
+        assert state["token"] == rig.source.token
+        assert frame["observed_at"] == state["observed_at"]
+
+    @pytest.mark.asyncio
+    async def test_db_edit_reaches_a_second_subscriber(self, tmp_path: Path) -> None:
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        rig = _in_loop(build_db_export(path), name="x.db", archive_path=Path(path))
+        _, created = await asgi(rig.app, "POST", f"/api/session/{sid}/event", {"label": "a"})
+        first, second = rig.collector.subscribe(), rig.collector.subscribe()
+        status, _ = await asgi(
+            rig.app, "PATCH", f"/api/session/{sid}/event/{created['id']}", {"label": "b"}
+        )
+        assert status == 200
+        for queue in (first, second):
+            [fragment] = _drain(queue)
+            assert fragment["session"] == sid
+            assert [e["label"] for e in fragment["events"]] == ["b"]
+        assert rig.source.revision == 0
+
+    @pytest.mark.asyncio
+    async def test_db_read_repair_publishes_but_is_not_counted(self, tmp_path: Path) -> None:
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        rig = _in_loop(build_db_export(path), name="x.db", archive_path=Path(path))
+        base = f"/api/session/{sid}/event"
+        _, created = await asgi(rig.app, "POST", base, {"label": "mine"})
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("UPDATE events SET label = 'theirs' WHERE id = ?", (created["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        queue = rig.collector.subscribe()
+        status, body = await asgi(
+            rig.app,
+            "POST",
+            f"{base}/{created['id']}/revert",
+            {"expect": created, "write": {**created, "label": "undone"}},
+        )
+        assert status == 409
+        assert body["code"] == "changed"
+        [repair] = _drain(queue)
+        assert [e["label"] for e in repair["events"]] == ["theirs"]
+        assert (rig.source.revision, rig.source.unsaved) == (0, 0)
+
+    @pytest.mark.asyncio
+    async def test_db_write_refused_as_changed_repairs_and_is_not_counted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The row changes between the read and the guarded write: the archive's
+        refusal repairs the document to the row it carries, published, never counted."""
+        path, sid = await asyncio.to_thread(_make_archive, tmp_path)
+        rig = _in_loop(build_db_export(path), name="x.db", archive_path=Path(path))
+        base = f"/api/session/{sid}/event"
+        _, created = await asgi(rig.app, "POST", base, {"label": "mine"})
+        real_update = archive_edit.update_event
+
+        def changed_first(*args: Any, **kwargs: Any) -> bool:
+            with contextlib.closing(sqlite3.connect(path)) as conn:
+                conn.execute("UPDATE events SET label = 'theirs' WHERE id = ?", (created["id"],))
+                conn.commit()
+            return real_update(*args, **kwargs)
+
+        monkeypatch.setattr(archive_edit, "update_event", changed_first)
+        queue = rig.collector.subscribe()
+        status, body = await asgi(rig.app, "PATCH", f"{base}/{created['id']}", {"label": "edit"})
+        assert status == 409
+        assert body["code"] == "changed"
+        assert body["current"]["label"] == "theirs"
+        [repair] = _drain(queue)
+        assert [e["label"] for e in repair["events"]] == ["theirs"]
+        found = rig.source.find_event(sid, created["id"])
+        assert found is not None
+        assert found.label == "theirs"
+        assert (rig.source.revision, rig.source.unsaved) == (0, 0)
+
+    @pytest.mark.asyncio
+    async def test_write_queued_behind_a_switch_is_refused(self) -> None:
+        """The token is checked inside the lock, so a write that queued behind a source
+        switch (the real upload route) is refused against the new source, never applied."""
+        rig = _in_loop(_one_event_document())
+        old_token = rig.source.token
+        lock = rig.collector.mutation_lock()
+        await lock.acquire()
+        switching = asyncio.ensure_future(_upload(rig, _one_event_document()))
+        await settle()
+        patch = asyncio.ensure_future(
+            asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": "late"}, token=old_token)
+        )
+        await settle()
+        assert not switching.done()
+        assert not patch.done()
+        lock.release()
+        status, state = await switching
+        assert status == 200
+        replacement = rig.source
+        assert replacement.token == state["token"] != old_token
+        before = replacement.body()
+        status, body = await patch
+        assert status == 409
+        assert body["code"] == "source_changed"
+        assert body["source_state"]["token"] == replacement.token
+        assert replacement.body() == before
+        assert replacement.revision == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token", [None, "wrong"])
+    async def test_review_write_without_or_with_a_wrong_token_409s(self, token: str | None) -> None:
+        rig = _in_loop(_one_event_document())
+        before = rig.source.body()
+        status, body = await asgi(
+            rig.app, "POST", "/api/session/a/event", {"label": "x"}, token=token
+        )
+        assert status == 409
+        assert body["code"] == "source_changed"
+        assert body["source_state"]["token"] == rig.source.token
+        assert rig.source.body() == before
+
+    @pytest.mark.asyncio
+    async def test_json_write_to_an_unknown_session_404s(self) -> None:
+        rig = _in_loop(_one_event_document())
+        status, body = await asgi(rig.app, "POST", "/api/session/nope/event", {"label": "x"})
+        assert status == 404
+        assert body["error"] == str(UnknownSessionError("nope"))
+
+    @pytest.mark.asyncio
+    async def test_view_only_id_write_403s(self) -> None:
+        document = parse_review_json(_REPEATED_IDS.read_bytes(), origin=str(_REPEATED_IDS))
+        rig = _in_loop(document, name=_REPEATED_IDS.name)
+        before = rig.source.body()
+        one = f"/api/session/{_REPEATED_SID}/event/3"
+        for method, body in (("PATCH", {"label": "x"}), ("DELETE", None)):
+            status, refused = await asgi(rig.app, method, one, body)
+            assert status == 403
+            assert refused == {"error": refused["error"], "code": "view_only"}
+        assert rig.source.body() == before
+        assert rig.source.unsaved == 0
+
+    @pytest.mark.asyncio
+    async def test_create_beside_repeated_ids_gets_the_next_id(self) -> None:
+        document = parse_review_json(_REPEATED_IDS.read_bytes(), origin=str(_REPEATED_IDS))
+        rig = _in_loop(document, name=_REPEATED_IDS.name)
+        status, created = await asgi(
+            rig.app, "POST", f"/api/session/{_REPEATED_SID}/event", {"label": "x"}
+        )
+        assert status == 201
+        assert created["id"] == 10
+
+    @pytest.mark.asyncio
+    async def test_create_past_the_id_ceiling_422s_and_counts_nothing(self) -> None:
+        rig = _in_loop(_one_event_document(event_ops.MAX_SAFE_EVENT_ID))
+        before = rig.source.body()
+        status, body = await asgi(rig.app, "POST", "/api/session/a/event", {"label": "x"})
+        assert status == 422
+        assert set(body) == {"error"}
+        assert rig.source.unsaved == 0
+        assert rig.source.body() == before
+
+
+async def _upload(
+    rig: "_InLoop | Any",
+    document: "MonitorExport | bytes | list[bytes]",
+    *,
+    token: "str | FromMode | None" = FROM_MODE,
+    unsaved: "str | None" = "0",
+    name: "str | None" = "y.json",
+    declared: "int | None" = None,
+) -> tuple[int | None, Any]:
+    """POST *document* (a model, raw bytes, or chunks) to ``/api/source`` as a switch confirmation.
+
+    ``unsaved`` and ``name`` are the confirmation's ``UNSAVED_HEADER`` and
+    (percent-encoded) ``SOURCE_NAME_HEADER``; ``None`` omits the header.
+    ``declared`` sends that ``Content-Length`` with chunks (none by default).
+    """
+    app = rig.app if isinstance(rig, _InLoop) else rig
+    content = document_json(document).encode() if isinstance(document, MonitorExport) else document
+    headers: dict[str, str] = {} if declared is None else {"content-length": str(declared)}
+    if unsaved is not None:
+        headers[UNSAVED_HEADER] = unsaved
+    if name is not None:
+        headers[SOURCE_NAME_HEADER] = quote(name)
+    return await asgi(app, "POST", SOURCE_PATH, token=token, content=content, headers=headers)
+
+
+def _two_session_ids_document() -> MonitorExport:
+    """A valid model whose two sessions share an id: the upload validator refuses it."""
+    one = _one_event_document().sessions[0]
+    return MonitorExport(format=1, sessions=[one, one.model_copy()])
+
+
+async def _ack(app: Any, token: str, revision: int) -> tuple[int | None, Any]:
+    return await asgi(app, "POST", SAVED_PATH, {"token": token, "revision": revision}, token=None)
+
+
+def _not_json_app(kind: str, tmp_path: Path) -> Any:
+    """An app serving a source no upload replaces: a live one, or a ``.db`` archive."""
+    if kind == "live":
+        return _build_app(_empty_collector(), key="k", mode="live")
+    path, _ = _make_archive(tmp_path)
+    return _in_loop(build_db_export(path), name="x.db", archive_path=Path(path)).app
+
+
+class TestSourceSwitch:
+    """``POST /api/source`` (switch to an uploaded ``.json``) and ``/api/source/saved``."""
+
+    @pytest.mark.asyncio
+    async def test_upload_switches_every_tab(self) -> None:
+        rig = _in_loop(_one_event_document())
+        old_token = rig.source.token
+        tabs = [rig.collector.subscribe(), rig.collector.subscribe()]
+        status, state = await _upload(rig, _one_event_document(7))
+        assert status == 200
+        new_token = rig.source.token
+        assert new_token != old_token
+        assert (state["token"], state["source"], state["kind"]) == (new_token, "y.json", "json")
+        assert (state["unsaved"], state["revision"]) == (0, 0)
+        for tab in tabs:
+            [frame] = _drain(tab)
+            assert set(frame) == {"format", "source_state", "observed_at"}
+            assert frame["source_state"]["token"] == new_token
+            assert frame["observed_at"] <= state["observed_at"]
+        assert rig.source.find_event("a", 7) is not None
+        _, mode = await asgi(rig.app, "GET", MODE_PATH)
+        assert mode["token"] == new_token
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["live", "db"])
+    async def test_upload_refused_on_live_and_db_before_reading(
+        self, kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refused before the gate and the body: an over-limit body still answers 403, not 413."""
+        app = await asyncio.to_thread(_not_json_app, kind, tmp_path)
+        monkeypatch.setattr(
+            review_source, "read_upload", functools.partial(review_source.read_upload, limit=10)
+        )
+        status, body = await _upload(app, b"x" * 100)
+        assert status == 403
+        assert body == {"error": body["error"], "code": "not_switchable"}
+
+    @pytest.mark.asyncio
+    async def test_upload_with_stale_token_or_unsaved_409s(self) -> None:
+        rig = _in_loop(_one_event_document())
+        await asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": "edited"})
+        served, before = rig.source, rig.source.body()
+        queue = rig.collector.subscribe()
+        refused: list[tuple[str | FromMode, str | None]] = [
+            ("wrong", "1"),
+            (FROM_MODE, "0"),
+            (FROM_MODE, None),
+        ]
+        for token, unsaved in refused:
+            status, body = await _upload(rig, _one_event_document(), token=token, unsaved=unsaved)
+            assert status == 409
+            assert body["code"] == "source_changed"
+            assert body["source_state"]["token"] == served.token
+            assert body["source_state"]["unsaved"] == 1
+        assert rig.source is served
+        assert (served.body(), served.unsaved) == (before, 1)
+        assert _drain(queue) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "content",
+        [b"not json", document_json(_two_session_ids_document()).encode()],
+        ids=["unparsable", "repeated-session-id"],
+    )
+    async def test_invalid_upload_leaves_source_and_unsaved_untouched(self, content: bytes) -> None:
+        rig = _in_loop(_one_event_document())
+        await asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": "edited"})
+        served, token, before = rig.source, rig.source.token, rig.source.body()
+        queue = rig.collector.subscribe()
+        status, body = await _upload(rig, content, unsaved="1", name="bad.json")
+        assert status == 422
+        assert set(body) == {"error"}
+        assert "bad.json" in body["error"]
+        assert rig.source is served
+        assert (served.token, served.body(), served.unsaved) == (token, before, 1)
+        assert _drain(queue) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "content",
+        [b"[" * 11, [b"[" * 6, b"[" * 6]],
+        ids=["content-length", "chunked"],
+    )
+    async def test_oversized_upload_413s(
+        self, content: "bytes | list[bytes]", monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rig = _in_loop(_one_event_document())
+        served = rig.source
+        monkeypatch.setattr(
+            review_source, "read_upload", functools.partial(review_source.read_upload, limit=10)
+        )
+        status, body = await _upload(rig, content)
+        assert status == 413
+        assert body == {"error": body["error"], "code": "too_large"}
+        assert rig.source is served
+        monkeypatch.undo()
+        status, _ = await _upload(rig, _one_event_document())
+        assert status == 200, "a refused upload releases the gate"
+
+    @pytest.mark.asyncio
+    async def test_the_route_reads_under_the_real_upload_limit(self) -> None:
+        """A declared length past ``MAX_SOURCE_UPLOAD_BYTES`` is refused before the body is read.
+
+        The route's own limit, unpatched: nothing that size is allocated, the
+        declared length alone is refused, naming the real limit.
+        """
+        rig = _in_loop(_one_event_document())
+        served = rig.source
+        status, body = await _upload(rig, [b"{}"], declared=MAX_SOURCE_UPLOAD_BYTES + 1)
+        assert status == 413
+        assert body == {"error": str(UploadTooLarge(MAX_SOURCE_UPLOAD_BYTES)), "code": "too_large"}
+        assert rig.source is served
+
+    @pytest.mark.asyncio
+    async def test_two_concurrent_uploads_are_serialised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rig = _in_loop(_one_event_document())
+        token = rig.source.token
+        real_read = review_source.read_upload
+        in_flight = 0
+        most = 0
+
+        async def counted_read(request: Any, **kwargs: Any) -> bytes:
+            nonlocal in_flight, most
+            in_flight += 1
+            most = max(most, in_flight)
+            try:
+                await settle()
+                return await real_read(request, **kwargs)
+            finally:
+                in_flight -= 1
+
+        monkeypatch.setattr(review_source, "read_upload", counted_read)
+        first, second = await asyncio.gather(
+            _upload(rig, _one_event_document(), token=token),
+            _upload(rig, _one_event_document(), token=token),
+        )
+        assert first[0] == 200
+        assert second[0] == 409
+        assert second[1]["code"] == "source_changed"
+        assert second[1]["source_state"]["token"] == first[1]["token"]
+        assert most == 1
+
+    @pytest.mark.asyncio
+    async def test_non_ascii_name_round_trips(self) -> None:
+        rig = _in_loop(_one_event_document())
+        status, state = await _upload(rig, _one_event_document(), name="messung-öl.json")
+        assert status == 200
+        assert state["source"] == "messung-öl.json"
+        _, mode = await asgi(rig.app, "GET", MODE_PATH)
+        assert mode["source"] == "messung-öl.json"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", [None, "", "\x1b\n"], ids=["absent", "empty", "unprintable"])
+    async def test_upload_without_a_name_is_upload_json(self, name: "str | None") -> None:
+        rig = _in_loop(_one_event_document())
+        status, state = await _upload(rig, _one_event_document(), name=name)
+        assert status == 200
+        assert state["source"] == "upload.json"
+
+    @pytest.mark.asyncio
+    async def test_upload_name_drops_non_printable_characters(self) -> None:
+        """No control sequence in the name can reach the terminal's unsaved-changes warning."""
+        rig = _in_loop(_one_event_document())
+        status, state = await _upload(rig, _one_event_document(), name="ev\x1b[2Jil\n.json")
+        assert status == 200
+        assert state["source"] == "ev[2Jil.json"
+        assert rig.source.name == "ev[2Jil.json"
+
+    @pytest.mark.asyncio
+    async def test_ack_lowers_only_what_the_file_covered(self) -> None:
+        rig = _in_loop(_one_event_document())
+        for label in ("one", "two", "three"):
+            await asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": label})
+        token = rig.source.token
+        queue = rig.collector.subscribe()
+        status, state = await _ack(rig.app, token, 2)
+        assert status == 200
+        assert (state["unsaved"], state["revision"]) == (1, 3)
+        [frame] = _drain(queue)
+        assert frame["source_state"]["unsaved"] == 1
+        status, state = await _ack(rig.app, token, 2)
+        assert (status, state["unsaved"]) == (200, 1)
+        assert _drain(queue) == [], "a repeated acknowledgement changes nothing"
+        status, state = await _ack(rig.app, token, 99)
+        assert (status, state["unsaved"]) == (200, 0)
+        [frame] = _drain(queue)
+        assert frame["source_state"]["unsaved"] == 0
+
+    @pytest.mark.asyncio
+    async def test_ack_with_a_stale_token_409s_and_changes_nothing(self) -> None:
+        rig = _in_loop(_one_event_document())
+        await asgi(rig.app, "PATCH", "/api/session/a/event/1", {"label": "edited"})
+        queue = rig.collector.subscribe()
+        status, body = await _ack(rig.app, "stale", 1)
+        assert status == 409
+        assert body["code"] == "source_changed"
+        assert body["source_state"]["token"] == rig.source.token
+        assert rig.source.unsaved == 1
+        assert _drain(queue) == []
+
+    @pytest.mark.asyncio
+    async def test_ack_on_live_answers_the_unchanged_state(self, tmp_path: Path) -> None:
+        app = await asyncio.to_thread(_not_json_app, "live", tmp_path)
+        _, mode = await asgi(app, "GET", MODE_PATH)
+        status, state = await _ack(app, "anything", 5)
+        assert status == 200
+        assert {**state, "observed_at": None} == {**mode, "observed_at": None}
+
+    @pytest.mark.asyncio
+    async def test_ack_on_db_is_a_no_op_its_counts_clamp_to(self, tmp_path: Path) -> None:
+        """A ``.db`` write counts nothing an export saves: its revision stays 0, the ack clamps."""
+        app = await asyncio.to_thread(_not_json_app, "db", tmp_path)
+        _, mode = await asgi(app, "GET", MODE_PATH)
+        status, state = await _ack(app, mode["token"], 5)
+        assert status == 200
+        assert {**state, "observed_at": None} == {**mode, "observed_at": None}
+        assert (state["unsaved"], state["revision"]) == (0, 0)
+        status, body = await _ack(app, "stale", 5)
+        assert status == 409
+        assert body["code"] == "source_changed"
 
 
 def test_force_stop_before_serve_is_noop() -> None:
@@ -1488,9 +2139,8 @@ class TestMonitorSessionsEndpoint:
     async def test_live_mode_with_no_session_returns_404(self) -> None:
         """A live server built without frame/lab has no session to serve.
 
-        Both in-tree consumers that build a bare ``DashboardHarness``/
-        ``MonitorServer`` (``shell_dash`` in the dashboard e2e conftest, and
-        ``scripts/capture_docs_media.py``) get exactly this: the default
+        A bare ``DashboardHarness``/``MonitorServer`` (``bare_live_dash`` in
+        the dashboard e2e conftest) gets exactly this: the default
         ``mode="live"`` with ``frame=None``/``lab=None``. Before this fix, that
         combination raised ``RuntimeError`` from inside the route handler —
         an uncaught 500 + uvicorn traceback on every page load through either

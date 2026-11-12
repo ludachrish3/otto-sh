@@ -7,6 +7,7 @@ import type { MonitorSessionFragment } from "../api/export.gen";
 import { observedAtMicros } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs } from "../data/time";
+import { sourceState } from "./_sourceState";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DRIFT = readFileSync(join(__dir, "../../fixtures/drift.json"), "utf-8");
@@ -22,8 +23,40 @@ function reset() {
     activeSessionId: null,
     range: null,
     windowMs: 900_000,
+    mode: null,
     editable: false,
+    source: null,
+    pendingSource: null,
+    lastSourceStamp: null,
+    sourceKindUnresolved: false,
+    resyncUnresolved: false,
+    covered: null,
+    sourceToken: null,
   });
+}
+
+/** A resync's install (installSnapshot, not fresh) of `text`: the snapshot
+ * captured at `captured`, spending the replay `token` (a new one, with
+ * nothing logged, by default), as a source in `mode` (live by default). */
+function resync(
+  text: string,
+  opts: {
+    name?: string;
+    captured?: string | null;
+    token?: number;
+    mode?: "live" | "review";
+  } = {},
+): boolean {
+  const { actions } = useReviewStore.getState();
+  return (
+    actions.installSnapshot(text, opts.name ?? "live", {
+      replayToken: opts.token ?? actions.beginResync(),
+      captured: opts.captured ?? null,
+      fresh: false,
+      state: sourceState({ mode: opts.mode ?? "live" }),
+      holds: 0,
+    }) !== "invalid"
+  );
 }
 
 describe("reviewStore", () => {
@@ -49,13 +82,13 @@ describe("reviewStore", () => {
     expect(s.sourceName).toBe("minimal.json");
   });
 
-  // Plan 5b follow-ups #3: resyncMonitorSessions (the stream's reconnect
-  // path, data/stream.ts's onerror -> resync -> reopen) must preserve a
+  // Plan 5b follow-ups #3: a resync (installSnapshot, not fresh: the
+  // stream's reconnect path, data/source.ts's syncFromServer) must preserve a
   // paused view across a transient blip, but NOT strand the shell forever
   // when the monitor server actually restarted mid-tab and handed back a
   // wholly different session set — the old id resolves to nothing, and
   // nothing else re-derives a valid selection.
-  describe("resyncMonitorSessions", () => {
+  describe("installSnapshot as a resync (not fresh)", () => {
     it("id still resolves: range and activeSessionId survive untouched", () => {
       useReviewStore.getState().actions.importMonitorSessions(DRIFT, "drift.json");
       const s2 = useReviewStore.getState().sessions[1].id;
@@ -64,7 +97,7 @@ describe("reviewStore", () => {
 
       // A resync of the SAME document: every id (including s2) still
       // resolves in the new snapshot.
-      const ok = useReviewStore.getState().actions.resyncMonitorSessions(DRIFT, "drift.json");
+      const ok = resync(DRIFT, { name: "drift.json" });
 
       expect(ok).toBe(true);
       const s = useReviewStore.getState();
@@ -82,7 +115,7 @@ describe("reviewStore", () => {
 
       // A resync against MINIMAL: a server restart's fresh snapshot with a
       // completely different (single) session id — s2 resolves to nothing.
-      const ok = useReviewStore.getState().actions.resyncMonitorSessions(MINIMAL, "minimal.json");
+      const ok = resync(MINIMAL, { name: "minimal.json" });
 
       expect(ok).toBe(true);
       const s = useReviewStore.getState();
@@ -98,7 +131,7 @@ describe("reviewStore", () => {
       useReviewStore.getState().actions.setRange({ from: 100, to: 200 });
 
       const empty = JSON.stringify({ format: 1, sessions: [] });
-      const ok = useReviewStore.getState().actions.resyncMonitorSessions(empty, "empty.json");
+      const ok = resync(empty, { name: "empty.json" });
 
       expect(ok).toBe(true);
       const s = useReviewStore.getState();
@@ -136,13 +169,13 @@ describe("reviewStore", () => {
         };
         doc.sessions[0].metrics.push(metric);
         const expected = doc.sessions[0].metrics.length;
-        expect(actions.resyncMonitorSessions(JSON.stringify(doc), "live", token)).toBe(true);
+        expect(resync(JSON.stringify(doc), { token })).toBe(true);
         const s = useReviewStore.getState().sessions[0];
         expect(s.events.map((e) => e.id)).toEqual([1]);
         expect(s.metrics).toHaveLength(expected);
       });
 
-      it("replays event upserts and deletes, never metric rows, and the log ends with the apply", () => {
+      it("replays event upserts, deletes and metric rows stamped after the capture, and the log ends with the apply", () => {
         const { actions } = useReviewStore.getState();
         actions.importMonitorSessions(withEvents([event(1), event(2)]), "live");
         const sid = useReviewStore.getState().sessions[0].id;
@@ -166,14 +199,17 @@ describe("reviewStore", () => {
         const snapshot = JSON.stringify(doc);
         const metricsInSnapshot = (JSON.parse(snapshot) as { sessions: { metrics: unknown[] }[] })
           .sessions[0].metrics.length;
-        expect(actions.resyncMonitorSessions(snapshot, "live", token)).toBe(true);
+        expect(resync(snapshot, { token, captured: capturedAt })).toBe(true);
         let s = useReviewStore.getState().sessions[0];
         expect(s.events.map((e) => e.id).sort()).toEqual([1, 3]);
-        expect(s.metrics).toHaveLength(metricsInSnapshot);
+        // The stream stays open while the snapshot is in flight, so a metric
+        // row stamped after the capture is not in it: it is replayed, once.
+        expect(s.metrics).toHaveLength(metricsInSnapshot + 1);
         // The token is spent: a later resync with it replays nothing.
-        expect(actions.resyncMonitorSessions(snapshot, "live", token)).toBe(true);
+        expect(resync(snapshot, { token, captured: capturedAt })).toBe(true);
         s = useReviewStore.getState().sessions[0];
         expect(s.events.map((e) => e.id).sort()).toEqual([1, 2]);
+        expect(s?.metrics).toHaveLength(metricsInSnapshot);
       });
 
       it("resync reseeds stamps from the snapshot", () => {
@@ -191,7 +227,7 @@ describe("reviewStore", () => {
         const capturedAt = "2026-07-01T08:31:00.000001+00:00";
         const doc = JSON.parse(withEvents([event(1)])) as { sessions: Record<string, unknown>[] };
         for (const session of doc.sessions) session["observed_at"] = capturedAt;
-        expect(actions.resyncMonitorSessions(JSON.stringify(doc), "live", token)).toBe(true);
+        expect(resync(JSON.stringify(doc), { token, captured: capturedAt })).toBe(true);
         let s = useReviewStore.getState().sessions[0];
         const floor = observedAtMicros(capturedAt);
         expect(s.eventFloor).toBe(floor);
@@ -216,13 +252,68 @@ describe("reviewStore", () => {
         expect(useReviewStore.getState().sessions[0].events.map((e) => e.id)).toEqual([1]);
       });
 
+      it("only a live tab's stamps move the horizon; a review tab's still order events", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(withEvents([event(1)]), "run.json");
+        const first = () => {
+          const s = useReviewStore.getState().sessions[0];
+          if (s === undefined) throw new Error("no session");
+          return s;
+        };
+        const sid = first().id;
+        const horizon = first().observedMs;
+        const stamped = (label: string, at: string) =>
+          actions.appendFragment({
+            format: 1,
+            session: sid,
+            events: [{ ...event(1), label }],
+            observed_at: at,
+          });
+        useReviewStore.setState({ mode: "review" });
+        stamped("newer", "2026-07-01T09:30:00.000002+00:00");
+        stamped("older", "2026-07-01T09:30:00.000001+00:00");
+        expect(first().events.map((e) => e.label)).toEqual(["newer"]);
+        expect(first().observedMs).toBe(horizon);
+        useReviewStore.setState({ mode: "live" });
+        stamped("live", "2026-07-01T09:30:00.000003+00:00");
+        expect(first().observedMs).toBe(Date.parse("2026-07-01T09:30:00Z"));
+      });
+
+      it("the snapshot's capture stamp is every session's ordering floor", () => {
+        const capturedAt = "2026-07-01T09:00:00.000001+00:00";
+        expect(resync(withEvents([event(1)]), { captured: capturedAt })).toBe(true);
+        for (const s of useReviewStore.getState().sessions) {
+          expect(s.eventFloor).toBe(observedAtMicros(capturedAt));
+        }
+      });
+
+      it.each([
+        ["live", Date.parse("2026-07-01T09:30:00Z")],
+        ["review", null],
+      ] as const)(
+        "a %s install's replay follows the installed source's mode, not the tab's",
+        (mode, raised) => {
+          const { actions } = useReviewStore.getState();
+          actions.importMonitorSessions(MINIMAL, "run.json");
+          const before = useReviewStore.getState().sessions[0]?.observedMs;
+          const sid = useReviewStore.getState().sessions[0]?.id ?? "";
+          const token = actions.beginResync();
+          // Applied while the tab holds no server source: no horizon move yet.
+          actions.appendFragment({ format: 1, session: sid, observed_at: "2026-07-01T09:30:00Z" });
+          expect(useReviewStore.getState().sessions[0]?.observedMs).toBe(before);
+          expect(resync(MINIMAL, { token, captured: "2026-07-01T09:00:00Z", mode })).toBe(true);
+          expect(useReviewStore.getState().sessions[0]?.observedMs).toBe(raised ?? before);
+        },
+      );
+
       it("never lowers a kept session's observedMs", () => {
         const { actions } = useReviewStore.getState();
         actions.importMonitorSessions(MINIMAL, "live");
+        useReviewStore.setState({ mode: "live" });
         const sid = useReviewStore.getState().sessions[0].id;
         const later = "2026-07-01T09:30:00Z";
         actions.appendFragment({ format: 1, session: sid, observed_at: later });
-        expect(actions.resyncMonitorSessions(MINIMAL, "live")).toBe(true);
+        expect(resync(MINIMAL)).toBe(true);
         expect(useReviewStore.getState().sessions[0].observedMs).toBe(Date.parse(later));
       });
     });
@@ -465,16 +556,47 @@ describe("reviewStore", () => {
     });
   });
 
-  // Plan 5c: /api/mode's editable flag and the mutation-failure warnings
-  // channel both land directly on the store (bootstrap.ts and eventApi.ts
-  // are the real callers; this is the store-level unit case for each).
-  describe("setEditable / addWarning (Plan 5c)", () => {
-    it("setEditable stores the flag verbatim", () => {
-      expect(useReviewStore.getState().editable).toBe(false); // reset()'s default
-      useReviewStore.getState().actions.setEditable(true);
-      expect(useReviewStore.getState().editable).toBe(true);
-      useReviewStore.getState().actions.setEditable(false);
+  // The source state and the mutation-failure warnings channel both land
+  // directly on the store (data/source.ts and eventApi.ts are the real
+  // callers; this is the store-level unit case for each).
+  describe("setSourceState / setPendingSource / addWarning", () => {
+    const state = (token: string, editable = true) => ({
+      mode: "review" as const,
+      kind: "json" as const,
+      source: `${token}.json`,
+      token,
+      editable,
+      unsaved: 2,
+      revision: 5,
+      observed_at: "2026-07-18T12:00:00.000010+00:00",
+    });
+
+    it("the installed source decides mode, token, kind, counts and editable", () => {
+      const { actions } = useReviewStore.getState();
+      actions.setSourceState(state("a"));
+      let s = useReviewStore.getState();
+      expect([s.mode, s.sourceToken, s.sourceKind, s.unsaved, s.revision, s.editable]).toEqual([
+        "review",
+        "a",
+        "json",
+        2,
+        5,
+        true,
+      ]);
+      expect(s.lastSourceStamp).toBe(observedAtMicros("2026-07-18T12:00:00.000010+00:00"));
+      actions.setSourceState(null);
+      s = useReviewStore.getState();
+      expect([s.mode, s.sourceToken, s.sourceKind, s.editable]).toEqual([null, null, null, false]);
+    });
+
+    it("a pending source makes the tab read-only until it is cleared", () => {
+      const { actions } = useReviewStore.getState();
+      actions.setSourceState(state("a"));
+      actions.setPendingSource(state("b"));
       expect(useReviewStore.getState().editable).toBe(false);
+      expect(useReviewStore.getState().sourceToken).toBe("a");
+      actions.setPendingSource(null);
+      expect(useReviewStore.getState().editable).toBe(true);
     });
 
     it("addWarning appends to the existing warnings channel without clobbering it", () => {
@@ -519,14 +641,14 @@ describe("reviewStore", () => {
       expect(actions.importMonitorSessions(snapshot(), "live")).toBe(true);
       expect(useReviewStore.getState().sessions[0].endMs).toBe(T);
       expect(visible()).toBe(true);
-      expect(actions.resyncMonitorSessions(snapshot(), "live")).toBe(true);
+      expect(resync(snapshot())).toBe(true);
       expect(visible()).toBe(true);
     });
 
     it("pause after a mark keeps it visible, and resume follows again", () => {
       const { actions } = useReviewStore.getState();
       actions.importMonitorSessions(MINIMAL, "live");
-      actions.setMode("live");
+      useReviewStore.setState({ mode: "live" });
       const sid = useReviewStore.getState().sessions[0].id;
       actions.appendFragment({
         format: 1,

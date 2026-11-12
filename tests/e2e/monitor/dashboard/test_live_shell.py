@@ -26,7 +26,7 @@ from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 from tests._fixtures._time_mirror import format_outage
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.e2e.monitor.dashboard.test_marking import _drag, _open_palette_command
+from tests.e2e.monitor.dashboard._file_import import settle_blob_reads, track_blob_reads
 
 pytestmark = [
     pytest.mark.hostless,
@@ -460,45 +460,29 @@ def _boot_live_with_r1(page: Page, dash: DashboardHarness[FakeCollector]) -> Non
     expect(_tid(page, "mark-button")).to_be_visible()  # live and editable
 
 
-def test_import_while_live_switches_to_review(
+def test_import_is_not_offered_while_live(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector]
 ) -> None:
-    """Importing a file while live makes the file the only data source
-    (#873): the shell drops to read-only review -- the review bar appears
-    and the live marking chrome is gone."""
+    """A live URL never offers Import (#958): the overflow menu has no Import
+    row, and a file handed to the import input anyway is ignored -- the shell
+    stays live and editable, with no review bar and no switch prompt."""
     _boot_live_with_r1(page, live_stream_dash)
 
+    _tid(page, "overflow-menu").click()
+    expect(_tid(page, "menu-theme")).to_be_visible()
+    expect(_tid(page, "menu-import")).to_have_count(0)
+    page.keyboard.press("Escape")
+
+    # Settle point: record every Blob read the import starts, so the checks
+    # below run only once the shell's own file.text() has resolved (its
+    # continuation, which decides the import, is queued ahead of ours) and
+    # two frames have let React commit whatever that continuation set.
+    track_blob_reads(page)
     _tid(page, "import-input").set_input_files(_KITCHEN_SINK)
+    reads = settle_blob_reads(page)
+    assert reads >= 1, "the import never read the file, so the checks below prove nothing"
 
-    expect(_tid(page, "review-bar")).to_be_visible()
-    expect(_tid(page, "mark-button")).to_have_count(0)
-
-
-def test_import_while_sweep_armed_cannot_open_editor(
-    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
-) -> None:
-    """A sweep armed against the live server does not survive a file import
-    (#873): dragging across the imported file's chart afterwards zooms and
-    never opens the event editor."""
-    _boot_live_with_r1(page, live_stream_dash)
-    _tid(page, "subject-link-r1").click()
-    _tid(page, "subject-page").wait_for()
-    _open_palette_command(page, "Sweep", "action-sweep-span")
-    expect(_tid(page, "sweep-chip")).to_be_visible()
-
-    _tid(page, "import-input").set_input_files(_KITCHEN_SINK)
-    expect(_tid(page, "review-bar")).to_be_visible()
-
-    page.goto(f"{live_stream_dash.url}#/host/chassis-a-lc1-1")
-    panel = _tid(page, "chart-panel-cpu")
-    panel.locator("canvas").wait_for()
-    expect(panel).to_have_attribute("data-echarts-window-to", re.compile(r"\d+"))
-    before_to = panel.get_attribute("data-echarts-window-to")
-    box = panel.bounding_box()
-    assert box is not None
-    _drag(page, box, 0.25, 0.7)
-
-    # The drag landed as a plain zoom-select (an armed sweep opens the editor
-    # instead and never zooms), so the editor's absence below is not vacuous.
-    expect(panel).not_to_have_attribute("data-echarts-window-to", before_to or "")
-    expect(_tid(page, "event-editor")).to_have_count(0)
+    expect(_tid(page, "mark-button")).to_be_visible()
+    expect(_tid(page, "subject-link-r1")).to_be_visible()
+    expect(_tid(page, "review-bar")).to_have_count(0)
+    expect(_tid(page, "confirm-switch")).to_have_count(0)

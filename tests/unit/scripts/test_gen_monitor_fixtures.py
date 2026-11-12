@@ -58,7 +58,8 @@ def test_documents_round_trip_and_stems():
     # minimal: web/src/__tests__/reviewbar.test.tsx, reviewstore.test.ts,
     #   shell.test.tsx, bootstrap.test.ts, events_panel.test.tsx; the dashboard
     #   e2e conftest (tests/e2e/monitor/dashboard/conftest.py) reads
-    #   web/fixtures/minimal.json directly to build shell_dash; and
+    #   web/fixtures/minimal.json directly to build the review boot document
+    #   review_dash serves (_review_boot_document); and
     #   _import_fixture(page, "minimal.json") calls in test_review_shell.py.
     # drift: web/src/__tests__/reviewbar.test.tsx, reviewstore.test.ts; and
     #   _import_fixture(page, "drift.json") in test_review_shell.py.

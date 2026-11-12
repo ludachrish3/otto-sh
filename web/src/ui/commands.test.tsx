@@ -75,6 +75,7 @@ afterEach(() => {
     windowMs: 900_000,
     editable: false,
     warnings: [],
+    source: null,
   });
   useUiStore.setState({
     paletteOpen: false,
@@ -135,6 +136,44 @@ describe("useCommands — review/import mode", () => {
     seedStore(null);
     const { result } = renderHook(() => useCommands());
     expect(result.current.find((c) => c.id === "action-theme")?.binding).toBeUndefined();
+  });
+
+  it("Import is not offered on live or db sources", () => {
+    seedStore(null);
+    const { result } = renderHook(() => useCommands());
+    expect(result.current.map((c) => c.id)).toContain("action-import");
+    for (const kind of ["live", "db"] as const) {
+      act(() => {
+        useReviewStore.setState({
+          source: {
+            mode: kind === "live" ? "live" : "review",
+            kind,
+            source: kind === "db" ? "a.db" : null,
+            token: "A",
+            editable: true,
+            unsaved: 0,
+            revision: 0,
+            observed_at: "2026-07-18T12:00:00+00:00",
+          },
+        });
+      });
+      expect(result.current.map((c) => c.id)).not.toContain("action-import");
+    }
+    act(() => {
+      useReviewStore.setState({
+        source: {
+          mode: "review",
+          kind: "json",
+          source: "a.json",
+          token: "A",
+          editable: true,
+          unsaved: 0,
+          revision: 0,
+          observed_at: "2026-07-18T12:00:00+00:00",
+        },
+      });
+    });
+    expect(result.current.map((c) => c.id)).toContain("action-import");
   });
 
   it("disables Export with no data loaded", () => {

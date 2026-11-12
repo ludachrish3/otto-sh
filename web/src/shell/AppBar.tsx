@@ -21,15 +21,17 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import ottoMark from "../assets/otto-mark.png";
 import { useIsPaused, useReviewStore } from "../data/reviewStore";
+import { importOffered } from "../data/source";
 import { SearchTrigger } from "../ui/SearchTrigger";
 import { EXPORT_BINDING, formatBinding, IMPORT_BINDING, PALETTE_BINDING } from "../ui/shortcuts";
 import { useUiStore } from "../ui/uiStore";
-import { exportLoadedDocument, openImportPicker } from "./ImportExport";
+import { openExportDialog, openImportPicker } from "./ImportExport";
 import { MarkControl } from "./MarkControl";
 
 export function AppBar() {
   const hasData = useReviewStore((s) => s.rawMonitorSessions !== null);
   const mode = useReviewStore((s) => s.mode);
+  const canImport = useReviewStore(importOffered);
   const paused = useIsPaused();
   const togglePause = useReviewStore((s) => s.actions.togglePause);
   const theme = useUiStore((s) => s.theme);
@@ -81,7 +83,7 @@ export function AppBar() {
             color="tertiary"
             size="sm"
             isDisabled={!hasData}
-            onClick={exportLoadedDocument}
+            onClick={openExportDialog}
           />
         )}
         <Dropdown.Root>
@@ -94,20 +96,22 @@ export function AppBar() {
           <Dropdown.Popover>
             <Dropdown.Menu>
               <Dropdown.Section>
-                <Dropdown.Item
-                  id="import"
-                  label="Import…"
-                  icon={Upload01}
-                  addon={formatBinding(IMPORT_BINDING)}
-                  onAction={openImportPicker}
-                  data-testid="menu-import"
-                />
+                {canImport && (
+                  <Dropdown.Item
+                    id="import"
+                    label="Import…"
+                    icon={Upload01}
+                    addon={formatBinding(IMPORT_BINDING)}
+                    onAction={openImportPicker}
+                    data-testid="menu-import"
+                  />
+                )}
                 <Dropdown.Item
                   id="export"
                   label="Export"
                   icon={Download01}
                   addon={formatBinding(EXPORT_BINDING)}
-                  onAction={exportLoadedDocument}
+                  onAction={openExportDialog}
                   isDisabled={!hasData}
                   data-testid="menu-export"
                 />

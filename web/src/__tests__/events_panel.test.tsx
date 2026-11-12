@@ -512,6 +512,19 @@ describe("EventsPanel row affordances", () => {
     expect(screen.queryByTestId("event-edit--1")).toBeNull();
     expect(screen.queryByTestId("event-endnow--1")).toBeNull();
   });
+
+  it("repeated-id rows are listed, each once, with no edit affordance", async () => {
+    useReviewStore.setState({ mode: "review", editable: true });
+    const repeated = readFileSync(join(HERE, "../../fixtures/repeated-ids.json"), "utf-8");
+    useReviewStore.getState().actions.importMonitorSessions(repeated, "repeated-ids.json");
+    render(<EventsPanel isOpen onClose={() => {}} />);
+    const panel = await screen.findByTestId("events-panel");
+    expect(panel.querySelectorAll("[data-testid^=event-row-]")).toHaveLength(5);
+    expect(screen.queryByTestId("event-row-3")).toBeNull();
+    expect(screen.queryByTestId("event-edit-3")).toBeNull();
+    expect(screen.getByTestId("event-edit-1")).toBeTruthy();
+    expect(screen.getByTestId("event-edit-9")).toBeTruthy();
+  });
 });
 
 describe("EventsPanel pending gate (#867)", () => {

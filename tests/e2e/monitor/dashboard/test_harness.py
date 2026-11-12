@@ -77,19 +77,21 @@ def _tolerate_missing_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
 
 
-MODE_KEYS = {"mode", "source", "editable"}
+MODE_KEYS = {"mode", "kind", "source", "token", "editable", "unsaved", "revision", "observed_at"}
 LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
-# The SSE stream speaks format:1 (plan 5b, Task 2): every message is a
+# The SSE stream speaks format:1 (plan 5b, Task 2): every session message is a
 # MonitorSessionFragment-shaped dict, so its top-level keys are always a
 # subset of {"format", "session", "observed_at", "metrics", "events",
 # "log_events", "deleted_event_ids", "chart_map", "meta"} — never a bare
-# "type" tag. Every published fragment carries the server's observed_at
+# "type" tag — except the document-level source frame (SSE_SOURCE_KEYS),
+# which names no session. Every published fragment carries the server's observed_at
 # (#866), so it is part of each message's exact key set.
 SSE_LOG_EVENT_KEYS = {"format", "session", "observed_at", "log_events"}
 SSE_METRIC_KEYS = {"format", "session", "observed_at", "metrics"}
 SSE_EVENT_KEYS = {"format", "session", "observed_at", "events"}
 SSE_EVENT_DELETED_KEYS = {"format", "session", "observed_at", "deleted_event_ids"}
+SSE_SOURCE_KEYS = {"format", "source_state", "observed_at"}
 
 
 def _get_json(url: str) -> Any:
@@ -691,6 +693,94 @@ def test_sse_event_lifecycle_wire_contract(
         assert deleted == {"format": 1, "session": "", "deleted_event_ids": [ev.id]}
     finally:
         conn.close()
+
+
+def test_sse_json_review_edit_wire_contract(
+    review_dash: DashboardHarness[MetricCollector],
+) -> None:
+    """A ``.json`` review edit streams its session fragment, then the document-level source frame.
+
+    ``review_dash`` serves its document with no archive, so it is a ``.json``
+    source: every write counts, and each count goes out as a source frame
+    right after the fragment it counts.
+    """
+    port = urlsplit(review_dash.url).port
+    assert port is not None
+    key = review_dash.server.key
+    headers = {
+        "Content-Type": "application/json",
+        server_module.SOURCE_TOKEN_HEADER: review_dash.source_token(),
+    }
+    sid = _two_session_document().sessions[0].id
+    stream = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    write = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        stream.request("GET", f"/api/stream?key={key}", headers={"Accept": "text/event-stream"})
+        resp = stream.getresponse()
+
+        write.request(
+            "POST", f"/api/session/{sid}/event?key={key}", json.dumps({"label": "x"}), headers
+        )
+        created = json.loads(write.getresponse().read())
+        assert set(_next_sse_payload(resp)) == SSE_EVENT_KEYS
+        assert set(_next_sse_payload(resp)) == SSE_SOURCE_KEYS
+
+        write.request(
+            "PATCH",
+            f"/api/session/{sid}/event/{created['id']}?key={key}",
+            json.dumps({"label": "y"}),
+            headers,
+        )
+        assert write.getresponse().read()
+        patched = _next_sse_payload(resp)
+        assert set(patched) == SSE_EVENT_KEYS
+        assert set(patched["events"][0]) == EVENT_KEYS
+        frame = _next_sse_payload(resp)
+        assert set(frame) == SSE_SOURCE_KEYS
+        assert set(frame["source_state"]) == MODE_KEYS
+        assert frame["source_state"]["revision"] == 2
+    finally:
+        write.close()
+        stream.close()
+
+
+def test_sse_source_switch_wire_contract(
+    review_dash: DashboardHarness[MetricCollector],
+) -> None:
+    """``POST /api/source`` answers the new source's state and streams it as one source frame."""
+    port = urlsplit(review_dash.url).port
+    assert port is not None
+    key = review_dash.server.key
+    headers = {
+        "Content-Type": "application/json",
+        server_module.SOURCE_TOKEN_HEADER: review_dash.source_token(),
+        server_module.UNSAVED_HEADER: "0",
+        server_module.SOURCE_NAME_HEADER: "next.json",
+    }
+    stream = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    upload = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        stream.request("GET", f"/api/stream?key={key}", headers={"Accept": "text/event-stream"})
+        resp = stream.getresponse()
+
+        upload.request(
+            "POST",
+            f"/api/source?key={key}",
+            _two_session_document().model_dump_json(exclude_none=True),
+            headers,
+        )
+        answer = upload.getresponse()
+        assert answer.status == 200
+        state = json.loads(answer.read())
+        assert set(state) == MODE_KEYS
+        frame = _next_sse_payload(resp)
+        assert set(frame) == SSE_SOURCE_KEYS
+        assert set(frame["source_state"]) == MODE_KEYS
+        assert frame["source_state"]["token"] == state["token"]
+        assert frame["source_state"]["source"] == "next.json"
+    finally:
+        upload.close()
+        stream.close()
 
 
 @_on_its_own_thread
