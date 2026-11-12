@@ -33,6 +33,7 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     tree_hash,
     tree_state,
 )
+from scripts.import_budget_delta import APPROVALS_PATH  # noqa: E402 -- the one literal
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,8 @@ SCRIPTS = "scripts"
 ESCALATE = "escalate"
 FULL = "full"
 WORKFLOW = "workflow"
+BUDGET_CLASSES = frozenset({SRC_LEAF, SCRIPTS, ESCALATE, FULL})
+"""The classes whose diffs can move a file-operation count: the import-budget gate runs for them."""
 
 # ── data: every row the classification reads; pinned against the live tree by the tests ──
 # fnmatch has no `**`; its `*` crosses `/`, and every glob below is written for that.
@@ -1649,15 +1652,33 @@ class Plan:
     suspended: "list[str]" = dataclasses.field(default_factory=list)
 
 
-def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None) -> Plan:
-    """Return the tip for ``base_sha..tip_sha``, reading sources at *tip_sha*, never HEAD."""
-    scope = classify(
+def scope_between(
+    repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None
+) -> Scope:
+    """Return the classified scope of ``base_sha..tip_sha``, reading sources at *tip_sha*."""
+    return classify(
         changes_between(repo, f"{base_sha}..{tip_sha}", env),
         _reader(repo, env),
         base_sha,
         tip_sha,
         head_tree(repo, env, tip_sha),
     )
+
+
+def budget_eligible(scope: Scope) -> bool:
+    """Whether the import-budget gate runs for *scope*.
+
+    True when its classes can move a count, or when it edits the approvals file
+    (which re-judges without measuring).
+    """
+    return bool(set(scope.classes) & BUDGET_CLASSES) or (
+        APPROVALS_PATH.as_posix() in scope.changed_files
+    )
+
+
+def plan(repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None) -> Plan:
+    """Return the tip for ``base_sha..tip_sha``, reading sources at *tip_sha*, never HEAD."""
+    scope = scope_between(repo, base_sha, tip_sha, env)
     cmds = commands(scope, tip=True, base=base_sha, tip_rev=tip_sha)
     keys = [lane_key(line) for line in cmds if not is_live(line)]
     stamped = [key for key in keys if key not in SUSPENDED_LANES]
@@ -1716,12 +1737,34 @@ def _rendered(cmd: str) -> str:
     return f"  {cmd}" if reason is None else f"  {cmd}  (suspended — {reason})"
 
 
+def _budget_eligible_verb(args: argparse.Namespace, env: "dict[str, str] | None") -> int:
+    """`--budget-eligible`: classify ``base..tip`` as `plan` does and print `run=<bool>`."""
+    if args.tip is None:
+        print("gate-scope: --budget-eligible needs --tip", file=sys.stderr)
+        return 2
+    try:
+        scope = scope_between(args.repo, args.base, args.tip, env)
+    except (GateScopeError, GateError) as exc:
+        print(f"gate-scope: {exc}", file=sys.stderr)
+        return 1
+    print(f"run={'true' if budget_eligible(scope) else 'false'}")
+    return 0
+
+
 def main(argv: "list[str] | None" = None, *, env: "dict[str, str] | None" = None) -> int:
     """Run the oracle; `env` is the git environment. Exit 0 ok, 1 git failure, 2 refusal."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--base", default="origin/main")
+    parser.add_argument(
+        "--budget-eligible",
+        action="store_true",
+        help="print run=true or run=false: whether the import-budget gate runs for base..--tip",
+    )
+    parser.add_argument("--tip", default=None, help="the tip revision (with --budget-eligible)")
     args = parser.parse_args(argv)
+    if args.budget_eligible:
+        return _budget_eligible_verb(args, env)
     try:
         state = tree_state(args.repo)
         if state.tracked_dirty:

@@ -183,7 +183,7 @@ class Record:
     ending: "list[str]"
     """The harness's reasons the run did not end as the surface expects; empty when it did."""
     by_path: "dict[str, int]"
-    """Calls per `<bucket>:<path below its root>` (`fd`: no path); attribution only."""
+    """Calls per path key as scripts/import_budget.py records them; attribution only."""
 
 
 @dataclass(frozen=True)

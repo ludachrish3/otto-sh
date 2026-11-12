@@ -300,3 +300,92 @@ def test_report_failure_needs_every_job():
 def test_expand_renders_a_session_matrix():
     job = {"name": "${{ matrix.session }}-3.14", "strategy": {"matrix": {"session": ["a", "b"]}}}
     assert _expand("j", job) == ["a-3.14", "b-3.14"]
+
+
+# --- the import-budget gate -------------------------------------------------
+
+
+def _step_runs(job: dict) -> "list[str]":
+    return [s["run"] for s in job["steps"] if "run" in s]
+
+
+def test_the_budget_scope_job_asks_gate_scope_and_the_delta_s_base_tag_verb_and_names_no_path():
+    job = CI["jobs"]["budget-scope"]
+    assert job["needs"] == ["gate-admission"]
+    assert "if" not in job, "the certificate needs its answer on every event"
+    assert set(job["outputs"]) == {"run", "tag", "base", "head"}
+    checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout"))
+    assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["fetch-tags"] is True
+    runs = "\n".join(_step_runs(job))
+    # gate_scope imports gate_stamp_common, which imports tomli on 3.10; the
+    # delta's base-tag verb is stdlib only (the same split as the admission).
+    assert "uv run --no-project --with tomli python scripts/gate_scope.py --budget-eligible" in runs
+    assert "uv run --no-project python scripts/import_budget_delta.py base-tag" in runs
+    assert "git merge-base" in runs
+    assert "0000000000000000000000000000000000000000" in runs
+    assert "src/" not in runs, "which paths matter is gate_scope's decision, not the workflow's"
+    assert "pyproject" not in runs
+
+
+def test_the_budget_legs_run_only_when_the_scope_job_says_so_and_never_fail_fast():
+    job = CI["jobs"]["import-budget-delta"]
+    assert job["needs"] == ["gate-admission", "budget-scope"]
+    assert job["if"] == "needs.budget-scope.outputs.run == 'true'"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"]["python"] == ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    assert _expand("import-budget-delta", job) == [
+        f"import-budget-delta ({m})" for m in ("3.10", "3.11", "3.12", "3.13", "3.14")
+    ]
+    assert job["timeout-minutes"] == 45
+    steps = job["steps"]
+    assert steps[0]["with"]["ref"] == "${{ needs.budget-scope.outputs.head }}"
+    setup = next(s for s in steps if s.get("uses") == "./.github/actions/hostless-setup")
+    assert setup["with"] == {"python": "${{ matrix.python }}"}
+    image = next(s for s in steps if s.get("id") == "img")
+    assert image["run"] == 'echo "v=$ImageVersion" >> "$GITHUB_OUTPUT"'
+    # restore + save (always) with one key: a growth stop fails the job, and a
+    # plain actions/cache saves only on success, so every re-run re-measured the base.
+    key = (
+        "budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}"
+        "-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}"
+        "-${{ runner.os }}-${{ steps.img.outputs.v }}"
+    )
+    path = "reports/budget/${{ needs.budget-scope.outputs.tag }}"
+    caches = [s for s in steps if s.get("uses", "").startswith("actions/cache")]
+    assert [s["uses"].split("@")[0] for s in caches] == [
+        "actions/cache/restore",
+        "actions/cache/save",
+    ]
+    restore, save = caches
+    measure = next(s for s in steps if "import_budget_delta.py measure" in s.get("run", ""))
+    assert steps.index(image) < steps.index(restore) < steps.index(measure) < steps.index(save)
+    assert restore["with"] == {"path": path, "key": key}
+    assert save["with"] == {"path": path, "key": key}
+    assert save["if"] == "always()"
+    assert measure["run"] == (
+        'uv run python scripts/import_budget_delta.py measure --minors "${{ matrix.python }}"'
+        ' --base-rev "${{ needs.budget-scope.outputs.base }}"'
+    )
+    upload = next(s for s in steps if s.get("uses", "").startswith("actions/upload-artifact"))
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == "budget-${{ matrix.python }}"
+    assert upload["with"]["path"] == "reports/budget/"
+
+
+def test_the_budget_certificate_is_required_always_runs_and_accepts_a_skipped_leg():
+    job = CI["jobs"]["import-budget"]
+    assert job["needs"] == ["gate-admission", "budget-scope", "import-budget-delta"]
+    assert job["if"] == "always()"
+    assert job["timeout-minutes"] == 5
+    (step,) = job["steps"]
+    assert step["run"] == (
+        'test "${{ needs.gate-admission.result }}" = success'
+        ' && test "${{ needs.budget-scope.result }}" = success'
+        ' && { test "${{ needs.import-budget-delta.result }}" = success'
+        ' || test "${{ needs.import-budget-delta.result }}" = skipped; }'
+    )
+    assert "import-budget" in _required()
+    assert {"budget-scope", "import-budget-delta", "import-budget"} <= set(
+        CI["jobs"]["report-failure"]["needs"]
+    )
