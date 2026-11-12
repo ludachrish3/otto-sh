@@ -5,50 +5,68 @@ INFO     @docker-host   | docker ps -q --filter
          label=com.docker.compose.project=example_lab-quickstart-docs --filter
          label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
 INFO     @docker-host > | <id>
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount || {
-         __otto_gcda_rc=$( { { find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \;
-         ! -path '"'"'*
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/wordcount; while ! test
+         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
+         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/wordcount && { ! test -d
+         "$__otto_d" || test -x "$__otto_d"; }; } || { __otto_gcda_rc=$( { { find /tmp/wordcount
+         -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/wordcount/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*}; done;
          done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS=
          read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/wordcount 2>/dev/null;
          test "$__otto_gcda_rc" = 0; }'
-INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
-         otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print 2>&1'
-INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
-         /tmp/quickstart-docker/banner || { __otto_gcda_rc=$( { { find /tmp/quickstart-docker/banner
-         -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; ! -path '"'"'*
+INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '{
+         __otto_d=/tmp/quickstart-docker/banner; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/quickstart-docker/banner && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } || {
+         __otto_gcda_rc=$( { { find /tmp/quickstart-docker/banner -name '"'"'*.gcda'"'"' -type f
+         -exec rm -f {} \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/quickstart-docker/banner/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d";
          d=${d%/*}; done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :;
          done; } | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test
          "$__otto_gcda_rc" = 0; }'
 INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
-         '"'"'\n%s\n'"'"' otto-gcda-check; LC_ALL=C find /tmp/quickstart-docker/banner -name
-         '"'"'*.gcda'"'"' -type f -print 2>&1'
+         '"'"'\n%s\n'"'"' otto-gcda-check; if { __otto_d=/tmp/quickstart-docker/banner; while ! test
+         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
+         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/quickstart-docker/banner && { !
+         test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo otto-gcda-absent; else LC_ALL=C
+         find /tmp/quickstart-docker/banner -name '"'"'*.gcda'"'"' -type f -print 2>&1; fi'
 INFO     @docker-host > | otto-gcda-check
 INFO     @docker-host   | printf '\n%s\n' otto-cov-presence
          if test -d /tmp/quickstart-docker/banner; then echo 'otto-cov 0 present'; else echo
          'otto-cov 0 absent'; fi
 INFO
+INFO     @docker-host > | otto-cov-presence
+INFO     @docker-host > | otto-cov 0 present
+INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
+         otto-gcda-check; if { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
+         otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print
+         2>&1; fi'
+INFO
 INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host > | find: /tmp/wordcount: No such file or directory
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/shout || {
-         __otto_gcda_rc=$( { { find /tmp/shout -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; !
-         -path '"'"'*
+INFO     @docker-host > | otto-gcda-absent
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; while ! test -e
+         "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/};
+         done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
+         } || { __otto_gcda_rc=$( { { find /tmp/shout -name '"'"'*.gcda'"'"' -type f -exec rm -f {}
+         \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/shout/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*}; done; done
          | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read
          -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/shout 2>/dev/null; test
          "$__otto_gcda_rc" = 0; }'
-INFO
-INFO     @docker-host > | otto-cov-presence
-INFO     @docker-host > | otto-cov 0 present
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
-         otto-gcda-check; LC_ALL=C find /tmp/shout -name '"'"'*.gcda'"'"' -type f -print 2>&1'
+         otto-gcda-check; if { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
+         otto-gcda-absent; else LC_ALL=C find /tmp/shout -name '"'"'*.gcda'"'"' -type f -print 2>&1;
+         fi'
 INFO
 INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host > | find: /tmp/shout: No such file or directory
+INFO     @docker-host > | otto-gcda-absent
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
          otto-cov-presence
          if test -d /tmp/wordcount; then echo '"'"'otto-cov 0 present'"'"'; else echo '"'"'otto-cov
@@ -147,44 +165,62 @@ INFO     lcov capture: 2 file(s) ->
          fo
 INFO     docker-host.quickstart.tools/wordcount: skipped 5 source file(s) outside the project root
 INFO     Coverage captures produced: 3 board(s)
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount || {
-         __otto_gcda_rc=$( { { find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \;
-         ! -path '"'"'*
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/wordcount; while ! test
+         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
+         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/wordcount && { ! test -d
+         "$__otto_d" || test -x "$__otto_d"; }; } || { __otto_gcda_rc=$( { { find /tmp/wordcount
+         -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/wordcount/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*}; done;
          done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS=
          read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/wordcount 2>/dev/null;
          test "$__otto_gcda_rc" = 0; }'
-INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
-         /tmp/quickstart-docker/banner || { __otto_gcda_rc=$( { { find /tmp/quickstart-docker/banner
-         -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; ! -path '"'"'*
+INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '{
+         __otto_d=/tmp/quickstart-docker/banner; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/quickstart-docker/banner && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } || {
+         __otto_gcda_rc=$( { { find /tmp/quickstart-docker/banner -name '"'"'*.gcda'"'"' -type f
+         -exec rm -f {} \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/quickstart-docker/banner/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d";
          d=${d%/*}; done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :;
          done; } | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test
          "$__otto_gcda_rc" = 0; }'
 INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
-         '"'"'\n%s\n'"'"' otto-gcda-check; LC_ALL=C find /tmp/quickstart-docker/banner -name
-         '"'"'*.gcda'"'"' -type f -print 2>&1'
+         '"'"'\n%s\n'"'"' otto-gcda-check; if { __otto_d=/tmp/quickstart-docker/banner; while ! test
+         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
+         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/quickstart-docker/banner && { !
+         test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo otto-gcda-absent; else LC_ALL=C
+         find /tmp/quickstart-docker/banner -name '"'"'*.gcda'"'"' -type f -print 2>&1; fi'
 INFO     @docker-host > | otto-gcda-check
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
-         otto-gcda-check; LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print 2>&1'
+         otto-gcda-check; if { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
+         otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print
+         2>&1; fi'
 INFO
 INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host > | find: /tmp/wordcount: No such file or directory
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/shout || {
-         __otto_gcda_rc=$( { { find /tmp/shout -name '"'"'*.gcda'"'"' -type f -exec rm -f {} \; !
-         -path '"'"'*
+INFO     @docker-host > | otto-gcda-absent
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; while ! test -e
+         "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/};
+         done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
+         } || { __otto_gcda_rc=$( { { find /tmp/shout -name '"'"'*.gcda'"'"' -type f -exec rm -f {}
+         \; ! -path '"'"'*
          *'"'"' -print; echo "$?" >&3; } | while IFS= read -r f; do d=${f%/*}; while case $d in
          /tmp/shout/*) true;; *) false;; esac; do printf '"'"'%s\n'"'"' "$d"; d=${d%/*}; done; done
          | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :; done; } | while IFS= read
          -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/shout 2>/dev/null; test
          "$__otto_gcda_rc" = 0; }'
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
-         otto-gcda-check; LC_ALL=C find /tmp/shout -name '"'"'*.gcda'"'"' -type f -print 2>&1'
+         otto-gcda-check; if { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
+         otto-gcda-absent; else LC_ALL=C find /tmp/shout -name '"'"'*.gcda'"'"' -type f -print 2>&1;
+         fi'
 INFO
 INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host > | find: /tmp/shout: No such file or directory
+INFO     @docker-host > | otto-gcda-absent
 INFO     coverage counters cleared after collection on 3 product(s) across 2 host(s)
 
 Output directory: /tmp/otto-gs/xdir/test/<run>

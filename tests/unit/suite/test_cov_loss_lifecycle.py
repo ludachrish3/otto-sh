@@ -20,7 +20,7 @@ from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.shell_host import coverage_shell_host, install_shell_lab
 
-_LOSS = "existed at run start and is gone"
+_LOSS = "survived the run-start clean and is gone"
 
 
 def _loss_warnings(caplog) -> list[logging.LogRecord]:

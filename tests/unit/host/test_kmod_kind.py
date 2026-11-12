@@ -15,7 +15,7 @@ from otto.host.kmod_kind import KMODCOV_SYSFS_ROOT, KmodProduct
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
-from tests.unit.host._gcda_frame import CHECK_PREFIX, delete_line, framed
+from tests.unit.host._gcda_frame import check_line, delete_line, framed
 
 
 def _entry(**params):
@@ -140,9 +140,8 @@ def _expected_delete_line(cov_dir: str) -> str:
 
 
 def _expected_check_line(cov_dir: str) -> str:
-    """Independently reconstruct the reset's files-only check: its marker, then find, unguarded."""
-    find = f"LC_ALL=C find {shlex.quote(cov_dir)} -name '*.gcda' -type f -print 2>&1"
-    return CHECK_PREFIX + find
+    """Independently reconstruct the reset's files-only check: its marker, the guard, then find."""
+    return check_line(cov_dir)
 
 
 def _expected_sudo_delete_cmd(cov_dir: str) -> str:

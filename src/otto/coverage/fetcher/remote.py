@@ -207,8 +207,8 @@ async def _take_archive(
         if any(line.strip() == _NO_COV_DIR for line in lines):
             if existed_at_reset:
                 logger.warning(
-                    "cov_dir %s on %s for %s existed at run start and is gone: its coverage "
-                    "is missing from this run (was it removed before collection?)",
+                    "cov_dir %s on %s for %s survived the run-start clean and is gone: its "
+                    "coverage is missing from this run (was it removed before collection?)",
                     cov_dir,
                     host.id,
                     product.name,

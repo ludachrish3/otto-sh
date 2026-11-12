@@ -4,6 +4,7 @@ import asyncio
 import os
 import shlex
 import shutil
+import subprocess
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -15,7 +16,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 from tests._fixtures.shell_host import ELEVATED_MARK, ShellHost, fake_bin
-from tests.unit.host._gcda_frame import CHECK_MARK, CHECK_PREFIX, delete_line, framed
+from tests.unit.host._gcda_frame import CHECK_MARK, check_line, delete_line, framed
 
 
 class _DummyShellProduct(ShellProduct):
@@ -634,7 +635,7 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
             {"timeout": 60},
         ),
         (
-            CHECK_PREFIX + "LC_ALL=C find '/opt/My App/cov' -name '*.gcda' -type f -print 2>&1",
+            check_line("/opt/My App/cov"),
             {"timeout": 60},
         ),
     ]
@@ -646,7 +647,7 @@ async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
     await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host=host)
     assert [cmd for cmd, _ in host.exec_calls] == [
         delete_line("/tmp/app"),
-        f"{CHECK_PREFIX}LC_ALL=C find /tmp/app -name '*.gcda' -type f -print 2>&1",
+        check_line("/tmp/app"),
     ]
 
 
@@ -692,7 +693,7 @@ async def test_root_owned_reset_deletes_under_sudo():
     result = await p.reset_coverage(host=host)
     assert result.is_ok
     delete = delete_line("/var/cov/app")
-    check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
+    check = check_line("/var/cov/app")
     assert host.run_calls == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
         (f"sh -c {shlex.quote(check)}", {"sudo": True, "timeout": 60}),
@@ -890,9 +891,12 @@ async def test_reset_succeeds_when_the_check_says_the_cov_dir_is_absent(path):
     os.geteuid() == 0, reason="root reads through a chmod 000 dir, so it cannot be made unreadable"
 )
 async def test_reset_check_fails_on_an_inaccessible_ancestor_plain(tmp_path):
-    # `test -d` is false for a dir behind an unreadable parent, so the guarded
-    # removal exits 0 without looking. The check has no guard: it must say
-    # what stopped it, never report "clean" for a dir nobody could look into.
+    # `test -d` is false for a dir behind an unreadable parent. The shared
+    # guard (cov_dir_absent_test) demands a searchable parent before it calls
+    # a cov_dir absent, so neither the removal nor the check reports "clean"
+    # for a dir nobody could look into: find runs and says what stopped it.
+    from otto.host.product import GcdaFindError, classify_gcda_check, gcda_check_cmd
+
     parent = tmp_path / "locked"
     cov = parent / "cov"
     cov.mkdir(parents=True)
@@ -901,12 +905,16 @@ async def test_reset_check_fails_on_an_inaccessible_ancestor_plain(tmp_path):
     parent.chmod(0)
     try:
         result = await p.reset_coverage(host=ShellHost())
+        check = await ShellHost().exec(gcda_check_cmd(str(cov)))
     finally:
         parent.chmod(0o755)
     assert result.status is Status.Error, result
-    assert result.msg.startswith(f"checking .gcda under {cov} failed: ")
+    assert result.msg.startswith(f"deleting .gcda under {cov} failed: ")
     assert "Permission denied" in result.msg
     assert (cov / "a.gcda").exists()
+    answer = classify_gcda_check(str(cov), check)
+    assert isinstance(answer, GcdaFindError), answer
+    assert "Permission denied" in answer.detail
 
 
 @pytest.mark.asyncio
@@ -917,6 +925,7 @@ async def test_reset_check_fails_on_an_inaccessible_ancestor_elevated(tmp_path):
     cov = parent / "cov"
     cov.mkdir(parents=True)
     (cov / "a.gcda").write_bytes(b"")
+    (cov / "notes.txt").write_text("user data")  # kept, so the check reaches find
     bin_dir = _find_failing_only_the_check(tmp_path, f"find: '{parent}': Permission denied")
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
@@ -931,6 +940,7 @@ async def test_reset_fails_when_the_check_fails_after_a_successful_removal(tmp_p
     cov = tmp_path / "cov"
     cov.mkdir()
     (cov / "a.gcda").write_bytes(b"")
+    (cov / "notes.txt").write_text("user data")  # kept, so the check reaches find
     bin_dir = _find_failing_only_the_check(tmp_path, f"find: '{cov}': Permission denied")
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     result = await _reset(p, ShellHost(bin_dir=bin_dir), path)
@@ -981,8 +991,10 @@ def _tree(root: Path) -> list[str]:
 
 
 # A space splits an unquoted word; glob characters make an unquoted `case`
-# bound match a different directory, so the walk would stop at once.
-_COV_NAMES = ["my cov", "c[x]*"]
+# bound match a different directory, so the walk would stop at once. A
+# non-ASCII byte and a tab are what GNU find's C-locale diagnostics escape:
+# an emptied cov_dir must be answered absent by the check, never misread.
+_COV_NAMES = ["my cov", "c[x]*", "caf\u00e9", "t\tab"]
 
 
 @pytest.mark.asyncio
@@ -997,13 +1009,9 @@ async def test_reset_removes_the_dirs_it_emptied_and_nothing_else(tmp_path, path
     # file stays (its emptied child goes); a dir that was already empty is
     # not one the reset emptied, so it stays; the cov_dir, still holding
     # both, stays; and nothing above it is ever touched.
-    assert _tree(above) == [
-        name,
-        f"{name}/mixed",
-        f"{name}/mixed/keep.txt",
-        f"{name}/was empty",
-        "neighbour",
-    ]
+    assert _tree(above) == sorted(
+        [name, f"{name}/mixed", f"{name}/mixed/keep.txt", f"{name}/was empty", "neighbour"]
+    )
 
 
 @pytest.mark.asyncio
@@ -1190,6 +1198,7 @@ async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_pa
     cov = tmp_path / "cov"
     cov.mkdir()
     (cov / "a.gcda").write_bytes(b"")
+    (cov / "notes.txt").write_text("user data")  # kept, so the check reaches find
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Success, result.msg
@@ -1233,9 +1242,70 @@ async def test_reset_ignores_what_the_session_printed_before_the_check_ran(tmp_p
     assert result.msg == f"deleting .gcda under {cov} left 1 file(s): {survivor}"
 
 
+@pytest.mark.parametrize(
+    ("case", "absent"),
+    [
+        ("parent exists", True),
+        ("parent missing too", True),
+        ("under a regular file", True),
+        ("under a dangling symlink", True),
+        ("exists", False),
+        ("is a dangling symlink", False),
+        ("is a regular file", False),
+    ],
+)
+def test_cov_dir_absent_test_holds_only_for_a_provably_absent_cov_dir(tmp_path, case, absent):
+    from otto.host.product import cov_dir_absent_test
+
+    root = tmp_path / "r t"  # a space: the quoting is load-bearing
+    root.mkdir()
+    cov = {
+        "parent exists": root / "cov",
+        "parent missing too": root / "gone" / "deeper" / "cov",
+        "under a regular file": root / "file" / "cov",
+        "under a dangling symlink": root / "dangling" / "cov",
+        "exists": root / "cov",
+        "is a dangling symlink": root / "cov",
+        "is a regular file": root / "cov",
+    }[case]
+    (root / "file").write_text("")
+    (root / "dangling").symlink_to(root / "nowhere")
+    if case == "exists":
+        cov.mkdir()
+    elif case == "is a dangling symlink":
+        cov.symlink_to(root / "nowhere")
+    elif case == "is a regular file":
+        cov.write_text("")
+    done = subprocess.run(["sh", "-c", cov_dir_absent_test(str(cov))], check=False)
+    assert (done.returncode == 0) is absent
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root searches a chmod 000 dir, so it cannot be made unsearchable"
+)
+def test_cov_dir_absent_test_never_holds_behind_an_unsearchable_ancestor(tmp_path):
+    from otto.host.product import cov_dir_absent_test
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        for cov in (locked / "cov", locked / "a" / "cov"):
+            done = subprocess.run(["sh", "-c", cov_dir_absent_test(str(cov))], check=False)
+            assert done.returncode != 0, cov
+    finally:
+        locked.chmod(0o755)
+
+
 @pytest.mark.asyncio
 async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
-    from otto.host.product import classify_gcda_check, gcda_check_cmd, gcda_delete_cmd
+    from otto.host.product import (
+        classify_gcda_check,
+        classify_gcda_listing,
+        gcda_check_cmd,
+        gcda_delete_cmd,
+        gcda_list_cmd,
+    )
 
     async def sh(line):
         proc = await asyncio.create_subprocess_shell(
@@ -1260,14 +1330,29 @@ async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
     # POSIX only: `-delete` is an extension BusyBox builds compile out (#842).
     assert "-delete" not in gcda_delete_cmd(str(cov))
 
-    # The real-GNU leg of the rendering pin: an absent cov_dir, however its
-    # name must be quoted, is recognised as absent from find's own line.
-    for name in ("plain", "with space", "it's gone", "back\\slash"):
+    # The check's guard answers an absent cov_dir before find runs; find's own
+    # line is the real-GNU leg of the rendering pin (a cov_dir that vanished
+    # between the guard and find, and cleanup's probes): however its name
+    # must be quoted, it reads as absent.
+    for name in (
+        "plain",
+        "with space",
+        "it's gone",
+        "back\\slash",
+        "caf\u00e9",
+        "t\tab",
+        "\a\b\f\v\r",
+        "d\x7f\x1b",
+    ):
         absent = str(tmp_path / "absent" / name)
         rc, out = await sh(gcda_check_cmd(absent))
         status = Status.Success if rc == 0 else Status.Failed
-        cmd = CommandResult(status=status, value=out, command="find", retcode=rc)
+        cmd = CommandResult(status=status, value=out, command="sh", retcode=rc)
         assert classify_gcda_check(absent, cmd) == "absent", (name, rc, out)
+        assert "find" not in out, out  # the guard answered
+        rc, out = await sh(f"LC_ALL=C {gcda_list_cmd(absent)} 2>&1")
+        lines = [line for line in out.splitlines() if line]
+        assert classify_gcda_listing(absent, lines, rc) == "absent", (name, rc, out)
 
 
 @pytest.mark.asyncio

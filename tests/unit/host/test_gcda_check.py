@@ -19,7 +19,7 @@ from otto.host.product import (
 )
 from otto.result import CommandResult
 from otto.utils import Status
-from tests.unit.host._gcda_frame import CHECK_MARK, CHECK_PREFIX
+from tests.unit.host._gcda_frame import CHECK_MARK, check_line
 
 
 def _raw(retcode: int, value: str) -> CommandResult:
@@ -44,6 +44,12 @@ def _cmd(retcode: int, value: str) -> CommandResult:
         ("find: '/x/my cov': No such file or directory", "/x/my cov"),
         ("find: 'it\\'s gone': No such file or directory", "it's gone"),
         ("find: '/x/a\\\\b': No such file or directory", "/x/a\\b"),
+        # GNU's C-locale quoting escapes every byte outside printable ASCII.
+        ("find: '/x/caf\\303\\251': No such file or directory", "/x/caf\u00e9"),
+        ("find: '/x/t\\tab': No such file or directory", "/x/t\tab"),
+        ("find: '/x/d\\177\\033': No such file or directory", "/x/d\x7f\x1b"),
+        # BusyBox prints it bare.
+        ("find: /x/caf\u00e9: No such file or directory", "/x/caf\u00e9"),
     ],
 )
 def test_enoent_for_start_matches_every_measured_rendering_of_the_start_path(line, cov_dir):
@@ -148,10 +154,19 @@ def test_a_zero_exit_that_otto_marked_failed_is_an_error_not_a_listing():
     assert isinstance(classify_gcda_check("/x/cov", cmd), GcdaFindError)
 
 
-def test_the_check_command_prints_the_marker_before_find():
-    assert gcda_check_cmd("/x/my cov") == (
-        f"{CHECK_PREFIX}LC_ALL=C find '/x/my cov' -name '*.gcda' -type f -print 2>&1"
-    )
+def test_the_check_command_prints_the_marker_before_the_guarded_find():
+    assert gcda_check_cmd("/x/my cov") == check_line("/x/my cov")
+
+
+def test_the_guards_absent_answer_is_absent_only_on_a_zero_exit():
+    absent = f"\n{CHECK_MARK}\notto-gcda-absent\n"
+    ok = CommandResult(status=Status.Success, value=absent, command="sh", retcode=0)
+    assert classify_gcda_check("/x/cov", ok) == "absent"
+    failed = CommandResult(status=Status.Failed, value=absent, command="sh", retcode=1)
+    assert isinstance(classify_gcda_check("/x/cov", failed), GcdaFindError)
+    extra = f"\n{CHECK_MARK}\notto-gcda-absent\n/x/cov/a.gcda\n"
+    more = CommandResult(status=Status.Success, value=extra, command="sh", retcode=0)
+    assert isinstance(classify_gcda_check("/x/cov", more), GcdaFindError)
 
 
 # ── the marker frame: what the session printed before the check is not its answer ──
