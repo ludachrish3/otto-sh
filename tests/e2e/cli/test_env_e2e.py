@@ -14,15 +14,19 @@ developer's real ~/.otto.
 
 import json
 import os
+import shutil
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from otto.config.home import workspace_key
 from otto.env.backends import uv_bin, uv_version, venv_python
+from otto.errors import OttoError
 from otto.version import get_version
 from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
-from tests._fixtures.project_scaffold import copy_sample_project
+from tests._fixtures.project_scaffold import copy_sample_project, make_project
 from tests.e2e._otto_subprocess import PROJECT1, run_otto
 
 pytestmark = pytest.mark.hostless
@@ -418,3 +422,184 @@ class TestShow:
 
         restamped = _run(["env", "show"], home=home)
         assert "last sync:   otto " in restamped.stdout, restamped.stdout
+
+
+_VIRTUAL_PYPROJECT = """\
+[project]
+name = "otto-sample-virtual"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["otto-fixture-beetroot>=0.1"]
+"""
+"""The single-project pyproject docs/installation.md recommends: a ``[project]``
+table and NO ``[build-system]``. ``uv sync`` inside the project treats it as a
+virtual project; ``otto env`` must too (#554)."""
+
+
+@pytest.fixture
+def virtual_project(tmp_path):
+    """A project1-shaped project whose pyproject declares no build backend.
+
+    The SHAPE is the hostile condition: several top-level directories, none of
+    them excluded, which is exactly what setuptools' flat-layout auto-discovery
+    refuses to build. A project that happened to build under the setuptools
+    fallback would prove nothing about never building it.
+    """
+    return make_project(
+        tmp_path / "virtual",
+        name="virtual",
+        extra='libs = ["pylib"]',
+        files={
+            "pyproject.toml": _VIRTUAL_PYPROJECT,
+            "pylib/virtual_instructions.py": "",
+            "product/README": "",
+            "docker/Dockerfile": "",
+            "tests/test_nothing.py": "",
+        },
+    )
+
+
+def _has_dist(env, dist):
+    """Whether *dist* is installed in *env*, asked of the env's own interpreter."""
+    probe = subprocess.run(
+        [str(venv_python(env)), "-c", f"import importlib.metadata as m; m.distribution({dist!r})"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+class TestVirtualProject:
+    """A project with a pyproject but no build backend is never built (#554)."""
+
+    def test_create_installs_its_dependencies_and_never_builds_it(
+        self, tmp_path, virtual_project, project4
+    ):
+        """project4 rides along so the package arm (built, editable) is exercised beside it."""
+        home = tmp_path / "home"
+        roots = os.pathsep.join(str(p) for p in (PROJECT1, virtual_project, project4))
+        built = _run(
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
+            home=home,
+            roots=roots,
+            timeout=BUILD_TIMEOUT,
+        )
+        assert built.returncode == 0, built.stdout + built.stderr
+        assert "installed dependencies (virtual, not built): virtual" in built.stdout, built.stdout
+        assert "installed (editable): project4" in built.stdout, built.stdout
+
+        env = _the_env(home)
+        assert _has_dist(env, "otto-fixture-beetroot"), "the virtual project's dependency"
+        assert _has_dist(env, "otto-sample-project4"), "the package project, editable"
+        assert not _has_dist(env, "otto-sample-virtual"), "a virtual project is never built"
+
+    def test_show_reports_its_dependencies_not_a_dist(self, tmp_path, virtual_project):
+        """Both arms: the answer has to MOVE when the dependency is removed underneath otto."""
+        home = tmp_path / "home"
+        built = _run(
+            ["env", "create", "--", "--find-links", str(WHEELS_DIR)],
+            home=home,
+            roots=str(virtual_project),
+            timeout=BUILD_TIMEOUT,
+        )
+        assert built.returncode == 0, built.stdout + built.stderr
+
+        shown = _run(["env", "show"], home=home, roots=str(virtual_project))
+        assert shown.returncode == 0, shown.stderr
+        assert _cell(shown.stdout, "otto-sample-virtual", 2) == "deps met", shown.stdout
+
+        _uninstall(_the_env(home), "otto-fixture-beetroot")
+        after = _run(["env", "show"], home=home, roots=str(virtual_project))
+        assert _cell(after.stdout, "otto-sample-virtual", 2) == "deps missing", after.stdout
+
+    def test_the_hermetic_arm_resolves_offline(self, tmp_path, virtual_project, monkeypatch):
+        """``--no-index --find-links`` fails DIFFERENTLY when the project is built.
+
+        Building a project with no backend falls back to setuptools, which an
+        offline wheel directory does not hold, so the resolver gives up before
+        setuptools' discovery is even reached. Not building it leaves only the
+        dependency, which the wheel directory does hold.
+
+        IN-PROCESS, and only because of otto's own install: a hermetic
+        ``env create`` through the binary would also have to install otto
+        offline, and otto's own dependencies are in no wheel directory the
+        suite ships. So otto's install is stood in for by a requirement the
+        wheel directory satisfies, and everything else -- the project install,
+        the real uv, the real venv -- runs as the command runs it.
+        """
+        env = _fill_hermetically(
+            tmp_path, monkeypatch, virtual_project, ["--find-links", str(WHEELS_DIR)]
+        )
+
+        assert _has_dist(env, "otto-fixture-beetroot")
+        assert not _has_dist(env, "otto-sample-virtual")
+
+    def test_a_uv_source_is_honoured_not_sent_to_an_index(self, tmp_path, monkeypatch):
+        """``uv add --editable ../lib`` writes the dependency's location to
+        ``[tool.uv.sources]``, not to ``[project] dependencies``.
+
+        Installing the bare requirement string sends it to an index instead,
+        where it is "not found" or, worse, a public package of the same name.
+        Here the source is a path to a wheel and the run has NO index and no
+        find-links, so only the source can satisfy it.
+        """
+        wheels = tmp_path / "wheels"
+        wheels.mkdir()
+        wheel = Path(shutil.copy(_BEETROOT_WHEEL, wheels))
+        source = f'otto-fixture-beetroot = {{ path = "../wheels/{wheel.name}" }}'
+        root = make_project(
+            tmp_path / "sourced",
+            name="sourced",
+            files={
+                "pyproject.toml": f"{_VIRTUAL_PYPROJECT}\n[tool.uv.sources]\n{source}\n",
+                "pylib/x.py": "",
+                "product/README": "",
+            },
+        )
+
+        env = _fill_hermetically(tmp_path, monkeypatch, root, [])
+
+        assert _has_dist(env, "otto-fixture-beetroot")
+        assert not _has_dist(env, "otto-sample-virtual")
+
+    def test_requires_python_is_enforced_before_installing(
+        self, tmp_path, monkeypatch, virtual_project
+    ):
+        """Installing a package checks its ``requires-python``; a requirements file does not.
+
+        So a virtual project's is checked by otto, against the env's own
+        interpreter, and refused before its dependencies go in.
+        """
+        pyproject = virtual_project / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text().replace('requires-python = ">=3.10"', 'requires-python = "<3.0"')
+        )
+
+        with pytest.raises(OttoError, match="requires-python"):
+            _fill_hermetically(
+                tmp_path, monkeypatch, virtual_project, ["--find-links", str(WHEELS_DIR)]
+            )
+        assert not _has_dist(tmp_path / "env", "otto-fixture-beetroot")
+
+
+_BEETROOT_WHEEL = next(WHEELS_DIR.glob("otto_fixture_beetroot-*.whl"))
+
+
+def _fill_hermetically(tmp_path, monkeypatch, root, passthrough):
+    """Fill a real venv with *root*'s project install, offline, with the real uv.
+
+    ``--no-index`` always: everything the install needs must come from
+    *passthrough* or from the project's own declarations. otto's own install
+    is stood in for by the fixture wheel's path -- otto's own dependencies are
+    in no wheel directory the suite ships.
+    """
+    from otto.env import backends, manage
+
+    env = tmp_path / "env"
+    uv, version = manage._acquire_uv(env)
+    manage._relay(backends.create_venv(uv, env), [], "creating the venv")
+    monkeypatch.setattr(manage, "_otto_target", lambda: [str(_BEETROOT_WHEEL)])
+    project = SimpleNamespace(name=root.name, root=root)
+    manage._fill(env, uv, version, manage._plan([project]), ["--no-index", *passthrough])
+    return env

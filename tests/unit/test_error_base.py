@@ -66,7 +66,12 @@ from otto.creds.errors import CredsConstructionError, CredsError
 from otto.docker.build import DockerImageConfigError
 from otto.docker.observe import DockerVerbError
 from otto.docker.resolve import UseCaseResolutionError
-from otto.env import EnvBuildError, EnvExistsError, EnvSelfRebuildError
+from otto.env import (
+    EnvBuildError,
+    EnvExistsError,
+    EnvSelfRebuildError,
+    EnvUninstallableProjectError,
+)
 from otto.env.backends import UvNotFoundError
 from otto.errors import EnsureStateError, FieldError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
@@ -173,6 +178,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnvExistsError, RuntimeError),
     (EnvBuildError, RuntimeError),
     (EnvSelfRebuildError, RuntimeError),
+    (EnvUninstallableProjectError, ValueError),
     # A settings error like the model-level ones, which are pydantic
     # ValidationErrors — so an `except ValueError` around config loading
     # catches a cross-project [logging.levels] conflict too.

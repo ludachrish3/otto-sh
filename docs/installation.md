@@ -293,10 +293,15 @@ Activate it with:
   source ~/.otto/134b91c0-project-a-project-b/env/bin/activate
 ```
 
-Each project that has a `pyproject.toml` is installed **editable**, so your
-checkouts stay live; projects without one are skipped and said so, since their
-`libs` reach `sys.path` at bootstrap anyway. otto installs itself too, matching
-how your otto is installed — an editable checkout stays that checkout.
+A project whose `pyproject.toml` declares a build backend is installed
+**editable**, so your checkout stays live. A project laid out as
+[above](#with-uv-recommended), with no build backend, is a virtual project: only
+its dependencies are installed and the project itself is never built, so it
+needs no build configuration in a workspace either. Projects without a
+`pyproject.toml` are skipped and said so, since their `libs` reach `sys.path` at
+bootstrap anyway. otto installs itself too, matching how your otto is installed
+— an editable checkout stays that checkout. The full rule, and what it
+refuses, is {ref}`What goes in <env-what-goes-in>`.
 
 ### The uv-workspace alternative
 

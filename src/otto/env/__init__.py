@@ -23,7 +23,9 @@ if TYPE_CHECKING:
     from .manage import EnvMeta as EnvMeta
     from .manage import EnvSelfRebuildError as EnvSelfRebuildError
     from .manage import EnvStatus as EnvStatus
+    from .manage import EnvUninstallableProjectError as EnvUninstallableProjectError
     from .manage import ProjectState as ProjectState
+    from .manage import SkippedProject as SkippedProject
     from .manage import create_env as create_env
     from .manage import env_path as env_path
     from .manage import env_status as env_status
@@ -36,12 +38,14 @@ if TYPE_CHECKING:
 _LAZY_ATTRS: dict[str, str] = {
     "EnvBuild": "otto.env.manage",
     "EnvBuildError": "otto.env.manage",
+    "EnvUninstallableProjectError": "otto.env.manage",
     "EnvExistsError": "otto.env.manage",
     "EnvMeta": "otto.env.manage",
     "EnvSelfRebuildError": "otto.env.manage",
     "EnvStatus": "otto.env.manage",
     "META_FILENAME": "otto.env.manage",
     "ProjectState": "otto.env.manage",
+    "SkippedProject": "otto.env.manage",
     "UvNotFoundError": "otto.env.backends",
     "create_env": "otto.env.manage",
     "env_path": "otto.env.manage",
@@ -75,7 +79,9 @@ __all__ = [
     "EnvMeta",
     "EnvSelfRebuildError",
     "EnvStatus",
+    "EnvUninstallableProjectError",
     "ProjectState",
+    "SkippedProject",
     "UvNotFoundError",
     "create_env",
     "env_path",

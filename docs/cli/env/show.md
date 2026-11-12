@@ -10,20 +10,20 @@ otto env show
 $ otto env show
 environment: ~/.otto/134b91c0-project1-project4/env
   last sync:   otto %OTTO_VERSION%, uv 0.13.6
-╭──────────┬──────────────────────┬───────────┬───────────────────────────────────╮
-│ project  │ distribution         │ installed │ state                             │
-├──────────┼──────────────────────┼───────────┼───────────────────────────────────┤
-│ project1 │ —                    │ —         │ no pyproject (libs ride sys.path) │
-│ project4 │ otto-sample-project4 │ yes       │ current                           │
-╰──────────┴──────────────────────┴───────────┴───────────────────────────────────╯
+╭──────────┬──────────────────────┬───────────┬────────────────────────────────────────╮
+│ project  │ distribution         │ installed │ state                                  │
+├──────────┼──────────────────────┼───────────┼────────────────────────────────────────┤
+│ project1 │ —                    │ —         │ no pyproject.toml (libs ride sys.path) │
+│ project4 │ otto-sample-project4 │ yes       │ current                                │
+╰──────────┴──────────────────────┴───────────┴────────────────────────────────────────╯
 ```
 
 | Column | Meaning |
 | ------ | ------- |
 | `project` | The project's otto name, from its `settings.toml` |
 | `distribution` | Its `[project] name`, or `—` when it has no `pyproject.toml` |
-| `installed` | Whether that distribution is actually present in the environment |
-| `state` | `current`, `stale`, or why the project is not installable |
+| `installed` | Whether that distribution is actually present in the environment. A {ref}`virtual project <env-what-goes-in>` has no distribution, so it reads `deps met` or `deps missing` instead |
+| `state` | `current`, `stale`, or why the project is skipped (see {ref}`env-what-goes-in`) |
 
 The `last sync:` line names the otto and the
 {ref}`uv otto runs <which-uv-runs-what>` as of the last successful
@@ -51,7 +51,7 @@ requirements last changed.
 
 ```console
 $ otto env show
-│ project4 │ otto-sample-project4 │ yes       │ stale — run `otto env sync`       │
+│ project4 │ otto-sample-project4 │ yes       │ stale — run `otto env sync`            │
 ```
 
 The check is cheap — no imports, no installer call, nothing that can hang on
@@ -64,6 +64,13 @@ case.
 
 The check runs one query inside the environment's own interpreter. If the
 environment's interpreter cannot answer, the column reads `?`.
+
+For a virtual project, the same query reports the environment's site
+directories and its own marker values (`python_version` and the rest, from the
+Python uv picked for it, not the one otto runs on), and the
+{ref}`dependency preflight <env-dependency-preflight>` judges the project's
+dependencies against them, so `show` and the preflight cannot disagree. A
+virtual project with dynamic dependencies cannot be judged and reads `?`.
 
 A project showing `no` after a successful build usually means its install failed
 and the failure was reported at the time — see the resolver output in

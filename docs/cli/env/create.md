@@ -82,9 +82,13 @@ dry-run seam stops lab-free commands before the command body runs — see
 
 ## What it installs
 
-Each discovered project with a `pyproject.toml`, editable; then otto itself. Projects
-without a `pyproject.toml` are named in the output and passed over — they are
-not installable, and their `libs` reach `sys.path` at bootstrap regardless.
+Each discovered project with a `pyproject.toml`: a package editable, a virtual
+project by its dependencies only (`installed dependencies (virtual, not built):`
+in the output); then otto itself. Projects with nothing to install (no
+`pyproject.toml`, or a virtual project with no `[project]` table) are named in
+the output with the reason and passed over; their `libs` reach `sys.path` at
+bootstrap regardless. Which projects are packages, which are virtual, and what
+is refused is {ref}`the rule in What goes in <env-what-goes-in>`.
 
 See {doc}`index` for the uv it runs, the `--` passthrough, and how resolver
 failures are reported.
