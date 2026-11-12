@@ -1522,6 +1522,7 @@ abstract	otto.host:CommandResult	@manifest:subclass=false
 name	otto.host:ConnectionManager	class
 mro	otto.host:ConnectionManager	-
 call	otto.host:ConnectionManager	sync	KO:ip:- KO:creds:- KO:term:- KO:name:- KO:hop:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:ftp_options:N KO:console_options:N KO:console_endpoint:N KO:host_id:-
+member	otto.host:ConnectionManager.abandon	method	sync	-
 member	otto.host:ConnectionManager.abandon_console	method	sync	-
 member	otto.host:ConnectionManager.close	method	coroutine	-
 member	otto.host:ConnectionManager.connect_allowance	method	sync	KO:term:N
@@ -1937,11 +1938,12 @@ name	otto.host:Expect	alias
 name	otto.host:FlatPreferences	alias
 name	otto.host:HopTransport	protocol
 mro	otto.host:HopTransport	-
+member	otto.host:HopTransport.abort	method	sync	-
 member	otto.host:HopTransport.close	method	coroutine	-
 member	otto.host:HopTransport.forward_port	method	coroutine	PK:dest_host:- KO:dest_port:-
 member	otto.host:HopTransport.get_tunnel	method	coroutine	-
 member	otto.host:HopTransport.unforward_port	method	sync	PK:dest_host:- KO:dest_port:-
-requires	otto.host:HopTransport	close forward_port get_tunnel unforward_port
+requires	otto.host:HopTransport	abort close forward_port get_tunnel unforward_port
 name	otto.host:Host	protocol
 mro	otto.host:Host	-
 member	otto.host:Host.__aenter__	method	coroutine	-

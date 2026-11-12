@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from asyncssh import SSHClientConnection
 
-from otto.host.transport import HopTransportTornDownError, _SshHopTransport
+from otto.host.transport import HopTransportTornDownError, _SshHopTransport, abort_ssh_connection
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -355,6 +355,87 @@ class TestClose:
         transport = _SshHopTransport(factory)
         await transport.close()  # should not raise
         factory.assert_not_awaited()
+
+
+class TestAbort:
+    """The synchronous release a dropped or cancelled manager uses (#451, #999)."""
+
+    @staticmethod
+    def _conn() -> MagicMock:
+        conn = MagicMock(spec=SSHClientConnection)
+        conn._transport = MagicMock()
+        return conn
+
+    @pytest.mark.asyncio
+    async def test_aborts_the_tunnel_its_socket_and_every_forward(self):
+        conn = self._conn()
+        listener = MagicMock()
+        listener.get_port.return_value = 11111
+        conn.forward_local_port = AsyncMock(return_value=listener)
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
+        await transport.forward_port("localhost", dest_port=23)
+
+        transport.abort()
+
+        listener.close.assert_called_once()
+        conn.abort.assert_called_once()
+        conn._transport.abort.assert_called_once()
+        conn.close.assert_not_called()  # no await-free graceful close: an abort
+        assert transport._port_forwards == {}
+        assert transport._conn is None
+
+    @pytest.mark.asyncio
+    async def test_cascades_to_the_parent(self):
+        parent_conn, child_conn = self._conn(), self._conn()
+        parent = _SshHopTransport(AsyncMock(return_value=parent_conn))
+        child = _SshHopTransport(AsyncMock(return_value=child_conn), parent=parent)
+        await child.get_tunnel()
+        await parent.get_tunnel()
+
+        child.abort()
+
+        child_conn.abort.assert_called_once()
+        parent_conn.abort.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_raising_step_skips_nothing_and_never_raises(self):
+        conn = self._conn()
+        conn.abort.side_effect = RuntimeError("Event loop is closed")
+        bad, good = MagicMock(), MagicMock()
+        bad.get_port.return_value, good.get_port.return_value = 1, 2
+        bad.close.side_effect = OSError("listener already gone")
+        conn.forward_local_port = AsyncMock(side_effect=[bad, good])
+        transport = _SshHopTransport(AsyncMock(return_value=conn))
+        await transport.forward_port("localhost", dest_port=23)
+        await transport.forward_port("localhost", dest_port=24)
+
+        transport.abort()
+
+        good.close.assert_called_once()
+        conn._transport.abort.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ends_the_generation_and_stays_usable(self, factory: AsyncMock):
+        """Like ``close()``: an in-flight build releases itself; a later call dials anew."""
+        transport = _SshHopTransport(factory)
+        await transport.get_tunnel()
+        before = transport._generation
+
+        transport.abort()
+
+        assert transport._generation == before + 1
+        await transport.get_tunnel()
+        assert factory.await_count == 2
+
+    def test_abort_without_connect_is_a_no_op(self, factory: AsyncMock):
+        _SshHopTransport(factory).abort()
+        factory.assert_not_awaited()
+
+    def test_abort_ssh_connection_with_no_asyncio_transport(self):
+        conn = MagicMock(spec=SSHClientConnection)
+        conn._transport = None
+        abort_ssh_connection(conn)
+        conn.abort.assert_called_once()
 
 
 # Runaway guard for the teardown-latency control below: it catches a HANG, so

@@ -1226,6 +1226,34 @@ class ConnectionManager:
         if console is not None:
             console.abort()
 
+    def abandon(self) -> None:
+        """Release, synchronously, what this manager holds beyond its target.
+
+        For a caller dropping this manager unclosed (a rebuild): the console
+        line (:meth:`abandon_console`) and every hop transport, the console
+        server's and the host's own. Those reach a box the rebuild did not
+        touch, so nothing else would ever close them; the target's own
+        transports are left to die with it or with their loop.
+        """
+        self.abandon_console()
+        self._abort_hops()
+
+    def _owned_hops(self) -> "list[tuple[str, HopTransport]]":
+        """Name the hop transports this manager owns, in release order.
+
+        The console server's hop, then the host's own: :meth:`close` closes
+        them in this order, last of all, and :meth:`_abort_hops` aborts them.
+        """
+        endpoint = self._console_endpoint
+        named = [("console hop", None if endpoint is None else endpoint.hop), ("hop", self._hop)]
+        return [(what, hop) for what, hop in named if hop is not None]
+
+    def _abort_hops(self) -> None:
+        """Abort every hop this manager owns (:meth:`_owned_hops`), each guarded."""
+        for what, hop in self._owned_hops():
+            with teardown_step(self._name, f"{what} abort"):
+                hop.abort()
+
     async def forward_port(self, *, dest_port: int) -> int:
         """Forward a local ephemeral port to ``self._ip:dest_port`` through the tunnel.
 
@@ -1278,8 +1306,8 @@ class ConnectionManager:
         ``CancelledError`` is not guarded: a force-abandoned teardown stops
         the chain, loudly. Nothing closes this manager afterwards, so on the
         way out it aborts the telnet and console clients it detached, without
-        a drain. One whose release was already under way, or already ended,
-        is left to it.
+        a drain (one whose release was already under way, or already ended,
+        is left to it), then its hops.
         """
         sftp, self._sftp_conn = self._sftp_conn, None
         ssh, self._ssh_conn = self._ssh_conn, None
@@ -1320,19 +1348,16 @@ class ConnectionManager:
                 with teardown_step(self._name, "ftp"):
                     await ftp.quit()
 
-            if self._console_endpoint is not None and self._console_endpoint.hop is not None:
-                with teardown_step(self._name, "console hop"):
-                    await self._console_endpoint.hop.close()
-
-            if self._hop is not None:
-                with teardown_step(self._name, "hop"):
-                    await self._hop.close()
+            for what, hop in self._owned_hops():
+                with teardown_step(self._name, what):
+                    await hop.close()
         except asyncio.CancelledError:
             # Each client's ``abort()`` is sync and a no-op once its stream
             # is taken, so this frees only what no release has reached.
             for client in (telnet, console):
                 if client is not None:
                     client.abort()
+            self._abort_hops()
             raise
 
         # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled by
