@@ -36,13 +36,6 @@ def test_tree_hash_takes_a_revision(tmp_path: Path):
     assert common.tree_hash(repo, first) != common.tree_hash(repo)
 
 
-def test_blob_sha_is_git_hash_object_of_the_working_file(tmp_path: Path):
-    repo = _repo(tmp_path)
-    (repo / "tracked.txt").write_text("v2\n")
-    expected = _git(repo, "hash-object", "tracked.txt").strip()
-    assert common.blob_sha(repo, "tracked.txt") == expected
-
-
 def test_dirt_refusals_name_tracked_dirt_and_blocking_untracked(tmp_path: Path):
     repo = _repo(tmp_path)
     (repo / "tracked.txt").write_text("v2\n")

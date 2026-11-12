@@ -180,7 +180,6 @@ class TestGoals:
             "tree": tree,
             "command": "make coverage",
             "base": "b" * 40,
-            "measured": {},
             "written_at": "now",
             "checkout": str(repo),
         }
@@ -192,6 +191,35 @@ class TestGoals:
 
 
 class TestKeysAndFiles:
+    def test_a_stamp_file_with_a_measured_key_still_loads_and_the_key_is_dropped(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        tree = tree_hash(repo)
+        path = gt.write_stamp(root, tree=tree, key="make coverage-bed", base="b", checkout="/x")
+        data = json.loads(path.read_text())
+        data["measured"] = {"schemas/support_matrix.json": "0" * 40}
+        path.write_text(json.dumps(data))
+        stamp = gt.read_stamp(path)
+        assert stamp is not None
+        assert not hasattr(stamp, "measured")
+        fresh = gt.write_stamp(
+            root, tree="e" * 40, key="make coverage-bed", base="b", checkout="/x"
+        )
+        assert "measured" not in json.loads(fresh.read_text())
+
+    def test_the_only_promotion_is_the_carry(self):
+        stamp = gt.Stamp(
+            tree="a" * 40,
+            command="make coverage-bed",
+            base="b" * 40,
+            written_at="now",
+            checkout="/x",
+            promoted_from=None,
+            path=Path("/x"),
+        )
+        assert "promoted from" in gt._promoted_line(stamp, "carried", "c" * 40)
+        with pytest.raises(ValueError, match="unknown promotion 'witnessed'"):
+            gt._promoted_line(stamp, "witnessed", "c" * 40)
+
     def test_the_key_strips_only_the_range_decoration(self):
         assert gt.lane_key("make check-breaking RANGE=abc..HEAD") == "make check-breaking"
         assert gt.lane_key('make quick PATHS="a b"') == 'make quick PATHS="a b"'
@@ -239,7 +267,6 @@ class TestKeysAndFiles:
             "tree": "t" * 40,
             "command": "make coverage-bed",
             "base": "b" * 40,
-            "measured": {},
             "written_at": "now",
             "checkout": "/x",
         }
@@ -251,8 +278,6 @@ class TestKeysAndFiles:
             json.dumps({**good, "format": 2}),
             json.dumps({**good, "tree": 7}),
             json.dumps({**good, "command": ["make", "coverage"]}),
-            json.dumps({**good, "measured": ["schemas/support_matrix.json"]}),
-            json.dumps({**good, "measured": {"schemas/support_matrix.json": 1}}),
             json.dumps({**good, "promoted_from": 3}),
             json.dumps({**good, "command": 'make quick PATHS="unbalanced'}),
             json.dumps({**good, "command": "make a-goal-this-runner-never-knew"}),
@@ -275,61 +300,9 @@ class TestKeysAndFiles:
             gt.lookup(repo, root, tree_hash(repo), "make coverage-bed").reason == "unreadable stamp"
         )
 
-    def test_a_corrupt_exact_file_does_not_hide_valid_promoted_evidence(self, tmp_path):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout=str(repo),
-        )
-        _git(repo, "commit", "-qam", "measured")
-        t_tree = tree_hash(repo)
-        exact = gt.stamp_path(root, t_tree, "make coverage-bed")
-        exact.parent.mkdir(parents=True)
-        exact.write_text("{crashed mid-write")
-        found = gt.lookup(repo, root, t_tree, "make coverage-bed")
-        assert found.stamp is not None
-        assert found.stamp.tree == s_tree
-
-    def test_a_file_claiming_another_tree_never_satisfies_through_that_trees_witness(
-        self, tmp_path
-    ):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout=str(repo),
-        )
-        _git(repo, "commit", "-qam", "measured")
-        t_tree = tree_hash(repo)
-        # a coverage "stamp" filed under <T>/ but claiming S: with S's witness it would promote
-        path = gt.write_stamp(
-            root, tree=t_tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
-        )
-        data = json.loads(path.read_text())
-        data["tree"] = s_tree
-        path.write_text(json.dumps(data))
-        assert gt.find_stamp(repo, root, t_tree, "make coverage-bed") is None
-        assert path in gt.load_store(root).unreadable
-
     def test_a_stamp_whose_command_is_not_the_key_is_a_mismatch(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        path = gt.write_stamp(
-            root, tree="t" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
-        )
+        path = gt.write_stamp(root, tree="t" * 40, key="make coverage-bed", base="b", checkout="/x")
         data = json.loads(path.read_text())
         data["command"] = "make kmodcov"  # a digest collision, or a hand edit
         path.write_text(json.dumps(data))
@@ -345,56 +318,38 @@ class TestKeysAndFiles:
         assert gt.invalidate(repo, root, "make coverage-bed", tree="t" * 40) == [path]
         assert not path.exists()
 
-    def test_a_misnamed_file_is_neither_candidate_nor_witness_at_another_tree(self, tmp_path):
+    def test_a_misnamed_file_is_never_a_candidate_at_another_tree(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        # a conformance-bed-named file under S edited to claim kmodcov AND to carry the witness
+        # a conformance-bed-named file under S edited to claim kmodcov
         path = gt.write_stamp(
             root,
             tree=s_tree,
             key="make conformance-bed",
             base="b",
-            measured={"schemas/support_matrix.json": blob},
             checkout=str(repo),
         )
         data = json.loads(path.read_text())
         data["command"] = "make kmodcov"
         path.write_text(json.dumps(data))
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
-        _git(repo, "commit", "-qam", "measured")
+        gt.write_stamp(root, tree=s_tree, key="make coverage-bed", base="b", checkout=str(repo))
+        _measure(repo, '{"as_of": "2026-10-16"}\n')
+        _git(repo, "commit", "-qam", "next")
         t_tree = tree_hash(repo)
         assert gt.find_stamp(repo, root, t_tree, "make kmodcov") is None
         assert gt.find_stamp(repo, root, t_tree, "make coverage-bed") is None, (
-            "the misnamed file's blob is no witness"
+            "the misnamed file is no candidate for coverage-bed"
         )
 
     def test_exact_evidence_wins_without_a_store_scan(self, tmp_path, monkeypatch):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
-        # a REAL promotable candidate: S's coverage stamp plus S's measurement witness for T
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout="/elsewhere"
-        )
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout="/elsewhere",
-        )
-        _git(repo, "commit", "-qam", "measured")
+        # another tree's stamp sits in the store: the exact hit must not read it
+        gt.write_stamp(root, tree=s_tree, key="make coverage-bed", base="b", checkout="/elsewhere")
+        _measure(repo, '{"as_of": "2026-10-16"}\n')
+        _git(repo, "commit", "-qam", "next")
         t_tree = tree_hash(repo)
-        assert gt.find_stamp(repo, root, t_tree, "make coverage-bed").checkout == "/elsewhere", (
-            "promotable on its own"
-        )
-        gt.write_stamp(
-            root, tree=t_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
+        gt.write_stamp(root, tree=t_tree, key="make coverage-bed", base="b", checkout=str(repo))
         reads = []
         real = gt._read_record
         monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
@@ -409,9 +364,7 @@ class TestKeysAndFiles:
         repo, root = _repo(tmp_path), _store(tmp_path)
         monkeypatch.setattr(gt, "slug", lambda key: "collide")  # two known keys, one file name
         tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=tree, key="make kmodcov", base="b", measured={}, checkout=str(repo)
-        )
+        gt.write_stamp(root, tree=tree, key="make kmodcov", base="b", checkout=str(repo))
         found = gt.lookup(repo, root, tree, "make coverage-bed")
         assert found.stamp is None
         assert (
@@ -423,9 +376,7 @@ class TestKeysAndFiles:
 
     def test_an_exact_path_stamp_that_claims_another_tree_is_not_evidence(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        path = gt.write_stamp(
-            root, tree="t" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
-        )
+        path = gt.write_stamp(root, tree="t" * 40, key="make coverage-bed", base="b", checkout="/x")
         data = json.loads(path.read_text())
         data["tree"] = "u" * 40
         path.write_text(json.dumps(data))
@@ -436,54 +387,8 @@ class TestSatisfies:
     def test_the_exact_tree(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
+        gt.write_stamp(root, tree=tree, key="make coverage-bed", base="b", checkout=str(repo))
         assert gt.find_stamp(repo, root, tree, "make coverage-bed") is not None
-
-    def test_a_tree_that_differs_only_by_a_recorded_measured_blob(self, tmp_path):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout=str(repo),
-        )
-        _git(repo, "commit", "-qam", "measured")
-        t_tree = tree_hash(repo)
-        coverage = gt.find_stamp(repo, root, t_tree, "make coverage-bed")
-        assert coverage is not None, "promoted through the measuring stamp"
-        assert coverage.tree == s_tree
-        assert gt.find_stamp(repo, root, t_tree, "make conformance-bed") is not None
-
-    def test_a_recorded_blob_followed_by_different_bytes_inherits_nothing(self, tmp_path):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout=str(repo),
-        )
-        _measure(repo, '{"as_of": "2026-10-16", "hand": "edited"}\n')
-        _git(repo, "commit", "-qam", "edited after the measurement")
-        found = gt.lookup(repo, root, tree_hash(repo), "make coverage-bed")
-        assert found.stamp is None
-        assert "beyond the measured outputs" in found.reason
-        assert s_tree[:12] in found.reason
 
     def test_a_matrix_only_commit_with_no_run_behind_it_inherits_nothing(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -492,74 +397,26 @@ class TestSatisfies:
             tree=tree_hash(repo),
             key="make coverage-bed",
             base="b",
-            measured={},
             checkout=str(repo),
         )
         _measure(repo, '{"as_of": "hand-edited"}\n')
         _git(repo, "commit", "-qam", "edit")
         assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage-bed") is None
 
-    def test_any_witnessed_blob_for_the_path_counts(self, tmp_path):
-        """Two lanes under one tree may record different blobs for the same matrix."""
+    def test_another_trees_stamp_is_never_evidence_without_a_carry(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
-        first = _measure(repo, '{"as_of": "first"}\n')
+        gt.write_stamp(root, tree=s_tree, key="make coverage-bed", base="b", checkout=str(repo))
         gt.write_stamp(
             root,
             tree=s_tree,
             key="make conformance-bed",
             base="b",
-            measured={"schemas/support_matrix.json": first},
-            checkout=str(repo),
-        )
-        second = _measure(repo, '{"as_of": "second"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make kmodcov",
-            base="b",
-            measured={"schemas/support_matrix.json": second},
-            checkout=str(repo),
-        )
-        assert gt.witnesses(gt.load_store(root).stamps, s_tree) == {
-            "schemas/support_matrix.json": {first, second}
-        }
-        _measure(repo, '{"as_of": "first"}\n')
-        _git(repo, "commit", "-qam", "commit the first measurement")
-        assert gt.find_stamp(repo, root, tree_hash(repo), "make kmodcov") is not None
-
-    def test_a_difference_outside_the_measured_outputs_inherits_nothing(self, tmp_path):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        gt.write_stamp(
-            root, tree=s_tree, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": "0" * 40},
             checkout=str(repo),
         )
         (repo / "tests" / "unit" / "test_a.py").write_text("def test_a():\n    assert True\n")
         _git(repo, "commit", "-qam", "code")
         assert gt.find_stamp(repo, root, tree_hash(repo), "make coverage-bed") is None
-
-    def test_diff_tree_is_recursive(self, tmp_path):
-        repo, root = _repo(tmp_path), _store(tmp_path)
-        s_tree = tree_hash(repo)
-        blob = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        gt.write_stamp(
-            root,
-            tree=s_tree,
-            key="make conformance-bed",
-            base="b",
-            measured={"schemas/support_matrix.json": blob},
-            checkout=str(repo),
-        )
-        _git(repo, "commit", "-qam", "measured")
-        assert gt.find_stamp(repo, root, tree_hash(repo), "make conformance-bed") is not None
 
     def test_a_pruned_tree_is_unreadable_never_an_exception(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -568,16 +425,13 @@ class TestSatisfies:
             tree="f" * 40,
             key="make conformance-bed",
             base="b",
-            measured={"schemas/support_matrix.json": "0" * 40},
             checkout=str(repo),
         )
         found = gt.lookup(repo, root, tree_hash(repo), "make conformance-bed")
         assert found.stamp is None
         assert found.reason == "unreadable stamp"
         # the same with NO witness under the pruned tree: still unreadable, never "differs beyond"
-        gt.write_stamp(
-            root, tree="e" * 40, key="make coverage-bed", base="b", measured={}, checkout=str(repo)
-        )
+        gt.write_stamp(root, tree="e" * 40, key="make coverage-bed", base="b", checkout=str(repo))
         assert (
             gt.lookup(repo, root, tree_hash(repo), "make coverage-bed").reason == "unreadable stamp"
         )
@@ -589,7 +443,6 @@ class TestSatisfies:
             tree=tree_hash(repo),
             key='make quick PATHS="tests/unit/a"',
             base="a" * 40,
-            measured={},
             checkout=str(repo),
         )
         found = gt.lookup(
@@ -609,7 +462,6 @@ class TestSatisfies:
             tree=tree,
             key='make quick PATHS="tests/unit/a"',
             base="a" * 40,
-            measured={},
             checkout=str(repo),
         )
         found = gt.lookup(repo, root, tree, 'make quick PATHS="tests/unit/b"')
@@ -631,12 +483,9 @@ class TestSatisfies:
                 tree=tree,
                 key="make kmodcov",
                 base="b",
-                measured={"schemas/support_matrix.json": "0" * 40},
                 checkout="/x",
             )
-            gt.write_stamp(
-                root, tree=tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
-            )
+            gt.write_stamp(root, tree=tree, key="make coverage-bed", base="b", checkout="/x")
         reads = []
         real = gt._read_record
         monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
@@ -678,17 +527,11 @@ class TestInvalidate:
         repo, root = _repo(tmp_path), _store(tmp_path)
         gated = tree_hash(repo)
         gone = [
-            gt.write_stamp(
-                root, tree="a" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
-            ),
-            gt.write_stamp(
-                root, tree="b" * 40, key="make coverage-bed", base="b", measured={}, checkout="/y"
-            ),
+            gt.write_stamp(root, tree="a" * 40, key="make coverage-bed", base="b", checkout="/x"),
+            gt.write_stamp(root, tree="b" * 40, key="make coverage-bed", base="b", checkout="/y"),
             gt.write_red(root, tree="c" * 40, key="make coverage-bed", checkout="/y"),
         ]
-        kept = gt.write_stamp(
-            root, tree="a" * 40, key="make kmodcov", base="b", measured={}, checkout="/x"
-        )
+        kept = gt.write_stamp(root, tree="a" * 40, key="make kmodcov", base="b", checkout="/x")
         assert sorted(gt.invalidate(repo, root, "make coverage-bed", tree=gated)) == sorted(gone)
         assert not any(p.exists() for p in gone)
         assert gt.read_stamp(kept) is not None, "another key is never touched"
@@ -699,7 +542,7 @@ class TestInvalidate:
         live = [_live_tree(repo, str(n)) for n in range(3)]
         dead = [c * 40 for c in "abcd"]
         for tree in live + dead:
-            gt.write_stamp(root, tree=tree, key=LANE, base="b", measured={}, checkout="/x")
+            gt.write_stamp(root, tree=tree, key=LANE, base="b", checkout="/x")
         gt.write_red(root, tree="e" * 40, key=LANE, checkout="/y")
         gated = tree_hash(repo)
         spawns = []
@@ -718,9 +561,7 @@ class TestInvalidate:
 
     def test_nothing_for_the_key_spawns_no_git(self, tmp_path, monkeypatch):
         repo, root = _repo(tmp_path), _store(tmp_path)
-        gt.write_stamp(
-            root, tree="a" * 40, key="make kmodcov", base="b", measured={}, checkout="/x"
-        )
+        gt.write_stamp(root, tree="a" * 40, key="make kmodcov", base="b", checkout="/x")
         spawns = []
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: spawns.append(a))
         assert gt.invalidate(repo, root, LANE, tree="z" * 40) == []
@@ -730,9 +571,7 @@ class TestInvalidate:
         """#650: gating tree A from checkout X never deletes tree B's stamp from checkout Y."""
         repo, root = _repo(tmp_path), _store(tmp_path)
         a_tree, b_tree = tree_hash(repo), _live_tree(repo, "b")
-        peer = gt.write_stamp(
-            root, tree=b_tree, key="make coverage-bed", base="b", measured={}, checkout="/y"
-        )
+        peer = gt.write_stamp(root, tree=b_tree, key="make coverage-bed", base="b", checkout="/y")
         assert gt.invalidate(repo, root, "make coverage-bed", tree=a_tree) == []
         assert gt.read_stamp(peer) is not None
 
@@ -741,7 +580,7 @@ class TestInvalidate:
         repo, root = _repo(tmp_path), _store(tmp_path)
         a_tree, c_tree = _live_tree(repo, "a"), tree_hash(repo)
         a_stamp = gt.write_stamp(
-            root, tree=a_tree, key="make coverage-bed", base="b", measured={}, checkout="/x"
+            root, tree=a_tree, key="make coverage-bed", base="b", checkout="/x"
         )
         assert gt.invalidate(repo, root, "make coverage-bed", tree=c_tree) == []
         assert gt.read_stamp(a_stamp) is not None
@@ -749,9 +588,7 @@ class TestInvalidate:
     def test_the_gated_trees_own_stamp_stays_for_the_lanes_outcome_to_replace(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         u_tree = tree_hash(repo)
-        own = gt.write_stamp(
-            root, tree=u_tree, key="make coverage-bed", base="b", measured={}, checkout="/y"
-        )
+        own = gt.write_stamp(root, tree=u_tree, key="make coverage-bed", base="b", checkout="/y")
         assert gt.invalidate(repo, root, "make coverage-bed", tree=u_tree) == []
         assert gt.read_stamp(own) is not None
 
@@ -761,7 +598,7 @@ class TestInvalidate:
         unreadable.parent.mkdir(parents=True)
         unreadable.write_text("{bad")
         mismatched = gt.write_stamp(
-            root, tree="c" * 40, key="make coverage-bed", base="b", measured={}, checkout="/x"
+            root, tree="c" * 40, key="make coverage-bed", base="b", checkout="/x"
         )
         data = json.loads(mismatched.read_text())
         data["command"] = "make kmodcov"
@@ -936,14 +773,11 @@ class TestRedMarker:
     def test_a_red_marker_never_promotes_to_another_tree(self, tmp_path):
         repo, root = _repo(tmp_path), _store(tmp_path)
         s_tree = tree_hash(repo)
-        blob = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        gt.write_stamp(
-            root, tree=s_tree, key="make kmodcov", base="b", measured={SUPPORT: blob}, checkout="/x"
-        )
+        gt.write_stamp(root, tree=s_tree, key="make kmodcov", base="b", checkout="/x")
         gt.write_red(root, tree=s_tree, key=LANE, checkout="/x")
-        _git(repo, "commit", "-qam", "measured")
+        _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _git(repo, "commit", "-qam", "next")
         u_tree = tree_hash(repo)
-        assert gt.find_stamp(repo, root, u_tree, "make kmodcov") is not None, "S's witness holds"
         found = gt.lookup(repo, root, u_tree, LANE)
         assert found.stamp is None
         assert found.reason == "no stamp"
@@ -1016,7 +850,6 @@ def _stamp(repo, key, tree=None, **kw):
         tree=tree or tree_hash(repo),
         key=key,
         base="b",
-        measured=kw.pop("measured", {}),
         checkout=kw.pop("checkout", str(repo)),
         **kw,
     )
@@ -1278,11 +1111,10 @@ class TestRunner:
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
-        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, LANE, tree=s_tree, checkout="/peer")
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
-        assert gt.find_stamp(repo, root, u_tree, LANE) is not None, "promotable before the run"
         runner = FakeRunner(statuses={LANE: 1})
         status, _out, _ = _go(monkeypatch, repo, [LANE], runner, force=True)
         assert status == 1
@@ -1308,8 +1140,8 @@ class TestRunner:
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
-        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, LANE, tree=s_tree, checkout="/peer")
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
         _go(monkeypatch, repo, [LANE], FakeRunner(statuses={LANE: 1}), force=True)
@@ -1323,103 +1155,6 @@ class TestRunner:
         assert gt.find_stamp(repo, root, u_tree, LANE) is None, "U never passed"
         assert gt.lookup(repo, root, u_tree, LANE).reason.startswith("the lane went red")
         assert gt.exact_stamp(root, s_tree, LANE) is not None, "the peer's stamp stays"
-
-    @staticmethod
-    def _witnessed_landing(tmp_path) -> "tuple[Path, Path, str, str]":
-        """Return (repo, root, S, U): U differs from S only by a measured blob S's stamp holds."""
-        repo = _repo(tmp_path)
-        root = gt.stamps_root(repo, gt.STORE)
-        s_tree = tree_hash(repo)
-        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
-        _git(repo, "commit", "-qam", "measured")
-        return repo, root, s_tree, tree_hash(repo)
-
-    def test_a_peers_red_marker_at_the_exact_path_before_promotion_runs_the_lane(
-        self, tmp_path, monkeypatch
-    ):
-        """The scan runs unlocked; the write re-reads the exact path under the lock."""
-        repo, root, s_tree, u_tree = self._witnessed_landing(tmp_path)
-        injected = _inject_on_promotion(
-            monkeypatch, LANE, lambda: gt.write_red(root, tree=u_tree, key=LANE, checkout="/peer")
-        )
-        runner = FakeRunner(statuses={LANE: 1})
-        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
-        assert injected == [LANE], "the peer's marker landed between the scan and the lock"
-        assert status == 1
-        assert runner.keys == [LANE], "the lane ran"
-        assert f"{LANE} … already stamped" not in out
-        assert "carry abandoned" not in out
-        assert isinstance(gt.read_entry(gt.stamp_path(root, u_tree, LANE)), gt.Red)
-        assert gt.exact_stamp(root, s_tree, LANE) is not None
-
-    def test_a_peers_red_marker_at_another_tree_before_promotion_abandons_it(
-        self, tmp_path, monkeypatch
-    ):
-        repo, root, _s_tree, u_tree = self._witnessed_landing(tmp_path)
-        other = _live_tree(repo, "other")
-        injected = _inject_on_promotion(
-            monkeypatch, LANE, lambda: gt.write_red(root, tree=other, key=LANE, checkout="/peer")
-        )
-        runner = FakeRunner()
-        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
-        assert injected == [LANE]
-        assert status == 0
-        assert f"{LANE} … carry abandoned (a red marker changed during the scan)" in out
-        assert runner.keys == [LANE], "the lane ran"
-        assert isinstance(gt.read_entry(gt.stamp_path(root, other, LANE)), gt.Red), "kept"
-        stamp = gt.exact_stamp(root, u_tree, LANE)
-        assert stamp is not None
-        assert stamp.promoted_from is None, "stamped by its own run, not promoted"
-
-    def test_the_lineage_sequence(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        root = gt.stamps_root(repo, gt.STORE)
-        s_tree = tree_hash(repo)
-        b1 = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        _stamp(repo, LANE)
-        _stamp(repo, "make kmodcov", measured={SUPPORT: b1})
-        _git(repo, "commit", "-qam", "measured")
-        t_sha = _git(repo, "rev-parse", "HEAD").strip()
-        t_tree = tree_hash(repo)
-        bed = "make conformance-bed"
-        runner = FakeRunner(
-            effects={bed: lambda: _measure(repo, '{"as_of": "2026-10-17"}\n')},
-        )
-        status, _out, _ = _go(monkeypatch, repo, [LANE, bed], runner)
-        assert status == 0
-        assert runner.keys == [bed], "the lane is satisfied through the measuring stamp's witness"
-        promoted = gt.exact_stamp(root, t_tree, LANE)
-        assert promoted is not None
-        assert promoted.promoted_from == s_tree
-        bed_stamp = gt.exact_stamp(root, t_tree, bed)
-        assert bed_stamp is not None
-        assert list(bed_stamp.measured) == [SUPPORT]
-        assert bed_stamp.measured[SUPPORT] != b1
-        _git(repo, "commit", "-qam", "measured again")
-        u_tree = tree_hash(repo)
-
-        runner = FakeRunner(statuses={LANE: 1})
-        status, _out, _ = _go(monkeypatch, repo, [LANE], runner, force=True)
-        assert status == 1
-        assert sorted(s.tree for s in gt.load_store(root).stamps if s.command == LANE) == sorted(
-            [s_tree, t_tree]
-        ), "S's and T's stamps are still true and stay"
-        assert gt.find_stamp(repo, root, u_tree, LANE) is None, "U went red"
-
-        _git(repo, "checkout", "-q", t_sha)
-        runner = FakeRunner()
-        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
-        assert status == 0
-        assert runner.keys == [], "T's own stamp survived U's red run"
-        assert "already stamped" in out
-        t_stamp = gt.exact_stamp(root, t_tree, LANE)
-        assert t_stamp is not None
-        witnessed = gt.witnesses(gt.load_store(root).stamps, t_tree)
-        assert gt.satisfies(repo, t_stamp, u_tree, witnessed), "through the bed's witness"
-        found = gt.lookup(repo, root, u_tree, LANE)
-        assert found.stamp is None, "U went red: nothing promotes to it until it passes"
-        assert found.reason.startswith("the lane went red on this tree")
 
     def test_a_lane_already_stamped_is_skipped_and_a_changed_paths_key_is_run(
         self, tmp_path, monkeypatch
@@ -1455,21 +1190,7 @@ class TestRunner:
         assert result == gt.RunOutcome(0, "only stderr")
         assert gt._default_runner("exit 3", tmp_path, dict(os.environ)) == gt.RunOutcome(3, "")
 
-    def test_a_measuring_lane_stamps_with_the_blob_and_prints_the_review_note(
-        self, tmp_path, monkeypatch
-    ):
-        repo = _repo(tmp_path)
-        bed = "make conformance-bed"
-        runner = FakeRunner(effects={bed: lambda: _measure(repo, '{"as_of": "2026-10-20"}\n')})
-        status, out, _ = _go(monkeypatch, repo, [bed], runner)
-        assert status == 0
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), bed)
-        assert stamp is not None
-        blob = _git(repo, "hash-object", SUPPORT).strip()
-        assert stamp.measured == {SUPPORT: blob}
-        assert "review and commit, or restore" in out
-
-    def test_a_second_lane_after_measured_dirt_stops_with_the_commit_then_rerun_line(
+    def test_a_lane_that_rewrites_any_tracked_file_is_not_stamped_and_says_which(
         self, tmp_path, monkeypatch
     ):
         repo = _repo(tmp_path)
@@ -1477,20 +1198,9 @@ class TestRunner:
         runner = FakeRunner(effects={bed: lambda: _measure(repo, '{"as_of": "2026-10-20"}\n')})
         status, out, _ = _go(monkeypatch, repo, [bed, "make kmodcov"], runner)
         assert status == 1
-        assert runner.keys == [bed]
-        assert "commit the measured outputs" in out
-        assert "gate-tip: 1 stamped," in out
-
-    def test_a_red_measuring_lane_names_its_rewritten_matrix(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        bed = "make conformance-bed"
-        runner = FakeRunner(
-            effects={bed: lambda: _measure(repo, '{"as_of": "2026-10-20"}\n')}, statuses={bed: 1}
-        )
-        status, out, _ = _go(monkeypatch, repo, [bed], runner)
-        assert status == 1
-        assert f"still rewrote {SUPPORT}" in out
-        assert f"git checkout -- {SUPPORT}" in out
+        assert f"NOT STAMPED (the tree changed under the lane: {SUPPORT})" in out
+        assert gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), bed) is None
+        assert "gate-tip: 0 stamped," in out
 
     def test_a_lane_that_changes_the_tree_is_not_stamped_and_counts_red(
         self, tmp_path, monkeypatch
@@ -1510,10 +1220,7 @@ class TestRunner:
     def test_dry_run_lists_runs_nothing_and_writes_nothing(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
-        b1 = _measure(repo, '{"as_of": "2026-10-16"}\n')
         _stamp(repo, LANE)
-        _stamp(repo, "make kmodcov", measured={SUPPORT: b1})
-        _git(repo, "commit", "-qam", "measured")
         with gt.store_lock(root):  # a store written through the runner always has its lock file
             pass
         before = _snapshot(root)
@@ -1711,42 +1418,39 @@ class TestPushCheck:
         assert "went red on this tree" in missing[0].reason
         assert "/x" in missing[0].reason
 
-    def test_a_red_marker_only_the_scan_holds_still_refuses(self, tmp_path, monkeypatch):
-        """lookup heeds a red in the scanned store even when its exact read missed it.
+    def _other_trees_stamp(self, tmp_path):
+        """Return (repo, remote sha, tip, root, key, U's tree): another tree holds the key's stamp.
 
-        Inside the check the shared lock keeps peers out (see the next test), so the files are
-        written here between the exact read and the scan directly, as a caller without the lock,
-        or one holding a cached store, could see them.
+        The key has no exact stamp at the tip's tree U, so the lookup falls to the scan, which
+        reads the store and asks ``_pruned`` about the one candidate (the remote's tree).
         """
-        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
-        tip = _commit_file(repo, SUPPORT, '{"as_of": "2026-10-21"}\n', "matrix")
-        u_tree = tree_hash(repo, tip)
-        u_blob = _git(repo, "rev-parse", f"{tip}:{SUPPORT}").strip()
-        (repo / SUPPORT).write_text('{"as_of": "2026-10-20"}\n')
-        _git(repo, "add", SUPPORT)
-        s_tree = _git(repo, "write-tree").strip()  # U but for the measured matrix
-        _git(repo, "reset", "-q", "--hard")
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
         _stamp_tip(repo, remote_sha, tip)
         root = gt.stamps_root(repo, gt.STORE)
-        lanes = [
+        key = next(
             gt.lane_key(line)
             for line in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
             if not gt.is_live(line)
-        ]
-        key = lanes[0]
+        )
+        u_tree = tree_hash(repo, tip)
         gt.stamp_path(root, u_tree, key).unlink()
+        gt.write_stamp(
+            root, tree=tree_hash(repo, remote_sha), key=key, base=remote_sha, checkout="/p"
+        )
+        return repo, remote_sha, tip, root, key, u_tree
+
+    def test_a_red_marker_only_the_scan_holds_still_refuses(self, tmp_path, monkeypatch):
+        """lookup heeds a red in the scanned store even when its exact read missed it.
+
+        Inside the check the shared lock keeps peers out (see the next test), so the red is
+        written here between the exact read and the scan, as a caller without the lock, or one
+        holding a cached store, could see it.
+        """
+        repo, _remote_sha, _tip, root, key, u_tree = self._other_trees_stamp(tmp_path)
         real_load = gt.load_store
 
-        def peers_then_scan(where):
+        def peer_then_scan(where):
             gt.write_red(root, tree=u_tree, key=key, checkout="/peer")
-            gt.write_stamp(
-                root,
-                tree=s_tree,
-                key=key,
-                base=remote_sha,
-                measured={SUPPORT: u_blob},
-                checkout="/p",
-            )
             return real_load(where)
 
         reads: "list[Path]" = []
@@ -1756,48 +1460,32 @@ class TestPushCheck:
             reads.append(path)
             return real_read(path)
 
-        monkeypatch.setattr(gt, "load_store", peers_then_scan)
+        monkeypatch.setattr(gt, "load_store", peer_then_scan)
         monkeypatch.setattr(gt, "_read_record", counting)
         found = gt.lookup(repo, root, u_tree, key)
         monkeypatch.undo()
         assert found.stamp is None
         assert found.reason.startswith("the lane went red")
+        assert "/peer" in found.reason
         in_store = len(list(root.glob("*/*.json")))
         assert len(reads) == 1 + in_store, "the exact probe, then one scan: no new read"
-        assert len(lanes) > 1, "the tip's other lanes are stamped too"
-        gt.stamp_path(root, u_tree, key).unlink()
-        assert gt.find_stamp(repo, root, u_tree, key) is not None, "without the red, S promotes"
 
-    def test_a_peers_red_during_the_checks_git_spawns_waits_for_the_check(
+    def test_a_peers_stamp_during_the_checks_git_spawns_waits_for_the_check(
         self, tmp_path, monkeypatch
     ):
-        """The check holds the shared lock from its first read to its result: a peer's red that
-        would land during ``_pruned``/``satisfies`` waits, so the verdict is of one store state."""
-        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
-        tip = _commit_file(repo, SUPPORT, '{"as_of": "2026-10-21"}\n', "matrix")
-        u_tree = tree_hash(repo, tip)
-        u_blob = _git(repo, "rev-parse", f"{tip}:{SUPPORT}").strip()
-        (repo / SUPPORT).write_text('{"as_of": "2026-10-20"}\n')
-        _git(repo, "add", SUPPORT)
-        s_tree = _git(repo, "write-tree").strip()
-        _git(repo, "reset", "-q", "--hard")
-        _stamp_tip(repo, remote_sha, tip)
-        root = gt.stamps_root(repo, gt.STORE)
-        key = next(
-            gt.lane_key(line)
-            for line in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
-            if not gt.is_live(line)
-        )
-        gt.stamp_path(root, u_tree, key).unlink()
-        gt.write_stamp(
-            root, tree=s_tree, key=key, base=remote_sha, measured={SUPPORT: u_blob}, checkout="/p"
-        )
+        """The check holds the shared lock from its first read to its result: a peer's write that
+        would land during ``_pruned`` waits, so the verdict is of one store state."""
+        repo, remote_sha, tip, root, key, u_tree = self._other_trees_stamp(tmp_path)
         deferred: list = []
         real = gt._pruned
 
         def spawn_then_peer(*args):
             _peer_write(
-                root, lambda: gt.write_red(root, tree=u_tree, key=key, checkout="/peer"), deferred
+                root,
+                lambda: gt.write_stamp(
+                    root, tree=u_tree, key=key, base=remote_sha, checkout="/peer"
+                ),
+                deferred,
             )
             return real(*args)
 
@@ -1806,11 +1494,10 @@ class TestPushCheck:
         refusal = gt.stamp_refusal(repo, plan, ref="refs/heads/x", who="gate-tip")
         monkeypatch.undo()
         assert len(deferred) == 1, "the peer's write waited for the check"
-        assert refusal == [], "the check saw one state: S promotes, no red yet"
+        assert [line for line in refusal if line.startswith(f"  {key}:")], "the check saw no stamp"
         for write in deferred:
             write()
-        after = gt.stamp_refusal(repo, plan, ref="refs/heads/x", who="gate-tip")
-        assert [line for line in after if "the lane went red" in line] == after[1:2]
+        assert gt.stamp_refusal(repo, plan, ref="refs/heads/x", who="gate-tip") == []
 
     def test_the_check_creates_nothing_without_a_store(self, tmp_path):
         repo, _bare_repo, remote_sha, tip = _published(tmp_path)
@@ -1844,49 +1531,8 @@ class TestTheOraclesLanes:
         assert missing == [gt.Missing("make kmodcov", "no stamp")]
 
 
-class TestMeasuredOutputsThroughTheCheck:
-    """A tip differing from a stamped tree by a recorded blob is honoured; any other is not."""
-
-    MATRIX = "schemas/support_matrix.json"
-
-    def _stamped_s(self, tmp_path: Path, measured_text: str):
-        """Return (repo, remote sha, S sha, the blob a lane recorded for measured_text)."""
-        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
-        s_sha = _commit_file(repo, self.MATRIX, '{"as_of": "2026-10-01"}\n', "matrix")
-        _stamp_tip(repo, remote_sha, s_sha)
-        (repo / self.MATRIX).write_text(measured_text)
-        blob = _git(repo, "hash-object", self.MATRIX).strip()
-        _git(repo, "checkout", "--", self.MATRIX)
-        assert "make coverage-bed" in gs.tip_commands(repo, remote_sha, s_sha, git_env(repo))
-        key = gs.plan(repo, remote_sha, s_sha).stamped[0]
-        gt.write_stamp(
-            gt.stamps_root(repo, gt.STORE),
-            tree=gt.tree_hash(repo, s_sha),
-            key=key,
-            base=remote_sha,
-            measured={self.MATRIX: blob},
-            checkout=str(repo),
-        )
-        return repo, remote_sha, s_sha
-
-    def test_a_tip_that_differs_only_by_a_recorded_measured_blob_is_honoured(self, tmp_path):
-        text = '{"as_of": "2026-10-16"}\n'
-        repo, remote_sha, s_sha = self._stamped_s(tmp_path, text)
-        t_sha = _commit_file(repo, self.MATRIX, text, "measured")
-        # the same stamped lanes; only the live line's range names the other tip
-        assert _stamped_lanes(repo, remote_sha, s_sha) == _stamped_lanes(repo, remote_sha, t_sha)
-        assert gt.missing_stamps(repo, gs.plan(repo, remote_sha, t_sha)) == []
-
-    def test_a_tip_whose_matrix_bytes_differ_from_the_recorded_blob_is_refused(self, tmp_path):
-        repo, remote_sha, s_sha = self._stamped_s(tmp_path, '{"as_of": "2026-10-16"}\n')
-        t_sha = _commit_file(repo, self.MATRIX, '{"as_of": "hand edited"}\n', "edited")
-        missing = gt.missing_stamps(repo, gs.plan(repo, remote_sha, t_sha))
-        assert [m.lane for m in missing] == _stamped_lanes(repo, remote_sha, t_sha)
-        reason = (
-            f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
-            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
-        )
-        assert {m.reason for m in missing} == {reason}
+class TestAnotherTreesStampThroughTheCheck:
+    """A tip whose tree is not the stamped one is missing the stamp, and the reason says so."""
 
     def test_one_that_differs_elsewhere_names_the_stamp_checkout_and_base(self, tmp_path):
         repo, _bare_repo, remote_sha, s_sha = _published(tmp_path)
@@ -1896,7 +1542,7 @@ class TestMeasuredOutputsThroughTheCheck:
         assert [m.lane for m in missing] == _stamped_lanes(repo, remote_sha, t_sha)
         reason = (
             f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
-            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
+            f"(stamped in {repo}, base {remote_sha[:12]})"
         )
         assert {m.reason for m in missing} == {reason}
 
@@ -2002,7 +1648,6 @@ class TestTimings:
         assert timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
         record = json.loads(stamp.path.read_text())
         assert record["timing"] == timing
-        assert record["measured"] == {}, "the measured outputs are a different field"
 
     def test_a_report_older_than_the_lane_is_not_the_lanes(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
@@ -2036,20 +1681,12 @@ class TestTimings:
         assert stamp is not None
         assert stamp.timing is None
 
-    def test_a_promoted_stamp_carries_no_timing(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        other = _live_tree(repo, "other")
-        _stamp(repo, LANE, tree=other, measured={SUPPORT: "x" * 40})
-        root = gt.stamps_root(repo, gt.STORE)
-        # treat the tip as differing from `other` by a witnessed measured blob only
-        monkeypatch.setattr(gt, "satisfies", lambda *_a, **_k: True)
-        monkeypatch.setattr(gt, "_pruned", lambda *_a: False)
-        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
-        assert status == 0
-        assert "already stamped" in out
-        promoted = gt.exact_stamp(root, tree_hash(repo), LANE)
+    def test_a_promoted_stamp_carries_no_timing(self, tmp_path):
+        case, root, runner = _carried_run(tmp_path)
+        assert gt.run(_options(case.repo, runner)) == 0
+        promoted = gt.exact_stamp(root, case.t1, K)
         assert promoted is not None
-        assert promoted.promoted_from == other
+        assert promoted.promoted_from == case.t0
         assert promoted.timing is None
 
     def test_a_red_lane_records_its_timing_on_the_marker(self, tmp_path, monkeypatch):
@@ -2406,15 +2043,17 @@ class TestLease:
         assert "release" not in spy.events
         assert "reap" not in spy.events
 
-    def test_a_bed_lane_a_dirty_tree_refuses_takes_no_lease(self, monkeypatch, tmp_path):
+    def test_a_bed_lane_after_a_lane_that_dirtied_a_tracked_file_takes_no_lease(
+        self, monkeypatch, tmp_path
+    ):
         repo = _repo(tmp_path)
-        # the static lane rewrites a measured output: stamped, but the bed lane after it
-        # finds tracked dirt and never runs
+        # the static lane rewrites a tracked file: not stamped, so the bed lane after it
+        # never runs
         runner = FakeRunner(effects={"make check-python": lambda: _measure(repo, '{"x": 1}\n')})
         spy = _lease_spy(monkeypatch, runner, fg.scripted_gh([]))
         status, out, _ = _go(monkeypatch, repo, BED, spy.runner, gh=spy.gh)
         assert status == 1
-        assert "commit the measured outputs" in out
+        assert "NOT STAMPED (the tree changed under the lane: schemas/support_matrix.json)" in out
         assert spy.events == ["run make check-python"]
 
     def test_a_reap_that_raises_keeps_the_lease(self, monkeypatch, tmp_path):
@@ -3696,7 +3335,7 @@ def _at(path: Path, written_at: str) -> Path:
 
 
 def _stamp_at(root: Path, tree: str, base: str, key: str = K, written_at: str = "") -> Path:
-    path = gt.write_stamp(root, tree=tree, key=key, base=base, measured={}, checkout="/x")
+    path = gt.write_stamp(root, tree=tree, key=key, base=base, checkout="/x")
     return _at(path, written_at) if written_at else path
 
 
@@ -4045,26 +3684,6 @@ class TestCarry:
             f"main's delta {case.b0[:12]}..{case.b1[:12]} reaches the bed: src-leaf"
         )
 
-    def test_a_witnessed_promotion_across_bases_wins_before_the_carry(self, tmp_path, monkeypatch):
-        case = _rebased_landing(tmp_path, main_change=_docs_change)
-        root = gt.stamps_root(case.repo, gt.STORE)
-        blob = _measure(case.repo, '{"as_of": "2026-10-20", "rows": [1]}\n')
-        gt.write_stamp(
-            root, tree=case.t1, key=K, base=case.b0, measured={SUPPORT: blob}, checkout="/x"
-        )
-        _git(case.repo, "commit", "-qam", "measured")
-        measured_tree = tree_hash(case.repo)
-
-        def never(*_args, **_kw):
-            raise AssertionError("the carry ran")
-
-        monkeypatch.setattr(gt, "replays_to", never)
-        monkeypatch.setattr(gs, "plan", never)
-        found = self._carry(case, tree=measured_tree)
-        assert found.stamp is not None
-        assert found.stamp.tree == case.t1
-        assert found.promotion == "witnessed"
-
 
 def _carried_run(tmp_path, monkeypatch=None, runner=None) -> "tuple[_Rebased, Path, FakeRunner]":
     """Build a landing rebased over a docs commit with K stamped at (T0, B0); return the parts."""
@@ -4167,25 +3786,6 @@ class TestCarryInTheRunner:
         rows = [line for line in gt.timings(case.repo, root, "HEAD") if line.endswith(K)]
         assert len(rows) == 1
         assert "promoted" in rows[0]
-
-    def test_an_unknown_promotion_line_raises(self, tmp_path):
-        stamp = gt.read_stamp(_stamp_at(tmp_path / "store", "a" * 40, "b" * 40))
-        assert stamp is not None
-        with pytest.raises(ValueError, match="unknown promotion"):
-            gt._promoted_line(stamp, "", "c" * 40)
-
-    def test_the_witnessed_promotion_line_names_the_measured_outputs(self, tmp_path, monkeypatch):
-        repo = _repo(tmp_path)
-        s_tree = tree_hash(repo)
-        blob = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, LANE, tree=s_tree, measured={SUPPORT: blob})
-        _git(repo, "commit", "-qam", "measured")
-        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
-        assert status == 0
-        assert (
-            f"{LANE} … already stamped (promoted from {s_tree[:12]}: measured outputs witnessed)"
-            in out
-        )
 
     def test_no_replay_or_plan_runs_under_any_lock(self, tmp_path, monkeypatch):
         case, root, runner = _carried_run(tmp_path)

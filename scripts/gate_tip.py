@@ -23,8 +23,7 @@ the exit status. ``--status`` (``make gate-status``) posts it for a tree gated e
 and then admits the pull request's run (its ``gate-admission`` job).
 
 The store: ``<git common dir>/otto-gate-stamps/<tree>/<slug>-<8 hex>.json``,
-one file per (tree, lane key). A measured matrix (MEASURED_OUTPUTS) committed
-exactly as a run produced it keeps every stamp of that run ("promotion").
+one file per (tree, lane key). A rebase keeps a stamp whose patch replays ("carry").
 
 Every worktree shares the store, so a run deletes only what cannot still be true:
 before a lane runs, a corrupt or misnamed file at the gated tree's own path, and
@@ -79,9 +78,7 @@ from scripts.gate_scope import (  # noqa: E402
 from scripts.gate_stamp_common import (  # noqa: E402
     ZERO_SHA,
     GateError,
-    TreeState,
     _git,
-    blob_sha,
     blocking_untracked,
     dirt_refusals,
     fetch_main,
@@ -108,8 +105,6 @@ from scripts.local_gate_status import (  # noqa: E402
 )
 from scripts.process_group import UndrainedError, run_awaiting_descendants  # noqa: E402
 
-MEASURED_OUTPUTS = ["schemas/support_matrix.json", "schemas/kmodcov_matrix.json"]
-"""Files a lane rewrites with what it measured; the Makefile says review and commit the diff."""
 STORE = "otto-gate-stamps"
 FORMAT = 1
 _STR_FIELDS = ("tree", "command", "base", "written_at", "checkout")
@@ -139,7 +134,6 @@ class Stamp:
     tree: str
     command: str
     base: str
-    measured: "dict[str, str]"
     written_at: str
     checkout: str
     promoted_from: "str | None"
@@ -178,11 +172,6 @@ def _stamp_from(data: "dict | None", path: Path) -> "Stamp | None":
         return None
     if any(not isinstance(data.get(name), str) for name in _STR_FIELDS):
         return None
-    measured = data.get("measured")
-    if not isinstance(measured, dict) or any(
-        not isinstance(k, str) or not isinstance(v, str) for k, v in measured.items()
-    ):
-        return None
     promoted = data.get("promoted_from")
     if promoted is not None and not isinstance(promoted, str):
         return None
@@ -195,7 +184,6 @@ def _stamp_from(data: "dict | None", path: Path) -> "Stamp | None":
         tree=data["tree"],
         command=data["command"],
         base=data["base"],
-        measured=dict(measured),
         written_at=data["written_at"],
         checkout=data["checkout"],
         promoted_from=promoted,
@@ -221,7 +209,6 @@ def write_stamp(
     tree: str,
     key: str,
     base: str,
-    measured: "dict[str, str]",
     checkout: str,
     promoted_from: "str | None" = None,
     timing: "dict | None" = None,
@@ -232,7 +219,6 @@ def write_stamp(
         "tree": tree,
         "command": key,
         "base": base,
-        "measured": measured,
         "written_at": utc_now(),
         "checkout": checkout,
     }
@@ -441,42 +427,6 @@ def exact_stamp(root: Path, tree: str, key: str) -> "Stamp | None":
     return stamp
 
 
-def witnesses(stamps: "list[Stamp]", tree: str) -> "dict[str, set[str]]":
-    """Return, per measured path, every blob some stamp under *tree* recorded for it."""
-    out: "dict[str, set[str]]" = {}
-    for stamp in stamps:
-        if stamp.tree == tree:
-            for path, blob in stamp.measured.items():
-                out.setdefault(path, set()).add(blob)
-    return out
-
-
-def satisfies(repo: Path, stamp: Stamp, tree: str, witnessed: "dict[str, set[str]]") -> bool:
-    """Return whether *stamp* is evidence for *tree*.
-
-    True for the same tree, or for a tree that differs from the stamp's only by measured
-    outputs whose blobs are among *witnessed* (what some stamp of the stamp's tree recorded).
-    A failing ``diff-tree`` (a pruned tree) is False, never an exception.
-    """
-    if stamp.tree == tree:
-        return True
-    try:
-        raw = _git(repo, "diff-tree", "-r", "-z", "--name-only", stamp.tree, tree)
-    except GateError:
-        return False
-    changed = [p for p in raw.split("\0") if p]
-    for path in changed:
-        if path not in MEASURED_OUTPUTS or path not in witnessed:
-            return False
-        try:
-            blob = _git(repo, "rev-parse", f"{tree}:{path}").strip()
-        except GateError:
-            return False
-        if blob not in witnessed[path]:
-            return False
-    return True
-
-
 @dataclass(frozen=True)
 class Lookup:
     """What the store holds for one (tree, key): the stamp, or why none counts.
@@ -489,9 +439,8 @@ class Lookup:
     reason: str
     store: "Store | None" = None
     promotion: str = ""
-    """How another tree's stamp came to count: ``"witnessed"`` (it differs only by measured
-    outputs a stamp of its tree recorded), ``"carried"`` (across a rebase, :func:`_carry`);
-    ``""`` for an exact hit or no stamp."""
+    """How another tree's stamp came to count: ``"carried"`` (across a rebase,
+    :func:`_carry`); ``""`` for an exact hit or no stamp."""
     carry_missed: bool = False
     """True when the carry tried a candidate and none carried: ``reason`` is the carry's."""
 
@@ -792,7 +741,7 @@ def lookup(
     Nothing that fails ends the search; the reason names the best evidence that did NOT count,
     in this order: why the carry refused (a base not behind *base*, a patch that differs on
     it, a red marker on this patch or one that cannot be placed or replayed, main's delta
-    reaching the bed); a stamp of a tree that differs beyond the measured outputs; a command
+    reaching the bed); a stamp of another tree; a command
     mismatch at the exact path; an unreadable file (corrupt, wrong-tree, or a pruned tree); a
     same-goal stamp for a different path list (with the remote's base when *base* is given);
     "no stamp".
@@ -821,9 +770,6 @@ def lookup(
         if _pruned(repo, candidate.tree):
             unreadable = True
             continue
-        witnessed = witnesses(store.stamps, candidate.tree)
-        if witnessed and satisfies(repo, candidate, tree, witnessed):
-            return Lookup(candidate, "", store, promotion="witnessed")
         nearest = candidate
     if carry is not None and is_bed(key):
         carried, why = _carry(carry, store, tree, key)
@@ -834,7 +780,7 @@ def lookup(
         return Lookup(
             None,
             f"stamped for tree {nearest.tree[:12]}, which differs from the tip's "
-            f"beyond the measured outputs (stamped in {nearest.checkout}, "
+            f"(stamped in {nearest.checkout}, "
             f"base {nearest.base[:12]})",
             store,
         )
@@ -1000,13 +946,6 @@ def _plan(opts: Options) -> gate_scope.Plan:
     return range_plan(opts.repo, resolve_base(opts), "HEAD")
 
 
-def _measured_dirt(state: TreeState) -> "tuple[list[str], list[str]]":
-    """Split tracked dirt into measured outputs and everything else."""
-    measured = [p for p in state.tracked_dirty if p in MEASURED_OUTPUTS]
-    other = [p for p in state.tracked_dirty if p not in MEASURED_OUTPUTS]
-    return measured, other
-
-
 def lane_timing(
     repo: Path, started_at: str, before: "dict[str, list[int]] | None", elapsed: int
 ) -> dict:
@@ -1079,7 +1018,6 @@ class _Run:
     already: int = 0
     live: int = 0
     red: int = 0
-    stopped: bool = False
     missing: "list[str]" = field(default_factory=list)
     red_keys: "list[str]" = field(default_factory=list)
     """The lanes that left a red marker in this run: what a failure status names."""
@@ -1223,7 +1161,6 @@ def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
             tree=tree,
             key=key,
             base=base,
-            measured={},
             checkout=str(repo),
             promoted_from=found.stamp.tree,
         )
@@ -1239,8 +1176,6 @@ def _promoted_line(stamp: Stamp, promotion: str, base: str) -> str:
             f"already stamped (promoted from {t0}: the patch replays onto {b1}, "
             f"main's delta {b0}..{b1} has no bed lane)"
         )
-    if promotion == "witnessed":
-        return f"already stamped (promoted from {t0}: measured outputs witnessed)"
     raise ValueError(f"unknown promotion {promotion!r}")
 
 
@@ -1255,15 +1190,6 @@ def _report_stamped(ctx: _Run, label: str, key: str, said: str) -> bool:
 def _before_lane(ctx: _Run, label: str, key: str) -> bool:
     """Check the tree before a lane; say why and return False when the lane cannot run."""
     state = tree_state(ctx.opts.repo)
-    measured, _other = _measured_dirt(state)
-    if measured:
-        _say(
-            ctx.opts,
-            f"commit the measured outputs ({', '.join(measured)}) and run "
-            "make gate-tip again; the stamps already written stay valid for that commit",
-        )
-        ctx.stopped = True
-        return False
     why = dirt_refusals(state, ctx.roots)
     if why:
         _say(
@@ -1311,38 +1237,28 @@ def _after_lane(ctx: _Run, label: str, key: str, status: int, timing: "dict | No
     """
     repo = ctx.opts.repo
     after = tree_state(repo)
-    measured, other = _measured_dirt(after)
+    dirty = after.tracked_dirty
     elapsed = timing["elapsed_s"] if timing else None
     if status != 0:
-        for path in measured:
-            _say(
-                ctx.opts,
-                f"the lane failed and still rewrote {path}: restore it "
-                f"(git checkout -- {path}) or review it before the next run",
-            )
         _say(ctx.opts, f"{label} … RED (exit {status}, {_elapsed_cell(elapsed) or 'not timed'})")
         _mark_red(ctx, key, timing)
         return False
     blocking = blocking_untracked(after, ctx.roots)
-    if tree_hash(repo) != ctx.tree or other or blocking:
-        what = ", ".join(other + blocking) or "the tree hash moved"
+    if tree_hash(repo) != ctx.tree or dirty or blocking:
+        what = ", ".join(dirty + blocking) or "the tree hash moved"
         _say(ctx.opts, f"{label} … NOT STAMPED (the tree changed under the lane: {what})")
         ctx.red += 1
         ctx.rows.append(Row(key, "not stamped", elapsed))
         return False
-    blobs = {path: blob_sha(repo, path) for path in measured}
     with store_lock(ctx.root):
         write_stamp(
             ctx.root,
             tree=ctx.tree,
             key=key,
             base=ctx.plan.base_sha,
-            measured=blobs,
             checkout=str(repo),
             timing=timing,
         )
-    for path in measured:
-        _say(ctx.opts, f"{key} rewrote {path}: review and commit, or restore it")
     _say(ctx.opts, f"{label} … stamped ({_elapsed_cell(elapsed) or 'not timed'})")
     ctx.stamped += 1
     ctx.rows.append(Row(key, "stamped", elapsed))
@@ -1450,7 +1366,7 @@ def run(opts: Options) -> int:
             print(row, file=opts.out, flush=True)
     if opts.dry_run:
         return 1 if ctx.missing else 0
-    if ctx.red or ctx.stopped:
+    if ctx.red:
         if ctx.red_keys:
             _publish_failure(ctx)
         return 1

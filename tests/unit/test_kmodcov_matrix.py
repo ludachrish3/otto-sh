@@ -400,22 +400,20 @@ def test_main_writes_the_page_it_was_pointed_at(tmp_path):
     assert out.read_text(encoding="utf-8").startswith("(kmodcov-matrix)=")
 
 
-def test_the_kmodcov_lane_folds_and_the_release_stage_gates():
+def test_the_release_stage_runs_the_kmodcov_lane_and_the_by_hand_fold_stays():
+    """The release stage's own shape.
+
+    The verify macro call and the candidate copy are pinned in test_make_release_lanes.
+    """
     makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     # No re.DOTALL: `.*?` must not cross a newline, or a moved/emptied tab
     # block would let the match run on past it and capture a DIFFERENT
     # target's recipe body instead of failing loudly.
-    kmodcov = re.search(r"^kmodcov:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)
-    assert kmodcov and "kmodcov-matrix" in kmodcov.group(1)  # noqa: PT018
-    assert "if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate" in kmodcov.group(1)
     stage = re.search(r"^release-kmodcov-matrix:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)
     assert stage
     body = stage.group(1)
-    assert "HEAD:schemas/kmodcov_matrix.json" in body
-    assert (  # noqa: PT018
-        "scripts/check_matrix_downgrades.py --baseline" in body
-        and "--candidate schemas/kmodcov_matrix.json" in body
-    )
+    assert "$(MAKE) --no-print-directory kmodcov\n" in body
+    assert body.index("kmodcov\n") < body.index("cp $(KMODCOV_MATRIX_CANDIDATE)")
     assert "chore(matrix): re-measure the kmodcov matrix" in body
     assert "core.hooksPath=/dev/null" in body
     fold = re.search(r"^kmodcov-matrix:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)

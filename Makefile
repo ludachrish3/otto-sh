@@ -379,6 +379,13 @@ LEAK_DETECT := OTTO_DETECT_ASYNCIO_LEAKS=1
 JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
+# The verify lanes' tail (conformance-bed, kmodcov): fold the run's observations
+# into a CANDIDATE copy of the committed matrix and judge it, never touching
+# schemas/. $(1) matrix path, $(2) collate module, $(3) candidate path. The
+# fold is the collate script's `--matrix PATH --write`; the downgrade rule is
+# scripts/check_matrix_downgrades.py. Usage: $(call verify_matrix,M,mod,C)
+verify_matrix = mkdir -p $(dir $(3)) && cp $(1) $(3) && uv run python -m $(2) --matrix $(3) --write && uv run python scripts/check_matrix_downgrades.py --baseline $(1) --candidate $(3)
+
 # min(4, nproc): a targeted run is short; more workers only add startup cost.
 # `:=` probes nproc once, at parse (a recursive `?=` reran it at every reference); a
 # command-line QUICK_WORKERS wins, one in the environment does not.
@@ -1402,20 +1409,24 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # new serialization together; nowhere near this cap.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1200s
-# WARNING: `make -n conformance-bed` is NOT a dry run — the recipe is one
-# semicolon/backslash-continued line containing $(MAKE) (the `support-matrix`
-# fold below), so GNU make executes it under -n; the $(MAKE) sub-call
-# inherits -n and no-ops, but the plain `uv run pytest -m "conformance"`
-# command runs for real. Never dry-run this target.
-conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it, or let `make release-matrix` do both when the change is not a downgrade. JUnit XML lands in reports/junit/conformance-bed/.
+MATRIX_CANDIDATE := reports/.support-matrix-candidate.json
+# A VERIFY LANE: it folds the run into $(MATRIX_CANDIDATE), judges that against
+# the committed matrix (a downgrade fails the lane) and leaves schemas/ alone;
+# `make release-matrix` copies the judged candidate over the matrix. The fold
+# STILL RUNS WHEN THE LANE IS RED: a contract that failed on a real guest is
+# exactly what the matrix should publish, and a fold that only ran after a green
+# lane could never record a `measured-broken`. The lane's own exit status
+# still wins. The lane takes the bed lease, reaps and drives the real bed:
+# do not dry-run it.
+conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Verifies against the committed matrix and leaves the tree clean: it folds what it measured into the candidate reports/.support-matrix-candidate.json and a downgrade fails the lane; `make release-matrix` copies the judged candidate over the matrix. JUnit XML lands in reports/junit/conformance-bed/.
 	$(call bed_acquire,conformance-bed)
 	$(call bed_reap)
 	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
 	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
 	    timeout --foreground --kill-after=10s $(CONFORMANCE_BED_TIMEOUT) \
 	    uv run pytest -m "conformance" --no-cov $(call junitxml,conformance-bed); \
-	  lane=$$?; $(MAKE) --no-print-directory support-matrix; collate=$$?; \
-	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+	  lane=$$?; $(call verify_matrix,schemas/support_matrix.json,scripts.collate_support_matrix,$(MATRIX_CANDIDATE)); verify=$$?; \
+	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$verify
 	$(call bed_reap)
 	$(call bed_release)
 
@@ -1444,37 +1455,34 @@ KMODCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
 KMODCOV_KERNELS ?= x86_64-cross,2.6.32,3.13,4.4,5.4,5.15,6.17
 KMODCOV_KERNELS_DIR ?= /home/vagrant/build/kmodcov-kernels
 KMODCOV_TIMEOUT := 3600s
-# WARNING: `make -n kmodcov` is NOT a dry run — the recipe is one
-# semicolon/backslash-continued line containing $(MAKE) (the `kmodcov-matrix`
-# fold below), so GNU make executes it under -n; the $(MAKE) sub-call
-# inherits -n and no-ops, but the plain `uv run pytest -m "kmodcov"` command
-# runs for real. Never dry-run this target.
-kmodcov: ## Run the otto_kmodcov toolchain proofs (`kmodcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KMODCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KMODCOV_KERNELS: the x86_64 cross build from the source tree at KMODCOV_CROSS_KDIR on the host, and each provisioned kernel under KMODCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kmodcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kmodcov-matrix` by `make release`. JUnit XML lands in reports/junit/kmodcov/. Ends by folding what it measured into schemas/kmodcov_matrix.json (`make kmodcov-matrix`) — review the diff and commit it, or let `make release-kmodcov-matrix` do both when the change is not a downgrade.
+KMODCOV_MATRIX_CANDIDATE := reports/.kmodcov-matrix-candidate.json
+# A VERIFY LANE, like `conformance-bed`: it folds into
+# $(KMODCOV_MATRIX_CANDIDATE), judges that against the committed matrix (a
+# downgrade fails the lane), leaves schemas/ alone, and folds even when the
+# lane is red (the lane's own exit status still wins);
+# `make release-kmodcov-matrix` copies the judged candidate over the matrix.
+# The lane takes the bed lease, reaps and drives the real bed: do not dry-run it.
+kmodcov: ## Run the otto_kmodcov toolchain proofs (`kmodcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KMODCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KMODCOV_KERNELS: the x86_64 cross build from the source tree at KMODCOV_CROSS_KDIR on the host, and each provisioned kernel under KMODCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kmodcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kmodcov-matrix` by `make release`. JUnit XML lands in reports/junit/kmodcov/. Verifies against the committed matrix and leaves the tree clean: it folds what it measured into the candidate reports/.kmodcov-matrix-candidate.json and a downgrade fails the lane; `make release-kmodcov-matrix` copies the judged candidate over the matrix.
 	$(call bed_acquire,kmodcov)
 	$(call bed_reap)
 	@$(SAY) "pytest: otto_kmodcov toolchain proofs ($(KMODCOV_TOOLCHAINS); kernels $(KMODCOV_KERNELS); cross tree $(KMODCOV_CROSS_KDIR))"
 	@OTTO_KMODCOV_TOOLCHAINS="$(KMODCOV_TOOLCHAINS)" OTTO_KMODCOV_CROSS_KDIR="$(KMODCOV_CROSS_KDIR)" OTTO_KMODCOV_KERNELS="$(KMODCOV_KERNELS)" OTTO_KMODCOV_KERNELS_DIR="$(KMODCOV_KERNELS_DIR)" \
 	    timeout --foreground --kill-after=10s $(KMODCOV_TIMEOUT) \
 	    uv run pytest -m "kmodcov" -n0 --no-cov $(call junitxml,kmodcov); \
-	  lane=$$?; $(MAKE) --no-print-directory kmodcov-matrix; collate=$$?; \
-	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+	  lane=$$?; $(call verify_matrix,schemas/kmodcov_matrix.json,scripts.collate_kmodcov_matrix,$(KMODCOV_MATRIX_CANDIDATE)); verify=$$?; \
+	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$verify
 	$(call bed_reap)
 	$(call bed_release)
 
-KMODCOV_MATRIX_BASELINE := reports/.kmodcov-matrix-baseline.json
-
-kmodcov-matrix: ## Fold the kmodcov run's observation records into schemas/kmodcov_matrix.json (the ONLY writer of a `measured-*` verdict there). Reads reports/kmodcov-observations/, discards every record it cannot place loudly, writes a bed cell measured-ok only when the column's control passed in the same run, never downgrades a cell no run drew, and never commits — `make release-kmodcov-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
+kmodcov-matrix: ## Fold the kmodcov run's observation records into schemas/kmodcov_matrix.json (the ONLY writer of a `measured-*` verdict there). Reads reports/kmodcov-observations/, discards every record it cannot place loudly, writes a bed cell measured-ok only when the column's control passed in the same run, never downgrades a cell no run drew, and never commits. The by-hand fold, to accept a measured change in a commit of your own.
 	@$(SAY) "collate: folding the kmodcov run's observations into schemas/kmodcov_matrix.json"
 	@uv run python -m scripts.collate_kmodcov_matrix --write
 
-release-kmodcov-matrix: ## (Build & Release) Re-measure the otto_kmodcov toolchain proofs and commit schemas/kmodcov_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's kmodcov stage; dev VM only. Run it by hand before a release to deal with a downgrade on your own terms.
+release-kmodcov-matrix: ## (Build & Release) Run the kmodcov lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/kmodcov_matrix.json and commit it; `as_of` is the date of the release that certified the cell. The release's kmodcov stage; dev VM only.
 	$(call bed_acquire,release-kmodcov-matrix)
 	@$(SAY) "release: re-measuring the kmodcov compatibility matrix"
-	@mkdir -p $(dir $(KMODCOV_MATRIX_BASELINE))
-	@git show HEAD:schemas/kmodcov_matrix.json > $(KMODCOV_MATRIX_BASELINE)
 	@$(MAKE) --no-print-directory kmodcov
-	@uv run python scripts/check_matrix_downgrades.py --baseline $(KMODCOV_MATRIX_BASELINE) --candidate schemas/kmodcov_matrix.json
-	@rm -f $(KMODCOV_MATRIX_BASELINE)
+	@cp $(KMODCOV_MATRIX_CANDIDATE) schemas/kmodcov_matrix.json
 	@if git diff --quiet -- schemas/kmodcov_matrix.json; then \
 	    $(SAY) "release: the kmodcov matrix was already current"; \
 	  else \
@@ -1499,23 +1507,19 @@ release-kmodcov-matrix: ## (Build & Release) Re-measure the otto_kmodcov toolcha
 # `conformance-hermetic` job -- implying to anyone reading the workflow that CI
 # collates the matrix. It does not, and it cannot: CI has no lab.
 #
-# STILL RUNS WHEN THE LANE IS RED, and that is the point of having a
-# `measured-broken` state at all: a contract that failed on a real guest is
-# exactly the thing the matrix should publish, and a collate step that only ran
-# after a green lane could never record one. The lane's own exit status still
-# wins, so a red lane is still a red `make`.
+# THIS TARGET IS ONLY THE BY-HAND FOLD, to accept a measured change in a commit
+# of your own. `conformance-bed` folds into a candidate instead (that fold runs
+# even when the lane is red, and the downgrade check lives on that lane's tail),
+# so this one is not part of any lane.
 #
 # NEVER COMMITS, and neither does CI. `--write` edits the file and stops, and no
 # workflow invokes this target (`tests/unit/test_support_matrix.py` checks every
-# workflow for it). What commits is `make release-matrix` below, and only for a
-# change nobody needs to see -- a downgrade is refused there and stays a person's
-# call. Run this bare to see what a run WOULD change without touching the artifact:
+# workflow for it). Run this bare to see what a run WOULD change without
+# touching the artifact:
 #     uv run python -m scripts.collate_support_matrix
-support-matrix: ## Fold the conformance run's observation records into schemas/support_matrix.json (the ONLY writer of a `measured-*` verdict). Reads reports/conformance-observations/, discards every non-bed record loudly, never downgrades a cell no run drew, and never commits — `make release-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
+support-matrix: ## Fold the conformance run's observation records into schemas/support_matrix.json (the ONLY writer of a `measured-*` verdict). Reads reports/conformance-observations/, discards every non-bed record loudly, never downgrades a cell no run drew, and never commits. The by-hand fold, to accept a measured change in a commit of your own.
 	@$(SAY) "collate: folding the bed run's observations into schemas/support_matrix.json"
 	@uv run python -m scripts.collate_support_matrix --write
-
-MATRIX_BASELINE := reports/.matrix-baseline.json
 
 # The release's re-measure stage (Chris, 2026-08-25). `make release` is the only
 # place the matrix CAN be refreshed: the collate step needs the bed, and the bed
@@ -1526,13 +1530,13 @@ MATRIX_BASELINE := reports/.matrix-baseline.json
 # THIS COMMITS, and it is the only thing in this file that does.
 # `scripts/collate_support_matrix.py` still cannot: it holds no version-control
 # vocabulary at all and a guard keeps it that way. What commits is this target,
-# and only after `scripts/check_matrix_downgrades.py` has said the change is one
-# nobody needs to see -- an improvement, a new working cell, or evidence that
-# moved under an unchanged verdict. A new `measured-broken`, or a lost
-# `measured-ok`, refuses instead and stops the release: that is either a
-# regression that must not ship or a gap worth recording on purpose, and neither
-# should ride into a release unread. The person spec §5 puts in front of every
-# verdict is still there; they are now called only when the answer matters.
+# and only after `conformance-bed` has judged its candidate with
+# `scripts/check_matrix_downgrades.py`: this target copies THAT judged candidate
+# over the matrix. A new `measured-broken`, or a lost `measured-ok`, fails the
+# lane and stops the release: that is either a regression that must not ship or
+# a gap worth recording on purpose, and neither should ride into a release
+# unread. The person spec §5 puts in front of every verdict is still there; they
+# are now called only when the answer matters.
 #
 # ITS OWN COMMIT rather than riding the version bump, so the measurement diff is
 # reviewable on its own terms and revertable without touching the version.
@@ -1551,14 +1555,11 @@ MATRIX_BASELINE := reports/.matrix-baseline.json
 # IDEMPOTENT: run it by hand, review, commit, and the release's stage finds
 # nothing to do. If the release aborts later, this commit stays -- it is a true
 # statement about the bed either way.
-release-matrix: ## (Build & Release) Re-measure the bed and commit schemas/support_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's matrix stage; needs the lab VMs (dev VM only). Run it by hand before a release to deal with a downgrade on your own terms.
+release-matrix: ## (Build & Release) Run the conformance-bed lane, which refuses a downgrade, then copy the lane's judged candidate over schemas/support_matrix.json and commit it; `as_of` is the date of the release that certified the cell. The release's matrix stage; needs the lab VMs (dev VM only).
 	$(call bed_acquire,release-matrix)
 	@$(SAY) "release: re-measuring the bed support matrix"
-	@mkdir -p $(dir $(MATRIX_BASELINE))
-	@git show HEAD:schemas/support_matrix.json > $(MATRIX_BASELINE)
 	@$(MAKE) --no-print-directory conformance-bed
-	@uv run python scripts/check_matrix_downgrades.py --baseline $(MATRIX_BASELINE)
-	@rm -f $(MATRIX_BASELINE)
+	@cp $(MATRIX_CANDIDATE) schemas/support_matrix.json
 	@if git diff --quiet -- schemas/support_matrix.json; then 	    $(SAY) "release: the support matrix was already current"; 	  else 	    git add schemas/support_matrix.json 	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the bed support matrix" 	    && $(SAY) "release: committed a refreshed support matrix"; 	  fi
 	$(call bed_release)
 
