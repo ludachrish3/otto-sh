@@ -68,7 +68,7 @@ def _green() -> GhRunner:
 
 
 def _certified(repo: TmpGitRepo, *, tree: "str | None" = None, version: str = "0.18.1") -> None:
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     rr.certify(
         repo.root,
         RUN,
@@ -87,7 +87,7 @@ def _tag(repo: TmpGitRepo, gh: "GhRunner | None" = None) -> int:
 def test_no_record_and_a_pending_record_refuse(repo, capsys):
     assert _tag(repo) == 1
     assert "no release record" in capsys.readouterr().err
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     assert _tag(repo) == 1
     assert "the record is pending" in capsys.readouterr().err
 
@@ -126,7 +126,7 @@ def test_a_pending_run_is_waited_for_up_to_the_ceiling_then_refused(repo, capsys
     )
     assert rc == 1
     assert clock.slept == [10, 10, 10]
-    assert "still running after 0 minutes" in capsys.readouterr().err
+    assert "is still running; wait for" in capsys.readouterr().err
     assert repo.git("tag", "--list") == ""
 
 
@@ -337,3 +337,7 @@ def test_a_missing_required_contexts_file_refuses(repo, capsys):
     _certified(repo)
     assert rt.main(["--repo", str(repo.root), "--required", "absent.json"]) == 1
     assert "absent.json" in capsys.readouterr().err
+
+
+def test_the_refusal_text_is_the_shared_formatter():
+    assert rt.ci_refusal is lgs.ci_refusal

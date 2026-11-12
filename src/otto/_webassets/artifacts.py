@@ -6,7 +6,7 @@ air-gapped, so the frontends must ship inside the package and resolve via
 ``Path(__file__)`` in source checkouts, editable installs, and wheels alike.
 
 One registry, one ``.gitignore`` glob (``src/otto/_webassets/*/``), one
-``web-clean`` target, one ``wheel-check`` loop. The unit-test lane
+``clean-web-assets`` target, one ``wheel-check`` loop. The unit-test lane
 neutralizes every consumer of these paths by default (see
 ``tests/_fixtures/webassets.py``); the drift guard
 (``tests/unit/test_webassets_guard.py``) pins the coupling.

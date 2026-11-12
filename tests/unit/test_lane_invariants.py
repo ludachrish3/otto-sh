@@ -79,6 +79,17 @@ from pathlib import Path
 import pytest
 from _pytest.mark.expression import Expression
 
+from noxfile import (
+    BED_CLAUSES,
+    HOSTLESS_E2E_CANARY_SERIAL_ARGS,
+    HOSTLESS_E2E_CANARY_TEST_ARGS,
+    HOSTLESS_MIDDLE_SERIAL_ARGS,
+    HOSTLESS_MIDDLE_TEST_ARGS,
+    TESTS_ALL_NONPRIMARY_SERIAL_ARGS,
+    TESTS_ALL_NONPRIMARY_TEST_ARGS,
+    TESTS_BED_SERIAL_ARGS,
+    TESTS_BED_TEST_ARGS,
+)
 from scripts import gate_scope as gs
 from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.make_recipes import is_commented_recipe, makefile_live_recipe
@@ -250,6 +261,7 @@ _CONSTANT_PAIRS = (
     ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS"),
     ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS"),
     ("TESTS_ALL_NONPRIMARY_TEST_ARGS", "TESTS_ALL_NONPRIMARY_SERIAL_ARGS"),
+    ("TESTS_BED_TEST_ARGS", "TESTS_BED_SERIAL_ARGS"),
 )
 
 _SERIAL_TIMING_TESTS = {
@@ -1873,16 +1885,6 @@ def make_legs(start: str) -> "list[_Leg]":
 # lists the rows to add or drop. Roots are relative to the checkout; () means
 # pyproject's testpaths. A nox surface carries the interpreter the release runs
 # it on ("@3.10"); "@default" is a session whose Python the recipe did not pick.
-_HOSTLESS_MIDDLE = (
-    "not integration and not embedded and not stability and not browser "
-    "and not busybox and not conformance and not kmodcov and not release_proof "
-    "and not serial_timing and not interpreter_agnostic"
-)
-_HOSTLESS_MIDDLE_SERIAL = (
-    "serial_timing and not integration and not embedded and not stability and not browser "
-    "and not busybox and not conformance and not kmodcov and not release_proof "
-    "and not interpreter_agnostic"
-)
 _COVERAGE = (
     "not stability and not browser and not busybox and not conformance and not kmodcov "
     "and not release_proof and not serial_timing"
@@ -1891,25 +1893,23 @@ _COVERAGE_SERIAL = (
     "serial_timing and not stability and not browser and not busybox and not conformance "
     "and not kmodcov and not release_proof"
 )
-_ALL_NONPRIMARY = (
-    "not browser and not stability and not busybox and not conformance and not kmodcov "
-    "and not release_proof and not serial_timing and not interpreter_agnostic"
-)
-_ALL_NONPRIMARY_SERIAL = (
-    "serial_timing and not browser and not stability and not busybox and not conformance "
-    "and not kmodcov and not release_proof and not interpreter_agnostic"
-)
-_LINT_ARCH_IMPORT_RULES = (
-    "tests/unit/test_patch_targets.py",
-    "tests/unit/test_no_import_time_lazy_exports.py",
-    "tests/unit/test_moved_name_spellings.py",
-    "tests/unit/test_internal_imports_skip_facades.py",
-)
-_LINT_ARCH_LAYER_AUDITS = (
-    "tests/unit/test_tach_layers.py",
-    "tests/unit/test_dynamic_import_audit.py",
-    "tests/unit/test_monitor_service_reads_no_lab.py",
-)
+
+
+def _marker_expr(args: "tuple[str, ...]") -> str:
+    """The `-m` value of a noxfile argument bundle: the selection, read from its one home."""
+    return args[args.index("-m") + 1]
+
+
+# The canary's selections, read from the noxfile bundles the sessions run, so the
+# partition test below judges the live expressions, never a retyped copy.
+_ALL_NONPRIMARY = _marker_expr(TESTS_ALL_NONPRIMARY_TEST_ARGS)
+_ALL_NONPRIMARY_SERIAL = _marker_expr(TESTS_ALL_NONPRIMARY_SERIAL_ARGS)
+_HOSTLESS_MIDDLE = _marker_expr(HOSTLESS_MIDDLE_TEST_ARGS)
+_HOSTLESS_MIDDLE_SERIAL = _marker_expr(HOSTLESS_MIDDLE_SERIAL_ARGS)
+_HOSTLESS_E2E_CANARY = _marker_expr(HOSTLESS_E2E_CANARY_TEST_ARGS)
+_HOSTLESS_E2E_CANARY_SERIAL = _marker_expr(HOSTLESS_E2E_CANARY_SERIAL_ARGS)
+_BED_NONPRIMARY = _marker_expr(TESTS_BED_TEST_ARGS)
+_BED_NONPRIMARY_SERIAL = _marker_expr(TESTS_BED_SERIAL_ARGS)
 _STABILITY_UNIT_FILES = (
     "tests/unit/host/test_app_shell_concurrency.py",
     "tests/unit/host/test_session_concurrency.py",
@@ -1923,9 +1923,6 @@ _STABILITY_UNIX_FILES = (
     "tests/integration/host/test_session_stability_integration.py",
 )
 RELEASE_LANES: "tuple[_Leg, ...]" = (
-    # check-python → lint-arch: the import-rule and layer-audit pytest files, no `-m`.
-    _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_IMPORT_RULES),
-    _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_LAYER_AUDITS),
     # release-preflight → the live-ruleset pin (skipped unless OTTO_RULESET_CHECK=1,
     # which the recipe sets).
     _Leg("Makefile:release-preflight", _ANY_MARKER, ("tests/unit/test_landing_ruleset.py",)),
@@ -1941,19 +1938,27 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     # family's only release selection since Phase B (3.14 deselects it).
     _Leg("Makefile:coverage-python", _COVERAGE, ()),
     _Leg("Makefile:coverage-python", _COVERAGE_SERIAL, ()),
-    # nox-release → tests_all on the canary only (the family deselected —
-    # it runs on the primary only, #566 Q2 — and coverage off); the primary's
-    # session is what the stamp proves.
-    _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY, ()),
-    _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY_SERIAL, ()),
-    # nox-release → tests_hostless_unit on the middle Pythons: the trimmed tests/unit pair.
-    _Leg("noxfile.py:tests_hostless_unit@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless_unit@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless_unit@3.12", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless_unit@3.12", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless_unit@3.13", _HOSTLESS_MIDDLE, ("tests/unit",)),
-    _Leg("noxfile.py:tests_hostless_unit@3.13", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
-    # dashboard-all → dashboard: the two browser suites on every engine.
+    # nox-release → tests_bed on the canary only: the bed half of the coverage
+    # selection (the family deselected — it runs on the primary only, #566 Q2 —
+    # and coverage off). The canary's and the middle Pythons' hostless halves are
+    # CI's tests_hostless-3.1x sessions; the primary's session is what the stamp proves.
+    # The literals are the manifest's declaration; the partition test reads the noxfile.
+    _Leg(
+        "noxfile.py:tests_bed@3.14",
+        "(integration or embedded) and not stability and not browser and not busybox "
+        "and not conformance and not kmodcov and not release_proof "
+        "and not serial_timing and not interpreter_agnostic",
+        (),
+    ),
+    _Leg(
+        "noxfile.py:tests_bed@3.14",
+        "serial_timing and (integration or embedded) and not stability and not browser "
+        "and not busybox and not conformance and not kmodcov and not release_proof "
+        "and not interpreter_agnostic",
+        (),
+    ),
+    # coverage-python's `dashboard` prerequisite: the two browser suites on
+    # DASHBOARD_BROWSERS (chromium); the other engines are CI's dashboard-e2e.
     _Leg(
         "Makefile:dashboard",
         "browser and not soak",
@@ -1993,6 +1998,30 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     _Leg("Makefile:conformance", "conformance and not conformance_bed", ()),
     _Leg("Makefile:busybox", "busybox", ()),
 )
+
+_LEGS_CI_PROVES = (
+    "Makefile:check-python",
+    "Makefile:lint-arch",
+    "Makefile:docs@first",
+    "noxfile.py:tests_hostless_unit@3.11",
+    "noxfile.py:tests_hostless_unit@3.12",
+    "noxfile.py:tests_hostless_unit@3.13",
+    "noxfile.py:tests_all@3.14:hostless",
+    "Makefile:dashboard-all",
+    "Makefile:check-ts",
+    "Makefile:coverage-ts",
+)
+"""An excerpt of the pre-2026-11 release census: the legs the old `make release`
+ran that the release now trusts CI (or the coverage stamp) for."""
+
+
+def test_the_evidence_map_is_exactly_the_legs_the_release_stopped_running() -> None:
+    """Both ways: every dropped leg has evidence; each evidence key is a leg the old release ran."""
+    from scripts import release_stages
+
+    assert set(_LEGS_CI_PROVES) == set(release_stages.EVIDENCE)
+    assert len(set(_LEGS_CI_PROVES)) == len(_LEGS_CI_PROVES)
+
 
 # OWNER EXEMPTIONS. Lanes the release deliberately does NOT run, each with its
 # reason, spelled as the leg it would be. The census treats their selection as
@@ -2039,7 +2068,6 @@ _REQUIRED_LANES = (
     "nox-release",
     "release-kmodcov-matrix",
     "kmodcov",
-    "dashboard-all",
     "dashboard",
     "docs",
     "doctest-src",
@@ -2570,6 +2598,7 @@ HOSTLESS_TARGETS = [
     "build",
     "clean",
     "clean-dist",
+    "clean-web-assets",
     "dev",
     "help",
     "changelog",
@@ -2583,7 +2612,6 @@ HOSTLESS_TARGETS = [
     "monitor-fixtures",
     "browsers",
     "web",
-    "web-clean",
     "web-dev",
     "web-install",
     # a ping sweep of the lab's addresses: it logs into nothing
@@ -2727,6 +2755,45 @@ def test_the_prerequisite_order_guard_sees_the_defect_it_was_written_for() -> No
     ]
     early = "DIST := x/index.html\nlane: $(DIST)\n\t@echo $(LATER)\nlane: export X := 1\n"
     assert makefile_rules_naming_an_undefined_variable(early) == []
+
+
+def test_the_bed_clauses_are_the_makefile_s_coverage_bed_selection() -> None:
+    """noxfile's `BED_CLAUSES` is the Makefile's `M_COVERAGE_BED`, expanded: one selection."""
+    variables = _makefile_marker_variables(_MAKEFILE_TEXT)
+    assert (
+        variables["M_COVERAGE_BED"].replace("$(M_COVERAGE)", variables["M_COVERAGE"]) == BED_CLAUSES
+    )
+
+
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_canary_s_hostless_sessions_and_the_bed_leg_partition_tests_all(
+    collect_marker_sets,
+) -> None:
+    """The release's bed leg plus CI's hostless sessions select what `tests_all` did.
+
+    On the canary `tests_all` ran every product test minus the family; the
+    release now runs only the bed half (`tests_bed`) and trusts CI's
+    `tests_hostless_unit` (middle pair) and `tests_hostless_e2e` (canary pair)
+    for the rest. Equality over one real collection proves no test fell out.
+    """
+    items = collect_marker_sets(tuple(pyproject_testpaths(_REPO)))
+    whole = _selected_node_ids(
+        [_Leg("a", _ALL_NONPRIMARY, ()), _Leg("a", _ALL_NONPRIMARY_SERIAL, ())], items
+    )
+    assert whole, "tests_all selects nothing, so this compares nothing"
+    parts = _selected_node_ids(
+        [
+            _Leg("u", _HOSTLESS_MIDDLE, ("tests/unit",)),
+            _Leg("u", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+            _Leg("e", _HOSTLESS_E2E_CANARY, ("tests/e2e",)),
+            _Leg("e", _HOSTLESS_E2E_CANARY_SERIAL, ("tests/e2e",)),
+            _Leg("b", _BED_NONPRIMARY, ()),
+            _Leg("b", _BED_NONPRIMARY_SERIAL, ()),
+        ],
+        items,
+    )
+    assert parts == whole, {"only in tests_all": whole - parts, "only in the union": parts - whole}
 
 
 def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> None:

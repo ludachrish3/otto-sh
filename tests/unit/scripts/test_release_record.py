@@ -1,5 +1,6 @@
 """scripts/release_record.py: the release record's lifecycle, mode decision and CLI."""
 
+import json
 import os
 import subprocess
 import sys
@@ -7,11 +8,14 @@ from pathlib import Path
 
 import pytest
 
+import scripts.local_gate_status as lgs
+import tests._fixtures.fake_gh as fg
 from scripts import gate_stamp_common
 from scripts import process_group as pg
 from scripts import release_record as rr
 from tests._fixtures.gitrepo import TmpGitRepo, git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.unit.scripts.test_local_gate_status import _jobs, _runs
 
 _started = pg.process_start(os.getpid())
 assert _started is not None
@@ -32,12 +36,14 @@ def repo(tmp_path: Path) -> TmpGitRepo:
 
 
 def test_a_run_starts_pending_and_a_second_run_overwrites_a_certificate(repo: TmpGitRepo) -> None:
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     rr.certify(repo.root, RUN, head="h", tree="t", version="0.18.1")
     record = rr.read(repo.root)
     assert record is not None
     assert record.state == "certified"
-    rr.write_pending(repo.root, rr.RunIdentity(RUN.pid, RUN.pid_started + 1))
+    rr.write_pending(
+        repo.root, rr.RunIdentity(RUN.pid, RUN.pid_started + 1), trusted_run="u", trusted_head="h"
+    )
     record = rr.read(repo.root)
     assert record is not None
     assert record.state == "pending"
@@ -48,7 +54,7 @@ def test_certify_landed_and_tip_certified_follow_the_lifecycle_of_one_run(repo: 
     other = rr.RunIdentity(RUN.pid, RUN.pid_started + 1)
     with pytest.raises(rr.ReleaseError):
         rr.certify(repo.root, RUN, head="h", tree="t", version="v")  # no pending yet
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     with pytest.raises(rr.ReleaseError):
         rr.certify(repo.root, other, head="h", tree="t", version="v")  # another run
     rr.certify(repo.root, RUN, head="h", tree="t", version="0.18.1")
@@ -62,7 +68,7 @@ def test_certify_landed_and_tip_certified_follow_the_lifecycle_of_one_run(repo: 
         "t",
         "0.18.1",
     )
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     rr.certify(repo.root, RUN, head="m", tree="t2", version="0.18.1")
     rr.tip_certified(repo.root, RUN, head="m", tree="t2", version="0.18.1")
     record = rr.read(repo.root)
@@ -71,7 +77,7 @@ def test_certify_landed_and_tip_certified_follow_the_lifecycle_of_one_run(repo: 
 
 
 def test_landing_needs_a_certificate_by_the_same_run(repo: TmpGitRepo) -> None:
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     with pytest.raises(rr.ReleaseError):
         rr.mark_landed(repo.root, RUN, url="u")  # still pending
     with pytest.raises(rr.ReleaseError):
@@ -114,7 +120,9 @@ def test_the_landing_is_decided_by_the_shared_main_tip_predicate() -> None:
 
 def test_the_cli_writes_the_states_with_make_s_pid(repo: TmpGitRepo) -> None:
     pid = str(os.getpid())
-    assert rr.main(["--repo", str(repo.root), "pending", "--pid", pid]) == 0
+    _github_origin(repo)
+    _copy_required(repo)
+    assert _pending(repo, _gh(_all_success())) == 0
     assert rr.main(["--repo", str(repo.root), "certify", "--pid", pid, "--version", "0.18.1"]) == 0
     record = rr.read(repo.root)
     assert record is not None
@@ -163,13 +171,13 @@ def test_read_fields_prints_one_value_per_line_and_empty_for_none(
     fields = ["--repo", str(repo.root), "read", "--fields", "state,run.pid,run.pid_started,url"]
     assert rr.main(fields) == 0
     assert capsys.readouterr().out == "\n\n\n\n", "no record: every field empty"
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     rr.certify(repo.root, RUN, head="h", tree="t", version="0.18.1")
     rr.mark_landed(repo.root, RUN, url="https://x/pull/1")
     assert rr.main(fields) == 0
     out = capsys.readouterr().out
     assert out.splitlines() == ["landed", str(RUN.pid), str(RUN.pid_started), "https://x/pull/1"]
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     assert rr.main(fields) == 0
     assert capsys.readouterr().out.splitlines() == [
         "pending",
@@ -182,7 +190,7 @@ def test_read_fields_prints_one_value_per_line_and_empty_for_none(
 def test_read_fields_refuses_a_field_the_record_does_not_have(
     repo: TmpGitRepo, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rr.write_pending(repo.root, RUN)
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
     assert rr.main(["--repo", str(repo.root), "read", "--fields", "state,run.colour"]) == 1
     assert "release-record: the record has no field run.colour" in capsys.readouterr().err
 
@@ -206,3 +214,150 @@ def test_a_corrupt_record_is_refused_not_a_traceback(
         rr.read(repo.root)
     assert rr.main(["--repo", str(repo.root), "read"]) == 1
     assert "release-record:" in capsys.readouterr().err
+
+
+def _gh(jobs: "dict[str, str] | None", status: str = "completed") -> lgs.GhRunner:
+    """A gh listing one push run, viewed with *jobs* (name -> conclusion); None lists none."""
+    if jobs is None:
+        return fg.scripted_gh([fg.GhReply(["run", "list"], stdout=_runs())])
+    return fg.scripted_gh(
+        [
+            fg.GhReply(["run", "list"], stdout=_runs((1, status, None))),
+            fg.GhReply(["run", "view"], stdout=_jobs(status, **jobs)),
+        ]
+    )
+
+
+def _github_origin(repo: TmpGitRepo) -> None:
+    repo.git("remote", "set-url", "origin", "https://github.com/o/r.git")
+
+
+def _required() -> "list[str]":
+    return json.loads((CHECKOUT_ROOT / ".github/required_contexts.json").read_text())
+
+
+def _all_success() -> "dict[str, str]":
+    return {n: "success" for n in _required() if n not in lgs.EXCLUDED_FROM_VERDICT}
+
+
+def _pending(repo: TmpGitRepo, gh: lgs.GhRunner) -> int:
+    argv = ["--repo", str(repo.root), "pending", "--pid", str(os.getpid()), "--remote", "origin"]
+    return rr.main(argv, gh=gh)
+
+
+def _copy_required(repo: TmpGitRepo) -> None:
+    repo.write(lgs.REQUIRED_CONTEXTS_FILE, json.dumps(_required()))
+
+
+def test_pending_reads_main_s_verdict_once_and_records_the_trusted_run(repo: TmpGitRepo) -> None:
+    _github_origin(repo)
+    _copy_required(repo)
+    assert _pending(repo, _gh(_all_success())) == 0
+    record = rr.read(repo.root)
+    assert record is not None
+    assert record.state == rr.PENDING
+    assert record.trusted_head == repo.git("rev-parse", "HEAD").strip()
+    assert record.trusted_run == "run-url"
+
+
+@pytest.mark.parametrize(
+    ("jobs", "status", "said"),
+    [
+        ({**_all_success(), "docs": "failure"}, "completed", "is not green: docs: failure"),
+        ({}, "in_progress", "is still running; wait for"),
+        (None, "completed", "cannot be read"),
+    ],
+)
+def test_pending_refuses_without_writing_when_the_run_is_red_pending_or_absent(
+    repo: TmpGitRepo,
+    capsys: pytest.CaptureFixture[str],
+    jobs: "dict[str, str] | None",
+    status: str,
+    said: str,
+) -> None:
+    _github_origin(repo)
+    _copy_required(repo)
+    assert _pending(repo, _gh(jobs, status)) == 1
+    assert said in capsys.readouterr().err
+    assert rr.read(repo.root) is None
+
+
+def test_pending_refuses_a_missing_required_job_by_name(
+    repo: TmpGitRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _github_origin(repo)
+    _copy_required(repo)
+    jobs = _all_success()
+    del jobs["import-budget"]
+    assert _pending(repo, _gh(jobs)) == 1
+    assert "import-budget: no job" in capsys.readouterr().err
+
+
+def test_certify_landed_and_tip_certified_carry_the_trusted_run(repo: TmpGitRepo) -> None:
+    def trusted() -> "tuple[str | None, str | None]":
+        record = rr.read(repo.root)
+        assert record is not None
+        return record.trusted_run, record.trusted_head
+
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
+    rr.certify(repo.root, RUN, head="h1", tree="t", version="0.18.1")
+    assert trusted() == ("u", "h")
+    rr.mark_landed(repo.root, RUN, url="https://x/pull/1")
+    assert trusted() == ("u", "h")
+    rr.write_pending(repo.root, RUN, trusted_run="u", trusted_head="h")
+    rr.certify(repo.root, RUN, head="h1", tree="t", version="0.18.1")
+    rr.tip_certified(repo.root, RUN, head="h1", tree="t", version="0.18.1")
+    assert trusted() == ("u", "h")
+
+
+def test_an_old_record_without_trusted_fields_still_reads(repo: TmpGitRepo) -> None:
+    old = {
+        "state": "certified",
+        "run": {"pid": RUN.pid, "pid_started": RUN.pid_started},
+        "head": "h",
+        "tree": "t",
+        "version": "0.18.1",
+        "url": None,
+        "written_at": "2026-11-11T00:00:00Z",
+    }
+    repo.write(str(rr.RECORD), json.dumps(old))
+    record = rr.read(repo.root)
+    assert record is not None
+    assert (record.trusted_run, record.trusted_head) == (None, None)
+
+
+def _record_pending(repo: TmpGitRepo, required: str) -> int:
+    pid = str(os.getpid())
+    argv = ["--repo", str(repo.root), "pending", "--pid", pid, "--remote", "origin"]
+    return rr.main([*argv, "--required", required], gh=_gh(None))
+
+
+def _tag_main(repo: TmpGitRepo, required: str) -> int:
+    from scripts import release_tag
+
+    return release_tag.main(["--repo", str(repo.root), "--required", required])
+
+
+@pytest.mark.parametrize("entry", [_record_pending, _tag_main], ids=["pending", "release-tag"])
+def test_a_relative_required_path_resolves_under_the_repo_with_one_refusal(
+    repo: TmpGitRepo, capsys: pytest.CaptureFixture[str], entry
+) -> None:
+    assert entry(repo, "missing/contexts.json") == 1
+    err = capsys.readouterr().err.strip()
+    _, said = err.split(": ", 1)
+    want = f"cannot read the required contexts {repo.root / 'missing/contexts.json'}: "
+    assert said.startswith(want), err
+    assert "No such file or directory" in said
+
+
+def test_pending_prints_one_skip_line_per_evidence_entry(
+    repo: TmpGitRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import release_stages
+
+    _github_origin(repo)
+    _copy_required(repo)
+    assert _pending(repo, _gh(_all_success())) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == len(release_stages.EVIDENCE)
+    assert all(line.startswith("skipped ") for line in lines)

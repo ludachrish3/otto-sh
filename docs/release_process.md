@@ -71,71 +71,91 @@ which waits the 25 minutes of `main`'s own CI run before it tags.
    `NEW_VERSION=` skips the first check and turns the second into a warning.
 
    `make release` runs its cheap stages first, so a cheap failure costs
-   minutes rather than the hour the test stages take:
+   minutes rather than the hour the test stages take, and it runs only what
+   no other run on the same tree has already proved. In order:
 
-   - The **[coverage stamp](contributing.md#the-coverage-stamp)** is checked
-     once, before anything is built, and the answer is kept for the coverage
-     stage. A dirty tree, a non-primary venv, or a command-line variable
-     other than `BUMP=`/`NEW_VERSION=` stops the release
-     here.
-   - **`release-preflight`** refuses four things, naming what it found:
-     `main` or a detached `HEAD` (the release lands through a pull request,
-     so it needs a branch); commits not yet pushed to the branch's upstream,
-     or a branch with no upstream; a branch that is not `main`'s tip, fetched
-     (the release certifies the tree `main` will carry once its pull request
-     merges, so it starts from `main` exactly); and untracked files under
-     `docs/`, `src/`, `tests/` and `schemas/` (an untracked file under
-     `src/` or a test root is usually refused one step earlier, by the stamp
-     check, in its own words; the remedy is the same). The release builds and
-     tests the checkout in place, so it would read them even though no commit
-     carries them, and CI never sees them. Commit, ignore or move each one,
-     then run the release again. The preflight then clears the gitignored
-     run output the release regenerates anyway: `reports/*-observations`,
-     `tests/project5/build`, `tests/project_ctr/build`, and any `src/otto/`
-     directory left holding only `__pycache__` (it would import as a
-     namespace package). Last, it pins the live `main` ruleset (15843311)
-     and the repository's merge settings against the committed expectation
-     (`tests/unit/test_landing_ruleset.py`), so it needs `gh` auth and the
-     network. You can run `make release-preflight` by hand.
-   - The run then writes its **release record**,
-     `reports/release/record.json`, as `pending`: a run that fails anywhere
-     leaves a pending record, never an older certificate.
-   - `clean-dist`, `web-install`, a first **docs** build (its prerequisites
-     build the web assets, so a broken web build also surfaces here), the
-     Python static checks and `budget-delta`.
+   1. The **[coverage stamp](contributing.md#the-coverage-stamp)** is checked
+      once, before anything is built, and the answer is kept for the coverage
+      stage. A dirty tree, a non-primary venv, or a command-line variable
+      other than `BUMP=`/`NEW_VERSION=` stops the release here.
+   2. **`release-preflight`** refuses four things, naming what it found:
+      `main` or a detached `HEAD` (the release lands through a pull request,
+      so it needs a branch); commits not yet pushed to the branch's upstream,
+      or a branch with no upstream; a branch that is not `main`'s tip, fetched
+      (the release certifies the tree `main` will carry once its pull request
+      merges, so it starts from `main` exactly); and untracked files under
+      `docs/`, `src/`, `tests/` and `schemas/` (an untracked file under
+      `src/` or a test root is usually refused one step earlier, by the stamp
+      check, in its own words; the remedy is the same). The release builds and
+      tests the checkout in place, so it would read them even though no commit
+      carries them, and CI never sees them. Commit, ignore or move each one,
+      then run the release again. The preflight then clears the gitignored
+      run output the release regenerates anyway: `reports/*-observations`,
+      `tests/project5/build`, `tests/project_ctr/build`, and any `src/otto/`
+      directory left holding only `__pycache__` (it would import as a
+      namespace package). Last, it pins the live `main` ruleset (15843311)
+      and the repository's merge settings against the committed expectation
+      (`tests/unit/test_landing_ruleset.py`), so it needs `gh` auth and the
+      network. You can run `make release-preflight` by hand.
+   3. The **pending record**: `release_record.py pending` reads `main`'s CI
+      verdict on HEAD once, with the same reader `make release-tag` uses, and
+      writes `reports/release/record.json` as `pending` only when that run is
+      green (a run that fails anywhere later leaves a pending record, never an
+      older certificate). It does not wait. It refuses with one of:
+      - `main's CI on <sha> is still running; wait for <run url>`: run the
+        release again once that run finishes;
+      - `main's CI on <sha> is not green: <failed jobs>; <run url>`: fix
+        `main` through a pull request (or re-run a job that failed for a
+        reason outside the tree), then branch from the new tip;
+      - `main's CI on <sha> cannot be read: …`: usually `gh` auth or the
+        network; fix it and run again.
 
-   Then the coverage stage: when the stamp check found no valid stamp for
-   HEAD's committed tree, the release runs `make coverage` itself and checks
-   again — then `nox-release` (the
-   **[tiered nox matrix](contributing.md#cross-version-testing-with-nox)**
-   on the canary and the middle Pythons; the primary's session is what the
-   stamp proves), the web build with the
-   all-browser dashboard e2e and the TypeScript gate, the two matrix stages
-   (`release-matrix`, `release-kmodcov-matrix` — they commit), the release
-   campaign (`release-campaign` — every lane the default gates exclude, once
-   each; its contents are described under
-   [the last two rows are the point](architecture/quality-gates.md#the-last-two-rows-are-the-point)),
-   and the docs again (this build renders the matrices the release just
-   re-measured, so it must come after them); only then does it regenerate
-   `CHANGELOG.md` at the new version, bump the version in `pyproject.toml`
-   and `uv.lock` and commit (no tag: the tag waits for the merge), and build
-   `dist/` (`wheel-check`). It needs the dev
-   VM with the lab VMs and the Zephyr guests up and **exclusive use of the
-   bed** (the campaign holds it), and the campaign adds about 9 minutes
-   (the chaos lanes are not in it — they are on-demand only); a
-   red lane before the bump stops the release before any version commit (the
-   two matrix stages may already have committed a refreshed matrix on the
-   branch; that commit is correct, but `release-preflight` refuses a branch
-   that is not `main`'s tip, so land it through its own pull request and
-   start the release again from the new tip). `wheel-check` is the one stage
-   after the bump: a red `wheel-check` leaves the bump committed on the
-   release branch, unpushed, with the record `pending`. That bump never
-   reached `main`, so it is not a case for [the recertification
-   run](#release-recertification), which recovers a bump `main`
-   already carries: reset the branch to `main`'s tip (`git reset --hard
-   origin/main`), land the fix for what `wheel-check` reported through its
-   own pull request, and start the release again; the census bumps to the
-   same version.
+      On green it prints one `skipped <leg>: proved by <jobs> in <run url>`
+      line per leg CI proved; those legs are not run again. The list is
+      [What the release trusts CI for](architecture/quality-gates.md#what-the-release-trusts-ci-for).
+   4. `clean-dist` and `clean-web-assets` (the web bundles are rebuilt once,
+      by the first stage that needs them), then `web-install`.
+   5. **`budget-delta`**, the import-budget delta against the previous tag
+      (see [The import-budget delta](#the-import-budget-delta) below).
+   6. The **coverage stage**: when the stamp check found no valid stamp for
+      HEAD's committed tree, the release runs `make coverage` (the 96 % floor,
+      lines and branches, hostless and bed judged together in one process)
+      and checks again.
+   7. **`nox-release`**, the release's canary bed leg: the bed half of
+      `make coverage`'s selection on the canary Python, pass/fail. The
+      canary's and the middle Pythons' hostless halves are CI's, and the
+      primary's session is what the stamp proves.
+   8. The two **matrix stages**, `release-matrix` and `release-kmodcov-matrix`.
+      Each runs its verify lane (`make conformance-bed`, `make kmodcov`),
+      which refuses a downgrade against the committed matrix, then copies the
+      judged candidate over `schemas/support_matrix.json` or
+      `schemas/kmodcov_matrix.json` and commits it when it differs. These are
+      the only stages that write a matrix on their own. A cell's `as_of` is the date the cell was last measured; since only the release's matrix stages write a matrix on their own, that is normally the release that certified it (a by-hand fold or edit re-dates it in its own commit).
+   9. The **release campaign** (`release-campaign`: every lane the default
+      gates exclude, once each; its contents are described under
+      [the last two rows are the point](architecture/quality-gates.md#the-last-two-rows-are-the-point)).
+   10. **`docs`**, built once, after the matrix stages, so it renders the
+       matrices the release just certified.
+   11. The changelog is regenerated at the new version, the version in
+       `pyproject.toml` and `uv.lock` is bumped and committed (no tag: the
+       tag waits for the merge), and `wheel-check` builds `dist/`.
+
+   It needs the dev VM with the lab VMs and the Zephyr guests up and
+   **exclusive use of the bed** (the campaign holds it), and the campaign
+   adds about 9 minutes (the chaos lanes are not in it — they are on-demand
+   only). A red lane before the bump stops the release before any version
+   commit (the two matrix stages may already have committed a refreshed
+   matrix on the branch; that commit is correct, but `release-preflight`
+   refuses a branch that is not `main`'s tip, so land it through its own
+   pull request and start the release again from the new tip). `wheel-check`
+   is the one stage after the bump: a red `wheel-check` leaves the bump
+   committed on the release branch, unpushed, with the record `pending`.
+   That bump never reached `main`, so it is not a case for [the
+   recertification run](#release-recertification), which recovers a bump
+   `main` already carries: reset the branch to `main`'s tip (`git reset
+   --hard origin/main`), land the fix for what `wheel-check` reported
+   through its own pull request, and start the release again; the census
+   bumps to the same version.
 
    On green the run certifies its head in the record (the commit, its tree
    and the version) and lands the branch like any branch: `make gate-tip`
@@ -147,7 +167,7 @@ which waits the 25 minutes of `main`'s own CI run before it tags.
    prints `opened <url>: rebase-merge it, then run: make release-tag`.
 
 3. **Merge the release pull request.** The maintainer reviews the diff (the
-   changelog, the bump, the re-measured matrices) and presses **Rebase and
+   changelog, the bump, the certified matrices) and presses **Rebase and
    merge** once its CI and the `local-gate` status are green. Nothing else
    should land while the release pull request is open, and until the tag is
    pushed: `make release-tag` tags only the tree the run certified.
@@ -183,7 +203,7 @@ untagged, so the release cannot simply be repeated. Branch from `main`'s tip
 again (step 1, under another name such as `release/recert`) and run `make
 release`: it sees that the remote has no tag for the current version and that
 the census names that same version, and runs in **recertification mode**:
-every validation stage as usual, the matrices re-measured and committed when
+every validation stage as usual, the matrices certified and committed when
 they changed, the changelog regenerated for the same version and committed
 when it changed, and **no bump**. When the run committed nothing, there is
 nothing to merge: it certifies `main`'s tip itself (`tip-certified`) and
@@ -196,6 +216,74 @@ release that bumps again; a census below it is refused.
 A [hotfix](contributing.md#hotfix) that leaves `main`'s CI red blocks the
 release until its follow-up lands: `make release-tag` and the release
 workflow's guard both require green CI on the commit they tag.
+
+### The import-budget delta
+
+`make budget-delta` measures the previous release tag and HEAD, file
+operations per surface on every nox interpreter, and stops the release on
+growth nothing approved. How it measures (pristine worktrees, the
+confirming pairs, the caches) is in
+[Contributing](contributing.md#the-import-budget); this section is what
+the release needs from you.
+
+**The approvals file** is `tests/unit/import_budget/approved_growth.json`,
+committed like any source. For example, a file approving one growth:
+
+```json
+{"base": "v0.20.0", "entries": [
+  {"surface": "run", "minor": "3.12", "buckets": {"site:yaml": 14}, "why": "run now reads YAML suites"}
+]}
+```
+
+`base` is the release tag the entries were written against. Each entry
+names a surface, optionally one minor (without it, the entry holds on
+every minor), the buckets that may grow with the most each may grow by, and
+a `why`. An entry approves a growth when every bucket that moved is named and
+within its amount; an unnamed bucket may move only by the measurement's
+noise. Entries are **in force** while `base` is the tag the delta measures
+against; once a newer tag exists, every entry is **spent** and printed as a
+`NOTE`, never used as evidence. Approvals expire at the tag: the file is not
+emptied, but against the next tag its entries are spent `NOTE`s and approve
+nothing, so prune them in the next approval you commit. An entry nothing grew for is a `NOTE` (unused),
+never a stop. A `why` that is still the printed placeholder is refused.
+
+**A stop** is judged over every minor first, then printed once: a `STOP:`
+block with one line per surface that grew beyond its approval, the paths
+that moved under it, and `to approve, write
+tests/unit/import_budget/approved_growth.json:` followed by the complete
+file (the entries the run used plus the ones the stops warrant). Replace each
+new `why` and land the file through an approval pull request to `main`
+(CI's `import-budget` judges it; an approvals-only commit is judged without
+measuring, see [Contributing](contributing.md#the-import-budget)). Do not
+commit it on the release branch: `release-preflight` refuses a branch that is
+not `main`'s tip. Once it merges, cut a NEW release branch at the new `main`
+tip and run `make release` again. When `reports/budget/other/<minor>.json`
+holds the other environment's records for that minor (CI's
+`budget-<minor>` artifact, placed by hand), each grown surface's stop line is
+followed by an `other environment:` line with that environment's numbers.
+An approval applies to both environments.
+
+The same delta runs on every pull request whose diff can move the budget,
+against the release tag nearest its merge base, so most growth is approved
+in the pull request that causes it (see
+[the CI job table](architecture/quality-gates.md#what-binds-each-gate)).
+
+(landing-import-budget-context)=
+
+### Landing the import-budget certificate
+
+The `import-budget` job is a required context of `main`'s ruleset. When a
+pull request adds or removes a required context, the maintainer edits the
+`main` branch ruleset on GitHub (Settings → Rules → Rulesets), adding the
+required status check (here `import-budget`), and updates
+`.github/required_contexts.json` in the same step as the merge.
+`tests/unit/test_landing_ruleset.py` pins the ruleset against that file, and
+`make release-preflight` runs that pin, so a ruleset and a file that
+disagree stop the next release at its first stage.
+
+The `import-budget-delta` legs' `timeout-minutes` in
+`.github/workflows/ci.yml` is a placeholder until a leg has run: the first
+measured leg's time sets it, in a follow-up change.
 
 ## What the tag push triggers
 

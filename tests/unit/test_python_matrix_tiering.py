@@ -857,17 +857,17 @@ def test_the_make_nox_release_target_runs_no_primary_session() -> None:
     """``make nox-release`` is the release's matrix once `make coverage` has stamped the tree.
 
     The primary's full session is the selection the stamp already proves,
-    so the target runs the canary's ``tests_all`` and the middle versions'
-    ``tests_hostless_unit`` and nothing on ``$(NOX_PRIMARY)`` (#566 ruling 4).
+    so the target runs only the canary's bed session (the hostless halves
+    are CI's) and nothing on ``$(NOX_PRIMARY)`` (#566 ruling 4).
     """
     text = (CHECKOUT_ROOT / "Makefile").read_text()
     live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     recipe = re.search(r"^nox-release:.*?\n((?:\t.*\n)+)", live, re.MULTILINE)
     assert recipe is not None, "Makefile has no `nox-release` recipe"
     body = recipe.group(1)
-    assert "tests_all-$(NOX_CANARY)" in body, body
-    assert "tests_hostless_unit-$(v)" in body, body
+    assert "tests_bed-$(NOX_CANARY)" in body, body
     assert "$(NOX_PRIMARY)" not in body, body
+    assert "tests_bed-3.10" not in body, body
     assert "tests_all-3.10" not in body, body
     assert not re.search(r"\btests_all\b(?!-)", body), (
         f"a bare tests_all would run every interpreter: {body}"

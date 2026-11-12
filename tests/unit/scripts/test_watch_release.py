@@ -45,8 +45,14 @@ def _repo(tmp_path: Path) -> TmpGitRepo:
     (repo.root / "scripts").mkdir()
     shutil.copy2(_SCRIPT, repo.root / "scripts" / "watch_release.sh")
     # ``scripts`` is a namespace package (no __init__.py), importable from the repo root;
-    # the record is read through release_record.py, which imports the other two.
-    for name in ("process_group.py", "release_record.py", "gate_stamp_common.py"):
+    # the record is read through release_record.py, which imports the others.
+    for name in (
+        "process_group.py",
+        "release_record.py",
+        "release_stages.py",
+        "gate_stamp_common.py",
+        "local_gate_status.py",
+    ):
         shutil.copy2(CHECKOUT_ROOT / "scripts" / name, repo.root / "scripts" / name)
     # the session's whole venv, so the copy's interpreter has its packages (tomli)
     (repo.root / ".venv").symlink_to(sys.prefix, target_is_directory=True)

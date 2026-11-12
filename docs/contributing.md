@@ -293,8 +293,9 @@ description and a pin ever disagree, fix the doc. Run them locally with
 per-task check; needs `make browsers` once) or `make dashboard-all` for the
 full cross-engine matrix: Chromium (Blink), Firefox (Gecko), and WebKit
 (Safari). The one Safari-specific test runs on WebKit only via
-`@only_browser("webkit")`. `make release` runs all three; CI runs them as a
-parallel per-engine matrix. A failed engine job uploads the failed tests'
+`@only_browser("webkit")`. CI runs all three as a parallel per-engine
+matrix, and `make release` trusts that verdict instead of running them again
+(`scripts/release_stages.py` names the evidence). A failed engine job uploads the failed tests'
 Playwright traces and screenshots as the `playwright-traces-<browser>`
 artifact; open a trace with `npx playwright show-trace <trace.zip>` (or at
 trace.playwright.dev) to step through its clicks, DOM, console and network.
@@ -323,7 +324,7 @@ bare umbrella that runs both:
 The umbrella targets `make validate`, `lint`, `format`, `typecheck`, and
 `check` each run **both** languages via their `-python` / `-ts` sub-targets
 (so `make validate` == `make validate-python` + `make validate-ts`). Bare
-`make coverage` is the same shape: `coverage-python` (full pytest, 95.5 floor over lines and branches)
+`make coverage` is the same shape: `coverage-python` (full pytest, 96 floor over lines and branches)
 + `coverage-ts` (merged vitest+e2e, its own floor). CI's browserless
 `check-ts` job runs the reduced slice `check-ts coverage-ts-unit` — the
 vitest-only floor, since it has no browsers to run the merged e2e leg.
@@ -984,7 +985,7 @@ environment reaches the lanes undetected (`CONFORMANCE_CELLS=1 make gate-tip`
 stamps a sampled bed run as the bed lane): the same boundary the coverage stamp
 has, and you are trusted on it as on intermediate commits.
 
-No lane in a landing's gate writes a tracked file: the conformance bed and `kmodcov` verify against the committed matrices and leave the tree clean; the release's matrix stages are the only writers (`make release-matrix`, `make release-kmodcov-matrix`).
+No lane in a landing's gate writes a tracked file by design: the conformance bed and `kmodcov` verify against the committed matrices, and the release's matrix stages are the only writers (`make release-matrix`, `make release-kmodcov-matrix`). A lane can still leave tracked dirt by accident (`coverage-bed` reaches the dashboard's dist rule, whose `make web` regenerates the tracked `web/src/api/*.gen.ts`; types that drifted from the API leave them changed, as would a rewritten matrix). Such a lane is not stamped: the runner names the dirty paths and refuses to stamp it, so commit the regenerated files (or find what rewrote them) and gate again.
 
 A release's own commits need no stamp. `make release` re-dates the two
 matrices and bumps the version in `pyproject.toml` and `uv.lock` after its
@@ -1033,11 +1034,11 @@ The second is honest about what it skips: `make gate-status` posts no
 request cannot land without [the hotfix](#hotfix)'s bypass. (The
 test-isolation guard is not on that list: nightly's `unit-repeat` job runs it.)
 
-`scripts/coverage_stamp.py check` stays exact-tree, and `make release` still
-uses it that way. A release after a matrix commit therefore re-runs coverage
-instead of trusting a promoted stamp. That is the right trade: the release is
-the one place the full coverage run is cheap relative to what it certifies, and
-promotion is for the landing's gate, not the release's.
+`scripts/coverage_stamp.py check` stays exact-tree, and `make release` uses
+it that way: it reads the stamp before any of its stages commits, and no
+landing commits the matrices, so the release's tree is one a landing could
+have stamped. Gate stamps carried between trees are for the landing's gate,
+never the release's.
 
 ### The coverage stamp
 
@@ -1049,8 +1050,9 @@ threshold and selection, and a digest of the built web assets. `make release`
 checks the stamp first and, when HEAD's tree has no valid one, runs
 `make coverage` itself before any test stage, and before any stage that
 commits, and checks again; its own matrix
-(`make nox-release`) then covers 3.11–3.14 only, because the primary's
-session is what the stamp proves.
+(`make nox-release`) then runs only the bed half on the canary
+(`tests_bed`), because the primary's session is what the stamp proves and
+the non-primary hostless halves are main's CI.
 
 The stamp is a committed-tree contract, like a lane stamp: a run over
 modified or staged tracked files, over an untracked file under `src/` or a
@@ -1458,8 +1460,8 @@ what you want to exercise:
 | Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded`. On demand only — never part of `make release` (owner decision, 2026-10-15; see [quality gates](architecture/quality-gates.md#the-last-two-rows-are-the-point)); its reboot scenarios reboot only [the chaos reboot guest](architecture/subsystems/chaos-guest.md) behind test4, never a lab VM ([#985](https://github.com/ludachrish3/otto-sh/issues/985)). | leased unix host, incl. test3 for docker and the chaos reboot guest on test4 (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
 | Host-contract conformance, hermetic venue (opt-in; also the GitHub nightly job) | `make conformance` (`OTTO_CONFORMANCE_CELLS=N\|all`) | none — loopback sshd + pinned BusyBox artifacts as subprocesses |
-| Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |
-| otto_kmodcov toolchain proofs (opt-in, dev VM only; `make release` runs it) | `make kmodcov` (`KMODCOV_TOOLCHAINS=gcc-9,…,clang`, `KMODCOV_CROSS_KDIR=<prepared kernel source tree>`, `KMODCOV_KERNELS=x86_64-cross,2.6.32,…,6.17` — the host's own cross build plus the six kernels `scripts/provision_kmodcov_kernels.sh` provisions under `KMODCOV_KERNELS_DIR` (the script itself reads `OTTO_KMODCOV_KERNELS_DIR`), idempotently: re-runs are cheap, and a re-pin rebuilds only what it changes); ends by folding the run into `schemas/kmodcov_matrix.json` (the {ref}`compatibility matrix <kmodcov-matrix>`), which `make release-kmodcov-matrix` re-measures and commits | test1/test2, plus gcc 9–14, clang 18, the 6.8 source tree, docker with the qemu-x86_64 binfmt (`qemu-user-static` with `binfmt-support`) and the provisioned kernel set on the dev VM |
+| Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample); verifies against `schemas/support_matrix.json` and leaves the tree clean; the release certifies (`make release-matrix`) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |
+| otto_kmodcov toolchain proofs (opt-in, dev VM only; `make release` runs it) | `make kmodcov` (`KMODCOV_TOOLCHAINS=gcc-9,…,clang`, `KMODCOV_CROSS_KDIR=<prepared kernel source tree>`, `KMODCOV_KERNELS=x86_64-cross,2.6.32,…,6.17` — the host's own cross build plus the six kernels `scripts/provision_kmodcov_kernels.sh` provisions under `KMODCOV_KERNELS_DIR` (the script itself reads `OTTO_KMODCOV_KERNELS_DIR`), idempotently: re-runs are cheap, and a re-pin rebuilds only what it changes); verifies against `schemas/kmodcov_matrix.json` (the {ref}`compatibility matrix <kmodcov-matrix>`) and leaves the tree clean; the release certifies (`make release-kmodcov-matrix`) | test1/test2, plus gcc 9–14, clang 18, the 6.8 source tree, docker with the qemu-x86_64 binfmt (`qemu-user-static` with `binfmt-support`) and the provisioned kernel set on the dev VM |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, trimmed hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 
@@ -2192,17 +2194,19 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
 ```
 
 - **A release compares against the previous tag, not just the ceilings.**
-  `make budget-delta` (a stage of `make release`, right after `check-python`)
+  `make budget-delta` (a stage of `make release`, after `web-install`)
   measures the nearest tag and HEAD on every nox interpreter, the primary
   first, each in a pristine worktree with its own venv, with the tip's
-  `import_budget.py` as the one instrument. It judges every minor, then
-  stops once if a surface costs more file operations than it did at the
-  tag, after a second measurement confirms it — growth the 10 % headroom
-  would have let through. Approvals live in the committed
-  `tests/unit/import_budget/approved_growth.json`: per surface (and
-  optionally minor), the amount each bucket may grow by and a `why`; the
-  entries hold until the next release tag. A stop prints the complete
-  file to commit (write the `why` of each new entry). Growth or a bucket shuffle is
+  `import_budget.py` as the one instrument. It judges every minor, whatever an
+  earlier one found, then stops once if a surface costs more file operations
+  than it did at the tag — growth the 10 % headroom would have let through.
+  Approvals live in the committed
+  `tests/unit/import_budget/approved_growth.json`; see
+  [the release process](release_process.md#the-import-budget-delta).
+  `BUMP=` and `NEW_VERSION=` stay the release's only command-line knobs.
+  A stop's tables name the paths that moved under each grown bucket
+  (`FileOps.by_path` in `scripts/import_budget.py`); the paths attribute
+  only, and no verdict reads them. Growth or a bucket shuffle is
   measured a second time before it counts, a third when the second
   disagrees, and a minor that never reproduces itself stops as
   inconclusive, naming the surfaces; the tables shown are the deciding
@@ -2234,6 +2238,18 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   releases must not run `make budget-delta` at the same time on one machine:
   each would remove the other's venv, and the loser fails loudly with status
   2, never with a wrong verdict.
+- **A pull request runs the same delta in CI.** `budget-scope` asks
+  `scripts/gate_scope.py --budget-eligible` whether the diff can move the
+  budget (a class that can move a count, or an edit to the approvals file)
+  and resolves the base with `import_budget_delta.py base-tag --rev
+  <merge-base>`. Only then do the `import-budget-delta (<minor>)` legs run,
+  one per supported Python, each `import_budget_delta.py measure --base-rev
+  <merge-base>` with the base's records cached; each uploads its records as
+  the `budget-<minor>` artifact (the other environment's numbers for a local
+  run). The one required context is `import-budget`, which passes when the
+  legs passed or were skipped. CI runners are x86 and the dev VM is ARM64, so
+  each environment compares the tag with the tip on itself; one approval
+  applies to both.
 - **Regenerate per interpreter.** `make import-snapshot` rewrites only the
   running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
   For another minor, install its nox env and run the script with that

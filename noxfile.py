@@ -160,6 +160,26 @@ HOSTLESS_CLAUSES = (
     "and not busybox and not conformance and not kmodcov and not release_proof"
 )
 
+# BED_CLAUSES is the bed half of `make coverage`'s selection: the Makefile's
+# M_COVERAGE_BED with $(M_COVERAGE) expanded, held equal to it by
+# tests/unit/test_lane_invariants.py (the Makefile is the one site). The
+# release's canary bed leg (tests_bed) composes from it.
+BED_CLAUSES = (
+    "(integration or embedded) and not stability and not browser and not busybox "
+    "and not conformance and not kmodcov and not release_proof"
+)
+TESTS_BED_TEST_ARGS = (
+    "-m",
+    BED_CLAUSES + " and not serial_timing and not interpreter_agnostic",
+    "--no-cov",
+)
+TESTS_BED_SERIAL_ARGS = (
+    "-m",
+    "serial_timing and " + BED_CLAUSES + " and not interpreter_agnostic",
+    "-n0",
+    "--no-cov",
+)
+
 # The hostless selection is three sessions, one per tier, so CI runs them as
 # parallel jobs: tests_hostless_unit (tests/unit, every interpreter),
 # tests_hostless_e2e (tests/e2e, the bookends) and tests_hostless_guards (the
@@ -468,6 +488,24 @@ def tests_hostless_unit(session: nox.Session) -> None:
         session.run(
             "pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
         )
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_bed(session: nox.Session) -> None:
+    """Run the bed half of ``make coverage``'s selection, uninstrumented, pass/fail.
+
+    ``make nox-release`` runs it on the CANARY_PYTHON only: the release's
+    cross-version bed leg. The hostless half on every non-primary Python is
+    CI's (``tests_hostless_unit``, ``tests_hostless_e2e``). The
+    ``interpreter_agnostic`` family is deselected (it runs on the primary
+    only). Requires the dev VM with Vagrant hosts up; not run in CI.
+    """
+    # Bundles spelled by NAME, as in tests_hostless_unit: the lane scanners
+    # expand `*MODULE_CONSTANT` only.
+    parallel_junit = _junitxml(session, "nox-bed")
+    serial_junit = _junitxml(session, "nox-bed-serial")
+    session.run("pytest", *TESTS_BED_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV)
+    session.run("pytest", *TESTS_BED_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV)
 
 
 @nox_uv.session(python=list(BOOKEND_PYTHONS), uv_groups=["dev"])

@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 import tomli
 
+import scripts.local_gate_status as lgs
 import scripts.release_record as rr
 import scripts.release_tag
 from scripts import gate_tip as gt
@@ -29,8 +30,12 @@ from tests._fixtures.fake_gh import GhReply, gh_calls, install_fake_gh
 from tests._fixtures.gitrepo import TmpGitRepo, git_env
 from tests._fixtures.lease_env import lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.unit.scripts.test_local_gate_status import _jobs, _runs
 
 pytestmark = pytest.mark.interpreter_agnostic
+
+REQUIRED_CONTEXTS_FILE = lgs.REQUIRED_CONTEXTS_FILE
+_REQUIRED = lgs.required_contexts(CHECKOUT_ROOT / REQUIRED_CONTEXTS_FILE)
 
 _TIERS = ("stability-unit", "stability-unix", "stability-tunnel", "stability-embedded")
 _HELPER = "lab-reachability"
@@ -485,12 +490,12 @@ def _delta_line(stdout: str) -> str:
     return line
 
 
-def test_the_release_runs_the_budget_delta_right_after_check_python():
-    """Early and failing: right after check-python, before coverage, a bare `$(MAKE)` line."""
+def test_the_release_runs_the_budget_delta_right_after_web_install():
+    """Early and failing: right after web-install, before coverage, a bare `$(MAKE)` line."""
     text = (CHECKOUT_ROOT / "Makefile").read_text()
     _prerequisites, recipe = _rule(text, "release")
     stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
-    assert stages.index("budget-delta") == stages.index("check-python") + 1, stages
+    assert stages.index("budget-delta") == stages.index("web-install") + 1, stages
     # The coverage stamp check (its `$(MAKE) coverage` fallback) sits between them.
     assert stages.index("coverage") == stages.index("budget-delta") + 1, stages
     assert stages.index("nox-release") == stages.index("coverage") + 1, stages
@@ -658,8 +663,8 @@ def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.Complete
     the real `uv`, `git-cliff` and `bump-my-version`: even a regressed recipe
     that ran past every stub could not bump, commit or tag this checkout. Each
     guard logs its name to :func:`_guard_log` and fails. The release record's
-    calls are the exception: `uv` appends `release_record-<verb>` to the make
-    stub's log, so they read as stages, and succeeds (this checkout's
+    calls are the exception: `uv` appends `release_record-<verb> <args>` to the
+    make stub's log, so they read as stages, and succeeds (this checkout's
     `reports/` is not a test's to write).
     """
     guard = tmp_path / "guard"
@@ -668,7 +673,7 @@ def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.Complete
     calls_log = stub.parent / "calls.log"
     record = (
         f'case "$1 $2 $3" in {_RECORD_CALL}) '
-        f'echo "release_record-$4" >> "{calls_log}"; exit 0 ;; esac\n'
+        f'verb=$4; shift 4; echo "release_record-$verb $*" >> "{calls_log}"; exit 0 ;; esac\n'
     )
     for tool in ("uv", "git-cliff", "bump-my-version"):
         prefix = record if tool == "uv" else ""
@@ -715,14 +720,24 @@ def test_the_cheap_stages_run_before_coverage_and_a_red_coverage_stops_the_rest(
         "release-preflight",
         "release_record-pending",
         "clean-dist",
+        "clean-web-assets",
         "web-install",
-        "docs",
-        "check-python",
         "budget-delta",
         "coverage",
     ]
     assert "no valid coverage stamp" in completed.stdout, "the wait for coverage is said up front"
     assert not _guard_log(tmp_path).exists()
+
+
+def test_the_pending_record_is_written_for_origin(tmp_path: Path):
+    """The pending record reads origin's CI verdict, so the recipe names the remote."""
+    stub, log = _stub_make(tmp_path, {"release-preflight": 0, "clean-dist": 1})
+
+    _run_release(tmp_path, stub, 1)
+
+    (line,) = [x for x in log.read_text(encoding="utf-8").splitlines() if "release_record-" in x]
+    assert line.startswith("release_record-pending ")
+    assert "--remote origin" in line
 
 
 def test_a_valid_stamp_skips_coverage_and_the_release_goes_on(tmp_path: Path):
@@ -752,24 +767,20 @@ def test_a_red_preflight_stops_the_release_before_anything_else(tmp_path: Path):
     assert not _guard_log(tmp_path).exists()
 
 
-def test_a_red_early_docs_build_stops_the_release_before_coverage(tmp_path: Path):
-    stub, log = _stub_make(tmp_path, {"docs": 1})
-
-    completed = _run_release(tmp_path, stub, 1)
-
-    assert completed.returncode != 0
-    assert _calls(log)[-1] == "docs"
-    assert "coverage" not in _calls(log)
-
-
-def test_the_release_builds_the_docs_again_after_it_re_measures_the_matrices():
-    """The early build is a probe; the final one renders the committed matrices."""
+def test_the_release_builds_the_docs_once_after_the_matrices_and_the_campaign():
+    """main's CI proved the first build; the one left renders the committed matrices."""
     _prerequisites, recipe = _rule((CHECKOUT_ROOT / "Makefile").read_text(), "release")
     stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
-    assert stages.count("docs") == 2, stages
-    last_docs = len(stages) - 1 - stages[::-1].index("docs")
-    assert stages.index("release-kmodcov-matrix") < last_docs, stages
-    assert stages.index("release-campaign") < last_docs, stages
+    assert stages.count("docs") == 1, stages
+    assert stages.index("release-kmodcov-matrix") < stages.index("docs"), stages
+    assert stages.index("release-campaign") < stages.index("docs"), stages
+
+
+def test_the_release_recipe_names_no_stage_ci_proves():
+    """The stages main's CI proved on this tree (scripts/release_stages.py) are not re-run."""
+    _prerequisites, recipe = _rule((CHECKOUT_ROOT / "Makefile").read_text(), "release")
+    stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
+    assert {"check-python", "dashboard-all", "validate-ts", "web"} & set(stages) == set(), stages
 
 
 # --- the release's landing: a certified record and a pull request ------------
@@ -786,6 +797,9 @@ class _Tail:
     start_sha: str
     """`origin/release/next` before the run."""
     gh_calls: "list[list[str]]"
+    """The release's own `gh` calls; the record's CI-verdict reads are :attr:`ci_reads`."""
+    ci_reads: "list[list[str]]"
+    """The `gh run ...` calls: the pending record's read of main's CI verdict."""
     guard_log: str
     """What the `uv`, `git-cliff` and `bump-my-version` stand-ins were asked, one line each."""
 
@@ -795,14 +809,23 @@ def _remote_sha(repo: TmpGitRepo, branch: str) -> str:
 
 
 def _scratch_release_repo(root: Path) -> TmpGitRepo:
-    """`release/next` at main's tip, both pushed to a bare `origin`; 0.18.1, untagged."""
+    """`release/next` at main's tip, both pushed to a bare `origin`; 0.18.1, untagged.
+
+    It carries the checkout's required contexts and a `github` remote with a GitHub
+    URL, which the record's `pending` reads main's CI verdict through
+    (:func:`_tail_guard`), since `origin` is a bare path.
+    """
     repo = TmpGitRepo(root / "scratch")
     repo.write("pyproject.toml", '[tool.bumpversion]\ncurrent_version = "0.18.1"\ntag = false\n')
     repo.write("CHANGELOG.md", "# unchanged\n")
+    repo.write(
+        REQUIRED_CONTEXTS_FILE, (CHECKOUT_ROOT / REQUIRED_CONTEXTS_FILE).read_text(encoding="utf-8")
+    )
     repo.commit("base")
     bare = root / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env=git_env(root))
     repo.git("remote", "add", "origin", str(bare))
+    repo.git("remote", "add", "github", "https://github.com/o/r.git")
     repo.git("push", "-q", "origin", "main")
     repo.git("checkout", "-q", "-b", "release/next")
     repo.git("push", "-q", "-u", "origin", "release/next")
@@ -829,14 +852,19 @@ def _tail_guard(
     `--unreleased` call, the pull request's body, prints half and fails); `bump-my-version`
     rewrites `current_version` and commits, never tagging, as `tag = false` says. With
     *lose_origin*, that bare repository is deleted just before the record's `landing`
-    call, so the real script's fetch of main fails there.
+    call, so the real script's fetch of main fails there. The record's `pending` reads
+    main's CI verdict through the scratch repo's `github` remote (a trailing `--remote`
+    wins over the recipe's), answered green by the fake `gh`.
     """
     lose = f'if [ "$4" = landing ]; then rm -rf "{lose_origin}"; fi; ' if lose_origin else ""
+    github = 'if [ "$4" = pending ]; then set -- "$@" --remote github; fi; '
+    green = {n: "success" for n in _REQUIRED if n not in lgs.EXCLUDED_FROM_VERDICT}
     _uv_stub(
         guard / "uv",
         'case "$1 $2 $3" in\n'
         f'  "run python scripts/release_bump.py") echo "{census}"; exit 0 ;;\n'
-        f'  {_RECORD_CALL}) {lose}shift 3; PYTHONPATH="{CHECKOUT_ROOT}" exec "{sys.executable}" '
+        f"  {_RECORD_CALL}) {lose}{github}shift 3; "
+        f'PYTHONPATH="{CHECKOUT_ROOT}" exec "{sys.executable}" '
         f'"{CHECKOUT_ROOT}/scripts/release_record.py" "$@" ;;\n'
         "esac\n"
         f'echo "uv $*" >> "{guard_log}"\n'
@@ -862,7 +890,14 @@ def _tail_guard(
         'sed -i "s/^current_version = .*/current_version = \\"$new\\"/" pyproject.toml\n'
         'git commit -qam "bump: v$new"',
     )
-    install_fake_gh(guard, [GhReply(["pr", "create"], stdout="https://x/pull/1\n")])
+    install_fake_gh(
+        guard,
+        [
+            GhReply(["pr", "create"], stdout="https://x/pull/1\n"),
+            GhReply(["run", "list"], stdout=_runs((1, "completed", "success")), repeat=True),
+            GhReply(["run", "view"], stdout=_jobs(**green), repeat=True),
+        ],
+    )
 
 
 def _run_release_tail(
@@ -919,7 +954,8 @@ def _run_release_tail(
         calls=_calls(log),
         repo=repo,
         start_sha=start_sha,
-        gh_calls=gh_calls(guard),
+        gh_calls=[call for call in gh_calls(guard) if call[:1] != ["run"]],
+        ci_reads=[call for call in gh_calls(guard) if call[:1] == ["run"]],
         guard_log=guard_log.read_text() if guard_log.exists() else "",
     )
 
@@ -968,6 +1004,9 @@ def test_a_higher_census_bumps_without_a_tag_and_lands_through_a_pull_request(tm
     assert _state(t.repo) == "landed"
     assert "chore(release): v0.18.2" in t.gh_calls[0]
     assert t.calls[-2:] == ["gate-tip", "gate-status"]
+    # the pending record reads main's CI verdict once: one listing, one view, of o/r
+    assert [call[:2] for call in t.ci_reads] == [["run", "list"], ["run", "view"]]
+    assert all("o/r" in call for call in t.ci_reads), t.ci_reads
 
 
 def test_a_census_below_the_untagged_bump_stops_before_the_changelog(tmp_path: Path):
@@ -1066,8 +1105,7 @@ _TAIL_SEQUENCE = [
 
 def test_the_release_tail_is_the_declared_landing_sequence():
     recipe = _recipe("release")
-    second_docs = recipe.index("$(MAKE) docs", recipe.index("$(MAKE) docs") + 1)
-    tail = recipe[second_docs:]
+    tail = recipe[recipe.index("$(MAKE) docs") :]
     at = [tail.find(step) for step in _TAIL_SEQUENCE]
     assert -1 not in at, [s for s, i in zip(_TAIL_SEQUENCE, at, strict=True) if i == -1]
     assert at == sorted(at), sorted(zip(at, _TAIL_SEQUENCE, strict=True))
@@ -1144,3 +1182,43 @@ def test_the_release_matrix_stages_copy_the_judged_candidate_then_commit(target,
     assert f"cp {candidate} {matrix}" in joined
     assert "check_matrix_downgrades" not in joined
     assert "BASELINE" not in joined
+
+
+def test_wheel_check_consumes_the_built_assets_through_the_dist_rule():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    prerequisites, _ = _rule(text, "wheel-check")
+    assert prerequisites == ["clean-dist", "$(DASHBOARD_DIST)", "$(COVAPP_DIST)", "build"]
+
+
+def test_the_dist_block_is_defined_before_nox_release():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    assert text.index("DASHBOARD_DIST :=") < text.index("\nnox-release:")
+
+
+def test_clean_web_assets_removes_both_bundles_and_the_release_runs_it_after_clean_dist():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    _, recipe = _rule(text, "clean-web-assets")
+    joined = " ".join(recipe)
+    assert "src/otto/_webassets/monitor" in joined
+    assert "src/otto/_webassets/covapp" in joined
+    stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(_rule(text, "release")[1]))
+    assert stages[stages.index("clean-dist") + 1] == "clean-web-assets"
+
+
+def test_nox_release_runs_the_bed_session_on_the_canary_only():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    prerequisites, recipe = _rule(text, "nox-release")
+    assert prerequisites == ["$(COVAPP_DIST)"]
+    joined = " ".join(recipe)
+    assert "nox -s tests_bed-$(NOX_CANARY)" in joined
+    assert "tests_all" not in joined
+    assert "tests_hostless_unit" not in joined
+
+
+def test_the_coverage_floor_is_96():
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
+    found = re.search(r"^COVERAGE_THRESHOLD := (\S+)$", text, re.MULTILINE)
+    assert found is not None
+    assert found.group(1) == "96"
+    assert "95.5" not in " ".join(_rule(text, "coverage-python")[1] + _rule(text, "coverage")[1])
+    assert "95.5" not in text
