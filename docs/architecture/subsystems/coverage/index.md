@@ -121,7 +121,7 @@ overrides them. `prepare_coverage` does nothing. `reset_coverage` runs
 `find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \; -print`, guarded so a
 `cov_dir` that does not exist yet is a no-op. It then tries `rmdir` on each
 printed counter's ancestor directories strictly below `cov_dir`, deepest first
-and best effort ({ref}`coverage-clean-directories`); a counter whose path holds
+and best effort ({ref}`which directories go <coverage-clean-directories>`); a counter whose path holds
 a newline is removed but never walked. Last, a `find … -print` check fails the
 reset, naming them, when counters survive.
 The removal is POSIX `-exec`, never `-delete`, which a BusyBox build may compile
