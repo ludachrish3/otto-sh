@@ -115,7 +115,7 @@ def run_via_dash(applets: Path, script: str) -> subprocess.CompletedProcess:
     )
 
 
-SWEEP_APPLETS = ["sh", "find", "rm", "rmdir", "ls", "printf", "test", "["]
+SWEEP_APPLETS = ["sh", "find", "rm", "rmdir", "ls", "printf", "test", "[", "sort"]
 """The applets the coverage removal and its probes run, linked into the PATH dir."""
 
 

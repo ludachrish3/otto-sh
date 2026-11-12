@@ -15,7 +15,7 @@ from otto.host.kmod_kind import KMODCOV_SYSFS_ROOT, KmodProduct
 from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
-from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
+from tests.unit.host._gcda_frame import CHECK_PREFIX, delete_line, framed
 
 
 def _entry(**params):
@@ -136,8 +136,7 @@ def _expected_kernel_reset_cmds(gcov_path: str, cov_dir: str) -> list[str]:
 
 def _expected_delete_line(cov_dir: str) -> str:
     """Independently reconstruct the guarded delete line: a missing cov_dir is a no-op."""
-    dest_q = shlex.quote(cov_dir)
-    return f"! test -d {dest_q} || find {dest_q} -name '*.gcda' -type f -exec rm -f {{}} \\;"
+    return delete_line(cov_dir)
 
 
 def _expected_check_line(cov_dir: str) -> str:

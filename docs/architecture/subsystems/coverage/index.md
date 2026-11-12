@@ -115,11 +115,15 @@ remotes.
 Each product carries two coverage hooks: `prepare_coverage(host=host)` runs before
 the fetcher archives the product's `cov_dir` and puts counters on disk when they live somewhere else
 first, and `reset_coverage(host=host)` is what every clean — `--cov-clean`, the
-post-fetch clean, `otto cov clean` — issues per product. The defaults (do
-nothing; `find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \;`, guarded so a
-`cov_dir` that does not exist yet is a no-op, then a `find … -print` check that
-fails the reset, naming them, when counters survive) are the user-space case;
-a kind whose counters live in the kernel or behind a daemon overrides them.
+post-fetch clean, `otto cov clean` — issues per product. The defaults are the
+user-space case; a kind whose counters live in the kernel or behind a daemon
+overrides them. `prepare_coverage` does nothing. `reset_coverage` runs
+`find <cov_dir> -name '*.gcda' -type f -exec rm -f {} \; -print`, guarded so a
+`cov_dir` that does not exist yet is a no-op. It then tries `rmdir` on each
+printed counter's ancestor directories strictly below `cov_dir`, deepest first
+and best effort ({ref}`coverage-clean-directories`); a counter whose path holds
+a newline is removed but never walked. Last, a `find … -print` check fails the
+reset, naming them, when counters survive.
 The removal is POSIX `-exec`, never `-delete`, which a BusyBox build may compile
 out.
 

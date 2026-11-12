@@ -15,7 +15,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 from tests._fixtures.shell_host import ELEVATED_MARK, ShellHost, fake_bin
-from tests.unit.host._gcda_frame import CHECK_PREFIX, framed
+from tests.unit.host._gcda_frame import CHECK_MARK, CHECK_PREFIX, delete_line, framed
 
 
 class _DummyShellProduct(ShellProduct):
@@ -630,10 +630,7 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
     assert result.is_ok
     assert host.exec_calls == [
         (
-            (
-                "! test -d '/opt/My App/cov' || "
-                "find '/opt/My App/cov' -name '*.gcda' -type f -exec rm -f {} \\;"
-            ),
+            delete_line("/opt/My App/cov"),
             {"timeout": 60},
         ),
         (
@@ -648,7 +645,7 @@ async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
     host = _ExecHost()
     await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host=host)
     assert [cmd for cmd, _ in host.exec_calls] == [
-        "! test -d /tmp/app || find /tmp/app -name '*.gcda' -type f -exec rm -f {} \\;",
+        delete_line("/tmp/app"),
         f"{CHECK_PREFIX}LC_ALL=C find /tmp/app -name '*.gcda' -type f -print 2>&1",
     ]
 
@@ -694,7 +691,7 @@ async def test_root_owned_reset_deletes_under_sudo():
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
     result = await p.reset_coverage(host=host)
     assert result.is_ok
-    delete = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -exec rm -f {} \\;"
+    delete = delete_line("/var/cov/app")
     check = f"{CHECK_PREFIX}LC_ALL=C find /var/cov/app -name '*.gcda' -type f -print 2>&1"
     assert host.run_calls == [
         (f"sh -c {shlex.quote(delete)}", {"sudo": True, "timeout": 60}),
@@ -787,6 +784,8 @@ async def test_root_owned_reset_fails_when_find_fails_on_a_present_cov_dir(tmp_p
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
     result = await p.reset_coverage(host=host)
     assert result.status is Status.Error
+    # find's own status, carried out of the pipeline, fails the removal.
+    assert result.msg.startswith(f"deleting .gcda under {present} failed")
     assert "permission denied" in result.msg
 
 
@@ -832,7 +831,7 @@ _PATHS = ["plain", "elevated"]
 
 
 class _CheckHost:
-    """The removal succeeds; the check (the ``-print`` line) answers ``(rc, output)``."""
+    """The removal succeeds; the check (the marked line) answers ``(rc, output)``."""
 
     def __init__(self, check_rc, check_out):
         self.id = "h1"
@@ -841,7 +840,7 @@ class _CheckHost:
 
     def _answer(self, cmd):
         self.calls.append(cmd)
-        rc, out = self._check if "-print" in cmd else (0, "")
+        rc, out = self._check if CHECK_MARK in cmd else (0, "")
         status = Status.Success if rc == 0 else Status.Failed
         return CommandResult(status=status, value=framed(cmd, out), command=cmd, retcode=rc)
 
@@ -853,12 +852,12 @@ class _CheckHost:
 
 
 def _find_failing_only_the_check(tmp_path: Path, message: str) -> Path:
-    """A ``find`` that runs the real one for the removal and fails the ``-print`` check."""
+    """A ``find`` that runs the real one for the removal (``-exec``) and fails the check."""
     real_find = shutil.which("find")
     assert real_find is not None
     return _fake_find(
         tmp_path,
-        'case " $* " in *" -print "*) '
+        'case " $* " in *" -exec "*) ;; *" -print "*) '
         f"echo {shlex.quote(message)}; exit 1;; esac\n"
         f'exec {real_find} "$@"',
     )
@@ -957,6 +956,148 @@ async def test_reset_fails_when_a_counter_survives_the_removal(tmp_path, path):
     assert result.msg == f"deleting .gcda under {cov} left 1 file(s): {survivor}"
 
 
+# ── the reset removes the dirs it emptied, strictly below cov_dir (#722) ────
+
+
+def _emptied_tree(tmp_path: Path, name: str) -> tuple[Path, Path]:
+    """``above/<name>`` (the cov_dir) with emptied, mixed and pre-empty subtrees."""
+    above = tmp_path / "above"
+    cov = above / name
+    (cov / "emptied" / "deeper").mkdir(parents=True)
+    (cov / "emptied" / "deeper" / "x.gcda").write_bytes(b"")
+    (cov / "emptied" / "y.gcda").write_bytes(b"")
+    (cov / "mixed" / "sub").mkdir(parents=True)
+    (cov / "mixed" / "keep.txt").write_text("user data")
+    (cov / "mixed" / "sub" / "z.gcda").write_bytes(b"")
+    (cov / "was empty").mkdir()
+    (cov / "top.gcda").write_bytes(b"")
+    (above / "neighbour").mkdir()
+    return above, cov
+
+
+def _tree(root: Path) -> list[str]:
+    """Every path under *root*, relative and sorted."""
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+# A space splits an unquoted word; glob characters make an unquoted `case`
+# bound match a different directory, so the walk would stop at once.
+_COV_NAMES = ["my cov", "c[x]*"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", _COV_NAMES)
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_removes_the_dirs_it_emptied_and_nothing_else(tmp_path, path, name):
+    above, cov = _emptied_tree(tmp_path, name)
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, ShellHost(), path)
+    assert result.status is Status.Success, result.msg
+    # An emptied subtree goes, deepest first; a dir holding an unrelated
+    # file stays (its emptied child goes); a dir that was already empty is
+    # not one the reset emptied, so it stays; the cov_dir itself and
+    # everything above it are never touched.
+    assert _tree(above) == [
+        name,
+        f"{name}/mixed",
+        f"{name}/mixed/keep.txt",
+        f"{name}/was empty",
+        "neighbour",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_keeps_the_cov_dir_it_emptied(tmp_path, path):
+    cov = tmp_path / "cov"
+    (cov / "a" / "b").mkdir(parents=True)
+    (cov / "a" / "b" / "c.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    assert (await _reset(p, ShellHost(), path)).status is Status.Success
+    # Emptied up to, never including, the cov_dir: what the next run writes
+    # under, and what the pre-run presence probe asked about.
+    assert cov.is_dir()
+    assert list(cov.iterdir()) == []
+    assert sorted(q.name for q in tmp_path.iterdir()) == ["cov"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_never_walks_a_counter_path_holding_a_newline(tmp_path, path):
+    # The walk reads find's output line by line, and its `case` bound is
+    # textual: a counter whose path holds a newline would be read as a
+    # second, forged line naming a path through a symlink, and rmdir would
+    # remove an empty dir outside the cov_dir (as root, for an elevated
+    # kind). Such a counter is still removed, but never walked.
+    cov = tmp_path / "cov"
+    outside = tmp_path / "outside"
+    (outside / "victim").mkdir(parents=True)
+    cov.mkdir()
+    (cov / "link").symlink_to(outside)
+    forged = Path(f"{cov}/x\n{cov}/link/victim/z.gcda")
+    forged.parent.mkdir(parents=True)
+    forged.write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, ShellHost(), path)
+    assert result.status is Status.Success, result.msg
+    assert not forged.exists()
+    assert (outside / "victim").is_dir()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_removes_every_counter_when_the_prune_cannot_sort(tmp_path, path):
+    # Pruning is best effort: a sort that dies without reading its input
+    # must not SIGPIPE the walk, and through it find, mid-removal.
+    bin_dir = fake_bin(tmp_path, "sort", "exit 127")
+    cov = tmp_path / "cov"
+    for sub in range(10):
+        (cov / f"d{sub}").mkdir(parents=True)
+    for i in range(2000):
+        (cov / f"d{i % 10}" / f"{i:04d}_{'x' * 60}.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, ShellHost(bin_dir=bin_dir), path)
+    assert result.status is Status.Success, result.msg
+    assert list(cov.rglob("*.gcda")) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _PATHS)
+async def test_reset_succeeds_when_rmdir_fails(tmp_path, path):
+    # A dir the reset cannot remove stays, silently: the counters are gone.
+    bin_dir = fake_bin(tmp_path, "rmdir", 'echo "rmdir: Permission denied" >&2; exit 1')
+    cov = tmp_path / "cov"
+    (cov / "sub").mkdir(parents=True)
+    (cov / "sub" / "a.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await _reset(p, ShellHost(bin_dir=bin_dir), path)
+    assert result.status is Status.Success, result.msg
+    assert (cov / "sub").is_dir()
+    assert not (cov / "sub" / "a.gcda").exists()
+
+
+@pytest.mark.asyncio
+async def test_reset_removes_the_emptied_dirs_through_the_same_elevation(tmp_path):
+    # An rmdir that only works elevated: the root-owned kind's emptied dirs
+    # go only if the reset's own elevated runner ran the removal.
+    real_rmdir = shutil.which("rmdir")
+    assert real_rmdir is not None
+    bin_dir = fake_bin(
+        tmp_path,
+        "rmdir",
+        f'[ "${ELEVATED_MARK}" = 1 ] || {{ echo "rmdir: not elevated" >&2; exit 1; }}\n'
+        f'exec {real_rmdir} "$@"',
+    )
+    cov = tmp_path / "cov"
+    (cov / "sub").mkdir(parents=True)
+    (cov / "sub" / "a.gcda").write_bytes(b"")
+    p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
+    result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
+    assert result.status is Status.Success, result.msg
+    assert not (cov / "sub").exists()
+    assert cov.is_dir()
+
+
 @pytest.mark.asyncio
 async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_path):
     # A find that only works elevated and logs each call: the elevated reset
@@ -966,7 +1107,9 @@ async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_pa
     log = tmp_path / "find.log"
     bin_dir = _fake_find(
         tmp_path,
-        f'echo "${ELEVATED_MARK} $*" >> {shlex.quote(str(log))}\n'
+        # One line per call, though the removal's -path pattern holds a newline.
+        f'echo "${ELEVATED_MARK} $*" | tr "\\n" " " >> {shlex.quote(str(log))}\n'
+        f"echo >> {shlex.quote(str(log))}\n"
         f'[ "${ELEVATED_MARK}" = 1 ] || {{ echo "find: not elevated" >&2; exit 1; }}\n'
         f'exec {real_find} "$@"',
     )
@@ -976,10 +1119,10 @@ async def test_reset_check_runs_through_the_same_elevation_as_the_removal(tmp_pa
     p = _RootOwnedShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(cov))
     result = await p.reset_coverage(host=ShellHost(bin_dir=bin_dir))
     assert result.status is Status.Success, result.msg
-    calls = log.read_text().splitlines()
+    calls = [line.rstrip() for line in log.read_text().splitlines()]
     assert len(calls) == 2
     assert calls[0].startswith("1 ")  # the removal ran elevated
-    assert "-exec rm -f {} ;" in calls[0]
+    assert "-exec rm -f {} ; ! -path" in calls[0]
     assert calls[1].startswith("1 ")  # and so did its check
     assert calls[1].endswith("-print")
 
