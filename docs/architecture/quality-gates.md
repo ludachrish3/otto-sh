@@ -349,8 +349,8 @@ primary's session was the selection the stamp already proves (it used to run
 again under a lower 92 floor nobody read,
 [#566](https://github.com/ludachrish3/otto-sh/issues/566)). A run over a
 modified or staged tracked file, an untracked file under `src/` or a test
-root, or with ANY variable on the make command line (`BUMP=`,
-`NEW_VERSION=` and `BUDGET_APPROVE=` excepted — they are the release's own) still runs every leg
+root, or with ANY variable on the make command line (`BUMP=` and
+`NEW_VERSION=` excepted — they are the release's own) still runs every leg
 and is simply not stamped — `scripts/coverage_stamp.py` says why, and
 `tests/unit/scripts/test_coverage_stamp.py` pins each refusal. The release
 check applies the same rules, and tells the two kinds of "no" apart: a

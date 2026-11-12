@@ -76,7 +76,7 @@ which waits the 25 minutes of `main`'s own CI run before it tags.
    - The **[coverage stamp](contributing.md#the-coverage-stamp)** is checked
      once, before anything is built, and the answer is kept for the coverage
      stage. A dirty tree, a non-primary venv, or a command-line variable
-     other than `BUMP=`/`NEW_VERSION=`/`BUDGET_APPROVE=` stops the release
+     other than `BUMP=`/`NEW_VERSION=` stops the release
      here.
    - **`release-preflight`** refuses four things, naming what it found:
      `main` or a detached `HEAD` (the release lands through a pull request,

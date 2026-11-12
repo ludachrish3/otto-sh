@@ -175,11 +175,18 @@ def test_a_report_row_carries_the_harness_s_ending_verdict():
     ending verdict (``check_exit``'s reasons, empty when the run ended as the
     surface expects) tells the two apart outside the harness.
     """
-    ops = {"total": 5, "workspace": 1, "by_bucket": {"stdlib": 5}, "by_process": {"python": 5}}
+    ops = {
+        "total": 5,
+        "workspace": 1,
+        "by_bucket": {"stdlib": 5},
+        "by_process": {"python": 5},
+        "by_path": {},
+    }
     lab_error = {"file_ops": ops, "exit_code": 1, "exception": None, "modules": ["otto"]}
     row = harness.report_row(_ssh_exec(), lab_error)
     assert set(row) == {
-        "surface", "tier", "file_ops", "workspace", "exit", "ending", "by_bucket", "by_process"
+        "surface", "tier", "file_ops", "workspace", "exit", "ending", "by_bucket", "by_process",
+        "by_path",
     }  # fmt: skip
     assert row["exit"] == 1
     assert row["ending"] == harness.check_exit(_ssh_exec(), lab_error)
@@ -286,7 +293,7 @@ def _gate_pair(
         return {"file_ops": total, "workspace": 20, "by_bucket": {}, "by_process": {}}
 
     def result(total: int) -> dict:
-        ops = {"total": total, "workspace": 20, "by_bucket": {}, "by_process": {}}
+        ops = {"total": total, "workspace": 20, "by_bucket": {}, "by_process": {}, "by_path": {}}
         return {"exit_code": 0, "exception": None, "file_ops": ops}
 
     monkeypatch.setattr(
@@ -371,7 +378,15 @@ def test_a_counter_at_its_baseline_earns_no_note(monkeypatch):
         "read_ceilings",
         lambda: {"run": {"file_ops": 1000, "workspace": 1, "by_bucket": {}, "by_process": {}}},
     )
-    result = {"file_ops": {"total": 1000, "workspace": 1, "by_bucket": {}, "by_process": {}}}
+    result = {
+        "file_ops": {
+            "total": 1000,
+            "workspace": 1,
+            "by_bucket": {},
+            "by_process": {},
+            "by_path": {},
+        }
+    }
     assert harness.advisories(surface, result) == []
 
 
@@ -382,7 +397,13 @@ def test_a_missing_baseline_fails_by_name(monkeypatch):
     result = {
         "exit_code": 0,
         "exception": None,
-        "file_ops": {"total": 700, "workspace": 3, "by_bucket": {}, "by_process": {}},
+        "file_ops": {
+            "total": 700,
+            "workspace": 3,
+            "by_bucket": {},
+            "by_process": {},
+            "by_path": {},
+        },
     }
     [message] = harness.check_surface(surface, result)
     assert "9.99.json" in message
@@ -491,3 +512,60 @@ def test_a_baseline_missing_a_counter_fails_by_name(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError, match=r"`run`.*workspace"):
         harness.read_ceilings()
+
+
+def test_by_path_counts_every_call_per_bucket_relative_path():
+    ops = _parse(
+        '100 openat(AT_FDCWD, "/py/lib/python3.10/os.py", O_RDONLY) = 3\n'
+        '100 openat(AT_FDCWD, "/py/lib/python3.10/os.py", O_RDONLY) = 3\n'
+        '100 newfstatat(AT_FDCWD, "/py/lib/python3.10", {...}, 0) = 0\n'
+        '100 openat(AT_FDCWD, "/elsewhere/x.txt", O_RDONLY) = 3\n'
+        "100 getdents64(3, 0x0 /* 4 entries */, 32768) = 96\n"
+    )
+    assert ops.by_path["stdlib:os.py"] == 2
+    assert ops.by_path["stdlib:"] == 1
+    assert ops.by_path["other:/elsewhere/x.txt"] == 1
+    assert ops.by_path["fd"] == 1
+    assert sum(ops.by_path.values()) == ops.total
+
+
+def test_a_bytecode_cache_path_is_charged_to_its_source_in_by_path():
+    ops = harness.parse_file_ops(
+        '100 openat(AT_FDCWD, "/cache/py/lib/python3.10/os.cpython-310.pyc", O_RDONLY) = 3\n'
+        '100 openat(AT_FDCWD, "/py/lib/python3.10/os.cpython-310.pyc", O_RDONLY) = 3\n',
+        workspace_prefixes=[WS],
+        buckets=BUCKETS,
+        bytecode_prefix="/cache",
+    )
+    assert ops.by_path == {"stdlib:os.py": 2}
+
+
+@pytest.mark.parametrize(
+    "below",
+    [
+        "json/__pycache__/decoder.cpython-310.pyc",
+        "json/__pycache__/decoder.cpython-314.opt-1.pyc",
+        "json/__pycache__/decoder.cpython-312.opt-2.pyc",
+        "json/decoder.cpython-313.pyc",
+    ],
+)
+def test_a_pyc_is_attributed_to_its_source_path_and_nothing_else_moves(below):
+    """The spec (6.4) attributes bytecode to its source: `<dir>/<name>.py`."""
+    line = f'100 openat(AT_FDCWD, "/py/lib/python3.10/{below}", O_RDONLY) = 3\n'
+    ops = harness.parse_file_ops(line, workspace_prefixes=[WS], buckets=BUCKETS)
+    assert ops.by_path == {"stdlib:json/decoder.py": 1}
+    assert ops.total == 1
+    assert ops.by_bucket == {BUCKETS.relative(f"/py/lib/python3.10/{below}")[0]: 1}
+
+
+def test_relative_names_the_bucket_and_the_path_under_its_root():
+    site = "/venv/lib/python3.10/site-packages/"
+    assert BUCKETS.relative(f"{WS}proj/a.py") == ("workspace", "proj/a.py")
+    assert BUCKETS.relative("/src/otto/host/x.py") == ("otto:host", "host/x.py")
+    assert BUCKETS.relative("/src/otto") == ("otto:*", "")
+    assert BUCKETS.relative(site + "rich/a.py") == ("site:rich", "rich/a.py")
+    assert BUCKETS.relative("/py/lib/python3.10/os.py") == ("stdlib", "os.py")
+    assert BUCKETS.relative("/py/lib/python3.10") == ("stdlib", "")
+    assert BUCKETS.relative("/etc/hosts") == ("other", "/etc/hosts")
+    for p in (f"{WS}x", "/src/otto/a.py", site + "rich/a.py", "/py/lib/python3.10/os.py", "/etc/h"):
+        assert BUCKETS.relative(p)[0] == BUCKETS.bucket(p)
