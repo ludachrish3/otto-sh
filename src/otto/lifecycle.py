@@ -138,7 +138,7 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
     of that stream then aborts the process (``Fatal Python error:
     _enter_buffered_busy``, exit -6) instead of exiting 128 + signum. Blocked
     in its read, the thread holds only stdin's lock, which shutdown never
-    takes. So the thread and the command share a :class:`_PromptHandoff`: the
+    takes. So the thread and the command share a ``_PromptHandoff``: the
     reader marks the thread QUIET while it reads, a cancelled wait abandons
     the prompt and awaits quiet (on the loop, so a second press or the
     teardown deadline still forces the run as usual), and at its next turn to
@@ -233,7 +233,7 @@ class _PromptHandoff:
     reads cannot be seen is declared quiet at its start; see
     :func:`interruptible_prompt`.) The command, when it stops waiting, abandons
     the prompt and awaits quiet. An abandoned thread's next turn to write
-    (:meth:`may_write`) retires it and parks it for good, so it never writes
+    (``may_write``) retires it and parks it for good, so it never writes
     again. One lock orders the two sides: a turn to write either happens
     before the abandon (and the command waits for the thread to be quiet
     again) or after it (and the thread parks without writing).
@@ -335,7 +335,7 @@ def _read_prompt_line(prompt: str = "", *, handoff: "_PromptHandoff | None" = No
     ``input()``, which click turns into its ``Abort``. With a *handoff*, the
     thread is quiet only for the read itself: before writing, and again once
     the read returns (click may write next: an error, the question again), it
-    asks :meth:`_PromptHandoff.may_write`, which parks an abandoned thread.
+    asks ``_PromptHandoff.may_write``, which parks an abandoned thread.
     """
     if handoff is not None:
         handoff.may_write()
