@@ -123,13 +123,35 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
     installed (click's ``CliRunner`` echoes the input it feeds) is left alone.
 
     One prompt at a time: the terminal has one reader, and a prompt the
-    command gave up on is still that reader until its thread returns, so a
-    second call while any prompt thread lives raises :class:`RuntimeError`
-    (it would also find the swapped reader and could put ``input`` back under
-    the first). A hidden prompt (``hide_input=True``) raises
+    command gave up on is still that reader until its thread returns or
+    parks, so a second call meanwhile raises :class:`RuntimeError` (it would
+    also find the swapped reader and could put ``input`` back under the
+    first). A hidden prompt (``hide_input=True``) raises
     :class:`ValueError` before anything starts: :func:`getpass.getpass`
     turns echo off and restores it in a ``finally`` that an abandoned thread
     never reaches, so an interrupt would leave the person's terminal silent.
+
+    An interrupted command lets the prompt finish WRITING before it goes on,
+    and the abandoned thread never writes again. A daemon thread caught inside
+    a stdout or stderr write when the interpreter shuts down never gets the
+    GIL back, so it holds the stream's lock for good, and shutdown's own flush
+    of that stream then aborts the process (``Fatal Python error:
+    _enter_buffered_busy``, exit -6) instead of exiting 128 + signum. Blocked
+    in its read, the thread holds only stdin's lock, which shutdown never
+    takes. So the thread and the command share a :class:`_PromptHandoff`: the
+    reader marks the thread QUIET while it reads, a cancelled wait abandons
+    the prompt and awaits quiet (on the loop, so a second press or the
+    teardown deadline still forces the run as usual), and at its next turn to
+    write (a read returning, a re-asked question) an abandoned thread retires
+    instead. A prompt that does not read through the swapped reader (another
+    reader, a callable that is not click's) is quiet from the start: its
+    writes cannot be seen, so the cancel does not wait for them. A click
+    prompt that blocks anywhere but the read is never quiet, so its cancel
+    waits until the run forces.
+
+    A FORCED run (a second press, the teardown deadline) stops waiting for
+    quiet, and so gives this up too: it abandons cleanup by design, and a
+    thread caught mid-write at that instant can still abort the exit.
     """
     from .logger.management import direct_terminal
 
@@ -143,6 +165,7 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
     # back and imports nothing.
     module_name = getattr(prompt, "__module__", None)
     termui: Any = importlib.import_module(module_name) if module_name else None
+    handoff = _PromptHandoff(loop)
 
     def ask() -> None:
         # The THREAD owns the swap, both ways, and puts the reader back BEFORE
@@ -151,11 +174,23 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
         # the question, so a command that stopped waiting must not put `input`
         # back under a prompt that has not read yet: that read would then hold
         # the C stdin lock through exit(). A prompt the command gave up on keeps
-        # the Python reader until it returns, which on the command line is
-        # never: the process exits first.
+        # the Python reader until it returns or parks (_PromptHandoff), and
+        # restores `input` then.
         swap = getattr(termui, "visible_prompt_func", None) is input
+
+        def retire() -> None:
+            # The thread is done with the terminal: it returned, or it was
+            # abandoned and will never read again. Put the reader back and let
+            # the next prompt start.
+            if swap:
+                termui.visible_prompt_func = input
+            _PROMPTING.release()
+
+        handoff.on_retire(retire)
         if swap:
-            termui.visible_prompt_func = _read_prompt_line
+            termui.visible_prompt_func = functools.partial(_read_prompt_line, handoff=handoff)
+        else:
+            handoff.quiet()  # writes the reader cannot see: nothing to wait for
         outcome: "Callable[[], None]"
         try:
             result = prompt(*args, **kwargs)
@@ -164,18 +199,9 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
         else:
             outcome = functools.partial(answer.set_result, result)
         finally:
-            if swap:
-                termui.visible_prompt_func = input
-            _PROMPTING.release()  # the reader is back: the next prompt may start
+            handoff.retire()  # before the command hears the answer
 
-        def settle() -> None:
-            if not answer.done():  # done: the command stopped waiting
-                outcome()
-
-        # The loop may be gone by the time a prompt the command gave up on is
-        # answered: then there is nobody to tell.
-        with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(settle)
+        _settle_from_thread(loop, answer, outcome)
 
     with direct_terminal():
         if not _PROMPTING.acquire(blocking=False):
@@ -185,12 +211,97 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
         except BaseException:
             _PROMPTING.release()  # no thread to release it
             raise
-        return await answer
+        try:
+            return await answer
+        except asyncio.CancelledError:
+            # The exit this cancel leads to must not find the thread inside a
+            # write. Awaited, not blocked on: force and deadline still apply.
+            await handoff.abandon()
+            raise
 
 
-# Held from a prompt's start until its THREAD returns (released there, which a
-# plain Lock allows): see interruptible_prompt's "one prompt at a time".
+# Held from a prompt's start until its THREAD returns or parks (released there,
+# which a plain Lock allows): see interruptible_prompt's "one prompt at a time".
 _PROMPTING = threading.Lock()
+
+
+class _PromptHandoff:
+    """Whether a prompt's thread may still write to the terminal, shared with its command.
+
+    The thread is QUIET while it reads through the swapped reader and once it
+    retires: it holds no lock of stdout's or stderr's then. (A prompt whose
+    reads cannot be seen is declared quiet at its start; see
+    :func:`interruptible_prompt`.) The command, when it stops waiting, abandons
+    the prompt and awaits quiet. An abandoned thread's next turn to write
+    (:meth:`may_write`) retires it and parks it for good, so it never writes
+    again. One lock orders the two sides: a turn to write either happens
+    before the abandon (and the command waits for the thread to be quiet
+    again) or after it (and the thread parks without writing).
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._lock = threading.Lock()
+        self._quiet = False
+        self._abandoned = False
+        self._waiter: "asyncio.Future[None] | None" = None
+        self._retire: "Callable[[], None] | None" = None
+
+    def on_retire(self, retire: "Callable[[], None]") -> None:
+        """Set what the thread does, once, when it is done with the terminal."""
+        self._retire = retire
+
+    def quiet(self) -> None:
+        """Thread side: it writes nothing from here on (it reads, or it is done)."""
+        with self._lock:
+            self._quiet = True
+            waiter, self._waiter = self._waiter, None
+        if waiter is not None:
+            _settle_from_thread(self._loop, waiter, functools.partial(waiter.set_result, None))
+
+    def may_write(self) -> None:
+        """Thread side, before a write: park for good if the command gave up."""
+        with self._lock:
+            if not self._abandoned:
+                self._quiet = False
+                return
+        self.retire()
+        threading.current_thread().name = "otto-prompt-parked"
+        threading.Event().wait()  # holds no stream lock; the process exits around it
+
+    def retire(self) -> None:
+        """Thread side: done with the terminal (once), and quiet."""
+        retire, self._retire = self._retire, None
+        if retire is not None:
+            retire()
+        self.quiet()
+
+    async def abandon(self) -> None:
+        """Command side: give the prompt up, then wait until its thread is quiet."""
+        with self._lock:
+            self._abandoned = True
+            if self._quiet:
+                return
+            waiter = self._waiter = self._loop.create_future()
+        await waiter
+
+
+def _settle_from_thread(
+    loop: asyncio.AbstractEventLoop, future: "asyncio.Future[Any]", settle: "Callable[[], None]"
+) -> None:
+    """From the prompt thread: run *settle* on *loop* if *future* is still pending.
+
+    Done means the command stopped waiting. The loop may be gone by then (a
+    prompt the command gave up on, answered after the run ended): then there
+    is nobody to tell.
+    """
+
+    def run() -> None:
+        if not future.done():
+            settle()
+
+    with contextlib.suppress(RuntimeError):
+        loop.call_soon_threadsafe(run)
 
 
 def _asks_hidden(
@@ -214,18 +325,27 @@ def _asks_hidden(
     return bool(bound.arguments.get("hide_input"))
 
 
-def _read_prompt_line(prompt: str = "") -> str:
+def _read_prompt_line(prompt: str = "", *, handoff: "_PromptHandoff | None" = None) -> str:
     """Write *prompt* and read one line from ``sys.stdin``: ``input()``'s non-console branch.
 
     What :func:`input` does when stdin or stdout is not the console. On the
     console it would read through C stdio instead, whose lock an abandoned
     prompt thread would hold through C ``exit()`` (see
     :func:`interruptible_prompt`). End of input is :class:`EOFError`, as from
-    ``input()``, which click turns into its ``Abort``.
+    ``input()``, which click turns into its ``Abort``. With a *handoff*, the
+    thread is quiet only for the read itself: before writing, and again once
+    the read returns (click may write next: an error, the question again), it
+    asks :meth:`_PromptHandoff.may_write`, which parks an abandoned thread.
     """
+    if handoff is not None:
+        handoff.may_write()
     sys.stdout.write(prompt)
     sys.stdout.flush()
+    if handoff is not None:
+        handoff.quiet()
     line = sys.stdin.readline()
+    if handoff is not None:
+        handoff.may_write()
     if not line:
         raise EOFError
     return line.removesuffix("\n")

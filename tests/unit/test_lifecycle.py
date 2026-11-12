@@ -586,14 +586,24 @@ async def test_external_cancellation_body_translating_cancel_still_sweeps():
 
 @pytest.fixture(autouse=True)
 def _abandoned_prompts_finish():
-    """An abandoned prompt holds the one-prompt lock until its thread returns."""
+    """An abandoned prompt holds the one-prompt lock until its thread returns.
+
+    A PARKED thread ("otto-prompt-parked") already gave the lock and the
+    reader back, and stays parked for the process's life by design.
+    """
     yield
     import threading
 
+    from otto.utils import wait_for
+
     for thread in threading.enumerate():
         if thread.name == "otto-prompt":
-            thread.join(timeout=5)
-            assert not thread.is_alive(), "a test left its prompt thread blocked"
+            wait_for(
+                lambda thread=thread: not thread.is_alive() or thread.name == "otto-prompt-parked",
+                5,
+                interval=0.01,
+                on_timeout=lambda: "a test left its prompt thread blocked",
+            )
 
 
 def test_an_answered_prompt_returns_its_answer():
@@ -708,7 +718,7 @@ def test_the_console_reader_is_swapped_for_the_python_line_read_while_the_prompt
         return await interruptible_prompt(prompt)
 
     assert run_command(body(), _controller=_controller()) == "ok"
-    assert seen == [_read_prompt_line]
+    assert [getattr(reader, "func", reader) for reader in seen] == [_read_prompt_line]
     assert termui.visible_prompt_func is input  # put back
 
 
@@ -794,27 +804,28 @@ def test_a_prompt_that_reads_after_the_command_gave_up_still_gets_the_python_rea
     termui = types.ModuleType("fake_termui")
     termui.visible_prompt_func = input
     monkeypatch.setitem(sys.modules, "fake_termui", termui)
-    gave_up, looked_up = threading.Event(), threading.Event()
+    cancelled = threading.Event()
     seen: "list[object]" = []
 
     def prompt() -> str:
-        gave_up.wait()  # the question is on screen; the read comes later
+        cancelled.wait()  # the question is on screen; the read comes after the cancel
         seen.append(termui.visible_prompt_func)
-        looked_up.set()
         return "late"
 
     prompt.__module__ = "fake_termui"
     ctrl = _controller()
 
+    def interrupt() -> None:
+        ctrl._on_signal(signal.SIGINT)
+        cancelled.set()
+
     async def body() -> None:
-        asyncio.get_running_loop().call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        asyncio.get_running_loop().call_later(0.05, interrupt)
         await interruptible_prompt(prompt)
 
     with pytest.raises(SystemExit):
         run_command(body(), _controller=ctrl)
-    gave_up.set()
-    assert looked_up.wait(timeout=5)
-    assert seen == [_read_prompt_line]
+    assert [getattr(reader, "func", reader) for reader in seen] == [_read_prompt_line]
 
 
 def test_a_hidden_prompt_is_refused_before_it_starts():
@@ -921,3 +932,162 @@ def test_hidden_input_through_a_forwarding_wrapper_or_a_partial_is_refused():
 
         with pytest.raises(ValueError, match="hidden prompt"):
             run_command(body(), _controller=_controller())
+
+
+def test_the_python_line_read_is_quiet_only_for_the_read(monkeypatch, capsys):
+    """Quiet while it reads (no stream lock held); not once it returns: click may write next."""
+    import sys
+
+    from otto.lifecycle import _PromptHandoff, _read_prompt_line
+
+    loop = asyncio.new_event_loop()
+    try:
+        handoff = _PromptHandoff(loop)
+        at_read: "list[bool]" = []
+
+        class Stdin:
+            def readline(self) -> str:
+                at_read.append(handoff._quiet)
+                return "widget\n"
+
+        monkeypatch.setattr(sys, "stdin", Stdin())
+        assert _read_prompt_line(": ", handoff=handoff) == "widget"
+        assert at_read == [True]
+        assert handoff._quiet is False
+        assert capsys.readouterr().out == ": "
+    finally:
+        loop.close()
+
+
+def _fake_termui(monkeypatch):
+    import sys
+    import types
+
+    termui = types.ModuleType("fake_termui")
+    termui.visible_prompt_func = input
+    monkeypatch.setitem(sys.modules, "fake_termui", termui)
+    return termui
+
+
+def test_an_interrupted_prompt_finishes_writing_before_the_command_goes_on(monkeypatch):
+    """The cancel waits for the question to be written: shutdown must find no write in progress."""
+    import io
+    import sys
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+    from otto.utils import wait_for
+
+    termui = _fake_termui(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # never read: the thread parks first
+    cancelled = threading.Event()
+    order: "list[str]" = []
+
+    def prompt() -> str:
+        cancelled.wait()  # the interrupt lands before the question is written
+        order.append("question written")
+        return termui.visible_prompt_func("Name: ")  # abandoned by now, normally: parks
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    def interrupt() -> None:
+        ctrl._on_signal(signal.SIGINT)
+        cancelled.set()
+
+    async def body() -> None:
+        asyncio.get_running_loop().call_later(0.05, interrupt)
+        try:
+            await interruptible_prompt(prompt)
+        finally:
+            order.append("command goes on")
+
+    with pytest.raises(SystemExit):
+        run_command(body(), _controller=ctrl)
+    assert order == ["question written", "command goes on"]
+    wait_for(
+        lambda: termui.visible_prompt_func is input,  # the thread gave the reader back
+        5,
+        interval=0.01,
+        on_timeout=lambda: "the prompt thread never put the reader back",
+    )
+
+
+def test_an_abandoned_prompt_never_writes_again(monkeypatch):
+    """A line that arrives after the command gave up is not answered with click's next write."""
+    import sys
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+    from otto.utils import wait_for
+
+    termui = _fake_termui(monkeypatch)
+    gone = threading.Event()
+    after_read: "list[str]" = []
+
+    class Stdin:
+        def readline(self) -> str:
+            gone.wait()  # the line arrives once the command has gone on
+            return "maybe\n"
+
+    monkeypatch.setattr(sys, "stdin", Stdin())
+
+    asked_on: "list[threading.Thread]" = []
+
+    def prompt() -> str:
+        asked_on.append(threading.current_thread())
+        line = termui.visible_prompt_func("Name: ")
+        after_read.append("Error: invalid input")  # what click would write next
+        return line
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    async def body() -> None:
+        asyncio.get_running_loop().call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        try:
+            await interruptible_prompt(prompt)
+        finally:
+            gone.set()
+
+    with pytest.raises(SystemExit):
+        run_command(body(), _controller=ctrl)
+    (thread,) = asked_on
+    wait_for(
+        lambda: thread.name == "otto-prompt-parked",
+        5,
+        interval=0.01,
+        on_timeout=lambda: "the abandoned prompt thread never parked",
+    )
+    assert after_read == []
+
+
+def test_a_second_signal_forces_the_run_while_the_prompt_is_still_writing(monkeypatch):
+    """The cancel awaits the write on the loop, so the force stage still works during it."""
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+
+    termui = _fake_termui(monkeypatch)
+    release = threading.Event()  # the question's write never finishes on its own
+
+    def prompt() -> str:
+        release.wait()
+        return termui.visible_prompt_func("Name: ")
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        loop.call_later(0.1, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(prompt)
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            run_command(body(), _controller=ctrl)
+    finally:
+        release.set()
+    assert exc_info.value.code == 130
+    assert ctrl.forced is True
