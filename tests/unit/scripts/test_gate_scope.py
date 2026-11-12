@@ -2934,3 +2934,40 @@ def test_the_admission_imports_need_only_the_stdlib_and_tomli():
         [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
     )
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+# --- the import-budget gate's scope ----------------------------------------
+
+
+_EMPTY_SCOPE = gs.classify([], lambda rev, path: None, "a", "b", set())
+
+
+@pytest.mark.parametrize(
+    ("classes", "changed", "eligible"),
+    [
+        (["src-leaf"], [], True),
+        (["escalate"], [], True),
+        (["full"], [], True),
+        (["scripts"], [], True),
+        (["docs"], [], False),
+        (["none", "docs"], [], False),
+        (["tests-leaf"], [], False),
+        (["tests-leaf"], ["tests/unit/import_budget/approved_growth.json"], True),
+    ],
+)
+def test_budget_eligible_reads_the_classes_and_the_approvals_path(classes, changed, eligible):
+    import dataclasses
+
+    scope = dataclasses.replace(_EMPTY_SCOPE, classes=classes, changed_files=changed)
+    assert gs.budget_eligible(scope) is eligible
+
+
+def test_the_budget_eligible_flag_prints_run_true_or_false(tmp_path: Path, capsys, monkeypatch):
+    repo = _repo(tmp_path)
+    flag = ["--budget-eligible", "--tip"]
+    assert _main(monkeypatch, repo, *flag, "HEAD~1", "--base", "HEAD~2") == 0
+    assert capsys.readouterr().out == "run=false\n", "a docs edit cannot move the budget"
+    assert _main(monkeypatch, repo, *flag, "HEAD", "--base", "HEAD~1") == 0
+    assert capsys.readouterr().out == "run=true\n", "a src edit can"
+    assert _main(monkeypatch, repo, *flag, "HEAD", "--base", "no-such-rev") == 1
+    assert "gate-scope:" in capsys.readouterr().err

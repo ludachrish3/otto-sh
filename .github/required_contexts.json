@@ -19,5 +19,6 @@
   "api-dump-invariance-3.14",
   "uv-floor",
   "local-gate",
-  "gate-admission"
+  "gate-admission",
+  "import-budget"
 ]

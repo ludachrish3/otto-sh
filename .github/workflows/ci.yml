@@ -739,6 +739,124 @@ jobs:
       - name: Run otto env against the floor uv
         run: uv run nox -s tests_uv_floor
 
+  # The import-budget delta (docs/contributing.md, "Import budget"): the
+  # merge-base's file operations against the head's, per Python minor, with the
+  # base's records cached. `budget-scope` decides whether the diff can move the
+  # budget (scripts/gate_scope.py owns which paths do) and names the base tag
+  # through the delta script's own resolver; the legs run only then; the
+  # `import-budget` certificate is the one required context and accepts a leg
+  # that was skipped (a diff that cannot move the budget).
+  budget-scope:
+    needs: [gate-admission]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      # Only the legs' cache key: the legs resolve the base themselves from
+      # --base-rev, through the same resolver (import_budget_delta.base_ref).
+      tag: ${{ steps.scope.outputs.tag }}
+      base: ${{ steps.scope.outputs.base }}
+      head: ${{ steps.scope.outputs.head }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      - name: Ask gate_scope whether the diff can move the budget, and the delta which tag is the base
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            HEAD="${{ github.sha }}"
+          fi
+          git checkout -q --detach "$HEAD"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="$(git merge-base "${{ github.event.pull_request.base.sha }}" "$HEAD")"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            BASE="${{ github.event.before }}"
+          else
+            BASE="$(git rev-parse origin/main)"
+          fi
+          uv run --no-project --with tomli python scripts/gate_scope.py --budget-eligible --base "$BASE" --tip "$HEAD" >> "$GITHUB_OUTPUT"
+          TAG="$(uv run --no-project python scripts/import_budget_delta.py base-tag --rev "$BASE")"
+          {
+            echo "tag=$TAG"
+            echo "base=$BASE"
+            echo "head=$HEAD"
+          } >> "$GITHUB_OUTPUT"
+
+  # One leg per minor, serial inside a leg (the delta measures every side in a
+  # pristine worktree and venv). timeout-minutes is a placeholder: re-set it
+  # from the first measured leg's elapsed time (reports/budget/run.log in the
+  # `budget-<minor>` artifact).
+  import-budget-delta:
+    needs: [gate-admission, budget-scope]
+    if: needs.budget-scope.outputs.run == 'true'
+    name: import-budget-delta (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.budget-scope.outputs.head }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: ${{ matrix.python }}
+
+      # ImageVersion is in the runner's process environment, not the `env` context.
+      - name: The runner image version, for the cache key
+        id: img
+        run: echo "v=$ImageVersion" >> "$GITHUB_OUTPUT"
+
+      # Restore and save are split so the base's records are kept even when the
+      # leg stops on growth (actions/cache saves only on success); one key.
+      - name: The base's records, cached by the tag, the interpreter and the instrument
+        uses: actions/cache/restore@v6
+        with:
+          path: reports/budget/${{ needs.budget-scope.outputs.tag }}
+          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
+
+      - name: Measure the merge-base and the head under Python ${{ matrix.python }}
+        run: uv run python scripts/import_budget_delta.py measure --minors "${{ matrix.python }}" --base-rev "${{ needs.budget-scope.outputs.base }}"
+
+      - name: Keep the base's records for the next run, whatever this one concluded
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: reports/budget/${{ needs.budget-scope.outputs.tag }}
+          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
+
+      - name: Keep the records (the other environment's numbers for a local run)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: budget-${{ matrix.python }}
+          path: reports/budget/
+
+  # The required context. A skipped required check counts as passing, so this
+  # runs always and turns red on anything but success, a skipped leg excepted
+  # (a diff that cannot move the budget skips them).
+  import-budget:
+    needs: [gate-admission, budget-scope, import-budget-delta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.budget-scope.result }}" = success && { test "${{ needs.import-budget-delta.result }}" = success || test "${{ needs.import-budget-delta.result }}" = skipped; }
+
   # If any job above fails on main, open (or update) a tracking issue so a
   # broken main surfaces without anyone having to watch the Actions tab. Keyed
   # on the ref, as nightly.yml's reporter is: a pull request runs on
@@ -746,7 +864,7 @@ jobs:
   # the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [gate-admission, playwright-version, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor]
+    needs: [gate-admission, playwright-version, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor, budget-scope, import-budget-delta, import-budget]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -760,7 +878,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of gate-admission / playwright-version / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor failed."
+            echo "Check the job logs to see which of gate-admission / playwright-version / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor / budget-scope / import-budget-delta / import-budget failed."
           } > issue-body.md
 
       - name: Create issue from file
