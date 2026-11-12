@@ -88,6 +88,7 @@ from .host import (
     Expect,
     Host,
     SuppressCommandOutput,
+    _ConsoleReset,
     _validate_user,
     is_dry_run,
 )
@@ -897,17 +898,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             server=opts.server,
         )
 
-    def _reset_outcome(self, found: "ConsoleState") -> str:
-        """Word what ``ConsoleClient.reset()`` found: already at the prompt, or restored."""
+    def _reset_outcome(self, found: "ConsoleState") -> _ConsoleReset:
+        """Say what ``ConsoleClient.reset()`` found: already at the prompt, or restored.
+
+        Its value is the outcome in words; ``already_at_login`` is the same
+        answer for a caller that acts on it (``reboot``).
+        """
         from .console import ConsoleState  # off the CLI startup import graph on purpose
 
         opts = self._connections.console_options
-        what = (
-            "already at login prompt"
-            if found is ConsoleState.AT_LOGIN
-            else "reset: login prompt restored"
+        at_login = found is ConsoleState.AT_LOGIN
+        what = "already at login prompt" if at_login else "reset: login prompt restored"
+        return _ConsoleReset(
+            status=Status.Success,
+            value=f"{self.name}: console {opts.server}:{opts.port} {what}",
+            already_at_login=at_login,
         )
-        return f"{self.name}: console {opts.server}:{opts.port} {what}"
 
     async def _console_login_bridge(self, user: str | None, *, force: bool) -> None:
         """Bridge an interactive console session: release otto's own, dial, reset, log in, bridge.
@@ -942,7 +948,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             await client.open(interactive=True)
             notice = None
             if force:
-                notice = self._reset_outcome(await client.reset())
+                notice = self._reset_outcome(await client.reset()).value
             if opts.login:
                 await client.login_sequence()
             await run_telnet_login(
@@ -986,7 +992,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         finally:
             with teardown_step(self.name, "console client close"):
                 await client.close()
-        return Result(status=Status.Success, value=self._reset_outcome(found))
+        return self._reset_outcome(found)
 
     @override
     async def _exec_one(

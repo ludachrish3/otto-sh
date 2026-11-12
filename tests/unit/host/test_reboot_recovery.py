@@ -12,10 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import otto.host.connections as connections_mod
+from otto.host.console import ConsoleState
 from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
 from otto.host.errors import ConsoleError
-from otto.host.host import PROBE_TIMEOUT_S, _DownWait, _ProbeAnswer, _UpWait
+from otto.host.host import PROBE_TIMEOUT_S, _ConsoleReset, _DownWait, _ProbeAnswer, _UpWait
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.options import ConsoleOptions, RebootOptions, SshOptions
@@ -141,10 +142,13 @@ async def test_reboot_that_never_takes_fails_loudly(monkeypatch):
     """Host never goes down: the up-before-down race of the old code turned
     this into instant false success; now it must fail naming the down phase."""
     h = _reboot_ready_local(monkeypatch)
+    logout = AsyncMock()
+    monkeypatch.setattr(h, "logout", logout)
     _scripted_reachable(monkeypatch, h, [True])  # reachable forever
     result = await h.reboot(wait=True, timeout=0.05, down_timeout=0.05, poll_interval=0)
     assert result.status == Status.Failed
     assert "never went down" in (result.msg or "")
+    logout.assert_not_awaited()  # only "did not take" on a console logs the line out
 
 
 @pytest.mark.asyncio
@@ -219,9 +223,12 @@ async def test_unix_recovery_fails_when_shell_never_answers(monkeypatch):
     monkeypatch.setattr(type(h), "_wait_until_down", immediately_down)
     monkeypatch.setattr(type(h), "_wait_until_up", immediately_up)
     monkeypatch.setattr(h, "exec", AsyncMock(return_value=_timed_out()))
+    logout = AsyncMock()
+    monkeypatch.setattr(h, "logout", logout)
     result = await h.reboot(wait=True, timeout=0.05, down_timeout=0.05, poll_interval=0)
     assert result.status == Status.Failed
     assert "shell never answered" in (result.msg or "")
+    logout.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -659,12 +666,30 @@ def _rebooting(monkeypatch, host, logout: "AsyncMock | None" = None) -> AsyncMoc
     """
     monkeypatch.setattr(host, "_soft_reboot", AsyncMock(return_value=Result(status=Status.Success)))
     if logout is None:
-        logout = AsyncMock(return_value=Result(status=Status.Success, value="reset"))
+        logout = AsyncMock(return_value=_reset(already_at_login=False))
     monkeypatch.setattr(host, "run_logout", logout)
     return logout
 
 
 _SHELL_SEEN = repr("booting...\r\nu@box:~$ ")
+_RESTORED = "box: console srv:4001 reset: login prompt restored"
+_ALREADY = "box: console srv:4001 already at login prompt"
+
+
+def _reset(*, already_at_login: bool) -> _ConsoleReset:
+    """What the console host's own ``_reset_outcome`` answers (checked below)."""
+    return _console_host()._reset_outcome(
+        ConsoleState.AT_LOGIN if already_at_login else ConsoleState.LOGGED_IN
+    )
+
+
+def test_the_reset_outcome_says_whether_the_line_was_already_at_login():
+    assert _reset(already_at_login=False) == _ConsoleReset(
+        status=Status.Success, value=_RESTORED, already_at_login=False
+    )
+    assert _reset(already_at_login=True) == _ConsoleReset(
+        status=Status.Success, value=_ALREADY, already_at_login=True
+    )
 
 
 def _not_reachable(timeout: float) -> str:
@@ -674,7 +699,7 @@ def _not_reachable(timeout: float) -> str:
 def _did_not_take(timeout: float, seen: str = _SHELL_SEEN, outcome: str | None = None) -> str:
     """The "did not take" message; *outcome* is what came of the logout (logged out by default)."""
     if outcome is None:
-        outcome = "; otto logged the console line out"
+        outcome = f"; otto logged the console line out ({_RESTORED})"
     return (
         f"'box' was still at a logged-in shell {timeout}s after the reboot (last seen: {seen}) "
         f"— the reboot likely did not take{outcome}"
@@ -781,6 +806,42 @@ async def test_a_logout_that_fails_keeps_the_verdict_and_the_hint(
     ), result.msg
     logout.assert_awaited_once()
     assert any("could not log the console line out" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_line_already_at_login_when_otto_logs_it_out_may_have_rebooted_late(monkeypatch):
+    """The reset found ``login:``: the device got there after the last probe.
+
+    The reboot still fails (it did not come up within the timeout), but the
+    message says it may have taken late rather than that it did not take.
+    """
+    clock = _DialClock(monkeypatch)
+    host = _console_host()
+    logout = _rebooting(monkeypatch, host, AsyncMock(return_value=_reset(already_at_login=True)))
+    _scripted_line(monkeypatch, ["shell", "shell", "shell"], clock=clock)
+    result = await host.reboot(wait=True, timeout=2.5, down_timeout=5.0, poll_interval=0)
+    assert result.status == Status.Failed
+    assert result.msg == (
+        f"'box' was still at a logged-in shell 2.5s after the reboot (last seen: {_SHELL_SEEN}), "
+        "but the console line was already back at its login prompt when otto went to log it "
+        f"out ({_ALREADY}) — the reboot may have taken late"
+    ), result.msg
+    logout.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_console_reboot_that_never_went_down_leaves_the_line_alone(monkeypatch):
+    """ "Never went down" is the down phase's verdict: no logout, whatever the line shows."""
+    clock = _DialClock(monkeypatch)
+    host = _console_host()
+    logout = _rebooting(monkeypatch, host)
+    _scripted_line(monkeypatch, ["login"], clock=clock)
+    result = await host.reboot(wait=True, timeout=5.0, down_timeout=2.5, poll_interval=0)
+    assert (
+        result.msg
+        == "'box' never went down within 2.5s of the reboot — the reboot likely did not take"
+    )
+    logout.assert_not_awaited()
 
 
 @pytest.mark.asyncio

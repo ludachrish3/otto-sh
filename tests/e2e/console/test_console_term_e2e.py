@@ -122,7 +122,9 @@ async def test_a_reboot_that_never_takes_says_so_and_logs_the_line_out(monkeypat
         # whose password is the login name: the quote scrubs the password).
         assert "@test2:~$ ')" in msg, msg
         assert "the reboot likely did not take" in msg, msg
-        assert msg.endswith("; otto logged the console line out"), msg
+        # The logout's own outcome: it found the shell and restored the prompt.
+        restored = f"console {_OPTS.server}:{_OPTS.port} reset: login prompt restored"
+        assert msg.endswith(f"; otto logged the console line out (test2: {restored})"), msg
         answer = await console_answer(_OPTS.server, _OPTS.port)
         assert ends_at_login(answer), f"the reboot left the line logged in: {answer!r}"
     finally:
