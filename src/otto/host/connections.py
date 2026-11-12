@@ -555,15 +555,9 @@ class ConnectionManager:
     monkeypatching library functions::
 
         class FakeConnections(ConnectionManager):
-            def __init__(self, *args, **kwargs):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)  # no I/O: every slot starts empty
                 self._ssh_conn = AsyncMock(spec=SSHClientConnection)
-                self._sftp_conn = None
-                self._ftp_conn = None
-                self._telnet_conn = None
-                self._console_conn = None
-                self._user_ssh_conns = {}
-                self._user_sftp_conns = {}
-                self._user_locks = {}
 
             async def ssh(self):
                 return self._ssh_conn
@@ -579,7 +573,10 @@ class ConnectionManager:
         host = UnixHost(..., term="ssh")
 
     The built-in :meth:`create` passes every :class:`TermContext` field as a
-    keyword, so a double's ``__init__`` takes ``**kwargs``. Overwriting a
+    keyword, so a double's ``__init__`` takes ``**kwargs`` and hands them to
+    ``super().__init__``, which opens nothing; a double that sets its slots
+    by hand instead misses whatever field ``close()`` or a rebuild's
+    ``abandon()`` reads next. Overwriting a
     built-in is process-wide, so put the original back when the double is
     done: register ``ConnectionManager`` under the same name again, with the
     built-in's declarations and ``overwrite=True``. otto's own suite restores
