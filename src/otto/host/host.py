@@ -3797,10 +3797,10 @@ class BaseHost(ABC):
             )
             return self._logout_failed(what, why)
         if isinstance(reset, _ConsoleReset) and reset.already_at_login:
-            return (
-                f"{self.name!r} {what}, but the console line was already back at its login "
-                f"prompt when otto went to log it out ({reset.value}) — the reboot may have "
-                "taken late"
+            return self._reboot_verdict(
+                f"{what}, but the console line was already back at its login prompt when "
+                f"otto went to log it out ({reset.value})",
+                "may have taken late",
             )
         return self._reboot_did_not_take(
             what, f"; otto logged the console line out ({reset.value})"
@@ -3820,7 +3820,14 @@ class BaseHost(ABC):
         *what* says what the wait saw (``"never went down within 60s of the
         reboot"``); *hint* is what the user can do about it, if anything.
         """
-        return f"{self.name!r} {what} — the reboot likely did not take{hint}"
+        return self._reboot_verdict(what, "likely did not take", hint)
+
+    def _reboot_verdict(self, what: str, verdict: str, hint: str = "") -> str:
+        """Frame a reboot wait's verdict; every reboot verdict message is built here.
+
+        The shape is ``'<name>' <what> — the reboot <verdict><hint>``.
+        """
+        return f"{self.name!r} {what} — the reboot {verdict}{hint}"
 
     def probe_bound(self, *, timeout: float = PROBE_TIMEOUT_S) -> float:
         """Bound one reachability probe: *timeout*, or longer where the term needs it.
