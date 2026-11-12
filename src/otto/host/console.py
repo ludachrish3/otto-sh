@@ -25,7 +25,7 @@ from pydantic import SecretBytes, SecretStr
 from typing_extensions import override
 
 from ..models.base import as_secret
-from .errors import ConsoleError
+from .errors import ConsoleError, ConsoleLoggedInError
 from .options import ConsoleOptions
 from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
 from .secret_wire import reveal, reveal_bytes
@@ -307,6 +307,13 @@ class ConsoleClient(_StreamHolder):
             return ConsoleState.SILENT, text
         return ConsoleState.LOGGED_IN, text
 
+    def _shown(self, text: str) -> str:
+        """*text* as a human sees it: ANSI-stripped, NULs dropped, the password as ``***``."""
+        shown = strip_ansi(text).replace("\x00", "")
+        if self.password:
+            shown = shown.replace(self.password.get_secret_value(), "***")
+        return shown
+
     def _quote(self, text: str) -> str:
         """Quote the line's last ``_QUOTE_BYTES``: ANSI-stripped, password scrubbed, repr'd.
 
@@ -316,10 +323,7 @@ class ConsoleClient(_StreamHolder):
         prompt that only looked like a password prompt) would otherwise carry
         it into every message and log line that quotes the line.
         """
-        shown = strip_ansi(text)
-        if self.password:
-            shown = shown.replace(self.password.get_secret_value(), "***")
-        return repr(shown[-_QUOTE_BYTES:])
+        return repr(self._shown(text)[-_QUOTE_BYTES:])
 
     def _seen_suffix(self, text: str) -> str:
         """Render a trailing ``" Seen: '...'."`` for BUSY, or ``""`` if nothing arrived."""
@@ -328,9 +332,11 @@ class ConsoleClient(_StreamHolder):
     async def login_sequence(self) -> None:
         """Run steps 4-6 of the spec: nudge, classify, username, password.
 
-        Raises :class:`~otto.host.errors.ConsoleError` for every state but a login prompt. On
-        return the password has been written; the session's marker handshake
-        is the readiness check, exactly as for telnet — per spec §4 step 6, a
+        Raises :class:`~otto.host.errors.ConsoleError` for every state but a login prompt
+        (its :class:`~otto.host.errors.ConsoleLoggedInError` subclass for a line
+        already at a shell). On return the password has been written; the
+        session's marker handshake is the readiness check, exactly as for
+        telnet — per spec §4 step 6, a
         returning login prompt after the password (a refusal) is not
         inspected here; a bad password surfaces later, through the marker
         handshake's own timeout.
@@ -368,9 +374,13 @@ class ConsoleClient(_StreamHolder):
                 f"received — wrong port, no getty on the line, or a dead cable"
             )
         if state is ConsoleState.LOGGED_IN:
-            raise self._fail(
-                "did not show a login prompt; it is likely already logged in. "
-                f"Seen: {self._quote(text)}. Run `otto host <id> logout` to reset it"
+            seen = self._quote(text)
+            lines = self._shown(text).strip().splitlines()
+            raise ConsoleLoggedInError(
+                self._prefix() + "did not show a login prompt; it is likely already logged "
+                f"in. Seen: {seen}. Run `otto host <id> logout` to reset it",
+                seen=seen,
+                prompt=lines[-1].strip() if lines else "",
             )
 
         self._write((self.user + TELNET_EOL).encode())

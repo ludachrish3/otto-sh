@@ -2,8 +2,8 @@
 
 Login and run over both dial modes, the ``shell`` transfer on the one
 session, logout on close, and the failures a console must raise loudly
-(already logged in, a refused login, a busy line), and ``exec`` on the
-one session with a named session still refused.
+(already logged in, a refused login, a busy line), ``exec`` on the one
+session with a named session still refused, and a reboot that never takes.
 
 Every test releases the line and leaves it at its login prompt; the
 ``test2_console`` fixture (``conftest.py``) checks that after each test and,
@@ -13,11 +13,14 @@ when a test broke it, restores the prompt and fails the test that broke it.
 import os
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
+from unittest.mock import AsyncMock
 
 import pytest
 
 from otto.host.errors import ConsoleError
 from otto.host.login_proxy import Cred
+from otto.result import Result
+from otto.utils import Status
 from tests._fixtures.labdata import host_data, host_data_console, make_console_host
 from tests.e2e.console._raw import (
     console_answer,
@@ -89,6 +92,45 @@ async def test_already_logged_in_fails_loud():
     finally:
         await h.logout()  # the abandoned shell back to login:
         await h.close()
+
+
+async def test_a_reboot_that_never_takes_says_so_and_leaves_the_line_alone(monkeypatch):
+    """#451: a soft reboot that never takes effect, on a console host.
+
+    NOTHING REBOOTS: the in-shell reboot is replaced by a no-op on this host
+    object, and checked to be replaced before the call. The abandoned
+    client's shell then answers every poll with output and no login prompt,
+    which reads as not up, so the up phase runs out. Every poll met the same
+    prompt, so the result says the reboot did not take, quoting it, and says
+    how to log the line out; otto types nothing into the line. The test then
+    logs it out through ``otto host <id> logout``'s path and proves it is
+    back at ``login:``.
+    """
+    h = make_console_host("test2")
+    try:
+        assert (await h.run("true")).only.retcode == 0  # otto's login holds the line
+        noop = AsyncMock(return_value=Result(status=Status.Success))
+        monkeypatch.setattr(h, "_soft_reboot", noop)  # never the real reboot
+        assert h._soft_reboot is noop
+        result = await h.reboot(wait=True, timeout=30, down_timeout=15, poll_interval=1)
+        noop.assert_awaited_once()
+        assert result.status is Status.Failed, result
+        msg = result.msg or ""
+        assert "was still at a logged-in shell 30s after the reboot" in msg, msg
+        assert "(last seen: '" in msg, msg
+        # The quote is the shell's prompt (its login may read *** on a bed
+        # whose password is the login name: the quote scrubs the password).
+        assert "@test2:~$ ')" in msg, msg
+        assert "the reboot likely did not take" in msg, msg
+        assert msg.endswith("; run `otto host test2 logout` to log the console line out"), msg
+        still = await console_answer(_OPTS.server, _OPTS.port)
+        assert not ends_at_login(still), f"otto logged the line out by itself: {still!r}"
+        reset = await h.logout()
+        assert reset.is_ok, reset
+    finally:
+        await h.close()
+    answer = await console_answer(_OPTS.server, _OPTS.port)
+    assert ends_at_login(answer), answer
 
 
 @pytest.mark.parametrize("host1", ["console"], indirect=True)

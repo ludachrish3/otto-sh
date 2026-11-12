@@ -60,6 +60,7 @@ from ..utils import (
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
+from .errors import ConsoleLoggedInError
 from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
@@ -152,6 +153,99 @@ Applies to :meth:`Host.run`, :meth:`Host.exec` and
 given. Pass ``float("inf")`` for a deliberately unbounded command; there is
 no other way to disable the bound.
 """
+
+PROBE_TIMEOUT_S = 10.0
+"""Seconds one reachability probe (:meth:`Host.is_reachable`) may take by default.
+
+A hard bound: :meth:`BaseHost.probe_bound` lifts it where the term needs longer
+to answer (a console waits out its ``login_timeout``).
+"""
+
+
+@dataclass(frozen=True)
+class _ProbeAnswer:
+    """What one reboot-wait probe found: reached, and what a console shell showed.
+
+    Carries no exception on purpose: a failed probe's traceback frames hold
+    the failed client, its socket and its credential.
+    """
+
+    reached: bool
+    shell_seen: str | None = None
+    """The console line's quoted tail when the probe met a running shell
+    (:class:`~otto.host.errors.ConsoleLoggedInError`), else ``None``."""
+
+    shell_prompt: str | None = None
+    """That shell's last line, stripped (its prompt), else ``None``."""
+
+    @classmethod
+    def of(cls, failure: Exception | None) -> "_ProbeAnswer":
+        """Read one probe's outcome (``None``, or why it failed), keeping only the quote."""
+        if isinstance(failure, ConsoleLoggedInError):
+            return cls(reached=False, shell_seen=failure.seen, shell_prompt=failure.prompt)
+        return cls(reached=failure is None)
+
+    @property
+    def line_dropped(self) -> bool:
+        """Whether the probe failed on something other than a shell: busy, silent, undialable.
+
+        Weak evidence that the device went down: a busy line can be another
+        client, and a probe cut by its bound says nothing of the line. It only
+        ever keeps ``reboot`` from saying "did not take", so it fails safe.
+        """
+        return not self.reached and self.shell_seen is None
+
+
+@dataclass(frozen=True)
+class _UpWait:
+    """How ``reboot``'s up phase ended: reached, or whether every probe met a shell."""
+
+    reached: bool
+    always_at_shell: bool
+    last: "_ProbeAnswer | None"
+    prompts: frozenset[str] = frozenset()
+    """Every distinct shell prompt the up-phase probes met."""
+    probes: int = 0
+    """How many probes the up phase ran."""
+
+
+@dataclass(frozen=True)
+class _DownWait:
+    """How ``reboot``'s down phase ended, and what it saw of the line."""
+
+    down: bool
+    line_dropped: bool
+    first_shell_prompt: str | None
+    """The prompt of the first down-phase probe that met a shell, if any."""
+
+
+_MIN_UP_PROBES_ALONE = 2
+"""Up-phase probes that must see one unchanged prompt when there was no down phase."""
+
+
+def _shell_never_left(went: _DownWait | None, up: _UpWait) -> str | None:
+    """Return the last quote if a reboot's waits show its shell never went away, else ``None``.
+
+    Every up-phase probe met a shell, all at one prompt (a boot log's last
+    line changes between probes; a waiting shell's does not). When the down
+    phase ran (*went*), none of its probes met anything other than a shell
+    (busy, silent, undialable, cut by its bound, …), and that prompt is the
+    first down-phase shell prompt, unchanged; without a down phase, at
+    least two up-phase probes saw it. A device
+    that rebooted into another console (an ``(initramfs)`` shell, a
+    bootloader's ``=>``) shows a different prompt and does not qualify.
+    Output that is only whitespace has the empty prompt; that compares
+    equal to itself, so a line that answers every probe with a bare newline
+    (a foreground program holding the shell) reads as unchanged too.
+    """
+    if not up.always_at_shell or up.last is None or len(up.prompts) != 1:
+        return None
+    if went is None:
+        unchanged = up.probes >= _MIN_UP_PROBES_ALONE
+    else:
+        unchanged = not went.line_dropped and went.first_shell_prompt in up.prompts
+    return up.last.shell_seen if unchanged else None
+
 
 _EXEC_REAP_TIMEOUT = 5.0
 """Seconds to wait for a terminated command to report its exit status.
@@ -1066,9 +1160,12 @@ class Host(Protocol):
         """
         ...
 
-    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+    async def is_reachable(self, *, timeout: float = PROBE_TIMEOUT_S, fresh: bool = False) -> bool:
         """Return ``True`` if the host responds to a connection probe within *timeout* seconds.
 
+        *timeout* is a hard bound: a console names a running shell or a silent
+        line only after its full ``login_timeout``, so a shorter bound reads
+        such a line as a timeout (pass :meth:`BaseHost.probe_bound` to avoid that).
         *fresh* probes through a throwaway connection, never a cached one.
         """
         ...
@@ -3496,6 +3593,18 @@ class BaseHost(ABC):
         an embedded target reached through a console server that stays up
         across the reboot). Either phase expiring downgrades the result to
         :attr:`~otto.utils.Status.Failed` with a message naming the phase.
+        On a console host a probe that meets a running shell reads as down
+        (shutdown and boot output look the same). When the up phase expires,
+        the result says the reboot likely did not take, rather than that the
+        host did not become reachable, only on this evidence: every up-phase
+        probe met a shell at one unchanged prompt, no down-phase probe met
+        anything other than a shell (busy, silent, undialable, cut by its
+        bound, …), and that prompt is the first down-phase shell prompt (with
+        the down phase skipped, at least two up-phase probes at one prompt).
+        It quotes what the line last showed and says to run ``otto host <id>
+        logout``: a reboot never types into the line itself.
+        Each probe is bounded by :meth:`probe_bound`, so the last one may
+        overrun *timeout* by up to that bound.
 
         **Under a dry run this reports the plan and does nothing at all** —
         ``Status.NotRun``, ``is_ok`` False. THE HARD ARM IS WHY THE ARM IS AT
@@ -3507,7 +3616,7 @@ class BaseHost(ABC):
         none: ``_soft_reboot`` discards the declined ``run("reboot")`` and
         answers Success, so ``rebuild_connections()`` below tore down every
         cached transport for a host that is still up; and both wait phases dial
-        for real (``is_reachable`` → ``verify_connection``), burning the whole
+        for real (``is_reachable``'s fresh and live probes), burning the whole
         down/up deadline against a live host. Returning early is the contract's
         third honest behaviour — never run the logic — and it is the only one
         available, because there is no measurement here to decline: the harms
@@ -3596,18 +3705,29 @@ class BaseHost(ABC):
             loop = asyncio.get_running_loop()
             deadline = loop.time() + opts.timeout
             down_bound = min(opts.down_timeout, opts.timeout)
-            if opts.down_timeout > 0 and not await self.wait_until_down(
-                down_bound, interval=opts.poll_interval
-            ):
-                return Result(
-                    status=Status.Failed,
-                    msg=(
-                        f"{self.name!r} never went down within {down_bound}s of the "
-                        f"reboot — the reboot likely did not take"
-                    ),
-                )
+            went: _DownWait | None = None
+            if opts.down_timeout > 0:
+                went = await self._wait_until_down(down_bound, interval=opts.poll_interval)
+                if not went.down:
+                    return Result(
+                        status=Status.Failed,
+                        msg=self._reboot_did_not_take(
+                            f"never went down within {down_bound}s of the reboot"
+                        ),
+                    )
             remaining = max(0.0, deadline - loop.time())
-            if not await self.wait_until_up(remaining, interval=opts.poll_interval):
+            up = await self._wait_until_up(remaining, interval=opts.poll_interval)
+            if not up.reached:
+                seen = _shell_never_left(went, up)
+                if seen is not None:
+                    return Result(
+                        status=Status.Failed,
+                        msg=self._reboot_did_not_take(
+                            f"was still at a logged-in shell {opts.timeout}s after the reboot "
+                            f"(last seen: {seen})",
+                            f"; run `otto host {self.id} logout` to log the console line out",
+                        ),
+                    )
                 return Result(
                     status=Status.Failed,
                     msg=(
@@ -3625,6 +3745,41 @@ class BaseHost(ABC):
                 )
         return result
 
+    def _reboot_did_not_take(self, what: str, hint: str = "") -> str:
+        """Word the failure of a reboot whose wait shows it never happened.
+
+        *what* says what the wait saw (``"never went down within 60s of the
+        reboot"``); *hint* is what the user can do about it, if anything.
+        """
+        return f"{self.name!r} {what} — the reboot likely did not take{hint}"
+
+    def probe_bound(self, *, timeout: float = PROBE_TIMEOUT_S) -> float:
+        """Bound one reachability probe: *timeout*, or longer where the term needs it.
+
+        :meth:`is_reachable` treats its ``timeout`` as a hard bound, so a
+        caller that wants the term's own answer asks here; ``reboot``'s waits
+        and ``--dry-run --probe`` do. The default is *timeout* unchanged; a
+        remote host on the ``console`` term lifts it to that term's connect
+        allowance (a console names a running shell or a silent line only after
+        a full ``login_timeout``).
+        """
+        return timeout
+
+    async def _probe_up(self, timeout: float) -> _ProbeAnswer:
+        """One up-phase probe bounded by *timeout*; the default asks :meth:`is_reachable`.
+
+        A family whose probe can meet a console at a running shell overrides
+        it to say so.
+        """
+        return _ProbeAnswer(reached=await self.is_reachable(timeout=timeout))
+
+    async def _probe_down(self, timeout: float) -> _ProbeAnswer:
+        """One fresh down-phase probe bounded by *timeout*; the default asks :meth:`is_reachable`.
+
+        A family whose probe can tell a dropped line from a shell overrides it.
+        """
+        return _ProbeAnswer(reached=await self.is_reachable(timeout=timeout, fresh=True))
+
     @cli_exposed(
         help_=(
             "Power this host off from its own shell. Only unix hosts support it; "
@@ -3640,7 +3795,7 @@ class BaseHost(ABC):
             f"shutdown is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+    async def is_reachable(self, *, timeout: float = PROBE_TIMEOUT_S, fresh: bool = False) -> bool:
         """Whether this host answers a lightweight connection probe.
 
         With *fresh* the probe dials through a throwaway connection and never
@@ -3651,21 +3806,42 @@ class BaseHost(ABC):
         ) from None
 
     async def wait_until_up(self, timeout: float, *, interval: float = 2.0) -> bool:
-        """Poll :meth:`is_reachable` until reachable or *timeout*. Returns success."""
+        """Poll a reachability probe until reachable or *timeout*. Returns success.
+
+        Each probe is bounded by :meth:`probe_bound`, and the last one may run
+        past *timeout* by up to that bound.
+        """
+        return (await self._wait_until_up(timeout, interval=interval)).reached
+
+    async def _wait_until_up(self, timeout: float, *, interval: float) -> _UpWait:
+        """:meth:`wait_until_up`, also saying whether every probe met a console at a shell."""
         # probe_first (the wait_for default, kept deliberately): an exhausted
         # budget still probes once, so reboot()'s up-wait cannot fail a host
         # that IS up just because the down phase consumed the whole budget —
         # at the cost of one probe bound past the deadline in the worst case.
+        answers: list[_ProbeAnswer] = []
+
+        async def reachable() -> bool:
+            answer = await self._probe_up(self.probe_bound())
+            answers.append(answer)
+            return answer.reached
+
         try:
             await wait_for_async(
-                self.is_reachable,
+                reachable,
                 timeout,
                 interval=interval,
                 on_timeout=f"{self.name!r} not reachable within {timeout}s",
             )
         except WaitTimeoutError:
-            return False
-        return True
+            return _UpWait(
+                reached=False,
+                always_at_shell=bool(answers) and all(a.shell_seen is not None for a in answers),
+                last=answers[-1] if answers else None,
+                prompts=frozenset(a.shell_prompt for a in answers if a.shell_prompt is not None),
+                probes=len(answers),
+            )
+        return _UpWait(reached=True, always_at_shell=False, last=answers[-1])
 
     async def wait_until_down(self, timeout: float, *, interval: float = 2.0) -> bool:
         """Poll a fresh :meth:`is_reachable` until *not* reachable or *timeout*.
@@ -3674,9 +3850,16 @@ class BaseHost(ABC):
         probe can still log in, and a cached transport would then read the host
         as up long after it went down (#435).
         """
+        return (await self._wait_until_down(timeout, interval=interval)).down
+
+    async def _wait_until_down(self, timeout: float, *, interval: float) -> _DownWait:
+        """:meth:`wait_until_down`, also saying what the probes saw of the line."""
+        answers: list[_ProbeAnswer] = []
 
         async def unreachable() -> bool:
-            return not await self.is_reachable(fresh=True)
+            answer = await self._probe_down(self.probe_bound())
+            answers.append(answer)
+            return not answer.reached
 
         # probe_first kept for the same edge-of-budget reason as wait_until_up.
         try:
@@ -3686,9 +3869,15 @@ class BaseHost(ABC):
                 interval=interval,
                 on_timeout=f"{self.name!r} still reachable after {timeout}s",
             )
+            down = True
         except WaitTimeoutError:
-            return False
-        return True
+            down = False
+        prompts = [a.shell_prompt for a in answers if a.shell_prompt is not None]
+        return _DownWait(
+            down=down,
+            line_dropped=any(a.line_dropped for a in answers),
+            first_shell_prompt=prompts[0] if prompts else None,
+        )
 
     async def _confirm_recovered(
         self,

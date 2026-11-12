@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from otto.host.element import Element
+from otto.host.host import _DownWait, _UpWait
 from otto.host.login_proxy import Cred
 from otto.host.power import (
     POWER_CONTROLLERS,
@@ -433,7 +434,7 @@ async def test_localhost_is_reachable_true():
 
 
 @pytest.mark.asyncio
-async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
+async def test_remote_is_reachable_reflects_the_live_probe(monkeypatch):
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
@@ -442,25 +443,10 @@ async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )
-    monkeypatch.setattr(
-        host,
-        "verify_connection",
-        AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="ok", command="connect", retcode=0
-            )
-        ),
-    )
+    # The probe and log lines verify_connection shares with is_reachable.
+    monkeypatch.setattr(host, "_verify_outcome", AsyncMock(return_value=None))
     assert await host.is_reachable() is True
-    monkeypatch.setattr(
-        host,
-        "verify_connection",
-        AsyncMock(
-            return_value=CommandResult(
-                status=Status.Error, value="no", command="connect", retcode=1
-            )
-        ),
-    )
+    monkeypatch.setattr(host, "_verify_outcome", AsyncMock(return_value=OSError("no")))
     assert await host.is_reachable() is False
 
 
@@ -545,15 +531,15 @@ async def test_reboot_wait_timeout_downgrades_to_failed(monkeypatch):
     ctrl = _FakeController(state=PowerState.ON)
     host = _local_with_controller(ctrl)
 
-    async def went_down(self, timeout, interval=2.0):
-        return True
+    async def went_down(self, timeout, *, interval):
+        return _DownWait(down=True, line_dropped=True, first_shell_prompt=None)
 
-    monkeypatch.setattr(type(host), "wait_until_down", went_down)
+    monkeypatch.setattr(type(host), "_wait_until_down", went_down)
 
-    async def never_up(self, timeout, interval=2.0):
-        return False
+    async def never_up(self, timeout, *, interval):
+        return _UpWait(reached=False, always_at_shell=False, last=None)
 
-    monkeypatch.setattr(type(host), "wait_until_up", never_up)
+    monkeypatch.setattr(type(host), "_wait_until_up", never_up)
     result = await host.reboot(hard=True, wait=True, timeout=0.01)
     assert result.status is Status.Failed
     assert "reachable" in result.msg
@@ -565,15 +551,15 @@ async def test_reboot_wait_success_keeps_status(monkeypatch):
     ctrl = _FakeController(state=PowerState.ON)
     host = _local_with_controller(ctrl)
 
-    async def went_down(self, timeout, interval=2.0):
-        return True
+    async def went_down(self, timeout, *, interval):
+        return _DownWait(down=True, line_dropped=True, first_shell_prompt=None)
 
-    monkeypatch.setattr(type(host), "wait_until_down", went_down)
+    monkeypatch.setattr(type(host), "_wait_until_down", went_down)
 
-    async def comes_up(self, timeout, interval=2.0):
-        return True
+    async def comes_up(self, timeout, *, interval):
+        return _UpWait(reached=True, always_at_shell=False, last=None)
 
-    monkeypatch.setattr(type(host), "wait_until_up", comes_up)
+    monkeypatch.setattr(type(host), "_wait_until_up", comes_up)
     result = await host.reboot(hard=True, wait=True, timeout=0.01)
     assert result.status is Status.Success
 

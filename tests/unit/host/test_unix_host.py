@@ -4571,21 +4571,32 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
     device = device_behind_console
     await console_unix_host._connections.console()  # otto's session holds the line
     polls: list[bool] = []
-    real_is_reachable = console_unix_host.is_reachable
+    real_probe_fresh = console_unix_host._probe_fresh
+    real_probe_live = console_unix_host._probe_live
 
     async def soft_reboot():
         device.up = False
         return Result(status=Status.Success)
 
-    async def is_reachable(*, timeout: float = 10.0, fresh: bool = False) -> bool:
-        reachable = await real_is_reachable(timeout=timeout, fresh=fresh)
-        polls.append(reachable)
+    async def probe_fresh(timeout: float) -> "Exception | None":
+        # The down phase's probe.
+        failure = await real_probe_fresh(timeout)
+        polls.append(failure is None)
         if len(polls) == 2:  # booted: the login prompt is back from the next dial on
             device.up = True
-        return reachable
+        return failure
+
+    async def probe_live(timeout: float) -> "Exception | None":
+        # The up phase's probe: counted with the down phase's polls.
+        failure = await real_probe_live(timeout)
+        polls.append(failure is None)
+        if len(polls) == 2:
+            device.up = True
+        return failure
 
     monkeypatch.setattr(console_unix_host, "_soft_reboot", soft_reboot)
-    monkeypatch.setattr(console_unix_host, "is_reachable", is_reachable)
+    monkeypatch.setattr(console_unix_host, "_probe_fresh", probe_fresh)
+    monkeypatch.setattr(console_unix_host, "_probe_live", probe_live)
     monkeypatch.setattr(console_unix_host, "_confirm_recovered", AsyncMock(return_value=True))
 
     result = await console_unix_host.reboot(wait=True, timeout=5.0, poll_interval=0.01)

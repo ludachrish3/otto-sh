@@ -306,6 +306,29 @@ class ConsoleError(OttoError, ConnectionError):
     """
 
 
+class ConsoleLoggedInError(ConsoleError):
+    """The console line answered with a running shell instead of a login prompt.
+
+    The "already logged in" state of :class:`ConsoleError`, typed apart from
+    the other four: bytes answered the nudge, but no prompt. A probe still
+    reads it as unreachable (shutdown and boot output look the same);
+    ``reboot(wait=True)`` reads it, with the down phase's answers, to tell a
+    reboot that did not take — one that leaves the shell it was issued from
+    running on the line (#451).
+    """
+
+    seen: str
+    """The line's quoted tail, the same quote the message carries, password scrubbed."""
+
+    prompt: str
+    """The last line the line showed, stripped (a shell's prompt), password scrubbed."""
+
+    def __init__(self, message: str, *, seen: str, prompt: str) -> None:
+        super().__init__(message)
+        self.seen = seen
+        self.prompt = prompt
+
+
 class ContainerNotRunningError(OttoError, RuntimeError):
     """A declared container host was used, and no running container for it could be found.
 

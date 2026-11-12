@@ -225,7 +225,9 @@ includes logging in:
 ```
 
 The probe answers "would this run's connect phase succeed?", so a host that
-accepts TCP and then refuses the login is reported `unreachable`.
+accepts TCP and then refuses the login is reported `unreachable`. Each probe
+is bounded at 10 s, except on a `console` host, whose probe waits out the
+console's own login (its `login_timeout` waits) before it gives up.
 
 `--term`, `--transfer` and `--hop` are honoured, so the probe dials the
 transport the command would have dialed rather than the host's configured

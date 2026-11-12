@@ -42,7 +42,7 @@ from ..utils import Status
 from .connections import LOGINLESS, ConsoleEndpoint, connect_and_describe
 from .construction import RuntimeOnly
 from .errors import ConsoleError
-from .host import BaseHost, is_dry_run
+from .host import PROBE_TIMEOUT_S, BaseHost, _ProbeAnswer, is_dry_run
 from .options import ConsoleOptions, SshOptions, TelnetOptions
 
 if TYPE_CHECKING:
@@ -358,6 +358,71 @@ class RemoteHost(BaseHost):
         # NotImplementedError would surface as an EMPTY error message.
         raise NotImplementedError(f"{type(self).__name__} must implement _probe_with") from None
 
+    @override
+    def probe_bound(self, *, timeout: float = PROBE_TIMEOUT_S) -> float:
+        """*timeout*, lifted on the ``console`` term to its connect allowance.
+
+        Only a console needs it: it names a running shell or a silent line
+        after a full ``login_timeout``. Ssh and telnet keep the hard cut, so a
+        large ``connect_timeout`` cannot stretch one probe past a fast
+        reboot's down window. Sizing the allowance claims the live manager's
+        loop; when another live loop owns the host
+        (:class:`~otto.host.loop_owner.HostLoopError`) that is logged at debug
+        and *timeout* comes back unlifted — the probe then meets the same
+        claim and reads as unreachable. Any other failure propagates.
+        """
+        if self.term != "console":
+            return timeout
+        from .loop_owner import HostLoopError  # off the startup graph, as _claim_loop does
+
+        try:
+            return max(timeout, self._live_connections().connect_allowance())
+        except HostLoopError:
+            logger.debug("%s: the probe bound could not be sized", self.name, exc_info=True)
+            return timeout
+
+    async def _probe_live(self, timeout: float) -> Exception | None:
+        """Probe the live manager once, bounded by *timeout*: ``None``, or why it failed.
+
+        The one live probe: :meth:`is_reachable` (``fresh=False``) and
+        ``reboot``'s up phase (:meth:`_probe_up`) both come here. A bound
+        that cuts the probe answers with the ``TimeoutError``.
+        """
+        try:
+            return await asyncio.wait_for(self._verify_outcome(), timeout)
+        except Exception as exc:  # noqa: BLE001 — reachability probe, any failure means unreachable
+            return exc
+
+    async def _probe_fresh(self, timeout: float) -> Exception | None:
+        """Probe once through a throwaway manager, bounded by *timeout*: ``None``, or why not.
+
+        The line is released first, and the throwaway is closed (bounded by
+        ``_FRESH_CLOSE_S``, never raising) before returning; the live
+        manager's caches are untouched. ``is_reachable(fresh=True)`` and
+        ``reboot``'s down phase (:meth:`_probe_down`) both come here.
+        """
+        await self._release_probe_line()
+        conns = self._build_connections()
+        try:
+            await asyncio.wait_for(self._probe_with(conns), timeout)
+        except Exception as exc:  # noqa: BLE001 — reachability probe, any failure means unreachable
+            return exc
+        else:
+            return None
+        finally:
+            try:
+                await asyncio.wait_for(conns.close(), _FRESH_CLOSE_S)
+            except Exception as exc:  # noqa: BLE001 — a throwaway's teardown must never raise out
+                logger.debug("%s: fresh probe close did not finish: %r", self.name, exc)
+
+    @override
+    async def _probe_up(self, timeout: float) -> _ProbeAnswer:
+        return _ProbeAnswer.of(await self._probe_live(timeout))
+
+    @override
+    async def _probe_down(self, timeout: float) -> _ProbeAnswer:
+        return _ProbeAnswer.of(await self._probe_fresh(timeout))
+
     async def _release_probe_line(self) -> None:
         """Release a single-client line before a probe dials; default no-op.
 
@@ -377,13 +442,14 @@ class RemoteHost(BaseHost):
     async def verify_connection(self) -> CommandResult:
         """Attempt to connect without running any commands.
 
-        Called by :meth:`is_reachable` to decide whether the host is up (the
-        live reachability path) and by dry-run mode to validate connectivity.
-        The probe itself is family-specific (``_probe_connection``); this
-        template owns the logging and the ``CommandResult`` shape.
+        Called by dry-run mode to validate connectivity. The probe and its log
+        lines are ``_verify_outcome``, which the live reachability path
+        (:meth:`is_reachable`, ``reboot``'s up phase) runs too; the probe
+        itself is family-specific (``_probe_connection``), and this template
+        owns the ``CommandResult`` shape.
 
         **The label follows the invocation, not the file.** Both log lines
-        below were unconditionally prefixed ``[DRY RUN]``, which was false on
+        were unconditionally prefixed ``[DRY RUN]``, which was false on
         the busier of the two call paths: ``otto host <id> reboot --wait``
         with no ``-n`` anywhere dials for real through ``is_reachable`` once
         per poll, and printed ``[DRY RUN] Connection FAILED`` about a live
@@ -407,6 +473,15 @@ class RemoteHost(BaseHost):
         ANNOUNCEMENT. A probe whose dial left no trace in the log would be its
         own defect.
         """
+        failure = await self._verify_outcome()
+        if failure is None:
+            return CommandResult(
+                status=Status.Success, value="Connection successful", command="connect", retcode=0
+            )
+        return CommandResult(status=Status.Error, value=str(failure), command="connect", retcode=1)
+
+    async def _verify_outcome(self) -> Exception | None:
+        """:meth:`verify_connection`'s probe and log lines: ``None``, or the failure."""
         # Read once, above the try: both arms must agree, and a second call
         # inside the ``except`` would be a second chance to disagree.
         dry_run = is_dry_run()
@@ -414,13 +489,11 @@ class RemoteHost(BaseHost):
         note = " — a real connection; no command was run" if dry_run else ""
         try:
             await self._probe_connection()
-            self._log_command(f"{label}Connection verified{note}")
-            return CommandResult(
-                status=Status.Success, value="Connection successful", command="connect", retcode=0
-            )
         except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
             self._log_command(f"{label}Connection FAILED: {e}{note}")
-            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
+            return e
+        self._log_command(f"{label}Connection verified{note}")
+        return None
 
     ####################
     #  Connection state / lifecycle
@@ -453,34 +526,25 @@ class RemoteHost(BaseHost):
         return self._session_mgr.has_live_sessions or self._connections.connected
 
     @override
-    async def is_reachable(self, *, timeout: float = 10.0, fresh: bool = False) -> bool:
+    async def is_reachable(self, *, timeout: float = PROBE_TIMEOUT_S, fresh: bool = False) -> bool:
         """Probe by attempting a connection (no command), bounded by *timeout*.
+
+        *timeout* is a hard bound. A caller that must let the term finish its
+        own answer passes :meth:`probe_bound` (a console names a running
+        shell or a silent line only after a full ``login_timeout``).
 
         With *fresh* the probe line is released, a throwaway manager is built
         by ``_build_connections()`` and probed, and it is closed (bounded by
         ``_FRESH_CLOSE_S``, never raising) before returning; the live
         manager's caches are untouched. ``reboot``'s down phase uses it so a
         transport cached by an early login cannot read a dead host as up (#435).
+        Any failure is unreachable, a console line at a running shell
+        included: on a console that keeps its link through a reboot, shutdown
+        and boot output look the same as a shell.
         """
         if fresh:
-            await self._release_probe_line()
-            conns = self._build_connections()
-            try:
-                await asyncio.wait_for(self._probe_with(conns), timeout)
-                ok = True
-            except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable
-                ok = False
-            finally:
-                try:
-                    await asyncio.wait_for(conns.close(), _FRESH_CLOSE_S)
-                except Exception as exc:  # noqa: BLE001 — a throwaway's teardown must never raise out
-                    logger.debug("%s: fresh probe close did not finish: %r", self.name, exc)
-            return ok
-        try:
-            result = await asyncio.wait_for(self.verify_connection(), timeout)
-        except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable
-            return False
-        return result.status.is_ok
+            return await self._probe_fresh(timeout) is None
+        return await self._probe_live(timeout) is None
 
     @override
     async def _close(self) -> None:

@@ -47,22 +47,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .invoke import LabReference
 
-PROBE_TIMEOUT_SECONDS = 10.0
-"""Per-host bound on one reachability probe, in seconds.
-
-Matches :meth:`~otto.host.host.BaseHost.is_reachable`'s own default so a probe
-under ``--probe`` waits exactly as long as otto's live reachability path does
-— a host that a real run would call up is not called down here by a tighter
-budget than the real run uses.
-"""
-
 REACHABLE = "reachable"
 """A connection opened."""
 
 UNREACHABLE = "unreachable"
 """A connection was attempted and did not open (refused, timed out, refused
 authentication). The reason is not carried here: ``is_reachable`` collapses
-every failure to a bool, and ``verify_connection`` has already logged the
+every failure to a bool, and its live probe has already logged the
 underlying error, so inventing a reason at this layer would be the same
 fabrication in a smaller font."""
 
@@ -181,7 +172,11 @@ async def _probe_one(target: ProbeTarget) -> ProbeResult:
 
     start = time.monotonic()
     try:
-        reachable = await host.is_reachable(timeout=PROBE_TIMEOUT_SECONDS)
+        # The host's own probe bound, as reboot's waits use it: the default
+        # probe timeout (otto.host.host.PROBE_TIMEOUT_S), lifted on a console
+        # term to what it needs to answer, so a host that a real run would
+        # call up is not called down here by a tighter budget.
+        reachable = await host.is_reachable(timeout=host.probe_bound())
     except NotImplementedError as e:
         # The family has no connection probe (a docker container is reached
         # through its parent's shell, so there is no transport of its own to

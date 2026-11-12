@@ -1474,9 +1474,15 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
             dials.append("dial")
             return next(answers)
 
+        async def recording_probe(timeout: float) -> "Exception | None":
+            # Both phases' probes: the same spy, the same script.
+            return None if await recording_is_reachable(timeout) else OSError("down")
+
         host._soft_reboot = recording_soft_reboot
         host.rebuild_connections = lambda: None
         host.is_reachable = recording_is_reachable
+        host._probe_fresh = recording_probe
+        host._probe_live = recording_probe
         host._confirm_recovered = AsyncMock(return_value=True)
 
         with active_context(dry_run=True):
