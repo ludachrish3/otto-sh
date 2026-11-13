@@ -925,21 +925,50 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      # The report reads this run's jobs and their logs, and the checkout.
+      actions: read
+      contents: read
     steps:
-      - name: Write issue body
+      # The report reads the push range and the commit log: full depth.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      # scripts/ci_failure_report.py names the jobs that did not pass, each with
+      # its first failing line, and the last green run (#799). `--before` is the
+      # push's previous head: the report says whether the landing's diff holds
+      # each failing test file, which decides between a revert and a fix
+      # (docs/contributing.md, "When main goes red"). It runs on the
+      # runner's own Python with nothing installed, and it writes a report
+      # whatever GitHub answers; the fallback below is for the script itself
+      # failing, because an issue that is never filed is the worst outcome.
+      - name: Write the issue's title and body
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          {
-            echo "A CI run on \`main\` failed."
-            echo
-            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "- Commit: ${{ github.sha }}"
-            echo
-            echo "Check the job logs to see which of gate-admission / playwright-version / lint-python / tests-primary / tests-canary / tests / coverage-hostless / hostless-primary / hostless-canary / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance / uv-floor / budget-scope / import-budget-delta / import-budget failed."
-          } > issue-body.md
+          python3 scripts/ci_failure_report.py \
+              --workflow ci.yml \
+              --title "CI failed on main" \
+              --heading 'A CI run on `main` failed.' \
+              --repo "$GITHUB_REPOSITORY" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-url "$RUN_URL" \
+              --sha "$GITHUB_SHA" \
+              --before "$BEFORE" \
+              --title-out issue-title.txt \
+              --body-out issue-body.md || {
+            echo "CI failed on main" > issue-title.txt
+            printf '%s\n\n- Workflow run: %s\n- Commit: %s\n\nThe report script failed: read the run.\n' \
+              'A CI run on `main` failed.' "$RUN_URL" "$GITHUB_SHA" > issue-body.md
+          }
+          echo "title=$(head -n 1 issue-title.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Create issue from file
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: "CI failed on main"
+          title: ${{ steps.report.outputs.title }}
           content-filepath: issue-body.md
           labels: ci

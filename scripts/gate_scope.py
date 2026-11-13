@@ -373,6 +373,7 @@ WORKFLOW_READERS = [
     "tests/unit/api_snapshot/test_api_gate_wiring.py",
     "tests/unit/host/test_busybox_artifacts.py",
     "tests/unit/scripts/test_ci_breaking_marks_checkout.py",
+    "tests/unit/scripts/test_ci_failure_report.py",
     "tests/unit/test_changed_repeat_lanes.py",
     "tests/unit/test_ci_color_env.py",
     "tests/unit/test_ci_gate_admission.py",

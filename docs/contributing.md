@@ -881,7 +881,10 @@ land until it is out, so the first question is never "what is the fix"; it is
 
 The record is the issue CI files by itself (`CI failed on main: <jobs>`). It
 names the failing jobs and tests, and for each failing test file it says
-whether the landing's diff holds that file. Work from it:
+whether the landing's diff holds that file (`scripts/ci_failure_report.py`
+writes it, for nightly too; a nightly's issue lists the commits since the last
+green nightly and attributes nothing, because several landings may sit in
+between). Work from it:
 
 1. **The failure is in the landing's diff** (the failing test, or the code it
    tests, was added or changed by the landing). The landing's author opens a

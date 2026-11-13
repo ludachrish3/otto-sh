@@ -911,19 +911,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      # The report reads this run's jobs and their logs, and the checkout.
+      actions: read
+      contents: read
     steps:
-      - name: Write issue body
+      # The report reads the push range and the commit log: full depth.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Standing guidance the report cannot derive from the run. Which jobs
+      # failed is the report's to say, from the run itself, never a list kept
+      # here by hand (issue #267 listed six jobs, all of them green).
+      - name: Write the nightly's standing notes
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the dashboard soak, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, the probe-line cut sweep, and/or the next-Python canary moving off its expected rung)."
-            echo
-            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "- Commit: ${{ github.sha }}"
-            echo
-            echo "Check the matrix logs for the failing job (stability-matrix /"
-            echo "playwright-version / unit-matrix / unit-repeat / dashboard / dashboard-soak / chaos-tier2 / chaos-docker /"
-            echo "conformance-hermetic / busybox-upstream-drift / python-canary / probe-cut-sweep),"
-            echo "the Python version or browser, and the pytest-repeat iteration that"
+            echo "Find the Python version or browser in the job's name, and the"
+            echo "pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"
             echo "cell it drew in the test id; reproduce it with the"
             echo "--randomly-seed=N printed in that job's own pytest header. A"
@@ -948,11 +952,41 @@ jobs:
             echo "constant), lower means a wheel was pulled, a floor was raised, or"
             echo "a commit here broke that Python or grew its import budget. The"
             echo "job's step summary records the rung reached and what stopped it."
-          } > issue-body.md
+          } > issue-notes.md
+
+      # scripts/ci_failure_report.py names the jobs that did not pass, each with
+      # its first failing line, the last green nightly and the commits since
+      # (#799). No `--before`: several landings sit between two nightlies, so
+      # the report attributes nothing and suggests no revert. It runs on the
+      # runner's own Python with nothing installed, and it writes a report
+      # whatever GitHub answers; the fallback below is for the script itself
+      # failing, because an issue that is never filed is the worst outcome.
+      - name: Write the issue's title and body
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/ci_failure_report.py \
+              --workflow nightly.yml \
+              --title "Nightly run failed" \
+              --heading 'The nightly run failed.' \
+              --repo "$GITHUB_REPOSITORY" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-url "$RUN_URL" \
+              --sha "$GITHUB_SHA" \
+              --notes issue-notes.md \
+              --title-out issue-title.txt \
+              --body-out issue-body.md || {
+            echo "Nightly run failed" > issue-title.txt
+            printf '%s\n\n- Workflow run: %s\n- Commit: %s\n\nThe report script failed: read the run.\n' \
+              'The nightly run failed.' "$RUN_URL" "$GITHUB_SHA" > issue-body.md
+          }
+          echo "title=$(head -n 1 issue-title.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Create issue from file
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: "Nightly run failed"
+          title: ${{ steps.report.outputs.title }}
           content-filepath: issue-body.md
           labels: stability, ci

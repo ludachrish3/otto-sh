@@ -1555,24 +1555,57 @@ def test_every_job_in_a_workflow_is_one_its_failure_report_waits_on(workflow):
     assert jobs <= needs, f"{workflow}: {sorted(jobs - needs)} can fail without opening an issue"
 
 
-def test_the_nightly_issue_body_names_every_job_it_reports_on():
+@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
+def test_the_issue_names_the_jobs_that_failed_from_the_run_itself(workflow):
     """An auto-filed issue that omits the job that failed sends the reader to green logs.
 
     Issue #267 listed six jobs to check and every one of them had passed;
     `busybox-upstream-drift` had been added to `report-failure.needs` the day
-    before without touching the text. Derived from `needs` rather than a
-    hand-kept list, so the next job added to it either appears in the body or
-    reds here.
+    before without touching the hand-kept list in the body. Neither workflow
+    keeps such a list now: `scripts/ci_failure_report.py` asks the run which
+    jobs did not pass and names exactly those, in the title and the body
+    (`tests/unit/scripts/test_ci_failure_report.py` pins that half). This pins
+    the wiring: each reporter runs that script for its own workflow and files
+    the title it wrote.
     """
-    nightly = yaml.safe_load((_WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
-    report = nightly["jobs"]["report-failure"]
-    body = " ".join(step.get("run", "") for step in report["steps"])
+    spec = yaml.safe_load((_WORKFLOWS / workflow).read_text(encoding="utf-8"))
+    report = spec["jobs"]["report-failure"]
+    [write] = [step for step in report["steps"] if step.get("id") == "report"]
+    assert "python3 scripts/ci_failure_report.py" in write["run"]
+    assert f"--workflow {workflow}" in write["run"]
+    assert "--body-out issue-body.md" in write["run"]
+    [create] = [
+        step for step in report["steps"] if "create-issue-from-file" in step.get("uses", "")
+    ]
+    assert create["with"]["title"] == "${{ steps.report.outputs.title }}"
+    assert create["with"]["content-filepath"] == "issue-body.md"
+    assert report["permissions"] == {"issues": "write", "actions": "read", "contents": "read"}
+    # Without the token every API call fails and the issue names no job; without
+    # the full history the landing's diff and the commit list cannot be read.
+    assert write["env"]["GH_TOKEN"] == "${{ github.token }}"
+    [checkout] = [s for s in report["steps"] if s.get("uses", "").startswith("actions/checkout@")]
+    assert checkout["with"]["fetch-depth"] == 0
+    # A reporter that crashes must still file: the shell writes a minimal issue itself.
+    fallback = write["run"].partition("|| {")[2]
+    assert "issue-title.txt" in fallback
+    assert "issue-body.md" in fallback
+    assert write["run"].rstrip().endswith('>> "$GITHUB_OUTPUT"')
+    # A hand-kept list of jobs in the reporter is the defect; the run is the source.
+    text = " ".join(step.get("run", "") for step in report["steps"])
+    listed = [job for job in report["needs"] if f"{job} /" in text or f"/ {job}" in text]
+    assert not listed, f"{workflow}: the reporter spells a job list by hand: {listed}"
 
-    missing = [job for job in report["needs"] if job not in body]
-    assert not missing, (
-        f"{missing} can fail the nightly and open an issue, but the issue body never names "
-        f"them — so the ticket points the reader at a list of jobs that were all green"
-    )
+
+def test_only_a_landing_is_attributed_to_its_diff():
+    """A push has one landing before it; a nightly has however many landed that day."""
+    runs = {}
+    for workflow in ("ci.yml", "nightly.yml"):
+        spec = yaml.safe_load((_WORKFLOWS / workflow).read_text(encoding="utf-8"))
+        [write] = [s for s in spec["jobs"]["report-failure"]["steps"] if s.get("id") == "report"]
+        runs[workflow] = write
+    assert '--before "$BEFORE"' in runs["ci.yml"]["run"]
+    assert runs["ci.yml"]["env"]["BEFORE"] == "${{ github.event.before }}"
+    assert "--before" not in runs["nightly.yml"]["run"]
 
 
 # ─── shipped error text must cite things that exist ────────────────────────
