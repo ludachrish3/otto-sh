@@ -68,11 +68,21 @@ _REPEATS = 5
 """Each run signals at a different point of the prompt's start-up."""
 
 
-def _signal_at_prompt(script: Path, log: Path, signum: int, *, stdout: "int | None" = None) -> int:
+def _signal_at_prompt(
+    script: Path,
+    log: Path,
+    signum: int,
+    *,
+    stdout: "int | None" = None,
+    at: "list[str] | None" = None,
+) -> int:
     """Run *script*, send *signum* once it logs PROMPTING, and return its exit status.
 
     stdin is a pipe nobody writes, so the prompt waits for ever. The child's
     stderr (and its stdout too, unless *stdout* says otherwise) goes to *log*.
+    *at* names the lines to signal at, one delivery each, in order (default:
+    PROMPTING alone): each is a distinct line the child logs once, and the
+    delivery waits until the log holds it.
     """
     with log.open("wb") as sink:
         proc = subprocess.Popen(
@@ -82,13 +92,16 @@ def _signal_at_prompt(script: Path, log: Path, signum: int, *, stdout: "int | No
             stderr=sink,
         )
         try:
-            wait_for(
-                lambda: "PROMPTING" in log.read_text(),
-                30,
-                interval=0.01,
-                on_timeout=lambda: f"child never reached its prompt:\n{log.read_text()}",
-            )
-            proc.send_signal(signum)
+            for marker in at or ["PROMPTING"]:
+                wait_for(
+                    lambda marker=marker: marker in log.read_text(),
+                    30,
+                    interval=0.01,
+                    on_timeout=lambda marker=marker: (
+                        f"child never logged {marker}:\n{log.read_text()}"
+                    ),
+                )
+                proc.send_signal(signum)
             return proc.wait(timeout=30)  # exits with the prompt's thread still reading
         finally:
             if proc.poll() is None:
@@ -223,3 +236,72 @@ def test_an_interrupt_while_the_prompt_writes_its_question_exits_cleanly(tmp_pat
     assert "Fatal Python error" not in text, text
     assert "CODE 143" in text, text
     assert returncode == 0, text
+
+
+_STUCK_WRITE_CHILD = r"""
+import io, os, sys, threading
+import typer
+from otto import lifecycle
+
+# The prompt's thread enters a stdout write and never leaves it: what a full
+# pipe or a flow-controlled terminal does. It holds the BufferedWriter's lock
+# from then on. The first signal cancels the command, which waits for the
+# prompt to be quiet (WAITING); the second forces the run.
+
+
+class StuckRaw(io.RawIOBase):
+    def writable(self):
+        return True
+
+    def write(self, data):
+        if threading.current_thread().name == "otto-prompt":
+            os.write(2, b"ECHOING\n")
+            threading.Event().wait()
+        return os.write(1, data)
+
+
+sys.stdout = io.TextIOWrapper(io.BufferedWriter(StuckRaw()), write_through=False)
+
+waiting_for_quiet = lifecycle._PromptHandoff.abandon
+
+
+async def abandon(self):
+    os.write(2, b"WAITING\n")
+    await waiting_for_quiet(self)
+
+
+lifecycle._PromptHandoff.abandon = abandon
+lifecycle.register_force_exit_hook(lambda: os.write(2, b"HOOK\n"))
+ctrl = lifecycle._CommandRun(teardown_deadline=30.0)
+
+
+async def body():
+    os.write(2, b"PROMPTING\n")
+    await lifecycle.interruptible_prompt(typer.prompt, "Name")
+
+
+lifecycle.run_command(body(), _controller=ctrl)
+"""
+
+
+def test_a_forced_exit_ends_the_process_while_the_prompt_is_stuck_in_a_write(
+    tmp_path: Path,
+) -> None:
+    """A second signal ends the process, with 128 + signum, whatever stdout is doing (#1048).
+
+    A forced run stops waiting for the prompt to be quiet. Leaving through
+    the interpreter's ordinary shutdown would then flush stdout, whose lock
+    the prompt's thread holds inside its write: the exit hung for good on a
+    stuck write, and aborted (``_enter_buffered_busy``, exit -6) on a slow
+    one. The force-exit hooks still run first.
+    """
+    script = tmp_path / "child.py"
+    script.write_text(_STUCK_WRITE_CHILD)
+    log = tmp_path / "err.txt"
+    returncode = _signal_at_prompt(
+        script, log, signal.SIGTERM, stdout=subprocess.DEVNULL, at=["ECHOING", "WAITING"]
+    )
+    text = log.read_text()
+    assert "Fatal Python error" not in text, text
+    assert "HOOK" in text, text
+    assert returncode == 143, text

@@ -421,8 +421,10 @@ def _stop_listener() -> None:
 def shutdown_listener(*, join_timeout: float | None = None) -> None:
     """Public flush-and-stop for exit paths that bypass atexit.
 
-    ``lifecycle``'s forced sync-phase exit (``os._exit``) skips interpreter
-    teardown, so buffered log lines would be lost without an explicit stop.
+    ``lifecycle``'s forced exits that leave with ``os._exit`` (a wedged
+    synchronous phase, a command whose prompt thread may be writing) skip
+    interpreter teardown, so buffered log lines would be lost without an
+    explicit stop.
     The listener is claimed (swapped out of module state) before it is
     stopped, so a force-path watchdog racing atexit reduces to one stop and
     one no-op — a plain read-swap under the GIL, adequate for exit paths,

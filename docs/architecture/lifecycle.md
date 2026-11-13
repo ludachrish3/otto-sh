@@ -230,7 +230,9 @@ to the sweep alone. A body that is slow to unwind spends the sweep's time.
 A second signal, or that deadline expiring,
 **abandons** it: whatever teardown was still awaiting is dropped, the
 registered force-exit hooks run once the loop has closed, and the process
-raises `SystemExit(128 + signum)` — 130 for SIGINT, 143 for SIGTERM. Both
+raises `SystemExit(128 + signum)` — 130 for SIGINT, 143 for SIGTERM (one
+forced exit, at the end of this section, leaves with that status without
+raising). Both
 stages land on the same exit code; only how much cleanup happened differs, so
 a supervisor reads the interrupt identically either way.
 
@@ -341,8 +343,17 @@ prompt that does not read through the swapped reader is quiet from the start:
 its writes cannot be seen, so the cancel does not wait for them.
 
 A *forced* run (a second press, or the teardown deadline) stops waiting for
-quiet, because it abandons cleanup by design. A thread caught mid-write at that
-instant can still abort the exit.
+quiet, because it abandons cleanup by design. If the prompt's thread is still
+not quiet then, the command does not leave through the interpreter's shutdown:
+that would flush the stream the thread is writing to, and wait on its lock for
+good when the write is stuck (a full pipe, a paused terminal) or abort on it
+when it is only slow (#1048). It runs the force-exit hooks, flushes the log
+listener for a bounded time and exits with 128 + signum directly, which is the
+exit a forced synchronous phase already takes. `atexit` handlers do not run on
+that path. A forced run whose prompt thread is quiet, or that has no prompt,
+raises `SystemExit` as described above. A prompt that does not read through
+the swapped reader counts as quiet here too, as it does for the cancel: what
+it writes cannot be seen.
 
 ## OttoContext: the per-invocation runtime
 
