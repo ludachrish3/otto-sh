@@ -113,7 +113,7 @@ async def _fetch_one_product(
         ValueError: *product* has a name that is not a single safe path
             segment. Checked before any host command is issued.
     """
-    from ...host.product import cov_dir_of
+    from ...host.product import cov_dir_absent_test, cov_dir_of
 
     layout.validate_product_name(product.name)
     cov_dir = cov_dir_of(product)
@@ -140,7 +140,10 @@ async def _fetch_one_product(
     remove = f'"${{TMPDIR:-/tmp}}"/{token}.*'
     logger.info("Archiving .gcda for %s on %s:%s", product.name, host.id, cov_dir)
     # A missing cov_dir echoes the marker and exits 0 without an archive: the
-    # product never ran, the same quiet event as a dir with no counters.
+    # product never ran (or a clean removed it), the same quiet event as a dir
+    # with no counters. "Missing" is the reset's own guard
+    # (cov_dir_absent_test): a dir behind an unsearchable ancestor is not
+    # provably absent, so it reaches cd and fails the fetch loudly.
     # Otherwise the path mktemp printed is echoed after a marker before tar
     # runs, and the line's status is mktemp's, cd's or tar's: any of them
     # failing (no writable temp dir, an unreadable file or directory, no tar)
@@ -152,7 +155,7 @@ async def _fetch_one_product(
     issued = True
     try:
         archive = await host.exec(
-            f"! test -d {q} && echo {_NO_COV_DIR} || "
+            f"{cov_dir_absent_test(cov_dir)} && echo {_NO_COV_DIR} || "
             f'(t=$(mktemp "${{TMPDIR:-/tmp}}/{token}.XXXXXX") && echo "{_ARCHIVE_MARK}$t" '
             f'&& cd {q} && tar -cf "$t" .)',
             timeout=120,

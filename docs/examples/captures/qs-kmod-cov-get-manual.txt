@@ -3,9 +3,11 @@ INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'echo 1 >
          /sys/module/qs_wordcount/kmodcov/dump'
 INFO     Archiving .gcda for qs_wordcount on dut:/tmp/qs_wordcount
-INFO     @dut   | ! test -d /tmp/qs_wordcount && echo otto-no-cov-dir || (t=$(mktemp
-         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
-         /tmp/qs_wordcount && tar -cf "$t" .)
+INFO     @dut   | { __otto_d=/tmp/qs_wordcount; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/qs_wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } && echo
+         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
+         "otto-archive:$t" && cd /tmp/qs_wordcount && tar -cf "$t" .)
 INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product

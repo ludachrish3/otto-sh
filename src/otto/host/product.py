@@ -858,9 +858,18 @@ def cov_dir_absent_test(cov_dir: str) -> str:
     the nearest path that exists, and it is not searchable, so the test is
     false and ``find`` runs, and says what stopped it. Builtins only; the
     variable keeps an ``__otto_`` prefix because it lands in the host's
-    session shell, and *cov_dir* is quoted.
+    session shell, and *cov_dir* is quoted. Shared with the fetch's archive
+    guard (:mod:`otto.coverage.fetcher.remote`), so "absent" means the
+    same thing to the reset and the fetch.
+
+    Raises:
+        ValueError: *cov_dir* is not absolute: the climb ends at ``/``, and
+            a relative path would never reach it.
     """
     from .shell_quote import path_operand  # function-local: off the host import path
+
+    if not cov_dir.startswith("/"):
+        raise ValueError(f"cov_dir must be absolute, got {cov_dir!r}")
 
     q = path_operand(cov_dir)
     return (

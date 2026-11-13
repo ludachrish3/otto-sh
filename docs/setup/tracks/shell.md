@@ -219,8 +219,8 @@ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --
 ```
 
 `otto-no-cov-dir` means `wordcount` has no `cov_dir` on the host: it has not
-run there yet (a previous pass's cleanup removed its counters and the
-directory). The `skipped` line counts the system headers the tool compiled in,
+run there since the directory was last removed (by a previous pass's cleanup,
+or by a clean that emptied it). The `skipped` line counts the system headers the tool compiled in,
 which are not the project's sources.
 
 `--tester-name` and `--tester-email` record who did the testing. Leave them
