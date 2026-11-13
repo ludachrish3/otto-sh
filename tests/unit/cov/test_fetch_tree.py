@@ -12,6 +12,7 @@ import pytest
 from otto.coverage.fetcher.remote import ProductFetchError, _fetch_one_product, safe_extract
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests.unit.host._gcda_frame import absent_test
 
 
 class _Product:
@@ -96,7 +97,7 @@ async def test_fetch_keeps_paths_relative_to_cov_dir(tmp_path):
     (archive,) = [c for c in host.cmds if "tar -cf" in c]
     token = re.search(r"otto-fetch-[0-9a-f]+", archive).group(0)
     assert archive == (
-        "! test -d /var/cov/app && echo otto-no-cov-dir || "
+        f"{absent_test('/var/cov/app')} && echo otto-no-cov-dir || "
         f'(t=$(mktemp "${{TMPDIR:-/tmp}}/{token}.XXXXXX") && echo "otto-archive:$t" '
         '&& cd /var/cov/app && tar -cf "$t" .)'
     )
@@ -392,6 +393,56 @@ async def test_an_unreadable_subdir_is_a_failed_fetch_not_a_partial_one(tmp_path
 
     assert not (tmp_path / "staging" / "h").exists()
     assert "Permission denied" in caplog.text
+    assert host.gets == []
+    assert list(tmpdir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["parent exists", "parent missing too"])
+async def test_an_absent_cov_dir_is_no_counters_not_a_failure(tmp_path, caplog, where):
+    """The reset's own guard answers "absent": quiet, nothing archived (#722)."""
+    tmpdir = tmp_path / "host tmp"
+    tmpdir.mkdir()
+    cov_dir = tmp_path / ("gone" if where == "parent exists" else "gone/deeper") / "cov"
+    host = _ShellHost({"TMPDIR": str(tmpdir)})
+
+    with caplog.at_level(logging.DEBUG, logger="otto.coverage.fetcher.remote"):
+        assert await _fetch_one_product(host, _here(cov_dir), tmp_path / "staging") is None
+
+    assert "No cov_dir for" in caplog.text
+    assert "Failed to archive" not in caplog.text
+    assert host.gets == []
+    assert list(tmpdir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_a_cov_dir_behind_an_unsearchable_ancestor_is_a_failed_fetch(tmp_path, caplog):
+    """Not provably absent, so the archive runs and its cd fails loudly: the
+    counters may well be there, and a quiet "no cov_dir" would lose them."""
+    import os
+
+    cov_dir, tmpdir = _counters(tmp_path)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    hidden = locked / "cov"
+    cov_dir.rename(hidden)
+    locked.chmod(0)
+    if os.access(locked, os.X_OK):  # root searches through a mode of 0
+        locked.chmod(0o755)
+        pytest.skip("running as root: an unsearchable directory cannot be made")
+    host = _ShellHost({"TMPDIR": str(tmpdir)})
+    try:
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+            pytest.raises(ProductFetchError),
+        ):
+            await _fetch_one_product(host, _here(hidden), tmp_path / "staging")
+    finally:
+        locked.chmod(0o755)
+
+    assert "Failed to archive .gcda" in caplog.text
+    assert re.search(r"\bcd\b", caplog.text)  # the shell's own refusal, in its own words
+    assert "No cov_dir for" not in caplog.text
     assert host.gets == []
     assert list(tmpdir.iterdir()) == []
 

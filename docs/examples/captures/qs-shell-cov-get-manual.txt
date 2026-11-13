@@ -1,13 +1,17 @@
 $ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 INFO     Archiving .gcda for wordcount on dut:/tmp/wordcount
-INFO     @dut   | ! test -d /tmp/wordcount && echo otto-no-cov-dir || (t=$(mktemp
-         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
-         /tmp/wordcount && tar -cf "$t" .)
+INFO     @dut   | { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L "$__otto_d";
+         do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } && echo
+         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
+         "otto-archive:$t" && cd /tmp/wordcount && tar -cf "$t" .)
 INFO     @dut > | otto-no-cov-dir
 INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     Archiving .gcda for shout on dut:/tmp/shout
-INFO     @dut   | ! test -d /tmp/shout && echo otto-no-cov-dir || (t=$(mktemp
+INFO     @dut   | { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L "$__otto_d"; do
+         __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/shout && {
+         ! test -d "$__otto_d" || test -x "$__otto_d"; }; } && echo otto-no-cov-dir || (t=$(mktemp
          "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
          /tmp/shout && tar -cf "$t" .)
 INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>

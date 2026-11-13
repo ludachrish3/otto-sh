@@ -15,6 +15,7 @@ from otto.host.product import Product
 from otto.labs.loader import Lab
 from otto.result import CommandResult, NotRunResult, Result
 from otto.utils import Status
+from tests.unit.host._gcda_frame import absent_test
 
 
 def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True) -> MagicMock:
@@ -141,7 +142,7 @@ class TestGcdaFetcher:
         token = remote_tar.name.split(".")[0]
         assert remote_tar.as_posix() == f"/tmp/{token}.Ab12Cd"
         assert cmds[0] == (
-            "! test -d /var/cov && echo otto-no-cov-dir || "
+            f"{absent_test('/var/cov')} && echo otto-no-cov-dir || "
             f'(t=$(mktemp "${{TMPDIR:-/tmp}}/{token}.XXXXXX") && echo "otto-archive:$t" '
             '&& cd /var/cov && tar -cf "$t" .)'
         )
@@ -161,7 +162,7 @@ class TestGcdaFetcher:
         assert result[("host1", "agent")] == tmp_path / "staging" / "host1" / "agent"
         archives = [c.args[0] for c in host.exec.call_args_list if "tar -cf" in c.args[0]]
         assert len(archives) == 2
-        assert archives[0].startswith("! test -d /var/cov/app ")
+        assert archives[0].startswith(f"{absent_test('/var/cov/app')} ")
         assert '&& cd /var/cov/app && tar -cf "$t" .)' in archives[0]
         # the default cov_dir
         assert '&& cd /tmp/agent && tar -cf "$t" .)' in archives[1]
@@ -481,7 +482,7 @@ class TestGcdaFetcher:
 
         await _GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
         archive = host.exec.call_args_list[0].args[0]
-        assert archive.startswith("! test -d '/opt/My App/cov' ")
+        assert archive.startswith(f"{absent_test('/opt/My App/cov')} ")
         assert "&& cd '/opt/My App/cov' && tar -cf \"$t\" .)" in archive
         # The clean path's own quoting (a `find … -exec rm -f {} \;`) is
         # ``Product.reset_coverage``'s default, pinned directly in

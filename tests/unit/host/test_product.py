@@ -1280,6 +1280,15 @@ def test_cov_dir_absent_test_holds_only_for_a_provably_absent_cov_dir(tmp_path, 
     assert (done.returncode == 0) is absent
 
 
+@pytest.mark.parametrize("cov_dir", ["rel/cov", "cov", ""])
+def test_cov_dir_absent_test_refuses_a_relative_cov_dir(cov_dir):
+    # The climb ends at `/`: a relative path would never reach it and loop.
+    from otto.host.product import cov_dir_absent_test
+
+    with pytest.raises(ValueError, match="must be absolute"):
+        cov_dir_absent_test(cov_dir)
+
+
 @pytest.mark.skipif(
     os.geteuid() == 0, reason="root searches a chmod 000 dir, so it cannot be made unsearchable"
 )

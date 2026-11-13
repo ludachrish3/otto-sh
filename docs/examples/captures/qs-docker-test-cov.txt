@@ -26,6 +26,12 @@ INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '{
          d=${d%/*}; done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :;
          done; } | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test
          "$__otto_gcda_rc" = 0; }'
+INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
+         otto-gcda-check; if { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
+         otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print
+         2>&1; fi'
 INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
          '"'"'\n%s\n'"'"' otto-gcda-check; if { __otto_d=/tmp/quickstart-docker/banner; while ! test
          -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
@@ -39,12 +45,6 @@ INFO     @docker-host   | printf '\n%s\n' otto-cov-presence
 INFO
 INFO     @docker-host > | otto-cov-presence
 INFO     @docker-host > | otto-cov 0 present
-INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
-         otto-gcda-check; if { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L
-         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
-         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
-         otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '"'"'*.gcda'"'"' -type f -print
-         2>&1; fi'
 INFO
 INFO     @docker-host > | otto-gcda-check
 INFO     @docker-host > | otto-gcda-absent
@@ -102,12 +102,18 @@ INFO     @docker-host > | [3] hello docker world
 === 5 passed in <t>s ===
 INFO     Archiving .gcda for banner on docker-host:/tmp/quickstart-docker/banner
 INFO     Archiving .gcda for wordcount on docker-host.quickstart.tools:/tmp/wordcount
-INFO     @docker-host   | ! test -d /tmp/quickstart-docker/banner && echo otto-no-cov-dir ||
-         (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" &&
-         cd /tmp/quickstart-docker/banner && tar -cf "$t" .)
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount && echo
-         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
-         "otto-archive:$t" && cd /tmp/wordcount && tar -cf "$t" .)'
+INFO     @docker-host   | { __otto_d=/tmp/quickstart-docker/banner; while ! test -e "$__otto_d" && !
+         test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test
+         "$__otto_d" != /tmp/quickstart-docker/banner && { ! test -d "$__otto_d" || test -x
+         "$__otto_d"; }; } && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/quickstart-docker/banner && tar -cf "$t" .)
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/wordcount; while ! test
+         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
+         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/wordcount && { ! test -d
+         "$__otto_d" || test -x "$__otto_d"; }; } && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/wordcount && tar -cf "$t" .)'
 INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @docker-host   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
@@ -129,9 +135,11 @@ INFO     @docker-host   | rm -rf
 INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
          "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
 INFO     Archiving .gcda for shout on docker-host.quickstart.tools:/tmp/shout
-INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/shout && echo
-         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
-         "otto-archive:$t" && cd /tmp/shout && tar -cf "$t" .)'
+INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; while ! test -e
+         "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/};
+         done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
+         } && echo otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX")
+         && echo "otto-archive:$t" && cd /tmp/shout && tar -cf "$t" .)'
 INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
