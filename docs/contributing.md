@@ -868,6 +868,39 @@ unvalidated gap until #801 gates the merge result. Either way, run `make
 gate-status` after the push: the status belongs to a sha, and the old head's
 does not carry over.
 
+(when-main-goes-red)=
+
+### When main goes red
+
+A landing that breaks `main` turns every open pull request red with it,
+because each pull request's CI tests its merge with `main`. Nobody else can
+land until it is out, so the first question is never "what is the fix"; it is
+"does this landing come out".
+
+The record is the issue CI files by itself (`CI failed on main: <jobs>`). It
+names the failing jobs and tests, and for each failing test file it says
+whether the landing's diff holds that file. Work from it:
+
+1. **The failure is in the landing's diff** (the failing test, or the code it
+   tests, was added or changed by the landing). The landing's author opens a
+   revert pull request at once: `git revert` of the landing's commits, newest
+   first, on a branch, gated and pushed like any other pull request. The
+   maintainer lands it. The fix is then made on a branch and lands again
+   through the normal flow, with nobody waiting on it.
+2. **The failure is not in the landing's diff.** An older test failed that
+   fails only sometimes, and the landing was only the run it failed on.
+   `main` is not reverted: a revert would remove work that broke nothing and
+   leave the test as it is. Whoever takes the issue finds why the test fails
+   and fixes that cause, with the failing run linked from the fix. A retry, a
+   softened assertion and a skip are not fixes, and neither is re-running the
+   job until it passes: the issue stays open until the cause is fixed.
+3. **The issue cannot say** (a job that failed with no test named: a lint, the
+   docs build, a timeout). Read the job's log and decide between 1 and 2 by
+   the same question: did the landing's diff add or change what failed?
+
+Nothing reverts `main` automatically: a tool cannot tell case 1 from case 2,
+and reverting on case 2 costs a landing and fixes nothing.
+
 ### Hotfix
 
 A hotfix is a pull request like any other; only its checks are skipped. It is
