@@ -289,6 +289,99 @@ HOSTLESS_MIDDLE_SERIAL_ARGS = (
 # timing out on WebKit. If either expression changes, change both.
 DASHBOARD_MARKER_EXPR = "browser and not soak"
 
+# The two browser suites the `dashboard` session runs: the monitor dashboard
+# and the coverage-report SPA. Also the roots the changed-test repeat's browser
+# lane looks under.
+DASHBOARD_PATHS = (
+    "tests/e2e/monitor/dashboard",
+    "tests/e2e/cov/report_browser",
+)
+
+# A failed browser test keeps its Playwright trace (actions, DOM snapshots,
+# console, network) and a screenshot, which the CI jobs upload on failure. A
+# rare browser failure (#1006: a confirm dialog that never opened, no repro)
+# leaves nothing else behind; a passing test keeps nothing. Each job runs one
+# engine, and the per-test directory name already carries it, so no per-engine
+# subdirectory.
+DASHBOARD_ARTIFACT_ARGS = (
+    "--tracing",
+    "retain-on-failure",
+    "--screenshot",
+    "only-on-failure",
+    "--output",
+    str(PLAYWRIGHT_OUTPUT_DIR),
+)
+
+# ── The changed-test repeat (#1044): a pull request repeats the test files its
+# diff adds or modifies, so a test that fails only sometimes is caught where
+# it is introduced. docs/contributing.md describes it under "The changed-test
+# repeat". One bundle per lane, each the lane's own marker expression and
+# `-n0` with coverage off and a count. They are spelled out, like the canary
+# pair above, because the lane scanners (tests/unit/test_tier_marker_invariants.py)
+# read a session's bundles as literal tuples and could not see the `-m` of a
+# computed one; tests/unit/test_changed_repeat_lanes.py holds each equal to its
+# lane's bundle, so the two cannot drift. The FILES come from the diff
+# (scripts/changed_tests.py), so these carry no path. `--count` makes N items of each test, and
+# in a parallel leg xdist spreads them over the workers, as nightly's
+# `--count` lanes do: a test's repeats can run at the same time as each other
+# unless an xdist group holds them on one worker. It finds a test that fails
+# only sometimes, not state leaking from one test into the next in one
+# process (that is `tests_unit_repeat`'s job).
+CHANGED_REPEAT_COUNT = 20
+CHANGED_REPEAT_GUARDS_COUNT = 5
+CHANGED_REPEAT_BROWSER_COUNT = 10
+CHANGED_REPEAT_UNIT_ROOTS = ("tests/unit",)
+CHANGED_REPEAT_E2E_ROOTS = ("tests/e2e",)
+CHANGED_REPEAT_UNIT_TEST_ARGS = (
+    "-m",
+    HOSTLESS_CLAUSES + " and not serial_timing and not interpreter_agnostic",
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_COUNT}",
+)
+CHANGED_REPEAT_UNIT_SERIAL_ARGS = (
+    "-m",
+    "serial_timing and " + HOSTLESS_CLAUSES + " and not interpreter_agnostic",
+    "-n0",
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_COUNT}",
+)
+CHANGED_REPEAT_GUARDS_ARGS = (
+    "-m",
+    HOSTLESS_CLAUSES + " and interpreter_agnostic",
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_GUARDS_COUNT}",
+)
+CHANGED_REPEAT_E2E_TEST_ARGS = (
+    "-m",
+    HOSTLESS_CLAUSES + " and not serial_timing",
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_COUNT}",
+)
+CHANGED_REPEAT_E2E_SERIAL_ARGS = (
+    "-m",
+    "serial_timing and " + HOSTLESS_CLAUSES,
+    "-n0",
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_COUNT}",
+)
+CHANGED_REPEAT_BROWSER_ARGS = (
+    "-m",
+    DASHBOARD_MARKER_EXPR,
+    "--no-cov",
+    f"--count={CHANGED_REPEAT_BROWSER_COUNT}",
+)
+
+# The diff the changed-test repeat reads. In a pull request's CI the checkout
+# is the merge commit, whose first parent is `main`: HEAD^1..HEAD is the pull
+# request. Locally, name the range: CHANGED_TESTS_RANGE=origin/main...HEAD.
+CHANGED_TESTS_RANGE_ENV = "CHANGED_TESTS_RANGE"
+CHANGED_TESTS_DEFAULT_RANGE = "HEAD^1..HEAD"
+
+# pytest's "no tests collected": every test in the changed files belongs to
+# another lane (a bed-only test, a browser test in a hostless lane). That is
+# nothing to repeat here, and it is green ONLY for the repeat sessions.
+NO_TESTS_COLLECTED = 5
+
 
 # ── The catch-all sessions' bundles. The `interpreter_agnostic` family (tests
 # whose subject is the repository, its build files or a generated corpus) runs
@@ -836,8 +929,7 @@ def dashboard(session: nox.Session, browser: str) -> None:
     session.run("playwright", "install", browser)
     session.run(
         "pytest",
-        "tests/e2e/monitor/dashboard",
-        "tests/e2e/cov/report_browser",
+        *DASHBOARD_PATHS,
         "-m",
         DASHBOARD_MARKER_EXPR,
         "--browser",
@@ -846,20 +938,139 @@ def dashboard(session: nox.Session, browser: str) -> None:
         # `make coverage` to fold in via --cov-append), this job stands alone
         # with nothing to combine into, so coverage stays off entirely.
         "--no-cov",
-        # A failed test keeps its Playwright trace (actions, DOM snapshots,
-        # console, network) and a screenshot, which the CI jobs upload on
-        # failure. A rare browser failure (#1006: a confirm dialog that never
-        # opened, no repro) leaves nothing else behind; a passing test keeps
-        # nothing. Each job runs one engine, and the per-test directory name
-        # already carries it, so no per-engine subdirectory.
-        "--tracing",
-        "retain-on-failure",
-        "--screenshot",
-        "only-on-failure",
-        "--output",
-        str(PLAYWRIGHT_OUTPUT_DIR),
+        *DASHBOARD_ARTIFACT_ARGS,
         _junitxml(session, f"dashboard-{browser}"),
         *session.posargs,
+    )
+
+
+def _changed_test_files(session: nox.Session, roots: "tuple[str, ...]") -> "list[str]":
+    """Return the test files the diff adds or modifies under *roots* (scripts/changed_tests.py)."""
+    rev_range = os.environ.get(CHANGED_TESTS_RANGE_ENV, CHANGED_TESTS_DEFAULT_RANGE)
+    # stderr=None: nox folds stderr into the captured output by default, and
+    # a warning printed there would be handed to pytest as a path.
+    listing = session.run(
+        "python",
+        "scripts/changed_tests.py",
+        "--range",
+        rev_range,
+        *roots,
+        silent=True,
+        stderr=None,
+    )
+    return (listing or "").split()
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_changed_repeat_unit(session: nox.Session) -> None:
+    """Repeat the ``tests/unit`` files the diff adds or modifies (less the guards family).
+
+    The changed-test repeat (#1044): the lane ``tests_hostless_unit`` runs,
+    over the diff's files only, ``CHANGED_REPEAT_COUNT`` times each. One
+    failure in any repeat fails the session; nothing is retried.
+    """
+    files = _changed_test_files(session, CHANGED_REPEAT_UNIT_ROOTS)
+    if not files:
+        session.skip("the diff adds or modifies no test file under tests/unit")
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_UNIT_TEST_ARGS,
+        _junitxml(session, "changed-repeat"),
+        *session.posargs,
+        env=_LEAK_ENV,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_UNIT_SERIAL_ARGS,
+        _junitxml(session, "changed-repeat-serial"),
+        *session.posargs,
+        env=_LEAK_ENV,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def tests_changed_repeat_guards(session: nox.Session) -> None:
+    """Repeat the ``interpreter_agnostic`` guards in the files the diff adds or modifies.
+
+    The changed-test repeat's guards lane: what ``tests_hostless_guards``
+    runs, over the diff's files only, on the primary Python only.
+    """
+    files = _changed_test_files(session, CHANGED_REPEAT_UNIT_ROOTS)
+    if not files:
+        session.skip("the diff adds or modifies no test file under tests/unit")
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_GUARDS_ARGS,
+        _junitxml(session, "changed-repeat"),
+        *session.posargs,
+        env=_LEAK_ENV,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+
+
+@nox_uv.session(python=list(BOOKEND_PYTHONS), uv_groups=["dev"])
+def tests_changed_repeat_e2e(session: nox.Session) -> None:
+    """Repeat the hostless tests in the ``tests/e2e`` files the diff adds or modifies.
+
+    The changed-test repeat's e2e lane: what ``tests_hostless_e2e`` runs, over
+    the diff's files only, on the bookend Pythons. A browser test in one of
+    those files is deselected here and repeated by
+    ``tests_changed_repeat_browser``.
+    """
+    files = _changed_test_files(session, CHANGED_REPEAT_E2E_ROOTS)
+    if not files:
+        session.skip("the diff adds or modifies no test file under tests/e2e")
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_E2E_TEST_ARGS,
+        _junitxml(session, "changed-repeat"),
+        *session.posargs,
+        env=_LEAK_ENV,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_E2E_SERIAL_ARGS,
+        _junitxml(session, "changed-repeat-serial"),
+        *session.posargs,
+        env=_LEAK_ENV,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def tests_changed_repeat_browser(session: nox.Session) -> None:
+    """Repeat the browser tests in the dashboard files the diff adds or modifies.
+
+    The changed-test repeat's browser lane: what ``dashboard`` runs, over the
+    diff's files only. NOT parametrized by engine, unlike ``dashboard``: CI and
+    nightly select that session with ``nox -k <engine>``, which must keep
+    matching it alone. The engine comes in the posargs, as pytest takes it::
+
+        nox -s tests_changed_repeat_browser -- --browser chromium
+
+    Like ``dashboard``, it needs the built dashboard (``make web``) and the
+    engine installed (``playwright install <engine>``; CI's image carries all
+    three).
+    """
+    files = _changed_test_files(session, DASHBOARD_PATHS)
+    if not files:
+        session.skip("the diff adds or modifies no test file under the browser suites")
+    session.run(
+        "pytest",
+        *files,
+        *CHANGED_REPEAT_BROWSER_ARGS,
+        *DASHBOARD_ARTIFACT_ARGS,
+        _junitxml(session, "changed-repeat"),
+        *session.posargs,
+        success_codes=[0, NO_TESTS_COLLECTED],
     )
 
 

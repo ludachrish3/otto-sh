@@ -249,7 +249,8 @@ _SERIAL_LEG_TOKEN = '"serial_timing and '
 # exclusion in: (parallel bundle, its -n0 twin) — every catch-all session's
 # primary and non-primary pairs (the non-primary ones deselect the
 # `interpreter_agnostic` family and run coverage off —
-# tests/unit/test_python_matrix_tiering.py pins both).
+# tests/unit/test_python_matrix_tiering.py pins both), and the changed-test
+# repeat's two hostless lanes, which run their lane's pair over the diff's files.
 _CONSTANT_PAIRS = (
     ("UNIT_TEST_ARGS", "UNIT_SERIAL_ARGS"),
     ("UNIT_NONPRIMARY_TEST_ARGS", "UNIT_NONPRIMARY_SERIAL_ARGS"),
@@ -262,6 +263,8 @@ _CONSTANT_PAIRS = (
     ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS"),
     ("TESTS_ALL_NONPRIMARY_TEST_ARGS", "TESTS_ALL_NONPRIMARY_SERIAL_ARGS"),
     ("TESTS_BED_TEST_ARGS", "TESTS_BED_SERIAL_ARGS"),
+    ("CHANGED_REPEAT_UNIT_TEST_ARGS", "CHANGED_REPEAT_UNIT_SERIAL_ARGS"),
+    ("CHANGED_REPEAT_E2E_TEST_ARGS", "CHANGED_REPEAT_E2E_SERIAL_ARGS"),
 )
 
 _SERIAL_TIMING_TESTS = {
