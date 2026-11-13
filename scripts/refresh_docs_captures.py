@@ -68,9 +68,12 @@ kills and reaps the running command before the lease is released.
 
 ``unordered = true`` is for a command whose log lines interleave work otto
 does on several hosts at once, so their order varies from run to run.
-Refreshing writes the artifact exactly as printed. ``--check`` compares the
-redacted lines as a multiset (``_same_lines``): it ignores their order, but a
-missing, extra or changed line is still drift.
+``--check`` compares the redacted lines as a multiset (``_same_lines``): it
+ignores their order, but a missing, extra or changed line is still drift. A
+refresh asks the same question before it writes: an artifact that already
+holds the printed lines is kept as it is, so rerunning ``make docs-captures``
+never rewrites an artifact for the order alone. To record a new order, delete
+the artifact first.
 
 A top-level ``[leases]`` table names the projects whose captures need a bed
 lease (``docker_host = ["<project>", ...]``). A run selecting any capture of
@@ -1166,7 +1169,12 @@ def _run_set(caps: list[Capture], step: Callable[[Capture, bool], None]) -> None
 
 
 def refresh(caps: list[Capture], ctx: RunContext) -> None:
-    """Run every capture in ``caps`` and (over)write its artifact."""
+    """Run every capture in ``caps`` and (over)write its artifact.
+
+    An ``unordered`` capture whose artifact already holds the printed lines is
+    left alone: the check calls the two the same, so writing would only move
+    lines.
+    """
     if not caps:
         raise CaptureError("no captures selected")
     ctx.captures_dir.mkdir(parents=True, exist_ok=True)
@@ -1176,7 +1184,15 @@ def refresh(caps: list[Capture], ctx: RunContext) -> None:
         if not (cap.record and recorded):
             print(f"ran {cap.id}", flush=True)
             return
-        (ctx.captures_dir / f"{cap.id}.txt").write_text(text)
+        target = ctx.captures_dir / f"{cap.id}.txt"
+        if (
+            cap.unordered
+            and target.exists()
+            and _same_lines(target.read_text(), text, unordered=True)
+        ):
+            print(f"kept {cap.id}", flush=True)
+            return
+        target.write_text(text)
         print(f"captured {cap.id}", flush=True)
 
     _run_set(caps, step)

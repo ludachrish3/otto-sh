@@ -28,7 +28,8 @@
 #
 # unordered = true -> --check ignores the order of the redacted lines, never
 #   their count or text: for a command whose log interleaves work otto does on
-#   several hosts at once. A refresh still writes the artifact as printed.
+#   several hosts at once. A refresh keeps an artifact that already holds
+#   the lines it printed, whatever their order, so a rerun is never a diff.
 # kind = "gtest"  -> argv is a GoogleTest binary: colour off, timings redacted
 # [[capture.store]] -> after the run, a hit count the coverage store must hold:
 #   path and file (as the store records it) may use {project}/{tmp}/{xdir};
@@ -1172,9 +1173,10 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
 # for a transfer (a 32-digit uuid), and an otto-fetch id that wraps across a
 # line at a fixed column, since every path before it has a fixed length.
 #
-# install, cov get and test --cov work on the parent and the container at
-# once, so their log lines interleave differently on each run: they are
-# unordered = true.
+# install, cov get, test --cov and cleanup work on the parent and the
+# container at once, so their log lines interleave differently on each run:
+# they are unordered = true. cleanup's container is stopped by then, and the
+# line saying so waits on a probe that races the parent's own commands.
 #
 # A docker query whose status the shell ignores would pass a check it never
 # made, so each one is an assignment chained with &&: an assignment takes its
@@ -1510,6 +1512,7 @@ redact = [
 id = "qs-docker-cleanup"
 project = "quickstart-docker"
 always = true
+unordered = true
 timeout = 300
 env = { OTTO_COMPOSE_SUFFIX = "docs" }
 argv = ["{otto}", "--lab", "example_lab", "run", "cleanup", "--no-reset-impairments", "--no-remove-tunnels"]

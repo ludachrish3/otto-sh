@@ -1386,6 +1386,35 @@ def test_an_unordered_check_ignores_only_the_order(tmp_path, capsys, body, unord
     assert ("DRIFT u" in capsys.readouterr().out) is drifts
 
 
+@pytest.mark.parametrize(
+    ("body", "unordered", "kept"),
+    [
+        ("2\n1\n", True, True),  # reordered: the check calls these the same artifact
+        ("2\n1\n", False, False),  # an ordered capture records the order it printed
+        ("1\n3\n", True, False),  # a changed line is a new artifact
+        ("1\n", True, False),  # so is a missing one
+    ],
+    ids=["reordered", "ordered-reordered", "changed", "missing"],
+)
+def test_a_refresh_rewrites_an_artifact_only_when_the_check_would_call_it_drifted(
+    tmp_path, capsys, body, unordered, kept
+):
+    ctx = _ctx(tmp_path)
+    flag = "unordered = true\n" if unordered else ""
+    caps = rdc.load_manifest(_manifest(tmp_path, _TWO_LINES.format(flag=flag)))
+    ctx.captures_dir.mkdir(parents=True)
+    (ctx.captures_dir / "u.txt").write_text(_TWO_LINES_HEAD + body)
+    drifted = rdc.check(caps, ctx) == 1
+    capsys.readouterr()
+
+    rdc.refresh(caps, ctx)
+
+    assert drifted is not kept
+    after = (ctx.captures_dir / "u.txt").read_text()
+    assert after == _TWO_LINES_HEAD + (body if kept else "1\n2\n")
+    assert capsys.readouterr().out == ("kept u\n" if kept else "captured u\n")
+
+
 def _probe(lock: Path, out: Path) -> list[str]:
     """A capture argv that appends to *out* whether *lock* is held by someone else."""
     code = (
