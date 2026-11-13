@@ -585,6 +585,24 @@ async def test_external_cancellation_body_translating_cancel_still_sweeps():
 
 
 @pytest.fixture(autouse=True)
+def _no_test_leaves_the_process(monkeypatch):
+    """A forced run in this module must never reach the real ``os._exit``.
+
+    ``run_command`` leaves past interpreter shutdown when a prompt's thread may
+    be writing. In a test that would end the pytest worker with no report, and
+    one leaked prompt thread would do it to every later forced run. A test
+    that expects that exit installs its own stand-in
+    (``_record_exits_past_shutdown``).
+    """
+    from otto import lifecycle
+
+    def refuse(code: int, flush_logs: object) -> None:
+        raise AssertionError(f"a forced run tried to leave the process with {code}")
+
+    monkeypatch.setattr(lifecycle, "_exit_past_shutdown", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _abandoned_prompts_finish():
     """An abandoned prompt holds the one-prompt lock until its thread returns.
 
@@ -1062,13 +1080,42 @@ def test_an_abandoned_prompt_never_writes_again(monkeypatch):
     assert after_read == []
 
 
+def _record_exits_past_shutdown(monkeypatch) -> "list[int]":
+    """Stand in for the exit that skips interpreter shutdown: record its code, then unwind."""
+    import functools
+
+    from otto import lifecycle
+    from otto.logger.management import shutdown_listener
+
+    codes: "list[int]" = []
+
+    def leave(code: int, flush_logs: object) -> None:
+        # The flush itself, bounded: not the factory, which would flush nothing.
+        assert isinstance(flush_logs, functools.partial)
+        assert flush_logs.func is shutdown_listener
+        assert flush_logs.keywords == {"join_timeout": lifecycle._FORCE_FLUSH_JOIN}
+        codes.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(lifecycle, "_exit_past_shutdown", leave)
+    return codes
+
+
 def test_a_second_signal_forces_the_run_while_the_prompt_is_still_writing(monkeypatch):
-    """The cancel awaits the write on the loop, so the force stage still works during it."""
+    """The cancel awaits the write on the loop, so the force stage still works during it.
+
+    And the forced run does not leave through interpreter shutdown, which
+    would wait for (or abort on) the stream the thread is still writing to
+    (#1048): it runs the force-exit hooks and exits past it.
+    """
     import threading
 
-    from otto.lifecycle import interruptible_prompt
+    from otto.lifecycle import interruptible_prompt, register_force_exit_hook
 
     termui = _fake_termui(monkeypatch)
+    exits = _record_exits_past_shutdown(monkeypatch)
+    order: "list[str]" = []
+    unregister = register_force_exit_hook(lambda: order.append(f"hook, {len(exits)} exits so far"))
     release = threading.Event()  # the question's write never finishes on its own
 
     def prompt() -> str:
@@ -1089,5 +1136,256 @@ def test_a_second_signal_forces_the_run_while_the_prompt_is_still_writing(monkey
             run_command(body(), _controller=ctrl)
     finally:
         release.set()
+        unregister()
     assert exc_info.value.code == 130
     assert ctrl.forced is True
+    assert exits == [130]
+    assert order == ["hook, 0 exits so far"]
+
+
+def test_a_forced_run_whose_prompt_is_only_reading_exits_the_ordinary_way(monkeypatch):
+    """A thread blocked in its read holds no lock shutdown takes: SystemExit, as ever.
+
+    The prompt was given up (by the cancel, and again by the forced exit), so
+    the line that arrives afterwards parks the thread instead of letting it
+    write.
+    """
+    import io
+    import sys
+    import threading
+
+    from otto.lifecycle import interruptible_prompt
+    from otto.utils import wait_for
+
+    termui = _fake_termui(monkeypatch)
+    exits = _record_exits_past_shutdown(monkeypatch)
+    answered = threading.Event()
+    asked_on: "list[threading.Thread]" = []
+
+    ctrl = _controller()
+    loops: "list[asyncio.AbstractEventLoop]" = []
+
+    class Stdin:
+        def readline(self) -> str:
+            # Ordered by events, not by timers: the first signal is sent from
+            # INSIDE the read (the thread is quiet by then), the second from
+            # the body's own cancellation handler.
+            loops[0].call_soon_threadsafe(ctrl._on_signal, signal.SIGINT)
+            answered.wait()
+            return "late\n"
+
+    monkeypatch.setattr(sys, "stdin", Stdin())
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+
+    def prompt() -> str:
+        asked_on.append(threading.current_thread())
+        return termui.visible_prompt_func("Name: ")
+
+    prompt.__module__ = "fake_termui"
+
+    async def body() -> None:
+        loops.append(asyncio.get_running_loop())
+        try:
+            await interruptible_prompt(prompt)
+        except asyncio.CancelledError:
+            ctrl._on_signal(signal.SIGINT)  # the second press, during the teardown
+            await asyncio.Event().wait()  # a teardown that never ends: only a force leaves
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            run_command(body(), _controller=ctrl)
+    finally:
+        answered.set()
+    assert exc_info.value.code == 130
+    assert ctrl.forced is True
+    assert exits == []
+    (thread,) = asked_on
+    wait_for(
+        lambda: thread.name == "otto-prompt-parked",
+        5,
+        interval=0.01,
+        on_timeout=lambda: "the given-up prompt thread never parked",
+    )
+
+
+def test_a_run_forced_before_the_prompts_thread_has_run_does_not_trust_it_to_be_quiet(
+    monkeypatch,
+):
+    """click echoes the question before it reads: a thread that has not started may yet write.
+
+    The thread is held back entirely (its ``start`` is deferred), which is a
+    loaded machine's scheduling made certain. The forced exit must already
+    know of the prompt.
+    """
+    import threading
+
+    from otto import lifecycle
+    from otto.lifecycle import interruptible_prompt
+    from otto.utils import wait_for
+
+    termui = _fake_termui(monkeypatch)
+    exits = _record_exits_past_shutdown(monkeypatch)
+    held: "list[threading.Thread]" = []
+
+    def hold(thread: threading.Thread) -> None:
+        held.append(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", hold)
+
+    def prompt() -> str:
+        return termui.visible_prompt_func("Name: ")
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.call_soon(ctrl._on_signal, signal.SIGINT)
+        loop.call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(prompt)
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            run_command(body(), _controller=ctrl)
+        assert exc_info.value.code == 130
+        assert ctrl.forced is True
+        assert exits == [130]
+    finally:
+        # Let the held thread run: given up, it parks at its first turn to
+        # write, and hands the reader and the one-prompt lock back.
+        monkeypatch.undo()
+        for thread in held:  # none, if the run failed before it made one
+            thread.start()
+            wait_for(
+                lambda thread=thread: thread.name == "otto-prompt-parked",
+                5,
+                interval=0.01,
+                on_timeout=lambda: "the held prompt thread never parked",
+            )
+    assert len(held) == 1
+    assert lifecycle._PromptHandoff.live is None
+
+
+def test_a_forced_run_with_no_prompt_exits_the_ordinary_way(monkeypatch):
+    exits = _record_exits_past_shutdown(monkeypatch)
+    ctrl = _controller()
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.02, ctrl._on_signal, signal.SIGINT)
+        loop.call_later(0.04, ctrl._on_signal, signal.SIGINT)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.Event().wait()
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_command(body(), _controller=ctrl)
+    assert exc_info.value.code == 130
+    assert ctrl.forced is True
+    assert exits == []
+
+
+def test_the_exit_past_shutdown_flushes_first_and_exits_whatever_the_flush_raises(monkeypatch):
+    """One more Ctrl+C during the flush must not unwind into the shutdown being skipped.
+
+    On a command's main thread SIGINT is Python's default handler again by
+    then, so the press is a ``KeyboardInterrupt`` raised inside the flush.
+    """
+    import os
+
+    from otto import lifecycle
+
+    monkeypatch.undo()  # the real function, with only os._exit stood in for
+    order: "list[str]" = []
+
+    class Left(BaseException):
+        pass
+
+    def leave(code: int) -> None:
+        order.append(f"exit {code}")
+        raise Left
+
+    monkeypatch.setattr(os, "_exit", leave)
+
+    def flush() -> None:
+        order.append("flush")
+
+    with pytest.raises(Left):
+        lifecycle._exit_past_shutdown(143, flush)
+    assert order == ["flush", "exit 143"]
+
+    def interrupted_flush() -> None:
+        order.append("flush")
+        raise KeyboardInterrupt
+
+    order.clear()
+    with pytest.raises(Left):
+        lifecycle._exit_past_shutdown(130, interrupted_flush)
+    assert order == ["flush", "exit 130"]
+
+
+def test_a_press_during_the_force_exit_hooks_still_leaves_past_shutdown(monkeypatch):
+    """The hooks run on the main thread too, under the same default SIGINT handler."""
+    import threading
+
+    from otto.lifecycle import interruptible_prompt, register_force_exit_hook
+
+    termui = _fake_termui(monkeypatch)
+    exits = _record_exits_past_shutdown(monkeypatch)
+
+    def pressed_again() -> None:
+        raise KeyboardInterrupt
+
+    unregister = register_force_exit_hook(pressed_again)
+    release = threading.Event()
+
+    def prompt() -> str:
+        release.wait()
+        return termui.visible_prompt_func("Name: ")
+
+    prompt.__module__ = "fake_termui"
+    ctrl = _controller()
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.05, ctrl._on_signal, signal.SIGINT)
+        loop.call_later(0.1, ctrl._on_signal, signal.SIGINT)
+        await interruptible_prompt(prompt)
+
+    try:
+        with pytest.raises(SystemExit):
+            run_command(body(), _controller=ctrl)
+    finally:
+        release.set()
+        unregister()
+    assert exits == [130]
+
+
+def test_giving_a_prompt_up_parks_its_thread_at_its_next_write():
+    """The forced exit's own abandon: no cancelled wait is needed to have made it."""
+    import threading
+
+    from otto.lifecycle import _PromptHandoff
+
+    retired: "list[bool]" = []
+    loop = asyncio.new_event_loop()
+    try:
+        handoff = _PromptHandoff(loop)
+        handoff.on_retire(lambda: retired.append(True))
+        assert handoff.give_up() is False  # it has not said it is quiet: it may be writing
+        handoff.quiet()
+        assert handoff.give_up() is True
+        thread = threading.Thread(target=handoff.may_write, daemon=True)
+        thread.start()
+        from otto.utils import wait_for
+
+        wait_for(
+            lambda: thread.name == "otto-prompt-parked",
+            5,
+            interval=0.01,
+            on_timeout=lambda: "a given-up thread wrote instead of parking",
+        )
+        assert retired == [True]
+    finally:
+        loop.close()

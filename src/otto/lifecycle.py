@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine, Generator
-from typing import Any, TypeVar, overload
+from typing import Any, ClassVar, NoReturn, TypeVar, overload
 
 R = TypeVar("R")
 
@@ -150,8 +150,13 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
     waits until the run forces.
 
     A FORCED run (a second press, the teardown deadline) stops waiting for
-    quiet, and so gives this up too: it abandons cleanup by design, and a
-    thread caught mid-write at that instant can still abort the exit.
+    quiet. If the thread is still not quiet then, :func:`run_command` does not
+    leave through the interpreter's shutdown at all, which would wait on the
+    stream the thread is writing to (for good, if that write is stuck) or
+    abort on it: it runs the force-exit hooks, flushes the log listener
+    (bounded) and exits with 128 + signum directly, as a forced synchronous
+    phase does. A forced run whose prompt thread is quiet exits the ordinary
+    way.
     """
     from .logger.management import direct_terminal
 
@@ -206,9 +211,15 @@ async def interruptible_prompt(prompt: "Callable[..., R]", *args: Any, **kwargs:
     with direct_terminal():
         if not _PROMPTING.acquire(blocking=False):
             raise RuntimeError("another prompt is still reading the terminal")
+        # Published HERE, before the thread exists, and under _PROMPTING (one
+        # prompt at a time): a forced exit that lands before the thread has run
+        # a line must still find a prompt that is not quiet. click echoes the
+        # question before it calls the reader.
+        _PromptHandoff.live = handoff
         try:
             threading.Thread(target=ask, name="otto-prompt", daemon=True).start()
         except BaseException:
+            _PromptHandoff.live = None
             _PROMPTING.release()  # no thread to release it
             raise
         try:
@@ -238,6 +249,9 @@ class _PromptHandoff:
     before the abandon (and the command waits for the thread to be quiet
     again) or after it (and the thread parks without writing).
     """
+
+    live: "ClassVar[_PromptHandoff | None]" = None
+    """The prompt whose thread has not retired yet, if any: what a forced exit asks."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -272,15 +286,32 @@ class _PromptHandoff:
     def retire(self) -> None:
         """Thread side: done with the terminal (once), and quiet."""
         retire, self._retire = self._retire, None
+        if _PromptHandoff.live is self:
+            _PromptHandoff.live = None  # before the next prompt may start
         if retire is not None:
             retire()
         self.quiet()
 
-    async def abandon(self) -> None:
-        """Command side: give the prompt up, then wait until its thread is quiet."""
+    def give_up(self) -> bool:
+        """Command side: give the prompt up for good; whether its thread is quiet.
+
+        From here the thread never starts another write through the swapped
+        reader (its next turn to write parks it), so ``True`` stays true.
+        ``False`` means the thread may be inside a write this instant. A
+        prompt that does not read through the swapped reader was declared
+        quiet at its start and answers ``True`` whatever it is doing: its
+        writes cannot be seen (:func:`interruptible_prompt`).
+        """
         with self._lock:
             self._abandoned = True
-            if self._quiet:
+            return self._quiet
+
+    async def abandon(self) -> None:
+        """Command side: give the prompt up, then wait until its thread is quiet."""
+        if self.give_up():
+            return
+        with self._lock:
+            if self._quiet:  # it went quiet between the two looks
                 return
             waiter = self._waiter = self._loop.create_future()
         await waiter
@@ -606,12 +637,10 @@ class SyncPhaseGuard:
         if signum is None:
             signum = first_signum if first_signum is not None else signal.SIGINT
         _run_force_exit_hooks()
-        with contextlib.suppress(Exception):
-            self._shutdown_listener()
         # _wake_r is deliberately left open here: this branch never returns,
         # and os._exit reclaims every fd (uniform ownership: the watchdog
         # closes the read end only on its retire paths).
-        os._exit(128 + signum)
+        _exit_past_shutdown(128 + signum, self._shutdown_listener)
 
     def _close(self) -> None:
         """Retire a started watchdog; called from ``sync_phase``'s finally."""
@@ -709,16 +738,11 @@ def sync_phase(
     hooks are idempotent, harmless.
     """
     from .invocation import current_policy
-    from .logger.management import shutdown_listener
 
     bound = current_policy().teardown_deadline if deadline is None else deadline
-
-    def _bounded_flush() -> None:
-        # Resolved to a concrete callable here, in normal context; only the
-        # watchdog calls it, and only on the force path.
-        shutdown_listener(join_timeout=_FORCE_FLUSH_JOIN)
-
-    guard = SyncPhaseGuard(bound, what, _bounded_flush)
+    # Resolved to a concrete callable here, in normal context; only the
+    # watchdog calls it, and only on the force path.
+    guard = SyncPhaseGuard(bound, what, _bounded_log_flush())
     if not install_handlers:
         yield guard
         return
@@ -759,6 +783,51 @@ def _run_force_exit_hooks() -> None:
     for hook in reversed(list(_force_exit_hooks)):
         with contextlib.suppress(Exception):
             hook()
+
+
+def _bounded_log_flush() -> "Callable[[], None]":
+    """Return the force path's log flush: the listener stopped, joined for a bounded time.
+
+    A factory, because the import must happen in normal context: the
+    synchronous phase's watchdog calls the result where it may not import.
+    """
+    from .logger.management import shutdown_listener
+
+    return functools.partial(shutdown_listener, join_timeout=_FORCE_FLUSH_JOIN)
+
+
+def _exit_past_shutdown(code: int, flush_logs: "Callable[[], None]") -> NoReturn:
+    """Leave the process with *code* now, skipping the interpreter's shutdown.
+
+    The force path's last step wherever unwinding cannot be trusted to end:
+    a synchronous phase wedged in its teardown, and a command whose
+    abandoned prompt thread may be inside a stdout or stderr write (shutdown
+    flushes those streams, and would wait on that thread's lock or abort on
+    it). ``os._exit`` skips ``atexit``, hence *flush_logs* first; it must be
+    bounded (:func:`_bounded_log_flush`). The caller has run the force-exit
+    hooks.
+
+    Nothing the flush raises stops the exit, a ``KeyboardInterrupt``
+    included: on a command's main thread the loop has given SIGINT back to
+    Python's default handler by now, and one more press during the flush
+    would otherwise unwind into the very shutdown this function exists to
+    skip.
+    """
+    try:
+        flush_logs()
+    finally:
+        os._exit(code)
+
+
+def _prompt_may_be_writing() -> bool:
+    """Whether a prompt's thread may be inside a terminal write, giving the prompt up.
+
+    Asked once, by a forced exit. No live prompt, or one whose thread is
+    quiet, is ``False``; :meth:`_PromptHandoff.give_up` says what quiet
+    promises, and for which prompts.
+    """
+    handoff = _PromptHandoff.live
+    return handoff is not None and not handoff.give_up()
 
 
 class _CompensationExpired(Exception):  # noqa: N818 — internal control-flow signal, never leaves compensate()
@@ -1164,7 +1233,11 @@ def run_command(
     ``SystemExit(128 + signum)`` — 130 for SIGINT, 143 for SIGTERM — after
     the graceful sweep, or after abandoning it on a second signal /
     teardown-deadline expiry (then the registered force-exit hooks run, after
-    the loop has closed). With no explicit *teardown_deadline*, it reads the
+    the loop has closed). One forced exit does not raise: when an
+    :func:`interruptible_prompt` thread may still be writing to the terminal,
+    the process exits with that status directly, past the interpreter's
+    shutdown (``atexit`` handlers do not run; the log listener is flushed
+    first, bounded). With no explicit *teardown_deadline*, it reads the
     installed run policy's, which the run filled from
     ``OTTO_TEARDOWN_DEADLINE`` when it was prepared (10 s when no policy is
     installed). ``_controller`` is a test seam: tier-1 tests inject
@@ -1194,5 +1267,13 @@ def run_command(
         return asyncio.run(ctrl._main(coro))  # noqa: SLF001 (_main is test-visible seam, required for tier-1 state machine testing)
     except _InterruptedCommand as exc:
         if exc.forced:
-            _run_force_exit_hooks()
+            # Decided, and the flush resolved, BEFORE the hooks: SIGINT is the
+            # default handler's again, and a press during the hooks must not
+            # unwind past the exit below into the interpreter's shutdown.
+            flush_logs = _bounded_log_flush() if _prompt_may_be_writing() else None
+            try:
+                _run_force_exit_hooks()
+            finally:
+                if flush_logs is not None:
+                    _exit_past_shutdown(128 + exc.signum, flush_logs)
         raise SystemExit(128 + exc.signum) from None
