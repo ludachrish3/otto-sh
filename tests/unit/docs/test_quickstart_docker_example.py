@@ -538,7 +538,12 @@ def test_every_docker_query_is_status_checked(cap_id):
 
 def test_only_the_captures_that_interleave_two_hosts_are_unordered():
     unordered = [c.id for c in _captures() if c.unordered]
-    assert unordered == ["qs-docker-install", "qs-docker-cov-get-manual", "qs-docker-test-cov"]
+    assert unordered == [
+        "qs-docker-install",
+        "qs-docker-cov-get-manual",
+        "qs-docker-test-cov",
+        "qs-docker-cleanup",
+    ]
 
 
 def test_every_store_assertion_names_its_marker():
