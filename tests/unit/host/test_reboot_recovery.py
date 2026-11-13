@@ -771,25 +771,33 @@ async def test_what_the_waits_saw_decides_the_verdict(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("logout", "reason"),
+    ("make_logout", "reason"),
     [
         pytest.param(
-            AsyncMock(side_effect=ConsoleError("box: console srv:4001 (dial=ssh) is busy")),
+            lambda: AsyncMock(side_effect=ConsoleError("box: console srv:4001 (dial=ssh) is busy")),
             "box: console srv:4001 (dial=ssh) is busy",
             id="raises",
         ),
-        pytest.param(AsyncMock(side_effect=TimeoutError()), "TimeoutError", id="raises-bare"),
         pytest.param(
-            AsyncMock(return_value=Result(status=Status.Error, msg="reset gave up")),
+            lambda: AsyncMock(side_effect=TimeoutError()), "TimeoutError", id="raises-bare"
+        ),
+        pytest.param(
+            lambda: AsyncMock(return_value=Result(status=Status.Error, msg="reset gave up")),
             "reset gave up",
             id="not-ok",
         ),
     ],
 )
 async def test_a_logout_that_fails_keeps_the_verdict_and_the_hint(
-    monkeypatch, caplog, logout, reason
+    monkeypatch, caplog, make_logout, reason
 ):
-    """The logout failing never masks "did not take": it says so and keeps the manual hint."""
+    """The logout failing never masks "did not take": it says so and keeps the manual hint.
+
+    Each case builds its mock per run (a factory, not a parametrize value):
+    a mock made at collection is shared by every repeat of the case, so its
+    await count would carry over between runs.
+    """
+    logout = make_logout()
     clock = _DialClock(monkeypatch)
     host = _console_host()
     _rebooting(monkeypatch, host, logout)
