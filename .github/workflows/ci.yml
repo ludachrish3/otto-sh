@@ -107,8 +107,21 @@ jobs:
       fail-fast: false
       matrix:
         session: [tests_hostless_unit, tests_hostless_e2e, tests_hostless_guards]
+        # Each leg's changed-test repeat session: its lane's selection over
+        # the test files the pull request adds or modifies.
+        include:
+          - session: tests_hostless_unit
+            repeat: tests_changed_repeat_unit
+          - session: tests_hostless_e2e
+            repeat: tests_changed_repeat_e2e
+          - session: tests_hostless_guards
+            repeat: tests_changed_repeat_guards
     steps:
+      # Depth 2: on a pull request the checkout is the merge commit, and the
+      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -134,6 +147,15 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
+      # A test that fails only sometimes is caught here, on the pull request
+      # that adds or changes it, not on `main` under someone else's landing
+      # (#1044; docs/contributing.md, "The changed-test repeat"). One failure
+      # in any repeat fails the job: nothing is retried. Last, so the leg's
+      # coverage data is uploaded whatever the repeat finds.
+      - name: Repeat the test files this pull request adds or changes
+        if: github.event_name == 'pull_request'
+        run: uv run nox -s ${{ matrix.repeat }}-3.10
+
   # The newest Python, uninstrumented: the sessions whose behaviour can differ
   # by interpreter. Same timeout reasoning as `tests-primary`.
   tests-canary:
@@ -145,8 +167,17 @@ jobs:
       fail-fast: false
       matrix:
         session: [tests_hostless_unit, tests_hostless_e2e]
+        include:
+          - session: tests_hostless_unit
+            repeat: tests_changed_repeat_unit
+          - session: tests_hostless_e2e
+            repeat: tests_changed_repeat_e2e
     steps:
+      # Depth 2: on a pull request the checkout is the merge commit, and the
+      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -154,6 +185,10 @@ jobs:
 
       - name: Run ${{ matrix.session }} under Python 3.14
         run: uv run nox -s ${{ matrix.session }}-3.14
+
+      - name: Repeat the test files this pull request adds or changes
+        if: github.event_name == 'pull_request'
+        run: uv run nox -s ${{ matrix.repeat }}-3.14
 
   # The interior Pythons run the unit session alone. They keep the
   # `tests_hostless-<python>` names because those are required contexts.
@@ -168,7 +203,11 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
+      # Depth 2: on a pull request the checkout is the merge commit, and the
+      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -176,6 +215,10 @@ jobs:
 
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless_unit-${{ matrix.python }}
+
+      - name: Repeat the test files this pull request adds or changes
+        if: github.event_name == 'pull_request'
+        run: uv run nox -s tests_changed_repeat_unit-${{ matrix.python }}
 
   # Combines the primary legs' data and judges the hostless floor on the fold.
   # Not the hostless-setup action: combining data files needs no BusyBox cache,
@@ -281,7 +324,11 @@ jobs:
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
+      # Depth 2: on a pull request the checkout is the merge commit, and the
+      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
@@ -333,6 +380,15 @@ jobs:
           # 3GB dev VM — `make dashboard` stays -n 1 serial there.
           OTTO_BROWSER_SHARD: "1"
         run: uv run nox -k ${{ matrix.browser }}
+      # The changed-test repeat's browser lane, on this job's engine. A named
+      # session, never `-k`: the engine keyword above must keep selecting the
+      # `dashboard` session alone. Before the upload, so a repeat's failure
+      # leaves its trace too.
+      - name: Repeat the browser test files this pull request adds or changes (${{ matrix.browser }})
+        if: github.event_name == 'pull_request'
+        env:
+          OTTO_BROWSER_SHARD: "1"
+        run: uv run nox -s tests_changed_repeat_browser-3.10 -- --browser ${{ matrix.browser }}
       # The nox session keeps each failed test's Playwright trace and
       # screenshot under reports/playwright/ (noxfile.py's
       # PLAYWRIGHT_OUTPUT_DIR, --tracing retain-on-failure); this is

@@ -538,7 +538,9 @@ coverage fold, see [the quality-gates table](architecture/quality-gates.md#what-
 docs build and the TypeScript gates among them; the CI column of [the
 quality-gates table](architecture/quality-gates.md#what-binds-each-gate) names
 them, and only the issue-filing job waits for a failed run on `main`, as
-nightly's does: a failed pull request never files an issue. **The
+nightly's does: a failed pull request never files an issue. On a pull request
+the test jobs also run [the changed-test repeat](#the-changed-test-repeat).
+**The
 local tip adds what CI cannot run, and the cheap static lanes beside it**:
 `make check-breaking` over the landing range; `make check-python` and `make
 collect-check` for any diff that touches Python; and the bed lanes the diff
@@ -900,6 +902,10 @@ whether the landing's diff holds that file. Work from it:
 
 Nothing reverts `main` automatically: a tool cannot tell case 1 from case 2,
 and reverting on case 2 costs a landing and fixes nothing.
+
+Case 2 is what [the changed-test repeat](#the-changed-test-repeat) exists to
+prevent: it runs a new or changed test many times on its own pull request,
+so that it fails there and not later, on someone else's landing.
 
 ### Hotfix
 
@@ -1711,6 +1717,66 @@ local development. The toolchains themselves come from
 `uv python install 3.10 3.11 3.12 3.13 3.14` (run once per machine).
 `make all` is unchanged and remains the dev-VM contract — `nox` covers
 the cross-Python axis that `make all` doesn't.
+
+### The changed-test repeat
+
+A test that fails one run in fifty passes its own pull request and then fails
+on `main`, under a landing that never touched it. To catch it where it is
+written, a pull request's CI repeats every test file the pull request adds or
+modifies. The test jobs do it in a step after their own run, so there is no
+new check to wait for.
+
+Selection is by file: any `test_*.py` the pull request's diff adds or
+modifies (a renamed file counts under its new name; a deleted one is not
+run). The whole file is repeated, not only the functions that changed. Each
+lane takes the files under its roots and applies its own marker expression,
+so a test is repeated in the lanes that ordinarily run it:
+
+| Session | Files under | Repeats | Runs in |
+|---|---|---|---|
+| `tests_changed_repeat_unit` | `tests/unit` | 20 | every Python's unit leg |
+| `tests_changed_repeat_guards` | `tests/unit` (the `interpreter_agnostic` family) | 5 | the 3.10 guards leg |
+| `tests_changed_repeat_e2e` | `tests/e2e` | 20 | the 3.10 and 3.14 e2e legs |
+| `tests_changed_repeat_browser` | the two browser suites | 10 | each engine's `dashboard-e2e` job |
+
+One failure in any repeat fails the job. Nothing is retried, and the fix is
+the test's cause ([When main goes red](#when-main-goes-red) says why). A
+session whose lane has no changed file is skipped.
+
+The repeats of one test are separate items, and a parallel leg spreads them
+over its workers as it does any other items, so two repeats of a test can
+run at the same time (nightly's repeat lanes do the same). A test that takes
+a fixed port or writes a fixed path fails here; give it its own port or
+path, or pin it to one worker with an `xdist_group` mark. The browser suites
+are already grouped by file, so a browser file's repeats run one after
+another: ten repeats of a slow file take ten times its run.
+
+The repeat finds a test that fails only sometimes. It does not find state
+leaking from one test into the next: that is the test-isolation guard's job
+([nightly's `unit-repeat`](#gate-stability-lanes)).
+
+Not repeated:
+
+- a change to a `conftest.py`, a fixture module or a helper: only `test_*.py`
+  files are selected, so the tests that use the changed fixture run once, as
+  on any pull request;
+- `unittest.TestCase` methods, which the repeat plugin runs once;
+- `tests/busybox` and tests marked `busybox` (their job builds artifacts
+  first), and tests marked `conformance`, `kmodcov`, `release_proof` or
+  `stability`, which no hostless lane selects;
+- `tests/integration` and every other test that needs the lab (no CI job can
+  run them);
+- an existing test that a change elsewhere made unreliable (nightly's
+  `unit-matrix` runs the whole suite every night).
+
+To run a lane by hand, name the range, since a local checkout is not a
+pull request's merge commit:
+
+```bash
+CHANGED_TESTS_RANGE=origin/main...HEAD uv run nox -s tests_changed_repeat_unit-3.10
+CHANGED_TESTS_RANGE=origin/main...HEAD uv run nox -s tests_changed_repeat_browser-3.10 -- --browser chromium
+uv run python scripts/changed_tests.py --range origin/main...HEAD tests/unit   # only list the files
+```
 
 ## Documentation
 
