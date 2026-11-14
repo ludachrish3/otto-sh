@@ -1,0 +1,8 @@
+step 2, test2:console inventory: no password is typed at a console in this visit; the policy is read on the guest's telnet and ssh lines
+step 3, process cost by strace: the driver attaches no tracer to a guest's shell; the pid delta is recorded and marked 'not an exact count'
+step 3, candidates with `su - test` active: the driver switches no user; a child of the console's shell inherits its effective user by construction
+step 5, exec-frame costs under strace: no tracer is attached to a guest
+step 5, the restore line after a Ctrl-C on the bed: the driver interrupts nothing on a guest; the product's own path types that line and the bed conformance run exercises it
+su with a password: no device witness: every su host logs in as root
+an uncertain console cell's state: nothing is typed into an uncertain cell, so a console row that timed out leaves what it set (the directory, `set -f`, `-icanon`, the OTTO_CF_* exports, possibly a nested shell) until that console's login ends; the cell's record names the row
+an uncertain cell's `sudo -k`: nothing is typed into an uncertain cell; its session is closed, which ends a tty-scoped timestamp. Under a global or ppid timestamp the record can outlive it

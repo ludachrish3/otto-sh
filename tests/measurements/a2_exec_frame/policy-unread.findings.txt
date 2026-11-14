@@ -1,0 +1,1 @@
+ubu2404: not measured: the bed topology has no cell for this guest (line added by hand after the run; the driver records it from now on)
