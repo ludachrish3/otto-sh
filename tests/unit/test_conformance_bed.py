@@ -23,6 +23,7 @@ import sys
 import tempfile
 import types
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,8 +35,10 @@ from otto.host.command_frame import FRAME_CLASSES
 from otto.host.element import Element
 from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.options import UNESCAPED_IAC, ConsoleOptions
 from otto.host.remote_host import RemoteHost
 from otto.result import CommandResult, Results, Status
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
 from tests._fixtures._console_lock import GATE_NAME, RESOURCE_NAME, console_access
 from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV
 from tests._fixtures.labdata import (
@@ -43,6 +46,7 @@ from tests._fixtures.labdata import (
     entry_of,
     flat_hosts,
     host_data,
+    host_data_console,
     write_lab_json,
 )
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -54,11 +58,13 @@ from tests._fixtures.profiles import (
     axis_space,
 )
 from tests._fixtures.run_state import cleared_run_state
+from tests._fixtures.shell_transcripts import recordings, zephyr_recorded_output
 from tests._fixtures.support_matrix import discover_contracts
 from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance._bed import (
@@ -84,6 +90,16 @@ from tests.conformance._console_safety import (
     unhonored_console_lock,
 )
 from tests.conformance._controls import discover_controls
+from tests.conformance._entry import (
+    ALL_ENTRIES,
+    EXEC,
+    EXEC_SHELL,
+    RUN,
+    entries_declared,
+    expected_route,
+    space_for,
+)
+from tests.conformance._framing import framing_leak
 from tests.conformance._lab_context import BED_LAB_NAME, bed_lab, hop_targets
 from tests.conformance._observation import domain_exclusions
 from tests.conformance._resolved import ResolvedCell
@@ -91,9 +107,10 @@ from tests.conformance._sample import cell_label
 from tests.conformance._vocabulary import (
     OTTO_SENTINEL_PREFIX,
     POSIX,
-    ZEPHYR_SHELL,
+    ZEPHYR_SHELLS,
+    OutputArm,
     Vocabulary,
-    vocabulary_for_userland,
+    vocabulary_for,
 )
 from tests.conformance.test_timeout_contract import _BUDGET_S
 from tests.conformance.test_transfer_contract import _PAYLOAD_NAME, applicable_cell
@@ -552,7 +569,7 @@ async def test_the_opener_probes_the_host_because_entering_it_does_not(monkeypat
     "opened" mean "answered", and this pins that it actually runs.
     """
     fake = _FakeProbeHost(_answer(Status.Success, "Connection successful"))
-    monkeypatch.setattr(_bed, "build_bed_host", lambda cell: fake)
+    monkeypatch.setattr(_bed, "build_bed_host", lambda cell, **_: fake)
     async with _resolved(DEFAULT_CELL).open_host() as host:
         assert host is fake
     assert fake.probes == 1, "the opener yielded a host it never asked to answer"
@@ -593,7 +610,7 @@ async def test_a_bed_host_that_does_not_answer_fails_loudly_and_never_skips(monk
     thing spec s4 requires.
     """
     refused = _answer(Status.Error, "[Errno 111] Connect call failed ('10.10.200.11', 22)")
-    monkeypatch.setattr(_bed, "build_bed_host", lambda cell: _FakeProbeHost(refused))
+    monkeypatch.setattr(_bed, "build_bed_host", lambda cell, **_: _FakeProbeHost(refused))
     raised = await _opening_raises(_resolved(DEFAULT_CELL))
     assert raised is not None, "the opener yielded a host that never answered"
     assert not isinstance(raised, pytest.skip.Exception), (
@@ -616,7 +633,7 @@ async def test_a_bed_host_that_never_answers_is_bounded(monkeypatch):
     the test does not have to wait out the real one.
     """
     fake = _FakeProbeHost(hang=True)
-    monkeypatch.setattr(_bed, "build_bed_host", lambda cell: fake)
+    monkeypatch.setattr(_bed, "build_bed_host", lambda cell, **_: fake)
     monkeypatch.setattr(_bed, "_ANSWER_TIMEOUT_S", 0.05)
     with pytest.raises(RuntimeError, match="no answer within"):
         async with _resolved(DEFAULT_CELL).open_host():
@@ -634,7 +651,7 @@ async def test_a_failed_probe_still_closes_the_hosts_transports(monkeypatch):
     socket. Injected here rather than inferred from the code shape.
     """
     fake = _FakeProbeHost(_answer(Status.Error, "refused"))
-    monkeypatch.setattr(_bed, "build_bed_host", lambda cell: fake)
+    monkeypatch.setattr(_bed, "build_bed_host", lambda cell, **_: fake)
     with pytest.raises(RuntimeError):
         async with _resolved(DEFAULT_CELL).open_host():
             pass
@@ -1081,6 +1098,7 @@ def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch, t
 # is spelled out.
 _HERMETIC_LOCAL_CELL = "local:local:local"
 
+
 # Every contract in `tests/conformance/` is parametrized over every drawn
 # cell, and since the support matrix landed so is every POSITIVE CONTROL, so
 # one cell is this many items. Asserted rather than assumed by the subprocess
@@ -1092,10 +1110,17 @@ _HERMETIC_LOCAL_CELL = "local:local:local"
 # COUNT rather than on the protection they are about, which is the least
 # useful place for a suite to fail. The two discovery functions are the same
 # ones `tests/_fixtures/support_matrix.py` builds the matrix's rows from, so
-# this cannot disagree with the tree about what a cell's items are. (14 today:
-# 7 contracts + 7 controls, and `make conformance` collects 112 cell items over
-# the hermetic venue's 8 cells.)
-_ITEMS_PER_CELL = len(discover_contracts()) + len(discover_controls())
+# this cannot disagree with the tree about what a cell's items are.
+#
+# A COMMAND CONTRACT RUNS ONCE PER ENTRY the cell admits, so the count is each
+# nodeid's own space over the `local` cell (`space_for`, the one function that
+# crosses a cell with the entries a contract declares), not one per nodeid.
+def _items_per_cell() -> int:
+    local = [rc for rc in hermetic_space() if rc.kind == "local"]
+    assert len(local) == 1, [cell_label(rc) for rc in local]
+    nodeids = discover_contracts() + [control.nodeid for control in discover_controls()]
+    return sum(len(space_for(nodeid, local)) for nodeid in nodeids)
+
 
 # The plugin the subprocess runs load with `-p`. It INJECTS the hostile
 # condition rather than waiting to inherit it: the hermetic venue has no
@@ -1229,8 +1254,9 @@ def test_the_console_protection_is_in_effect_under_both_invocation_shapes(tmp_pa
     The `-m conformance` arm is the shape ``make conformance`` really uses.
     """
     result = _run_conformance(tmp_path, shape=shape, breakage="none")
-    assert f"{_ITEMS_PER_CELL} passed" in result.stdout, (
-        f"the injected console cell did not run {_ITEMS_PER_CELL} items ({shape}) -- a "
+    items = _items_per_cell()
+    assert f"{items} passed" in result.stdout, (
+        f"the injected console cell did not run {items} items ({shape}) -- a "
         f"pass on zero selected items would prove nothing:\n{result.stdout}\n{result.stderr}"
     )
     assert result.returncode == 0, f"({shape})\n{result.stdout}\n{result.stderr}"
@@ -1252,7 +1278,7 @@ def test_a_console_cell_running_unprotected_fails_the_run(tmp_path, breakage, ex
     bookkeeping would pass it, and the guest would be just as exposed.
     """
     result = _run_conformance(tmp_path, shape="path-named", breakage=breakage)
-    assert f"{_ITEMS_PER_CELL} failed" in result.stdout, (
+    assert f"{_items_per_cell()} failed" in result.stdout, (
         f"expected every item of the injected console cell to fail:\n"
         f"{result.stdout}\n{result.stderr}"
     )
@@ -2242,31 +2268,19 @@ def test_the_hermetic_venue_answers_with_a_runner_path_for_every_cell():
 #: these guards would otherwise be measured by nothing at all, and the walk
 #: would make that invisible. `test_every_vocabulary_in_the_module_is_guarded`
 #: pins the two against each other.
-VOCABULARIES: "dict[str, Vocabulary]" = {"posix": POSIX, "zephyr": ZEPHYR_SHELL}
+VOCABULARIES: "dict[str, Vocabulary]" = {"posix": POSIX, **ZEPHYR_SHELLS}
 
 #: The real output the measured stimuli answered with on the bed, for the
-#: commands whose output the tester cannot choose. Transcribed from a live
-#: `zephyr37_fat` open in this worktree (`help` abridged to its first lines
-#: plus the two that matter), not invented: a fabricated sample would let the
-#: scripted host below satisfy assertions the real guest does not.
-#:
-#: The `retval` line is kept ON PURPOSE. It is a genuine near-miss for the
-#: framing check -- otto's Zephyr frame reads the return code back with a
-#: `retval` command, and `help` legitimately LISTS that command -- so a
-#: framing check written as `"retval" not in output` would fail on honest
-#: output. Only the "a line of its own" spelling survives it.
+#: commands whose output the tester cannot choose and that no output case
+#: records. Zephyr's ``help`` is not here: each guest's vocabulary carries it
+#: as an output case, cut from that guest's recording, and the scripted host
+#: answers it from there -- so the framing contract below is driven with the
+#: real bytes, ``retval`` listed mid-line and the help formatter's cursor
+#: moves included, the two near-misses a framing check must not call leaks.
 MEASURED_ANSWERS: dict[str, str] = {
-    "help": (
-        "Please press the <Tab> button to see all available commands.\n"
-        "\n"
-        "Available commands:\n"
-        "  device       : Device commands\n"
-        "  help         : Prints the help message.\n"
-        "  kernel       : Kernel commands\n"
-        "  retval       : Print return value of most recent command\n"
-        "  version      : Show kernel version"
-    ),
     "kernel uptime": "Uptime: 42441320 ms",
+    # The POSIX vocabulary's multi-line `printf`: the tester chose these lines.
+    POSIX.multiline_command: "otto-conformance-frame-1\notto-conformance-frame-2",
 }
 
 #: The contracts this guard drives, by the short name the case table uses.
@@ -2283,8 +2297,8 @@ CONTRACTS = {
     "exit code": lambda cell, _notes: _exec_contract.test_exec_reports_the_documented_exit_code(
         cell
     ),
-    "framing": lambda cell, notes: _exec_contract.test_exec_frames_output_without_prompt_noise(
-        cell, notes.append
+    "framing": lambda cell, _notes: _exec_contract.test_exec_frames_output_without_prompt_noise(
+        cell
     ),
     "sequence": lambda cell, _notes: (
         _exec_contract.test_a_failing_command_is_not_reported_as_success(cell)
@@ -2292,7 +2306,26 @@ CONTRACTS = {
     "timeout": lambda cell, _notes: (
         _timeout_contract.test_a_command_exceeding_its_budget_fails_the_documented_way(cell)
     ),
+    "output": lambda cell, notes: _output_contract.test_a_commands_value_is_its_exact_output(
+        cell, notes.append
+    ),
 }
+
+#: Each driven contract's function, so its entries are read off its own marker
+#: (`entries_declared`, the one reader) rather than restated here.
+CONTRACT_FUNCTIONS = {
+    "exit code": _exec_contract.test_exec_reports_the_documented_exit_code,
+    "framing": _exec_contract.test_exec_frames_output_without_prompt_noise,
+    "sequence": _exec_contract.test_a_failing_command_is_not_reported_as_success,
+    "timeout": _timeout_contract.test_a_command_exceeding_its_budget_fails_the_documented_way,
+    "output": _output_contract.test_a_commands_value_is_its_exact_output,
+}
+
+
+def _entries_of_contract(name: str) -> "list[str]":
+    fn = CONTRACT_FUNCTIONS[name]
+    return entries_declared(f"{fn.__module__.replace('.', '/')}.py::{fn.__name__}")
+
 
 #: Each way a host can lie, and every contract that must catch it. A lie whose
 #: contract is outside a vocabulary's applicable domain is dropped from that
@@ -2314,6 +2347,10 @@ LIES: dict[str, set[str]] = {
     "stops_after_the_failure": {"sequence"},
     "never_times_out": {"timeout"},
     "wedges_the_session": {"timeout"},
+    # Every command answered with a value one character off its case's.
+    "garbles_the_output": {"output"},
+    # Every result names a route no entry of the cell takes.
+    "reports_the_wrong_route": {"exit code", "framing", "sequence", "timeout", "output"},
 }
 
 
@@ -2356,17 +2393,32 @@ class _ScriptedHost:
     bed, which is the failure this task exists to end.
     """
 
-    def __init__(self, words: Vocabulary, lie: "str | None") -> None:
+    def __init__(self, words: Vocabulary, lie: "str | None", exec_route: str) -> None:
         self._words = words
         self._lie = lie
+        self._exec_route = exec_route
         self._timed_out = False
 
     async def run(self, command, timeout=None) -> Results:
         commands = [command] if isinstance(command, str) else list(command)
-        entries = [self._answer(one, timeout) for one in commands]
+        entries = [
+            self._routed(self._answer(one, timeout), DEFAULT_SESSION_ROUTE) for one in commands
+        ]
         if self._lie == "stops_after_the_failure":
             entries = self._truncate_at_the_failure(entries)
         return Results.collect(items=entries)
+
+    async def exec(self, command, timeout=None) -> CommandResult:
+        result = self._routed(self._answer(command, timeout), self._exec_route)
+        if self._lie == "exec_strips":
+            # ast-grep-ignore: no-stripped-command-value -- the lie this host tells
+            return dataclasses.replace(result, value=result.value.strip())
+        return result
+
+    def _routed(self, result: CommandResult, route: str) -> CommandResult:
+        if self._lie == "reports_the_wrong_route":
+            route = WRONG_ROUTE
+        return dataclasses.replace(result, route=route)
 
     @staticmethod
     def _truncate_at_the_failure(entries: "list[CommandResult]") -> "list[CommandResult]":
@@ -2398,6 +2450,11 @@ class _ScriptedHost:
 
     def _ordinary(self, command: str) -> CommandResult:
         words = self._words
+        case = self._case_for(command)
+        if case is not None and command != words.multiline_command:
+            value = case.value + "x" if self._lie == "garbles_the_output" else case.value
+            status = Status.Success if case.retcode == 0 else Status.Failed
+            return CommandResult(status=status, value=value, command=command, retcode=case.retcode)
         retcode = {
             words.succeeding_command: 0,
             words.failing_command: words.failing_code,
@@ -2418,10 +2475,16 @@ class _ScriptedHost:
             retcode = 1
         return CommandResult(status=status, value=value, command=command, retcode=retcode)
 
+    def _case_for(self, command: str) -> "OutputCase | None":
+        return next((one for one in self._words.output_cases if one.command == command), None)
+
     def _output_for(self, command: str) -> str:
         words = self._words
         if command == words.multiline_command:
-            value = words.multiline_expected or MEASURED_ANSWERS[command]
+            # The multi-line command is also an output case on Zephyr (`help`);
+            # it is answered here so the framing lies reach it.
+            case = self._case_for(command)
+            value = case.value if case is not None else MEASURED_ANSWERS[command]
         elif command == words.single_line_command:
             if self._lie == "answers_with_a_prompt":
                 # Framing-clean, non-empty, and not the command line -- so only
@@ -2441,20 +2504,50 @@ class _ScriptedHost:
         return value
 
 
-def _scripted_cell(words: Vocabulary, lie: "str | None") -> ResolvedCell:
-    """A resolved cell whose host is scripted rather than real."""
+#: The routes the scripted host reports: what a unix ssh cell's `run`, `exec`
+#: and hooked `exec` take, and one no entry of such a cell takes.
+DEFAULT_SESSION_ROUTE = "default-session"
+WRONG_ROUTE = "local-subprocess"
 
-    @contextlib.asynccontextmanager
-    async def opener():
-        yield _ScriptedHost(words, lie)
+
+def _scripted_cell(words: Vocabulary, lie: "str | None", entry: str = RUN) -> ResolvedCell:
+    """A resolved cell whose host is scripted rather than real, reached by *entry*.
+
+    A unix ``ssh`` cell without a proxied login, the one shape that admits all
+    three entries. Its plain opener's ``exec`` takes the ssh channel and its
+    hooked opener's the pooled shell, as a real one's does.
+    """
+
+    def opener_for(exec_route: str):
+        @contextlib.asynccontextmanager
+        async def opener():
+            yield _ScriptedHost(words, lie, exec_route)
+
+        return opener
 
     return ResolvedCell(
-        cell=Cell("scripted", "term", "transfer"),
+        cell=Cell("scripted", "ssh", "transfer"),
         kind="scripted",
-        open_host=opener,
+        open_host=opener_for("ssh-channel"),
         remote_scratch=None,
         vocabulary=words,
+        entry=entry,
+        family="unix",
+        open_shell_host=opener_for("pooled-shell"),
     )
+
+
+def test_the_scripted_cell_routes_are_the_ones_its_entries_must_take() -> None:
+    """The harness's route literals agree with the suite's independent table."""
+    for entry, route in {
+        RUN: DEFAULT_SESSION_ROUTE,
+        EXEC: "ssh-channel",
+        EXEC_SHELL: "pooled-shell",
+    }.items():
+        assert expected_route(_scripted_cell(POSIX, None, entry)) == route
+    assert WRONG_ROUTE not in {
+        expected_route(_scripted_cell(POSIX, None, entry)) for entry in ALL_ENTRIES
+    }
 
 
 @pytest.mark.asyncio
@@ -2467,50 +2560,46 @@ async def test_an_honest_host_satisfies_every_contract_in_every_vocabulary(vocab
     every vocabulary. So the honest host has to get through first.
 
     ALSO CAPTURES WHAT EACH CONTRACT SAYS IT WATCHED, which is what
-    :func:`test_the_framing_observable_differs_between_the_two_vocabularies`
+    :func:`test_the_output_observable_differs_between_the_two_vocabularies`
     below compares across dialects.
     """
     words = VOCABULARIES[vocab_name]
     for name in _contracts_for(words):
-        await CONTRACTS[name](_scripted_cell(words, lie=None), [])
+        for entry in _entries_of_contract(name):
+            await CONTRACTS[name](_scripted_cell(words, lie=None, entry=entry), [])
 
 
 async def _noted_observable(vocab_name: str) -> str:
-    """What the framing contract says it watched, under *vocab_name*."""
+    """What the output contract says it watched, under *vocab_name*."""
     notes: "list[str]" = []
-    await CONTRACTS["framing"](_scripted_cell(VOCABULARIES[vocab_name], lie=None), notes)
-    assert len(notes) == 1, f"the framing contract noted {len(notes)} observables, not 1"
+    await CONTRACTS["output"](_scripted_cell(VOCABULARIES[vocab_name], lie=None), notes)
+    assert len(notes) == 1, f"the output contract noted {len(notes)} observables, not 1"
     return notes[0]
 
 
 @pytest.mark.asyncio
-async def test_the_framing_observable_differs_between_the_two_vocabularies() -> None:
+@pytest.mark.parametrize("zephyr", sorted(ZEPHYR_SHELLS))
+async def test_the_output_observable_differs_between_the_two_vocabularies(zephyr) -> None:
     """★ THE CLAIM THE `observable` FIELD EXISTS FOR, measured rather than asserted.
 
     Spec §5 asks a `measured-ok` cell to name its observable BECAUSE a surface's
-    observable differs by environment -- shell-history suppression is provable
-    on bash and not provable at all on the five BusyBox guests. A field derived
-    from the surface id could not express that, which is why
-    `tests/conformance/_observable.py` renders a per-cell template and lets a
-    contract narrow it further from its own body.
-
-    The framing surface is where this tree's own version of that difference
-    lives: a POSIX cell's stimulus is a `printf` whose text the tester CHOSE, so
-    exact equality is available; a Zephyr cell's is a stock builtin whose text
-    belongs to the firmware, so it is not. Both directions are asserted -- the
-    two must differ, AND each must name the comparison it really made -- because
-    "they differ" alone is satisfied by two strings that differ for no reason.
+    observable differs by environment. The exact-output surface is where this
+    tree's own version of that difference lives: a POSIX cell runs the shipped
+    table of chosen bytes, a Zephyr cell only the stock commands its firmware
+    fixes. Both directions are asserted -- the two must differ, AND each must
+    name the arm it really ran -- because "they differ" alone is satisfied by
+    two strings that differ for no reason.
     """
     posix = await _noted_observable("posix")
-    zephyr = await _noted_observable("zephyr")
-    assert posix != zephyr, (
-        "the framing observable renders identically on a POSIX and a Zephyr cell, so "
+    firmware = await _noted_observable(zephyr)
+    assert posix != firmware, (
+        "the output observable renders identically on a POSIX and a Zephyr cell, so "
         "the matrix's `observable` field could not disagree with the surface's own name"
     )
-    assert "exact equality against the 2 lines the tester chose" in posix, posix
-    assert "NO exact comparison" in zephyr, zephyr
-    assert "belongs" in zephyr, zephyr
-    assert "firmware" in zephyr, zephyr
+    table = f"every row of the table `otto.testing.EXACT_OUTPUT_CASES` ({len(EXACT_OUTPUT_CASES)}"
+    assert table in posix, posix
+    assert "the stock commands whose output this firmware fixes" in firmware, firmware
+    assert "`kernel version`" in firmware, firmware
 
 
 @pytest.mark.asyncio
@@ -2537,12 +2626,286 @@ async def test_every_lie_is_caught_in_every_vocabulary_that_can_be_asked(
     """
     words = VOCABULARIES[vocab_name]
     for name in caught_by:
-        with pytest.raises(AssertionError) as caught:
-            await CONTRACTS[name](_scripted_cell(words, lie=lie), [])
-        assert "scripted" in str(caught.value), (
-            f"the {name!r} contract caught {lie!r} under {vocab_name} but its message "
-            f"does not name the cell: {caught.value}"
+        for entry in _entries_of_contract(name):
+            with pytest.raises(AssertionError) as caught:
+                await CONTRACTS[name](_scripted_cell(words, lie=lie, entry=entry), [])
+            assert "scripted" in str(caught.value), (
+                f"the {name!r} contract caught {lie!r} under {vocab_name} over {entry} but "
+                f"its message does not name the cell: {caught.value}"
+            )
+
+
+def test_every_driven_contract_declares_entries() -> None:
+    """A contract driven with no entries would be driven over nothing."""
+    for name in CONTRACTS:
+        assert _entries_of_contract(name), f"the {name!r} contract declares no entries"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vocab_name", sorted(VOCABULARIES))
+async def test_a_host_that_reports_the_wrong_route_fails_every_command_contract(vocab_name) -> None:
+    """A command that ran on a route its entry does not take is refused, over every entry."""
+    words = VOCABULARIES[vocab_name]
+    for name in _contracts_for(words):
+        for entry in _entries_of_contract(name):
+            with pytest.raises(AssertionError, match="ran on route"):
+                await CONTRACTS[name](
+                    _scripted_cell(words, lie="reports_the_wrong_route", entry=entry), []
+                )
+
+
+@pytest.mark.asyncio
+async def test_a_host_whose_exec_strips_fails_the_output_contract() -> None:
+    """``exec`` trimming whitespace that ``run`` keeps is caught, through both exec entries.
+
+    POSIX only, and that is the evidence rather than an omission: the Zephyr
+    cases' outputs carry no leading or trailing whitespace, so a stripping
+    exec answers them correctly.
+    """
+    await CONTRACTS["output"](_scripted_cell(POSIX, lie="exec_strips", entry=RUN), [])
+    for entry in (EXEC, EXEC_SHELL):
+        with pytest.raises(AssertionError, match="scripted"):
+            await CONTRACTS["output"](_scripted_cell(POSIX, lie="exec_strips", entry=entry), [])
+
+
+class _ScriptedConsoleHost(_ScriptedHost):
+    """A scripted host on the ``console`` term that may claim, and may show, an unescaped 0xFF.
+
+    *claims* sets ``console_options.escapes_iac`` False, the declaration the
+    output contract reads; *drops_ff* answers each case as such a console
+    carries it (:func:`~tests.conformance.test_output_contract.carried_unescaped`).
+    """
+
+    term = "console"
+
+    def __init__(self, words: Vocabulary, *, claims: bool, drops_ff: bool) -> None:
+        super().__init__(words, None, DEFAULT_SESSION_ROUTE)
+        self.console_options = ConsoleOptions(escapes_iac=not claims)
+        self._drops_ff = drops_ff
+
+    def _case_for(self, command: str) -> "OutputCase | None":
+        case = super()._case_for(command)
+        if case is None or not self._drops_ff:
+            return case
+        return dataclasses.replace(case, writes=_output_contract.carried_unescaped(case.writes))
+
+
+def _scripted_console_cell(*, claims: bool, drops_ff: bool, entry: str) -> ResolvedCell:
+    """A unix ``console`` cell over :class:`_ScriptedConsoleHost`, reached by *entry*."""
+
+    @contextlib.asynccontextmanager
+    async def opener():
+        yield _ScriptedConsoleHost(POSIX, claims=claims, drops_ff=drops_ff)
+
+    return ResolvedCell(
+        cell=Cell("scripted", "console", "shell"),
+        kind="scripted",
+        open_host=opener,
+        remote_scratch=None,
+        vocabulary=POSIX,
+        entry=entry,
+        family="unix",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", [RUN, EXEC])
+async def test_a_console_declaring_unescaped_iac_runs_its_own_output_arm(entry) -> None:
+    """The arm follows the host's declaration and asserts what the declaration says.
+
+    Claiming and dropping the 0xFF passes; claiming it but returning the byte
+    fails (the declaration went stale); not claiming it and dropping the byte
+    fails (an undeclared loss). The observable names the declared arm.
+    """
+    notes: list[str] = []
+    honest = _scripted_console_cell(claims=True, drops_ff=True, entry=entry)
+    await CONTRACTS["output"](honest, notes)
+    assert len(notes) == 1
+    assert "as a console that does not escape 0xFF carries them" in notes[0]
+    with pytest.raises(AssertionError, match="invalid-utf8"):
+        await CONTRACTS["output"](
+            _scripted_console_cell(claims=True, drops_ff=False, entry=entry), []
         )
+    with pytest.raises(AssertionError, match="invalid-utf8"):
+        await CONTRACTS["output"](
+            _scripted_console_cell(claims=False, drops_ff=True, entry=entry), []
+        )
+    await _output_contract.test_the_output_comparison_sees_one_added_space(honest)
+
+
+def test_the_output_control_runs_a_case_with_words_on_every_arm() -> None:
+    """The control's case has output, and whitespace inside a line, on every arm.
+
+    Chosen by that property, so the honest baseline cannot pass for a backend
+    that returns nothing: the table's first row (``true``) writes nothing and
+    is never the one chosen. The unescaped-0xFF arm's cases are the table's,
+    carried as that console carries them.
+    """
+    console = SimpleNamespace(term="console", console_options=ConsoleOptions(escapes_iac=False))
+    carried = _output_contract.arm_cases(POSIX, console)
+    assert carried.arm is OutputArm.UNESCAPED_IAC
+    arms = {
+        "table": EXACT_OUTPUT_CASES,
+        "unescaped-iac": carried.cases,
+        **{element: words.output_cases for element, words in ZEPHYR_SHELLS.items()},
+    }
+    assert EXACT_OUTPUT_CASES[0].value == "", "the table's first row changed; re-read this"
+    for name, cases in arms.items():
+        chosen = _output_contract.control_case(cases)
+        assert chosen.value != "", name
+        assert any(len(line.split()) > 1 for line in chosen.value.splitlines()), name
+    with pytest.raises(LookupError):
+        _output_contract.control_case([EXACT_OUTPUT_CASES[0]])
+
+
+def test_the_unescaped_iac_rule_is_the_measured_one() -> None:
+    """The arm's expectation for the shipped row and the captured strings.
+
+    Every case the reader makes deterministic is pinned against a replay in
+    ``tests/unit/host/test_console_unescaped_iac.py``; here, the bytes no
+    0xFF precedes pass intact, and the open-ended cases are refused.
+    """
+    carried = _output_contract.carried_unescaped
+    assert carried(b"\xff\n") == b"\n"
+    assert carried(b"SA\xffBE\n") == b"SABE\n"
+    assert carried(b"SA\xff\xffBE\n") == b"SA\xffBE\n"
+    assert carried(b"a\xfe\xfd\xfb\x00\rb") == b"a\xfe\xfd\xfb\x00\rb"
+    with pytest.raises(ValueError, match="0xFA"):
+        carried(b"\xff\xfa\x01")
+    with pytest.raises(ValueError, match="last byte"):
+        carried(b"\xff")
+
+
+def test_the_bed_declares_unescaped_iac_on_exactly_its_measured_console() -> None:
+    """Only bb1350's ttyS1, the one console the 0xFF loss was measured on, declares it.
+
+    The three ARM Zephyr guests sit behind the same kind of QEMU ``-serial telnet:``
+    bridge, but no measurement of 0xFF was made on them (no stock firmware command
+    writes a chosen byte), so they declare nothing; neither does test2's ser2net
+    console, which no measurement shows sending 0xFF unescaped.
+    """
+    declared = {
+        host["element"]
+        for host in flat_hosts(BED_TECH)
+        if "console_options" in host
+        and host_data_console(host["element"], BED_TECH).exact_output is UNESCAPED_IAC
+    }
+    assert declared == {"bb1350"}
+
+
+def test_no_vocabulary_has_an_empty_output_case_list() -> None:
+    """An empty list would make the output contract pass by comparing nothing."""
+    for vocab_name, words in VOCABULARIES.items():
+        assert words.output_cases, f"{vocab_name} names no output case"
+        assert isinstance(words.output_cases, list), f"{vocab_name}.output_cases is not a list"
+
+
+def test_the_posix_output_cases_are_the_shipped_table() -> None:
+    """By identity: the contract's arm and every route's unit tests read one table.
+
+    And the arm each vocabulary names agrees with what it holds: only the
+    vocabulary holding the shipped table claims it.
+    """
+    assert POSIX.output_cases is EXACT_OUTPUT_CASES
+    for vocab_name, words in VOCABULARIES.items():
+        claims_table = words.output_arm is OutputArm.SHIPPED_TABLE
+        assert claims_table == (words.output_cases is EXACT_OUTPUT_CASES), vocab_name
+
+
+def _result(value: str, retcode: int) -> CommandResult:
+    status = Status.Success if retcode == 0 else Status.Failed
+    return CommandResult(status=status, value=value, command="c", retcode=retcode)
+
+
+def test_the_output_comparison_refuses_a_wrong_value_and_a_wrong_code_each_alone() -> None:
+    """The unit twin of the output control: each half of ``(value, retcode)`` is compared.
+
+    A ``mismatches`` that ignored ``value`` passes the wrong-value row; one
+    that ignored ``retcode`` passes the wrong-code row. Each row differs from
+    the case in exactly one half, so each such comparison is caught by one.
+    """
+    case = OutputCase(id="c", command="c", writes=b"a \n", retcode=3)
+    assert _output_contract.mismatches([_result("a ", 3)], [case]) == []
+    assert _output_contract.mismatches([_result("a", 3)], [case]) != []
+    assert _output_contract.mismatches([_result("a ", 4)], [case]) != []
+    assert _output_contract.mismatches([], [case]) != []
+
+
+@pytest.mark.parametrize("element", sorted(ZEPHYR_SHELLS))
+def test_each_zephyr_output_case_is_what_its_guest_sent(element) -> None:
+    """Each Zephyr case is exactly what the guest's recording holds, and its exit status.
+
+    Equality against the command's body CUT OUT OF ``raw`` -- between the
+    frame's own markers, by the recordings' README model
+    (:func:`tests._fixtures.shell_transcripts.zephyr_recorded_output`) -- not
+    against the ``value`` otto returned, so the expectation is not otto's own
+    answer read back. The per-release rows (``kernel version``, the unknown
+    command) are hand-written, so this is what checks them against every
+    guest of their release.
+    """
+    matching = [rec for rec in recordings().values() if rec["element"] == element]
+    assert len(matching) == 1, f"{element} has {len(matching)} recordings"
+    recording = matching[0]
+    by_command = {entry["cmd"]: entry for entry in recording["commands"]}
+    for case in ZEPHYR_SHELLS[element].output_cases:
+        entry = by_command.get(case.command)
+        assert entry is not None, f"{element} never recorded `{case.command}`"
+        assert zephyr_recorded_output(recording, entry).text == case.text, (
+            f"{element}: `{case.command}` did not send {case.writes!r}"
+        )
+        assert entry["retcode"] == case.retcode, element
+
+
+def test_the_framing_check_refuses_a_colour_escape_and_keeps_a_cursor_move() -> None:
+    """The shell's colourised prompt is a leak; the help formatter's cursor move is output.
+
+    Driven with the bytes the recordings hold: the Zephyr telnet prompt, and a
+    ``help`` continuation line. A check on every ``ESC [`` would refuse every
+    Zephyr guest's honest ``help``; one on none would pass a leaked prompt.
+    """
+    assert framing_leak("a\n\x1b[1;32m~$ \x1b[m", "help") is not None
+    assert framing_leak("a\n\x1b[1;31mx\x1b[m", "help") is not None
+    assert framing_leak("  devmem : x\n\x1b[17CUsage:", "help") is None
+
+
+def test_the_framing_check_refuses_every_escape_but_cursor_forward() -> None:
+    """An erase, a private mode or a cursor-back is the session's, never the command's.
+
+    The recordings hold no CSI in a command's output but the help formatter's
+    cursor-forward; a line editor's redraw (``\\x1b[K``) or a cursor toggle
+    (``\\x1b[?25l``) arriving in a value is a leak the colour-only check passed.
+    """
+    assert framing_leak("a\n\x1b[K", "help") is not None
+    assert framing_leak("a\n\x1b[J", "help") is not None
+    assert framing_leak("a\x1b[3Db", "help") is not None
+    assert framing_leak("a\n\x1b[?25l", "help") is not None
+    assert framing_leak("a\n\x1b[?2004h", "help") is not None
+
+
+def test_the_framing_check_sees_an_echo_with_an_escape_inside_it() -> None:
+    """The echo comparison runs on the line with its escapes removed.
+
+    A cursor-forward inside the echoed line passes the escape check, so only
+    the echo comparison can catch it -- and it must not be fooled by the escape.
+    """
+    leak = framing_leak("he\x1b[1Clp\na", "help")
+    assert leak is not None
+    assert "echoed" in leak, leak
+
+
+def test_the_zephyr_help_case_carries_more_than_one_line() -> None:
+    """``help`` is in every Zephyr guest's cases, and it is the multi-line evidence.
+
+    Blank lines, leading spaces and the help formatter's cursor moves: the
+    bytes the two single-line rows cannot show a frame mangling.
+    """
+    for element, words in ZEPHYR_SHELLS.items():
+        help_case = next((case for case in words.output_cases if case.command == "help"), None)
+        assert help_case is not None, element
+        assert help_case.text.count("\n") > 20, element
+        assert "\n\n" in help_case.text, f"{element}: no blank line in `help`"
+        assert "\n  " in help_case.text, f"{element}: no leading spaces in `help`"
+        assert re.search(r"\x1b\[\d+C", help_case.text), f"{element}: no cursor move in `help`"
 
 
 def test_the_lie_matrix_drops_a_case_only_where_the_contract_does_not_apply() -> None:
@@ -2561,7 +2924,11 @@ def test_the_lie_matrix_drops_a_case_only_where_the_contract_does_not_apply() ->
         for lie in LIES
         if (vocab_name, lie) not in {(v, ell) for v, ell, _ in LIE_CASES}
     }
-    assert dropped == {("zephyr", "never_times_out"), ("zephyr", "wedges_the_session")}, (
+    assert dropped == {
+        (zephyr, lie)
+        for zephyr in ZEPHYR_SHELLS
+        for lie in ("never_times_out", "wedges_the_session")
+    }, (
         f"the set of unmeasured (vocabulary, lie) pairs moved to {sorted(dropped)}; "
         f"every drop must be a contract outside that vocabulary's domain, not a "
         f"lie that quietly stopped being caught"
@@ -2588,6 +2955,12 @@ def test_every_vocabulary_in_the_module_is_guarded() -> None:
         (name, value)
         for name, value in vars(_vocabulary_module).items()
         if isinstance(value, Vocabulary) and not name.startswith("_")
+    ] + [
+        (f"{name}[{key!r}]", one)
+        for name, value in vars(_vocabulary_module).items()
+        if isinstance(value, Mapping) and not name.startswith("_")
+        for key, one in value.items()
+        if isinstance(one, Vocabulary)
     ]
     driven = list(VOCABULARIES.values())
     unguarded = [name for name, value in exported if not any(value is one for one in driven)]
@@ -2614,6 +2987,15 @@ def test_a_vocabulary_carries_data_and_never_behaviour() -> None:
     for vocab_name, words in VOCABULARIES.items():
         for field in dataclasses.fields(words):
             value = getattr(words, field.name)
+            if field.name == "output_cases":
+                # The one list field: frozen records of a command, its bytes and
+                # its exit status, with no behaviour of their own.
+                assert all(type(case) is OutputCase for case in value), vocab_name
+                continue
+            if field.name == "output_arm":
+                # An enum member: a name for which evidence the cases are.
+                assert type(value) is OutputArm, vocab_name
+                continue
             assert isinstance(value, allowed), (
                 f"{vocab_name}.{field.name} is a {type(value).__name__}; a vocabulary "
                 f"carries stimuli and expected values, never behaviour"
@@ -2737,7 +3119,8 @@ def test_every_bed_cell_carries_the_vocabulary_its_own_userland_answers_in() -> 
     do, because a missing entry would simply never be asked for.
     """
     for resolved in bed_space():
-        expected = vocabulary_for_userland(axes_for(resolved.cell.element, BED_TECH).userland)
+        element = resolved.cell.element
+        expected = vocabulary_for(userland=axes_for(element, BED_TECH).userland, element=element)
         assert resolved.vocabulary is expected, (
             f"{cell_label(resolved)} carries a vocabulary its userland did not choose"
         )
@@ -2746,10 +3129,14 @@ def test_every_bed_cell_carries_the_vocabulary_its_own_userland_answers_in() -> 
 def test_the_zephyr_guests_are_asked_in_the_zephyr_dialect_and_nobody_else_is() -> None:
     """The split, pinned against the real space rather than against the mapping.
 
-    Both halves matter: a mapping that answered ZEPHYR_SHELL for everything
+    Both halves matter: a mapping that answered a Zephyr vocabulary for everything
     would satisfy the first assertion and fail the second.
     """
-    zephyr = {rc.cell.element for rc in bed_space() if rc.vocabulary is ZEPHYR_SHELL}
+    zephyr = {
+        rc.cell.element
+        for rc in bed_space()
+        if any(rc.vocabulary is one for one in ZEPHYR_SHELLS.values())
+    }
     posix = {rc.cell.element for rc in bed_space() if rc.vocabulary is POSIX}
     assert zephyr == {
         "zephyr27_fat",
@@ -2785,7 +3172,7 @@ def test_a_userland_with_no_vocabulary_raises_rather_than_defaulting_to_bash() -
     """
     for userland in ("plan9-4", "gnu-but-not-really", "zephyr", "busybox"):
         with pytest.raises(ValueError, match="no conformance vocabulary"):
-            vocabulary_for_userland(userland)
+            vocabulary_for(userland=userland, element="zephyr37_fat")
 
 
 def test_a_resolved_cell_cannot_be_built_without_naming_its_dialect() -> None:

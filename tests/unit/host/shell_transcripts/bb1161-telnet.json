@@ -1,0 +1,110 @@
+{
+  "element": "bb1161",
+  "term": "telnet",
+  "release": "busybox-1.16.1",
+  "frame": "bash",
+  "terminal_mapping": "onlcr",
+  "captured": "2026-11-13",
+  "markers": {
+    "begin": "__OTTO_8b84091d93e1_BEGIN__",
+    "end_prefix": "__OTTO_8b84091d93e1_END__"
+  },
+  "commands": [
+    {
+      "cmd": "true",
+      "entry": "run",
+      "buffer": "/root # > __OTTO_8b84091d93e1_BEGIN__\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "/root # > __OTTO_8b84091d93e1_BEGIN__\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "",
+      "retcode": 0
+    },
+    {
+      "cmd": "echo 3",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\n3\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\n3\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "3",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'a\\n\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\na\n\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\na\r\n\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "a\n",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'abc'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\nabc__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\nabc__OTTO_8b84091d93e1_END__0__",
+      "value": "abc",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf '\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\n\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\n\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf '\\na\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\n\na\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\n\r\na\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "\na",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf '\\n\\na\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\n\n\na\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\n\r\n\r\na\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "\n\na",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf ' \\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\n \n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\n \r\n__OTTO_8b84091d93e1_END__0__",
+      "value": " ",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'a  \\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\na  \n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\na  \r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "a  ",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'a\\tb\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\na\tb\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\na\tb\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "a\tb",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'a\\nb\\nc\\n'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\na\nb\nc\n__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\na\r\nb\r\nc\r\n__OTTO_8b84091d93e1_END__0__",
+      "value": "a\nb\nc",
+      "retcode": 0
+    },
+    {
+      "cmd": "printf 'a\\nb'",
+      "entry": "run",
+      "buffer": "\n/root # > __OTTO_8b84091d93e1_BEGIN__\na\nb__OTTO_8b84091d93e1_END__0__",
+      "raw": "\r\n/root # > __OTTO_8b84091d93e1_BEGIN__\r\na\r\nb__OTTO_8b84091d93e1_END__0__",
+      "value": "a\nb",
+      "retcode": 0
+    }
+  ]
+}

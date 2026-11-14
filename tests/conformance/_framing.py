@@ -28,6 +28,22 @@ import re
 from tests._fixtures.profiles import Cell
 from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX, Vocabulary
 
+#: Any CSI sequence (ECMA-48: ``ESC [``, parameter bytes ``0-?`` -- digits,
+#: ``;`` and the private-mode ``?`` --, intermediates `` -/``, one final byte
+#: ``@-~``). Removed before the echo comparison, so an echoed command line
+#: with an escape inside it is still recognised as the echo.
+_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+#: Every CSI sequence EXCEPT cursor-forward (final byte ``C``): colour, erase
+#: (``\x1b[K``, ``\x1b[J``), the other cursor moves, private modes
+#: (``\x1b[?25l``). Cursor-forward alone passes because the help formatter's
+#: ``\x1b[17C`` at the start of a continuation line is a byte the COMMAND
+#: writes, and otto keeps it -- the recordings' README,
+#: ``tests/unit/host/shell_transcripts/README.md``, class (b). It is the only
+#: CSI any recorded command output carries; anything else in a value is the
+#: session's (a prompt, a line editor's redraw), not the command's.
+_SESSION_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-BD-~]")
+
 
 def framing_leak(output: str, command: str) -> "str | None":
     """What the session added to *command*'s output, or None if it added nothing.
@@ -58,9 +74,14 @@ def framing_leak(output: str, command: str) -> "str | None":
     """
     if OTTO_SENTINEL_PREFIX in output:
         return f"an otto frame sentinel ({OTTO_SENTINEL_PREFIX}...) reached the caller"
-    if "\x1b[" in output:
-        return "a raw ANSI escape survived; the shell's colourised prompt was not stripped"
-    for line in output.splitlines():
+    escape = _SESSION_ESCAPE.search(output)
+    if escape:
+        return (
+            f"a raw ANSI escape ({escape.group()!r}) survived; only a cursor-forward "
+            f"move is the command's own output"
+        )
+    for raw_line in output.splitlines():
+        line = _CSI.sub("", raw_line)
         # `retval` only on a line of its own: it is a Zephyr shell command in
         # its own right, so `help` legitimately lists it mid-line.
         if line.strip() == "retval":

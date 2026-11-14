@@ -102,7 +102,6 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/docker/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/env/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/host/__init__.py", "__getattr__", FACADE_RESOLVER),
-    ("otto/host/command_frame.py", "_register_builtin_frames", REF_OVER_LITERAL_TABLE),
     ("otto/host/dev_tool.py", "_register_builtin_kinds", REF_OVER_LITERAL_TABLE),
     ("otto/host/embedded_filesystem.py", "_register_builtin_filesystems", REF_OVER_LITERAL_TABLE),
     ("otto/host/product.py", "_register_builtin_kinds", REF_OVER_LITERAL_TABLE),

@@ -1,1 +1,45 @@
-{"base": "v0.20.0", "entries": []}
+{
+  "base": "v0.20.0",
+  "entries": [
+    {
+      "surface": "run_bootstrapped",
+      "minor": "3.10",
+      "buckets": {
+        "otto:host": 4
+      },
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+    },
+    {
+      "surface": "run_bootstrapped",
+      "minor": "3.11",
+      "buckets": {
+        "otto:host": 4
+      },
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+    },
+    {
+      "surface": "run_bootstrapped",
+      "minor": "3.12",
+      "buckets": {
+        "otto:host": 4
+      },
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+    },
+    {
+      "surface": "run_bootstrapped",
+      "minor": "3.13",
+      "buckets": {
+        "otto:host": 4
+      },
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+    },
+    {
+      "surface": "run_bootstrapped",
+      "minor": "3.14",
+      "buckets": {
+        "otto:host": 4
+      },
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+    }
+  ]
+}

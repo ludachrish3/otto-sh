@@ -12,6 +12,7 @@ from otto.host.host import (
 )
 from otto.host.inventory_ref import InventoryRef
 from otto.host.local_host import LocalHost
+from otto.host.output_codec import READ_CHUNK
 from otto.invocation import current_policy
 from otto.logger.mode import LogMode
 from otto.utils import Status
@@ -853,3 +854,32 @@ async def test_overlapping_global_suppressions_leave_command_output_on():
 
         assert get_logging_command_output_enabled() is True
         assert current_policy().log_command_output is True
+
+
+async def _lines_of(data: bytes) -> list[str]:
+    from otto.host.local_host import _decoded_lines
+
+    stream = asyncio.StreamReader(limit=4 * READ_CHUNK)
+    stream.feed_data(data)
+    stream.feed_eof()
+    return [line async for line in _decoded_lines(stream)]
+
+
+@pytest.mark.asyncio
+async def test_decoded_lines_join_a_character_and_a_crlf_split_across_chunks():
+    """Chunk 1 ends inside ``é``; chunk 2 ends on ``\\r``; chunk 3 opens with ``\\n``."""
+    head = b"a" * (READ_CHUNK - 1) + "é".encode()
+    middle = b"b" * (READ_CHUNK - 2) + b"\r"
+    data = head + middle + b"\nz"
+    assert data[READ_CHUNK - 1 : READ_CHUNK + 1] == "é".encode()  # split by the first read
+    assert data[2 * READ_CHUNK - 1 : 2 * READ_CHUNK + 1] == b"\r\n"  # split by the second
+
+    assert await _lines_of(data) == [
+        "a" * (READ_CHUNK - 1) + "é" + "b" * (READ_CHUNK - 2) + "\r\n",
+        "z",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_decoded_lines_end_an_incomplete_character_at_end_of_stream_as_a_replacement():
+    assert await _lines_of(b"ok\n" + "€".encode()[:2]) == ["ok\n", "�"]

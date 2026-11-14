@@ -63,6 +63,7 @@ from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager, TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
+from .exec_route import ExecRoute
 from .host import (
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
@@ -76,6 +77,7 @@ from .host import (
 from .power import power_control_from_spec
 from .remote_host import OsType, RemoteHost
 from .session import (
+    ExecPlan,
     SessionManager,
 )
 from .transfer import TransferContext, build_transfer_backend
@@ -388,15 +390,20 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         )
 
     @override
-    async def _exec_one(
+    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
+        """Plan the default session: one console, and no stateless primitive beside it."""
+        return ExecPlan(route=ExecRoute.DEFAULT_SESSION)
+
+    @override
+    async def _run_plan(
         self,
+        plan: ExecPlan,
+        *,
         cmd: str,
         timeout: float,
-        log: LogMode = LogMode.NORMAL,
-        user: str | None = None,
-        *,
-        expects: "list[Expect | CredentialExpect] | None" = None,
-        needs_shell: bool = False,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
@@ -407,8 +414,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         workflows.
 
         The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm. *needs_shell* is accepted
-        for signature parity — this family always runs on the shared shell.
+        so it lands above ``exec``'s dry-run arm. This family always runs on
+        the shared shell, so the plan has nothing to choose.
         """
         return await self._live_session_mgr().run_cmd(
             cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)

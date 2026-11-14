@@ -106,7 +106,7 @@ def _make_host_with_session(
 ) -> UnixHost:
     """Build a UnixHost whose SessionManager uses a FakeSession.
 
-    ``term="telnet"`` by default: ``exec``'s ``_exec_route`` takes the
+    ``term="telnet"`` by default: ``exec``'s ``exec_route`` takes the
     ``POOLED_SHELL`` route (the same ``FakeSession``) only off SSH's fast
     path — a plain ``exec`` on an SSH host with no hops takes the
     ``SSH_CHANNEL`` route instead and would try a real
@@ -748,9 +748,11 @@ class TestHostTermAndTransfer:
         with (
             patch("otto.fleet.get_host", return_value=base),
             patch("otto.run_context._apply_option_overrides", return_value=switched),
-            patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
-                switched._session_mgr, "exec", wraps=switched._session_mgr.exec
+                base._session_mgr, "exec_on_route", wraps=base._session_mgr.exec_on_route
+            ) as base_exec,
+            patch.object(
+                switched._session_mgr, "exec_on_route", wraps=switched._session_mgr.exec_on_route
             ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
@@ -768,9 +770,11 @@ class TestHostTermAndTransfer:
         with (
             patch("otto.fleet.get_host", return_value=base),
             patch("otto.run_context._apply_option_overrides", return_value=switched),
-            patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
-                switched._session_mgr, "exec", wraps=switched._session_mgr.exec
+                base._session_mgr, "exec_on_route", wraps=base._session_mgr.exec_on_route
+            ) as base_exec,
+            patch.object(
+                switched._session_mgr, "exec_on_route", wraps=switched._session_mgr.exec_on_route
             ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--transfer", "sftp", "router1", "exec", "ls"])

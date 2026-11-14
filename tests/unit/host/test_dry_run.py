@@ -1234,7 +1234,7 @@ class TestThePrimitiveDeclinesInsteadOfAnswering:
             host = _docker()
             # The seam itself: public `exec`/`run` short-circuit ABOVE this in
             # `BaseHost`, so calling it directly is the only way to inject the
-            # condition it has to survive as `SessionManager`'s exec_factory.
+            # condition it has to survive as the container's exec primitive.
             direct = await host._exec_via_parent("uptime", 5.0)
             assert direct.status is Status.NotRun
             assert direct.command == "uptime", "the decline named the docker-exec wrapper"

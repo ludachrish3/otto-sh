@@ -533,14 +533,18 @@ venue's cells:
   instead.
 
 **Why the bed venue is not `tests/integration/host/test_host_contract.py`
-again.** That suite asserts host contracts against these same hosts
-parametrized by *backend id* — one transport per backend, in depth. This
-lane's distinct claim is the **crossing**: the same contract over every
-`(term, transfer)` pair a host's own menus permit. A defect that holds over
-`shell` and breaks over `nc` on the same host is invisible to a per-backend
-suite, and the venue's first runs against real hardware surfaced exactly such
-a difference (below). The two are complements, and neither is a superset:
-depth there, breadth here.
+again.** That suite asserts the raw `send`/`expect` surface, file transfer and
+transfer progress against these same hosts parametrized by *backend id* — one
+transport per backend, in depth. A command's status and its exact output are
+not asserted there: the conformance contracts (`exec-exit-code` and its
+siblings) assert them over every cell, and the shipped exact-output table
+(`otto.testing.EXACT_OUTPUT_CASES`) over every entry, so one definition of
+"the right answer" serves both venues. This lane's distinct claim is the
+**crossing**: the same contract over every `(term, transfer)` pair a host's own
+menus permit. A defect that holds over `shell` and breaks over `nc` on the same
+host is invisible to a per-backend suite, and the venue's first runs against
+real hardware surfaced exactly such a difference (below). The two are
+complements, and neither is a superset: depth there, breadth here.
 
 A cell the selected venue cannot build is **dropped from the space, not
 skipped**. The hermetic venue has no console server and no embedded

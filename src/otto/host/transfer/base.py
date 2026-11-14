@@ -96,7 +96,8 @@ class TransferContext:
     userland: "Userland | None" = None
     # How long a single line of a command this host's `exec_cmd` can carry, or
     # None when nothing bounds it -- asked of the host's SessionManager (see
-    # `otto.host.session.SessionManager.exec_line_budget`) rather than derived
+    # `otto.host.session.SessionManager.line_budget`, for the route the host's
+    # exec plan names) rather than derived
     # here, because the answer depends on which primitive `exec` routes
     # through and on the host's shell dialect, neither of which a transfer
     # backend can see. A CALLABLE, not a number: `term` has a setter and a

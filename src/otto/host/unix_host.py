@@ -81,6 +81,7 @@ from .connections import (
     teardown_step,
 )
 from .errors import ConsoleError, ForgetResult, HostCommandError, UnsupportedOnUserlandError
+from .exec_route import ExecRoute
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -108,6 +109,7 @@ from .privilege import PosixPrivilege
 from .remote_host import RemoteHost
 from .session import (
     BridgeSetup,
+    ExecPlan,
     SessionManager,
 )
 from .telnet import TelnetClient
@@ -160,7 +162,7 @@ def shutdown_command(userland: "Userland", *, host: str = "") -> str:
 
     **The gap registry's fourth product call site, and the first that FIXES a
     surface rather than declining it.** The other three --
-    :func:`otto.host.session.refuse_if_line_editor_would_truncate`,
+    :func:`otto.host.session.refuse_if_typed_line_would_be_cut`,
     :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash` and
     :func:`otto.host.file_ops.refuse_if_base64_is_absent` -- all answer a
     measured device limitation by refusing. This one answers it by asking the
@@ -636,12 +638,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
                     exec_cmd=exec_cmd,
-                    # Asked of the session manager, never predicted from
+                    # Asked of `_exec_plan`, the plan `exec_cmd`'s `exec`
+                    # dispatches, with the same effective user: `user=None`
+                    # is an enclosing `as_user()`'s identity on both, read
+                    # when the budget is asked. Never predicted from
                     # `self.term`: whether `exec` types into a line-disciplined
-                    # shell is that object's decision (a proxied login routes
-                    # through the pooled path on ssh too), and the framing it
-                    # subtracts is its frame's.
-                    exec_line_budget=lambda: self._session_mgr.exec_line_budget,
+                    # shell depends on the route (a proxied login, or a user
+                    # without a direct cred, rides the pooled shell on ssh
+                    # too), and the framing it subtracts is the session
+                    # manager's frame's.
+                    exec_line_budget=lambda: self._session_mgr.line_budget(
+                        route=self._exec_plan(user=user, needs_shell=False).route
+                    ),
                     max_filename_len=self.max_filename_len,
                 ),
             ),
@@ -995,103 +1003,83 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return self._reset_outcome(found)
 
     @override
-    async def _exec_one(
-        self,
-        cmd: str,
-        timeout: float,
-        log: LogMode = LogMode.NORMAL,
-        user: str | None = None,
-        *,
-        expects: "list[Expect | CredentialExpect] | None" = None,
-        needs_shell: bool = False,
-    ) -> CommandResult:
-        """Run a single command concurrent-safely, independent of the persistent shell.
+    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
+        """Plan one ``exec`` call as *user*: which route, and on whose connection.
 
-        Unlike :meth:`~otto.host.host.BaseHost.run`, this method is **concurrent-safe**: multiple
-        ``exec()`` calls can run simultaneously via ``asyncio.gather()`` or
-        ``asyncio.create_task()`` without corrupting each other or the
-        persistent shell session.
+        Synchronous and free of I/O, so the transfer line budget can ask it
+        (through ``BaseHost._exec_plan``, which resolves *user* first) without
+        running anything; :meth:`_run_plan` runs the answer. The conditions,
+        in the order they are read:
 
-        Key differences from ``run()``:
+        1. A *user* with a DIRECT credential on an ``ssh`` term, on a call
+           that needs no shell: ``SSH_CHANNEL`` on that user's own
+           connection (:meth:`~otto.host.connections.ConnectionManager.ssh_as`),
+           so the command runs with their real credentials.
+        2. Any other *user* (one reachable only through proxy hops, any user
+           on telnet, or a direct-credential user whose call needs a shell)
+           needs a shell switched to them for the call, so the call is
+           planned as needing a shell.
+        3. Everything else is the transport's answer,
+           :meth:`~otto.host.session.SessionManager.exec_route`: a
+           ``console`` term is ``DEFAULT_SESSION``; a proxied login, a
+           ``session_setup`` hook or a call that needs a shell is
+           ``POOLED_SHELL``; otherwise ``SSH_CHANNEL`` on ssh and
+           ``POOLED_SHELL`` on telnet.
 
-        +------------------+------------------------------+----------------------------+
-        | Property         | ``run()``                    | ``exec()``                 |
-        +==================+==============================+============================+
-        | Shell state      | Persistent (cd, env persist) | Stateless (not on console) |
-        | Concurrency      | Sequential only              | gather()-safe (console:    |
-        |                  |                              | calls take turns)          |
-        | Expect support   | Yes                          | Yes (forces needs_shell)   |
-        | Connection cost  | Reuses existing session      | Reuses cached exec pool    |
-        | Best for         | Multi-step workflows, state  | One-off / parallel cmds    |
-        +------------------+------------------------------+----------------------------+
-
-        Implementation details:
-
-        - **SSH**: runs via ``SSHClientConnection.create_process()`` — a
-          lightweight exec channel on the existing TCP connection.  No new
-          TCP handshake or authentication needed.
-        - **Telnet**: telnet has no stateless exec primitive, so otto keeps
-          a free-list pool of dedicated internal shell sessions.  Serial
-          callers reuse one session (one TCP+auth handshake amortized over
-          all calls); concurrent callers each pull their own session off
-          the free-list, opening a new one if none are free.  This preserves
-          the independence guarantee while avoiding the 1-2 s handshake on
-          every call.
-        - **Console**: the line serves one client, so there is neither a raw
-          channel nor a pool. The command runs on the default session, the
-          one ``run`` uses (its shell state included), and concurrent calls
-          take turns — see ``_exec_on_console``.
+        What each route does for the caller (concurrency, shell state, how
+        a console switches user) is :meth:`exec`'s and :meth:`_run_plan`'s to
+        say.
 
         Args:
-            cmd: Shell command to run. Shell operators (``<``, ``>``, ``|``) work on
-                SSH because asyncssh wraps the command in a shell; on telnet the
-                command runs through the login shell of the new session.
-            timeout: Seconds before the command is considered hung.
-                Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
-                pass ``float("inf")`` for a deliberately unbounded command such
-                as a netcat listener awaiting a connection.
-            user: Run the command as this user. A user with a DIRECT cred on
-                an ssh host is authenticated on a connection of their own
-                (:meth:`~otto.host.connections.ConnectionManager.ssh_as`), so
-                the command runs with their real credentials — unless the
-                call also needs a shell (*expects*, *sudo*), which a raw
-                channel cannot provide. Every other case — a user reachable
-                only through proxy hops, or any user on a telnet host — runs
-                on a pooled shell session switched to that user for the call
-                and back after (spec 2026-09-21 §4.2). On a console term
-                there is no pool: the one default session is switched to
-                that user for the call and back, as ``run(user=...)`` does,
-                while no other ``exec`` runs. ``None`` inherits an
-                enclosing ``as_user()``'s identity, else the login target.
+            user: The effective user of the call, or ``None`` for the login
+                target.
+            needs_shell: The call needs a shell a raw channel cannot be
+                (*expects*, *sudo*).
 
         Returns:
-            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
-
-        See Also:
-            :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
-            with expect support.
+            The :class:`~otto.host.session.ExecPlan` :meth:`_run_plan` runs.
         """
-        if self.term == "console":
-            return await self._exec_on_console(
-                cmd, timeout=timeout, log=log, user=user, expects=expects
-            )
         if (
             user is not None
             and self.term == "ssh"
             and not needs_shell
             and self._live_connections().has_direct_cred(user=user)
         ):
-            conn = await self._live_connections().ssh_as(user=user)
-            return await self._live_session_mgr().exec_on(
+            return ExecPlan(route=ExecRoute.SSH_CHANNEL, as_user=user)
+        # A user without a direct cred needs a shell switched to them for the
+        # call, and so does any user whose call needs a shell anyway.
+        route = self._live_session_mgr().exec_route(needs_shell=needs_shell or user is not None)
+        return ExecPlan(route=route)
+
+    @override
+    async def _run_plan(
+        self,
+        plan: ExecPlan,
+        *,
+        cmd: str,
+        timeout: float,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
+    ) -> CommandResult:
+        """Run *cmd* on the route :meth:`_plan_exec` chose."""
+        if plan.route is ExecRoute.DEFAULT_SESSION:
+            return await self._exec_on_console(
+                cmd, timeout=timeout, log=log, user=user, expects=expects
+            )
+        mgr = self._live_session_mgr()
+        if plan.as_user is not None:
+            conn = await self._live_connections().ssh_as(user=plan.as_user)
+            return await mgr.exec_on(
                 conn=conn, cmd=cmd, timeout=timeout, log=self._effective_log(log)
             )
-        return await self._live_session_mgr().exec(
+        return await mgr.exec_on_route(
+            route=plan.route,
             cmd=cmd,
             timeout=timeout,
             log=self._effective_log(log),
             expects=expects,
             user=user,
-            needs_shell=needs_shell,
         )
 
     def _console_line(self) -> asyncio.Lock:
@@ -1168,12 +1156,20 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         mgr = self._live_session_mgr()
         async with self._console_line():
             if user is None or user == mgr.current_user:
-                return await mgr.exec(
-                    cmd=cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                return await mgr.exec_on_route(
+                    route=ExecRoute.DEFAULT_SESSION,
+                    cmd=cmd,
+                    timeout=timeout,
+                    log=self._effective_log(log),
+                    expects=expects,
                 )
             async with self.as_user(user=user):
-                return await mgr.exec(
-                    cmd=cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                return await mgr.exec_on_route(
+                    route=ExecRoute.DEFAULT_SESSION,
+                    cmd=cmd,
+                    timeout=timeout,
+                    log=self._effective_log(log),
+                    expects=expects,
                 )
 
     ####################

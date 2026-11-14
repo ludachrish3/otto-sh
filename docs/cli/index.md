@@ -495,7 +495,8 @@ returns:
 
 Commands that run something on a host are ssh-like instead: they exit with the
 remote command's own return code, or 255 when the command never ran because the
-connection failed.
+connection failed. Whether that exit code, and the command's output, mean the
+same on every kind of host is answered on {ref}`the command contract page <command-contract>`.
 
 The setup checks, `otto link check` and `otto tunnel check`, exit by their
 verdicts instead: see {doc}`check-verdicts`.

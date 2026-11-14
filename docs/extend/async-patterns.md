@@ -25,7 +25,7 @@ state like the working directory persists between calls:
 >>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> run(host.run("cd /tmp"))
-Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0, timed_out=False)], msg='')
+Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0, timed_out=False, route='default-session')], msg='')
 >>> result = run(host.run("pwd")).only
 >>> result.value
 '/tmp'

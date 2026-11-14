@@ -141,6 +141,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tests._fixtures.support_matrix import FORMAT as MATRIX_FORMAT
 from tests._fixtures.support_matrix import (
     MATRIX_PATH,
     cell_coverage,
@@ -149,6 +150,7 @@ from tests._fixtures.support_matrix import (
     positive_control_errors,
 )
 from tests.conformance._controls import positive_control_for
+from tests.conformance._entry import entries_declared
 from tests.conformance._observation import (
     CONTROL,
     DEFAULT_OBSERVATIONS_DIR,
@@ -403,25 +405,20 @@ def _observed_cells(
     and a mixed cell's failing route is not, so the passing route's control
     record (which had run and PASSED) was collected and thrown away.
 
-    ★ AND DELIBERATELY NOT A SEVENTH: NO PER-CELL ``observable``.
-    Every record carries one, so it would be free to store, and it was left open
-    twice -- once by the task that added this field and once by the renderer,
-    which can say WHICH transport broke but not WHAT was watched on each.
-    MEASURED 2026-08-25 over the 575 records of a real bed lane and DECIDED:
-    of the 51 cells a run drew observations for (the other three are the
-    ``not-observable`` timeout cells, which have none), 12 have contributing
-    observations whose observables differ at all -- and in every one of the 51
-    the only thing that differs is the TRANSPORT TOKEN, which the ``transfer``
-    field beside it already carries
-    structurally. Storing the string per cell would repeat a ~110-character
-    sentence 32 times on ``gnu`` x transfer-mode to say ``scp`` / ``sftp`` /
-    ``ftp`` / ``nc``, which is the 900-character ``observable`` Task 4 measured
-    and shrank, restored one level down.
-    ``tests/unit/test_support_matrix.py``'s
-    ``test_a_cells_observables_differ_only_by_the_transport_its_entry_already_names``
-    is the tripwire: the day two drawn cells of one profile watch genuinely
-    different things, the cell-level join starts hiding one and that guard
-    reddens rather than the decision quietly becoming wrong.
+    ★ EVERY ENTRY ALSO CARRIES ITS OWN ``observable``, read off its record.
+    The cell-level ``observable`` (:func:`_observable_of`) stays: it is the
+    join, and for a surface whose drawn cells agree it is all a page needs. But
+    a limitation can apply to ONE term or ONE entry of a device -- ``run`` and
+    ``exec`` of a command contract can watch different things on the same
+    cell -- and the page must be able to say so for that cell rather than leave
+    the difference inside a pipe-joined string. The per-cell field is what makes
+    that publishable without parsing.
+
+    AND AN ``entry``, present exactly when the contract declares entries
+    (``tests/conformance/_entry.py``). :func:`_entry_mismatches` refuses any
+    record that disagrees with ``entries_declared(contract)`` before this runs,
+    so the key's presence here is the contract's declaration, read off the
+    record.
     """
     return [
         {
@@ -430,7 +427,9 @@ def _observed_cells(
             "term": record["term"],
             "transfer": record["transfer"],
             "outcome": record["outcome"],
+            "observable": record["observable"],
         }
+        | ({"entry": record["entry"]} if record["entry"] else {})
         | (
             {"positive_control": controls[record["cell_label"]]}
             if record["cell_label"] in controls
@@ -522,6 +521,29 @@ def _unbacked_passes(observations: "list[dict]", controls: "dict[str, str]") -> 
     )
 
 
+def _entry_mismatches(evidence: CellEvidence) -> "list[str]":
+    """Name every record whose ``entry`` disagrees with what its contract declares.
+
+    A command contract (``@pytest.mark.entries``) is measured per entry, so its
+    record must name one of the declared entries; an unmarked contract's record
+    must name none. Either disagreement is a defect in the emitter -- a record
+    that cannot say how its command was issued, or one claiming a measurement
+    its contract never makes -- and the cell is refused rather than written.
+    Asked of each record's OWN contract, so a control is judged against its own
+    marker as the contract is against its.
+    """
+    wrong: "list[str]" = []
+    for record in evidence.observations + evidence.exclusions + evidence.controls:
+        declared = entries_declared(record["contract"])
+        entry = record.get("entry", "")
+        if (entry not in declared) if declared else entry:
+            wrong.append(
+                f"{record['cell_label']} names entry {entry!r} but its contract declares "
+                f"entries {declared}"
+            )
+    return sorted(wrong)
+
+
 def _verdict(
     matrix: dict, surface: str, profile: str, evidence: CellEvidence
 ) -> "tuple[dict | None, str | None]":
@@ -536,6 +558,9 @@ def _verdict(
     transfer was measurably broken. The rule outlives the example: it is what
     any element with disagreeing cells will be aggregated by.
     """
+    mismatched = _entry_mismatches(evidence)
+    if mismatched:
+        return None, "; ".join(mismatched)
     if not evidence.observations and not evidence.exclusions:
         return None, (
             "only positive-control records name this cell -- a control's outcome is "
@@ -637,6 +662,9 @@ def collate(matrix: dict, records: "list[dict]") -> Collation:
     """
     kept, discarded = _bucket(records, matrix)
     result = Collation(matrix=copy.deepcopy(matrix), discarded=discarded, kept=len(kept))
+    # The format this collator WRITES, never the one the artifact it read
+    # carried: every cell it writes has this format's shape.
+    result.matrix["format"] = MATRIX_FORMAT
     for (surface, profile), evidence in sorted(_evidence(kept).items()):
         where = f"{surface} x {profile}"
         before = matrix["cells"][surface][profile]

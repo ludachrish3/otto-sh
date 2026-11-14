@@ -26,7 +26,8 @@ shells gets more coverage and a runner with fewer never silently loses the
 baseline.
 
 THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
-bottom. ``handshake()`` renders ``2>/dev/null stty -echo || :; echo; …; echo <READY>``
+bottom. ``handshake()`` renders
+``2>/dev/null stty -echo || :; 2>/dev/null stty tab0 || :; echo; …; echo <READY>``
 (the bare ``echo`` puts READY at the start of a line whatever the terminal's
 echo state), and suppression rides in front of it, so they share one line
 and one failure mode: anything that aborts the line strands READY and takes a
@@ -55,7 +56,18 @@ from otto.host.command_frame import (
 from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
 from otto.host.session import ready_pattern
-from otto.host.terminal_mapping import CALIBRATION_COMMAND, IDENTITY, ONLCR, measure
+from otto.host.terminal_mapping import (
+    CALIBRATION_COMMAND,
+    ECHO_OFF_COMMAND,
+    ECHO_RESET,
+    ECHO_UNSET,
+    ECHO_VAR,
+    IDENTITY,
+    ONLCR,
+    TABS_OFF_COMMAND,
+    measure,
+    saved_settings,
+)
 from tests._fixtures.interactive_shell import (
     FAKE_RAN,
     HAZARD_MARKERS,
@@ -301,7 +313,8 @@ def test_payload_carries_a_zsh_specific_clause():
 # ---------------------------------------------------------------------------
 # The handshake's other statement: a device with no `stty`
 #
-# `handshake()` renders `2>/dev/null stty -echo || :; echo; …; echo <READY>`. `stty` is
+# `handshake()` renders
+# `2>/dev/null stty -echo || :; 2>/dev/null stty tab0 || :; echo; …; echo <READY>`. `stty` is
 # an ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so
 # a stripped userland can simply not have it — and then the shell, not stty,
 # produces the diagnostic ("not found"). That message has to be swallowed by
@@ -553,15 +566,15 @@ def test_the_bed_tail_answers_nothing():
 def _inside_the_calibrations_last_escape(line: str) -> range:
     """The offsets of every tail that starts inside the calibration format's final escape.
 
-    That escape is the format's newline, the last word before ``; echo``. A
-    cut between its two backslashes once left the bare word ``n``, which is
-    a terminal-reading program on GitHub's ubuntu runner (#853). The range
-    starts there.
+    That escape is the format's newline, the end of the format word, before
+    the echo variable's argument. A cut between its two backslashes once left
+    the bare word ``n``, which is a terminal-reading program on GitHub's
+    ubuntu runner (#853). The range starts there and ends with the format.
     """
     start = line.index(CALIBRATION_COMMAND)
-    end = start + len(CALIBRATION_COMMAND)
+    end = start + CALIBRATION_COMMAND.index(f" ${ECHO_VAR}")
     k = line.rindex("\\\\", start, end)
-    assert line[end:].startswith(" || :; echo "), f"lost the calibration's end: {line!r}"
+    assert line[end:].startswith(f" ${ECHO_VAR} || :; "), f"lost the calibration's end: {line!r}"
     assert "\\" not in line[k + 2 : end], f"lost the calibration's last escape: {line!r}"
     return range(k + 1, end)
 
@@ -617,11 +630,18 @@ def test_no_tail_inside_the_marker_id_runs_the_ids_end(name, argv, fragment, kin
 @pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
 def test_the_whole_line_prints_ready_last_calibrated_and_leaves_nothing_set(name, argv, nounset):
-    """Run whole, the line prints READY last, calibrated, and unsets its variable."""
+    """Run whole, the line prints READY last, calibrated, and unsets its variables.
+
+    ``sh -c`` has no terminal, so ``stty -echo`` fails here and the
+    calibration carries the echo marker.
+    """
     shell = [*argv, "-u"] if nounset else argv
-    proc = _run(shell, LINE + 'echo "[${__otto_probe-unset}]"\n')
-    assert proc.stdout.endswith(f"\n{TAIL_MARKERS.ready}\n[unset]\n"), f"{name}: {proc.stdout!r}"
-    assert measure(proc.stdout.removesuffix("[unset]\n"), TAIL_MARKERS.ready).mapping == "identity"
+    proc = _run(shell, LINE + 'echo "[${__otto_probe-unset}${__otto_echo-unset}]"\n')
+    end = "[unsetunset]\n"
+    assert proc.stdout.endswith(f"\n{TAIL_MARKERS.ready}\n{end}"), f"{name}: {proc.stdout!r}"
+    seen = measure(proc.stdout.removesuffix(end), TAIL_MARKERS.ready)
+    assert seen.mapping == "identity"
+    assert seen.echoes is True
 
 
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
@@ -677,6 +697,7 @@ _STATEMENT_NAMES = {
     "command export": "export-group",
     "command set": "set-group",
     "eval": "eval",
+    "stty tab0": "stty-tabs",
     "stty": "stty",
     "printf": "printf",
 }
@@ -731,17 +752,62 @@ def _inside_the_echo_word(line: str, m: SessionMarkers) -> int:
 
 
 def _inside_the_or_colons(line: str) -> dict[str, dict[str, int]]:
-    """Every tail from inside the ``|| :`` after ``stty`` and ``printf``: ``|| :``, ``| :``, ``:``.
+    """Every tail from inside the ``||`` branch after ``stty -echo``, ``stty tab0`` and ``printf``.
 
-    ``|| :`` keeps either statement's failure from ending the line under
-    ``set -e`` (#953). A tail from it starts with a syntax error (``||``,
-    ``|``) or runs ``:``, and none may leave the resend unanswered.
+    The branch keeps either statement's failure from ending the line under
+    ``set -e`` (#953): ``|| :``, or after ``stty -echo`` the assignment that
+    records the failure (``|| __otto_echo=E``). A tail from it starts with a
+    syntax error (``||``, ``|``), runs ``:``, or assigns or runs a fragment
+    of the assignment, and none may leave the resend unanswered.
     """
     found: dict[str, dict[str, int]] = {}
-    for statement, text in (("stty", "stty -echo || :"), ("printf", f"{CALIBRATION_COMMAND} || :")):
-        k = line.index(text) + len(text) - len("| :")
-        assert line[k - 1 :].startswith("|| :; echo"), f"lost the {statement} statement's || :"
-        found[statement] = {"oror": k - 1, "pipe": k, "colon": k + len("| ")}
+    # What the handshake runs right after each tolerant statement's branch:
+    # the tab statement, the bare `echo`, and the unset of the echo variable.
+    tabs_statement = TABS_OFF_COMMAND.removesuffix(" || :")
+    for statement, text, branch, follower in (
+        ("stty", ECHO_OFF_COMMAND, f"|| {ECHO_VAR}=E", tabs_statement),
+        ("stty-tabs", TABS_OFF_COMMAND, "|| :", "echo; "),
+        ("printf", f"{CALIBRATION_COMMAND} || :", "|| :", ECHO_UNSET),
+    ):
+        k = line.index(text) + len(text) - len(branch) + 1
+        assert line[k - 1 :].startswith(f"{branch}; {follower}"), (
+            f"lost the {statement} statement's {branch}, or what follows it moved"
+        )
+        cuts = {"oror": k - 1, "pipe": k, "colon": k + len("| ")}
+        if statement == "stty":
+            cuts = {
+                "oror": k - 1,
+                "pipe": k,
+                "assignment": k + len("| "),
+                "inside-the-name": k + len("| __otto_"),
+                "equals": k + len(branch) - 3,
+                "value": k + len(branch) - 2,
+            }
+        found[statement] = cuts
+    return found
+
+
+def _around_the_echo_variable(line: str) -> dict[str, int]:
+    """Tails from inside the echo variable's reset, its expansion and its unset.
+
+    ``__otto_echo=;`` leaves ``=;`` and fragments of the name; the
+    calibration's ``$__otto_echo`` argument leaves the bare name or its
+    suffixes (``echo``, ``o``) as the tail's first word; ``unset __otto_echo``
+    leaves ``set __otto_echo``. None may wedge the resend.
+    """
+    reset = line.index(ECHO_RESET + ";")
+    dollar = line.index(f"${ECHO_VAR}")
+    unset = line.index(ECHO_UNSET)
+    found = {
+        "reset-name": reset + len("__otto_"),
+        "reset-equals": reset + len(ECHO_RESET) - 1,
+        "expansion-name": dollar + 1,
+        "expansion-echo": dollar + 1 + len("__otto_"),
+        "unset-set": unset + len("un"),
+    }
+    assert line[found["expansion-echo"] :].startswith("echo || :"), (
+        f"lost the calibration arg: {line!r}"
+    )
     return found
 
 
@@ -760,17 +826,24 @@ def _hazards() -> list[tuple[str, str, int]]:
         render_probe("recovery", TAIL_MARKERS),
     )
     _redirections(resync, {"export-group", "set-group", "eval"})
-    redirect = _redirections(handshake, {"export-group", "set-group", "eval", "stty", "printf"})
+    redirect = _redirections(
+        handshake, {"export-group", "set-group", "eval", "stty", "stty-tabs", "printf"}
+    )
     return [
         ("calibration", "handshake", _after_the_calibration_x(handshake)),
         ("zsh-clause", "handshake", _inside_the_zsh_clause(handshake)),
         ("redirection-export-group", "handshake", redirect["export-group"]),
         ("redirection-eval", "handshake", redirect["eval"]),
         ("redirection-stty", "handshake", redirect["stty"]),
+        ("redirection-stty-tabs", "handshake", redirect["stty-tabs"]),
         *(
             (f"or-{statement}-{cut}", "handshake", k)
             for statement, cuts in _inside_the_or_colons(handshake).items()
             for cut, k in cuts.items()
+        ),
+        *(
+            (f"echo-variable-{cut}", "handshake", k)
+            for cut, k in _around_the_echo_variable(handshake).items()
         ),
         ("brace", "resync", _after_the_echo_word_dollar(resync, TAIL_MARKERS)),
         ("recovery-quote", "recovery", _at_the_echo_words_head(recovery, TAIL_MARKERS)),
@@ -780,6 +853,8 @@ def _hazards() -> list[tuple[str, str, int]]:
 HAZARDS = _hazards()
 _NOUNSET_HAZARDS = (
     "calibration",
+    "echo-variable-reset-name",
+    "echo-variable-expansion-name",
     "zsh-clause",
     "redirection-export-group",
     "brace",
@@ -807,7 +882,9 @@ def test_the_whole_handshake_answers_first_try(name, history):
     """Typed whole once, the handshake prints READY and its calibration reads ``onlcr``."""
     with interactive_shell(name) as shell:
         reply = _whole(shell, "handshake", history)
-    assert measure(reply, TAIL_MARKERS.ready).mapping == ONLCR, f"{name}: {reply!r}"
+    seen = measure(reply, TAIL_MARKERS.ready)
+    assert seen.mapping == ONLCR, f"{name}: {reply!r}"
+    assert seen.echoes is False, f"{name}: `stty -echo` took on a pty: {reply!r}"
 
 
 @_HISTORY
@@ -834,7 +911,13 @@ def test_a_tail_inside_the_zsh_history_clause_does_not_wedge(name, kind, k):
 
 
 @pytest.mark.parametrize(
-    ("kind", "k"), _of("redirection-export-group", "redirection-eval", "redirection-stty")
+    ("kind", "k"),
+    _of(
+        "redirection-export-group",
+        "redirection-eval",
+        "redirection-stty",
+        "redirection-stty-tabs",
+    ),
 )
 @pytest.mark.parametrize("name", INTERACTIVE)
 def test_a_redirection_only_tail_does_not_feed_cat(name, kind, k):
@@ -843,7 +926,7 @@ def test_a_redirection_only_tail_does_not_feed_cat(name, kind, k):
     zsh runs a command made only of redirections as ``$NULLCMD``, ``cat`` by
     default, and that ``cat`` would read every resend as its input. One
     redirection of each form: closing a brace group, leading the zsh
-    clause's ``eval``, and on the ``stty`` statement.
+    clause's ``eval``, and on each ``stty`` statement.
     """
     cut_probe(name, kind, k, TAIL_MARKERS, RESEND_MARKERS)
 
@@ -853,7 +936,7 @@ def test_a_redirection_only_tail_does_not_feed_cat(name, kind, k):
     _of(
         *(
             f"or-{statement}-{cut}"
-            for statement in ("stty", "printf")
+            for statement in ("stty", "stty-tabs", "printf")
             for cut in ("oror", "pipe", "colon")
         )
     ),
@@ -1010,8 +1093,9 @@ def test_the_handshake_reaches_ready_under_errexit_without_printf(name, tmp_path
     assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
 
 
+@pytest.mark.parametrize("kind", ["handshake", "console-handshake"])
 @pytest.mark.parametrize("name", [name for name, _ in _STTY_ABSENT_SHELLS])
-def test_the_handshake_reaches_ready_under_errexit_without_stty(name, tmp_path):
+def test_the_handshake_reaches_ready_under_errexit_without_stty(name, kind, tmp_path):
     """``set -e`` and no ``stty``: the failed ``stty -echo`` must not end the line (#953).
 
     An empty ``PATH`` removes ``stty`` on every shell outside
@@ -1023,11 +1107,17 @@ def test_the_handshake_reaches_ready_under_errexit_without_stty(name, tmp_path):
     with interactive_shell(name, setup=f"PATH={tmp_path}") as shell:
         printf_reachable = _reachable(shell, "printf")
         _absent_under_errexit(shell, "stty")
-        reply = _whole(shell, "handshake")
+        reply = _whole(shell, kind)
+    # The console's settings save prints its tag alone: nothing is saved.
+    assert saved_settings(reply, TAIL_MARKERS.saved) is None, f"{name}: {reply!r}"
     calibration = measure(reply, TAIL_MARKERS.ready)
     assert calibration.calibrated is printf_reachable, f"{name}: {reply!r}"
+    # Echo is still on: the calibration says so, and an uncalibrated reply
+    # is treated as possibly echoing.
+    assert calibration.echoes is True, f"{name}: {reply!r}"
     if printf_reachable:
         assert calibration.mapping == ONLCR, f"{name}: {reply!r}"
+        assert "EX" in reply, f"{name}: {reply!r}"
     assert not re.search(r"not found", reply, re.IGNORECASE), f"{name}: {reply!r}"
 
 

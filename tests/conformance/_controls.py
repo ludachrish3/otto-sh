@@ -100,25 +100,16 @@ class Control:
     """
 
 
-def mark_string_argument(node: ast.expr, mark_name: str) -> "str | None":
-    """The single string literal in a ``@pytest.mark.<mark_name>("...")`` decorator.
+def mark_string_arguments(node: ast.expr, mark_name: str) -> "list[str] | None":
+    """The string literals in a ``@pytest.mark.<mark_name>(...)`` decorator, in order.
 
-    Answers ``None`` when *node* is not that marker at all, and the EMPTY
-    STRING when it is that marker but its argument cannot be read from source.
-    The two are different answers and every caller distinguishes them: "not a
-    control" and "a control whose surface this cannot see" must not collapse,
-    because the second is a loud failure and the first is the ordinary case.
-
-    Matches the ATTRIBUTE PATH and not merely the final name, so an unrelated
-    ``@something.positive_control(...)`` is not read as this marker. A marker
-    whose argument is computed puts its value somewhere an AST read cannot
-    follow, and the honest answer to that is to fail the tree's cross-check
-    rather than to guess.
-
-    Shared with ``tests/conformance/_observable.py``, which reads a second
-    marker of exactly this shape off the CONTRACTS. One reader rather than
-    two, so the two markers cannot end up disagreeing about what
-    ``@pytest.mark.X("y")`` means.
+    THE ONE READER of a literal pytest marker off source. Answers ``None`` when
+    *node* is not that marker at all; an argument that is not a string literal
+    is answered as ``""``, which every caller rejects loudly. Matches the
+    ATTRIBUTE PATH and not merely the final name, so an unrelated
+    ``@something.positive_control(...)`` is not read as this marker.
+    :func:`mark_string_argument` is its one-argument wrapper; the ``entries``
+    marker (``tests/conformance/_entry.py``) reads several.
     """
     if not isinstance(node, ast.Call):
         return None
@@ -130,10 +121,35 @@ def mark_string_argument(node: ast.expr, mark_name: str) -> "str | None":
         return None
     if not (isinstance(mark.value, ast.Name) and mark.value.id == "pytest"):
         return None
-    if len(node.args) != 1 or not isinstance(node.args[0], ast.Constant):
-        return ""
-    value = node.args[0].value
-    return value if isinstance(value, str) else ""
+    return [
+        arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else ""
+        for arg in node.args
+    ]
+
+
+def mark_string_argument(node: ast.expr, mark_name: str) -> "str | None":
+    """The single string literal in a ``@pytest.mark.<mark_name>("...")`` decorator.
+
+    Answers ``None`` when *node* is not that marker at all, and the EMPTY
+    STRING when it is that marker but its argument cannot be read from source
+    (not exactly one string literal). The two are different answers and every
+    caller distinguishes them: "not a control" and "a control whose surface
+    this cannot see" must not collapse, because the second is a loud failure
+    and the first is the ordinary case.
+
+    A marker whose argument is computed puts its value somewhere an AST read
+    cannot follow, and the honest answer to that is to fail the tree's
+    cross-check rather than to guess.
+
+    Shared with ``tests/conformance/_observable.py``, which reads a second
+    marker of exactly this shape off the CONTRACTS; both go through
+    :func:`mark_string_arguments`, so no two markers can disagree about what
+    ``@pytest.mark.X("y")`` means.
+    """
+    arguments = mark_string_arguments(node, mark_name)
+    if arguments is None:
+        return None
+    return arguments[0] if len(arguments) == 1 else ""
 
 
 def _mark_surface(node: ast.expr) -> "str | None":

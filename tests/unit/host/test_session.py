@@ -29,7 +29,9 @@ from otto.host.command_frame import (
     ZephyrFrame,
     ZephyrSerialFrame,
 )
+from otto.host.exec_route import ExecRoute
 from otto.host.local_host import LocalHost
+from otto.host.output_codec import PatternReader
 from otto.host.secret_wire import reveal
 from otto.host.session import (
     INIT_TIMEOUT_ENV_VAR,
@@ -39,11 +41,12 @@ from otto.host.session import (
     SshSession,
     resolve_init_timeout,
 )
-from otto.host.shell_quote import shell_operand
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
 from otto.utils import Status, wait_for_async
 from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures.clock import stepped_loop_clock
 from tests._fixtures.fake_shell import ShellModel, probe_marker
+from tests._fixtures.line_reader import lf_lines
 from tests.unit.host._session_feed import (
     FeedAfterWriteMixin,
     handshake_reply,
@@ -78,8 +81,19 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
     async def open_transport(self) -> None:
         # Create paired streams: what the session writes to "stdin" can be read
         # by the test, and what the test writes to "stdout" can be read by the session.
-        self._out_reader = asyncio.StreamReader()
-        self._utf8 = codecs.getincrementaldecoder("utf-8")()
+        self._out_reader = out_reader = asyncio.StreamReader()
+
+        async def read_byte() -> bytes:
+            # One byte per read, so a multi-byte character and every marker
+            # arrive split; the product's reader does the decoding and the
+            # search, so a long line costs what it costs in production.
+            chunk = await out_reader.read(1)
+            if self._connection_lost_pending:
+                self._connection_lost_pending = False
+                raise asyncssh.ConnectionLost("connection lost")
+            return chunk
+
+        self._reader = PatternReader(read_byte)
         # No real writer needed — we feed data directly into the StreamReader
 
     async def write_transport(self, data: str) -> None:
@@ -89,20 +103,7 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         self.written.append(reveal(data))  # what the transport writes
 
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
-        assert self._out_reader is not None
-        buf = ""
-        while True:
-            chunk = await self._out_reader.read(1)
-            if self._connection_lost_pending:
-                self._connection_lost_pending = False
-                raise asyncssh.ConnectionLost("connection lost")
-            if not chunk:
-                raise asyncio.IncompleteReadError(buf.encode(), None)
-            # Incremental: a multi-byte character arrives one byte per read.
-            buf += self._utf8.decode(chunk)
-            m = pattern.search(buf)
-            if m:
-                return buf
+        return await self._reader.read_transport_until(pattern)
 
     async def close(self) -> None:
         self._alive = False
@@ -2078,59 +2079,36 @@ class TestExecProxyRouting:
     """Task 8: ``exec()`` must route through the proxied pool — not a raw
     SSH exec channel — whenever the login is proxied (non-empty ``proxy_hops``).
 
-    Both raw-exec fast paths (the ``_exec_factory`` callable, and the
-    inline ``ssh_conn.create_process`` in the ``case "ssh":`` branch)
-    authenticate as the resolved DIRECT cred and cannot replay proxy hops —
-    so a proxied exec on either fast path would silently run as the
-    via-user instead of the target. Only the pooled named-session path
+    The raw-exec fast path (the ``ssh_conn.create_process`` channel)
+    authenticates as the resolved DIRECT cred and cannot replay proxy hops —
+    so a proxied exec on it would silently run as the via-user instead of
+    the target. Only the pooled named-session path
     (``_acquire_exec_session`` -> ``open_session``) replays hops, via
     ``_apply_login_proxy`` (Task 7).
     """
 
-    @pytest.mark.asyncio
-    async def test_no_hops_uses_factory_fast_path(self):
-        """Existing fast path preserved: no proxy_hops -> factory IS called."""
-        factory_calls: list[str] = []
-
-        async def fake_factory(cmd: str, timeout: float | None) -> CommandResult:
-            factory_calls.append(cmd)
-            return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
-
+    def test_no_hops_uses_the_raw_fast_path(self):
+        """Existing fast path preserved: no proxy_hops on ssh -> the raw channel."""
         conn = _proxy_connections([], login_target="alice", credentials=("alice", "alicepw"))
-        mgr = SessionManager(
-            connections=conn,
-            session_factory=_StubExecSession,
-            exec_factory=fake_factory,
-            host_id="h",
-        )
+        conn.term = "ssh"
+        mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
 
-        result = await mgr.exec(cmd="id")
-
-        assert factory_calls == ["id"]
-        assert result.value == "factory"
-        assert mgr._exec_pool == []  # pool never touched
+        assert mgr.exec_route() is ExecRoute.SSH_CHANNEL
 
     @pytest.mark.asyncio
-    async def test_hops_present_skips_factory_uses_pool(self):
-        """A proxied login (non-empty proxy_hops) bypasses the factory entirely."""
-        factory_calls: list[str] = []
-
-        async def fake_factory(cmd: str, timeout: float | None) -> CommandResult:
-            factory_calls.append(cmd)
-            return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
-
+    async def test_hops_present_skips_the_raw_path_uses_pool(self):
+        """A proxied login (non-empty proxy_hops) bypasses the raw channel entirely."""
         hop = Cred(login="mysql", proxy="su", via="admin")
         conn = _proxy_connections([hop], login_target="mysql", credentials=("admin", "adminpw"))
-        mgr = SessionManager(
-            connections=conn,
-            session_factory=_StubExecSession,
-            exec_factory=fake_factory,
-            host_id="h",
-        )
+        conn.term = "ssh"
+        conn.ssh = AsyncMock()
+        mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
 
-        result = await mgr.exec(cmd="id")
+        route = mgr.exec_route()
+        assert route is ExecRoute.POOLED_SHELL
+        result = await mgr.exec_on_route(route=route, cmd="id", timeout=10.0, log=LogMode.NORMAL)
 
-        assert factory_calls == []  # the raw exec factory must NOT run
+        conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
         # the pooled session actually ran the command and ended up stamped
         # as the proxied target, not the direct-auth via-user
@@ -2158,7 +2136,9 @@ class TestExecProxyRouting:
             host_id="h",
         )
 
-        result = await mgr.exec(cmd="id")
+        route = mgr.exec_route()
+        assert route is ExecRoute.POOLED_SHELL
+        result = await mgr.exec_on_route(route=route, cmd="id", timeout=10.0, log=LogMode.NORMAL)
 
         conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
@@ -2236,7 +2216,9 @@ class TestExecLogsCommandExactlyOnce:
             ssh=AsyncMock(return_value=ssh_conn),
         )
 
-        result = await self._mgr(conn, logged).exec(cmd="id")
+        result = await self._mgr(conn, logged).exec_on_route(
+            route=ExecRoute.SSH_CHANNEL, cmd="id", timeout=10.0, log=LogMode.NORMAL
+        )
 
         assert result.value == "out"
         assert logged == [("id", LogMode.NORMAL)]
@@ -2251,7 +2233,9 @@ class TestExecLogsCommandExactlyOnce:
             term="telnet",
         )
 
-        await self._mgr(conn, logged).exec(cmd="id")
+        await self._mgr(conn, logged).exec_on_route(
+            route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL
+        )
 
         assert logged == [("id", LogMode.NORMAL)]
 
@@ -2332,17 +2316,9 @@ class TestExecOnDropsTheEofPartial:
         assert logged == output_lines
 
 
-# One table for both exec routes: (id, the raw lines a drain reads, value).
-# The raw lines are what a command prints, split after each ``\n``; ``''`` is
-# asyncssh's EOF partial, which only the ssh channel ever yields.
-_EXEC_LINE_ROWS: list[tuple[str, list[str], str]] = [
-    ("trailing-space", ["a \n"], "a "),
-    ("trailing-tab", ["a\t\n"], "a\t"),
-    ("crlf", ["a\r\n", "b\n"], "a\r\nb"),
-    ("blank-tail", ["a\n", "\n"], "a\n"),
-    ("no-final-newline", ["abc"], "abc"),
-    ("empty", [], ""),
-]
+# Rows only the ssh channel can produce: ``''`` is asyncssh's EOF partial
+# (#711), which contributes nothing to ``value``. Every other row comes from
+# :data:`otto.testing.EXACT_OUTPUT_CASES`.
 _SSH_ONLY_ROWS: list[tuple[str, list[str], str]] = [
     ("eof-partial-only", [""], ""),
     ("eof-partial-after-line", ["a\n", ""], "a"),
@@ -2360,7 +2336,8 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
 
     @pytest.mark.parametrize(
         ("raw_lines", "value"),
-        [pytest.param(raw, value, id=id_) for id_, raw, value in _EXEC_LINE_ROWS + _SSH_ONLY_ROWS],
+        [pytest.param(lf_lines(c.text), c.value, id=c.id) for c in EXACT_OUTPUT_CASES]
+        + [pytest.param(raw, value, id=id_) for id_, raw, value in _SSH_ONLY_ROWS],
     )
     @pytest.mark.asyncio
     async def test_ssh_exec_channel(self, raw_lines: list[str], value: str) -> None:
@@ -2377,26 +2354,17 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
 
         assert result.value == value
 
-    @pytest.mark.parametrize(
-        ("command", "value"),
-        [
-            pytest.param(f"printf %s {shell_operand(''.join(raw))}", value, id=id_)
-            for id_, raw, value in _EXEC_LINE_ROWS
-        ]
-        # shlex quoting cannot carry a byte that is not UTF-8, so printf's octal
-        # escape writes it: 0xff alone is invalid UTF-8 and decodes replaced.
-        + [pytest.param(r"printf '\377\n'", "\N{REPLACEMENT CHARACTER}", id="invalid-utf8")],
-    )
+    @pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
     @pytest.mark.asyncio
-    async def test_local_exec(self, command: str, value: str) -> None:
+    async def test_local_exec(self, case: OutputCase) -> None:
         host = LocalHost(log=LogMode.QUIET)
         try:
-            result = await host.exec(command)
+            result = await host.exec(case.command)
         finally:
             await host.close()
 
-        assert result.status == Status.Success, result.value
-        assert result.value == value
+        assert result.value == case.value
+        assert result.retcode == case.retcode
 
     @pytest.mark.asyncio
     async def test_ssh_exec_channel_replaces_invalid_utf8(self) -> None:
@@ -2424,13 +2392,24 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
 
     @pytest.mark.asyncio
     async def test_ssh_shell_session_decodes_like_the_exec_channel(self) -> None:
-        """The ssh shell session's channel is decoded the same way: an invalid byte is replaced."""
-        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess([])))
+        """The ssh shell session's channel is decoded the same way: an invalid byte is replaced.
 
-        await SshSession(conn).open_transport()
+        The channel carries bytes, and the session's reader decodes them with
+        otto's one output decoder."""
+        chunks = [b"\xff\n"]
 
-        kwargs = conn.create_process.await_args.kwargs
-        assert (kwargs.get("encoding"), kwargs.get("errors")) == ("utf-8", "replace")
+        async def read(_n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        process = _FakeSshProcess([])
+        process.stdout = SimpleNamespace(read=read)
+        conn = SimpleNamespace(create_process=AsyncMock(return_value=process))
+        session = SshSession(conn)
+
+        await session.open_transport()
+
+        assert conn.create_process.await_args.kwargs.get("encoding") is None
+        assert await session.read_transport_until(pattern=re.compile("\n")) == "�\n"
 
 
 class _HangupableSshProcess(_FakeSshProcess):
@@ -2554,9 +2533,11 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
         ran.append(cmd)
         return CommandResult(status=Status.Success, value="test", command=cmd, retcode=0)
 
-    mgr._session = SimpleNamespace(alive=True, current_user="test", run_cmd=run_cmd)
+    mgr._session = SimpleNamespace(alive=True, echoes=False, current_user="test", run_cmd=run_cmd)
 
-    result = await mgr.exec(cmd="id -un")
+    route = mgr.exec_route()
+    assert route is ExecRoute.DEFAULT_SESSION
+    result = await mgr.exec_on_route(route=route, cmd="id -un", timeout=10.0, log=LogMode.NORMAL)
 
     assert (result.value, result.retcode, ran) == ("test", 0, ["id -un"])
     assert mgr._exec_pool == []

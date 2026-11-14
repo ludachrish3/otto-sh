@@ -18,7 +18,7 @@ its exit code from :attr:`Result.exit_code`.
 """
 
 from collections.abc import Iterator, Sequence
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, field
 from typing import Any, Protocol, overload, runtime_checkable
 
 from typing_extensions import Never, final, override
@@ -138,6 +138,20 @@ class CommandResult(Result):
     Distinguishes a timeout from an ordinary failure without string-matching
     :attr:`~otto.result.Result.value`; ``retcode`` cannot, since ``-1`` also
     means "never ran" and "skipped: cumulative budget exhausted".
+    """
+
+    route: str = field(default="", compare=False)
+    """Which route ran the command, recorded by the primitive that ran it.
+
+    An :class:`~otto.host.exec_route.ExecRoute` value: ``"ssh-channel"``,
+    ``"pooled-shell"``, ``"default-session"`` or ``"local-subprocess"``;
+    ``run`` reports ``"default-session"``. A container's ``exec`` reports
+    ``"container/"`` followed by its parent's route (``"container/ssh-channel"``),
+    which is therefore not itself an ``ExecRoute`` value;
+    :func:`~otto.host.exec_route.ran_route` reads either shape back to its
+    ``ExecRoute``. ``""`` for a result no host route produced (a dry run, a
+    command on a named session, a docker build). Informational: it takes no
+    part in equality or hashing.
     """
 
     @override
@@ -264,7 +278,7 @@ class NotRunResult(CommandResult):
         return (
             f"{type(self).__name__}(status={self.status!r}, value=<not run>, "
             f"msg={self.msg!r}, command={self.command!r}, retcode={self.retcode!r}, "
-            f"timed_out={self.timed_out!r}, host_name={self.host_name!r})"
+            f"timed_out={self.timed_out!r}, route={self.route!r}, host_name={self.host_name!r})"
         )
 
     @override

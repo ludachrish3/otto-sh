@@ -224,11 +224,15 @@ def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
 
     async def _exec(cmd: str, timeout: float | None = None, **kw: object) -> CommandResult:
         calls.append((cmd, kw.get("log")))
+        # The route a real parent's exec primitive records on its result.
+        route = "ssh-channel"
         if cmd.startswith("docker ps -q"):
-            return CommandResult(status=Status.Success, value=ps_out, command=cmd)
+            return CommandResult(status=Status.Success, value=ps_out, command=cmd, route=route)
         if cmd.startswith("docker exec"):
-            return CommandResult(status=Status.Success, value=exec_ps_text, command=cmd)
-        return CommandResult(status=Status.Success, value="", command=cmd)
+            return CommandResult(
+                status=Status.Success, value=exec_ps_text, command=cmd, route=route
+            )
+        return CommandResult(status=Status.Success, value="", command=cmd, route=route)
 
     parent.exec = AsyncMock(side_effect=_exec)
     ctr = DockerContainerHost(

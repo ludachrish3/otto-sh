@@ -494,12 +494,12 @@ def _applet_probe_command(applets: "list[str]") -> str:
     9000-character exec-channel ceiling is roomy -- but ``exec`` has no
     stateless primitive on a ``term: telnet`` host or on any host whose login
     is proxied, and there it routes through a pooled shell session where
-    :data:`ASH_TYPED_LINE_MAX` (1022, minus otto's own BEGIN/END framing)
+    :data:`PTY_TYPED_LINE_MAX` (4095, minus otto's own BEGIN/END framing)
     applies instead. The shipped seven names emit 135 characters, so the slack
     against the tighter of the two is a factor of about seven -- comfortable,
     and nothing like the three orders of magnitude the exec ceiling suggests.
     ``test_the_batch_fits_the_line_bound_the_tighter_transport_imposes`` runs
-    otto's real ``refuse_if_line_editor_would_truncate`` over this command, so
+    otto's real ``refuse_if_typed_line_would_be_cut`` over this command, so
     the guard is the RELATIONSHIP and neither number is retyped: a list long
     enough to approach the bound reds there rather than truncating on a device.
     """
@@ -2297,6 +2297,66 @@ class Gap:
         return bool(self.paths) and not self.open_paths
 
 
+PTY_TYPED_LINE_MAX = 4095
+"""Longest single line otto can type into a shell through a terminal. A DISCRIMINATOR.
+
+The measurement behind the ``run-command-line-length`` record (in
+:data:`GAPS` below, which reads it), hoisted into a constant because
+:func:`otto.host.session.refuse_if_typed_line_would_be_cut` compares against
+it and :func:`otto.host.session.typed_line_budget` hands it out. Read that
+record for the evidence; this docstring is about the number's standing.
+
+IT IS THE KERNEL'S BOUND, NOT ASH'S. A terminal in canonical mode holds one
+line in N_TTY's 4096-byte buffer, the line's own newline included, so 4095
+characters arrive and the rest of a longer line is dropped with no error.
+Measured on 2026-11-13 through otto's own session on all five BusyBox QEMU
+guests over telnet, and on BusyBox 1.35.0 over dropbear ssh and over its serial
+console: 4095 intact, 4096 cut to 4095, on every release and every route.
+
+WHY BUSYBOX ASH'S 1022-CHARACTER LINE EDITOR DOES NOT BOUND IT. That editor
+(``CONFIG_FEATURE_EDITING_MAX_LEN``, 1024 on the upstream builds) is real and
+cuts a typed line at 1022 characters -- but only while the terminal ECHOES.
+Upstream ``read_line_input`` (``libbb/lineedit.c``) falls back to a plain
+buffered read when the terminal is canonical with echo off, and a buffered read
+takes a long line in pieces and loses nothing. otto's handshake turns echo off
+(``stty -echo``, see :meth:`~otto.host.command_frame.BashFrame.handshake`)
+before it types any command, so the editor never applies to a line otto types.
+The same session with ``stty echo`` typed back cuts at 1022 on every release
+and route, which is the condition the 2026-08-13 measurements of 1022 were
+taken under. The behaviour is measured; the source path is read, not traced.
+
+A device whose ``stty -echo`` fails (no ``stty`` applet, #953, or one that
+refuses it) keeps echoing, and there the 1022 cut applies:
+:data:`ASH_ECHOING_LINE_MAX` is that bound, and
+:func:`otto.host.session.typed_line_ceiling` picks between the two from what
+the handshake measured (:attr:`otto.host.terminal_mapping.Measurement.echoes`).
+
+THE SCOPE OF THE CLAIM. 4095 is the Linux terminal's bound (N_TTY's canonical
+line), measured on BusyBox guests. It is not claimed for a Zephyr board, whose
+shell buffer (``CONFIG_SHELL_CMD_BUFF_SIZE``) is the real bound and is
+unmeasured, nor as measured on bash.
+
+**NEVER WIDEN THIS.** It is not a budget otto chose; a larger value re-opens
+the silent cut for the band between the two numbers. Only a new measurement
+moves it, and then to whatever that measurement answered.
+"""
+
+ASH_ECHOING_LINE_MAX = 1022
+"""Longest line BusyBox ash takes from a terminal that still ECHOES. A DISCRIMINATOR.
+
+ash's line editor (``CONFIG_FEATURE_EDITING_MAX_LEN``, 1024 on the upstream
+builds) cuts a typed line at 1022 characters, with no error, but engages only
+while the terminal echoes (:data:`PTY_TYPED_LINE_MAX` has why). Measured
+2026-08-13 by a raw harness on BusyBox 1.16.1, 1.21.1, 1.28.1, 1.31.0 and
+1.35.0 through a local pty, and on 1.35.0 over dropbear and OpenSSH; and
+2026-11-13 through otto's own session after ``stty echo``, on the five BusyBox
+QEMU guests over telnet and on 1.35.0 over dropbear ssh and its serial
+console: 1022 intact, 1023 cut, on every release and route. It bounds a line
+otto types into an ash shell whose handshake could not turn echo off
+(:func:`otto.host.session.typed_line_ceiling`). Never widen it either.
+"""
+
+
 # The records. ORDER IS THE DOCS TABLE'S ORDER, so it is grouped the way a
 # reader meets these: the file-moving surfaces first (the ones the `shell`
 # backend exists for), then the command surfaces, then what is merely unknown.
@@ -2330,8 +2390,8 @@ GAPS: list[Gap] = [
             "nothing -- `todo/busybox-parity-sweep-2026-08-11.md`'s uu item is built and "
             "covered per row in `tests/integration/busybox_bed/test_shell_codec.py`, and "
             "the PTY path that used to be queued here is measured: a `term: telnet` "
-            "BusyBox host routes this backend through a pooled shell session whose line "
-            "editor truncates at 1022 characters (the `run-command-line-length` record), "
+            "BusyBox host routes this backend through a pooled shell session whose typed "
+            "lines are cut past 4095 characters (the `run-command-line-length` record), "
             "so PUT now SIZES its chunk lines to that budget, and multi-chunk round "
             "trips run over telnet on all five guests -- uuencode on 1.16.1, base64 on "
             "the rest"
@@ -2823,41 +2883,61 @@ GAPS: list[Gap] = [
         surface="run-command-line-length",
         status=MEASURED_BROKEN,
         reason=(
-            "BusyBox ash's line editor SILENTLY TRUNCATES a typed line longer than 1022 "
-            "characters -- a different, shorter command runs and its success is reported "
-            "as the caller's. `Host.run()` refuses instead, up front, on any host whose "
-            "declared shell dialect is `ash`: `run()` drives a PERSISTENT session, which "
-            '`SshSession.open_transport` opens with `term_type="dumb"`, so the far side allocates '
-            "a pty and the command arrives as a TYPED LINE through that editor. The bound "
-            "is on the LINE and not on the command -- otto's framing adds 38 characters "
-            "to the command's first line, leaving 984 for the longest line of the "
-            "command itself. "
+            f"a line typed into a shell through a terminal is SILENTLY CUT past "
+            f"{PTY_TYPED_LINE_MAX} characters -- the kernel holds one typed line in a "
+            "4096-byte buffer, its newline included -- so a different, shorter command "
+            "runs and its success is reported as the caller's. `Host.run()` refuses "
+            "instead, up front, on any host whose declared shell dialect is `ash`: "
+            "`run()` drives a PERSISTENT session, which `SshSession.open_transport` opens "
+            'with `term_type="dumb"`, so the far side allocates a pty and the command '
+            "arrives as a TYPED LINE. The bound is on the LINE and not on the command -- "
+            "otto's framing adds 38 characters to the command's first line, leaving "
+            f"{PTY_TYPED_LINE_MAX - 38} for the longest line of the command itself. "
+            "BusyBox ash's own line editor cuts at 1022 characters, but only while the "
+            "terminal echoes. otto's handshake turns echo off before it types a command "
+            "and records whether that took; where it did not (no `stty`, or one that "
+            "refuses it) the session's bound is 1022, less the same 38, and `run()` "
+            "refuses against it once the session is open, before typing anything. "
+            f"{PTY_TYPED_LINE_MAX} is the Linux terminal's bound, measured on BusyBox "
+            "guests, not on bash and not on a Zephyr board. "
             "`Host.exec()` opens a bare exec channel with no pty, is unaffected, and is "
             "NOT refused: it is the way to send this command. Two paths stay unguarded "
             "deliberately -- a named session's `HostSession.run()`, and `exec()` on a "
             "telnet or proxied-login host, which has no stateless primitive and so routes "
             "through a pooled shell session. Guarding those would make "
-            "`ShellFileTransfer` refuse its own 5534-character chunk lines, which is the "
+            "`ShellFileTransfer` refuse its own chunk lines, which is the "
             "whole reason the `shell` backend exists"
         ),
         measured_on=(
-            "TWO measurements, and the second is why the bound is a constant. The phase-5 "
-            "spike, 2026-08-13, dropbear 2022.83 against BusyBox 1.35.0: largest line "
-            "delivered intact 1022, first truncated 1023, with no error and no log line -- "
-            "identical against OpenSSH and against a bare LOCAL pty, which is what "
-            "identifies it as BusyBox ash's `CONFIG_FEATURE_EDITING_MAX_LEN` and not the "
-            "transport, while the exec channel took 9000 characters intact and broke at "
-            "9001. Then, 2026-08-13, because that config is BUILD-TIME and one artifact "
-            "cannot speak for the matrix: all five pinned rows (1.16.1, 1.21.1, 1.28.1, "
-            "1.31.0, 1.35.0) driven through a local pty answered 1022/1023 identically, "
-            "and the same harness carried 18437 characters into bash and over 20000 into "
-            "dash -- ruling itself out as the thing being measured. A CUSTOM build that "
-            "raised the config would be refused a command it could actually run; that "
-            "cost is stated on `ASH_TYPED_LINE_MAX` rather than hidden"
+            "Measured in several runs; the 2026-11-13 ones explain the first two. "
+            "2026-08-13, dropbear 2022.83 against BusyBox 1.35.0, then all five pinned rows "
+            "(1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) through a local pty, with a raw "
+            "harness typing into a shell whose terminal still echoed: 1022 intact, 1023 "
+            "cut with no error, identical against OpenSSH; the exec channel took 9000 "
+            "characters and broke at 9001, and the same harness carried 18437 characters "
+            "into bash and over 20000 into dash. 2026-08-21, the five BusyBox QEMU guests "
+            "over telnet through otto's session: 1023 intact and nothing lost up to 4000; "
+            "the stall it recorded at 4090 did not reproduce on 2026-11-13. 2026-11-13, "
+            "all five guests over telnet and BusyBox 1.35.0 over dropbear ssh and over its "
+            "serial console, through otto's own session (`x=<pad>` then `echo ${#x}`, so a "
+            "cut reads as a short count): after otto's handshake, which runs `stty -echo`, "
+            f"{PTY_TYPED_LINE_MAX} characters arrive intact and a line of "
+            f"{PTY_TYPED_LINE_MAX + 1} is cut to {PTY_TYPED_LINE_MAX}, on every release and "
+            "route; the same session after `stty echo` cuts at 1022 on every release and "
+            "route. The 1022 bound is the line editor's, which BusyBox engages only while "
+            "the terminal echoes, and only the 2026-08-13 harness typed with echo on. "
+            "2026-11-13, BusyBox 1.35.0 over telnet, dropbear ssh and its serial console, "
+            "through otto's session under the bed's normal (bash) frame, with a "
+            "session-setup hook that turned echo back on and made `stty` fail before the "
+            "handshake: the handshake reached READY reading `onlcr, echo on`, and a raw line "
+            "of 1023 characters was cut to 1022; the same hook on test1's GNU bash over ssh "
+            "cut nothing at 1023. 2026-11-13, the same three routes with the `ash` frame "
+            "declared and the same hook: the line budget read 984 and a 1023-character "
+            "`run()` was refused naming 1022"
         ),
         queued_for=(
             "the REFUSAL has landed, in "
-            "`otto.host.session.refuse_if_line_editor_would_truncate` -- this registry's "
+            "`otto.host.session.refuse_if_typed_line_would_be_cut` -- this registry's "
             "first product call site. A FIX has not, and stays unqueued "
             "deliberately: it is a pty-free `run()` path, not a larger buffer, "
             "because the buffer belongs to the device. The record stays `measured-broken` "
@@ -2869,14 +2949,16 @@ GAPS: list[Gap] = [
             GapPath(
                 site="otto.host.session.SessionManager.run_cmd",
                 state=PATH_WIRED,
-                checked_by="otto.host.session.refuse_if_line_editor_would_truncate",
+                checked_by="otto.host.session.refuse_if_typed_line_would_be_cut",
                 detail=(
                     "the per-command path of `Host.run()` for every host family, and the "
                     "only one of the three below that reads this record. The guard keys on "
                     "`isinstance(frame, AshFrame)` -- the DECLARED dialect, free and "
                     "synchronous -- sizes the line otto would TYPE including its own framing, "
-                    "and refuses before `_ensure_session`, so a refused command costs no "
-                    "connection"
+                    "and refuses a line over 4095 before `_ensure_session`, so it costs no "
+                    "connection; once the session is open, before anything is typed, it "
+                    "checks again against that session's bound (1022 where its terminal "
+                    "still echoes)"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_run_line_length.py::TestAnAshHostRefusesInsteadOfTruncating"
@@ -2902,7 +2984,7 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.session.SessionManager.exec",
+                site="otto.host.session.SessionManager.exec_on_route",
                 state=PATH_OPEN,
                 detail=(
                     "`exec()` is safe only where it has a stateless primitive. On a "
@@ -2948,7 +3030,7 @@ GAPS: list[Gap] = [
         queued_for=(
             "issue #437: a per-host exec line budget, so `ShellFileTransfer` can fit its "
             "chunks to the exec channel the way it already fits them to a typed line. "
-            "`SessionManager.exec_line_budget` answers `None` for the bare ssh exec route by "
+            "`SessionManager.line_budget` answers `None` for the bare ssh exec route by "
             "design today, and giving that route a bound is a new host field, which needs "
             "its own spec"
         ),
@@ -2959,8 +3041,9 @@ GAPS: list[Gap] = [
                 detail=(
                     "the `shell` backend's put loop, which emits one chunk command per "
                     "stride through the host's exec path. On an ssh host the chunk is sized by "
-                    "`_fitted_chunk_bytes` against `exec_line_budget`, which is `None` for "
-                    "the bare exec channel, so the full 4096-byte stride goes out and a "
+                    "`_fitted_chunk_bytes` against the transfer's `exec_line_budget`, which "
+                    "is `None` for the bare exec channel, so the full 4096-byte stride goes "
+                    "out and a "
                     "capped sshd drops the connection. Nothing refuses it: otto has no way "
                     "to learn an sshd's string cap before sending, and refusing every "
                     "ssh `shell` put would stop transfers to the devices that have no cap"
@@ -3172,36 +3255,3 @@ def refuse_if_gapped(
     if gap is None or not gap.refuses:
         return
     raise UnsupportedOnUserlandError.for_gap(gap, host=host, attempted=attempted, observed=observed)
-
-
-ASH_TYPED_LINE_MAX = 1022
-"""Longest line BusyBox ash's line editor delivers intact. A DISCRIMINATOR.
-
-The measurement behind the ``run-command-line-length`` record, hoisted into a
-constant because :func:`otto.host.session.refuse_if_line_editor_would_truncate`
-now compares against it rather than merely printing it. Read that record for
-the evidence; this docstring is about the number's standing.
-
-**NEVER WIDEN THIS.** It is not a budget otto chose and not a runaway guard --
-it is the far side's buffer, ``CONFIG_FEATURE_EDITING_MAX_LEN`` minus the NUL,
-and a larger value here does not buy patience, it re-opens the silent
-truncation for the band between the two numbers. The only thing that may
-change it is a new measurement against real artifacts, and then it moves to
-whatever they answered.
-
-WHICH BUILDS ANSWERED 1022, precisely, because ``CONFIG_FEATURE_EDITING_MAX_LEN``
-is build-configurable and a device is free to disagree. All five pinned matrix
-artifacts -- 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 -- were driven through a
-local pty on 2026-08-13 and every one of them delivered 1022 intact and
-truncated at 1023. Twelve years of upstream prebuilds agreeing is why this is a
-constant and not a per-row table, and it is still not a proof about a
-CUSTOM build: a vendor who raised the config, or compiled the line editor out
-altogether, has a device otto will now refuse a working command on. That is the
-expensive direction, so it is stated rather than buried -- the refusal names
-the measurement, and a device that disagrees is a new measurement, not a bug in
-the caller's command.
-
-The same harness measured bash at 18437 and dash at 20000+ on the machine that
-took the BusyBox numbers, which is what rules the harness itself out as the
-thing being measured.
-"""

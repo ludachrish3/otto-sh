@@ -104,3 +104,24 @@ class ResolvedCell:
     against a scripted host under every vocabulary -- honest hosts pass under
     all of them, and each lying host fails under all of them.
     """
+
+    entry: str = ""
+    """How a command reaches this cell's host: ``""`` for an entry-less cell
+    (every contract not marked ``@pytest.mark.entries``), else ``run``,
+    ``exec`` or ``exec-shell`` (``tests/conformance/_entry.py``)."""
+
+    family: str = ""
+    """``"unix"``, ``"embedded"`` or ``"local"``: the host family the venue
+    built this cell's host as, read from the lab entry it built it from. The
+    exec route a cell must report is decided by this and the term, never by
+    asking the host's own resolver."""
+
+    proxied_login: bool = False
+    """Whether this cell's login on its term goes through another user (a
+    cred with a ``proxy``, replayed as ``proxy_hops``). NOT a network ``hop``:
+    a jump host does not change the exec route."""
+
+    open_shell_host: "Callable[[], AbstractAsyncContextManager[BaseHost]] | None" = None
+    """The same host as :attr:`open_host`, built with a registered no-op
+    ``session_setup`` so ``exec`` is forced onto the pooled shell. Set by both
+    venues for ``ssh`` cells without a proxied login; ``None`` elsewhere."""

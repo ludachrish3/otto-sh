@@ -52,7 +52,7 @@ from ..models.base import Cred
 from .command_frame import CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import run_proxy
-from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, held_bytes, output_decoder
+from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, PatternReader
 from .secret_wire import reveal, reveal_bytes
 from .session import BridgeSetup, HostSession, ShellSession, _SessionProxyIO
 from .telnet import TELNET_EOL, telnet_line_ends
@@ -124,17 +124,22 @@ class _LineBuffer:
 
     def __init__(self, on_line: Callable[[str], None]) -> None:
         self._buf = bytearray()
+        # How much of ``_buf`` is known to hold no newline: a feed searches
+        # only what arrived since, so a long line is scanned once.
+        self._scanned = 0
         self._on_line = on_line
 
     def feed(self, data: bytes) -> None:
         """Append ``data`` to the buffer and emit any completed lines."""
         self._buf.extend(data)
         while True:
-            idx = self._buf.find(b"\n")
+            idx = self._buf.find(b"\n", self._scanned)
             if idx < 0:
+                self._scanned = len(self._buf)
                 return
             line = bytes(self._buf[:idx])
             del self._buf[: idx + 1]
+            self._scanned = 0
             self._emit(line)
 
     def flush(self) -> None:
@@ -142,6 +147,7 @@ class _LineBuffer:
         if self._buf:
             self._emit(bytes(self._buf))
             self._buf.clear()
+        self._scanned = 0
 
     def _emit(self, line: bytes) -> None:
         cleaned = _strip_ansi(line).decode(OUTPUT_ENCODING, OUTPUT_ERRORS).rstrip("\r")
@@ -389,53 +395,6 @@ def _print_stderr(msg: str) -> None:
         pass
 
 
-class _BridgeReader:
-    """What an automation reader on the bridge has read and not yet matched.
-
-    Both bridge adapters read through one, so they agree on what a match
-    consumes and on what the human is handed when automation ends: everything
-    read past the final match, as text plus the first bytes of a character the
-    last read split (:meth:`take_residual`).
-    """
-
-    def __init__(self, read_remote: Callable[[], Awaitable[bytes]]) -> None:
-        self._read_remote = read_remote
-        self.unmatched = ""
-        # Chunks can split a multi-byte character; the held decoder joins it.
-        self._decoder = output_decoder()
-
-    async def read_until(self, pattern: "re.Pattern[str]") -> str | None:
-        """Return the text through *pattern*'s first match, consuming it.
-
-        Consuming it (like ``StreamReader.readuntil``) means a later read only
-        sees what came after this match. ``None`` at end of stream, with the
-        decoder flushed into :attr:`unmatched`, as every output reader does.
-        """
-        while True:
-            match = pattern.search(self.unmatched)
-            if match is not None:
-                matched = self.unmatched[: match.end()]
-                self.unmatched = self.unmatched[match.end() :]
-                return matched
-            chunk = await self._read_remote()
-            if not chunk:
-                self.unmatched += self._decoder.decode(b"", final=True)
-                return None
-            self.unmatched += self._decoder.decode(chunk)
-
-    def take_residual(self) -> bytes:
-        """Return and clear whatever was read past the last match, as bytes.
-
-        The bytes of a character the last read left split are still in the
-        decoder, not the text: they follow it, so the raw pump's next bytes
-        complete the character instead of arriving without their start.
-        """
-        residual = self.unmatched.encode(OUTPUT_ENCODING) + held_bytes(self._decoder)
-        self.unmatched = ""
-        self._decoder = output_decoder()
-        return residual
-
-
 class _BridgeProxyIO:
     r"""Adapts a login driver's ``write_remote``/``read_remote`` closures.
 
@@ -459,7 +418,7 @@ class _BridgeProxyIO:
     ) -> None:
         self._write_remote = write_remote
         self._newline = newline
-        self.reader = _BridgeReader(read_remote)
+        self.reader = PatternReader(read_remote)
 
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:  # noqa: ARG002 — `log` is part of the ProxyIO protocol; this adapter has no sink to leak a password to either way
         r"""Send *text*, translating a trailing ``"\n"`` to the transport newline.
@@ -539,11 +498,15 @@ class _BridgeShellSession(ShellSession):
         console_client: "ConsoleClient | None" = None,
         init_timeout: float | None = None,
     ) -> None:
-        super().__init__(command_frame=command_frame, init_timeout=init_timeout, shell_history=True)
+        super().__init__(
+            command_frame=command_frame,
+            init_timeout=init_timeout,
+            shell_history=True,
+            console_client=console_client,
+        )
         self._write_remote = write_remote
         self._newline = newline
-        self._reader = _BridgeReader(read_remote)
-        self.console_client = console_client
+        self._reader = PatternReader(read_remote)
 
     @override
     async def open_transport(self) -> None:
@@ -560,10 +523,7 @@ class _BridgeShellSession(ShellSession):
 
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
-        matched = await self._reader.read_until(pattern)
-        if matched is None:
-            raise asyncio.IncompleteReadError(self._reader.unmatched.encode(OUTPUT_ENCODING), None)
-        return matched
+        return await self._reader.read_transport_until(pattern)
 
     @override
     async def console_login(self) -> None:
@@ -585,7 +545,10 @@ class _BridgeShellSession(ShellSession):
         self._initialized = False
 
     def take_residual(self) -> bytes:
-        """Return and clear whatever was read past the last match (:class:`_BridgeReader`)."""
+        """Return and clear whatever was read past the last match.
+
+        See :meth:`~otto.host.output_codec.PatternReader.take_residual`.
+        """
         return self._reader.take_residual()
 
 
@@ -606,12 +569,16 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     """Land, hop, run the hook, enter the frame, restore the terminal; return the residual.
 
     The spec's bridge order for a hook host: landing handshake (bash: echo
-    off); proxy hops over the framed session; the LANDING frame's
-    ``restore_interactive()`` so a hook that leaves the landing shell does
+    off); proxy hops over the framed session; the session's restore step in
+    the LANDING frame's dialect so a hook that leaves the landing shell does
     not strand the pty echo-off for the human; the hook; frame entry; the
-    TARGET frame's ``restore_interactive()``; and whatever the last read
+    restore step in the TARGET frame's dialect; and whatever the last read
     left unconsumed, returned so the bridge can show the human the prompt
-    they are at. A raw landing sends nothing before the hook.
+    they are at. A raw landing sends nothing before the hook. The restore
+    step (``ShellSession._restore_line``) is the frame's
+    ``restore_interactive()``, or on a console, whose line outlives the
+    bridge, its ``restore_terminal()`` of the settings the landing handshake
+    saved (:mod:`otto.host.terminal_mapping`).
 
     The host's ``shell_history`` field is deliberately not read here. It
     governs the sessions otto drives; this one ends in a human's hands, and
@@ -661,8 +628,9 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         await run_proxy(io, hop, via=Cred(login=via), host_id=host_id, history_prefix=prefix)
         via = hop.login
     session.current_user = via
-    landing = session._frame  # noqa: SLF001 — the bridge is this session's manager
-    restore = landing.restore_interactive()
+    # The session's one restore step, in the landing frame's dialect: on a
+    # console, the settings the landing handshake saved; elsewhere echo.
+    restore = session._restore_line()  # noqa: SLF001 — the bridge is this session's manager
     if restore is not None:
         await session.run_cmd(cmd=restore)
     handle = HostSession(
@@ -687,7 +655,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     )
     _print_stderr(f"[otto] running session setup {setup.name!r}...")
     await apply_session_setup(session, handle, ctx, setup, target_frame)
-    restore = target_frame.restore_interactive()
+    restore = session._restore_line(target_frame)  # noqa: SLF001 — the bridge is this session's manager
     if restore is not None:
         await session.run_cmd(cmd=restore)
     return session.take_residual()

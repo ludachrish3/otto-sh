@@ -494,26 +494,32 @@ class TestExecTemplate:
         mock.assert_not_awaited()
 
     def test_no_subclass_overrides_exec(self):
-        """exec is final; the container family may only rewrite its
-        arguments and delegate — see TestContainerExecOverride below for the
-        shape that override is held to."""
+        """exec is final and so is _exec_one; the container family may only
+        rewrite its arguments and delegate — see TestContainerExecOverride
+        below for the shape that override is held to. Families state their
+        route in _plan_exec and run it in _run_plan."""
         from otto.host.docker_host import DockerContainerHost
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.host import BaseHost
         from otto.host.local_host import LocalHost
 
         for cls in (LocalHost, UnixHost, EmbeddedHost):
-            assert "exec" not in vars(cls), f"{cls.__name__} must override _exec_one, not exec"
-            assert "_exec_one" in vars(cls), f"{cls.__name__} must implement _exec_one"
+            assert "exec" not in vars(cls), f"{cls.__name__} must override _run_plan, not exec"
+            assert "_exec_one" not in vars(cls), f"{cls.__name__} must not override _exec_one"
+            assert "_plan_exec" in vars(cls), f"{cls.__name__} must implement _plan_exec"
+            assert "_run_plan" in vars(cls), f"{cls.__name__} must implement _run_plan"
             assert BaseHost.exec is cls.exec
+            assert BaseHost._exec_one is cls._exec_one
 
         assert "exec" in vars(DockerContainerHost), (
             "DockerContainerHost is the one family that overrides exec, to "
             "rewrite sudo=True into user='root' before delegating"
         )
-        assert "_exec_one" in vars(DockerContainerHost), (
-            "DockerContainerHost must still implement _exec_one"
+        assert "_exec_one" not in vars(DockerContainerHost), (
+            "DockerContainerHost must not override _exec_one"
         )
+        assert "_plan_exec" in vars(DockerContainerHost)
+        assert "_run_plan" in vars(DockerContainerHost)
 
 
 class TestContainerExecOverride:

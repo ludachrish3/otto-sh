@@ -469,6 +469,7 @@ first connect, as a bad `hop` is, not at lab load.
 | `cols`, `rows` | `400`, `24` | Initial terminal size reported to the server. |
 | `encoding` | `false` | Text encoding; `false` is bytes mode. |
 | `echo_negotiation_timeout` | `3.0` | Seconds to wait for the server to stop echoing. |
+| `escapes_iac` | `true` | `console_options` only. Declares whether the console's server doubles a 0xFF byte from the device, as the telnet protocol requires; set `false` for one that does not, such as QEMU's `-serial telnet:` bridge. otto reads the console the same way either way and does not compensate: the field only declares what the server does, which the command contract publishes and the conformance suite checks. What such a console loses is under [Declared exceptions](../command-contract.md#declared-exceptions). |
 | `extra` | `{}` | Passed verbatim to `telnetlib3.open_connection()`. |
 
 **What otto does on connect.** It dials, waits `settle`, then presses
@@ -761,12 +762,14 @@ the history file at exit.
 ## Session setup
 
 otto runs two commands of its own on every shell it opens — the readiness
-handshake (`__otto_probe=READY__; stty -echo || :; echo; printf X\\r\\nY\\nZ\\rW\\012 || :;
+handshake (`__otto_probe=READY__; __otto_echo=; stty -echo || __otto_echo=E; stty tab0 || :;
+echo; printf %sX\\r\\nY\\nZ\\rW\\tT\\012 $__otto_echo || :; unset __otto_echo;
 echo __OTTO_<id>_$__otto_probe` on bash) and, on Unix hosts, history
 suppression — and then, by default, nothing else. The `printf` is the
 handshake's calibration line: how its known bytes come back shows how the
 session's terminal translates line endings, which is what lets otto return a
-command's output exactly ({ref}`command-output-contract`). It costs no extra
+command's output exactly ({ref}`what a command's value holds <command-output-contract>`), and an `E` before its
+`X` shows that `stty -echo` did not take. It costs no extra
 round trip, and a target without `printf` or `stty` still completes the
 handshake, `set -e` included. The line holds the end of its marker in a
 variable that its first statement sets, so a line cut short by a login that

@@ -1,0 +1,94 @@
+{
+  "element": "zephyr27_fat",
+  "term": "telnet",
+  "release": "zephyr-2.7",
+  "frame": "zephyr-inline",
+  "terminal_mapping": "unmeasured",
+  "captured": "2026-11-13",
+  "markers": {
+    "begin": "__OTTO_fe9235fcaadb_BEGIN__",
+    "end_prefix": "__OTTO_fe9235fcaadb_END__"
+  },
+  "commands": [
+    {
+      "cmd": "kernel version",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nZephyr version 2.7.6\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nZephyr version 2.7.6\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "Zephyr version 2.7.6",
+      "retcode": 0
+    },
+    {
+      "cmd": "help",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  bypass    :Bypass shell\r\n  clear     :Clear screen.\r\n  date      :Date commands\r\n  demo      :Demo commands\r\n  device    :Device commands\r\n  devmem    :Read/write physical memory\"devmem address [width [value]]\r\n  dynamic   :Demonstrate dynamic command usage.\r\n  fs        :File system commands\r\n  help      :Prints the help message.\r\n  history   :Command history.\r\n  kernel    :Kernel commands\r\n  log       :Commands for controlling logger\r\n  log_test  :Log test\r\n  pcie      :PCI(e) device information\r\n  resize    :Console gets terminal screen size or assumes default in case the\r\n\u001b[13Creadout fails. It must be executed after each terminal width change\r\n\u001b[13Cto ensure correct text display.\r\n  shell     :Useful, not Unix-like shell commands.\r\n  version   :Show kernel version\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  bypass    :Bypass shell\r\n  clear     :Clear screen.\r\n  date      :Date commands\r\n  demo      :Demo commands\r\n  device    :Device commands\r\n  devmem    :Read/write physical memory\"devmem address [width [value]]\r\n  dynamic   :Demonstrate dynamic command usage.\r\n  fs        :File system commands\r\n  help      :Prints the help message.\r\n  history   :Command history.\r\n  kernel    :Kernel commands\r\n  log       :Commands for controlling logger\r\n  log_test  :Log test\r\n  pcie      :PCI(e) device information\r\n  resize    :Console gets terminal screen size or assumes default in case the\r\n\u001b[13Creadout fails. It must be executed after each terminal width change\r\n\u001b[13Cto ensure correct text display.\r\n  shell     :Useful, not Unix-like shell commands.\r\n  version   :Show kernel version\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "Please press the <Tab> button to see all available commands.\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\nYou can try to call commands with <-h> or <--help> parameter for more information.\n\nShell supports following meta-keys:\n  Ctrl + (a key from: abcdefklnpuw)\n  Alt  + (a key from: bf)\nPlease refer to shell documentation for more details.\n\nAvailable commands:\n  bypass    :Bypass shell\n  clear     :Clear screen.\n  date      :Date commands\n  demo      :Demo commands\n  device    :Device commands\n  devmem    :Read/write physical memory\"devmem address [width [value]]\n  dynamic   :Demonstrate dynamic command usage.\n  fs        :File system commands\n  help      :Prints the help message.\n  history   :Command history.\n  kernel    :Kernel commands\n  log       :Commands for controlling logger\n  log_test  :Log test\n  pcie      :PCI(e) device information\n  resize    :Console gets terminal screen size or assumes default in case the\n\u001b[13Creadout fails. It must be executed after each terminal width change\n\u001b[13Cto ensure correct text display.\n  shell     :Useful, not Unix-like shell commands.\n  version   :Show kernel version",
+      "retcode": 0
+    },
+    {
+      "cmd": "kernel uptime",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nUptime: 50896880 ms\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nUptime: 50896880 ms\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "Uptime: 50896880 ms",
+      "retcode": 0
+    },
+    {
+      "cmd": "otto_not_a_command",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "otto_not_a_command: command not found",
+      "retcode": -8
+    },
+    {
+      "cmd": "device list",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\ndevices:\r\n- UART_1 (READY)\r\n- UART_0 (READY)\r\n- sys_clock (READY)\r\n- eth0 (READY)\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\ndevices:\r\n- UART_1 (READY)\r\n- UART_0 (READY)\r\n- sys_clock (READY)\r\n- eth0 (READY)\r\nretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "devices:\n- UART_1 (READY)\n- UART_0 (READY)\n- sys_clock (READY)\n- eth0 (READY)",
+      "retcode": 0
+    },
+    {
+      "cmd": "devmem",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nretCode = -22\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nretCode = -22\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "",
+      "retcode": -22
+    },
+    {
+      "cmd": "fs cat /nonexistent /nonexistent2",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mFailed to obtain file /nonexistent (err: -2)\r\n\u001b[m\u001b[1;31mFailed to obtain file /nonexistent2 (err: -2)\r\n\u001b[mretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mFailed to obtain file /nonexistent (err: -2)\r\n\u001b[m\u001b[1;31mFailed to obtain file /nonexistent2 (err: -2)\r\n\u001b[mretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "Failed to obtain file /nonexistent (err: -2)\nFailed to obtain file /nonexistent2 (err: -2)",
+      "retcode": 0
+    },
+    {
+      "cmd": "log enable inf otto_nope1 otto_nope2",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_nope1: unknown source name.\r\n\u001b[m\u001b[1;31motto_nope2: unknown source name.\r\n\u001b[mretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_nope1: unknown source name.\r\n\u001b[m\u001b[1;31motto_nope2: unknown source name.\r\n\u001b[mretCode = 0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "otto_nope1: unknown source name.\notto_nope2: unknown source name.",
+      "retcode": 0
+    },
+    {
+      "cmd": "dynamic show",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;33mPlease add some commands first.\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;33mPlease add some commands first.\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "Please add some commands first.",
+      "retcode": -8
+    },
+    {
+      "cmd": "kernel log_level otto_nope 1",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles   :Kernel cycles.\r\n  stacks   :List threads stack usage.\r\n  threads  :List kernel threads.\r\n  uptime   :Kernel uptime.\r\n  version  :Kernel version.\r\nretCode = 1\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "raw": ": command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_BEGIN__: command not found\r\n\u001b[mretCode = -8\r\n\u001b[1;32m~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles   :Kernel cycles.\r\n  stacks   :List threads stack usage.\r\n  threads  :List kernel threads.\r\n  uptime   :Kernel uptime.\r\n  version  :Kernel version.\r\nretCode = 1\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_fe9235fcaadb_END__",
+      "value": "kernel - Kernel commands\nSubcommands:\n  cycles   :Kernel cycles.\n  stacks   :List threads stack usage.\n  threads  :List kernel threads.\n  uptime   :Kernel uptime.\n  version  :Kernel version.",
+      "retcode": 1
+    }
+  ]
+}

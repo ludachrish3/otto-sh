@@ -414,7 +414,7 @@ class TestThePhase4And5MeasurementsAreRecorded:
         )
 
     def test_the_run_pty_truncation_is_recorded_with_both_boundaries(self) -> None:
-        """1022 intact / 1023 truncated, and ``exec()`` named as the unaffected path.
+        """4095 intact / 4096 truncated, and ``exec()`` named as the unaffected path.
 
         Recorded rather than fixed, deliberately: the phase-5 plan puts the
         fix under "Out of scope". A record that omitted the boundary or the
@@ -423,8 +423,8 @@ class TestThePhase4And5MeasurementsAreRecorded:
         gap = gap_for("run-command-line-length")
         assert gap is not None, "the run() pty truncation is gone from GAPS"
         assert gap.refuses
-        assert "1022" in gap.reason
-        assert "1023" in gap.measured_on
+        assert "4095" in gap.reason
+        assert "4096" in gap.measured_on
         assert "exec()" in gap.reason, (
             "the record must name `exec()` as the pty-free path, since that is the only "
             "thing a caller can actually do about this today"

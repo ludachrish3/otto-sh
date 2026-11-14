@@ -60,6 +60,7 @@ from ..utils import (
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
+from .exec_route import ran_route
 from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
@@ -75,7 +76,7 @@ if TYPE_CHECKING:
     from .element import Element
     from .power import PowerController
     from .product import Product
-    from .session import HostSession, SessionManager
+    from .session import ExecPlan, HostSession, SessionManager
 
     # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
     # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
@@ -872,6 +873,13 @@ class Host(Protocol):
                 Strings and :class:`ShellCommand` objects may be mixed.
             expects: Optional ``(pattern, response)`` pair(s) for interactive
                 prompts. Inherited by each command unless overridden per-command.
+                A pattern matches as one :func:`re.search` over all the output
+                not yet matched would, on every transport: a match of any
+                length, an anchor or a lookbehind is found wherever the
+                output's reads fell. A compiled pattern keeps its flags
+                (``re.IGNORECASE``, ``re.MULTILINE``...), and so does one
+                that opens with a global inline flag such as ``(?i)``; a
+                global inline flag anywhere else raises :exc:`ValueError`.
             timeout: Per-command timeout for a single command, or a cumulative
                 budget shared across all commands in a sequence. Defaults to
                 :data:`DEFAULT_COMMAND_TIMEOUT`. Execution is always bounded;
@@ -929,10 +937,10 @@ class Host(Protocol):
         Args:
             cmd: The command, or a :class:`ShellCommand` carrying its own
                 expects/timeout/log (call-level values are its defaults).
-            expects: ``(pattern, response)`` pair(s) for interactive prompts.
-                Families whose raw channel has no pty to answer one on
-                refuse; ``run(expects=...)`` answers on the persistent shell
-                instead.
+            expects: ``(pattern, response)`` pair(s) for interactive prompts,
+                searched as :meth:`run`'s are. Families whose raw channel has
+                no pty to answer one on refuse; ``run(expects=...)`` answers on
+                the persistent shell instead.
             timeout: Seconds before the command is abandoned.
             log: Logging disposition for this call.
             sudo: Elevate through the host's resolved mechanism. Families
@@ -1863,10 +1871,13 @@ class BaseHost(ABC):
 
     @property
     def terminal_mapping(self) -> str:
-        """How this host's default shell session maps line endings, as its handshake measured it.
+        """How this host's default shell session maps its output, as its handshake measured it.
 
         ``identity``, ``onlcr``, ``unknown(<observed>)``, or ``unmeasured``
-        before the session opens or on a dialect with no calibration line. An
+        before the session opens or on a dialect with no calibration line,
+        with ``, tabs expanded`` after it where the terminal still expands
+        tabs (``stty tab0`` did not take) and ``, echo on`` where it still
+        echoes (``stty -echo`` did not take). An
         observation, never a setting: see :mod:`otto.host.terminal_mapping`.
         ``otto host <id> probe`` reports it per term.
         """
@@ -2087,8 +2098,8 @@ class BaseHost(ABC):
                 password was refused. The command is interrupted first.
             ~otto.host.errors.UnsupportedOnUserlandError: the host's declared
                 shell dialect is ``ash`` and a command's framed line would
-                exceed what BusyBox ash's line editor delivers intact — see
-                :func:`~otto.host.session.refuse_if_line_editor_would_truncate`.
+                exceed what a terminal delivers intact on one line — see
+                :func:`~otto.host.session.refuse_if_typed_line_would_be_cut`.
                 The command is refused before anything is sent, because the
                 alternative is the device silently running a SHORTER command
                 and reporting its success as this one's. :meth:`exec` allocates
@@ -2294,7 +2305,7 @@ class BaseHost(ABC):
         Validation and refusals sit ABOVE the dry-run arm, so a dry run of a
         call the family could never honour refuses rather than declining as
         though it could have. Do not override this method — override
-        ``_exec_one``, so that ordering cannot be bypassed — the container
+        ``_plan_exec`` and ``_run_plan``, so that ordering cannot be bypassed — the container
         family rewrites its arguments and delegates, which is the one
         permitted shape.
 
@@ -2322,8 +2333,7 @@ class BaseHost(ABC):
                 elevation prompt came back after otto answered it once: the
                 password was refused. The command is interrupted first.
         """
-        if user is None:
-            user = self._ambient_user()
+        user = self._effective_exec_user(user)
         if user is not None:
             _validate_user(user)
             self._refuse_exec_user(user)
@@ -2354,7 +2364,7 @@ class BaseHost(ABC):
         bodies, above their own dry-run arm, so a dry run of a call the family
         could never honour refuses rather than declining as though it could
         have. ``exec`` cannot get that ordering for free: its dry-run arm lives
-        here in :meth:`exec`, ABOVE the family's ``_exec_one``, so a refusal
+        here in :meth:`exec`, ABOVE the family's ``_run_plan``, so a refusal
         written there is unreachable under ``--dry-run``. A family that cannot
         act on *user* overrides this instead, and the refusal lands above the
         arm like every other verb's.
@@ -2395,6 +2405,7 @@ class BaseHost(ABC):
         ``user=`` outright.
         """
 
+    @final
     async def _exec_one(
         self,
         cmd: str,
@@ -2405,11 +2416,85 @@ class BaseHost(ABC):
         expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
-        """Family-specific runner for one command. Subclasses override.
+        """Run one command: plan its route once, then run that plan.
+
+        The one place an ``exec`` call is dispatched. Which route it takes is
+        :meth:`_plan_exec`'s answer alone, asked through :meth:`_exec_plan`
+        with the effective user, and :meth:`_run_plan` runs what that answer
+        names, so any other reader of the decision (the transfer line budget)
+        asks :meth:`_exec_plan` too rather than re-deriving it. Families
+        override ``_plan_exec`` and ``_run_plan``, never this.
 
         *expects* and *needs_shell* are the call's own reasons to want a
-        shell; a family whose raw channel cannot honour them routes to its
-        pooled shell (see :meth:`~otto.host.session.SessionManager.exec`).
+        shell; a family whose raw channel cannot honour them plans its
+        pooled shell instead.
+
+        The result's ``route`` is recorded by the primitive that ran, never
+        copied from the plan, and is checked against it here: a ``_run_plan``
+        that dispatched a different primitive than its plan names is a bug in
+        otto, and raises rather than reporting the route it meant to take.
+
+        Raises:
+            AssertionError: the primitive that ran is not the one the plan
+                names.
+        """
+        plan = self._exec_plan(user=user, needs_shell=needs_shell)
+        result = await self._run_plan(
+            plan, cmd=cmd, timeout=timeout, log=log, user=user, expects=expects
+        )
+        if isinstance(result, NotRunResult):
+            return result
+        if ran_route(result.route) is not plan.route:
+            raise AssertionError(
+                f"{self.name}: exec planned the {plan.route.value!r} route but ran on "
+                f"{result.route!r}; _run_plan dispatched a primitive its plan does not "
+                f"name, which is a bug in otto"
+            )
+        return result
+
+    @final
+    def _effective_exec_user(self, user: str | None) -> str | None:
+        """Return the user one ``exec`` call runs as: *user*, else an enclosing ``as_user()``'s.
+
+        The one place ``exec``'s ``user=None`` is resolved, so :meth:`exec`
+        and every query of its plan (:meth:`_exec_plan`) read the same
+        identity. Idempotent: a resolved user resolves to itself.
+        """
+        return self._ambient_user() if user is None else user
+
+    @final
+    def _exec_plan(self, *, user: str | None, needs_shell: bool) -> "ExecPlan":
+        """Return the plan one ``exec`` call as *user* runs: effective user, then family plan.
+
+        :meth:`_exec_one` dispatches this and the transfer line budget asks
+        it, so a query cannot plan for a different user than the call it
+        sizes (``user=None`` inside ``as_user()`` is that user, on both).
+        """
+        return self._plan_exec(user=self._effective_exec_user(user), needs_shell=needs_shell)
+
+    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> "ExecPlan":
+        """Which route one ``exec`` call as *user* takes on this host. Families override.
+
+        Synchronous and free of I/O: the answer comes from the host's
+        configuration and its transport's current state, so a query (the
+        transfer line budget) can ask it without running anything.
+        """
+        raise NotImplementedError from None
+
+    async def _run_plan(
+        self,
+        plan: "ExecPlan",
+        *,
+        cmd: str,
+        timeout: float,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
+    ) -> CommandResult:
+        """Run *cmd* on the route *plan* names. Families override.
+
+        The only place a family calls its exec primitive; the route is
+        already decided, so this chooses nothing.
         """
         raise NotImplementedError from None
 

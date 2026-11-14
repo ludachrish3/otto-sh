@@ -22,9 +22,16 @@ from collections.abc import Coroutine
 
 import pytest
 
-from otto.host.command_frame import BashFrame, SessionMarkers, ZephyrFrame
+from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, ZephyrFrame
 from otto.host.session import HostSession, ready_pattern
-from otto.host.terminal_mapping import CALIBRATION_COMMAND, measure
+from otto.host.terminal_mapping import (
+    CALIBRATION_COMMAND,
+    ECHO_OFF_COMMAND,
+    TABS_OFF_COMMAND,
+    Measurement,
+    measure,
+    reported,
+)
 from otto.utils import wait_for_async
 from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host.test_session import MockSession
@@ -35,17 +42,34 @@ R = M.ready
 
 def identity_reply(ready: str = R) -> str:
     """What a pipe (or a tty without ``onlcr``) returns for the bash handshake."""
-    return f"\nX\r\nY\nZ\rW\n{ready}\n"
+    return f"\nX\r\nY\nZ\rW\tT\n{ready}\n"
 
 
 def onlcr_reply(ready: str = R) -> str:
     """What a default Linux tty returns for the bash handshake."""
-    return f"\r\nX\r\r\nY\r\nZ\rW\r\n{ready}\r\n"
+    return f"\r\nX\r\r\nY\r\nZ\rW\tT\r\n{ready}\r\n"
 
 
 def lossy_reply(ready: str = R) -> str:
     """A lone LF expanded but CRLF kept as it was."""
-    return f"\r\nX\r\nY\r\nZ\rW\r\n{ready}\r\n"
+    return f"\r\nX\r\nY\r\nZ\rW\tT\r\n{ready}\r\n"
+
+
+# The tab as a pty with ``tab3`` returns it: W sits in column 0 after the CR,
+# so the tab became the seven spaces up to column 8. Measured 2026-11-13 on
+# every BusyBox telnetd pty of the bed (bb1161 to bb1350), which reports
+# ``onlcr ... tab3`` in ``stty -a``.
+EXPANDED = " " * 7
+
+
+def onlcr_expanded_reply(ready: str = R) -> str:
+    """A default Linux tty whose tab expansion is still on (``stty tab0`` refused)."""
+    return f"\r\nX\r\r\nY\r\nZ\rW{EXPANDED}T\r\n{ready}\r\n"
+
+
+def identity_expanded_reply(ready: str = R) -> str:
+    """No ``onlcr``, but tabs expanded."""
+    return f"\nX\r\nY\nZ\rW{EXPANDED}T\n{ready}\n"
 
 
 def mapping(reply: str, ready: str) -> str:
@@ -71,10 +95,10 @@ class TestTheMapping:
         # A lone LF expanded but CRLF kept as it was: X's CRLF and Y's LF now
         # look the same, so no fold can tell them apart again.
         got = mapping(lossy_reply(), R)
-        assert got == "unknown('X\\r\\nY\\r\\nZ\\rW\\r\\n')"
+        assert got == "unknown('X\\r\\nY\\r\\nZ\\rW\\tT\\r\\n')"
 
     def test_a_cr_mapped_to_lf_is_unknown(self):
-        got = mapping(f"\nX\n\nY\nZ\nW\n{R}\n", R)
+        got = mapping(f"\nX\n\nY\nZ\nW\tT\n{R}\n", R)
         assert got.startswith("unknown(")
 
     def test_no_calibration_line_at_all_is_unknown(self):
@@ -89,11 +113,67 @@ class TestTheMapping:
         the one right before READY.
         """
         typed = f"2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; echo {R}"
-        reply = f"user@h:~$ {typed}\r\n\r\nX\r\r\nY\r\nZ\rW\r\n{R}\r\n"
+        reply = f"user@h:~$ {typed}\r\n\r\nX\r\r\nY\r\nZ\rW\tT\r\n{R}\r\n"
         assert mapping(reply, R) == "onlcr"
 
     def test_an_sgr_sequence_before_ready_is_skipped(self):
-        assert mapping(f"\nX\r\nY\nZ\rW\n\x1b[0m{R}\n", R) == "identity"
+        assert mapping(f"\nX\r\nY\nZ\rW\tT\n\x1b[0m{R}\n", R) == "identity"
+
+
+class TestTabsAreMeasuredApartFromLineEndings:
+    """Whether a tab survives is a second fact, never folded into the line-ending mapping.
+
+    A terminal that expands tabs but is otherwise ``onlcr`` still folds
+    ``\\r\\n`` exactly; reading it as ``unknown(...)`` would leave every line
+    ending of its output unfolded.
+    """
+
+    @pytest.mark.parametrize(
+        ("reply", "line", "expanded"),
+        [
+            (identity_reply, "identity", False),
+            (onlcr_reply, "onlcr", False),
+            (identity_expanded_reply, "identity", True),
+            (onlcr_expanded_reply, "onlcr", True),
+        ],
+    )
+    def test_the_four_cases(self, reply, line, expanded):
+        seen = measure(reply(), R)
+        assert (seen.mapping, seen.tabs_expanded, seen.calibrated) == (line, expanded, True)
+
+    def test_the_reported_mapping_names_expanded_tabs_alongside_the_line_ending(self):
+        assert reported(measure(onlcr_expanded_reply(), R)) == "onlcr, tabs expanded"
+        assert reported(measure(onlcr_reply(), R)) == "onlcr"
+
+    def test_no_calibration_line_says_nothing_about_tabs(self):
+        seen = measure(f"\n{R}\n", R)
+        assert seen.tabs_expanded is False
+        assert reported(seen) == "unknown('\\n')"
+
+
+class TestTheHandshakeTurnsTabExpansionOff:
+    """Tab expansion has no exact inverse, so otto turns it off rather than undoing it.
+
+    ``tab0`` is the spelling every bed ``stty`` accepted (BusyBox 1.16.1 to
+    1.35.0 and GNU coreutils, measured 2026-11-13); ``-tabs`` is the opposite
+    setting (``tab3``) on both.
+    """
+
+    @pytest.mark.parametrize("frame", [BashFrame(), AshFrame()], ids=["bash", "ash"])
+    def test_every_frame_that_silences_echo_turns_tabs_off_in_its_own_tolerant_statement(
+        self, frame
+    ):
+        hs = frame.handshake(M, prefix=frame.quiet_history())
+        assert TABS_OFF_COMMAND == "2>/dev/null stty tab0 || :"
+        statements = [c.strip() for c in hs.split("; ")]
+        assert ECHO_OFF_COMMAND == "2>/dev/null stty -echo || __otto_echo=E"
+        assert ECHO_OFF_COMMAND in statements
+        assert TABS_OFF_COMMAND in statements
+        # before the calibration, so the calibration measures the result
+        assert hs.index(TABS_OFF_COMMAND) < hs.index(CALIBRATION_COMMAND)
+
+    def test_the_hand_back_leaves_tabs_unexpanded(self):
+        assert "tab" not in BashFrame().restore_interactive()
 
 
 class TestBashHandshakeCarriesTheCalibrationLine:
@@ -140,6 +220,51 @@ def _feed_after_entry(s: MockSession, reply) -> Coroutine[None, None, None]:
     return _feed()
 
 
+def onlcr_echoing_reply(ready: str = R) -> str:
+    """A default Linux tty whose ``stty -echo`` failed: the calibration's ``%s`` printed ``E``."""
+    return f"\r\nEX\r\r\nY\r\nZ\rW\tT\r\n{ready}\r\n"
+
+
+class TestEchoIsMeasuredOnTheSameLine:
+    """Whether ``stty -echo`` took is a third fact, read from the calibration's marker."""
+
+    def test_no_marker_is_echo_off(self):
+        seen = measure(onlcr_reply(), R)
+        assert (seen.mapping, seen.echoes) == ("onlcr", False)
+        assert reported(seen) == "onlcr"
+
+    def test_the_marker_is_echo_on_and_leaves_the_mapping_alone(self):
+        seen = measure(onlcr_echoing_reply(), R)
+        assert (seen.mapping, seen.calibrated, seen.echoes) == ("onlcr", True, True)
+        assert reported(seen) == "onlcr, echo on"
+
+    def test_the_marker_alongside_expanded_tabs(self):
+        reply = f"\r\nEX\r\r\nY\r\nZ\rW{EXPANDED}T\r\n{R}\r\n"
+        assert reported(measure(reply, R)) == "onlcr, tabs expanded, echo on"
+
+    def test_no_calibration_line_is_possibly_echoing_but_says_nothing(self):
+        """No ``printf`` (and perhaps no ``stty``): nothing was seen, so the conservative answer."""
+        seen = measure(f"\n{R}\n", R)
+        assert seen.calibrated is False
+        assert seen.echoes is True
+        assert reported(seen) == "unknown('\\n')"
+
+    def test_a_calibration_cut_before_its_x_is_not_read(self):
+        """A reply whose calibration lost its head is uncalibrated, not echo-off."""
+        seen = measure(f"\r\nE\r\r\nY\r\nZ\rW\tT\r\n{R}\r\n", R)
+        assert seen.calibrated is False
+        assert seen.echoes is True
+
+    def test_the_echoed_typed_line_never_carries_the_marker(self):
+        """With echo on the typed line comes back; its ``%sX\\r`` is not ``EX`` + CR."""
+        typed = BashFrame().handshake(M)
+        seen = measure(typed.replace("\n", "\r\n") + onlcr_reply(), R)
+        assert seen.echoes is False
+
+    def test_an_unmeasured_session_is_possibly_echoing(self):
+        assert Measurement("unmeasured", calibrated=False).echoes is True
+
+
 class TestTheSessionMeasures:
     @pytest.mark.asyncio
     async def test_onlcr_from_a_fragmented_reply(self):
@@ -149,7 +274,21 @@ class TestTheSessionMeasures:
         init = asyncio.create_task(s._ensure_initialized())
         await asyncio.sleep(0)
         ready = s.markers.ready
-        for chunk in ["\r\n", "X", "\r", "\r", "\n", "Y\r", "\nZ", "\r", "W\r", "\n", ready, "\r"]:
+        for chunk in [
+            "\r\n",
+            "X",
+            "\r",
+            "\r",
+            "\n",
+            "Y\r",
+            "\nZ",
+            "\r",
+            "W\t",
+            "T\r",
+            "\n",
+            ready,
+            "\r",
+        ]:
             s.feed(chunk)
             await asyncio.sleep(0)
         # READY's own line ending has not arrived, so the handshake is still reading.
@@ -219,6 +358,72 @@ class TestTheSessionMeasures:
         [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert "No calibration line came back (no `printf` on the target?)" in warning
         assert "cannot undo exactly" not in warning
+
+    @pytest.mark.asyncio
+    async def test_tabs_still_expanded_warn_once_and_the_crlf_fold_holds(self, caplog):
+        s = MockSession()
+        await s.open_transport()
+        with caplog.at_level(logging.WARNING, logger="otto.host.session"):
+            await _handshake(s, onlcr_expanded_reply(s.markers.ready))
+            assert s.terminal_mapping == "onlcr, tabs expanded"
+            feed = asyncio.create_task(_feed_after_entry(s, onlcr_expanded_reply))
+            await s.enter_frame(frame=BashFrame())
+            await feed
+        [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert "expands tabs" in warning
+        assert "`stty tab0` could not turn it off" in warning
+        assert s._terminal.mapping == "onlcr"  # the fold still applies
+
+    @pytest.mark.asyncio
+    async def test_echo_still_on_warns_once_on_an_ash_frame(self, caplog):
+        """Where the 1022 ceiling depends on it, the failed `stty -echo` is a WARNING."""
+        s = MockSession(command_frame=AshFrame())
+        await s.open_transport()
+        with caplog.at_level(logging.WARNING, logger="otto.host.session"):
+            await _handshake(s, onlcr_echoing_reply(s.markers.ready))
+            assert s.terminal_mapping == "onlcr, echo on"
+            assert s.echoes is True
+            feed = asyncio.create_task(_feed_after_entry(s, onlcr_echoing_reply))
+            await s.enter_frame(frame=AshFrame())
+            await feed
+        [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert "`stty -echo` did not take" in warning
+        assert "1022" in warning
+
+    @pytest.mark.asyncio
+    async def test_echo_still_on_is_only_a_debug_line_on_a_bash_frame(self, caplog):
+        """A bash frame's ceiling does not depend on echo, so nothing is warned (#953)."""
+        s = MockSession(command_frame=BashFrame())
+        await s.open_transport()
+        with caplog.at_level(logging.DEBUG, logger="otto.host.session"):
+            await _handshake(s, onlcr_echoing_reply(s.markers.ready))
+        assert s.terminal_mapping == "onlcr, echo on"
+        assert s.echoes is True
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+        assert any("`stty -echo` did not take" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_pipe_session_is_never_echoing_whatever_stty_answers(self, caplog):
+        """A local session reads a pipe: the echo marker is no echo, no warning, no suffix."""
+        from otto.host.session import LocalSession
+
+        class PipeMock(MockSession):
+            reads_a_terminal = LocalSession.reads_a_terminal
+
+        s = PipeMock(command_frame=AshFrame())
+        await s.open_transport()
+        with caplog.at_level(logging.WARNING, logger="otto.host.session"):
+            await _handshake(s, onlcr_echoing_reply(s.markers.ready))
+        assert s.echoes is False
+        assert s.terminal_mapping == "onlcr"
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    @pytest.mark.asyncio
+    async def test_echo_off_is_read_by_the_session(self):
+        s = MockSession()
+        await s.open_transport()
+        await _handshake(s, onlcr_reply(s.markers.ready))
+        assert s.echoes is False
 
     @pytest.mark.asyncio
     async def test_every_handshake_re_measures(self, caplog):

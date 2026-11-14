@@ -56,6 +56,8 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from otto.host.embedded_host import EmbeddedHost
@@ -64,9 +66,10 @@ from otto.host.host import BaseHost
 from otto.host.remote_host import RemoteHost
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.profiles import Cell, _ensure_custom_frames, axes_for, axis_space
+from tests.conformance._entry import family_of, hooked, proxied_on
 from tests.conformance._lab_context import bed_lab_context
 from tests.conformance._resolved import ResolvedCell
-from tests.conformance._vocabulary import Vocabulary, vocabulary_for_userland
+from tests.conformance._vocabulary import Vocabulary, vocabulary_for
 
 # The lab-data tech the bed venue is built from. `axis_space` and `axes_for`
 # both default to it; naming it once here keeps `BED_LABS` below and the
@@ -155,7 +158,7 @@ def bed_vocabulary(element: str) -> "Vocabulary":
     :func:`bed_scratch_dir` is: the pin a cell carries is a TRANSPORT choice,
     and no transport changes which commands a shell understands.
     """
-    return vocabulary_for_userland(axes_for(element, BED_TECH).userland)
+    return vocabulary_for(userland=axes_for(element, BED_TECH).userland, element=element)
 
 
 def bed_kind(element: str) -> str:
@@ -178,7 +181,7 @@ def bed_kind(element: str) -> str:
 _ANSWER_TIMEOUT_S = 60.0
 
 
-def build_bed_host(cell: "Cell") -> "RemoteHost":
+def build_bed_host(cell: "Cell", *, session_setup: "str | None" = None) -> "RemoteHost":
     """Build *cell*'s host through otto's factory, PINNED to the cell's pair.
 
     THE SAME CALL THE BED'S OWN FIXTURES MAKE. ``tests/conftest.py`` builds
@@ -226,13 +229,17 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
     surviving would build or fail depending on what else the session had
     collected -- the invocation-shape dependence that function's own
     docstring was written for.
+
+    *session_setup* names a registered hook for the host to carry, which is
+    how the ``exec-shell`` entry forces ``exec`` onto the pooled shell
+    (``tests/conformance/_entry.py``); the caller registers it first.
     """
     _ensure_custom_frames()
     entry = dict(host_data(cell.element, BED_TECH))
-    host = create_host_from_dict(
-        {**entry, "term": cell.term, "transfer": cell.transfer},
-        element=element_for(cell.element, BED_TECH),
-    )
+    pinned = {**entry, "term": cell.term, "transfer": cell.transfer}
+    if session_setup is not None:
+        pinned["session_setup"] = session_setup
+    host = create_host_from_dict(pinned, element=element_for(cell.element, BED_TECH))
     if (host.term, host.transfer) != (cell.term, cell.transfer):
         raise RuntimeError(
             f"bed cell {cell.element}:{cell.term}:{cell.transfer} built a host reporting "
@@ -364,15 +371,25 @@ def bed_scratch_dir(element: str) -> "Path | None":
     them fails -- measured, both mutations red on four tests, the first being
     ``assert [] == ['zephyr37_llext', 'zephyr37_nofs', 'zephyr44_llext']``.
     """
-    _ensure_custom_frames()
-    host = create_host_from_dict(
-        dict(host_data(element, BED_TECH)), element=element_for(element, BED_TECH)
-    )
+    host = _unpinned_bed_host(element)
     if isinstance(host, EmbeddedHost) and not host.filesystem.supports_transfer:
         return None
     if host.default_dest_dir != Path():
         return host.default_dest_dir
     return _POSIX_SCRATCH_DIR
+
+
+def _unpinned_bed_host(element: str) -> "BaseHost":
+    """*element*'s host as its lab entry declares it, with no cell's pair pinned.
+
+    The construction :func:`bed_scratch_dir` and the login facts in
+    :func:`bed_space` both read; see the former for why it is not
+    :func:`build_bed_host`.
+    """
+    _ensure_custom_frames()
+    return create_host_from_dict(
+        dict(host_data(element, BED_TECH)), element=element_for(element, BED_TECH)
+    )
 
 
 def _scratch_for(dest: "Path | None") -> "Callable[[Path], Path] | None":
@@ -394,7 +411,9 @@ def _scratch_for(dest: "Path | None") -> "Callable[[Path], Path] | None":
     return scratch
 
 
-def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseHost]]":
+def _opener_for(
+    cell: "Cell", *, session_setup: "str | None" = None
+) -> "Callable[[], AbstractAsyncContextManager[BaseHost]]":
     """Open *cell*'s real bed host, pinned to its pair, or fail naming the host.
 
     ONE opener for all three kinds, and that is a finding rather than a
@@ -443,17 +462,59 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     what the integration tree's module-scoped install also does -- a host
     built outside a context and opened inside one would be a third
     construction condition nothing else in the suite uses.
+
+    *session_setup* is passed through to :func:`build_bed_host`: the
+    ``exec-shell`` entry's opener is this one with a hook.
     """
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
         with bed_lab_context(BED_TECH):
-            host = build_bed_host(cell)
+            host = build_bed_host(cell, session_setup=session_setup)
             async with host:
                 await _require_an_answer(cell, host)
                 yield host
 
     return opener
+
+
+def _hooked_open(cell: "Cell", session_setup: str) -> "AbstractAsyncContextManager[BaseHost]":
+    """:func:`_opener_for`'s open of *cell*, its host carrying *session_setup*."""
+    return _opener_for(cell, session_setup=session_setup)()
+
+
+@dataclass(frozen=True)
+class BedCell:
+    """One bed cell's topology: which host and term, its venue kind, and how to open it.
+
+    No evidence: nothing here reads a recording or a vocabulary, so
+    ``scripts/capture_shell_transcripts.py`` can open a guest that has never
+    been recorded. :func:`bed_space` adds the evidence-dependent fields.
+    """
+
+    cell: "Cell"
+    kind: str
+    open_host: "Callable[[], AbstractAsyncContextManager[BaseHost]]"
+
+
+def bed_topology() -> "list[BedCell]":
+    """Every bed cell the lab data permits, in :func:`bed_space`'s order, with no evidence read.
+
+    De-duplicated across labs, first appearance winning; :func:`bed_space`
+    gives the measurements behind the order and the de-duplication.
+    """
+    kinds: dict[str, str] = {}
+    seen: set[Cell] = set()
+    cells: list[BedCell] = []
+    for lab in BED_LABS:
+        for cell in axis_space(lab, BED_TECH):
+            if cell in seen:
+                continue
+            seen.add(cell)
+            if cell.element not in kinds:
+                kinds[cell.element] = bed_kind(cell.element)
+            cells.append(BedCell(cell=cell, kind=kinds[cell.element], open_host=_opener_for(cell)))
+    return cells
 
 
 def bed_space() -> "list[ResolvedCell]":
@@ -501,31 +562,41 @@ def bed_space() -> "list[ResolvedCell]":
     ``tests/conformance/test_transfer_contract.py`` and
     ``tests/conformance/conftest.py``'s ``pytest_generate_tests``.
     """
-    kinds: dict[str, str] = {}
     scratch: dict[str, Path | None] = {}
     words: dict[str, Vocabulary] = {}
-    seen: set[Cell] = set()
+    unpinned: dict[str, BaseHost] = {}
     resolved: list[ResolvedCell] = []
-    for lab in BED_LABS:
-        for cell in axis_space(lab, BED_TECH):
-            if cell in seen:
-                continue
-            seen.add(cell)
-            if cell.element not in kinds:
-                kinds[cell.element] = bed_kind(cell.element)
-                # Per ELEMENT because the QUESTION is per element --
-                # `bed_scratch_dir` and `bed_vocabulary` take no cell, and
-                # their docstrings give the measurement. 16 host builds at
-                # resolve time rather than 55.
-                scratch[cell.element] = bed_scratch_dir(cell.element)
-                words[cell.element] = bed_vocabulary(cell.element)
-            resolved.append(
-                ResolvedCell(
-                    cell=cell,
-                    kind=kinds[cell.element],
-                    open_host=_opener_for(cell),
-                    remote_scratch=_scratch_for(scratch[cell.element]),
-                    vocabulary=words[cell.element],
-                )
+    for bed_cell in bed_topology():
+        cell = bed_cell.cell
+        if cell.element not in words:
+            # Per ELEMENT because the QUESTION is per element --
+            # `bed_scratch_dir` and `bed_vocabulary` take no cell, and
+            # their docstrings give the measurement. 16 host builds at
+            # resolve time rather than 55.
+            scratch[cell.element] = bed_scratch_dir(cell.element)
+            words[cell.element] = bed_vocabulary(cell.element)
+            # The family and the login's proxy chain are facts of the lab
+            # entry, read off the host built from it unpinned -- never the
+            # session manager's own exec route.
+            unpinned[cell.element] = _unpinned_bed_host(cell.element)
+        host = unpinned[cell.element]
+        proxied = proxied_on(
+            dict(host_data(cell.element, BED_TECH)), cell.term, family=family_of(host)
+        )
+        resolved.append(
+            ResolvedCell(
+                cell=cell,
+                kind=bed_cell.kind,
+                open_host=bed_cell.open_host,
+                remote_scratch=_scratch_for(scratch[cell.element]),
+                vocabulary=words[cell.element],
+                family=family_of(host),
+                proxied_login=proxied,
+                open_shell_host=(
+                    hooked(partial(_hooked_open, cell))
+                    if cell.term == "ssh" and not proxied
+                    else None
+                ),
             )
+        )
     return resolved

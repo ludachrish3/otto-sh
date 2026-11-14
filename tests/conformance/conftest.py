@@ -48,6 +48,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.conformance import _entry
 from tests.conformance._cells import resolve_space
 from tests.conformance._console_safety import (
     opens_a_single_client_console,
@@ -132,6 +133,37 @@ def _drawn_cells(config) -> "list[ResolvedCell]":
         drawn = draw(_SPACE, cell_budget(), seed)
         config.stash[_DRAWN_KEY] = drawn
         log_draw(current_venue(), _SPACE, drawn, seed)
+    return drawn
+
+
+_DRAWN_FOR_ENTRIES_KEY = pytest.StashKey["dict[tuple[str, ...], list[ResolvedCell]]"]()
+
+
+def _drawn_for(config, contract: str) -> "list[ResolvedCell]":
+    """The cells *contract* measures: the full draw, or its entries' projected one.
+
+    An UNMARKED contract gets :func:`_drawn_cells` itself, so the draw every
+    contract took before entries existed is unchanged. A contract marked
+    ``@pytest.mark.entries(...)`` draws from
+    :func:`tests.conformance._entry.space_for` instead -- the space projected
+    to one cell per ``(element, term)``, crossed with its entries -- under
+    the same budget and seed. A marked contract's draw is memoised per
+    declared-entries tuple, so two contracts declaring the same entries draw
+    the same cells, and each distinct draw is logged once; an unmarked one
+    returns before the memo is consulted (``_drawn_cells`` keeps its own).
+    """
+    declared = _entry.entries_declared(contract)
+    if not declared:
+        return _drawn_cells(config)
+    memo = config.stash.setdefault(_DRAWN_FOR_ENTRIES_KEY, {})
+    key = tuple(declared)
+    drawn = memo.get(key)
+    if drawn is None:
+        space = _entry.space_for(contract, _SPACE)
+        seed = root_seed(config)
+        drawn = draw(space, cell_budget(), seed)
+        memo[key] = drawn
+        log_draw(f"{current_venue()} entries={','.join(declared)}", space, drawn, seed)
     return drawn
 
 
@@ -228,6 +260,10 @@ def pytest_generate_tests(metafunc):
     statement from what a run MEASURED, and the run's own draw line still
     names every cell it drew.
 
+    A COMMAND CONTRACT, marked ``@pytest.mark.entries(...)``, is parametrized
+    over its entries' projected draw instead (:func:`_drawn_for`), and the
+    domain and expected-failure hooks then receive each cell WITH its entry.
+
     A domain that narrows the draw to NOTHING raises rather than
     parametrizing over an empty list. pytest's answer to an empty parameter
     set is to mark the item SKIPPED, which would put back exactly the silent
@@ -241,7 +277,7 @@ def pytest_generate_tests(metafunc):
     """
     if "resolved_cell" not in metafunc.fixturenames:
         return
-    drawn = _drawn_cells(metafunc.config)
+    drawn = _drawn_for(metafunc.config, metafunc.definition.nodeid)
     applies = getattr(metafunc.module, _DOMAIN_HOOK, None)
     expected = getattr(metafunc.module, _XFAIL_HOOK, None)
     if applies is not None:

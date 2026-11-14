@@ -31,6 +31,7 @@ import pytest
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.utils import Status
+from tests.conformance._framing import framing_leak
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE as _BACKEND_NE,
 )
@@ -97,21 +98,16 @@ class TestMultilineOutputClean:
         would conflate a command-vocabulary difference with a parser bug.
 
         The positional parser must drop the bracketing prompt lines without
-        leaking the BEGIN marker, the ``retval`` line, or any ANSI escapes
-        into the captured output.
+        leaking the BEGIN marker, the ``retval`` line, or any escape other
+        than the help formatter's cursor-forward moves into the output
+        (:func:`tests.conformance._framing.framing_leak`, the one predicate).
         """
         result = (await host1.run("help")).only
         assert result.status == Status.Success
-        # No otto sentinels leaked into the output.
-        assert "__OTTO_" not in result.value
-        # No `retval` echo (the parser must take only the command's output).
-        # `retval` itself as a substring could legitimately appear in other
-        # contexts, so we only check for it on a line of its own.
-        for line in result.value.splitlines():
-            assert line.strip() != "retval", f"retval line leaked into output: {result.value!r}"
-        # No raw ANSI escapes (the shell's colored prompt is stripped before
-        # parsing).
-        assert "\x1b[" not in result.value
+        # The shared framing predicate: no sentinel, no `retval` line, no
+        # prompt or echo, and no escape but the help formatter's cursor-forward
+        # moves, which are the command's own output.
+        assert framing_leak(result.value, "help") is None, result.value
 
 
 # ---------------------------------------------------------------------------

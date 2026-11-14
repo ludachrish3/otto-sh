@@ -21,6 +21,7 @@ on every ``*ValidationError``. And the rejections are backed by
 negative test in this file and nothing else here would notice.
 """
 
+import ast
 import asyncio
 import contextlib
 import copy
@@ -37,6 +38,10 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from otto.host.command_frame import BashFrame
+from otto.host.exec_route import ExecRoute
+from otto.host.limitation import Limitation
+from otto.host.session import RouteRecord
 from otto.host.transfer import (
     TRANSFER_BACKENDS,
     ProgressGranularity,
@@ -44,25 +49,37 @@ from otto.host.transfer import (
 )
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
+from scripts import collate_support_matrix as _collator
 from scripts.check_matrix_downgrades import main as gate_main
 from scripts.collate_support_matrix import BED, FAILURE_SUMMARY_LIMIT, collate, report
 from scripts.collate_support_matrix import main as collate_main
 from scripts.render_support_matrix import (
     _UNINTERPRETED,
     _UNWATCHED_STATES,
+    AXIS_PHRASE,
+    COMMAND_CONTRACT_PATH,
     FAMILIES_PAGE_PATH,
     FAMILY_BLURB,
     PAGE_PATH,
     VOICE,
     Promise,
+    _domain_of,
     _domain_rule,
+    _suite_cells,
     axes_mismatch,
+    branch_capability,
     code_spans,
+    contract_rows,
+    declared_limitations,
     narrowing_mismatch,
+    not_checked,
     promise_mismatch,
     promise_of,
+    reader_narrowed,
     render,
+    render_command_contract,
     render_families,
+    split_of,
 )
 from scripts.render_support_matrix import main as render_main
 from tests._ambient_env import ambient_opt_ins
@@ -85,20 +102,23 @@ from tests._fixtures.support_matrix import (
     element_accounting_errors,
     positive_control_errors,
 )
+from tests.conformance import _entry
 from tests.conformance import conftest as conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance import test_transfer_contract as _transfer_contract
+from tests.conformance._bed import bed_space
 from tests.conformance._controls import (
     CONTROL_MARK,
     discover_controls,
     positive_control_for,
 )
+from tests.conformance._entry import ALL_ENTRIES, entries_declared, space_for, with_entry
 from tests.conformance._observable import (
     OBSERVABLE_MARK,
     discover_observables,
-    observable_template_for,
     render_observable,
 )
 from tests.conformance._observation import (
@@ -123,7 +143,8 @@ from tests.conformance._observation import (
     record_filename,
 )
 from tests.conformance._resolved import ResolvedCell
-from tests.conformance._vocabulary import POSIX, vocabulary_for_userland
+from tests.conformance._sample import cell_label
+from tests.conformance._vocabulary import POSIX, vocabulary_for
 from tests.conformance.test_transfer_contract import _MODE as _TRANSFER_MODE
 from tests.conformance.test_transfer_contract import _PAYLOAD
 
@@ -238,6 +259,7 @@ COMPLETE_MEASURED_OK = {
             "term": "telnet",
             "transfer": "console",
             "outcome": "passed",
+            "observable": "the bytes read back by get() after put() of a known payload",
             "positive_control": (
                 "tests/conformance/test_transfer_contract.py"
                 "::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte"
@@ -250,6 +272,7 @@ COMPLETE_MEASURED_OK = {
             "term": "telnet",
             "transfer": "console",
             "outcome": "passed",
+            "observable": "the bytes read back by get() after put() of a known payload",
             "positive_control": (
                 "tests/conformance/test_transfer_contract.py"
                 "::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte"
@@ -320,6 +343,7 @@ COMPLETE_MEASURED_BROKEN = {
             "term": "telnet",
             "transfer": "nc",
             "outcome": "xfailed",
+            "observable": "the bytes get() reads back over `nc` after put() of a known payload",
         },
         {
             "cell_label": "bed-busybox[bb1161:telnet:shell]",
@@ -327,6 +351,7 @@ COMPLETE_MEASURED_BROKEN = {
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
+            "observable": "the bytes get() reads back over `shell` after put() of a known payload",
             "positive_control": (
                 "tests/conformance/test_transfer_contract.py"
                 "::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte"
@@ -1116,6 +1141,60 @@ def test_a_breakdown_whose_axes_disagree_with_its_own_label_is_caught(committed)
     assert any("disagrees with the axes beside it" in error for error in errors), errors
 
 
+def _marks_with_entries(monkeypatch, contract: str, entries: "list[str]") -> None:
+    """Make *contract* AND its positive control declare *entries*, for one test.
+
+    Both, because a control runs on exactly the cells its contract runs on.
+    Patched on :mod:`tests.conformance._entry` -- the one reader of the marker
+    -- and on the collator's own import of it, so every site that asks
+    ``entries_declared`` hears the same answer. No committed contract carries
+    the marker yet, so without this the entry-bearing shape has no live case.
+    """
+    real = _entry.entries_declared
+    surface = next(s.id for s in SURFACES if s.contract == contract)
+    marked = {contract, positive_control_for(surface)}
+
+    def declared(asked: str) -> "list[str]":
+        return list(entries) if asked.split("[", 1)[0] in marked else real(asked)
+
+    monkeypatch.setattr(_entry, "entries_declared", declared)
+    monkeypatch.setattr(_collator, "entries_declared", declared)
+
+
+def test_an_entry_label_must_agree_with_its_entry_field(committed, monkeypatch):
+    """The :func:`test_a_breakdown_whose_axes_disagree_with_its_own_label_is_caught`
+    pin, extended to the fourth field: a label ``[element:term:transfer:entry]``
+    and the ``entry`` beside it are two spellings of one fact as well.
+
+    Both rows: the agreeing entry raises nothing (a guard that refused every
+    entry label would otherwise pass), the disagreeing one is named.
+    """
+    _marks_with_entries(monkeypatch, _TRANSFER_CONTRACT, ["run", "exec"])
+    entries = copy.deepcopy(COMPLETE_MEASURED_OK["observed_cells"])
+    for entry in entries:
+        entry["cell_label"] = entry["cell_label"][:-1] + ":run]"
+        entry["entry"] = "run"
+    agreeing, _ = _with_cell(
+        committed, COMPLETE_MEASURED_OK | {"observed_cells": entries}, TRANSFER_X_ZEPHYR37
+    )
+    assert _at(cell_outcome_errors(agreeing), TRANSFER_X_ZEPHYR37) == []
+    entries[0]["entry"] = "exec"
+    disagreeing, _ = _with_cell(
+        committed, COMPLETE_MEASURED_OK | {"observed_cells": entries}, TRANSFER_X_ZEPHYR37
+    )
+    errors = _at(cell_outcome_errors(disagreeing), TRANSFER_X_ZEPHYR37)
+    assert any("disagrees with the axes beside it" in error for error in errors), errors
+
+
+def test_an_entryless_label_is_refused_for_a_command_contract(committed, monkeypatch):
+    """A command contract's cells are reached by an entry, so a three-field
+    label names no cell it draws -- the per-contract space, not one map for all."""
+    _marks_with_entries(monkeypatch, _TRANSFER_CONTRACT, ["run", "exec"])
+    document, _ = _with_cell(committed, COMPLETE_MEASURED_OK, TRANSFER_X_ZEPHYR37)
+    errors = _at(cell_outcome_errors(document), TRANSFER_X_ZEPHYR37)
+    assert any("not a cell the bed venue draws" in error for error in errors), errors
+
+
 def test_a_breakdown_listing_one_cell_twice_is_caught(committed):
     """A duplicate would double-count in any "N transports" the page renders."""
     entry = COMPLETE_MEASURED_OK["observed_cells"][0]
@@ -1383,6 +1462,47 @@ def test_re_measuring_one_cell_replaces_its_record_rather_than_adding_one():
         for outcome in (PASSED, FAILED)
     }
     assert len(both) == 1
+
+
+def test_two_entries_of_one_cell_write_two_records():
+    """Two entries of one cell are two measurements; neither may overwrite the other."""
+    contract = SURFACES[0].contract
+    cell = _fabricated_cell("test1", "ssh", "scp", kind="bed-unix")
+    records = [
+        observation_record(
+            resolved=with_entry(cell, entry),
+            venue="bed",
+            contract=contract,
+            nodeid=f"{contract}[{cell_label(with_entry(cell, entry))}]",
+            outcome=PASSED,
+        )
+        for entry in ("run", "exec")
+    ]
+    assert [record["entry"] for record in records] == ["run", "exec"]
+    assert len({record_filename(record) for record in records}) == 2
+
+
+def test_an_entryless_record_still_names_its_entry_as_empty():
+    """Every record carries ``entry``; an unmarked contract's is ``""``, never absent."""
+    contract = SURFACES[0].contract
+    record = observation_record(
+        resolved=_fabricated_cell("test1", "ssh", "scp", kind="bed-unix"),
+        venue="bed",
+        contract=contract,
+        nodeid=f"{contract}[bed-unix[test1:ssh:scp]]",
+        outcome=PASSED,
+    )
+    assert record["entry"] == ""
+    assert record["format"] == 2
+
+
+def test_the_schema_accepts_an_entry_nodeid(validator):
+    """The :func:`test_the_schema_holds_a_parametrized_conformance_nodeid` pin, with
+    the fourth, entry field a command contract's cell label carries."""
+    pattern = re.compile(validator.schema["$defs"]["NodeId"]["pattern"])
+    contract = SURFACES[0].contract
+    for label in ("bed-unix[test1:ssh:scp:exec]", "bed-busybox[bb1161:telnet:nc:run]"):
+        assert pattern.match(f"{contract}[{label}]"), label
 
 
 def test_the_schema_holds_a_parametrized_conformance_nodeid():
@@ -1961,7 +2081,8 @@ def test_a_measured_ok_cell_naming_another_surfaces_control_is_rejected(committe
     about the transfer roundtrip.
     """
     other = positive_control_for("exec-framing")
-    named = f"{other}[bed-zephyr[zephyr37_fat:telnet:console]]"
+    # A command control's cells carry their entry (`tests/conformance/_entry.py`).
+    named = f"{other}[bed-zephyr[zephyr37_fat:telnet:console:run]]"
     assert named in bed_nodeids, "the fixture must name a control that really is collected"
     errors = _control_errors(_measured_ok_at(committed, named), bed_nodeids)
     assert errors, "a cell citing another surface's control was accepted"
@@ -2057,7 +2178,7 @@ def test_a_routes_control_from_another_surface_is_rejected(committed, bed_nodeid
     Everything a shape check can see is right and it says nothing about
     whether the roundtrip comparison could reject a corrupted byte there.
     """
-    named = f"{positive_control_for('exec-framing')}[bed-zephyr[zephyr37_fat:telnet:console]]"
+    named = f"{positive_control_for('exec-framing')}[bed-zephyr[zephyr37_fat:telnet:console:run]]"
     assert named in bed_nodeids, "the fixture must name a control that really is collected"
     errors = _control_errors(_route_at(committed, named), bed_nodeids)
     assert errors, "a route citing another surface's control was accepted"
@@ -2118,6 +2239,29 @@ def test_an_unparametrized_control_is_not_accepted_as_evidence(committed, bed_no
     assert "is not this surface's control" in errors[0], errors
 
 
+def test_a_control_is_cited_per_contract_space(monkeypatch):
+    """The acceptable citations are the control joined to the labels of THIS
+    contract's space (``space_for``), not one label map shared by every contract.
+
+    Marked with entries, the roundtrip contract draws one cell per
+    ``(element, term)`` crossed with its entries, so ``bb1161`` -- two cells over
+    ``telnet`` entry-less -- is cited by the projected cell under each entry,
+    and the entry-less spelling is no longer acceptable.
+    """
+    control = positive_control_for("transfer-roundtrip")
+    before = acceptable_controls("transfer-roundtrip", ["bb1161"])
+    assert f"{control}[bed-busybox[bb1161:telnet:nc]]" in before
+    _marks_with_entries(monkeypatch, _TRANSFER_CONTRACT, ["run", "exec"])
+    expected = {
+        f"{control}[{cell_label(resolved)}]"
+        for resolved in space_for(_TRANSFER_CONTRACT, bed_space())
+        if resolved.cell.element == "bb1161"
+    }
+    assert len(expected) == 2
+    assert all(nodeid.endswith((":run]]", ":exec]]")) for nodeid in expected), expected
+    assert acceptable_controls("transfer-roundtrip", ["bb1161"]) == expected
+
+
 def test_a_positive_control_leaves_a_control_record_and_never_an_observation(tmp_path):
     """A control's outcome is evidence about the INSTRUMENT, never about the host.
 
@@ -2166,6 +2310,10 @@ _FRAMING_CONTRACT = (
 _FRAMING_CONTROL = (
     "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution"
 )
+#: The command contract that narrows its observable from its own body.
+_OUTPUT_CONTRACT = (
+    "tests/conformance/test_output_contract.py::test_a_commands_value_is_its_exact_output"
+)
 
 
 def test_a_control_record_names_the_surface_its_own_marker_declares(tmp_path):
@@ -2211,15 +2359,15 @@ def test_the_observable_a_contract_notes_is_the_one_that_reaches_the_record(tmp_
     mutation defeats; without it, a template that happened to contain the same
     words would satisfy the first.
     """
-    _, records = _run_conformance(tmp_path, _FRAMING_CONTRACT)
+    _, records = _run_conformance(tmp_path, _OUTPUT_CONTRACT)
     observations = [record for record in records if record["kind"] == "observation"]
     assert observations, "the inner run left no observation"
     template = next(
-        entry.template for entry in discover_observables() if entry.contract == _FRAMING_CONTRACT
+        entry.template for entry in discover_observables() if entry.contract == _OUTPUT_CONTRACT
     )
     for record in observations:
         observable = record["observable"]
-        assert "exact equality against the 2 lines the tester chose" in observable, (
+        assert "every row of the table `otto.testing.EXACT_OUTPUT_CASES`" in observable, (
             f"{record['cell_label']}: the record carries {observable!r}, which is not what "
             f"the contract's body noted -- the refinement never reached the emitter"
         )
@@ -2368,9 +2516,22 @@ class _FakeHost:
         self._modes: "dict[str, int]" = {}
         self._file_transfer = _FakeTransfer(mode_support)
 
+    #: The route each opener's ``exec`` reports, set by :func:`_fake_cell`.
+    exec_route = "ssh-channel"
+
     async def run(self, command, timeout=None):
         commands = [command] if isinstance(command, str) else list(command)
-        return Results.collect(items=[self._answer(one, timeout) for one in commands])
+        return Results.collect(
+            items=[self._routed(self._answer(one, timeout), "default-session") for one in commands]
+        )
+
+    async def exec(self, command, timeout=None) -> CommandResult:
+        return self._routed(self._answer(command, timeout), self.exec_route)
+
+    def _routed(self, result: CommandResult, route: str) -> CommandResult:
+        if "reports-the-wrong-route" in self._twists:
+            route = "local-subprocess"
+        return dataclasses.replace(result, route=route)
 
     def _answer(self, command: str, timeout) -> CommandResult:
         if "always-times-out" in self._twists:
@@ -2393,7 +2554,8 @@ class _FakeHost:
             return CommandResult(status=Status.Failed, value="", command=command, retcode=7)
         if "every-command-fails" in self._twists:
             return CommandResult(status=Status.Failed, value="", command=command, retcode=3)
-        retcode, value = self._honest(command)
+        case = next((one for one in POSIX.output_cases if one.command == command), None)
+        retcode, value = (case.retcode, case.value) if case else self._honest(command)
         status = Status.Success if retcode == 0 else Status.Failed
         return CommandResult(status=status, value=value, command=command, retcode=retcode)
 
@@ -2620,19 +2782,31 @@ class _FakeHost:
         return Result(status=Status.Success)
 
 
-def _fake_cell(host: _FakeHost) -> ResolvedCell:
-    """A resolved cell whose host is *host* and whose vocabulary is POSIX."""
+def _fake_cell(host: _FakeHost, entry: str = "") -> ResolvedCell:
+    """A resolved cell whose host is *host*, whose vocabulary is POSIX, reached by *entry*.
 
-    @contextlib.asynccontextmanager
-    async def opener():
-        yield host
+    A unix ``ssh`` cell without a proxied login, which admits every entry: its
+    plain opener's ``exec`` takes the ssh channel, its hooked opener's the
+    pooled shell.
+    """
+
+    def opener_for(exec_route: str):
+        @contextlib.asynccontextmanager
+        async def opener():
+            host.exec_route = exec_route
+            yield host
+
+        return opener
 
     return ResolvedCell(
-        cell=Cell("fake", "term", "transfer"),
+        cell=Cell("fake", "ssh", "transfer"),
         kind="fake",
-        open_host=opener,
+        open_host=opener_for("ssh-channel"),
         remote_scratch=lambda tmp: tmp,
         vocabulary=POSIX,
+        entry=entry,
+        family="unix",
+        open_shell_host=opener_for("pooled-shell"),
     )
 
 
@@ -2644,6 +2818,7 @@ def _fake_cell(host: _FakeHost) -> ResolvedCell:
 CONTROLS = {
     "exec-exit-code": _exec_contract.test_control_the_exit_code_channel_reports_more_than_one_code,
     "exec-framing": _exec_contract.test_control_the_framing_check_sees_planted_pollution,
+    "exec-output-exact": _output_contract.test_the_output_comparison_sees_one_added_space,
     "exec-failure-in-sequence": (
         _exec_contract.test_control_a_succeeding_sequence_is_not_reported_as_failed
     ),
@@ -2685,6 +2860,8 @@ HOST_CASES = [
         True,
         False,
     ),
+    ("the honest output matches", "exec-output-exact", (), True, True),
+    ("no command answers honestly", "exec-output-exact", ("every-command-fails",), True, False),
     ("aggregate discriminates", "exec-failure-in-sequence", (), True, True),
     (
         "aggregate always fails",
@@ -2767,24 +2944,58 @@ async def test_a_control_passes_when_its_observable_moves_and_fails_when_it_cann
     remote = tmp_path / "remote"
     remote.mkdir()
     control = CONTROLS[surface]
-    # `watches_progress` is read off the row's own surface rather than added as
-    # a sixth column: every `transfer-progress` row watches the bar and no
-    # other row does, so a column would be a restatement of `surface` that can
-    # drift from it. Same derivation as the `kwargs` branch below.
-    resolved = _fake_cell(
-        _FakeHost(
-            *twists, mode_support=mode_support, watches_progress=surface == "transfer-progress"
+    # A command control runs once per entry its own marker declares, as it does
+    # in a real run; a transfer control is entry-less.
+    for entry in entries_declared(positive_control_for(surface)) or [""]:
+        # `watches_progress` is read off the row's own surface rather than added as
+        # a sixth column: every `transfer-progress` row watches the bar and no
+        # other row does, so a column would be a restatement of `surface` that can
+        # drift from it. Same derivation as the `kwargs` branch below.
+        resolved = _fake_cell(
+            _FakeHost(
+                *twists, mode_support=mode_support, watches_progress=surface == "transfer-progress"
+            ),
+            entry,
         )
-    )
-    kwargs = {"resolved_cell": resolved}
-    if surface.startswith("transfer-"):
-        kwargs |= {"remote_scratch": remote, "tmp_path": tmp_path, "worker_id": "master"}
+        kwargs = {"resolved_cell": resolved}
+        if surface.startswith("transfer-"):
+            kwargs |= {"remote_scratch": remote, "tmp_path": tmp_path, "worker_id": "master"}
 
-    if must_pass:
-        await control(**kwargs)
-        return
-    with pytest.raises(AssertionError):
-        await control(**kwargs)
+        if must_pass:
+            await control(**kwargs)
+            continue
+        with pytest.raises(AssertionError):
+            await control(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "surface",
+    [surface.id for surface in SURFACES if entries_declared(surface.contract)],
+)
+async def test_a_host_that_reports_the_wrong_route_fails_every_command_control(surface):
+    """Every command CONTROL refuses a result that ran on a route its entry does not take.
+
+    The control issues through the same ``issue`` as its contract, so this is
+    the route check proved from the control's side, over every declared entry.
+    """
+    control = CONTROLS[surface]
+    for entry in entries_declared(positive_control_for(surface)):
+        with pytest.raises(AssertionError, match="ran on route"):
+            await control(resolved_cell=_fake_cell(_FakeHost("reports-the-wrong-route"), entry))
+
+
+@pytest.mark.parametrize("surface", [surface.id for surface in SURFACES])
+def test_every_control_is_reached_through_exactly_its_contracts_entries(surface):
+    """The collator judges a control's cells by the CONTROL's own marker, so they must agree."""
+    contract = next(one.contract for one in SURFACES if one.id == surface)
+    assert entries_declared(positive_control_for(surface)) == entries_declared(contract), surface
+
+
+def test_the_schemas_entry_enum_is_every_entry_the_suite_knows():
+    """``CellOutcome.entry`` admits exactly :data:`~tests.conformance._entry.ALL_ENTRIES`."""
+    schema = json.loads(SCHEMA_PATH.read_text())
+    assert schema["$defs"]["CellOutcome"]["properties"]["entry"]["enum"] == ALL_ENTRIES
 
 
 # --------------------------------------------------------------------------
@@ -2832,8 +3043,11 @@ def test_a_positive_control_declares_no_observable_of_its_own():
     assert overlap == [], f"{overlap} are positive controls carrying a contract's marker"
 
 
-@pytest.mark.parametrize("userland", ["gnu", "busybox-1.35.0", "zephyr-3.7"])
-def test_every_declared_observable_renders_against_every_vocabulary(userland):
+@pytest.mark.parametrize(
+    ("userland", "element"),
+    [("gnu", "test1"), ("busybox-1.35.0", "bb1350"), ("zephyr-3.7", "zephyr37_fat")],
+)
+def test_every_declared_observable_renders_against_every_vocabulary(userland, element):
     """A template naming a field that does not exist must fail HERE, not in a run.
 
     An unrenderable template reaches a reporting hook, where it either raises
@@ -2846,8 +3060,8 @@ def test_every_declared_observable_renders_against_every_vocabulary(userland):
     that userland has no command that outlives a budget, so its template
     interpolates a ``None`` there and no run can ever produce it.
     """
-    words = vocabulary_for_userland(userland)
-    resolved = _fabricated_cell("element", "telnet", "console", kind="bed-zephyr")
+    words = vocabulary_for(userland=userland, element=element)
+    resolved = _fabricated_cell(element, "telnet", "console", kind="bed-zephyr")
     resolved = ResolvedCell(
         cell=resolved.cell,
         kind=resolved.kind,
@@ -2872,12 +3086,12 @@ def test_no_declared_observable_is_a_restatement_of_its_surface(committed):
     name does not: a command, a result attribute, a transport.
 
     Weak on its own, and it is here because the strong form is elsewhere:
-    ``test_the_framing_observable_differs_between_the_two_vocabularies`` in
+    ``test_the_output_observable_differs_between_the_two_vocabularies`` in
     ``tests/unit/test_conformance_bed.py`` measures that one surface's
     observable really DIFFERS between two userlands, which no derivation from a
     surface id could do.
     """
-    words = vocabulary_for_userland("gnu")
+    words = vocabulary_for(userland="gnu", element="test1")
     base = _fabricated_cell("test1", "ssh", "scp", kind="bed-unix")
     resolved = ResolvedCell(
         cell=base.cell,
@@ -2898,77 +3112,31 @@ def test_no_declared_observable_is_a_restatement_of_its_surface(committed):
         )
 
 
-def test_a_cells_observables_differ_only_by_the_transport_its_entry_already_names(committed):
-    """★ WHY `CellOutcome` STORES NO PER-CELL `observable`. The decision, and its tripwire.
+def test_every_observed_cell_names_its_observable(committed):
+    """★ WHY `CellOutcome` NOW STORES ITS OWN `observable`.
 
-    Task 4b left the field open and Task 5 left it open again with a caller that would
-    use one: the page can say WHICH transport broke but not WHAT was watched on each.
-    MEASURED 2026-08-25 over the 575 records of a real bed lane, and that is what
-    settles it: of the 51 cells a run drew observations for -- the other three are the
-    `not-observable` timeout cells, which have none -- 12 have contributing observations
-    whose observables differ at all, and in **every one of the 51** the ONLY thing that
-    differs is the transport token, which `observed_cells` already carries as a
-    structural `transfer` field. Storing the string per cell would repeat a
-    ~110-character sentence 32 times on `gnu` x transfer-mode to say `scp` / `sftp` /
-    `ftp` / `nc`, which is the 900-character field Task 4 measured and shrank,
-    restored one level down.
+    It once did not, on a measurement: every drawn cell of a profile watched the
+    same thing up to the transport token its ``transfer`` field already names,
+    so a per-cell string would only have repeated a sentence. That stops being
+    true the day a limitation applies to ONE term or ONE entry of a device --
+    ``run`` and ``exec`` of a command contract can watch different things on the
+    same cell, and the page must be able to say which. The cell-level
+    ``observable`` stays as the join a uniform surface renders; the per-cell
+    field is what lets a non-uniform one be published per cell rather than
+    hidden inside that join.
 
-    So the decision is: NOT STORED, and this is what makes it falsifiable rather than a
-    preference. A template that started naming the DEVICE, or a vocabulary field that
-    varied inside one profile, would make two drawn cells watch genuinely different
-    things -- and then the cell-level join really would be hiding something and the
-    field should be added.
-
-    ITS BLIND SPOT, DECLARED: this renders the declared TEMPLATE, so it cannot see a
-    `note_observable` refinement, which only a running contract produces. That layer
-    was covered by the record measurement above rather than by this guard, and the
-    normalisation here is the same one that measurement used.
+    So every entry of every committed ``observed_cells`` names its observable,
+    and the schema requires it there.
     """
-    varied = 0
-    checked = 0
-    for surface in SURFACES:
-        template = observable_template_for(surface.contract)
-        for profile in committed["profiles"]:
-            entries = committed["cells"][surface.id][profile["id"]].get("observed_cells", [])
-            if len(entries) < 2:
-                continue
-            words = vocabulary_for_userland(profile["id"])
-            rendered = [
-                (
-                    entry,
-                    render_observable(
-                        template,
-                        ResolvedCell(
-                            cell=Cell(entry["element"], entry["term"], entry["transfer"]),
-                            kind="bed-unix",
-                            open_host=lambda: None,
-                            remote_scratch=None,
-                            vocabulary=words,
-                        ),
-                    ),
-                )
-                for entry in entries
-            ]
-            checked += 1
-            if len({text for _, text in rendered}) > 1:
-                varied += 1
-            normalised = {
-                text.replace(f"`{entry['transfer']}`", "<transport>").replace(
-                    f"`{entry['term']}`", "<console>"
-                )
-                for entry, text in rendered
-            }
-            assert len(normalised) == 1, (
-                f"{surface.id} x {profile['id']}: its drawn cells watch things that "
-                f"differ by more than the transport their own entries already name "
-                f"{sorted(normalised)} -- the cell-level observable is now hiding a "
-                f"real difference, and `CellOutcome` needs the field this test declined"
-            )
-    assert checked, "no cell has two drawn cells, so the normalisation examined nothing"
-    assert varied, (
-        "no cell's observables vary at all today, so the normalisation above proves "
-        "nothing: it would pass over identical strings"
-    )
+    entries = [
+        (f"{surface}.{profile}", entry)
+        for surface, row in committed["cells"].items()
+        for profile, cell in row.items()
+        for entry in cell.get("observed_cells", [])
+    ]
+    assert entries, "no committed cell has a breakdown, so this examined nothing"
+    missing = sorted({where for where, entry in entries if not entry.get("observable")})
+    assert not missing, f"observed_cells entries with no observable of their own: {missing}"
 
 
 # --------------------------------------------------------------------------
@@ -3056,10 +3224,10 @@ def _record(kind: str, surface: str, contract: str, element: str, label: str, **
     profile = profile_for(element)
     assert profile is not None, f"{element} is in no profile column, so this fixture is wrong"
     kind_prefix, axes = label.split("[", 1)
-    label_element, term, transfer = axes.rstrip("]").split(":")
+    label_element, term, transfer, *entry = axes.rstrip("]").split(":")
     assert label_element == element, f"{label} is not a cell of {element}"
     return {
-        "format": 1,
+        "format": 2,
         "kind": kind,
         "surface": surface,
         "contract": contract,
@@ -3071,6 +3239,7 @@ def _record(kind: str, surface: str, contract: str, element: str, label: str, **
         "transfer": transfer,
         "cell_kind": kind_prefix,
         "cell_label": label,
+        "entry": entry[0] if entry else "",
     } | extra
 
 
@@ -3138,6 +3307,79 @@ def _mixed_records() -> "list[dict]":
         records += [_observation(element), _control(element)]
     records += [_exclusion(element) for element in _ZEPHYR37_NOT_OBSERVABLE]
     return records
+
+
+def test_a_format_1_record_is_discarded_and_counted(committed):
+    """A record from before entries existed cannot say which entry it measured.
+
+    It goes through the one discard path every unreadable record takes, and the
+    report counts it -- never read as an entry-less modern record.
+    """
+    format_1_record = _observation("zephyr37_fat") | {"format": 1}
+    format_1_record.pop("entry")
+    format_2_record = _observation("zephyr37_lfs")
+    result = collate(committed, [format_1_record, format_2_record])
+    assert len(result.discarded) == 1
+    assert result.discarded[0].records == [format_1_record]
+    reason = result.discarded[0].reason
+    assert reason.startswith("not format "), reason
+    lines = report(result, records_dir=Path("records"), writing=False)
+    assert any(f"   1  {reason}" in line for line in lines), lines
+
+
+def test_an_observed_cell_stores_its_own_observable(committed):
+    """Each breakdown entry carries the observable ITS record declared, not the join."""
+    records = []
+    for element, observable in zip(
+        _ZEPHYR37_OBSERVED, ("watched one way", "watched another"), strict=True
+    ):
+        records += [_observation(element, observable=observable), _control(element)]
+    cell = collate(committed, records).matrix["cells"]["transfer-roundtrip"]["zephyr-3.7"]
+    assert [entry["observable"] for entry in cell["observed_cells"]] == [
+        "watched one way",
+        "watched another",
+    ], cell["observed_cells"]
+    assert all("entry" not in entry for entry in cell["observed_cells"]), (
+        "an entry-less contract's breakdown must not carry an entry key"
+    )
+
+
+def test_an_observed_cell_of_a_command_contract_names_its_entry(committed, monkeypatch):
+    """Present exactly when the contract declares entries: here it does."""
+    _marks_with_entries(monkeypatch, _TRANSFER_CONTRACT, ["run", "exec"])
+    label = "bed-zephyr[zephyr37_fat:telnet:console:run]"
+    records = [_observation("zephyr37_fat", label=label), _control("zephyr37_fat", label=label)]
+    result = collate(committed, records)
+    assert result.ok, result.refused
+    cell = result.matrix["cells"]["transfer-roundtrip"]["zephyr-3.7"]
+    assert [entry.get("entry") for entry in cell["observed_cells"]] == ["run"]
+
+
+def test_a_command_record_without_an_entry_is_refused(committed, monkeypatch):
+    """A record that disagrees with ``entries_declared(contract)`` is refused, both ways.
+
+    A command contract's record with no entry cannot say how its command was
+    issued; an unmarked contract's record naming one claims a measurement its
+    contract never makes. Either is an emitter defect, and the cell is left as
+    it was.
+    """
+    unmarked = [_observation("zephyr37_fat", label="bed-zephyr[zephyr37_fat:telnet:console:run]")]
+    result = collate(committed, unmarked)
+    assert not result.ok
+    assert "entries" in result.refused[0], result.refused
+    assert _unchanged(committed, result, TRANSFER_X_ZEPHYR37)
+    _marks_with_entries(monkeypatch, _TRANSFER_CONTRACT, ["run", "exec"])
+    result = collate(committed, [_observation("zephyr37_fat"), _control("zephyr37_fat")])
+    assert not result.ok
+    assert "entries" in result.refused[0], result.refused
+    assert _unchanged(committed, result, TRANSFER_X_ZEPHYR37)
+
+
+def test_a_rebuilt_matrix_is_format_2(committed):
+    """``build_matrix`` writes the current format, and so does the collator --
+    the format it was built with, never the one the artifact it read carried."""
+    assert build_matrix(committed)["format"] == 2
+    assert collate(committed | {"format": 1}, []).matrix["format"] == 2
 
 
 def test_the_mixed_zephyr37_transfer_cell_collates_to_a_mixed_cell(committed):
@@ -3895,11 +4137,12 @@ def test_the_collate_step_refuses_to_write_over_a_self_contradicting_artifact(tm
         "venue": "bed",
         "as_of": "2026-08-25",
         "observable": "how long a command that outlives its budget takes to come back",
-        "positive_control": f"{positive_control_for('timeout')}[bed-unix[test1:ssh:scp]]",
+        "positive_control": f"{positive_control_for('timeout')}[bed-unix[test1:ssh:scp:run]]",
         "observed_on": ["test1"],
         "observed_cells": [
             {
-                "cell_label": "bed-unix[test2:ssh:scp]",
+                "cell_label": "bed-unix[test2:ssh:scp:run]",
+                "entry": "run",
                 "element": "test2",
                 "term": "ssh",
                 "transfer": "scp",
@@ -3958,11 +4201,12 @@ def test_the_collate_step_refuses_an_artifact_that_double_counts_a_device(tmp_pa
         "venue": "bed",
         "as_of": "2026-08-25",
         "observable": "how long a command that outlives its budget takes to come back",
-        "positive_control": f"{positive_control_for('timeout')}[bed-unix[test1:ssh:scp]]",
+        "positive_control": f"{positive_control_for('timeout')}[bed-unix[test1:ssh:scp:run]]",
         "observed_on": ["test1"],
         "observed_cells": [
             {
-                "cell_label": "bed-unix[test1:ssh:scp]",
+                "cell_label": "bed-unix[test1:ssh:scp:run]",
+                "entry": "run",
                 "element": "test1",
                 "term": "ssh",
                 "transfer": "scp",
@@ -3973,7 +4217,7 @@ def test_the_collate_step_refuses_an_artifact_that_double_counts_a_device(tmp_pa
             {
                 "element": "test1",
                 "probed": "tests/conformance/test_timeout_contract.py::applicable_cell"
-                "(bed-unix[test1:ssh:scp])",
+                "(bed-unix[test1:ssh:scp:run])",
                 "probe_result": "False -- invented, and contradicting observed_on above",
             }
         ],
@@ -4023,17 +4267,18 @@ def test_the_collate_step_refuses_an_artifact_whose_route_cites_the_wrong_cell(t
         "venue": "bed",
         "as_of": "2026-08-25",
         "observable": "how long a command that outlives its budget takes to come back",
-        "positive_control": f"{control}[bed-unix[test1:ssh:scp]]",
+        "positive_control": f"{control}[bed-unix[test1:ssh:scp:run]]",
         "observed_on": ["test1"],
         "observed_cells": [
             {
-                "cell_label": "bed-unix[test1:ssh:scp]",
+                "cell_label": "bed-unix[test1:ssh:scp:run]",
+                "entry": "run",
                 "element": "test1",
                 "term": "ssh",
                 "transfer": "scp",
                 "outcome": "passed",
-                # THE ONE THING WRONG: `sftp`'s control, cited under `scp`.
-                "positive_control": f"{control}[bed-unix[test1:ssh:sftp]]",
+                # THE ONE THING WRONG: the `exec` entry's control, cited under `run`.
+                "positive_control": f"{control}[bed-unix[test1:ssh:scp:exec]]",
             }
         ],
         "not_observable": [],
@@ -4545,6 +4790,18 @@ def _grid_token(page: str, surface_id: str, profile_id: str) -> str:
     return rows[0].split("|")[column].strip()
 
 
+def _watch(cell: dict, observable: str) -> None:
+    """Make *cell* say it watched *observable*, at the cell AND on every drawn cell.
+
+    The arm is chosen per drawn cell (each ``observed_cells`` entry carries its
+    own ``observable``), so an injection that rewrote only the cell-level join
+    would leave every drawn cell on the arm it had.
+    """
+    cell["observable"] = observable
+    for entry in cell.get("observed_cells", []):
+        entry["observable"] = observable
+
+
 def _evidence_block(page: str, surface_id: str, profile_id: str) -> str:
     """The provenance bullets under a profile's table for one surface."""
     title = next(surface.title for surface in SURFACES if surface.id == surface_id)
@@ -4718,6 +4975,32 @@ def test_a_cell_whose_drawn_cells_disagreed_never_renders_as_one_answer(committe
     # file was just rewritten to avoid. The injection is the guarantee.
 
 
+def _uniform_two_route_cell(matrix: dict, surface_id: str) -> "tuple[str, str, str]":
+    """Pick, BY PROPERTY, a uniformly passing *surface_id* cell of exactly two drawn cells.
+
+    Returns ``(profile_id, axis, broken_value)``: the one axis the two drawn cells
+    differ on, and the value of the drawn cell the caller will turn red. Selected
+    from the real artifact rather than named, because which axis a cell's drawn
+    cells differ on is the bed's business -- a refill that replaced the
+    ``shell``/``nc`` pair with a ``run``/``exec`` pair left a fixed selection
+    pointing at a shape the artifact no longer has.
+    """
+    for profile_id, cell in matrix["cells"][surface_id].items():
+        drawn = cell.get("observed_cells") or []
+        if cell.get("status") != "measured-ok" or len(drawn) != 2:
+            continue
+        if {entry["outcome"] for entry in drawn} != {"passed"}:
+            continue
+        axes = [
+            axis
+            for axis in ("element", "term", "transfer", "entry")
+            if drawn[0].get(axis) != drawn[1].get(axis)
+        ]
+        if len(axes) == 1 and all(entry.get("positive_control") for entry in drawn):
+            return profile_id, axes[0], drawn[1][axes[0]]
+    raise AssertionError(f"no uniform two-route {surface_id} cell to inject a split into")
+
+
 def test_a_split_injected_where_there_was_none_is_still_named(committed):
     """The guard above reads real splits; this one MAKES one where the tree has none.
 
@@ -4727,19 +5010,21 @@ def test_a_split_injected_where_there_was_none_is_still_named(committed):
     back uniform, on a surface that has never had a split.
     """
     injected = copy.deepcopy(committed)
-    cell = injected["cells"]["exec-exit-code"]["busybox-1.16.1"]
-    assert {entry["outcome"] for entry in cell["observed_cells"]} == {"passed"}
+    profile_id, axis, broken_value = _uniform_two_route_cell(injected, "exec-exit-code")
+    cell = injected["cells"]["exec-exit-code"][profile_id]
+    broken = next(entry for entry in cell["observed_cells"] if entry[axis] == broken_value)
+    survivor = next(entry for entry in cell["observed_cells"] if entry is not broken)
     cell["status"] = "measured-broken"
-    cell["failure_summary"] = "bed-busybox[bb1161:telnet:nc]: injected, for this guard"
+    cell["failure_summary"] = f"{broken['cell_label']}: injected, for this guard"
     del cell["positive_control"]
-    broken = next(entry for entry in cell["observed_cells"] if entry["transfer"] == "nc")
     broken["outcome"] = "failed"
 
-    row = _row(_page(injected), "exec-exit-code", "busybox-1.16.1")
-    assert "`shell`" in row, f"the injected split does not name what still works: {row}"
-    assert "`nc`" in row, f"the injected split does not name what broke: {row}"
+    row = _row(_page(injected), "exec-exit-code", profile_id)
+    kept = f"`{survivor[axis]}`"
+    assert kept in row, f"the injected split does not name what still works: {row}"
+    assert f"`{broken_value}`" in row, f"the injected split does not name what broke: {row}"
     assert "nothing predicted" in row, f"an injected surprise reads as routine: {row}"
-    assert "**Only over `shell`.**" in row
+    assert f"**Only {AXIS_PHRASE[axis].format(kept)}.**" in row, row
 
 
 def test_the_page_cites_the_control_behind_a_route_it_claims_positively(committed):
@@ -4974,21 +5259,21 @@ def test_a_cited_split_injected_where_there_was_none_is_still_cited(committed):
     surviving route's own control must still reach the page.
     """
     injected = copy.deepcopy(committed)
-    cell = injected["cells"]["exec-exit-code"]["busybox-1.16.1"]
-    assert {entry["outcome"] for entry in cell["observed_cells"]} == {"passed"}
+    profile_id, axis, broken_value = _uniform_two_route_cell(injected, "exec-exit-code")
+    cell = injected["cells"]["exec-exit-code"][profile_id]
+    broken = next(entry for entry in cell["observed_cells"] if entry[axis] == broken_value)
+    survivor = next(entry for entry in cell["observed_cells"] if entry is not broken)
     cell["status"] = "measured-broken"
-    cell["failure_summary"] = "bed-busybox[bb1161:telnet:nc]: injected, for this guard"
+    cell["failure_summary"] = f"{broken['cell_label']}: injected, for this guard"
     del cell["positive_control"]
-    survivor = next(entry for entry in cell["observed_cells"] if entry["transfer"] == "shell")
-    next(entry for entry in cell["observed_cells"] if entry["transfer"] == "nc")["outcome"] = (
-        "failed"
-    )
+    broken["outcome"] = "failed"
 
     page = _page(injected)
-    row = _row(page, "exec-exit-code", "busybox-1.16.1")
-    assert "**Only over `shell`.** You can run a command" in row, row
-    block = _evidence_block(page, "exec-exit-code", "busybox-1.16.1")
-    assert f"*Positive control over `shell`:* `{survivor['positive_control']}`" in block, block
+    row = _row(page, "exec-exit-code", profile_id)
+    where = AXIS_PHRASE[axis].format(f"`{survivor[axis]}`")
+    assert f"**Only {where}.** You can run a command" in row, row
+    block = _evidence_block(page, "exec-exit-code", profile_id)
+    assert f"*Positive control {where}:* `{survivor['positive_control']}`" in block, block
 
 
 def test_a_partial_verdict_injected_where_there_was_none_still_names_its_remainder(committed):
@@ -5635,11 +5920,43 @@ def test_the_renderer_recovers_no_field_by_parsing_prose():
     body = "\n".join(
         line for line in source.splitlines() if not line.lstrip().startswith(("#", '"', "*"))
     )
-    for forbidden in ('.split("["', ".split('['", '.split(" | "', "re.compile", "import re"):
+    for forbidden in ('.split("["', ".split('['", '.split(" | "', "re.compile"):
         assert forbidden not in body, (
             f"{RENDERER_PATH.name} reaches for {forbidden!r}; every field it renders is "
             f"read from a key, not recovered from a sentence"
         )
+    assert not _imports_re(source), (
+        f"{RENDERER_PATH.name} imports `re`; every field it renders is read from a key, "
+        f"not recovered from a sentence"
+    )
+
+
+def _imports_re(source: str) -> bool:
+    """Whether *source* imports the ``re`` module, by any spelling, anywhere."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import) and any(
+            alias.name == "re" or alias.name.startswith("re.") for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "re":
+            return True
+    return False
+
+
+def test_the_re_import_guard_tells_re_from_registry():
+    for caught in [
+        "import re",
+        "import re as _r",
+        "from re import compile",
+        "def f():\n import re",
+    ]:
+        assert _imports_re(caught), caught
+    for allowed in [
+        "import registry",
+        "from otto import registry",
+        "from otto.registry import resolved",
+    ]:
+        assert not _imports_re(allowed), allowed
 
 
 def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does():
@@ -5956,7 +6273,7 @@ def test_a_cell_whose_contract_watched_a_refusal_never_renders_as_a_capability(c
     refusal = committed["cells"]["transfer-mode"]["zephyr-2.7"]["observable"]
 
     injected = copy.deepcopy(committed)
-    injected["cells"]["transfer-mode"]["gnu"]["observable"] = refusal
+    _watch(injected["cells"]["transfer-mode"]["gnu"], refusal)
     page = _page(injected)
     row = _row(page, "transfer-mode", "gnu")
     arm = next(branch for branch in VOICE["transfer-mode"].branches if not branch.capability)
@@ -6027,7 +6344,7 @@ def test_a_recursive_cell_that_watched_the_refusal_never_renders_as_a_capability
     ):
         injected = copy.deepcopy(committed)
         cell = copy.deepcopy(donor)
-        cell["observable"] = observable
+        _watch(cell, observable)
         injected["cells"]["transfer-recursive"]["zephyr-3.7"] = cell
         page = _page(injected)
         row = _row(page, "transfer-recursive", "zephyr-3.7")
@@ -6080,7 +6397,7 @@ def test_a_cell_whose_observable_matches_no_declared_arm_promises_nothing(commit
             f"the {shape!r} observable matches {len(matched)} arms; this case is vacuous"
         )
         injected = copy.deepcopy(committed)
-        injected["cells"]["transfer-mode"]["gnu"]["observable"] = observable
+        _watch(injected["cells"]["transfer-mode"]["gnu"], observable)
         page = _page(injected)
         row = _row(page, "transfer-mode", "gnu")
         assert VOICE["transfer-mode"].capability not in row, (
@@ -6298,7 +6615,7 @@ def test_a_cell_whose_observable_matches_no_arm_fails_the_build(committed):
     the first.
     """
     injected = copy.deepcopy(committed)
-    injected["cells"]["transfer-mode"]["gnu"]["observable"] = "an arm nobody described"
+    _watch(injected["cells"]["transfer-mode"]["gnu"], "an arm nobody described")
     problems = promise_mismatch(injected)
     assert any("matches 0 of the 2 observables" in problem for problem in problems), problems
 
@@ -6307,7 +6624,7 @@ def test_a_cell_whose_observable_matches_two_arms_fails_the_build(committed):
     """Markers that do not discriminate are as bad as a marker that matches nothing."""
     injected = copy.deepcopy(committed)
     both = " ".join(branch.marker for branch in VOICE["transfer-mode"].branches)
-    injected["cells"]["transfer-mode"]["gnu"]["observable"] = both
+    _watch(injected["cells"]["transfer-mode"]["gnu"], both)
     problems = promise_mismatch(injected)
     assert any("matches 2 of the 2 observables" in problem for problem in problems), problems
 
@@ -6407,7 +6724,7 @@ def test_a_grid_word_never_covers_a_profile_the_verdict_does_not(committed):
         injected = copy.deepcopy(committed)
         cell = injected["cells"][surface_id]["gnu"]
         if observable is not None:
-            cell["observable"] = observable
+            _watch(cell, observable)
         dropped = cell["observed_on"][-1]
         cell["observed_on"] = cell["observed_on"][:-1]
         cell["observed_cells"] = [e for e in cell["observed_cells"] if e["element"] != dropped]
@@ -6560,6 +6877,7 @@ def test_the_grid_legend_explains_every_word_the_grid_can_print(committed):
         "broken": "`broken`",
         "partly broken": "`partly broken`",
         "refused": "`refused`",
+        "varies": "`varies`",
         "not interpreted": "`not interpreted`",
         "not observable": "`not observable`",
         "untested": "`untested`",
@@ -6753,7 +7071,7 @@ def test_a_refusal_cell_that_broke_still_reports_where_it_broke(committed):
     # true, and now it would only be reading the helper back to itself.
     mixed = _with_the_nc_split(committed, ("transfer-mode", "busybox-1.16.1"))
     cell = mixed["cells"]["transfer-mode"]["busybox-1.16.1"]
-    cell["observable"] = refusal
+    _watch(cell, refusal)
     row = _row(_page(mixed), "transfer-mode", "busybox-1.16.1")
     assert "it held over `shell`" in row, f"the row does not say where the refusal held: {row}"
     assert "failed over `nc`" in row, f"the row does not say where it broke: {row}"
@@ -6821,3 +7139,505 @@ def test_a_narrowing_clause_is_written_for_one_device_or_for_four(committed):
                 f"{word!r}: {segment}"
             )
     assert read, "no clause was read; this guard is vacuous"
+
+
+# --------------------------------------------------------------------------
+# The arm is chosen per DRAWN CELL, and the command contract page is generated
+# --------------------------------------------------------------------------
+
+
+def _by_entry(committed: dict, observables: "dict[str, str]") -> dict:
+    """``transfer-mode`` x ``gnu`` cut to ONE route, drawn once per entry in *observables*.
+
+    Only the entry varies, so the page must name the entry ("through `exec`")
+    and not fall back to a list of labels.
+    """
+    injected = copy.deepcopy(committed)
+    cell = injected["cells"]["transfer-mode"]["gnu"]
+    donor = cell["observed_cells"][0]
+    cell["observed_on"] = [donor["element"]]
+    cell["observed_cells"] = [
+        donor
+        | {
+            "cell_label": donor["cell_label"][:-1] + f":{entry}]",
+            "entry": entry,
+            "observable": observable,
+        }
+        for entry, observable in observables.items()
+    ]
+    cell["observable"] = " | ".join(observables.values())
+    return injected
+
+
+def test_two_arms_inside_one_profile_render_per_cell(committed):
+    """A limitation on ONE entry of a device is published for that entry, not the profile."""
+    voice = VOICE["transfer-mode"]
+    promising = next(branch for branch in voice.branches if branch.capability)
+    refusing = next(branch for branch in voice.branches if not branch.capability)
+    injected = _by_entry(
+        committed,
+        {
+            "run": f"the mode that {promising.marker}",
+            "exec": f"the refusal ConsoleFileTransfer returns {refusing.marker}",
+        },
+    )
+    assert promise_mismatch(injected) == [], "each drawn cell matches exactly one arm"
+    page = _page(injected)
+    row = _row(page, "transfer-mode", "gnu")
+    assert f"Through `run`: you can {promising.capability}" in row, row
+    assert f"Through `exec`: {refusing.headline}" in row, row
+    assert row.count("Through `") == 2, f"one line per arm, no more: {row}"
+    assert _grid_token(page, "transfer-mode", "gnu").startswith("varies"), _grid_token(
+        page, "transfer-mode", "gnu"
+    )
+
+
+def test_one_observed_cell_matching_two_arms_still_fails_the_build(committed):
+    """The two-arm rejection, now asked of each drawn cell rather than the cell-level join."""
+    voice = VOICE["transfer-mode"]
+    promising = next(branch for branch in voice.branches if branch.capability)
+    both = " ".join(branch.marker for branch in voice.branches)
+    injected = _by_entry(committed, {"run": f"the mode that {promising.marker}", "exec": both})
+    problems = promise_mismatch(injected)
+    assert any(
+        "matches 2 of the 2 observables" in problem and ":exec]" in problem for problem in problems
+    ), problems
+    assert not any(":run]" in problem for problem in problems), problems
+    row = _row(_page(injected), "transfer-mode", "gnu")
+    assert "you can" not in row.lower(), f"an unplaceable cell promised: {row}"
+
+
+def test_a_transfer_cell_without_entries_renders_as_before(committed):
+    """`entry` is an axis only when EVERY drawn cell carries one; a transfer cell has none."""
+    cell = committed["cells"]["transfer-mode"]["busybox-1.16.1"]
+    assert cell["observed_cells"], "no drawn cells; this guard is vacuous"
+    assert "entry" not in split_of(cell).varying
+    partly = copy.deepcopy(cell)
+    partly["observed_cells"][0]["entry"] = "run"
+    assert split_of(partly).varying == split_of(cell).varying, (
+        "one drawn cell carrying an entry made the entry an axis"
+    )
+    row = _row(_page(committed), "transfer-mode", "gnu")
+    assert "**Yes.** You can" in row, row
+    assert "Through `" not in row, row
+
+
+def test_a_branch_naming_a_declaration_that_does_not_resolve_is_reported(committed, monkeypatch):
+    voice = VOICE["transfer-mode"]
+    for declared_by, resolves in (
+        ("otto.host.command_frame:ZephyrFrame.no_such_limitation", False),
+        ("otto.host.command_frame:ZephyrFrame.type_name", False),
+        ("otto.no_such_module:THING", False),
+        ("otto.host.session:_LINE_BUDGET", True),
+    ):
+        drifted = dict(VOICE)
+        drifted["transfer-mode"] = dataclasses.replace(
+            voice,
+            branches=(
+                voice.branches[0],
+                dataclasses.replace(voice.branches[1], declared_by=declared_by),
+            ),
+        )
+        monkeypatch.setattr("scripts.render_support_matrix.VOICE", drifted)
+        reported = [p for p in promise_mismatch(committed) if declared_by in p]
+        assert bool(reported) is not resolves, (declared_by, reported)
+
+
+def test_the_committed_command_contract_page_is_the_generated_one():
+    assert COMMAND_CONTRACT_PATH.read_text(encoding="utf-8") == render_command_contract(), (
+        f"{COMMAND_CONTRACT_PATH} is stale; re-run "
+        f"`uv run python -m scripts.render_support_matrix` and commit the page"
+    )
+
+
+def test_every_contract_that_declares_entries_has_a_row_on_the_contract_page(monkeypatch):
+    page = render_command_contract()
+    for surface in SURFACES:
+        if _entry.entries_declared(surface.contract):
+            assert f"`{surface.contract}`" in page, surface.id
+    # And with a declaration the tree does not hold yet, through the same reader.
+    chosen = SURFACES[0]
+    monkeypatch.setattr(
+        "scripts.render_support_matrix.entries_declared",
+        lambda contract: ["run", "exec"] if contract == chosen.contract else [],
+    )
+    page = render_command_contract()
+    # The user table names the promise and its entries; the contributors list
+    # maps the same promise id to its test. Both, once each, for the one row.
+    rows = [line for line in page.splitlines() if VOICE[chosen.id].capability in line]
+    assert len(rows) == 1, page
+    assert "`run`, `exec`" in rows[0], rows[0]
+    assert f"`{chosen.id}`" in rows[0], rows[0]
+    assert f"`{chosen.contract}`" not in rows[0], rows[0]
+    tests = [line for line in page.splitlines() if f"`{chosen.contract}`" in line]
+    assert tests == [f"- `{chosen.id}`: `{chosen.contract}`"], page
+    assert page.index(rows[0]) < page.index("## For contributors") < page.index(tests[0])
+    for surface in SURFACES[1:]:
+        assert f"`{surface.contract}`" not in page, surface.id
+
+
+def _contract_row_line(page: str, surface_id: str) -> str:
+    rows = [line for line in page.splitlines() if line.endswith(f"| `{surface_id}` |")]
+    assert len(rows) == 1, page
+    return rows[0]
+
+
+def test_the_timeout_row_says_it_is_not_checked_on_a_zephyr_board():
+    """The real domain rule excludes every Zephyr cell, and the row says so, with the reason."""
+    assert _domain_of(_timeout_contract_path()) is not None, "timeout declares no domain; re-read"
+    row = next(row for row in contract_rows() if row.surface_id == "timeout")
+    assert row.not_checked[0].startswith("Not checked on a Zephyr board, so not promised there"), (
+        row
+    )
+    assert reader_narrowed("timeout") in row.not_checked[0]
+    page = render_command_contract()
+    number = _contract_note_number(page, row.not_checked[0])
+    assert str(number) in _contract_row_line(page, "timeout").split("|")[3]
+
+
+def _contract_note_number(page: str, note: str) -> int:
+    """The number of *note* in the page's "Where a promise is not checked" list."""
+    section = page.split("## Where a promise is not checked", 1)[1].split("\n## ", 1)[0]
+    numbered = [line for line in section.splitlines() if line.endswith(f". {note}")]
+    assert len(numbered) == 1, section
+    return int(numbered[0].split(".", 1)[0])
+
+
+def _timeout_contract_path() -> str:
+    return next(surface.contract for surface in SURFACES if surface.id == "timeout")
+
+
+def test_a_narrowed_contract_cannot_render_without_its_qualifier(monkeypatch):
+    """A synthetic domain over a contract that has none reaches the page as a qualifier."""
+    chosen = next(surface for surface in SURFACES if surface.id == "exec-exit-code")
+    assert _domain_of(chosen.contract) is None, "exec-exit-code declares a domain now; re-read"
+    real = _domain_of
+    monkeypatch.setattr(
+        "scripts.render_support_matrix._domain_of",
+        lambda contract: (
+            (lambda cell: cell.kind != "local") if contract == chosen.contract else real(contract)
+        ),
+    )
+    page = render_command_contract()
+    note = f"Not checked on the local machine, so not promised there: {reader_narrowed(chosen.id)}."
+    number = _contract_note_number(page, note)
+    assert str(number) in _contract_row_line(page, chosen.id).split("|")[3]
+    assert reader_narrowed(chosen.id) == VOICE[chosen.id].narrowed
+
+
+def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
+    """Every declared entry a collected cell lacks, and every host a domain drops, is named.
+
+    Driven over the suite's own cells and over a synthetic pair whose second cell
+    admits no ``exec-shell``; and the converse, a space where every cell admits
+    every entry, carries no qualifier at all.
+    """
+    from tests.conformance._entry import entries_of
+
+    cells = _suite_cells()
+    for row in contract_rows(cells):
+        applies = _domain_of(row.contract)
+        text = " ".join(row.not_checked)
+        for cell in cells:
+            if applies is not None and not applies(cell):
+                assert "Not checked on" in text, (row.surface_id, cell.kind)
+                continue
+            for entry in row.entries:
+                if entry not in entries_of(cell):
+                    assert f"`{entry}` is" in text, (row.surface_id, entry, cell.kind)
+    loopback = next(cell for cell in cells if cell.kind == "loopback-ssh")
+    telnet = next(cell for cell in cells if cell.kind == "bed-unix" and cell.cell.term == "telnet")
+    exec_contract = next(s.contract for s in SURFACES if s.id == "exec-exit-code")
+    notes = not_checked("exec-exit-code", exec_contract, [loopback, telnet], applies=None)
+    assert notes, notes
+    assert notes[0].startswith("`exec-shell` is checked only on"), notes
+    assert not_checked("exec-exit-code", exec_contract, [loopback], applies=None) == []
+
+
+def test_a_declared_arm_publishes_its_declarations_own_words(monkeypatch):
+    """The per-cell promise of an arm with ``declared_by`` carries the Limitation's text.
+
+    So correcting the declaration corrects the promise: a reworded reason
+    reaches the promise with no edit to :data:`VOICE`.
+    """
+    import dataclasses as _dc
+
+    from otto.host import options
+    from scripts.render_support_matrix import _promise_for
+
+    declared = [
+        branch for voice in VOICE.values() for branch in voice.branches if branch.declared_by
+    ]
+    assert declared, "no arm declares a limitation; vacuous"
+    for branch in declared:
+        assert branch.declared_by == "otto.host.options:UNESCAPED_IAC", branch
+        promise = _promise_for(branch).capability
+        assert options.UNESCAPED_IAC.reason in promise, promise
+        assert options.UNESCAPED_IAC.affects in promise, promise
+        assert branch_capability(branch) == promise
+    corrected = _dc.replace(options.UNESCAPED_IAC, reason="A corrected reason.")
+    monkeypatch.setattr(options, "UNESCAPED_IAC", corrected)
+    assert "A corrected reason." in _promise_for(declared[0]).capability
+
+
+def test_a_declared_arm_on_the_contract_page_links_its_declaration(monkeypatch):
+    """The contract page's narrower promise points at the Limitation's own section.
+
+    The link is read off the Limitation's ``affects`` and lands on the label its
+    section carries, and the reason is printed in that section, not inline; so
+    correcting the declaration corrects both the link and what it lands on.
+    """
+    import dataclasses as _dc
+
+    from otto.host import options
+    from scripts.render_support_matrix import exception_label
+
+    def label_of(limitation: Limitation) -> str:
+        item = next(i for i in declared_limitations() if i.limitation is limitation)
+        return exception_label(item)
+
+    page = render_command_contract()
+    label = label_of(options.UNESCAPED_IAC)
+    bullets = [line for line in page.splitlines() if f"<{label}>`" in line]
+    assert len(bullets) == 1, page
+    assert options.UNESCAPED_IAC.reason not in bullets[0]
+    assert f"{{ref}}`{options.UNESCAPED_IAC.affects[0].upper()}" in bullets[0], bullets[0]
+    section = page.split(f"({label})=", 1)[1].split("\n### ", 2)
+    assert section[1].startswith(options.UNESCAPED_IAC.affects[0].upper()), section[1]
+    for measurement in options.UNESCAPED_IAC.measured_on:
+        assert f"- {measurement}\n" in section[1], measurement
+    corrected = _dc.replace(options.UNESCAPED_IAC, affects="a corrected promise")
+    monkeypatch.setattr(options, "UNESCAPED_IAC", corrected)
+    monkeypatch.setitem(options.ConsoleOptions.declared_limitations, "escapes_iac", corrected)
+    label = label_of(corrected)
+    assert label.startswith("exception-a-corrected-promise-on-"), label
+    page = render_command_contract()
+    assert f"{{ref}}`A corrected promise <{label}>`" in page, page
+    assert f"({label})=" in page, page
+
+
+def test_every_declared_limitation_is_on_the_contract_page():
+    page = render_command_contract()
+    real = declared_limitations()
+    assert real, "no limitation declared; vacuous"
+    for item in real:
+        assert _escaped(item.limitation.reason) in page, item.where
+        for measurement in item.limitation.measured_on:
+            assert f"- {measurement}\n" in page, measurement
+    # And a declaration the tree does not hold, through the same collector.
+    fake = Limitation(
+        affects="a library promise",
+        kind="library",
+        reason="a reason nobody wrote",
+        measured_on=["m1"],
+    )
+
+    class _FakeFrame(BashFrame):
+        type_name = "fake-frame"
+        exact_output = Limitation(
+            affects="exact output", kind="device", reason="a frame reason", measured_on=["m2"]
+        )
+
+    routes = {ExecRoute.CONTAINER: RouteRecord(implemented_by="docker", limitations={"x": fake})}
+    collected = declared_limitations(frames=[_FakeFrame], routes=routes)
+    page = render_command_contract(limitations=collected)
+    for text in ("a reason nobody wrote", "a frame reason", "- m1\n", "- m2\n"):
+        assert text in page, page
+    assert "None declared." not in page
+    assert "None declared." in render_command_contract(limitations=[])
+
+
+def test_a_limitation_declared_on_two_routes_is_one_row():
+    shared = Limitation(affects="a promise", kind="device", reason="shared", measured_on=["m"])
+    other = Limitation(affects="a promise", kind="device", reason="shared", measured_on=["m"])
+    routes = {
+        ExecRoute.POOLED_SHELL: RouteRecord(implemented_by="otto", limitations={"a": shared}),
+        ExecRoute.DEFAULT_SESSION: RouteRecord(implemented_by="otto", limitations={"a": shared}),
+        ExecRoute.SSH_CHANNEL: RouteRecord(implemented_by="asyncssh", limitations={"a": other}),
+    }
+    collected = declared_limitations(frames=[], routes=routes, consoles={})
+    # By identity: an equal object declared elsewhere is its own record.
+    assert [item.routes for item in collected] == [
+        ["pooled-shell", "default-session"],
+        ["ssh-channel"],
+    ]
+    page = render_command_contract(limitations=collected)
+    rows = [line for line in page.splitlines() if line.startswith("| The ")]
+    assert rows[0].startswith("| The `pooled-shell` and `default-session` routes |"), rows
+    assert len(rows) == 2, rows
+    # And the real tree's one line-budget limitation is one row naming both routes.
+    real = render_command_contract()
+    assert real.count("| The `pooled-shell` and `default-session` routes |") == 1, real
+
+
+def test_the_contract_page_reads_its_frames_from_the_one_builtin_list():
+    from otto.host import command_frame
+    from scripts.render_support_matrix import _builtin_frames
+
+    assert [frame.type_name for frame in _builtin_frames()] == [
+        frame.name for frame in command_frame.BUILTIN_FRAMES
+    ]
+
+    class _Overwritten(BashFrame):
+        type_name = "bash"
+        exact_output = Limitation(
+            affects="exact output", kind="device", reason="a user frame", measured_on=["m"]
+        )
+
+    # A caller's frame in the registry, even one replacing a built-in, is not otto's.
+    command_frame.register_command_frame("bash", _Overwritten, overwrite=True)
+    assert command_frame.build_command_frame(type_name="bash").exact_output is not None
+    assert "a user frame" not in render_command_contract()
+
+
+def test_a_malformed_declaration_is_reported_not_raised(committed, monkeypatch):
+    voice = VOICE["transfer-mode"]
+    for declared_by in [":X", "a..b", "otto:a..b", "otto.host:", ".relative:X", "otto.:X", ":"]:
+        drifted = dict(VOICE)
+        drifted["transfer-mode"] = dataclasses.replace(
+            voice,
+            branches=(
+                voice.branches[0],
+                dataclasses.replace(voice.branches[1], declared_by=declared_by),
+            ),
+        )
+        monkeypatch.setattr("scripts.render_support_matrix.VOICE", drifted)
+        reported = [p for p in promise_mismatch(committed) if repr(declared_by) in p]
+        assert reported, declared_by
+
+
+def _escaped(text: str) -> str:
+    return text.replace("|", r"\|")
+
+
+# --------------------------------------------------------------------------
+# The contract page says each narrowing where the reader looks
+# --------------------------------------------------------------------------
+
+
+def test_the_not_checked_cell_says_each_place_in_words_beside_its_note():
+    """The table's **Not checked** cell names each place, then points at its note.
+
+    Read off the same notes as the numbered list: every short form sits in the
+    row's cell beside the number of the note that explains it.
+    """
+    page = render_command_contract()
+    rows = contract_rows()
+    assert any(row.not_checked for row in rows), "no row is narrowed; vacuous"
+    for row in rows:
+        cell = _contract_row_line(page, row.surface_id).split("|")[3].strip()
+        if not row.not_checked:
+            assert cell == "--", (row.surface_id, cell)
+            continue
+        assert len(row.not_checked_short) == len(row.not_checked), row
+        for short, note in zip(row.not_checked_short, row.not_checked, strict=True):
+            number = _contract_note_number(page, note)
+            assert f"{short} (note {number})" in cell, (row.surface_id, cell)
+
+
+def test_a_narrower_promise_names_the_device_it_applies_to():
+    """Every bullet under the narrower-promise heading starts with where it holds."""
+    page = render_command_contract()
+    section = page.split("### Where a device gets a narrower promise", 1)[1].split("\n### ", 1)[0]
+    bullets = [line for line in section.splitlines() if line.startswith("- ")]
+    assert bullets, section
+    for bullet in bullets:
+        assert bullet.startswith("- On "), bullet
+    assert any(bullet.startswith("- On a Zephyr board (") for bullet in bullets), bullets
+    assert any(
+        bullet.startswith("- On a console whose lab entry sets `console_options.")
+        for bullet in bullets
+    ), bullets
+
+
+def test_an_arms_kinds_are_the_kinds_its_marker_was_watched_on(committed):
+    """``Branch.kinds`` names the device on the contract page; the matrix says where it ran.
+
+    Every drawn cell whose observable carries the arm's marker is of one of the
+    arm's kinds, and every kind the arm names was drawn so -- a reworded marker or
+    a new device kind on that arm fails here instead of misnaming the device.
+    """
+    checked = 0
+    for surface_id, voice in VOICE.items():
+        for branch in voice.branches:
+            if not branch.kinds:
+                continue
+            seen = {
+                entry["cell_label"].split("[", 1)[0]
+                for cell in committed["cells"][surface_id].values()
+                for entry in cell.get("observed_cells") or []
+                if branch.marker in (entry.get("observable") or cell.get("observable") or "")
+            }
+            assert seen == set(branch.kinds), (surface_id, branch.marker, seen)
+            checked += 1
+    assert checked, "no arm declares kinds; vacuous"
+
+
+def test_the_zephyr_colour_removal_is_with_the_zephyr_promise_not_with_the_unmeasured():
+    from otto.host.command_frame import ZEPHYR_LEVEL_SEQUENCES
+
+    page = render_command_contract()
+    narrower = page.split("### Where a device gets a narrower promise", 1)[1].split("\n### ", 1)[0]
+    undefined = page.split("## Undefined: never measured", 1)[1].split("\n## ", 1)[0]
+    for sequence in ZEPHYR_LEVEL_SEQUENCES:
+        spelled = f"`{sequence.encode('unicode_escape').decode('ascii')}`"
+        assert spelled in narrower, spelled
+        assert spelled not in undefined, spelled
+
+
+def test_the_zephyr_recordings_say_what_the_undefined_bullet_relies_on():
+    """The recorded facts the page's Zephyr bullet is derived from, pinned.
+
+    README caveats 2 and 4: empty output was recorded on 2.7 only (``devmem``),
+    leading spaces are recorded (``help``), trailing spaces never are.
+    """
+    from scripts.render_support_matrix import zephyr_recorded
+
+    recorded = zephyr_recorded()
+    assert recorded.releases == ["zephyr-2.7", "zephyr-3.7", "zephyr-4.4"], recorded
+    assert recorded.empty_on == ["zephyr-2.7"], recorded
+    assert recorded.leading_spaces is True
+    assert recorded.trailing_spaces is False
+    page = render_command_contract()
+    assert "empty output on Zephyr 3.7 and 4.4 (on Zephyr 2.7 a command" in page
+    assert "spaces at the end of a line (spaces at the start of a line" in page
+
+
+def test_the_zephyr_undefined_bullet_follows_the_recordings():
+    """A recording that showed trailing spaces and empty output everywhere drops both clauses."""
+    from scripts.render_support_matrix import ZephyrRecorded, _zephyr_unrecorded
+
+    releases = ["zephyr-2.7", "zephyr-3.7"]
+    full = ZephyrRecorded(
+        releases=releases, empty_on=releases, leading_spaces=True, trailing_spaces=True
+    )
+    bullet = _zephyr_unrecorded(full)
+    assert "empty output" not in bullet, bullet
+    assert "spaces at the" not in bullet, bullet
+    bare = ZephyrRecorded(
+        releases=releases, empty_on=[], leading_spaces=False, trailing_spaces=False
+    )
+    bullet = _zephyr_unrecorded(bare)
+    assert "empty output on Zephyr 2.7 and 3.7;" in bullet, bullet
+    assert "spaces at the start of a line" in bullet, bullet
+
+
+def test_the_timeout_section_says_a_console_served_device_is_checked():
+    """`applicable_cell` drops only Zephyr cells, so console-served BusyBox cells are in."""
+    page = render_command_contract()
+    sentence = next(
+        line for line in page.splitlines() if "the timeout promise is checked on" in line
+    )
+    assert "a BusyBox device over `console`" in sentence, sentence
+    assert "a Zephyr board" not in sentence, sentence
+    assert sentence.endswith("a device reached over its console is checked too."), sentence
+
+
+def test_the_contract_page_says_what_a_promise_id_is_and_how_zephyr_exit_codes_read():
+    page = render_command_contract()
+    assert "The **Promise id**\nis the name the support matrix uses for the promise." in page
+    assert "`-8` for an unknown command" in page
+    assert "```{doctest}\n>>> from otto.result import CommandResult" in page
+    for word in ("**term**", "**lab entry**", "cred (the credentials entry"):
+        assert word in page, word
+    assert "draws a sample" not in page

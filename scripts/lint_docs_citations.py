@@ -283,6 +283,7 @@ MAINTAINER_TARGETS = frozenset(
         "release-tag",
         "repeat",
         "schema",
+        "shell-transcripts",
         "stability",
         "stability-cut-sweep",
         "stability-embedded",

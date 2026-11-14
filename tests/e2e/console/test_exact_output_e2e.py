@@ -3,7 +3,7 @@
 ``CommandResult.value`` is the command's output with exactly one trailing
 newline removed: blank lines and the program's own carriage returns kept,
 no telnet NULs, never stripped and never padded. Two different kinds of
-defect broke it, so each command is run 20 times per cell:
+defect broke it, so the ssh ``exec`` cell runs each command 20 times:
 
 * timing: asyncssh's exec channel handed back an empty partial line when
   end-of-file landed after the last line (#711), so a single run proves
@@ -27,77 +27,51 @@ keeps the contract in one place.
 
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass
 
 import pytest
 from rich.markup import escape
 
+from otto.host.exec_route import ExecRoute
 from otto.host.host import Host
-from otto.host.session import _ExecRoute
-from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
+from otto.host.session_setup import SessionSetup
 from otto.result import CommandResult
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
 from tests._fixtures.labdata import make_host
+from tests._fixtures.session_setup_hooks import noop_session_setup
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.asyncio,
-    # The console cells are the slowest: measured ~18 s for a cell's 340
-    # commands plus ~7 s for the guard's login-prompt check, so ~25 s per
-    # test. This is about three times that.
+    # The slowest cells are the ssh channel cell (every command 20 times) and
+    # the console cell, whose 100 KB single-line case alone takes about 9 s
+    # at 115200 baud, plus the guard's login-prompt check after the test.
     pytest.mark.timeout(75),
 ]
 
 _REPEATS = 20
-"""Runs per command per cell: enough for a 1-in-20 timing flake to show."""
+"""Runs per command on the SSH exec channel: enough for a 1-in-20 timing flake to show."""
 
 
-@dataclass(frozen=True)
-class _Case:
-    cmd: str
-    out: str
-    """What the program writes, exactly."""
-    retcode: int = 0
-
-    @property
-    def value(self) -> str:
-        """The contract: the output with exactly one trailing newline removed."""
-        return self.out.removesuffix("\n")
-
-    @property
-    def blank_lines(self) -> int:
-        """Blank lines the command really prints: the most empty log lines it may add."""
-        if self.out == "":
-            return 0
-        return sum(1 for line in self.value.split("\n") if line == "")
+def blank_lines(case: OutputCase) -> int:
+    """Blank lines the command really prints: the most empty log lines it may add."""
+    if case.writes == b"":
+        return 0
+    return sum(1 for line in case.value.split("\n") if line == "")
 
 
-_CASES = [
-    _Case("true", ""),
-    _Case("echo 3", "3\n"),
-    _Case("printf 'a\\n\\n'", "a\n\n"),
-    _Case("printf 'abc'", "abc"),
-    _Case("printf '\\n'", "\n"),
-    _Case("printf '\\na\\n'", "\na\n"),
-    _Case("printf '\\n\\na\\n'", "\n\na\n"),
-    _Case("printf ' \\n'", " \n"),
-    _Case("printf 'a  \\n'", "a  \n"),
-    _Case("printf 'a\\tb\\n'", "a\tb\n"),
-    _Case("printf 'a\\nb\\nc\\n'", "a\nb\nc\n"),
-    _Case("printf 'a\\nb'", "a\nb"),
-    _Case("seq 1 2000", "".join(f"{i}\n" for i in range(1, 2001))),
-    _Case("echo err >&2", "err\n"),
-    _Case("sh -c 'echo x; exit 3'", "x\n", retcode=3),
-    _Case("printf 'é\\n'", "é\n"),
-    _Case("printf 'a\\r\\nb\\rc\\n\\n'", "a\r\nb\rc\n\n"),
-]
+def _repeats(host: Host, route: str) -> int:
+    """Runs per command: only the SSH exec channel carries the #711 timing defect."""
+    return (
+        _REPEATS
+        if route == "exec"
+        and host._exec_plan(user=None, needs_shell=False).route is ExecRoute.SSH_CHANNEL
+        else 1
+    )
+
 
 _NOOP_HOOK = "exact-output-noop"
-"""A session-setup hook that does nothing. Declaring ANY hook sends ``exec``
+"""The name prefix of a session-setup hook that does nothing. Declaring ANY hook sends ``exec``
 to the pooled shell route, which is the route this hook is here to take."""
-
-
-async def _noop_setup(_session: object, _ctx: object) -> None:
-    return None
 
 
 @pytest.fixture
@@ -114,9 +88,8 @@ def _console_guard(request: pytest.FixtureRequest) -> None:
 
 @pytest.fixture
 def noop_hook() -> Iterator[str]:
-    register_session_setup(_NOOP_HOOK, _noop_setup, overwrite=True)
-    yield _NOOP_HOOK
-    SESSION_SETUPS.unregister(name=_NOOP_HOOK)
+    with noop_session_setup(_NOOP_HOOK) as name:
+        yield name
 
 
 def _empty_output_lines(records: list[logging.LogRecord], host: Host) -> int:
@@ -152,12 +125,13 @@ async def _check_every_case(
 ) -> list[str]:
     failures: list[str] = []
     with caplog.at_level(logging.INFO):
-        for case in _CASES:
-            for iteration in range(1, _REPEATS + 1):
+        repeats = _repeats(host, route)
+        for case in EXACT_OUTPUT_CASES:
+            for iteration in range(1, repeats + 1):
                 caplog.clear()
-                result = await _run(host, route, case.cmd)
+                result = await _run(host, route, case.command)
                 where = (
-                    f"{cell} route={route} cmd={case.cmd!r} iteration={iteration}/{_REPEATS} "
+                    f"{cell} route={route} cmd={case.command!r} iteration={iteration}/{repeats} "
                     f"(terminal mapping: {host.terminal_mapping})"
                 )
                 if result.retcode != case.retcode:
@@ -168,10 +142,10 @@ async def _check_every_case(
                 if result.value != case.value:
                     failures.append(f"{where}: value={result.value!r}, expected {case.value!r}")
                 empties = _empty_output_lines(caplog.records, host)
-                if empties > case.blank_lines:
+                if empties > blank_lines(case):
                     failures.append(
                         f"{where}: logged {empties} empty output line(s), "
-                        f"the command prints {case.blank_lines}; value={result.value!r}"
+                        f"the command prints {blank_lines(case)}; value={result.value!r}"
                     )
     return failures
 
@@ -212,7 +186,7 @@ async def test_pooled_exec_over_ssh_is_exact_too(
     """``exec`` on a hooked ssh host runs on a pooled shell session, not the exec channel."""
     host = make_host("test1", term="ssh", session_setup=SessionSetup(name=noop_hook))
     try:
-        assert host._session_mgr._exec_route() is _ExecRoute.POOLED_SHELL
+        assert host._exec_plan(user=None, needs_shell=False).route is ExecRoute.POOLED_SHELL
         failures = await _check_every_case(host, "exec", "term=ssh pooled", caplog)
     finally:
         await host.close()

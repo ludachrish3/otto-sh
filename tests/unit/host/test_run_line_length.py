@@ -1,8 +1,8 @@
-"""``Host.run()`` refuses a line BusyBox ash's line editor would truncate.
+"""``Host.run()`` refuses a line the terminal would truncate on an ash host.
 
 The ``run-command-line-length`` record in
 :data:`~otto.host.userland.GAPS` says what happens without this guard: a
-command over the device's line-editor buffer is SILENTLY TRUNCATED, a
+line over the terminal's canonical-mode buffer is SILENTLY TRUNCATED, a
 different and shorter command runs, and its success is reported as the
 caller's. That is the only place otto was knowingly wrong in the quiet
 direction, and this module pins the conversion of it into a refusal.
@@ -15,7 +15,7 @@ direction, and this module pins the conversion of it into a refusal.
 2. The bound is on the TYPED LINE, not on the caller's command. otto wraps
    every command in BEGIN/END sentinels before typing it
    (:meth:`~otto.host.command_frame.BashFrame.frame`), so a command
-   comfortably under 1022 can still frame into a line over it. A guard that
+   comfortably under the bound can still frame into a line over it. A guard that
    measured ``len(cmd)`` would leave a band of commands silently truncated —
    the exact defect, narrowed rather than closed.
 3. The refusal is SCOPED. ``exec()`` allocates no pty and is unaffected, and
@@ -39,13 +39,24 @@ from otto.host import userland
 from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, ZephyrFrame
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.exec_route import ExecRoute
 from otto.host.session import (
     _SESSION_ID_LEN,
-    PTY_TYPED_LINE_MAX,
     SessionManager,
     ShellSession,
+    typed_line_budget,
+    typed_line_ceiling,
 )
-from otto.host.userland import ASH_TYPED_LINE_MAX, MEASURED_BROKEN, UNTESTED, Gap, gap_for
+from otto.host.terminal_mapping import Measurement
+from otto.host.userland import (
+    ASH_ECHOING_LINE_MAX,
+    MEASURED_BROKEN,
+    PTY_TYPED_LINE_MAX,
+    UNTESTED,
+    Gap,
+    gap_for,
+)
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -64,9 +75,10 @@ class _StubSession(ShellSession):
     here is report that it was reached at all.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, echoes: bool = False, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.ran: list[str] = []
+        self._echoes = echoes
 
     async def open_transport(self) -> None: ...
     async def write_transport(self, data: str) -> None: ...
@@ -79,6 +91,9 @@ class _StubSession(ShellSession):
         self._initialized = False
 
     async def _ensure_initialized(self) -> None:
+        # What the handshake would have measured: echo off on the sunny path,
+        # or still on where `stty -echo` failed (*echoes*).
+        self._terminal = Measurement("onlcr", calibrated=True, echoes=self._echoes)
         self._initialized = True
         self._alive = True
 
@@ -89,12 +104,15 @@ class _StubSession(ShellSession):
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
 
-def _manager(frame, *, term: str = "ssh", name: str = "bb1"):
-    """A SessionManager wired to a recording stub, with *frame* as its dialect."""
+def _manager(frame, *, term: str = "ssh", name: str = "bb1", echoes: bool = False):
+    """A SessionManager wired to a recording stub, with *frame* as its dialect.
+
+    Its sessions measure echo off at their handshake, or still on with *echoes*.
+    """
     sessions: list[_StubSession] = []
 
     def factory() -> _StubSession:
-        session = _StubSession(command_frame=frame)
+        session = _StubSession(command_frame=frame, echoes=echoes)
         sessions.append(session)
         return session
 
@@ -126,7 +144,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
     async def test_an_overlong_command_is_refused(self) -> None:
         mgr, sessions = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
-            await mgr.run_cmd(cmd="echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 5000)
         assert sessions == [], (
             "the refusal must happen before a session is built: `nothing was attempted` "
             "is the one thing this exception means that the other host errors do not"
@@ -140,7 +158,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         assert gap.status == MEASURED_BROKEN
         mgr, _ = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.run_cmd(cmd="echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 5000)
         message = str(excinfo.value)
         assert SURFACE in message
         assert gap.reason in message
@@ -152,27 +170,32 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         """An operator has to be able to act on this without reading the source."""
         mgr, _ = _manager(AshFrame(), name="edge-router-3")
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.run_cmd(cmd="echo " + "x" * 2000)
+            await mgr.run_cmd(cmd="echo " + "x" * 5000)
         message = str(excinfo.value)
         assert "edge-router-3" in message
-        assert str(ASH_TYPED_LINE_MAX) in message
+        assert str(PTY_TYPED_LINE_MAX) in message
         assert "exec()" in message, (
             "the pty-free path is the only thing a caller can actually do about this "
             "today, so the refusal has to name it"
         )
-        assert str(2005) in message, "the refusal must state the command's own length"
+        assert str(5005) in message, "the refusal must state the command's own length"
 
     @pytest.mark.asyncio
     async def test_on_a_console_the_way_out_is_to_split_not_exec(self) -> None:
         """A console's exec types into this same session, so advising it would be false."""
         mgr, sessions = _manager(AshFrame(), term="console", name="bb1350")
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.exec(cmd="echo " + "x" * 2000)
+            await mgr.exec_on_route(
+                route=ExecRoute.DEFAULT_SESSION,
+                cmd="echo " + "x" * 5000,
+                timeout=10.0,
+                log=LogMode.NORMAL,
+            )
         message = str(excinfo.value)
         assert "Send it through `exec()`" not in message
         assert "split it" in message
         assert sessions == []
-        assert str(2005) in message, "the refusal must state the command's own length"
+        assert str(5005) in message, "the refusal must state the command's own length"
 
     @pytest.mark.asyncio
     async def test_flipping_the_record_to_untested_stops_the_refusal(
@@ -195,7 +218,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         )
         monkeypatch.setattr(userland, "GAPS", [downgraded])
         mgr, sessions = _manager(AshFrame())
-        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
+        result = await mgr.run_cmd(cmd="echo " + "x" * 5000)
         assert result.is_ok
         assert sessions, "no session was built, so the command was never sent"
         assert sessions[0].ran, "the command should have been sent"
@@ -216,44 +239,57 @@ class TestTheBoundIsTheTypedLine:
     def test_the_bound_is_the_number_that_was_measured(self) -> None:
         """A LITERAL, because every other assertion here derives from the constant.
 
-        Measured directly: with only ``ASH_TYPED_LINE_MAX`` changed from 1022
-        to 1023, every other test in this module stayed green — they compute
-        their boundary as ``ASH_TYPED_LINE_MAX - overhead`` and so move with
-        it. That is the shape of guard that pins a mechanism and lets the
-        NUMBER drift, and the number is the whole measurement here: widening
-        it by one re-opens the silent truncation for a one-character band.
+        Every other test in this module computes its boundary as
+        ``PTY_TYPED_LINE_MAX - overhead`` and so moves with the constant. That
+        is the shape of guard that pins a mechanism and lets the NUMBER drift,
+        and the number is the whole measurement here: widening it by one
+        re-opens the silent truncation for a one-character band.
 
-        The two registry assertions do the other half. They stop the constant
-        and the record's prose from disagreeing, which is the realistic way
-        this rots — someone re-measures, edits one of the two, and the other
-        keeps telling operators the old figure.
+        4095 was measured on 2026-11-13 through otto's own session on every
+        BusyBox guest and route the bed has: 4095 intact, 4096 cut to 4095.
+        The two registry assertions stop the constant and the record's prose
+        from disagreeing, which is the realistic way this rots.
         """
-        assert ASH_TYPED_LINE_MAX == 1022, (
-            "1022 is the far side's buffer, not a budget otto chose. It may only change "
-            "when a new measurement against real artifacts says something else — see "
-            "ASH_TYPED_LINE_MAX's own docstring, and re-measure before editing this."
+        assert PTY_TYPED_LINE_MAX == 4095, (
+            "4095 is the kernel's canonical-mode buffer less the newline, as measured on "
+            "the BusyBox bed, not a budget otto chose. It may only change when a new "
+            "measurement says something else -- see PTY_TYPED_LINE_MAX's own docstring."
         )
         gap = gap_for(SURFACE)
         assert gap is not None
-        assert str(ASH_TYPED_LINE_MAX) in gap.reason, (
+        assert str(PTY_TYPED_LINE_MAX) in gap.reason, (
             "the record's reason must state the same bound the guard enforces"
         )
-        assert str(ASH_TYPED_LINE_MAX + 1) in gap.measured_on, (
+        assert str(PTY_TYPED_LINE_MAX + 1) in gap.measured_on, (
             "the record's measurement must state the first length that truncated, and it "
             "has to be one past the bound the guard enforces"
         )
 
     @pytest.mark.asyncio
-    async def test_a_command_under_the_bound_is_still_refused_once_framed(self) -> None:
-        """The band a ``len(cmd) > 1022`` guard would leave silently truncated.
+    async def test_a_line_past_the_line_editors_1022_is_sent_on_ash(self) -> None:
+        """BusyBox ash's 1022-character line editor does not bound what otto types.
 
-        A 1000-character command is under the device's 1022 all by itself and
+        The editor engages only while the terminal echoes, and otto's handshake
+        turns echo off before any command (measured 2026-11-13: 4095 intact
+        after the handshake, 1022 after ``stty echo``). A 2000-character
+        command used to be refused here; it is a working command.
+        """
+        mgr, sessions = _manager(AshFrame())
+        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
+        assert result.is_ok
+        assert sessions[0].ran == ["echo " + "x" * 2000]
+
+    @pytest.mark.asyncio
+    async def test_a_command_under_the_bound_is_still_refused_once_framed(self) -> None:
+        """The band a ``len(cmd) > 4095`` guard would leave silently truncated.
+
+        A 4070-character command is under the terminal's 4095 all by itself and
         would sail past the naive guard, but otto types it inside its own
         BEGIN/END sentinels and the line that actually reaches ash is over.
         """
-        cmd = "x" * 1000
-        assert len(cmd) < ASH_TYPED_LINE_MAX
-        assert len(cmd) + _framing_overhead(AshFrame()) > ASH_TYPED_LINE_MAX
+        cmd = "x" * 4070
+        assert len(cmd) < PTY_TYPED_LINE_MAX
+        assert len(cmd) + _framing_overhead(AshFrame()) > PTY_TYPED_LINE_MAX
         mgr, sessions = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
             await mgr.run_cmd(cmd=cmd)
@@ -267,7 +303,7 @@ class TestTheBoundIsTheTypedLine:
         one-sided test. Both rows run against the same manager shape, so the
         only difference between green and red is the single character.
         """
-        budget = ASH_TYPED_LINE_MAX - _framing_overhead(AshFrame())
+        budget = PTY_TYPED_LINE_MAX - _framing_overhead(AshFrame())
 
         mgr, sessions = _manager(AshFrame())
         result = await mgr.run_cmd(cmd="x" * budget)
@@ -286,8 +322,8 @@ class TestTheBoundIsTheTypedLine:
         Summing a here-doc's total would refuse a script every line of which
         the device handles perfectly well.
         """
-        script = "\n".join(["x" * 400] * 10)
-        assert len(script) > ASH_TYPED_LINE_MAX
+        script = "\n".join(["x" * 400] * 12)
+        assert len(script) > PTY_TYPED_LINE_MAX
         mgr, sessions = _manager(AshFrame())
         result = await mgr.run_cmd(cmd=script)
         assert result.is_ok
@@ -295,7 +331,7 @@ class TestTheBoundIsTheTypedLine:
 
     @pytest.mark.asyncio
     async def test_one_overlong_line_inside_a_script_is_enough(self) -> None:
-        script = "\n".join(["x" * 400, "y" * 2000, "x" * 400])
+        script = "\n".join(["x" * 400, "y" * 5000, "x" * 400])
         mgr, _ = _manager(AshFrame())
         with pytest.raises(UnsupportedOnUserlandError):
             await mgr.run_cmd(cmd=script)
@@ -337,14 +373,14 @@ class TestTheRefusalIsScoped:
     @pytest.mark.parametrize("frame", [BashFrame(), ZephyrFrame()], ids=["bash", "zephyr"])
     @pytest.mark.asyncio
     async def test_another_dialect_is_not_refused(self, frame) -> None:
-        """The buffer belongs to BusyBox ash's line editor, not to every shell.
+        """The refusal is measured only on ash, so it fires only on ash.
 
-        Measured on this machine with the same pty harness that measured the
-        matrix: bash carried 18437 characters and dash carried 20000+, against
-        ash's 1022.
+        bash reads its line in raw mode through readline, and the 2026-08-13
+        pty harness carried 18437 characters into it and 20000+ into dash; a
+        refusal there would decline commands that run.
         """
         mgr, sessions = _manager(frame)
-        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
+        result = await mgr.run_cmd(cmd="echo " + "x" * 5000)
         assert result.is_ok
         assert sessions[0].ran
 
@@ -358,18 +394,26 @@ class TestTheRefusalIsScoped:
         """
         seen: list[str] = []
 
-        async def exec_factory(cmd: str, timeout: float) -> CommandResult:
+        async def _ssh():
+            return object()
+
+        mgr = SessionManager(
+            connections=cast(
+                "ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[], ssh=_ssh)
+            ),
+            name="bb1",
+            command_frame=AshFrame(),
+        )
+
+        async def _channel(*, conn, cmd, timeout, log):
             seen.append(cmd)
             return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
-        mgr = SessionManager(
-            connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[])),
-            name="bb1",
-            command_frame=AshFrame(),
-            exec_factory=exec_factory,
-        )
+        mgr.exec_on = _channel  # type: ignore[method-assign]
         line = "printf '%s' '" + "A" * 5500 + "' | base64 -d >> /tmp/x"
-        result = await mgr.exec(cmd=line)
+        route = mgr.exec_route()
+        assert route is ExecRoute.SSH_CHANNEL
+        result = await mgr.exec_on_route(route=route, cmd=line, timeout=10.0, log=LogMode.NORMAL)
         assert result.is_ok
         assert seen == [line]
 
@@ -377,7 +421,7 @@ class TestTheRefusalIsScoped:
     async def test_the_pooled_shell_session_exec_path_is_not_refused_either(self) -> None:
         """A scope statement about where the guard may NOT be moved.
 
-        ``SessionManager.exec`` has no stateless primitive on telnet (and none
+        ``SessionManager.exec_route`` has no stateless primitive on telnet (and none
         on a proxied login), so it routes through a pooled SHELL session — the
         line-edited path. ``ShellFileTransfer``'s ``exec_cmd`` is
         ``UnixHost.exec``, so pushing this guard down into
@@ -387,7 +431,9 @@ class TestTheRefusalIsScoped:
         """
         mgr, sessions = _manager(AshFrame(), term="telnet")
         line = "printf '%s' '" + "A" * 5500 + "' | base64 -d >> /tmp/x"
-        result = await mgr.exec(cmd=line)
+        route = mgr.exec_route()
+        assert route is ExecRoute.POOLED_SHELL
+        result = await mgr.exec_on_route(route=route, cmd=line, timeout=10.0, log=LogMode.NORMAL)
         assert result.is_ok
         assert sessions, "the pooled exec path built no session at all"
         assert sessions[0].ran == [line]
@@ -412,7 +458,7 @@ class TestTheRefusalIsScoped:
         """
         mgr, sessions = _manager(AshFrame())
         session = await mgr.open_session(name="monitor")
-        line = "echo " + "x" * 2000
+        line = "echo " + "x" * 5000
         results = await session.run(line)
         assert results.only.is_ok
         assert sessions, "open_session built no session at all"
@@ -429,14 +475,14 @@ class TestTheRefusalIsScoped:
 
 
 class TestTheExecLineBudget:
-    """``exec_line_budget`` answers the question the refusal above declines to answer.
+    """``line_budget`` on the plain exec route answers what the refusal above declines to.
 
     THE TWO ARE THE SAME MEASUREMENT WITH DIFFERENT VERBS, and the difference
     is who wrote the command. ``run()``'s caller wrote it and can shorten it,
     so a refusal is right. :class:`~otto.host.transfer.shell.ShellFileTransfer`
     GENERATES its command lines -- one per chunk -- so a refusal would stop
     every transfer to the devices the backend exists for (which is exactly why
-    ``SessionManager.exec`` is an OPEN path on the ``run-command-line-length``
+    ``SessionManager.exec_on_route`` is an OPEN path on the ``run-command-line-length``
     record, and must stay one). Handed a number instead, it emits a shorter
     line and the transfer works.
 
@@ -446,7 +492,9 @@ class TestTheExecLineBudget:
 
     def test_a_telnet_host_is_budgeted_by_the_ptys_ceiling(self) -> None:
         mgr, _ = _manager(BashFrame(), term="telnet")
-        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
+        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _framing_overhead(
+            BashFrame()
+        )
 
     def test_an_ssh_host_has_no_budget_at_all(self) -> None:
         """``None`` is the answer that keeps the path that was never broken still.
@@ -459,7 +507,7 @@ class TestTheExecLineBudget:
         command, not a per-line budget, and it is not this property's business.
         """
         mgr, _ = _manager(BashFrame(), term="ssh")
-        assert mgr.exec_line_budget is None
+        assert mgr.line_budget(route=mgr.exec_route()) is None
 
     def test_a_proxied_login_is_budgeted_on_ssh_too(self) -> None:
         """The case that makes ``term`` the wrong thing to read.
@@ -475,39 +523,39 @@ class TestTheExecLineBudget:
             name="bb1",
             command_frame=BashFrame(),
         )
-        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
-
-    @pytest.mark.asyncio
-    async def test_an_exec_factory_has_no_budget(self) -> None:
-        """A local subprocess or a ``docker exec`` types into no shell of otto's."""
-
-        async def exec_factory(cmd: str, timeout: float) -> CommandResult:
-            return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
-
-        mgr = SessionManager(
-            connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[])),
-            name="bb1",
-            command_frame=BashFrame(),
-            exec_factory=exec_factory,
+        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _framing_overhead(
+            BashFrame()
         )
-        assert mgr.exec_line_budget is None
 
-    def test_an_ash_host_gets_the_tighter_of_the_two_ceilings(self) -> None:
-        """Both ceilings are real and neither subsumes the other.
+    def test_a_subprocess_or_a_container_route_has_no_budget(self) -> None:
+        """A local subprocess or a ``docker exec`` types into no shell of otto's."""
+        mgr, _ = _manager(BashFrame(), term="telnet")
+        assert mgr.line_budget(route=ExecRoute.LOCAL_SUBPROCESS) is None
+        assert mgr.line_budget(route=ExecRoute.CONTAINER) is None
+        # The control: the same manager budgets the route it types into.
+        assert mgr.line_budget(route=ExecRoute.POOLED_SHELL) is not None
 
-        A stock BusyBox build truncates at 1022 through a pty of any size; the
-        bed's guests have no line editor in play and wedge at the kernel's
-        4096-byte canonical buffer instead. A budget that took only one of the
-        two would be wrong on the other kind of device, so it takes the
-        smaller of the two that apply -- keyed, like the refusal, on the
-        DECLARED dialect and never on a userland probe.
+    def test_an_ash_host_with_no_session_yet_gets_the_echoing_ceiling(self) -> None:
+        """Before any session measured echo off, an ash host plans on 1022.
+
+        Nothing has shown the terminal stops echoing, and BusyBox ash's line
+        editor cuts at 1022 while it echoes. A transfer planned this early
+        only sends shorter chunks.
         """
         ash, _ = _manager(AshFrame(), term="telnet")
-        bash, _ = _manager(BashFrame(), term="telnet")
-        assert ash.exec_line_budget == ASH_TYPED_LINE_MAX - _framing_overhead(AshFrame())
-        assert ash.exec_line_budget is not None
-        assert bash.exec_line_budget is not None
-        assert ash.exec_line_budget < bash.exec_line_budget
+        assert ash.line_budget(route=ash.exec_route()) == ASH_ECHOING_LINE_MAX - _framing_overhead(
+            AshFrame()
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("echoes", "ceiling"), [(False, PTY_TYPED_LINE_MAX), (True, ASH_ECHOING_LINE_MAX)]
+    )
+    async def test_an_open_ash_session_sets_the_budget_by_its_echo(self, echoes, ceiling) -> None:
+        """Once a session measured echo off, the kernel's 4095; still echoing, the editor's 1022."""
+        ash, _ = _manager(AshFrame(), term="telnet", echoes=echoes)
+        await ash.run_cmd(cmd="true")
+        assert ash.line_budget(route=ash.exec_route()) == ceiling - _framing_overhead(AshFrame())
 
     def test_the_budget_is_exactly_what_frames_inside_the_ceiling(self) -> None:
         """The RELATIONSHIP, in both directions, so an off-by-one cannot pass.
@@ -520,7 +568,7 @@ class TestTheExecLineBudget:
         """
         frame = BashFrame()
         mgr, _ = _manager(frame, term="telnet")
-        budget = mgr.exec_line_budget
+        budget = mgr.line_budget(route=mgr.exec_route())
         assert budget is not None
         markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
 
@@ -543,30 +591,16 @@ class TestTheExecLineBudget:
             name="bb1",
             command_frame=BashFrame(),
         )
-        assert mgr.exec_line_budget is None
+        assert mgr.line_budget(route=mgr.exec_route()) is None
         connections.term = "telnet"
-        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
+        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _framing_overhead(
+            BashFrame()
+        )
 
     def test_a_term_exec_cannot_run_on_is_not_handed_a_budget(self) -> None:
         """``exec`` raises for it before typing anything, so there is no line to budget."""
         mgr, _ = _manager(BashFrame(), term="serial")
-        assert mgr.exec_line_budget is None
-
-    def test_the_pty_ceiling_is_the_number_that_was_measured(self) -> None:
-        """A LITERAL, for the reason ``ASH_TYPED_LINE_MAX``'s own pin is one.
-
-        Every other assertion in this class derives its boundary from the
-        constant and so moves with it; this one is the measurement. 4000 is
-        the largest line the bed's guests delivered intact (4090 never
-        returned at all), and it is deliberately not the 4095 the kernel's
-        canonical buffer would allow -- the terminator shares that buffer and a
-        telnet transport may spell it ``\\r\\n``.
-        """
-        assert PTY_TYPED_LINE_MAX == 4000, (
-            "4000 is the far side's buffer as measured on the BusyBox bed, not a budget "
-            "otto chose -- see PTY_TYPED_LINE_MAX's own docstring, and re-measure before "
-            "editing this"
-        )
+        assert mgr.line_budget(route=mgr.exec_route()) is None
 
 
 # ===========================================================================
@@ -608,7 +642,7 @@ class TestThroughAHostBuiltFromLabData:
 
         monkeypatch.setattr(host._session_mgr, "_ensure_session", _no_connecting)
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await host.run("echo " + "x" * 2000)
+            await host.run("echo " + "x" * 5000)
         assert re.search(r"\bbb1\b", str(excinfo.value))
 
 
@@ -629,12 +663,12 @@ def test_the_published_framing_numbers_are_the_code_s():
     """The architecture page and the gap's reason both quote the framing overhead
     and the ash line budget. Computed nowhere else, they drifted the last time the
     frame changed (74/948 survived a frame that costs 38): pin them to the code."""
-    from otto.host.session import framed_line_overhead, typed_line_budget
+    from otto.host.session import framed_line_overhead
     from tests._fixtures.paths import CHECKOUT_ROOT
 
     overhead = framed_line_overhead(AshFrame())
-    budget = typed_line_budget(AshFrame())
-    assert budget == ASH_TYPED_LINE_MAX - overhead
+    budget = typed_line_budget(AshFrame(), echoes=False)
+    assert budget == PTY_TYPED_LINE_MAX - overhead
     page = (CHECKOUT_ROOT / "docs/architecture/subsystems/busybox-support.md").read_text(
         encoding="utf-8"
     )
@@ -643,3 +677,120 @@ def test_the_published_framing_numbers_are_the_code_s():
     for text in (page, gap.reason):
         assert f"{overhead} characters" in text
         assert str(budget) in text
+    # The echoing budget the page prints (984) is the code's too.
+    assert f"**{typed_line_budget(AshFrame(), echoes=True)}**" in page
+
+
+# ===========================================================================
+# The ceiling follows whether the terminal still echoes
+# ===========================================================================
+
+
+class TestTheCeilingFollowsTheEcho:
+    """One function decides the typed-line ceiling: the frame and the measured echo fact."""
+
+    @pytest.mark.parametrize(
+        ("frame", "echoes", "ceiling"),
+        [
+            (AshFrame(), True, 1022),
+            (AshFrame(), False, 4095),
+            (BashFrame(), True, 4095),
+            (BashFrame(), False, 4095),
+            (None, True, 4095),
+        ],
+        ids=["ash-echoing", "ash-echo-off", "bash-echoing", "bash-echo-off", "no-frame"],
+    )
+    def test_the_ceiling_by_frame_and_echo(self, frame, echoes, ceiling) -> None:
+        """LITERALS: 1022 and 4095 are the two measurements, not budgets otto chose."""
+        assert typed_line_ceiling(frame, echoes=echoes) == ceiling
+        assert ASH_ECHOING_LINE_MAX == 1022
+
+    @pytest.mark.parametrize("echoes", [False, True])
+    def test_the_budget_is_the_ceiling_less_the_framing(self, echoes) -> None:
+        assert typed_line_budget(AshFrame(), echoes=echoes) == typed_line_ceiling(
+            AshFrame(), echoes=echoes
+        ) - _framing_overhead(AshFrame())
+
+    @pytest.mark.asyncio
+    async def test_a_2000_character_run_is_sent_where_echo_is_off(self) -> None:
+        mgr, sessions = _manager(AshFrame(), echoes=False)
+        result = await mgr.run_cmd(cmd="echo " + "x" * 2000)
+        assert result.is_ok
+        assert sessions[0].ran == ["echo " + "x" * 2000]
+
+    @pytest.mark.asyncio
+    async def test_a_2000_character_run_is_refused_where_the_terminal_still_echoes(self) -> None:
+        """The session opens (run() opens it anyway), measures echo on, and nothing is typed."""
+        mgr, sessions = _manager(AshFrame(), echoes=True)
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await mgr.run_cmd(cmd="echo " + "x" * 2000)
+        assert len(sessions) == 1
+        assert sessions[0].ran == [], "nothing may be typed before the check"
+        message = str(excinfo.value)
+        assert "1022" in message
+        assert "still echoes" in message
+        assert str(1022 - _framing_overhead(AshFrame())) in message
+
+    @pytest.mark.asyncio
+    async def test_the_echoing_boundary_is_exact(self) -> None:
+        budget = ASH_ECHOING_LINE_MAX - _framing_overhead(AshFrame())
+        mgr, sessions = _manager(AshFrame(), echoes=True)
+        assert (await mgr.run_cmd(cmd="x" * budget)).is_ok
+        with pytest.raises(UnsupportedOnUserlandError):
+            await mgr.run_cmd(cmd="x" * (budget + 1))
+        assert sessions[0].ran == ["x" * budget]
+
+    @pytest.mark.asyncio
+    async def test_a_short_command_still_runs_after_a_refused_one(self) -> None:
+        """The refusal types nothing, so the session it opened is still usable."""
+        budget = ASH_ECHOING_LINE_MAX - _framing_overhead(AshFrame())
+        mgr, sessions = _manager(AshFrame(), echoes=True)
+        with pytest.raises(UnsupportedOnUserlandError):
+            await mgr.run_cmd(cmd="x" * (budget + 1))
+        assert (await mgr.run_cmd(cmd="echo hi")).is_ok
+        assert sessions[0].ran == ["echo hi"]
+        assert len(sessions) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_bash_session_that_still_echoes_keeps_the_kernels_ceiling(self) -> None:
+        """The 1022 cut is BusyBox ash's line editor; bash's lines are not refused."""
+        mgr, sessions = _manager(BashFrame(), echoes=True)
+        assert (await mgr.run_cmd(cmd="echo " + "x" * 2000)).is_ok
+        assert sessions[0].ran
+
+
+class TestTheMeasuredEchoOfAHost:
+    """``SessionManager._measured_echoes`` reads the open sessions: echo off only if all show it."""
+
+    @staticmethod
+    def _mgr(*, default_echoes: bool, named_echoes: bool):
+        def default() -> _StubSession:
+            return _StubSession(command_frame=AshFrame(), echoes=default_echoes)
+
+        def named() -> _StubSession:
+            return _StubSession(command_frame=AshFrame(), echoes=named_echoes)
+
+        return SessionManager(
+            connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[])),
+            name="bb1",
+            command_frame=AshFrame(),
+            session_factory=default,
+            named_session_factory=named,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_named_echoing_session_beside_an_echo_off_default_makes_it_true(self) -> None:
+        mgr = self._mgr(default_echoes=False, named_echoes=True)
+        await mgr.run_cmd(cmd="echo hi")
+        assert mgr._measured_echoes() is False
+        await mgr.open_session(name="aux")
+        assert mgr._measured_echoes() is True
+
+    @pytest.mark.asyncio
+    async def test_a_dead_echoing_session_is_ignored(self) -> None:
+        mgr = self._mgr(default_echoes=False, named_echoes=True)
+        await mgr.run_cmd(cmd="echo hi")
+        aux = await mgr.open_session(name="aux")
+        assert mgr._measured_echoes() is True
+        await aux.close()
+        assert mgr._measured_echoes() is False

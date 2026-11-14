@@ -1725,13 +1725,32 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
         f"BusyBox artifacts as subprocesses. First few: {selected[:3]}"
     )
 
-    drew = [line for line in output.splitlines() if "conformance: drew " in line]
+    drew = _session_draws(output)
     assert len(drew) == 1, (
-        f"the conformance tree logged {len(drew)} draws under a path-less "
+        f"the conformance tree logged {len(drew)} session draws under a path-less "
         f"collection, expected exactly 1 — with none, the tree was never "
         f"collected at all and the assertion above passed by the tier being "
         f"MISSING rather than excluded (see G11e):\n{output[-2000:]}"
     )
+
+
+def _session_draws(output: str) -> "list[str]":
+    """The session-start draw lines in *output*, after checking the per-entries ones.
+
+    ``tests/conformance/conftest.py`` logs the session's draw once
+    (``pytest_sessionstart``) and, beside it, one draw per distinct
+    ``@pytest.mark.entries(...)`` set (``_drawn_for``, ``venue=<v> entries=...``).
+    The per-entries draws are memoised, so each set must appear at most once;
+    the session draw is what says the tree was collected, and is returned.
+    """
+    venue = [line for line in output.splitlines() if "conformance: venue=" in line]
+    per_entries = [
+        line.split(" entries=", 1)[1].split()[0] for line in venue if " entries=" in line
+    ]
+    assert len(per_entries) == len(set(per_entries)), (
+        f"an entries draw was logged twice, so its memo did not hold: {per_entries}"
+    )
+    return [line for line in venue if " entries=" not in line]
 
 
 def test_no_labless_lane_can_select_the_bed_marked_conformance_tests():
@@ -2159,9 +2178,9 @@ def _assert_lane_collects_the_bed_venue(
         f"return-code assertion above catches first:\n{output[-2000:]}"
     )
 
-    drew = [line for line in output.splitlines() if "conformance: venue=" in line]
+    drew = _session_draws(output)
     assert len(drew) == 1, (
-        f"the conformance tree logged {len(drew)} draw lines under `make {target}`, "
+        f"the conformance tree logged {len(drew)} session draws under `make {target}`, "
         f"expected exactly 1 — with none, the tree was never collected at all and the "
         f"assertion above passed on something else (see G11e):\n{output[-2000:]}"
     )

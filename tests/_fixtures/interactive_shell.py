@@ -30,7 +30,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.host.command_frame import BashFrame, SessionMarkers
+from otto.host.command_frame import BashFrame, SessionMarkers, handshake_prefix
 from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
 from otto.host.session import ShellSession, ready_pattern
@@ -316,26 +316,42 @@ HAZARD_MARKERS: dict[str, SessionMarkers] = {
 Ids are random hex, so some session's id ends in each of these; a tail cut
 inside the echo word's head must not leave it as a word of its own."""
 
-PROBE_LINES = ("handshake", "resync", "recovery")
+PROBE_LINES = ("handshake", "console-handshake", "resync", "recovery")
 """The probe lines otto types into a shell that may run only a tail of them.
 
 The readiness handshake and the resync probe open a fresh shell; the
-recovery probe follows an interrupt after a command timed out."""
+recovery probe follows an interrupt after a command timed out. The console
+handshake is the readiness handshake a session whose terminal outlives it
+sends first, with the settings save in front (``handshake_prefix``)."""
 
-HISTORY_LINES = ("handshake", "resync")
+HANDSHAKE_LINES = ("handshake", "console-handshake")
+"""The :data:`PROBE_LINES` that carry the terminal-mapping calibration."""
+
+HISTORY_LINES = ("handshake", "console-handshake", "resync")
 """The :data:`PROBE_LINES` that carry history suppression when the host asks for it.
 
 They are the first line a fresh shell runs. The recovery probe is written
 into a shell that is already set up, so it never carries it."""
 
+
+def _handshake(m: SessionMarkers, history: bool, *, save_terminal: bool) -> str:
+    """The session's handshake line: its prefix composed as the session composes it."""
+    prefix = handshake_prefix(
+        BashFrame(), m, shell_history=not history, save_terminal=save_terminal
+    )
+    return BashFrame().handshake(m, prefix=prefix)
+
+
 _RENDER = {
-    "handshake": lambda m, prefix: BashFrame().handshake(m, prefix=prefix),
-    "resync": _identity_probe,
-    "recovery": lambda m, _prefix: BashFrame().recover(m),
+    "handshake": lambda m, history: _handshake(m, history, save_terminal=False),
+    "console-handshake": lambda m, history: _handshake(m, history, save_terminal=True),
+    "resync": lambda m, history: _identity_probe(m, BashFrame().quiet_history() if history else ""),
+    "recovery": lambda m, _history: BashFrame().recover(m),
 }
 
 _ANSWER = {
     "handshake": lambda m: ready_pattern(m, line_ending=True),
+    "console-handshake": lambda m: ready_pattern(m, line_ending=True),
     "resync": _identity_pattern,
     "recovery": BashFrame().recover_pattern,
 }
@@ -349,7 +365,7 @@ def render_probe(kind: str, m: SessionMarkers, history: bool = True) -> str:
     session's real first line. A line outside :data:`HISTORY_LINES` never
     carries it, so there *history* changes nothing.
     """
-    return _RENDER[kind](m, BashFrame().quiet_history() if history else "")
+    return _RENDER[kind](m, history)
 
 
 def probe_answer(kind: str, m: SessionMarkers) -> "re.Pattern[str]":
@@ -385,7 +401,7 @@ def cut_probe(
             probe_answer(kind, resend),
             probe_answer(kind, tail),
         )
-    if kind == "handshake":
+    if kind in HANDSHAKE_LINES:
         found = probe_answer(kind, resend).search(out)
         assert found is not None
         assert measure(out[: found.end()], resend.ready).mapping == ONLCR, (

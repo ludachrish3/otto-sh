@@ -467,7 +467,7 @@
                     "sw_version": "1.35.0",
                     "valid_terms": ["telnet", "ssh", "console"],
                     "valid_transfers": ["shell", "nc"],
-                    "console_options": {"server": "test1", "port": 2450},
+                    "console_options": {"server": "test1", "port": 2450, "escapes_iac": false},
                     "is_virtual": true,
                     "hop": "test1",
                     "creds": [

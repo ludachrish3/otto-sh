@@ -24,7 +24,7 @@ from otto.host import userland as userland_module
 from otto.host.command_frame import AshFrame
 from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import UserlandOptions
-from otto.host.session import refuse_if_line_editor_would_truncate
+from otto.host.session import refuse_if_typed_line_would_be_cut
 from otto.host.userland import (
     APPLET_ABSENT,
     APPLET_PRESENT,
@@ -2043,8 +2043,8 @@ def test_the_batch_fits_the_line_bound_the_tighter_transport_imposes():
     """The batch is a command, so it is measured against otto's own line guard.
 
     NOT A LENGTH ASSERTION WITH A NUMBER IN IT. The bound is
-    ``ASH_TYPED_LINE_MAX`` minus otto's BEGIN/END framing, and both halves
-    already live in ``refuse_if_line_editor_would_truncate`` -- so this runs
+    the typed-line ceiling (``typed_line_ceiling``) minus otto's BEGIN/END framing, and both halves
+    already live in ``refuse_if_typed_line_would_be_cut`` -- so this runs
     that function over the real emitted command rather than restating either
     one. Adding applets until the batch would truncate reds here, on the guard
     that would have refused it, instead of on a device.
@@ -2056,7 +2056,8 @@ def test_the_batch_fits_the_line_bound_the_tighter_transport_imposes():
     (see the ``run-command-line-length`` record's two OPEN paths), so there it
     is line-edited exactly like a typed command.
     """
-    refuse_if_line_editor_would_truncate(AshFrame(), _P_APPLETS, host="probe")
+    # echoes=True: the tightest ceiling, an ash terminal that still echoes.
+    refuse_if_typed_line_would_be_cut(AshFrame(), _P_APPLETS, echoes=True, host="probe")
 
 
 def test_one_userland_serves_contending_resolvers_on_a_second_loop(monkeypatch):

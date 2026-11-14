@@ -299,6 +299,7 @@ class ConsoleOptionsSpec(OttoModel):
     echo_negotiation_timeout: float = rt.field_default(
         rt.ConsoleOptions, "echo_negotiation_timeout"
     )
+    escapes_iac: bool = rt.field_default(rt.ConsoleOptions, "escapes_iac")
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra")
@@ -335,6 +336,7 @@ class ConsoleOptionsSpec(OttoModel):
             rows=self.rows,
             encoding=self.encoding,
             echo_negotiation_timeout=self.echo_negotiation_timeout,
+            escapes_iac=self.escapes_iac,
             extra=dict(self.extra),
         )
 

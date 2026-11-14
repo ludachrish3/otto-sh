@@ -139,7 +139,14 @@ class LlextHexLoader(BinaryLoader):
         Zephyr 3.7 and 4.4 print that line (and return ``-ENOENT``) from
         ``llext call_fn`` when no extension of that name is resident. The
         whole line has to match, so ``cov_ext_two``'s absence is not
-        ``cov_ext``'s.
+        ``cov_ext``'s, and the line may follow other output.
+
+        Measured (``llext/shell.c``, 3.7 and 4.4): the shell prints that line
+        uncoloured. *output* is a command's ``value``, which the Zephyr frame
+        has already cleared of the shell's message-level colouring
+        (``otto.host.command_frame.strip_zephyr_levels``), so a build that
+        prints the line through ``shell_error`` still reads bare here; this
+        reader removes nothing itself.
         """
         line = f"No such extension {name}"
         return any(raw.strip() == line for raw in output.splitlines())

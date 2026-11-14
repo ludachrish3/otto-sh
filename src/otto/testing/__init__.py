@@ -6,6 +6,7 @@ pytest test (it raises a single ``AssertionError`` listing every contract
 violation)::
 
     from otto.testing import (
+        assert_command_frame_conforms,
         assert_creds_store_conforms,
         assert_host_conforms,
         assert_host_registrable,
@@ -14,6 +15,13 @@ violation)::
         assert_reservation_backend_conforms,
         assert_transfer_backend_conforms,
     )
+
+``EXACT_OUTPUT_CASES`` (a list of ``OutputCase``) is the one table of commands
+and the bytes they write, for checking that a route reports a command's
+``value`` as its output with exactly one trailing newline removed.
+``assert_command_frame_conforms`` runs that table against a command frame;
+a frame that cannot meet it declares an ``otto.host.limitation.Limitation``
+on its ``exact_output``.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
 the host and transfer-backend suites (``.conformance_host``) load only when
@@ -27,11 +35,16 @@ it raises what ``register_host_class`` would refuse, and registers nothing.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .command_output import EXACT_OUTPUT_CASES as EXACT_OUTPUT_CASES
+    from .command_output import OutputCase as OutputCase
     from .conformance import assert_creds_store_conforms as assert_creds_store_conforms
     from .conformance import assert_inventory_conforms as assert_inventory_conforms
     from .conformance import assert_lab_repository_conforms as assert_lab_repository_conforms
     from .conformance import (
         assert_reservation_backend_conforms as assert_reservation_backend_conforms,
+    )
+    from .conformance_frame import (
+        assert_command_frame_conforms as assert_command_frame_conforms,
     )
     from .conformance_host import assert_host_conforms as assert_host_conforms
     from .conformance_host import assert_host_registrable as assert_host_registrable
@@ -41,6 +54,9 @@ if TYPE_CHECKING:
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
+    "EXACT_OUTPUT_CASES": "otto.testing.command_output",
+    "OutputCase": "otto.testing.command_output",
+    "assert_command_frame_conforms": "otto.testing.conformance_frame",
     "assert_creds_store_conforms": "otto.testing.conformance",
     "assert_inventory_conforms": "otto.testing.conformance",
     "assert_lab_repository_conforms": "otto.testing.conformance",
@@ -66,6 +82,9 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "EXACT_OUTPUT_CASES",
+    "OutputCase",
+    "assert_command_frame_conforms",
     "assert_creds_store_conforms",
     "assert_host_conforms",
     "assert_host_registrable",

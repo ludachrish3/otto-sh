@@ -89,7 +89,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from otto.host.connections import ConnectionManager
+from otto.host.exec_route import ExecRoute
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSession
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
@@ -196,6 +199,13 @@ class _Factory:
     @property
     def created_count(self) -> int:
         return len(self.created)
+
+
+def _pooled_exec(mgr: SessionManager, cmd: str):
+    """One ``exec`` on the pooled route, which is what a telnet manager plans."""
+    return mgr.exec_on_route(
+        route=ExecRoute.POOLED_SHELL, cmd=cmd, timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.NORMAL
+    )
 
 
 def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
@@ -390,7 +400,7 @@ async def test_exec_pool_connects_concurrently() -> None:
 
     N = 10  # noqa: N806 — single-letter math dimension
 
-    results = await asyncio.gather(*(mgr.exec(cmd=f"echo {i}") for i in range(N)))
+    results = await asyncio.gather(*(_pooled_exec(mgr, f"echo {i}") for i in range(N)))
 
     assert all(r.status.is_ok for r in results), "some execs returned non-ok status"
     # A peak of N already implies at least N sessions existed (one open_transport()
@@ -419,7 +429,7 @@ async def test_exec_pool_high_fanout() -> None:
     mgr = _make_mgr(factory)
 
     N = 200  # noqa: N806 — single-letter math dimension
-    results = await _gather_settled(*(mgr.exec(cmd=f"echo {i}") for i in range(N)))
+    results = await _gather_settled(*(_pooled_exec(mgr, f"echo {i}") for i in range(N)))
 
     exceptions = [r for r in results if isinstance(r, Exception)]
     assert not exceptions, f"{len(exceptions)} exec() calls raised; first: {exceptions[0]!r}"
@@ -585,7 +595,7 @@ async def _exec_ops(ops: list[str]) -> None:
             elif op == "open_b":
                 await mgr.open_session(name="B")
             elif op == "exec":
-                await mgr.exec(cmd="echo")
+                await _pooled_exec(mgr, "echo")
             elif op == "run_default":
                 # No finite budget: the fakes answer in memory, so any wall
                 # clock here is a stimulus this test never wanted. A 5.0 s

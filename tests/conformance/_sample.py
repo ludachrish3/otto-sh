@@ -78,9 +78,15 @@ def cell_label(resolved: ResolvedCell) -> str:
     ``element-term-transfer`` alone reads the same for cells standing up very
     different machinery. The kind is what tells a reader of a failure line
     whether an ``sshd`` was involved.
+
+    A cell reached through an entry (``tests/conformance/_entry.py``) names
+    it as a fourth field; an entry-less cell keeps the three-field spelling,
+    so the draw of every unmarked contract is unchanged.
     """
     cell = resolved.cell
-    return f"{resolved.kind}[{cell.element}:{cell.term}:{cell.transfer}]"
+    if not resolved.entry:
+        return f"{resolved.kind}[{cell.element}:{cell.term}:{cell.transfer}]"
+    return f"{resolved.kind}[{cell.element}:{cell.term}:{cell.transfer}:{resolved.entry}]"
 
 
 def draw(

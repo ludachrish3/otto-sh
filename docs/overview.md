@@ -82,7 +82,9 @@ follows success, never the payload — an empty-but-successful result is
 truthy, a failed result carrying output is falsy — so `if not result:` is
 the idiomatic failure check.  The CLI derives its exit codes from the same
 objects, ssh-style: a failing command's own return code, or 255 when the
-command never ran.
+command never ran. What those results promise, which kinds of host each
+promise is checked on, and where a device cannot keep a promise, is on
+{ref}`the command contract page <command-contract>`.
 
 ### Labs
 

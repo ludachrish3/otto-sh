@@ -22,6 +22,7 @@ has a command that can outlive a budget at all. See :func:`applicable_cell`.
 import pytest
 
 from otto.utils import Status
+from tests.conformance._entry import issue, opened
 from tests.conformance._framing import assert_single_line_answer
 from tests.conformance._resolved import ResolvedCell
 
@@ -113,6 +114,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     return resolved.vocabulary.long_running_command is not None
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.observable(
     "CommandResult.timed_out, .status, .retcode and .exit_code for "
     "`{words.long_running_command}` ({words.long_running_seconds}s) run under a shorter "
@@ -124,7 +126,7 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
 ) -> None:
     """The documented failure, and a session that survives it.
 
-    Both commands run inside one ``open_host()`` so the second is measured on
+    Both commands run inside one ``opened()`` so the second is measured on
     the SAME session the first timed out on. Reopening the host between them
     would assert that a fresh session works, which nobody doubted.
 
@@ -146,9 +148,9 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
         f"`applicable_cell` should have kept it out of this contract's domain"
     )
 
-    async with resolved_cell.open_host() as host:
-        timed_out = (await host.run(words.long_running_command, timeout=_BUDGET_S)).only
-        afterwards = (await host.run(words.single_line_command)).only
+    async with opened(resolved_cell) as host:
+        timed_out = await issue(host, resolved_cell, words.long_running_command, timeout=_BUDGET_S)
+        afterwards = await issue(host, resolved_cell, words.single_line_command)
 
     cell = resolved_cell.cell
     assert timed_out.timed_out is True, (
@@ -188,6 +190,7 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
 # stimulus that can outlive a budget in the first place.
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.positive_control("timeout")
 async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
     resolved_cell: ResolvedCell,
@@ -218,9 +221,9 @@ async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
         f"`applicable_cell` should have kept it out of this contract's domain"
     )
 
-    async with resolved_cell.open_host() as host:
-        await host.run(words.succeeding_command)
-        inside = (await host.run(words.single_line_command, timeout=_BUDGET_S)).only
+    async with opened(resolved_cell) as host:
+        await issue(host, resolved_cell, words.succeeding_command)
+        inside = await issue(host, resolved_cell, words.single_line_command, timeout=_BUDGET_S)
 
     cell = resolved_cell.cell
     assert inside.timed_out is False, (

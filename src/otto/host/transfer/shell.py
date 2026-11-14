@@ -146,14 +146,14 @@ direction would be caught by arithmetic rather than by a device.
 THE PTY PATH IS THE ONE WITH NO MARGIN, and it is a separate measurement this
 branch also holds. BusyBox ash's line editor
 (``CONFIG_FEATURE_EDITING_MAX_LEN``) delivers 1022 characters intact and
-truncates at 1023 -- the ``run-command-line-length`` record in
+truncates at 1023 while the terminal echoes -- the ``run-command-line-length`` record in
 :data:`~otto.host.userland.GAPS`, measured identically against dropbear,
 against OpenSSH and against a bare local pty, which is what identifies it as
 the DEVICE's line editor rather than as any transport. A 5535-character chunk
 line is over that by a factor of five.
 
 WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
-choice. ``_exec_cmd`` is ``UnixHost.exec``, and ``SessionManager.exec`` opens
+choice. ``_exec_cmd`` is ``UnixHost.exec``, whose plan opens
 a bare pty-less exec channel only for ``term: "ssh"``; telnet has no
 stateless exec primitive, so it routes through a pooled SHELL session
 instead -- the line-edited path. A ``term: telnet`` BusyBox host is therefore
@@ -172,16 +172,13 @@ predicted, PS2 included, and the backstop predicted with it also held: the
 staged temp is never renamed, so nothing landed wrong bytes under a
 ``Status.Success``.
 
-THE CEILING IS THE KERNEL'S, NOT ASH'S, on these guests. A raw
-``echo <pad> | wc -c`` probe -- counting what ARRIVED, so truncation reads as
-a short count rather than as a pass -- carries 500, 1000, 1022, 1023, 1100,
-2000 and 4000 characters intact and never returns at 4090. So the 1022 line
-editor above is measurably INACTIVE here (1023 would have been the tell) and
-what bounds the line is N_TTY's 4096-byte canonical buffer:
-:data:`~otto.host.session.PTY_TYPED_LINE_MAX`. Both ceilings are real on
-their own devices, neither subsumes the other, and
-:func:`~otto.host.session.typed_line_budget` therefore hands out the smaller
-of the two that apply to a given host.
+THE CEILING FOLLOWS WHETHER THE TERMINAL STILL ECHOES: the 1022-character
+line editor above engages only then, and otto's handshake turns echo off first.
+:func:`~otto.host.session.typed_line_ceiling` decides which bound applies, for
+``run()``'s refusal and this budget alike (it has the full statement), and
+:meth:`~otto.host.session.SessionManager.line_budget` hands it out less otto's
+framing, from the echo fact its open sessions measured (1022-based while no
+session is open when the transfer is planned).
 
 THE RESPONSE IS A BUDGET, NOT A SMALLER CONSTANT AND NOT A DIFFERENT CODEC.
 ``exec``'s route decides whether a budget exists at all (``None`` on the ssh
@@ -220,7 +217,7 @@ command and receives long OUTPUT, which no line discipline bounds: 16 KiB in
 0.4 s and 256 KiB in 2.9 s on the same guest that could not PUT 3000 bytes.
 
 THE ``run()`` GUARD DOES NOT REACH HERE, AND THAT IS THE POINT.
-:func:`otto.host.session.refuse_if_line_editor_would_truncate` now refuses an
+:func:`otto.host.session.refuse_if_typed_line_would_be_cut` now refuses an
 over-long typed line on an ash host, reading the same
 ``run-command-line-length`` record -- but it is called from
 ``SessionManager.run_cmd``, which is ``Host.run()``'s per-command path, and
@@ -470,11 +467,11 @@ class PutChunkLoop:
     """Characters this transport carries on ONE line of a command, or ``None``.
 
     ``None`` means no line discipline is in the way -- an ``ssh`` host's bare
-    exec channel, or a caller-supplied exec primitive -- and a codec should
-    then do exactly what it did before this field existed. It is not "unknown"
+    exec channel, a local subprocess, a container's ``docker exec`` -- and a
+    codec should then do exactly what it did before this field existed. It is not "unknown"
     and never a reason to guess: the number comes from
-    :attr:`~otto.host.session.SessionManager.exec_line_budget`, which is the
-    object that decides which primitive :meth:`~otto.host.session.SessionManager.exec`
+    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan, which is the
+    object that decides which primitive :meth:`~otto.host.session.SessionManager.exec_on_route`
     routes through, and it is already net of otto's own BEGIN/END framing, so a
     codec compares it against the command string it is about to emit and
     nothing else.
@@ -868,7 +865,7 @@ def _uu_unframe(text: str) -> bytes:
 
     Lines are matched after stripping a trailing CARRIAGE RETURN, because the
     device's text arrives through
-    :meth:`~otto.host.session.SessionManager.exec`'s line rejoin; nothing else
+    :meth:`~otto.host.session.SessionManager.exec_on_route`'s line rejoin; nothing else
     is stripped, since a correctly framed line contains no whitespace at all
     (see :func:`_uu_frame`).
     """
@@ -986,8 +983,8 @@ class UuencodeCodec(ShellCodec):
     spends the difference on the scratch path, which appears TWICE in every
     chunk command, so a long destination spends this headroom about three
     times as fast as base64's does. What the shape does buy is a LONGEST LINE
-    of 186 characters instead of 5533 -- under the 1022-character ash line
-    editor bound the ``run-command-line-length`` gap records, though nothing
+    of 186 characters instead of 5533 -- under the 4095-character typed-line
+    bound the ``run-command-line-length`` gap records, though nothing
     measures a multi-line command on that path and this docstring claims
     nothing about it.
 
@@ -1456,7 +1453,7 @@ class ShellFileTransfer(UnixFileTransfer):
         ``ssh`` host too, and the framing this number is net of belongs to the
         host's command frame, which no transfer backend can see. So the
         question goes to the object that decides both
-        (:attr:`~otto.host.session.SessionManager.exec_line_budget`, reached
+        (:meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan, reached
         through the context this backend was built with) and a
         ``None`` callable -- an embedded builder, a direct construction in a
         test -- means the same thing an unbudgeted route means.

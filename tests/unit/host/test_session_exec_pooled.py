@@ -1,4 +1,4 @@
-"""`SessionManager.exec` on the pooled route: switching user for one call, and
+"""`SessionManager.exec_on_route` on the pooled route: switching user for one call, and
 the keep-or-discard rule that protects the free-list (spec D3/D4/D5, §4.2)."""
 
 import logging
@@ -7,16 +7,14 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 
+from otto.host.exec_route import ExecRoute
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred, LoginProxyError
-from otto.host.session import SessionManager, _ExecRoute
+from otto.host.session import SessionManager
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.unit.host.test_session import _proxy_connections, _StubExecSession
-
-
-async def _factory(cmd: str, timeout: float | None) -> CommandResult:
-    return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
-
 
 _PW = SecretStr("pw")
 """The password every fake ``credentials`` pair here carries."""
@@ -26,7 +24,6 @@ def _mgr(
     *,
     hops=(),
     term="ssh",
-    factory=_factory,
     creds=None,
     login_target="admin",
     credentials=("admin", _PW),
@@ -44,33 +41,40 @@ def _mgr(
     return SessionManager(
         connections=conn,
         session_factory=_StubExecSession,
-        exec_factory=factory,
         host_id="h",
         creds=creds,
     )
 
 
+async def _exec(
+    mgr: SessionManager,
+    route: ExecRoute,
+    *,
+    cmd: str,
+    timeout: float = DEFAULT_COMMAND_TIMEOUT,
+    log: LogMode = LogMode.NORMAL,
+    **kw,
+) -> CommandResult:
+    """Dispatch *cmd* on *route*, with ``exec``'s own defaults for the rest."""
+    return await mgr.exec_on_route(route=route, cmd=cmd, timeout=timeout, log=log, **kw)
+
+
 class TestRoute:
-    def test_plain_call_with_a_factory_takes_the_factory(self):
-        assert _mgr()._exec_route() is _ExecRoute.FACTORY
-
-    def test_needs_shell_leaves_the_factory_for_the_pool(self):
-        assert _mgr()._exec_route(needs_shell=True) is _ExecRoute.POOLED_SHELL
-
     def test_needs_shell_leaves_the_ssh_channel_for_the_pool(self):
-        assert _mgr(factory=None)._exec_route() is _ExecRoute.SSH_CHANNEL
-        assert _mgr(factory=None)._exec_route(needs_shell=True) is _ExecRoute.POOLED_SHELL
+        assert _mgr().exec_route() is ExecRoute.SSH_CHANNEL
+        assert _mgr().exec_route(needs_shell=True) is ExecRoute.POOLED_SHELL
 
     def test_hops_pool_regardless(self):
         hop = Cred(login="mysql", proxy="su", via="alice")
-        assert _mgr(hops=[hop])._exec_route() is _ExecRoute.POOLED_SHELL
+        assert _mgr(hops=[hop]).exec_route() is ExecRoute.POOLED_SHELL
 
     def test_telnet_pools_regardless(self):
-        assert _mgr(factory=None, term="telnet")._exec_route() is _ExecRoute.POOLED_SHELL
+        assert _mgr(term="telnet").exec_route() is ExecRoute.POOLED_SHELL
 
-    def test_exec_line_budget_reads_the_plain_route(self):
+    def test_the_plain_route_is_unbudgeted(self):
         # A budget query must not be perturbed by what one call asks for.
-        assert _mgr(factory=None).exec_line_budget is None
+        mgr = _mgr()
+        assert mgr.line_budget(route=mgr.exec_route()) is None
 
 
 @pytest.fixture
@@ -83,8 +87,8 @@ def _fast_resync_settle(monkeypatch):
 class TestPooledExec:
     @pytest.mark.asyncio
     async def test_plain_pooled_exec_returns_the_session(self):
-        mgr = _mgr(factory=None, term="telnet")
-        result = await mgr.exec(cmd="id")
+        mgr = _mgr(term="telnet")
+        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert result.value == "OUT"
         assert len(mgr._exec_pool) == 1
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["id"]
@@ -102,16 +106,16 @@ class TestPooledExec:
                 seen.append(expects)
                 return await super().run_cmd(cmd=cmd, expects=expects, **kw)
 
-        mgr = _mgr(factory=None, term="telnet")
+        mgr = _mgr(term="telnet")
         mgr._session_factory = _RecordingExpects
-        await mgr.exec(cmd="sudo -S id", expects=[("assword", "pw\n")], needs_shell=True)
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="sudo -S id", expects=[("assword", "pw\n")])
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
         assert seen == [[("assword", "pw\n")]]
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
     async def test_user_switches_for_the_call_and_the_session_comes_back(self):
-        mgr = _mgr(factory=None, term="telnet", creds=[Cred(login="root", password="rootpw")])
+        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
         seen: list[tuple[str, str]] = []
 
         class _Switching(_StubExecSession):
@@ -120,7 +124,7 @@ class TestPooledExec:
                 return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Switching
-        result = await mgr.exec(cmd="id", user="root")
+        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
         assert result.value == "OUT"
         # The identity half is the point: the command ran INSIDE the switch,
         # not before it and not after the undo.
@@ -139,7 +143,7 @@ class TestPooledExec:
         result's. The session is discarded (it is still running as the switched
         user) and the failure is reported as a warning naming host, user and
         the undo's own error."""
-        mgr = _mgr(factory=None, term="telnet", creds=[Cred(login="root", password="rootpw")])
+        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
         from otto.host import session as session_mod
 
         async def _broken_undo(io, hop, via, host_id, history_prefix=""):
@@ -156,7 +160,7 @@ class TestPooledExec:
         monkeypatch.setattr(session_mod.HostSession, "close", _spy_close)
 
         with caplog.at_level(logging.WARNING, logger="otto.host.session"):
-            result = await mgr.exec(cmd="id", user="root")
+            result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
         assert result.value == "OUT", "the command ran; its result is not the undo's to lose"
         assert mgr._exec_pool == [], "a session that could not switch back is never pooled"
         assert closed == ["__exec_pool_1__"]
@@ -172,7 +176,7 @@ class TestPooledExec:
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
     async def test_a_failed_switch_discards_the_session_and_raises(self, monkeypatch):
-        mgr = _mgr(factory=None, term="telnet", creds=[Cred(login="root", password="rootpw")])
+        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
         from otto.host import session as session_mod
 
         async def _broken_switch(*a, **kw):
@@ -180,28 +184,30 @@ class TestPooledExec:
 
         monkeypatch.setattr(session_mod, "perform_switch", _broken_switch)
         with pytest.raises(LoginProxyError):
-            await mgr.exec(cmd="id", user="root")
+            await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
         assert mgr._exec_pool == []
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
     async def test_the_next_exec_after_a_discard_opens_a_fresh_session(self, monkeypatch):
-        mgr = _mgr(factory=None, term="telnet", creds=[Cred(login="root", password="rootpw")])
+        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
         from otto.host import session as session_mod
 
         async def _broken_undo(io, hop, via, host_id, history_prefix=""):
             raise RuntimeError("undo exploded")
 
         monkeypatch.setattr(session_mod, "run_undo", _broken_undo)
-        await mgr.exec(cmd="id", user="root")  # the undo fails; the result still comes back
+        await _exec(
+            mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root"
+        )  # the undo fails; the result still comes back
         monkeypatch.undo()
-        await mgr.exec(cmd="id")
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert mgr._exec_pool_count == 2
         assert [s.name for s in mgr._exec_pool] == ["__exec_pool_2__"]
 
     @pytest.mark.asyncio
     async def test_a_dead_session_is_closed_not_pooled(self):
-        mgr = _mgr(factory=None, term="telnet")
+        mgr = _mgr(term="telnet")
 
         class _Dies(_StubExecSession):
             async def run_cmd(self, cmd, **kw):
@@ -209,20 +215,19 @@ class TestPooledExec:
                 return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Dies
-        await mgr.exec(cmd="id")
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert mgr._exec_pool == []
 
 
 class TestAmbientUser:
     @pytest.mark.asyncio
     async def test_no_default_session_means_no_ambient_user(self):
-        mgr = _mgr(factory=None, term="telnet")
+        mgr = _mgr(term="telnet")
         assert mgr.ambient_user is None
 
     @pytest.mark.asyncio
     async def test_the_user_the_session_opened_as_is_not_ambient(self):
         mgr = _mgr(
-            factory=None,
             term="telnet",
             login_target="alice",
             credentials=("alice", _PW),
@@ -235,7 +240,6 @@ class TestAmbientUser:
     async def test_a_proxied_login_target_is_the_baseline_not_an_ambient_user(self):
         hop = Cred(login="mysql", proxy="su", via="alice")
         mgr = _mgr(
-            factory=None,
             term="telnet",
             hops=[hop],
             login_target="mysql",
@@ -248,7 +252,6 @@ class TestAmbientUser:
     @pytest.mark.asyncio
     async def test_a_switched_default_session_is_ambient_until_switched_back(self):
         mgr = _mgr(
-            factory=None,
             term="telnet",
             login_target="alice",
             credentials=("alice", _PW),
@@ -262,7 +265,6 @@ class TestAmbientUser:
     @pytest.mark.asyncio
     async def test_close_all_forgets_the_baseline(self):
         mgr = _mgr(
-            factory=None,
             term="telnet",
             login_target="alice",
             credentials=("alice", _PW),
@@ -278,18 +280,20 @@ class TestTheSshRowPromotesOffTheRawChannel:
 
     The telnet cases above can never observe this, because telnet has no raw
     route to be promoted off — every call there pools regardless. On ssh the
-    promotion is the whole contract: `exec` computes
-    ``needs_shell or bool(expects) or user is not None`` BEFORE reading the
-    route, and dropping that line would send both calls below down the raw
-    channel, where the identity switch and the prompt answers simply do not
-    exist (the command would run as the login user, and a `sudo -S` would
-    hang on a password nobody typed).
+    promotion is the whole contract: a call that needs a shell (a user to
+    switch to, prompts to answer) reads ``exec_route(needs_shell=True)``, and
+    an answer other than the pooled shell would send both calls below down
+    the raw channel, where the identity switch and the prompt answers simply
+    do not exist (the command would run as the login user, and a `sudo -S`
+    would hang on a password nobody typed). The host-side half — that a user
+    or a prompt IS a reason to need a shell — is pinned on the plan, in
+    ``test_exec_plan.py`` and ``test_unix_host.py``.
     """
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
     async def test_user_promotes_an_ssh_exec_onto_a_switched_pooled_shell(self):
-        mgr = _mgr(factory=None, term="ssh", creds=[Cred(login="root", password="rootpw")])
+        mgr = _mgr(term="ssh", creds=[Cred(login="root", password="rootpw")])
         seen: list[tuple[str, str]] = []
 
         class _Switching(_StubExecSession):
@@ -298,7 +302,9 @@ class TestTheSshRowPromotesOffTheRawChannel:
                 return await super().run_cmd(cmd=cmd, **kw)
 
         mgr._session_factory = _Switching
-        result = await mgr.exec(cmd="id", user="root")
+        route = mgr.exec_route(needs_shell=True)
+        assert route is ExecRoute.POOLED_SHELL
+        result = await _exec(mgr, route, cmd="id", user="root")
 
         assert result.value == "OUT"
         # INSIDE the switch: the raw route would have run it as the login user.
@@ -307,10 +313,9 @@ class TestTheSshRowPromotesOffTheRawChannel:
         assert not mgr._connections.ssh.await_count, "the raw exec channel was opened anyway"
 
     @pytest.mark.asyncio
-    async def test_expects_promote_an_ssh_exec_without_an_explicit_needs_shell(self):
-        """No ``needs_shell=True`` here on purpose — the caller passes prompt
-        answers and nothing else, and that alone has to buy a shell."""
-        mgr = _mgr(factory=None, term="ssh")
+    async def test_expects_reach_the_promoted_ssh_route(self):
+        """The answers have to reach the pooled shell the route promotes to."""
+        mgr = _mgr(term="ssh")
         seen: list[object] = []
 
         class _RecordingExpects(_StubExecSession):
@@ -319,7 +324,9 @@ class TestTheSshRowPromotesOffTheRawChannel:
                 return await super().run_cmd(cmd=cmd, expects=expects, **kw)
 
         mgr._session_factory = _RecordingExpects
-        result = await mgr.exec(cmd="sudo -S id", expects=[("assword", "pw\n")])
+        route = mgr.exec_route(needs_shell=True)
+        assert route is ExecRoute.POOLED_SHELL
+        result = await _exec(mgr, route, cmd="sudo -S id", expects=[("assword", "pw\n")])
 
         assert result.value == "OUT"
         assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
@@ -331,7 +338,7 @@ class TestTheSshRowPromotesOffTheRawChannel:
         """The control: with nothing to promote, the cheap route is still the
         one taken — otherwise the two tests above would pass on a product that
         simply pooled everything."""
-        mgr = _mgr(factory=None, term="ssh")
+        mgr = _mgr(term="ssh")
         ran: list[str] = []
 
         async def _fake_exec_on(conn, cmd, timeout=None, log=None):
@@ -339,7 +346,9 @@ class TestTheSshRowPromotesOffTheRawChannel:
             return CommandResult(status=Status.Success, value="RAW", command=cmd, retcode=0)
 
         monkeypatch.setattr(mgr, "exec_on", _fake_exec_on)
-        result = await mgr.exec(cmd="id")
+        route = mgr.exec_route()
+        assert route is ExecRoute.SSH_CHANNEL
+        result = await _exec(mgr, route, cmd="id")
 
         assert result.value == "RAW"
         assert ran == ["id"]
@@ -383,15 +392,15 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
 
     def test_the_route_is_the_default_session_whatever_the_call_needs(self):
         mgr, _console = self._console_mgr()
-        assert mgr._exec_route() is _ExecRoute.DEFAULT_SESSION
-        assert mgr._exec_route(needs_shell=True) is _ExecRoute.DEFAULT_SESSION
+        assert mgr.exec_route() is ExecRoute.DEFAULT_SESSION
+        assert mgr.exec_route(needs_shell=True) is ExecRoute.DEFAULT_SESSION
 
     @pytest.mark.asyncio
     async def test_a_plain_exec_runs_on_the_default_session(self, monkeypatch):
         mgr, _console = self._console_mgr()
         ran = self._spy_default(mgr, monkeypatch)
 
-        result = await mgr.exec(cmd="id -un", timeout=5.0)
+        result = await _exec(mgr, ExecRoute.DEFAULT_SESSION, cmd="id -un", timeout=5.0)
 
         assert ran == [("id -un", None, 5.0)]
         assert result.value == "out"
@@ -404,7 +413,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         ran = self._spy_default(mgr, monkeypatch)
         expects = [("Password:", "pw")]
 
-        await mgr.exec(cmd="sudo -S true", expects=expects, needs_shell=True)
+        await _exec(mgr, ExecRoute.DEFAULT_SESSION, cmd="sudo -S true", expects=expects)
 
         assert [(cmd, exp) for cmd, exp, _t in ran] == [("sudo -S true", expects)]
         assert mgr._exec_pool_count == 0
@@ -418,7 +427,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         ran = self._spy_default(mgr, monkeypatch)
 
         with pytest.raises(ConsoleError, match=r"^test2: console is single-client.*'test'.*'root'"):
-            await mgr.exec(cmd="id -un", user="root")
+            await _exec(mgr, ExecRoute.DEFAULT_SESSION, cmd="id -un", user="root")
 
         assert ran == []
         console.assert_not_awaited()
@@ -428,7 +437,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         mgr, _console = self._console_mgr()
         ran = self._spy_default(mgr, monkeypatch)
 
-        await mgr.exec(cmd="id -un", user="test")
+        await _exec(mgr, ExecRoute.DEFAULT_SESSION, cmd="id -un", user="test")
 
         assert [cmd for cmd, _e, _t in ran] == ["id -un"]
 
@@ -437,4 +446,6 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         from otto.host.session import typed_line_budget
 
         mgr, _console = self._console_mgr()
-        assert mgr.exec_line_budget == typed_line_budget(mgr._command_frame)
+        assert mgr.line_budget(route=mgr.exec_route()) == typed_line_budget(
+            mgr._command_frame, echoes=True
+        )

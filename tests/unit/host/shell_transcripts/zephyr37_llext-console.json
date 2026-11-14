@@ -1,0 +1,78 @@
+{
+  "element": "zephyr37_llext",
+  "term": "console",
+  "release": "zephyr-3.7",
+  "frame": "zephyr-serial",
+  "terminal_mapping": "unmeasured",
+  "captured": "2026-11-13",
+  "markers": {
+    "begin": "__OTTO_2397c629e670_BEGIN__",
+    "end_prefix": "__OTTO_2397c629e670_END__"
+  },
+  "commands": [
+    {
+      "cmd": "kernel version",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nZephyr version 3.7.2\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nZephyr version 3.7.2\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "Zephyr version 3.7.2",
+      "retcode": 0
+    },
+    {
+      "cmd": "help",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  clear    : Clear screen.\r\n  device   : Device commands\r\n  devmem   : Read/write physical memory\r\n\u001b[13CUsage:\r\n\u001b[13CRead memory at address with optional width:\r\n\u001b[13Cdevmem <address> [<width>]\r\n\u001b[13CWrite memory at address with mandatory width and value:\r\n\u001b[13Cdevmem <address> <width> <value>\r\n  help     : Prints the help message.\r\n  history  : Command history.\r\n  kernel   : Kernel commands\r\n  llext    : Loadable extension commands\r\n  rem      : Ignore lines beginning with 'rem '\r\n  resize   : Console gets terminal screen size or assumes default in case the\r\n\u001b[13Creadout fails. It must be executed after each terminal width change\r\n\u001b[13Cto ensure correct text display.\r\n  retval   : Print return value of most recent command\r\n  shell    : Useful, not Unix-like shell commands.\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  clear    : Clear screen.\r\n  device   : Device commands\r\n  devmem   : Read/write physical memory\r\n\u001b[13CUsage:\r\n\u001b[13CRead memory at address with optional width:\r\n\u001b[13Cdevmem <address> [<width>]\r\n\u001b[13CWrite memory at address with mandatory width and value:\r\n\u001b[13Cdevmem <address> <width> <value>\r\n  help     : Prints the help message.\r\n  history  : Command history.\r\n  kernel   : Kernel commands\r\n  llext    : Loadable extension commands\r\n  rem      : Ignore lines beginning with 'rem '\r\n  resize   : Console gets terminal screen size or assumes default in case the\r\n\u001b[13Creadout fails. It must be executed after each terminal width change\r\n\u001b[13Cto ensure correct text display.\r\n  retval   : Print return value of most recent command\r\n  shell    : Useful, not Unix-like shell commands.\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "Please press the <Tab> button to see all available commands.\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\nYou can try to call commands with <-h> or <--help> parameter for more information.\n\nShell supports following meta-keys:\n  Ctrl + (a key from: abcdefklnpuw)\n  Alt  + (a key from: bf)\nPlease refer to shell documentation for more details.\n\nAvailable commands:\n  clear    : Clear screen.\n  device   : Device commands\n  devmem   : Read/write physical memory\n\u001b[13CUsage:\n\u001b[13CRead memory at address with optional width:\n\u001b[13Cdevmem <address> [<width>]\n\u001b[13CWrite memory at address with mandatory width and value:\n\u001b[13Cdevmem <address> <width> <value>\n  help     : Prints the help message.\n  history  : Command history.\n  kernel   : Kernel commands\n  llext    : Loadable extension commands\n  rem      : Ignore lines beginning with 'rem '\n  resize   : Console gets terminal screen size or assumes default in case the\n\u001b[13Creadout fails. It must be executed after each terminal width change\n\u001b[13Cto ensure correct text display.\n  retval   : Print return value of most recent command\n  shell    : Useful, not Unix-like shell commands.",
+      "retcode": 0
+    },
+    {
+      "cmd": "kernel uptime",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nUptime: 130559540 ms\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nUptime: 130559540 ms\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "Uptime: 130559540 ms",
+      "retcode": 0
+    },
+    {
+      "cmd": "otto_not_a_command",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n-8\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n-8\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "otto_not_a_command: command not found",
+      "retcode": -8
+    },
+    {
+      "cmd": "device list",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\ndevices:\r\n- gpio@40013000 (READY)\r\n- gpio@40012000 (READY)\r\n- gpio@40011000 (READY)\r\n- gpio@40010000 (READY)\r\n- mps2_fpgaio@4002804c (READY)\r\n- mps2_fpgaio@40028008 (READY)\r\n- mps2_fpgaio@40028000 (READY)\r\n- uart@40009000 (READY)\r\n- uart@40007000 (READY)\r\n- uart@40006000 (READY)\r\n- uart@40005000 (READY)\r\n- uart@40004000 (READY)\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\ndevices:\r\n- gpio@40013000 (READY)\r\n- gpio@40012000 (READY)\r\n- gpio@40011000 (READY)\r\n- gpio@40010000 (READY)\r\n- mps2_fpgaio@4002804c (READY)\r\n- mps2_fpgaio@40028008 (READY)\r\n- mps2_fpgaio@40028000 (READY)\r\n- uart@40009000 (READY)\r\n- uart@40007000 (READY)\r\n- uart@40006000 (READY)\r\n- uart@40005000 (READY)\r\n- uart@40004000 (READY)\r\n\u001b[1;32muart:~$ \u001b[m\r\n0\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "devices:\n- gpio@40013000 (READY)\n- gpio@40012000 (READY)\n- gpio@40011000 (READY)\n- gpio@40010000 (READY)\n- mps2_fpgaio@4002804c (READY)\n- mps2_fpgaio@40028008 (READY)\n- mps2_fpgaio@40028000 (READY)\n- uart@40009000 (READY)\n- uart@40007000 (READY)\n- uart@40006000 (READY)\n- uart@40005000 (READY)\n- uart@40004000 (READY)",
+      "retcode": 0
+    },
+    {
+      "cmd": "devmem",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31mdevmem: wrong parameter count\r\n\u001b[mdevmem - Read/write physical memory\r\n\u001b[9CUsage:\r\n\u001b[9CRead memory at address with optional width:\r\n\u001b[9Cdevmem <address> [<width>]\r\n\u001b[9CWrite memory at address with mandatory width and value:\r\n\u001b[9Cdevmem <address> <width> <value>\r\nSubcommands:\r\n  dump  : Usage:\r\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\r\n\r\n  load  : Usage:\r\n\u001b[10Cdevmem load [options] [address]\r\nOptions:\r\n-e\tlittle-endian parse\r\n\u001b[1;32muart:~$ \u001b[m\r\n-22\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31mdevmem: wrong parameter count\r\n\u001b[mdevmem - Read/write physical memory\r\n\u001b[9CUsage:\r\n\u001b[9CRead memory at address with optional width:\r\n\u001b[9Cdevmem <address> [<width>]\r\n\u001b[9CWrite memory at address with mandatory width and value:\r\n\u001b[9Cdevmem <address> <width> <value>\r\nSubcommands:\r\n  dump  : Usage:\r\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\r\n\r\n  load  : Usage:\r\n\u001b[10Cdevmem load [options] [address]\r\nOptions:\r\n-e\tlittle-endian parse\r\n\u001b[1;32muart:~$ \u001b[m\r\n-22\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "devmem: wrong parameter count\ndevmem - Read/write physical memory\n\u001b[9CUsage:\n\u001b[9CRead memory at address with optional width:\n\u001b[9Cdevmem <address> [<width>]\n\u001b[9CWrite memory at address with mandatory width and value:\n\u001b[9Cdevmem <address> <width> <value>\nSubcommands:\n  dump  : Usage:\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\n\n  load  : Usage:\n\u001b[10Cdevmem load [options] [address]\nOptions:\n-e\tlittle-endian parse",
+      "retcode": -22
+    },
+    {
+      "cmd": "kernel log_level otto_nope 1",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles     : Kernel cycles.\r\n  reboot     : Reboot.\r\n  stacks     : List threads stack usage.\r\n  threads    : List kernel threads.\r\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\r\n  version    : Kernel version.\r\n  sleep      : ms\r\n  log-level  : <module name> <severity (0-4)>\r\n\u001b[1;32muart:~$ \u001b[m\r\n1\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles     : Kernel cycles.\r\n  reboot     : Reboot.\r\n  stacks     : List threads stack usage.\r\n  threads    : List kernel threads.\r\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\r\n  version    : Kernel version.\r\n  sleep      : ms\r\n  log-level  : <module name> <severity (0-4)>\r\n\u001b[1;32muart:~$ \u001b[m\r\n1\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "kernel - Kernel commands\nSubcommands:\n  cycles     : Kernel cycles.\n  reboot     : Reboot.\n  stacks     : List threads stack usage.\n  threads    : List kernel threads.\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\n  version    : Kernel version.\n  sleep      : ms\n  log-level  : <module name> <severity (0-4)>",
+      "retcode": 1
+    },
+    {
+      "cmd": "llext call_fn otto_nope otto_nope",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nNo such extension otto_nope\r\n\u001b[1;32muart:~$ \u001b[m\r\n-2\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_BEGIN__: command not found\r\n\u001b[m\u001b[1;32muart:~$ \u001b[m\r\nNo such extension otto_nope\r\n\u001b[1;32muart:~$ \u001b[m\r\n-2\r\n\u001b[1;32muart:~$ \u001b[m\r\n\u001b[1;31m__OTTO_2397c629e670_END__",
+      "value": "No such extension otto_nope",
+      "retcode": -2
+    }
+  ]
+}

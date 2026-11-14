@@ -12,8 +12,9 @@ from otto.host.app_shell import AppShell
 from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
 from otto.host.element import Element
 from otto.host.errors import RawLandingError
+from otto.host.exec_route import ExecRoute
 from otto.host.login_proxy import Cred
-from otto.host.session import SessionManager, ShellSession, _ExecRoute
+from otto.host.session import SessionManager, ShellSession
 from otto.host.session_setup import (
     SESSION_SETUPS,
     SessionSetup,
@@ -301,8 +302,9 @@ async def test_a_named_session_whose_hook_fails_is_torn_down_and_left_unregister
 async def test_exec_route_is_pooled_on_a_hook_host_and_the_hook_sees_exec_pool():
     h = _Harness(_export)
     try:
-        assert h.mgr._exec_route() is _ExecRoute.POOLED_SHELL
-        r = await h.mgr.exec(cmd="id")
+        route = h.mgr.exec_route()
+        assert route is ExecRoute.POOLED_SHELL
+        r = await h.mgr.exec_on_route(route=route, cmd="id", timeout=10.0, log=LogMode.NORMAL)
         assert r.retcode == 0
         assert ("exec_pool", "admin") in h.calls
     finally:
@@ -323,7 +325,7 @@ async def test_a_host_without_a_hook_is_unchanged():
     await mgr._ensure_session()
     readies = [w for w in built[0].shell.writes if "READY__" in w]
     assert len(readies) == 1
-    assert mgr._exec_route() is _ExecRoute.SSH_CHANNEL
+    assert mgr.exec_route() is ExecRoute.SSH_CHANNEL
 
 
 @pytest.mark.asyncio
@@ -509,7 +511,9 @@ async def test_a_hook_that_raises_on_the_exec_pool_surfaces_from_exec():
     h = _Harness(hook)
     try:
         with pytest.raises(SessionSetupError, match=r"session setup .* failed: boom"):
-            await h.mgr.exec(cmd="id")
+            await h.mgr.exec_on_route(
+                route=h.mgr.exec_route(), cmd="id", timeout=10.0, log=LogMode.NORMAL
+            )
         assert [kind for kind, _user in h.calls] == ["exec_pool"]
     finally:
         h.unregister()
@@ -629,25 +633,21 @@ async def test_every_transport_arm_builds_the_session_with_the_landing_frame(
     assert built[0].handed_frame is (landing if has_landing else command)
 
 
-def test_an_exec_factory_does_not_win_on_a_hooked_host():
-    """The FACTORY route's `and not hooked` clause: a raw primitive cannot run setup."""
+def test_the_raw_channel_does_not_win_on_a_hooked_host():
+    """The route's `hooked` clause: a raw primitive cannot run setup."""
     register_session_setup("t5-exec-route", _export, overwrite=True)
-
-    def factory(cmd, timeout):  # pragma: no cover - never routed to
-        raise AssertionError("a hooked host must not reach the exec factory")
 
     try:
         hooked = SessionManager(
             connections=_conn(),
             name="h",
             host_id="h",
-            exec_factory=factory,
             session_setup=SessionSetup(name="t5-exec-route"),
         )
-        assert hooked._exec_route() is _ExecRoute.POOLED_SHELL
+        assert hooked.exec_route() is ExecRoute.POOLED_SHELL
         # The same manager without the hook still takes the fast path, so this
         # cannot be satisfied by pooling everything.
-        plain = SessionManager(connections=_conn(), name="h", host_id="h", exec_factory=factory)
-        assert plain._exec_route() is _ExecRoute.FACTORY
+        plain = SessionManager(connections=_conn(), name="h", host_id="h")
+        assert plain.exec_route() is ExecRoute.SSH_CHANNEL
     finally:
         SESSION_SETUPS.unregister(name="t5-exec-route")

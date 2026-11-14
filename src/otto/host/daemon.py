@@ -137,7 +137,7 @@ def refuse_if_launch_wrapper_needs_bash(host: Any, *, attempted: str = "") -> No
     each wrong for its own reason:
 
     * NOT :attr:`~otto.host.userland.Userland.shell_dialect`. The same trap
-      :func:`otto.host.session.refuse_if_line_editor_would_truncate` documents:
+      :func:`otto.host.session.refuse_if_typed_line_would_be_cut` documents:
       it is the probe that MEASURES the fact, and reading it would drag a whole
       userland resolution -- up to ``_RESOLVE_BUDGET_S``, 30 seconds against a
       host that will not answer -- onto a decision the lab entry has already
