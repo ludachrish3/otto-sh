@@ -21,6 +21,10 @@ the lib/ and product/ source directories and their files with
 threshold-colored Line % and Branch % bars and one percentage column per
 tier, and the per-node stats card](../../_static/generated/coverage-report.png)
 
+A file page's **Columns** menu picks which columns the source view shows; in a
+narrow window it starts from just line numbers, a total hit count and the
+source. See {ref}`coverage-report-columns`.
+
 See {doc}`../../architecture/subsystems/coverage/index` for how the fetch → pair →
 capture → render pipeline fits together, and for the design behind tiers,
 validity, and why only manual captures are committed.

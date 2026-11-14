@@ -283,7 +283,8 @@ configure.
   column is sortable. The root page also shows a collapsed **Runs &
   captures** summary — the full table lives at `#/runs`.
 - **File pages** (`#/coverage/<file>`) — annotated source: per-tier hit
-  columns, branch pills (taken/not-taken/unreachable), winner-take-all row
+  columns (the **Columns** menu chooses which columns show, see
+  {ref}`coverage-report-columns`), branch pills (taken/not-taken/unreachable), winner-take-all row
   coloring per {ref}`coverage-colors`, and the per-line **runs** drilldown
   from {ref}`coverage-runs`, listing every run that hit the line with
   revoked/aging credits marked.
@@ -395,6 +396,43 @@ schema, `files[].functions` included, is {ref}`coverage-store-json`.
 `tickets.json` (see
 {ref}`coverage-tickets-json`) is a separate, public export built for
 consumers otto does not control.
+
+(coverage-report-columns)=
+### Choosing the source view's columns
+
+A file page's **Columns** button opens a menu that chooses which columns the
+annotated source shows. It is on file pages only; the directory tree and the
+runs table are unchanged.
+
+- **Show columns** — **Tickets**, **Line numbers**, **Branches** and **Hit
+  counts**, each a checkbox. **Tickets** appears only on files that have
+  ticket attribution.
+- **Hit counts as** — **Per tier** shows one count per tier; **Total** shows
+  one **Hits** column.
+- **Reset columns** — drops every choice you made and goes back to the
+  defaults.
+
+**Defaults follow the window width.** At 820 px wide and up, every column
+shows, with a hit count per tier. Below 820 px the page shows line numbers, the
+hit counts and the source, with **Tickets** and **Branches** off; in a report
+with more than one tier the hit counts are one **Hits** total column. A row's
+colour already tells you whether and how a line is covered, so the narrow
+default spends the width on the source.
+
+**Total** adds the line's per-tier counts into one number. It carries the
+dashed *asserted* marker (see {ref}`coverage-overrides`) only when every tier
+that contributes hits to the line is covered by an override alone; a line with
+any recorded run in the sum shows a plain count. **Per tier** shows the split.
+A report with a single tier always shows **Per tier**, and the **Per tier** /
+**Total** choice is greyed out.
+
+**Your choices last for the open report.** Each setting you change holds on
+every file page of that report and across window resizes, until **Reset
+columns**; a setting you have not changed keeps following the window width.
+Turning **Hit counts** off keeps whichever mode was in effect, and from then on
+that mode stays put across resizes until **Reset columns**; while **Hit
+counts** is off, **Per tier** and **Total** are greyed out.
+Choices are not kept across a reload, in a new tab, or in another report.
 
 ## Hosting the report in CI
 

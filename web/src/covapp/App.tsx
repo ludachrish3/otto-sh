@@ -16,6 +16,7 @@ import { FilePage } from "./pages/FilePage";
 import { GuardScreen } from "./pages/GuardScreen";
 import { RunsPage } from "./pages/RunsPage";
 import { TicketsPage } from "./pages/TicketsPage";
+import { SourceColumnsProvider } from "./sourceColumns";
 import { findNode } from "./stats";
 import type { IndexPayload } from "./types";
 
@@ -118,11 +119,16 @@ function CoverageApp() {
  * branch reads focus/toast. `<Router hook={useHashLocation}>` above uses
  * focus.tsx's own hash-location hook (NOT wouter's `wouter/use-hash-
  * location`) — see focus.tsx's header comment for why that swap is load-
- * bearing once `?ctx=` lives inside the hash fragment. */
+ * bearing once `?ctx=` lives inside the hash fragment. The
+ * `SourceColumnsProvider` inside it holds the source view's column choices
+ * in memory for the life of the tab (sourceColumns.tsx); like `FocusProvider`
+ * it works before the index loads. */
 function App() {
   return (
     <FocusProvider>
-      <CoverageApp />
+      <SourceColumnsProvider>
+        <CoverageApp />
+      </SourceColumnsProvider>
       <ToastViewport />
     </FocusProvider>
   );

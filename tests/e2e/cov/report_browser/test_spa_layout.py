@@ -24,7 +24,9 @@ pytestmark = [
     pytest.mark.browser,
 ]
 
-WIDTHS = [820, 960, 1000]
+# Source of truth: NARROW_MAX_WIDTH in web/src/covapp/sourceColumns.tsx.
+NARROW_MAX_WIDTH = 820
+WIDTHS = [NARROW_MAX_WIDTH, 960, 1000]
 VIEWPORT_HEIGHT = 800
 
 # Context / ticket / product / search values come from
@@ -187,7 +189,7 @@ def test_header_with_long_names_stays_sound(page: Page, report_dir: Path, width:
     assert title_span.evaluate("el => el.scrollWidth > el.clientWidth")
 
 
-@pytest.mark.parametrize("width", [820])
+@pytest.mark.parametrize("width", [NARROW_MAX_WIDTH])
 def test_runs_scrollport_fits_the_page(page: Page, report_dir: Path, width: int) -> None:
     _goto(page, report_dir, width, "/runs")
     port = _scrollport(page)
@@ -223,7 +225,7 @@ def test_runs_scroll_reveals_last_column(page: Page, report_dir: Path, width: in
     assert abs(cells["head"]["l"] - cells["cell"]["l"]) <= 1, cells
 
 
-@pytest.mark.parametrize("width", [820])
+@pytest.mark.parametrize("width", [NARROW_MAX_WIDTH])
 def test_runs_expanded_details_scroll_with_rows(page: Page, report_dir: Path, width: int) -> None:
     _goto(page, report_dir, width, "/runs")
     row = page.locator(f'[data-testid="run-row-{FOCUS_CTX}"]')
@@ -295,7 +297,7 @@ def test_runs_long_tier_name_stays_in_its_track(page: Page, report_dir: Path, wi
     assert rects["right"] <= rects["nextLeft"] + 0.5, rects
 
 
-@pytest.mark.parametrize("width", [820, 960])
+@pytest.mark.parametrize("width", [NARROW_MAX_WIDTH, 960])
 def test_runs_expanded_details_hold_long_values(page: Page, report_dir: Path, width: int) -> None:
     _inject_long_values(page, cells=True)
     _goto(page, report_dir, width, "/runs")
