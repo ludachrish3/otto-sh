@@ -13,6 +13,7 @@ Key features:
 """
 
 import asyncio
+import dataclasses
 import math
 import os
 import re
@@ -33,13 +34,22 @@ from .command_frame import (
     AshFrame,
     BashFrame,
     CommandFrame,
+    ExecInput,
+    ExecRestore,
     RawFrame,
     SessionMarkers,
     command_value,
+    frame_or_default,
     handshake_prefix,
     history_prefix,
 )
-from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
+from .errors import (
+    ConsoleError,
+    PasswordRefusedError,
+    RawLandingError,
+    SessionSetupError,
+    UnsupportedOnUserlandError,
+)
 from .exec_route import ExecRoute
 from .exit_status import exit_status_of, no_return_code_result
 from .identity import ROOT_LOGIN
@@ -139,6 +149,10 @@ _RECOVERY_TIMEOUT = 5.0
 
 # Per-probe wait inside the recovery resend loop (confirm_live).
 _RECOVERY_PROBE_TIMEOUT = 0.5
+
+# Pause between the interrupt and the first recovery probe, so the shell has
+# taken the interrupt before it is asked whether it is back.
+_RECOVERY_SETTLE = 0.1
 
 # Ceiling on the post-open marker handshake (ShellSession._handshake, whose
 # ``timeout`` argument defaults to it and can override it per call — see
@@ -329,9 +343,40 @@ def _sink_for(
     return lambda line: log_output(line, mode)
 
 
+NEVER_RAN = "the command never ran: its end record arrived with no BEGIN marker before it"
+"""The value of a command whose end record came with no BEGIN marker before it.
+
+A console's ``exec`` prints BEGIN from the login shell it starts, so a login
+shell that never reaches the command (no ``env``, no such ``$SHELL``, a
+``$SHELL`` that does not take ``-l -c``, a profile that exits or ``exec``s)
+gives this, with ``retcode`` -1 and ``Status.Failed``, whatever status its end
+record carries. Every other frame prints BEGIN before the command, so it
+never sees it in normal operation."""
+
 _BEFORE_ANY_SESSION_ECHOES = False
 """The echo fact that gives the widest typed-line ceiling: what a check made before any session
 opens assumes, so a line no session here could carry is refused without costing a connection."""
+
+
+def render_payload(
+    frame: CommandFrame, cmd: str, *, m: SessionMarkers, exec_input: "ExecInput | None"
+) -> str:
+    """Return what a session types for *cmd*: the ``run`` frame, or the ``exec`` frame.
+
+    *exec_input* ``None`` is a ``run``: :meth:`~otto.host.command_frame.CommandFrame.frame`.
+    Otherwise an ``exec``:
+    :meth:`~otto.host.command_frame.CommandFrame.frame_exec` with the call's
+    stdin, restore and credential. The one renderer of a command's payload.
+    """
+    if exec_input is None:
+        return frame.frame(cmd, m=m)
+    return frame.frame_exec(
+        cmd,
+        m=m,
+        stdin_eof=exec_input.stdin_eof,
+        restore=exec_input.restore,
+        credential=exec_input.credential,
+    )
 
 
 def typed_line_ceiling(frame: "CommandFrame | None", *, echoes: bool) -> int:
@@ -363,6 +408,7 @@ def refuse_if_typed_line_would_be_cut(
     echoes: bool,
     host: str = "",
     exec_escapes: bool = True,
+    exec_input: "ExecInput | None" = None,
 ) -> None:
     """Refuse *cmd* when the terminal it is typed through would silently shorten it.
 
@@ -418,9 +464,14 @@ def refuse_if_typed_line_would_be_cut(
     ``_SESSION_ID_LEN``, which ``tests/unit/host/test_run_line_length.py``
     pins against a real session.
 
+    *exec_input* is the payload kind the session will type (:func:`render_payload`):
+    ``None`` for a ``run``'s frame, an ``exec``'s for the exec frame, whose
+    opening is longer, so each entry is measured against its own line.
+
     *exec_escapes* says whether ``exec()`` on this host avoids the bound, and
-    so whether the message may advise it. It does everywhere but a ``console``
-    term, where ``exec`` runs on this same session and is refused the same way.
+    so whether the message may advise it. It does not on a ``console`` term,
+    where ``exec`` runs on the default session, nor on a pooled exec, which
+    types into a shell session of its own; both are refused the same way.
 
     Raises:
         ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
@@ -431,12 +482,11 @@ def refuse_if_typed_line_would_be_cut(
     """
     if not isinstance(frame, AshFrame):
         return
-    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
-    longest = max(len(line) for line in frame.frame(cmd, m=markers).rstrip("\n").split("\n"))
+    longest = max(len(line) for line in _synthetic_lines(frame, cmd, exec_input=exec_input))
     ceiling = typed_line_ceiling(frame, echoes=echoes)
     if longest <= ceiling:
         return
-    overhead = framed_line_overhead(frame)
+    overhead = framed_line_overhead(frame, exec_input=exec_input)
     terminal = (
         "BusyBox ash's line editor keeps intact on one line while the terminal still "
         "echoes (`stty -echo` did not take at the handshake)"
@@ -447,7 +497,7 @@ def refuse_if_typed_line_would_be_cut(
         "Send it through `exec()`, which allocates no pty and took 9000 characters "
         "in the same measurement, or split it"
         if exec_escapes
-        else "On a console `exec()` types into this same session, so split it"
+        else "`exec()` types into a shell session on this route too, so split it"
     )
     refuse_if_gapped(
         "run-command-line-length",
@@ -462,7 +512,9 @@ def refuse_if_typed_line_would_be_cut(
     )
 
 
-def typed_line_budget(frame: "CommandFrame | None", *, echoes: bool) -> int:
+def typed_line_budget(
+    frame: "CommandFrame | None", *, echoes: bool, exec_input: "ExecInput | None" = None
+) -> int:
     """Characters of ONE line of a caller's command a line-disciplined path carries.
 
     The BUDGET half of what :func:`refuse_if_typed_line_would_be_cut`
@@ -477,6 +529,8 @@ def typed_line_budget(frame: "CommandFrame | None", *, echoes: bool) -> int:
     line and the transfer works.
 
     The ceiling is :func:`typed_line_ceiling`'s for *frame* and *echoes*.
+    *exec_input* picks the payload as :func:`render_payload` does, so the
+    budget is the one the refusal measures for the same entry.
 
     Returns the budget for the caller's COMMAND, with what otto's frame adds to
     the command's own line already subtracted (see
@@ -493,12 +547,77 @@ def typed_line_budget(frame: "CommandFrame | None", *, echoes: bool) -> int:
     those later lines, and the alternative is a budget whose value depends on
     the shape of a command the caller has not built yet.
     """
-    frame = frame or BashFrame()
-    return typed_line_ceiling(frame, echoes=echoes) - framed_line_overhead(frame)
+    return typed_line_room(frame, "", echoes=echoes, exec_input=exec_input)
 
 
-def framed_line_overhead(frame: "CommandFrame") -> int:
+def typed_line_room(
+    frame: "CommandFrame | None",
+    cmd: str,
+    *,
+    echoes: bool,
+    exec_input: "ExecInput | None" = None,
+) -> int:
+    """Characters that text inserted into *cmd*'s first line may add before its line is cut.
+
+    The ceiling (:func:`typed_line_ceiling`) less the line *cmd*'s first line
+    is typed on, RENDERED (:func:`render_payload`), so whatever the frame does
+    to the command is counted: a console's exec frame quotes it as one word,
+    and every single quote in it then types as four characters. Negative
+    when that line is already over. The inserted text must be quote-free
+    (base64 is), so it types as itself.
+
+    The one sizing helper for a caller that builds its own command around a
+    payload (``ShellFileTransfer``'s chunk command): it measures its command
+    with an empty payload and spends what is left, never restating the
+    frame's arithmetic. :func:`typed_line_budget` is this for an empty
+    command.
+    """
+    frame = frame_or_default(frame)
+    return typed_line_ceiling(frame, echoes=echoes) - _command_line_length(
+        frame, cmd, exec_input=exec_input
+    )
+
+
+_LINE_PROBE = "OTTOFRAMEPROBE"
+"""A quote-free word that marks, in a rendered payload, the line a command starts on."""
+
+
+def _synthetic_lines(
+    frame: "CommandFrame", cmd: str, *, exec_input: "ExecInput | None"
+) -> "list[str]":
+    """Return the physical lines *frame* types for *cmd*, against the synthetic marker set."""
+    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
+    return render_payload(frame, cmd, m=markers, exec_input=exec_input).rstrip("\n").split("\n")
+
+
+def _command_line_length(frame: "CommandFrame", cmd: str, *, exec_input: "ExecInput | None") -> int:
+    """Length of the line *cmd*'s first line is typed on, framing and quoting included.
+
+    Rendered with :data:`_LINE_PROBE` in front of *cmd*, so the line is
+    found, and the probe's own length taken off again. A frame that
+    transforms the command beyond recognition is charged its whole frame
+    for an empty command, plus the command.
+    """
+    line = next(
+        (
+            x
+            for x in _synthetic_lines(frame, _LINE_PROBE + cmd, exec_input=exec_input)
+            if _LINE_PROBE in x
+        ),
+        None,
+    )
+    if line is None:
+        # A frame that transforms the command beyond recognition: charge the
+        # whole empty frame, as before the bash/ash frame split its lines.
+        return len("\n".join(_synthetic_lines(frame, "", exec_input=exec_input))) + len(cmd)
+    return len(line) - len(_LINE_PROBE)
+
+
+def framed_line_overhead(frame: "CommandFrame", *, exec_input: "ExecInput | None" = None) -> int:
     """Characters the frame adds to the physical line a command is typed on.
+
+    *exec_input* picks the payload as :func:`render_payload` does: ``None`` for
+    ``run``'s frame, an ``exec``'s for the exec frame.
 
     Measured on the line that carries the command, not on the whole frame: the
     bash/ash frame closes its brace group and echoes END on a line of its own,
@@ -507,15 +626,7 @@ def framed_line_overhead(frame: "CommandFrame") -> int:
     its quotes are counted too. Rendered against a synthetic marker set; only
     the marker LENGTH affects the arithmetic.
     """
-    probe = "OTTOFRAMEPROBE"
-    markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
-    lines = frame.frame(probe, m=markers).rstrip("\n").split("\n")
-    line = next((line for line in lines if probe in line), None)
-    if line is None:
-        # A frame that transforms the command beyond recognition: charge the
-        # whole empty frame, as before the bash/ash frame split its lines.
-        return len(frame.frame("", m=markers).rstrip("\n"))
-    return len(line) - len(probe)
+    return _command_line_length(frame, "", exec_input=exec_input)
 
 
 class ShellSession(ABC):
@@ -582,7 +693,7 @@ class ShellSession(ABC):
         self._handshake_seen = ""
         # The dialect: how commands are framed and parsed. Defaults to bash; an
         # embedded host injects a ZephyrFrame (or a project-registered frame).
-        self._frame: CommandFrame = command_frame or BashFrame()
+        self._frame: CommandFrame = frame_or_default(command_frame)
         # Whether otto's commands are recorded in this host's shell history.
         # Defaults True — "leave the shell as we found it" — so every caller
         # that doesn't opt in (LocalHost, DockerContainerHost, EmbeddedHost)
@@ -618,6 +729,10 @@ class ShellSession(ABC):
         # _recover_session before doing anything to drain that state and
         # return the shell to a clean prompt.
         self._needs_recovery = False
+        # What a cancelled isolated exec left to put back (its frame's tail
+        # never ran), restored by that next operation's recovery; None when
+        # the pending recovery has nothing to restore.
+        self._pending_restore: ExecRestore | None = None
         self._on_output: Callable[[str], None] = lambda _: None
         # Optional per-command write-progress sink: (bytes_written, total).
         # Set transiently around a single framed write (see _run_cmd_inner) and
@@ -636,6 +751,10 @@ class ShellSession(ABC):
         self._warned_terminal_mapping = False
         self._warned_tabs = False
         self._warned_echo = False
+        # Set, once, when an exec frame's end record said the shell's terminal
+        # record was gone (BashFrame.exec_baseline_present): the session
+        # warns once, never re-snapshots, and the exec pool closes it.
+        self._exec_baseline_lost = False
         # App-shell lock: the AppShell instance currently attached to this
         # session, or None. Typed `object` (not AppShell) to avoid an import
         # cycle — session.py must not import app_shell at module load. While
@@ -647,6 +766,18 @@ class ShellSession(ABC):
     def alive(self) -> bool:
         """Whether the session is initialized and responsive."""
         return self._alive
+
+    @property
+    def exec_baseline_lost(self) -> bool:
+        """Whether an ``exec`` found the shell's terminal record gone.
+
+        The record (``__otto_base``) is set on every handshake and kept by
+        the shell; a command that unsets it, or a shell that replaced
+        itself, loses it. From then on every ``exec`` reports the loss and
+        restores nothing, otto never takes a new snapshot over a terminal it
+        cannot vouch for, and the exec pool does not keep the session.
+        """
+        return self._exec_baseline_lost
 
     reads_a_terminal: bool = True
     """Whether this session's shell reads a terminal; ``False`` for a pipe (:class:`LocalSession`).
@@ -819,14 +950,16 @@ class ShellSession(ABC):
     # --- Session lifecycle ---
 
     async def _ensure_ready(self) -> None:
-        """Initialize the session if needed, and recover it if the prior op was cancelled."""
+        """Initialize the session if needed, and recover it if the prior op was cancelled.
+
+        The deferred recovery is the stop a timed-out command gets
+        (:meth:`_stop_under_bound`): bounded, followed by the restore line
+        when the cancelled op was an isolated ``exec``, and a session it
+        cannot confirm is left dead.
+        """
         await self._ensure_initialized()
         if self._needs_recovery:
-            # Clear the flag first so a recovery that itself fails doesn't
-            # loop forever on subsequent calls — _recover_session marks
-            # _alive=False on its own failures.
-            self._needs_recovery = False
-            await self._recover_session()
+            await self._stop_under_bound(restore=self._pending_restore)
 
     def _handshake_payload(self, m: SessionMarkers) -> str:
         """Render the complete first line written into a fresh shell.
@@ -1102,6 +1235,7 @@ class ShellSession(ABC):
         self._frame = frame
         self._end_pattern = frame.end_pattern(self._markers)
         self._needs_recovery = False
+        self._pending_restore = None
         self._initialized = False
         logger.debug(f"{self._log_tag}: entering frame {type(frame).__name__}")
         await self._handshake(timeout=timeout)
@@ -1235,6 +1369,7 @@ class ShellSession(ABC):
         on_output: Callable[[str], None] | None = None,
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Execute a shell command with sentinel-based output demarcation.
 
@@ -1244,15 +1379,22 @@ class ShellSession(ABC):
         Args:
             cmd: The shell command to execute.
             expects: Optional list of (pattern, response) tuples. If a pattern
-                appears in the output before the end sentinel, the response is
-                automatically sent. Expects are inherently optional — if the
-                pattern never appears, the end sentinel matches normally. A
-                :class:`~otto.host.host.CredentialExpect` is answered only
-                after the command's BEGIN marker, and at most once.
+                appears in the output between the command's BEGIN marker and
+                the end sentinel, the response is automatically sent; nothing
+                before BEGIN is matched. Expects are inherently optional — if
+                the pattern never appears, the end sentinel matches normally. A
+                :class:`~otto.host.host.CredentialExpect` is answered at most once.
             timeout: Seconds before the command is considered hung. On expiry,
                 the session attempts recovery via Ctrl+C and returns
                 Status.Error. Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
                 pass ``float("inf")`` for a deliberately unbounded command.
+            exec_input: ``None`` for a ``run``. For an ``exec``, what its frame
+                needs (:func:`render_payload`): on a dialect that isolates
+                ``exec``, the command runs in a subshell of its own, its
+                status is read by
+                :meth:`~otto.host.command_frame.CommandFrame.extract_exec_retcode`,
+                and an interrupted one is followed by the dialect's
+                post-recovery restore line.
 
         Returns:
             CommandResult with exit code extracted from the sentinel.
@@ -1281,13 +1423,23 @@ class ShellSession(ABC):
                 f"the target shell, then enter_frame() before run()"
             )
         await self._ensure_ready()
+        # A recovery that could not confirm the shell (an unconfirmed restore
+        # after a cancelled exec) left it dead: nothing more is typed into it.
+        self._require_alive()
         sink = on_output if on_output is not None else self._on_output
         output = ExecOutput(valuer=self._partial_value())
+        # What an interrupted command leaves to restore: only an exec that ran
+        # isolated has a tail of its own that the interrupt skipped.
+        restore = (
+            exec_input.restore if exec_input is not None and self._frame.isolates_exec else None
+        )
         try:
             # Always bounded: `inf` never fires, so an intentionally unbounded
             # command needs no separate branch.
             return await asyncio.wait_for(
-                self._run_cmd_inner(cmd, expects, sink, output, redact, write_progress),
+                self._run_cmd_inner(
+                    cmd, expects, sink, output, redact, write_progress, exec_input=exec_input
+                ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
@@ -1296,13 +1448,13 @@ class ShellSession(ABC):
             # the interrupt is written. What the recovery reads after it (the
             # echoed ^C, the prompt) is the shell's, never the command's.
             output.feed(await self._take_unread())
-            await self._interrupt_command()
+            await self._stop_under_bound(restore=restore)
             return timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
         except _CredentialRefusedError as refused:
             # The prompt came back after the one answer: typing the password
             # again would spend another authentication attempt on a password
             # already refused, and waiting would cost the whole timeout.
-            await self._interrupt_command()
+            await self._stop_under_bound(restore=restore)
             raise PasswordRefusedError(
                 f"password refused for {refused.expect.user or 'the session user'} "
                 f"on {refused.expect.host or 'this host'}"
@@ -1313,7 +1465,10 @@ class ShellSession(ABC):
             # we never consumed. Mark for recovery on next use rather than
             # running it inline — running here would race the cancellation
             # propagation and could leave the recover-marker write detached.
+            # What the interrupted exec's tail would have put back goes with
+            # it, for that recovery's restore line.
             self._needs_recovery = True
+            self._pending_restore = restore
             raise
         except tuple(self._connection_lost_errors()) as exc:
             # Same class of event either way — the transport is gone: EOF on
@@ -1365,20 +1520,84 @@ class ShellSession(ABC):
             self._undo_terminal_mapping(raw), m=self._markers
         )
 
-    async def _interrupt_command(self) -> None:
-        """Interrupt the running command and probe the shell, from outside the command's timeout.
+    def _stop_bound(self) -> float:
+        """Return how long stopping a command otto gave up on may take, in seconds.
 
-        The one recovery for a command otto gives up on (a timeout, a refused
-        password): :meth:`_recover_session`, which marks the session dead
-        when the probe fails so the next use opens a new one. A cancellation
-        landing mid-recovery leaves the shell mid-command, so it is marked
-        for recovery on next use, as a cancelled command is.
+        The settle after the interrupt, the recovery deadline and one probe
+        wait, read at call time so a rebound module value takes effect.
         """
+        return _RECOVERY_SETTLE + _RECOVERY_TIMEOUT + _RECOVERY_PROBE_TIMEOUT
+
+    async def _stop_interrupted_command(self, *, restore: ExecRestore | None) -> None:
+        """Interrupt the running command and confirm the shell is back.
+
+        :meth:`_recover_session`, which marks the session dead when the
+        probe fails; then, for an interrupted isolated ``exec`` (*restore*
+        not ``None``), :meth:`_restore_after_interrupt`. A confirmed recovery
+        (and restore) clears the pending recovery and its pending restore.
+        Reads no output for the caller: what recovery reads is the shell's.
+        """
+        await self._recover_session()
+        if self._alive and restore is not None:
+            await self._restore_after_interrupt(restore)
+        if self._alive:
+            self._needs_recovery = False
+            self._pending_restore = None
+
+    async def _restore_after_interrupt(self, restore: ExecRestore) -> None:
+        """Put back what an interrupted isolated ``exec``'s own end would have restored.
+
+        The interrupt stops the ``exec`` frame before its tail runs, so the
+        shell is left as the frame set it (``set +e``, the terminal as the
+        command left it). One write of the frame's
+        :meth:`~otto.host.command_frame.CommandFrame.restore_line` and one
+        read of its
+        :meth:`~otto.host.command_frame.CommandFrame.restored_pattern`, bounded
+        by the recovery probe's wait; what it reads is consumed, never output.
+        A frame without the restore, a read that times out or a transport
+        that drops marks the session dead, and nothing else: it never
+        recovers again.
+        """
+        line = self._frame.restore_line(restore, self._markers)
+        pattern = self._frame.restored_pattern(self._markers)
+        if line is None or pattern is None:
+            logger.debug(f"{self._log_tag}: no restore line for an interrupted exec; dead")
+            self._alive = False
+            return
         try:
-            await self._recover_session()
-        except asyncio.CancelledError:
-            self._needs_recovery = True
-            raise
+            await self.write_transport(data=line)
+            await asyncio.wait_for(
+                self.read_transport_until(pattern=pattern), _RECOVERY_PROBE_TIMEOUT
+            )
+        except (asyncio.TimeoutError, *self._connection_lost_errors()):
+            logger.debug(f"{self._log_tag}: restore after interrupt failed; session marked dead")
+            self._alive = False
+
+    async def _stop_under_bound(self, *, restore: ExecRestore | None) -> None:
+        """Stop a command otto gave up on (a timeout, a refused password, a cancel) under one bound.
+
+        The stop runs under :func:`~otto.lifecycle.compensate` with
+        :meth:`_stop_bound` as its timeout: a cancellation landing during it
+        is held until the stop ends, and a stop that does not confirm within
+        the bound (a blocked write, a shell that never answers) leaves the
+        session dead, to be closed later, and the pool discards it.
+        *restore* is what an interrupted isolated ``exec`` leaves
+        to put back (:meth:`_stop_interrupted_command`), ``None`` otherwise.
+        """
+        # Imported here, not at module scope: otto.lifecycle is needed only
+        # when a command is stopped, as for the proxied undo below.
+        from ..lifecycle import compensate
+
+        self._needs_recovery = True
+        try:
+            await compensate(
+                self._stop_interrupted_command(restore=restore),
+                timeout=self._stop_bound(),
+                what=f"{self._log_tag}: stop the interrupted command",
+            )
+        finally:
+            if self._needs_recovery:
+                self._alive = False
 
     async def _run_cmd_inner(
         self,
@@ -1388,6 +1607,8 @@ class ShellSession(ABC):
         read: "ExecOutput",  # defined below, with the drain that shares it
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
+        *,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Send sentinel-wrapped command, handle expects, surface output.
 
@@ -1412,8 +1633,9 @@ class ShellSession(ABC):
 
         # Write the framed command. The framing — BEGIN/END sentinels and how
         # the exit code is captured — is supplied by the session's CommandFrame
-        # so that a target can diverge from the bash form (see ZephyrFrame).
-        framed = self._frame.frame(cmd, m=self._markers)
+        # so that a target can diverge from the bash form (see ZephyrFrame);
+        # an exec gets the frame's exec frame (render_payload).
+        framed = render_payload(self._frame, cmd, m=self._markers, exec_input=exec_input)
         # Truncate for the log so a multi-line script doesn't dominate the
         # output. The frame seam is the natural call site to instrument once —
         # every dialect then gets the visibility for free.
@@ -1476,9 +1698,22 @@ class ShellSession(ABC):
                     on_output(line)
 
         buffer = self._undo_terminal_mapping(read.raw())
-        output = self._frame.parse_output(buffer, cmd=cmd, m=self._markers)
-        retcode = self._frame.extract_retcode(buffer, m=self._markers)
-        status = Status.Success if retcode == 0 else Status.Failed
+        if exec_input is not None:
+            self._note_exec_baseline(buffer)
+        if seen_begin or self._begun_before_end(buffer):
+            output = self._frame.parse_output(buffer, cmd=cmd, m=self._markers)
+            retcode = (
+                self._frame.extract_retcode(buffer, m=self._markers)
+                if exec_input is None
+                else self._frame.extract_exec_retcode(buffer, m=self._markers)
+            )
+            status = Status.Success if retcode == 0 else Status.Failed
+        else:
+            # An end record with no BEGIN before it: the command never ran
+            # (a console exec's login shell that never reached it). Never a
+            # success, whatever its digits; the raw text is in the DEBUG
+            # line below, and the value is one stable sentence.
+            output, retcode, status = NEVER_RAN, -1, Status.Failed
         # Buffered frames (raw stream not clean line-by-line) emit the parsed
         # output once here — identical to the returned CommandResult.value, so
         # the log never shows shell prompts or the retcode scaffolding.
@@ -1505,6 +1740,25 @@ class ShellSession(ABC):
             )
         return CommandResult(status=status, value=output, command=cmd, retcode=retcode)
 
+    def _begun_before_end(self, buffer: str) -> bool:
+        """Whether a line of *buffer* before its end record is the BEGIN marker's (marks_begin).
+
+        For a read that brought BEGIN and END in one chunk, which the read
+        loop's end check takes before its BEGIN check. Line by line, through
+        the frame's own test, so an echoed copy of the typed line, which
+        holds the marker inside a quoted word, is not taken for it.
+        """
+        end = self._end_pattern.search(buffer)
+        head = buffer[: end.start()] if end else buffer
+        return any(self._frame.marks_begin(line, m=self._markers) for line in head.splitlines())
+
+    def _note_exec_baseline(self, buffer: str) -> None:
+        """Record, and warn about once, an exec end record that reports the terminal record lost."""
+        if self._exec_baseline_lost or self._frame.exec_baseline_present(buffer, m=self._markers):
+            return
+        self._exec_baseline_lost = True
+        logger.warning(f"{self._log_tag}: exec terminal baseline lost; not restoring")
+
     async def _answer_expect(
         self,
         data: str,
@@ -1516,20 +1770,22 @@ class ShellSession(ABC):
     ) -> bool:
         """Answer the first expect whose pattern is in *data*; return whether one matched.
 
-        A plain pair answers whenever it matches. A
-        :class:`~otto.host.host.CredentialExpect` counts only once the
-        command has begun, since the typed command line is echoed before
-        BEGIN, and answers once: its index goes into *answered*. A later
+        Nothing is answered before the command's BEGIN marker, on any frame:
+        what precedes it is the shell's (the echoed command line, a console
+        login profile's output), never the command's, so no pattern, the
+        caller's or otto's own, is matched against it. A
+        :class:`~otto.host.host.CredentialExpect` answers once: its index goes
+        into *answered*. A later
         match raises :exc:`_CredentialRefusedError` when the pair is
         ``refused_on_repeat``, and is plain output otherwise.
 
         The DEBUG line names the pattern and the answer's length, never the
         answer; under ``LogMode.NEVER`` (*redact*) there is no line at all.
         """
+        if not seen_begin:
+            return False
         for i, expect in enumerate(expects):
             if isinstance(expect, CredentialExpect):
-                if not seen_begin:
-                    continue
                 pattern, response = expect.pattern, expect.response
             else:
                 pattern, response = expect
@@ -1633,7 +1889,7 @@ class ShellSession(ABC):
             )
             self._alive = False
             return
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(_RECOVERY_SETTLE)
         await self._confirm_recovered(deadline)
 
     async def _confirm_recovered(self, deadline: float | None = None) -> None:
@@ -2141,6 +2397,7 @@ class LocalSession(_PatternReaderTransport, ShellSession):
         self._process: asyncio.subprocess.Process | None = None
         self._transport: asyncio.SubprocessTransport | None = None
         self._pid: int | None = None
+        self._leader_exited = asyncio.Event()
         # One per stream: open_transport replaces it with each new process.
         self._reader: PatternReader | None = None
 
@@ -2152,11 +2409,12 @@ class LocalSession(_PatternReaderTransport, ShellSession):
         # reaching into the private Process._transport attribute.
         loop = asyncio.get_running_loop()
 
-        def protocol_factory() -> asyncio.subprocess.SubprocessStreamProtocol:
-            return asyncio.subprocess.SubprocessStreamProtocol(
-                limit=2**16,
-                loop=loop,
-            )
+        # The shell leads its own session and process group, as local exec's
+        # command does, so close() reaches what the session started.
+        # LeaderExitProtocol says when the shell itself is reaped, apart from
+        # pipe EOF a surviving member may hold off.
+        def protocol_factory() -> process_stop.LeaderExitProtocol:
+            return process_stop.LeaderExitProtocol(limit=2**16, loop=loop)
 
         transport, protocol = await loop.subprocess_exec(
             protocol_factory,
@@ -2166,7 +2424,9 @@ class LocalSession(_PatternReaderTransport, ShellSession):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
+        self._leader_exited = protocol.leader_exited
         self._transport = transport
         self._process = asyncio.subprocess.Process(transport, protocol, loop)
         self._pid = self._process.pid
@@ -2216,7 +2476,7 @@ class LocalSession(_PatternReaderTransport, ShellSession):
 
         if self._pid is not None:
             self._signal_children(self._pid, signal.SIGINT)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(_RECOVERY_SETTLE)
         await self._confirm_recovered(deadline)
 
     @staticmethod
@@ -2247,33 +2507,31 @@ class LocalSession(_PatternReaderTransport, ShellSession):
 
     @override
     async def close(self) -> None:
-        if self._process is not None:
-            if self._process.returncode is None:
-                # Process still running — try graceful exit
-                if self._process.stdin is not None:
-                    try:
-                        self._process.stdin.write(b"exit\n")
-                        await self._process.stdin.drain()
-                    except (BrokenPipeError, ConnectionResetError):
-                        pass
-                with suppress(ProcessLookupError):
-                    self._process.terminate()
-                try:
-                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    self._process.kill()
-            # Explicitly close pipe transports so their __del__ doesn't
-            # attempt loop.call_soon() after the event loop is closed.
-            if self._process.stdin is not None:
-                self._process.stdin.close()
-            # stdout is a StreamReader (no close); close the subprocess
-            # transport we stashed at open() time to release the pipe fds.
-            if self._transport is not None:
-                self._transport.close()
-                self._transport = None
-            self._process = None
-        self._alive = False
-        self._initialized = False
+        """Stop the shell's process group through the shared stop, then release the pipes.
+
+        ``process_stop.stop_timed_out`` sends ``TERM`` to the
+        group, and ``KILL`` only if the shell outlives it; it holds a
+        cancellation until the stop ends. The pipes and the transport are
+        released whatever the stop does, so their ``__del__`` never calls into
+        a closed loop. A second close finds no process and does nothing.
+        """
+        proc = self._process
+        try:
+            if proc is not None:
+                await process_stop.stop_timed_out(
+                    process_stop.LocalStoppable(proc, self._leader_exited),
+                    what=f"{self._log_tag}: close",
+                )
+        finally:
+            if proc is not None:
+                if proc.stdin is not None:
+                    proc.stdin.close()
+                if self._transport is not None:
+                    self._transport.close()
+                    self._transport = None
+                self._process = None
+            self._alive = False
+            self._initialized = False
 
 
 class _DockerSshSession(SshSession):
@@ -2425,6 +2683,14 @@ class HostSession:
     def alive(self) -> bool:
         """Whether the underlying shell session is still active."""
         return self._session.alive
+
+    @property
+    def exec_baseline_lost(self) -> bool:
+        """Whether an ``exec`` found the shell's terminal record gone.
+
+        The underlying session's :attr:`ShellSession.exec_baseline_lost`.
+        """
+        return self._session.exec_baseline_lost
 
     @property
     def name(self) -> str:
@@ -2645,13 +2911,15 @@ class HostSession:
         expects: list[Expect | CredentialExpect] | None,
         timeout: float,
         log: LogMode,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Log and run one command on this session: :meth:`run`'s step, and pooled ``exec``'s.
 
         Internal because *expects* may carry an elevation's
         :class:`~otto.host.host.CredentialExpect`, which no public signature
         does; *timeout* is already validated. A dry run declines here too, so
-        no route reaches the session's ``run_cmd`` under one.
+        no route reaches the session's ``run_cmd`` under one. *exec_input* is
+        a pooled ``exec``'s (:meth:`ShellSession.run_cmd`); ``None`` for a ``run``.
         """
         if is_dry_run():
             return self._decline_command(ShellCommand(cmd=cmd, timeout=timeout, log=log))
@@ -2663,6 +2931,7 @@ class HostSession:
             timeout=timeout,
             on_output=_sink_for(self._log_output, log),
             redact=log is LogMode.NEVER,
+            exec_input=exec_input,
         )
 
     def _decline_command(self, sc: ShellCommand) -> CommandResult:
@@ -4126,6 +4395,7 @@ class SessionManager:
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Run *cmd* on the default session, creating it if needed.
 
@@ -4138,11 +4408,10 @@ class SessionManager:
         ``exec()`` on a
         ``console`` term, which runs on this same session. Everywhere else
         ``exec()`` and named sessions reach a :class:`ShellSession` without
-        passing through here. That is what makes this the right and only home
-        for :func:`refuse_if_typed_line_would_be_cut`: the
-        ``run-command-line-length`` gap belongs to the default session, and the
-        two paths this method does not cover are two paths that MUST keep
-        working unguarded (see that function, and the gap record). On a console
+        passing through here. A pooled ``exec()`` makes the same refusal in
+        ``_exec_pooled``; a named session's ``HostSession.run`` is the one path
+        left unguarded, deliberately, because ``ShellFileTransfer`` rides it
+        (see the ``run-command-line-length`` gap record). On a console
         there is no unguarded path, so the refusal does not advise ``exec()``.
 
         The refusal is checked twice, through the same function. BEFORE
@@ -4152,7 +4421,14 @@ class SessionManager:
         the ceiling of the session the line will be typed into, from its
         measured echo fact (:func:`typed_line_ceiling`). ``run()`` opens the
         session anyway, so the second check costs nothing on the sunny path.
+
+        *exec_input* is an ``exec``'s on this session (a console's, an
+        embedded host's): it gets this session's restore
+        (``_exec_restore_for``, here and nowhere else for this route), is
+        measured by the refusal as the exec frame it types, and
+        :meth:`ShellSession.run_cmd` runs it in that frame. ``None`` for a ``run``.
         """
+        exec_input = self._with_restore_for(ExecRoute.DEFAULT_SESSION, exec_input)
         exec_escapes = getattr(self._connections, "term", None) != "console"
         refuse_if_typed_line_would_be_cut(
             self._command_frame,
@@ -4160,6 +4436,7 @@ class SessionManager:
             echoes=_BEFORE_ANY_SESSION_ECHOES,
             host=self._name,
             exec_escapes=exec_escapes,
+            exec_input=exec_input,
         )
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
@@ -4169,6 +4446,7 @@ class SessionManager:
             echoes=self._session.echoes,
             host=self._name,
             exec_escapes=exec_escapes,
+            exec_input=exec_input,
         )
         mode = log
         if mode is not LogMode.NEVER:
@@ -4181,6 +4459,7 @@ class SessionManager:
             on_output=_sink_for(self._log_output, mode),
             redact=mode is LogMode.NEVER,
             write_progress=write_progress,
+            exec_input=exec_input,
         )
         return _ran_on(result, ExecRoute.DEFAULT_SESSION)
 
@@ -4193,6 +4472,7 @@ class SessionManager:
         log: LogMode,
         expects: "list[Expect | CredentialExpect] | None" = None,
         user: str | None = None,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Run *cmd* on *route*, without sharing state with the default session.
 
@@ -4217,6 +4497,10 @@ class SessionManager:
         connection; a direct-credential user's connection is the host's to
         open (:meth:`exec_on`).
 
+        *exec_input* is the call's (:meth:`~otto.host.host.BaseHost.exec`
+        builds it); a shell route gives it the restore of its own session
+        (``_exec_restore_for``), and the ssh channel needs none.
+
         Raises:
             ValueError: *route* is ``UNSUPPORTED``, or a route this manager
                 does not own (a local subprocess, a container).
@@ -4228,11 +4512,17 @@ class SessionManager:
         match route:
             case ExecRoute.POOLED_SHELL:
                 return await self._exec_pooled(
-                    cmd, timeout=timeout, log=log, expects=expects, user=user
+                    cmd,
+                    timeout=timeout,
+                    log=log,
+                    expects=expects,
+                    user=user,
+                    exec_input=self._with_restore_for(route, exec_input),
                 )
             case ExecRoute.DEFAULT_SESSION:
+                # run_cmd gives it the default session's restore.
                 return await self._exec_on_default_session(
-                    cmd, timeout=timeout, log=log, expects=expects, user=user
+                    cmd, timeout=timeout, log=log, expects=expects, user=user, exec_input=exec_input
                 )
             case ExecRoute.SSH_CHANNEL:
                 ssh_conn = await self._connections.ssh()
@@ -4241,6 +4531,23 @@ class SessionManager:
                 raise ValueError(
                     f'{self._name}: unsupported terminal type "{self._connections.term}"'
                 )
+
+    @staticmethod
+    def _exec_restore_for(route: ExecRoute) -> ExecRestore:
+        """Return what an isolated ``exec`` on *route* restores: the one predicate.
+
+        The default session's ``exec`` (a console's) shares the line ``run``
+        uses, so it restores the terminal as it found it (``START``); a pooled
+        session's restores the record its handshake kept (``BASELINE``).
+        """
+        return ExecRestore.START if route is ExecRoute.DEFAULT_SESSION else ExecRestore.BASELINE
+
+    @classmethod
+    def _with_restore_for(cls, route: ExecRoute, exec_input: ExecInput | None) -> ExecInput | None:
+        """Return *exec_input* with the restore of *route*'s session; ``None`` (a run) stays."""
+        if exec_input is None:
+            return None
+        return dataclasses.replace(exec_input, restore=cls._exec_restore_for(route))
 
     async def exec_on(
         self,
@@ -4268,12 +4575,28 @@ class SessionManager:
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
-        process = await conn.create_process(
-            cmd,
-            stderr=asyncssh.STDOUT,
-            stdin=asyncssh.DEVNULL,
-            encoding=OUTPUT_ENCODING,
-            errors=OUTPUT_ERRORS,
+
+        async def stop_started(
+            started: "asyncssh.SSHClientProcess[str]", exc: BaseException
+        ) -> None:
+            # Cancelled while the channel was still opening: the remote
+            # command may already run, and closing the channel signals nothing.
+            await process_stop.stop_interrupted(
+                process_stop.ChannelStoppable(started),
+                exc,
+                what=f"{self._name}: stop the interrupted command",
+            )
+
+        process = await process_stop.started_or_stopped(
+            conn.create_process(
+                cmd,
+                stderr=asyncssh.STDOUT,
+                stdin=asyncssh.DEVNULL,
+                encoding=OUTPUT_ENCODING,
+                errors=OUTPUT_ERRORS,
+            ),
+            stop_started,
+            what=f"{self._name}: start the command",
         )
         output = ExecOutput()
         stoppable = process_stop.ChannelStoppable(process)
@@ -4322,14 +4645,17 @@ class SessionManager:
         log: LogMode,
         expects: "list[Expect | CredentialExpect] | None",
         user: str | None,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """One command on the default session: ``exec`` on a single-client console.
 
         A console line serves one client, so the session ``run`` uses is the
         only one there is: a pooled session would be a second connection to a
         port that refuses it. The command therefore goes through
-        :meth:`run_cmd`, with ``run``'s marker and exit-code handling, and
-        shares the default session's shell state (a ``cd`` it makes stays).
+        :meth:`run_cmd`, with ``run``'s marker and exit-code handling, in the
+        frame's exec frame (*exec_input*), so on a dialect that isolates
+        ``exec`` nothing it changes (a ``cd``, a variable) stays for the next
+        command.
 
         This layer does not serialise concurrent callers and cannot switch
         the session's identity. Both belong to the host, which owns the
@@ -4346,7 +4672,9 @@ class SessionManager:
                 f"session as {current!r}, so it cannot run as {user!r} here — "
                 f"switch the session first (host.exec(user=...) does)"
             )
-        return await self.run_cmd(cmd=cmd, expects=expects, timeout=timeout, log=log)
+        return await self.run_cmd(
+            cmd=cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
+        )
 
     async def _exec_pooled(
         self,
@@ -4356,6 +4684,7 @@ class SessionManager:
         log: LogMode,
         expects: "list[Expect | CredentialExpect] | None",
         user: str | None,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """One command on a pooled shell session, switched to *user* for the call.
 
@@ -4373,12 +4702,18 @@ class SessionManager:
         own, preserving the documented concurrency contract.
 
         The session goes back to the free-list only when it is alive, is
-        running as the user it was acquired as, and — when a switch was asked
-        for — both the switch and its undo completed. Anything else closes
+        running as the user it was acquired as, has not lost its terminal
+        record (:attr:`ShellSession.exec_baseline_lost`), and — when a switch
+        was asked for — both the switch and its undo completed. Anything else closes
         it: a session whose switch-back failed, or half applied, would let
         the next pooled ``exec`` run silently as *user*. ``alive`` alone was
         the old test, and it also left dead handles on the list for the next
         acquire to skip.
+
+        A line the session's terminal would cut is refused first, through
+        :func:`refuse_if_typed_line_would_be_cut` measured in the exec frame
+        and against the acquired session's echo fact, before anything is typed;
+        the session goes back to the free-list untouched.
 
         A failed switch-back costs the SESSION, never the RESULT. The command
         has already run by then, so its result is returned and the undo's
@@ -4386,12 +4721,27 @@ class SessionManager:
         handler below.
         """
         session = await self._acquire_exec_session()
+        try:
+            refuse_if_typed_line_would_be_cut(
+                self._command_frame,
+                cmd,
+                echoes=session.echoes,
+                host=self._name,
+                exec_escapes=False,
+                exec_input=exec_input,
+            )
+        except UnsupportedOnUserlandError:
+            # Nothing was typed, so the session is as it was acquired: idle again.
+            self._exec_pool.append(session)
+            raise
         acquired_as = session.current_user
         switched_ok = user is None
         try:
             if user is None:
                 return _ran_on(
-                    await session._run_one(cmd, expects=expects, timeout=timeout, log=log),  # noqa: SLF001 — the manager's own pooled session, on its internal entry
+                    await session._run_one(  # noqa: SLF001 — the manager's own pooled session, on its internal entry
+                        cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
+                    ),
                     ExecRoute.POOLED_SHELL,
                 )
             result: CommandResult | None = None
@@ -4399,7 +4749,7 @@ class SessionManager:
                 async with session.as_user(user=user):
                     switched_ok = True
                     result = await session._run_one(  # noqa: SLF001 — as above
-                        cmd, expects=expects, timeout=timeout, log=log
+                        cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
                     )
             except Exception as exc:
                 # A failure BEFORE the command produced a result -- the switch
@@ -4426,16 +4776,22 @@ class SessionManager:
                 )
             return _ran_on(result, ExecRoute.POOLED_SHELL)
         finally:
-            if session.alive and switched_ok and session.current_user == acquired_as:
+            if (
+                session.alive
+                and switched_ok
+                and session.current_user == acquired_as
+                and not session.exec_baseline_lost
+            ):
                 self._exec_pool.append(session)
             else:
                 logger.warning(
                     "%s: not pooling exec session %s "
-                    "(alive=%s, switched_ok=%s, user=%r, acquired as %r)",
+                    "(alive=%s, switched_ok=%s, baseline_lost=%s, user=%r, acquired as %r)",
                     self._name,
                     session.name,
                     session.alive,
                     switched_ok,
+                    session.exec_baseline_lost,
                     session.current_user,
                     acquired_as,
                 )
@@ -4527,6 +4883,19 @@ class SessionManager:
 
         The number is :func:`typed_line_budget`'s, with the echo fact the open
         sessions measured: echo off only once every open session showed it.
+        It is :meth:`line_room` for an empty command, and a caller that builds
+        its own command around a payload asks that instead.
+        """
+        return self.line_room(route=route, cmd="")
+
+    def line_room(self, *, route: ExecRoute, cmd: str) -> int | None:
+        """Characters a quote-free payload inserted into *cmd*'s first line may add on *route*.
+
+        ``None`` exactly where :meth:`line_budget` is (no line discipline).
+        Otherwise :func:`typed_line_room`'s, rendered through the exec frame
+        *route* types, with the echo fact :meth:`line_budget` reads: the
+        quoting a console's exec frame gives the command is counted, so a
+        caller never restates it.
         """
         record = EXEC_ROUTES.get(route)
         if record is None or "line_budget" not in record.limitations:
@@ -4535,7 +4904,15 @@ class SessionManager:
             # The route types into a shell, but this manager's shell reads a
             # pipe (LocalHost): no line discipline, so nothing bounds a line.
             return None
-        return typed_line_budget(self._command_frame, echoes=self._measured_echoes())
+        # No credential: the budget's one caller, the shell transfer, never
+        # elevates, and the credential redirect rides the frame's closing
+        # line, not the line the command is typed on, so it moves no budget.
+        return typed_line_room(
+            self._command_frame,
+            cmd,
+            echoes=self._measured_echoes(),
+            exec_input=ExecInput(stdin_eof=True, restore=self._exec_restore_for(route)),
+        )
 
     def _measured_echoes(self) -> bool:
         """Whether a line typed on this host may meet an echoing terminal, from the open sessions.

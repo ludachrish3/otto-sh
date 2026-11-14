@@ -21,6 +21,7 @@ from pydantic import SecretStr
 
 from otto.host import HostSession, UnixHost
 from otto.host.capability_grid import UserSupport
+from otto.host.command_frame import ExecInput
 from otto.host.connections import _UserConnections
 from otto.host.element import Element
 from otto.host.exec_route import ExecRoute
@@ -929,7 +930,13 @@ class TestExec:
         release_listener = asyncio.Event()
 
         async def _fake_run_cmd(
-            cmd, expects=None, timeout=None, on_output=None, redact=False, write_progress=None
+            cmd,
+            expects=None,
+            timeout=None,
+            on_output=None,
+            redact=False,
+            write_progress=None,
+            exec_input=None,
         ):
             if "nc -l" in cmd:
                 listener_running.set()
@@ -1027,6 +1034,7 @@ class TestExec:
             log=LogMode.QUIET,
             expects=None,
             user=None,
+            exec_input=ExecInput(stdin_eof=True),
         )
 
 
@@ -1276,7 +1284,9 @@ class TestConsoleTermTransfers:
         calls: list = []
         mgr = host._session_mgr
 
-        async def fake_run_cmd(cmd, expects=None, timeout=0.0, log=None, write_progress=None):
+        async def fake_run_cmd(
+            cmd, expects=None, timeout=0.0, log=None, write_progress=None, exec_input=None
+        ):
             calls.append((cmd, timeout))
             return _cs(command=cmd, output="ok", route=ExecRoute.DEFAULT_SESSION.value)
 

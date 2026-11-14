@@ -38,7 +38,9 @@ from a ``.otto`` init module — the same extension hook
 :func:`otto.host.embedded_filesystem.register_filesystem` follows.
 """
 
+import enum
 import re
+import shlex
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
@@ -47,20 +49,28 @@ from typing_extensions import final, override
 
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
+from .exit_status import subshell_status_of
 from .limitation import Limitation
 from .terminal_mapping import (
+    BASELINE_VAR,
     CALIBRATION_COMMAND,
     ECHO_OFF_COMMAND,
     ECHO_RESET,
     ECHO_UNSET,
+    ERREXIT_VAR,
+    START_VAR,
     TABS_OFF_COMMAND,
+    establish_exec_state,
     save_settings_command,
+    saved_into,
 )
 
 __all__ = [
     "FRAME_CLASSES",
     "BashFrame",
     "CommandFrame",
+    "ExecInput",
+    "ExecRestore",
     "RawFrame",
     "SessionMarkers",
     "ZephyrFrame",
@@ -97,6 +107,64 @@ RECOVER_SUFFIX = "RECOVER__"
 
 It follows the head's ``_`` separator, as :data:`READY_SUFFIX` does."""
 
+RESTORED_SUFFIX = "RESTORED__"
+"""The fixed end of :attr:`SessionMarkers.restored`, where :func:`whole_line_echo` splits it.
+
+It follows the head's ``_`` separator, as :data:`READY_SUFFIX` does."""
+
+SESSION_SHELL = '"${SHELL:-/bin/sh}"'
+"""The session's own shell program, as a word the session's shell expands.
+
+What a console exec starts its clean login shell with, and what an exec
+under sudo's ``shell`` form runs its command in: the login's shell, so the
+command is written in the language of the session it was typed into."""
+
+EXEC_CREDENTIAL_FD = 3
+"""The file descriptor an isolated ``exec`` keeps the caller's stdin on, for a password.
+
+The exec frame renders ``3<&0`` on its subshell only for a call that arms a
+credential (:attr:`ExecInput.credential`), so an elevation whose command's
+own stdin is at end of file can still read the password the caller's
+terminal carries from this descriptor; the elevation closes it before the
+command runs. Any other exec types no redirect, so its command never sees
+the descriptor, and a shell that refuses to duplicate fd 0 (BusyBox 1.16.1's
+ash) still runs it. The one definition of it."""
+
+
+class ExecRestore(enum.Enum):
+    """What an isolated ``exec`` puts the terminal back to when it ends, or is interrupted.
+
+    ``BASELINE``: the record the session's handshake keeps in the shell (a
+    pooled session's ``exec``). ``START``: the terminal as this ``exec``
+    found it, snapshotted at its own start (a console's ``exec``, which
+    shares the line ``run`` uses).
+    """
+
+    BASELINE = "baseline"
+    START = "start"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExecInput:
+    """What one ``exec`` call asks of the frame that isolates it.
+
+    Built once per call by :meth:`~otto.host.host.BaseHost.exec` and carried
+    unchanged to the session; ``None`` where one is accepted means a ``run``
+    (its frame, its status, no restore).
+    """
+
+    stdin_eof: bool
+    """Whether the command's stdin is at end of file (``</dev/null``)."""
+
+    restore: ExecRestore = ExecRestore.BASELINE
+    """Which terminal record the frame restores, per :class:`ExecRestore`."""
+
+    credential: bool = False
+    """Whether otto answers a password on ``EXEC_CREDENTIAL_FD`` for this call.
+
+    Decided where the elevation is applied (an elevation form that reads the
+    descriptor sets it); only then does the frame open the descriptor."""
+
 
 @final
 @dataclass(frozen=True)
@@ -126,6 +194,11 @@ class SessionMarkers:
 
     See :func:`~otto.host.terminal_mapping.save_settings_command`."""
 
+    restored: str
+    """Post-recovery restore token — ``__OTTO_<id>_RESTORED__``.
+
+    See :meth:`CommandFrame.restore_line`."""
+
     @classmethod
     def for_session(cls, *, session_id: str) -> "SessionMarkers":
         """Build the marker set for a session id.
@@ -142,6 +215,7 @@ class SessionMarkers:
             ready=f"__OTTO_{session_id}_{READY_SUFFIX}",
             recover=f"__OTTO_{session_id}_{RECOVER_SUFFIX}",
             saved=f"__OTTO_{session_id}_SAVED__",
+            restored=f"__OTTO_{session_id}_{RESTORED_SUFFIX}",
         )
 
 
@@ -242,10 +316,65 @@ class CommandFrame(ABC):
         """Full write payload that runs ``cmd`` bracketed by the sentinels."""
         ...
 
+    def frame_exec(
+        self,
+        cmd: str,
+        *,
+        m: SessionMarkers,
+        stdin_eof: bool,  # noqa: ARG002 — read only by a frame that isolates
+        restore: ExecRestore,  # noqa: ARG002 — read only by a frame that isolates
+        credential: bool = False,  # noqa: ARG002 — read only by a frame that isolates
+    ) -> str:
+        """Full write payload that runs ``cmd`` for an ``exec``, isolated from the session.
+
+        The default is :meth:`frame`: a dialect that does not override this
+        runs an ``exec`` exactly as a ``run``, sharing the session's state,
+        and its status is :meth:`extract_exec_retcode`'s. A dialect that
+        overrides it promises isolation: nothing the command changes (working
+        directory, variables, options, an ``exit``) reaches the next command,
+        its stdin is at end of file when *stdin_eof*, *restore* names the
+        terminal record its end puts back, and *credential* (otto answers a
+        password) keeps the caller's terminal on ``EXEC_CREDENTIAL_FD``,
+        which is otherwise not opened. Such a dialect also provides the
+        post-recovery restore (:meth:`restore_line`, :meth:`restored_pattern`),
+        which registration refuses it without, and reports in its end record
+        whether the terminal record was there (:meth:`exec_baseline_present`
+        reads it). Overriding this only to
+        delegate to :meth:`frame` claims an isolation the frame does not give:
+        :attr:`~otto.host.command_frame.CommandFrame.isolates_exec` reads the
+        override, not the payload.
+        """
+        return self.frame(cmd, m=m)
+
+    @property
+    def isolates_exec(self) -> bool:
+        """Whether this dialect's ``exec`` runs isolated: it overrides :meth:`frame_exec`.
+
+        Derived, never declared, so a subclass inherits its parent's answer
+        with no edit of its own.
+        """
+        return type(self).frame_exec is not CommandFrame.frame_exec
+
     @abstractmethod
     def recover(self, m: SessionMarkers) -> str:
         """Re-synchronization payload, echoing :attr:`SessionMarkers.recover`."""
         ...
+
+    def restore_line(self, restore: ExecRestore, m: SessionMarkers) -> str | None:  # noqa: ARG002 — the default restores nothing
+        """Return the line putting back what an interrupted isolated ``exec`` left changed.
+
+        Written once by the session after it recovered from an interrupted
+        ``exec`` (a timeout, a refused password), when the ``exec`` frame's own
+        end never ran. It prints :attr:`SessionMarkers.restored`, which
+        :meth:`restored_pattern` matches. ``None`` (the default) for a dialect
+        whose ``exec`` is not isolated: there is nothing to restore, and the
+        session that would need one marks itself dead rather than guess.
+        """
+        return None
+
+    def restored_pattern(self, m: SessionMarkers) -> re.Pattern[str] | None:  # noqa: ARG002 — the default restores nothing
+        """Pattern proving :meth:`restore_line` ran; ``None`` where there is no restore line."""
+        return None
 
     def quiet_history(self) -> str:
         """Statement prefix stopping this dialect's shell recording commands.
@@ -344,6 +473,23 @@ class CommandFrame(ABC):
     def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         """Recover the command's exit code; ``-1`` when none can be read."""
         ...
+
+    def extract_exec_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
+        """Recover an ``exec``'s exit code from what :meth:`frame_exec` printed; ``-1`` when none.
+
+        The default is :meth:`extract_retcode`, matching the default
+        :meth:`frame_exec`.
+        """
+        return self.extract_retcode(buffer, m=m)
+
+    def exec_baseline_present(self, buffer: str, *, m: SessionMarkers) -> bool:  # noqa: ARG002 — the default keeps no record to lose
+        """Whether *buffer*'s end record says the record an ``exec`` restores was there.
+
+        ``True`` by default: a dialect whose ``exec`` restores nothing has no
+        record to lose. A buffer with no end record reads ``True``: there is
+        no evidence of a missing record.
+        """
+        return True
 
     def parse_partial_output(self, buffer: str, *, m: SessionMarkers) -> str:
         r"""Extract what an UNFINISHED command had written from *buffer*: its timed-out value.
@@ -461,6 +607,18 @@ def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str =
     )
 
 
+_STATUS_VAR = "__otto_rc"
+"""The unexported variable the exec frame holds its subshell's status in."""
+
+_FLAG_VAR = "__otto_f"
+"""The unexported variable the exec frame holds its end record's flag in: ``B`` or ``N``."""
+
+
+def _restore_var(restore: "ExecRestore") -> str:
+    """Return the shell variable holding the terminal record *restore* names."""
+    return START_VAR if restore is ExecRestore.START else BASELINE_VAR
+
+
 def _runs_something(cmd: str) -> bool:
     """Whether *cmd* has a line that is neither blank nor a ``#`` comment."""
     return any(line.strip() and not line.lstrip().startswith("#") for line in cmd.splitlines())
@@ -470,6 +628,15 @@ def _continues(cmd: str) -> bool:
     """Whether *cmd* ends in an unescaped backslash, which continues its last line."""
     trailing = len(cmd) - len(cmd.rstrip("\\"))
     return trailing % 2 == 1
+
+
+_CLEAN_LOGIN_ENV = ["HOME", "TERM", "USER", "LOGNAME", "PATH"]
+"""What a console exec's clean login shell keeps of the console shell's environment, as it is.
+
+``SHELL`` is passed too, but resolved (:data:`SESSION_SHELL`), not as it is:
+it names the program the clean login shell is, also where the console's
+shell had it unset.
+"""
 
 
 class BashFrame(CommandFrame):
@@ -528,12 +695,62 @@ class BashFrame(CommandFrame):
         # before its command, and stdin stays open because `stty` acts on it.
         # `|| :` keeps a target without `stty` or `printf` on the line under
         # `set -e`, which would otherwise exit before READY (#953).
+        #
+        # establish_exec_state sets the variables frame_exec's tail reads
+        # (otto.host.terminal_mapping), on every handshake of the session: the
+        # terminal record is a snapshot taken here, after otto's own `stty`
+        # statements, so a session-setup hook's changes (the re-handshake
+        # after it) become the record an exec restores.
         return whole_line_echo(
             m.ready,
             READY_SUFFIX,
             f"{prefix}{ECHO_RESET}; {ECHO_OFF_COMMAND}; {TABS_OFF_COMMAND}; echo; "
-            f"{CALIBRATION_COMMAND} || :; {ECHO_UNSET}; ",
+            f"{CALIBRATION_COMMAND} || :; {ECHO_UNSET}; "
+            f"{establish_exec_state(replace=True)}; ",
         )
+
+    @staticmethod
+    def _frame_body(cmd: str) -> str:
+        """Return the command as both frames type it: ``:`` for nothing, a continuation ended.
+
+        An empty group or subshell is a syntax error, so a command with
+        nothing to run (blank, or only comments) becomes ``:``. A trailing
+        backslash would join the closing line onto the command's last line,
+        so a blank line ends the continuation first.
+        """
+        body = cmd if _runs_something(cmd) else ":"
+        if _continues(body):
+            body += "\n"
+        return body
+
+    @classmethod
+    def _clean_login_body(cls, cmd: str, *, m: SessionMarkers) -> str:
+        """Return the subshell body that runs *cmd* in a clean login shell: a console's exec.
+
+        ``exec env -i`` replaces the subshell with the console's login shell
+        (``${SHELL:-/bin/sh} -l``), its environment emptied but for
+        :data:`_CLEAN_LOGIN_ENV`, read from the console's shell as it is, and
+        ``SHELL`` set to the program it starts (:data:`SESSION_SHELL`), so the
+        sudo ``shell`` form and its probe inside it name that same shell. The
+        login shell reads its profile, changes to ``$HOME`` (``/`` when it is
+        unset or empty; a shell started
+        with ``-l`` keeps the directory it inherits; login(1) is what changes
+        it), THEN prints BEGIN and runs the command, so nothing a profile prints
+        reaches the value. *cmd* arrives as one quoted word, byte-exact, on its
+        own line: the newline before the closing quote ends a here-doc, a
+        comment or a continuation however *cmd* ends. File descriptors survive
+        ``exec`` and ``env -i``, so the credential descriptor and the caller's
+        terminal reach the command. A child that never reaches the command (no
+        ``env``, no such shell, a profile that exits) prints no BEGIN, and the
+        session reads that as a command that never ran
+        (:data:`otto.host.session.NEVER_RAN`).
+        """
+        # `${V-}`: a console shell under `set -u` may lack USER or LOGNAME.
+        keep = " ".join(f'{name}="${{{name}-}}"' for name in _CLEAN_LOGIN_ENV)
+        keep += f" SHELL={SESSION_SHELL}"
+        # `${HOME:-/}`: a login with no home starts in `/`, as login(1) does.
+        word = shlex.quote(f'cd "${{HOME:-/}}" || exit; echo "{m.begin}"; {cls._frame_body(cmd)}\n')
+        return f"exec env -i {keep} {SESSION_SHELL} -l -c {word}\n"
 
     @override
     def frame(self, cmd: str, *, m: SessionMarkers) -> str:
@@ -547,15 +764,100 @@ class BashFrame(CommandFrame):
         # BEGIN, so a continuation prompt prints BEFORE the BEGIN marker,
         # never inside the output. Not `eval '<cmd>'`: quoting makes the typed
         # length depend on the command's quotes, and a line budget sized by a
-        # fixed framing overhead would then overrun. An empty group is itself
-        # a syntax error, so a command with nothing to run (blank, or only
-        # comments) becomes `:`. A trailing backslash would join `}` onto the
-        # command's last line and the group would never close, so a blank
-        # line ends the continuation first.
-        body = cmd if _runs_something(cmd) else ":"
-        if _continues(body):
-            body += "\n"
-        return f'echo "{m.begin}"; {{ {body}\n}}; echo "{m.end_prefix}$?__"\n'
+        # fixed framing overhead would then overrun. The body is _frame_body's,
+        # the one rule frame_exec applies too.
+        return f'echo "{m.begin}"; {{ {self._frame_body(cmd)}\n}}; echo "{m.end_prefix}$?__"\n'
+
+    @override
+    def frame_exec(
+        self,
+        cmd: str,
+        *,
+        m: SessionMarkers,
+        stdin_eof: bool,
+        restore: ExecRestore,
+        credential: bool = False,
+    ) -> str:
+        # Two physical lines. The command runs in a subshell, so nothing it
+        # changes (cd, export, set, exit) reaches the session's shell. The
+        # parent's errexit is saved in __otto_e and turned off, so a failing
+        # subshell cannot end the session's shell; the subshell turns it back
+        # on, so an inherited `set -e` still stops the command at its first
+        # failure. Only when otto answers a password (*credential*) does
+        # `3<&0` keep the caller's stdin on EXEC_CREDENTIAL_FD before
+        # *stdin_eof* points stdin at end of file: no other command sees the
+        # descriptor, and BusyBox 1.16.1's ash, which refuses to duplicate
+        # fd 0, runs every exec that arms none. The tail then
+        # restores the terminal and the parent's errexit (terminal_restore,
+        # errexit_restore), and the end record carries a flag: `B` when the
+        # restore record was there, `N` when it was lost (end_pattern).
+        #
+        # A console's exec (*restore* START, the one predicate that names a
+        # console's default session) does not run the command in the
+        # subshell itself: the subshell becomes a clean login shell
+        # (_clean_login_body), which prints BEGIN once its profile has run.
+        console = restore is ExecRestore.START
+        start = f"{saved_into(START_VAR)}; " if console else ""
+        begin = "" if console else f'echo "{m.begin}"; '
+        body = (
+            self._clean_login_body(cmd, m=m)
+            if console
+            else f"{self.errexit_restore()}; {self._frame_body(cmd)}\n"
+        )
+        stdin = " </dev/null" if stdin_eof else ""
+        keep = f" {EXEC_CREDENTIAL_FD}<&0" if credential else ""
+        var = _restore_var(restore)
+        return (
+            f"{start}{begin}"
+            f"case $- in *e*) {ERREXIT_VAR}=e;; *) {ERREXIT_VAR}=;; esac; set +e; "
+            f"( {body}"
+            f"){keep}{stdin}; {_STATUS_VAR}=$?; "
+            f"{_FLAG_VAR}=N; case ${{{var}+x}} in x) {_FLAG_VAR}=B; "
+            f"{self.terminal_restore(restore)};; esac; {self.errexit_restore()}; "
+            f'echo "{m.end_prefix}${{{_FLAG_VAR}}}${{{_STATUS_VAR}}}__"\n'
+        )
+
+    def terminal_restore(self, restore: ExecRestore) -> str:
+        """Return the statement restoring the terminal record *restore* names, when non-empty.
+
+        Every read of the record is ``${V-}``, so the statement never aborts
+        under ``set -u``; it is quote-free, because it also rides
+        :meth:`restore_line`, whose cut rules forbid a quoted span. An empty
+        record restores nothing.
+
+        A console's start snapshot (:attr:`ExecRestore.START`) belongs to one
+        exec, so the statement then unsets it: a later restore whose own
+        frame never took a snapshot (a zero budget, a frame cut before its
+        start) finds none and restores nothing. The session's baseline stays.
+        """
+        var = _restore_var(restore)
+        put_back = f"case ${{{var}-}} in ?*) {self.restore_terminal(f'${{{var}-}}')};; esac"
+        return f"{put_back}; unset {var}" if restore is ExecRestore.START else put_back
+
+    def errexit_restore(self) -> str:
+        """Return the statement turning ``set -e`` back on when the exec frame saved it on.
+
+        A ``case``, so no proper tail of it sets ``-e``. The saved value
+        belongs to one exec, so the statement then unsets it: a later restore
+        whose own frame never saved one (a zero budget, a frame cut before
+        its save) finds none and leaves ``set -e`` as the shell has it.
+        """
+        return f"case ${{{ERREXIT_VAR}-}} in e) set -e;; esac; unset {ERREXIT_VAR}"
+
+    @override
+    def restore_line(self, restore: ExecRestore, m: SessionMarkers) -> str | None:
+        # Both halves on an anchored probe line (whole_line_echo's cut rules):
+        # a tail of it never prints the RESTORED marker whole, and a record
+        # that was lost restores nothing and still answers.
+        return whole_line_echo(
+            m.restored,
+            RESTORED_SUFFIX,
+            statements=f"{self.terminal_restore(restore)}; {self.errexit_restore()}; ",
+        )
+
+    @override
+    def restored_pattern(self, m: SessionMarkers) -> re.Pattern[str] | None:
+        return re.compile(re.escape(m.restored))
 
     @override
     def recover(self, m: SessionMarkers) -> str:
@@ -690,10 +992,22 @@ class BashFrame(CommandFrame):
         # RECOVER marker keeps this disjoint from end_pattern.
         return re.compile(re.escape(m.recover) + r"(\d+)__")
 
+    END_FLAG_GROUP: ClassVar[int] = 1
+    """The group of :meth:`end_pattern` holding the record's flag (``B``, ``N`` or empty)."""
+
+    END_CODE_GROUP: ClassVar[int] = 2
+    """The group of :meth:`end_pattern` holding the status digits."""
+
     @override
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
-        # ``__OTTO_<id>_END__<code>__`` — the digits carry the exit code.
-        return re.compile(re.escape(m.end_prefix) + r"(\d+)__")
+        # ``__OTTO_<id>_END__<flag><code>__``: a ``run`` prints no flag, an
+        # ``exec`` ``B`` (its restore record was there) or ``N`` (lost); the
+        # digits carry the exit code. One pattern for both, so the read loop
+        # ends on either. The flag comes before the digits, so no split of
+        # the record ends a read early. The groups are positional, never
+        # named: the session's combined read pattern sets a caller's expect
+        # patterns beside this one, and a named group could collide with one.
+        return re.compile(re.escape(m.end_prefix) + r"([BN]?)(\d+)__")
 
     @override
     def marks_begin(self, data: str, *, m: SessionMarkers) -> bool:
@@ -736,9 +1050,21 @@ class BashFrame(CommandFrame):
     @override
     def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
         match = self.end_pattern(m).search(buffer)
-        if match and match.groups():
-            return int(match.group(1))
-        return -1
+        if match is None:
+            return -1
+        return int(match.group(self.END_CODE_GROUP))
+
+    @override
+    def extract_exec_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
+        # The subshell reports a status above 255 only where ksh93 reports a
+        # signal death as 256+N; subshell_status_of gives it the shell's 128+N.
+        reported = self.extract_retcode(buffer, m=m)
+        return reported if reported < 0 else subshell_status_of(reported)
+
+    @override
+    def exec_baseline_present(self, buffer: str, *, m: SessionMarkers) -> bool:
+        match = self.end_pattern(m).search(buffer)
+        return match is None or match.group(self.END_FLAG_GROUP) != "N"
 
 
 class AshFrame(BashFrame):
@@ -1095,11 +1421,20 @@ class RawFrame(CommandFrame):
         return -1
 
 
+def frame_or_default(frame: CommandFrame | None) -> CommandFrame:
+    """Return *frame*, or :class:`BashFrame` for ``None``: what an unset frame means.
+
+    A host's ``command_frame`` field is ``None`` until a family sets it, and
+    :class:`~otto.host.session.ShellSession` types bash then.
+    """
+    return frame or BashFrame()
+
+
 def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     """Prefix that suppresses history recording, or ``""`` when history is kept.
 
-    *frame* None means bash, matching :class:`~otto.host.session.ShellSession`'s
-    own ``command_frame or BashFrame()`` default — so a caller holding a host's
+    *frame* None means bash (``frame_or_default``), as it does for
+    :class:`~otto.host.session.ShellSession` — so a caller holding a host's
     unresolved ``command_frame`` field doesn't have to repeat it.
 
     ``shell_history`` carries one meaning everywhere it appears — "are otto's
@@ -1110,7 +1445,7 @@ def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     """
     if shell_history:
         return ""
-    return (frame or BashFrame()).quiet_history()
+    return frame_or_default(frame).quiet_history()
 
 
 def handshake_prefix(
@@ -1158,6 +1493,44 @@ def _check_frame_class(type_name: str, cls: object) -> None:
             "exact_output on its own class body -- it would inherit a parent's Limitation "
             "it never measured. Declare None, or its own Limitation."
         )
+    _check_exec_frame(type_name, cls)
+
+
+def _defining_class(cls: type, name: str) -> type:
+    """Return the class in *cls*'s MRO whose own body defines *name*."""
+    return next(klass for klass in cls.__mro__ if name in vars(klass))
+
+
+def _check_exec_frame(type_name: str, cls: "type[CommandFrame]") -> None:
+    """Refuse a frame whose ``exec`` frame its own parser cannot read, or cannot restore after.
+
+    A class that isolates ``exec`` (its :meth:`CommandFrame.frame_exec` is
+    not the base's) must not re-spell :meth:`CommandFrame.frame` or
+    :meth:`CommandFrame.end_pattern` below the class that defines that
+    ``frame_exec``: the inherited exec frame would type a record the new
+    parser does not read. It must also provide the post-recovery restore
+    (:meth:`CommandFrame.restore_line` and
+    :meth:`CommandFrame.restored_pattern`), which an interrupted ``exec``
+    needs.
+    """
+    owner = _defining_class(cls, "frame_exec")
+    if owner is CommandFrame:
+        return
+    for name in ("frame", "end_pattern"):
+        definer = _defining_class(cls, name)
+        if definer is not owner and issubclass(definer, owner):
+            raise TypeError(
+                f"register_command_frame({type_name!r}): {cls.__name__} re-spells frame or "
+                f"end_pattern below {owner.__name__}.frame_exec; override frame_exec too, or "
+                "derive from a frame that does not isolate"
+            )
+    for name in ("restore_line", "restored_pattern"):
+        if _defining_class(cls, name) is CommandFrame:
+            raise TypeError(
+                f"register_command_frame({type_name!r}): {cls.__name__} isolates exec "
+                f"(it overrides frame_exec) but keeps CommandFrame.{name}; an isolating "
+                "frame provides the restore an interrupted exec needs"
+            )
 
 
 def _validate_frame_entry(

@@ -30,11 +30,11 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.host.command_frame import BashFrame, SessionMarkers, handshake_prefix
+from otto.host.command_frame import BashFrame, ExecRestore, SessionMarkers, handshake_prefix
 from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
 from otto.host.session import ShellSession, ready_pattern
-from otto.host.terminal_mapping import ONLCR, measure
+from otto.host.terminal_mapping import ONLCR, establish_exec_state, measure
 from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures.controlling_pty import ControllingPty, spawn_on_controlling_pty
 
@@ -238,16 +238,35 @@ class InteractiveShell:
             self._raw.extend(chunk)
 
 
+def shell_env(
+    name: str, home: str, fakes: str, *, overlay: "dict[str, str] | None" = None
+) -> dict[str, str]:
+    """The environment a matrix shell *name* starts interactive in: the one builder of it.
+
+    Only an empty ``HOME`` (*home*), ``PATH`` led by
+    :func:`terminal_reader_fakes` written into *fakes*, ``PS1="$ "``,
+    ``PS2="> "``, ``TERM=dumb`` and :data:`_SHELL_ENV`'s entry for *name*,
+    then *overlay* on top.
+    """
+    return {
+        "HOME": home,
+        "PATH": terminal_reader_fakes(fakes),
+        "PS1": _PROMPT,
+        "PS2": "> ",
+        "TERM": "dumb",
+        **_SHELL_ENV.get(name, {}),
+        **(overlay or {}),
+    }
+
+
 @contextlib.contextmanager
 def interactive_shell(
     name: str, *, onlcr: bool = True, setup: str = ""
 ) -> Iterator[InteractiveShell]:
     """Start shell *name* (a :data:`SHELL_ARGV` key) interactive on its own controlling pty.
 
-    Its environment is only an empty ``HOME``, ``PATH`` (led by
-    :func:`terminal_reader_fakes`, so a tail that runs one fails here on any
-    machine), ``PS1="$ "``, ``PS2="> "`` and ``TERM=dumb`` (plus
-    :data:`_SHELL_ENV`). It yields once
+    Its environment is :func:`shell_env`'s (its fake terminal readers make a
+    tail that runs one fail here on any machine). It yields once
     the shell has printed its prompt. *onlcr* sets the terminal's ``onlcr``
     before the shell starts. *setup*, when given, is typed first as one line
     (:meth:`InteractiveShell.run`). The shell and its foreground job are
@@ -257,15 +276,9 @@ def interactive_shell(
         tempfile.TemporaryDirectory(prefix="otto-ishell-") as home,
         tempfile.TemporaryDirectory(prefix="otto-ishell-fakes-") as fakes,
     ):
-        env = {
-            "HOME": home,
-            "PATH": terminal_reader_fakes(fakes),
-            "PS1": _PROMPT,
-            "PS2": "> ",
-            "TERM": "dumb",
-            **_SHELL_ENV.get(name, {}),
-        }
-        terminal = spawn_on_controlling_pty(SHELL_ARGV[name], env=env, onlcr=onlcr)
+        terminal = spawn_on_controlling_pty(
+            SHELL_ARGV[name], env=shell_env(name, home, fakes), onlcr=onlcr
+        )
         try:
             shell = InteractiveShell(name, terminal)
             shell._wait_for_prompt()
@@ -316,13 +329,34 @@ HAZARD_MARKERS: dict[str, SessionMarkers] = {
 Ids are random hex, so some session's id ends in each of these; a tail cut
 inside the echo word's head must not leave it as a word of its own."""
 
-PROBE_LINES = ("handshake", "console-handshake", "resync", "recovery")
+PROBE_LINES = ("handshake", "console-handshake", "resync", "recovery", "exec-restore")
 """The probe lines otto types into a shell that may run only a tail of them.
 
 The readiness handshake and the resync probe open a fresh shell; the
-recovery probe follows an interrupt after a command timed out. The console
-handshake is the readiness handshake a session whose terminal outlives it
-sends first, with the settings save in front (``handshake_prefix``)."""
+recovery probe follows an interrupt after a command timed out, and the
+post-recovery restore line (``exec-restore``) follows the recovery of a
+timed-out ``exec``. The console handshake is the readiness handshake a
+session whose terminal outlives it sends first, with the settings save in
+front (``handshake_prefix``)."""
+
+ESTABLISHED = establish_exec_state(replace=True)
+"""What a session's handshake leaves in its shell: the exec frame's variables, set."""
+
+PROBE_STATES: dict[str, tuple[bool, ...]] = {
+    "handshake": (False,),
+    "console-handshake": (False,),
+    "resync": (False, True),
+    "recovery": (False,),
+    "exec-restore": (True,),
+}
+"""Per :data:`PROBE_LINES` kind, whether the shell it is cut in has :data:`ESTABLISHED` typed first.
+
+A handshake opens a fresh shell. The resync probe meets both: a fresh shell
+after a switch, which it establishes, and an established one (the outer
+shell a rejected ``su`` returned to, the one an undo lands back in), which
+it keeps. The restore line follows an ``exec`` on an established session;
+the same line with the record lost is
+``test_exec_terminal.py::test_exec_restore_line_with_lost_state_answers_and_restores_nothing``."""
 
 HANDSHAKE_LINES = ("handshake", "console-handshake")
 """The :data:`PROBE_LINES` that carry the terminal-mapping calibration."""
@@ -342,11 +376,26 @@ def _handshake(m: SessionMarkers, history: bool, *, save_terminal: bool) -> str:
     return BashFrame().handshake(m, prefix=prefix)
 
 
+def _restore_line(m: SessionMarkers) -> str:
+    """The post-recovery restore line of a pooled session's ``exec``, as the session writes it."""
+    line = BashFrame().restore_line(ExecRestore.BASELINE, m)
+    assert line is not None
+    return line
+
+
+def _restored_pattern(m: SessionMarkers) -> "re.Pattern[str]":
+    """What the shell prints when it ran the whole restore line."""
+    pattern = BashFrame().restored_pattern(m)
+    assert pattern is not None
+    return pattern
+
+
 _RENDER = {
     "handshake": lambda m, history: _handshake(m, history, save_terminal=False),
     "console-handshake": lambda m, history: _handshake(m, history, save_terminal=True),
     "resync": lambda m, history: _identity_probe(m, BashFrame().quiet_history() if history else ""),
     "recovery": lambda m, _history: BashFrame().recover(m),
+    "exec-restore": lambda m, _history: _restore_line(m),
 }
 
 _ANSWER = {
@@ -354,6 +403,7 @@ _ANSWER = {
     "console-handshake": lambda m: ready_pattern(m, line_ending=True),
     "resync": _identity_pattern,
     "recovery": BashFrame().recover_pattern,
+    "exec-restore": _restored_pattern,
 }
 
 
@@ -382,6 +432,7 @@ def cut_probe(
     *,
     history: bool = True,
     setup: str = "",
+    established: bool = False,
 ) -> str:
     """Cut a *kind* line at *offset* in a fresh *name* shell, resend it whole, require the answer.
 
@@ -389,10 +440,12 @@ def cut_probe(
     line rendered with *resend*'s, so an answer from the tail is told apart
     (:func:`cut_case`). A handshake's answer must also carry its
     calibration, measured ``onlcr`` as on any default Linux terminal, so the
-    resend ran from its first byte. *setup* is typed before the cut
-    (:func:`interactive_shell`). Returns everything the terminal printed.
+    resend ran from its first byte. *setup*, then :data:`ESTABLISHED` when
+    *established* (:data:`PROBE_STATES`), is typed before the cut as one
+    line (:func:`interactive_shell`). Returns everything the terminal printed.
     """
-    with interactive_shell(name, setup=setup) as shell:
+    typed = "; ".join(part for part in (setup, ESTABLISHED if established else "") if part)
+    with interactive_shell(name, setup=typed) as shell:
         out = cut_case(
             shell,
             render_probe(kind, tail, history),

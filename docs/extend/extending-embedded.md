@@ -74,8 +74,43 @@ from the default:
 | `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. Waiting for the line to go quiet before closing it is the host's setting, not this one: `telnet_options.single_client_console` ({ref}`single-client-console`). |
-| `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. Such an override should build its line with {func}`otto.host.command_frame.whole_line_echo`, as `BashFrame` does, so a line the shell ran only the tail of never prints READY. |
+| `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. A `handshake()` override must keep, as `BashFrame` does: <br>- the `prefix` argument, placed in its line, so history suppression rides the first line; <br>- printing nothing but READY and the calibration line, and being safe to repeat, since otto resends the line until it lands; <br>- the calibration line, in a line built with {func}`otto.host.command_frame.whole_line_echo`, so a line the shell ran only the tail of never prints READY; <br>- `otto.host.terminal_mapping.establish_exec_state(replace=True)`, which saves the shell's terminal record ({ref}`the exec frame's variables <exec-frame-shell-state>`): without it every pooled `exec` reports its record lost, logs a WARNING, and the pool closes its session after each call. |
 | `exact_output` | `None`: `parse_output` returns the command's exact output, with one trailing newline removed ({ref}`command-output-contract`) | Your device makes the exact output impossible to recover (it trims every answer, say). An `unknown(...)` terminal mapping is not a limitation to declare: it is undefined behaviour, which the session reports with a WARNING. Set it to a {class}`~otto.host.limitation.Limitation` with `kind="device"`, the `reason`, and `measured_on` naming what you measured it on. Declare it on the frame's own class body: registration refuses a subclass that would inherit its parent's `Limitation` unseen. |
+
+### An exec frame of its own (optional)
+
+By default an `exec` that reaches a shell session is framed exactly as a `run`
+is ({meth}`~otto.host.command_frame.CommandFrame.frame_exec` returns `frame`),
+so it shares the session's shell state: what Zephyr's frames do. A dialect
+that can run one command in isolation overrides `frame_exec(cmd, m=m,
+stdin_eof=..., restore=...)`, as `BashFrame` does with a subshell, and that
+override is a promise: nothing the command changes (working directory,
+variables, options, an `exit`, the terminal's settings) reaches the next
+command, and its stdin is at end of file when `stdin_eof` is true. `restore`
+names which terminal record to put back: `BASELINE`, the one the session's
+handshake recorded (`BashFrame`'s handshake keeps it in `__otto_base`), or
+`START`, the terminal as this `exec` found it. `START` is what a console's
+default session passes, and `BashFrame` then runs the command in a clean
+login shell rather than a subshell ({ref}`exec-frame-shell-state`); a frame
+of your own decides from `restore` too, so the line budget measures what it
+types.
+{attr}`~otto.host.command_frame.CommandFrame.isolates_exec` is derived from the
+override alone, so an override that only delegates to `frame` claims an
+isolation the frame does not give: override it to isolate, or not at all.
+
+A frame that overrides it also supplies what the session needs around it:
+
+| Member | Responsibility |
+|--------|----------------|
+| `extract_exec_retcode(buffer, m=m)` | The status of what `frame_exec` ran (`extract_retcode` by default). |
+| `restore_line(restore, m)` / `restored_pattern(m)` | The line the session writes once after recovering from an interrupted `exec` (a timeout, a refused password), whose own end never ran, and the pattern proving it ran. Both `None` by default; a session that would need them and finds `None` marks itself unusable. |
+| `exec_baseline_present(buffer, m=m)` | Whether the terminal record the `exec` restores was there when it ended (`True` by default). |
+
+Registration refuses a frame that overrides `frame_exec` but keeps the default
+`restore_line` or `restored_pattern`, and a subclass that re-spells `frame` or
+`end_pattern` below the class whose `frame_exec` it inherits: the inherited
+exec frame would print a record the new parser cannot read. Override
+`frame_exec` too, or derive from a frame that does not isolate.
 
 The getting-started example's `PyReplFrame`
 (`docs/examples/getting-started/libs/gs_example/pyrepl_frame.py`) overrides

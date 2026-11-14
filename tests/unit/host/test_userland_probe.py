@@ -37,6 +37,7 @@ from dataclasses import fields
 import pytest
 from rich.text import Text
 
+from otto.host.errors import PasswordRefusedError
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
 from otto.host.specs import UnixHostSpec
@@ -130,6 +131,10 @@ class _Device:
         return CommandResult(status=status, value="", retcode=self._retcode)
 
 
+_PROBE_LOGIN = "admin"
+"""The login the scripted host's probe asks sudo as."""
+
+
 class _ScriptedHost(UserlandHost):
     """The mixin under test, plus one :class:`Userland` and nothing else.
 
@@ -140,20 +145,39 @@ class _ScriptedHost(UserlandHost):
     by :func:`test_the_verb_reaches_every_posix_host_and_no_other`.
     """
 
-    def __init__(self, userland: "Userland | None") -> None:
+    def __init__(
+        self, userland: "Userland | None", sudo_shell: "bool | str | BaseException" = True
+    ) -> None:
         self._u = userland
+        self._sudo_shell = sudo_shell
 
     def _userland(self) -> "Userland | None":
         return self._u
+
+    def _acting_user(self, user: "str | None") -> str:
+        return user or _PROBE_LOGIN
+
+    async def _prepare_exec_elevation(self, user: "str | None" = None) -> None:
+        """Answer ``sudo -l sh`` as scripted, through the one resolver an exec uses."""
+
+        async def ask() -> "bool | str":
+            if isinstance(self._sudo_shell, BaseException):
+                raise self._sudo_shell
+            return self._sudo_shell
+
+        if self._u is not None and self._u.elevation == "sudo":
+            await self._u.resolve_sudo_form(login=self._acting_user(user), probe=ask)
 
 
 def _userland(options: "UserlandOptions | None" = None, **device_kw) -> Userland:
     return Userland(options or UserlandOptions(), _Device(**device_kw))
 
 
-async def _report(userland: "Userland | None") -> list[str]:
+async def _report(
+    userland: "Userland | None", sudo_shell: "bool | str | BaseException" = True
+) -> list[str]:
     """Run the verb and hand back the lines it would print."""
-    result = await _ScriptedHost(userland).probe()
+    result = await _ScriptedHost(userland, sudo_shell).probe()
     assert isinstance(result, Result)
     assert result.is_ok, f"the verb reported failure: {result.msg}"
     assert isinstance(result.value, list), (
@@ -227,7 +251,7 @@ async def test_no_assumed_value_can_reach_the_pasteable_pin():
         f"assumed values reached the pasteable pin: {leaked}. as_lab_json() drops these on "
         f"purpose; the renderer must not put them back"
     )
-    assert pinned == userland.as_lab_json(), (
+    assert pinned == userland.as_lab_json(sudo_login=_PROBE_LOGIN), (
         "the printed pin is not the settled payload — the renderer must format what "
         "as_lab_json() returns rather than build its own"
     )
@@ -255,9 +279,9 @@ async def test_the_printed_pin_parses_as_the_lab_data_key_a_host_entry_really_ca
     }
     spec = UnixHostSpec.model_validate(entry)
 
-    assert spec.userland_options.to_runtime() == UserlandOptions(**userland.as_lab_json()), (
-        "the host entry built from the printed pin does not carry the answers otto measured"
-    )
+    assert spec.userland_options.to_runtime() == UserlandOptions(
+        **userland.as_lab_json(sudo_login=_PROBE_LOGIN)
+    ), "the host entry built from the printed pin does not carry the answers otto measured"
 
 
 @pytest.mark.asyncio
@@ -288,7 +312,9 @@ async def test_a_host_that_settled_nothing_prints_no_pin_and_says_why():
     typed out, so a changed bound cannot leave the explanation quoting the old
     one.
     """
-    lines = await _report(_userland(raises=OSError("channel refused")))
+    lines = await _report(
+        _userland(raises=OSError("channel refused")), sudo_shell="the channel was refused"
+    )
     text = "\n".join(str(line) for line in lines if isinstance(line, (str, Text)))
 
     assert '"userland_options"' not in text, f"an empty pin was printed anyway:\n{text}"
@@ -346,7 +372,9 @@ async def test_every_capability_appears_in_the_table_with_a_source():
     capabilities otto holds no opinion about, when in fact each has a value
     driving real commands right now.
     """
-    lines = await _report(_userland(raises=OSError("channel refused")))
+    lines = await _report(
+        _userland(raises=OSError("channel refused")), sudo_shell="the channel was refused"
+    )
     rows = _rows(lines)
 
     assert sorted(rows) == _PINNABLE
@@ -418,7 +446,12 @@ async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin(
     "report",
     [
         pytest.param(lambda: _report(_userland(applets=list(PROBED_APPLETS))), id="settled"),
-        pytest.param(lambda: _report(_userland(raises=OSError("refused"))), id="nothing-settled"),
+        pytest.param(
+            lambda: _report(
+                _userland(raises=OSError("refused")), sudo_shell="the channel was refused"
+            ),
+            id="nothing-settled",
+        ),
     ],
 )
 async def test_otto_s_own_prose_wraps_at_the_terminal_width(monkeypatch, report):
@@ -662,3 +695,35 @@ async def test_dry_run_still_contacts_nothing_and_skips(monkeypatch):
 
     assert result.status is Status.Skipped
     assert called == [], "a dry run ran the survey"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "row", "pinned"),
+    [
+        (True, ("sudo_form", "shell", "probed"), "shell"),
+        (False, ("sudo_form", "validate", "probed"), "validate"),
+        ("sudo did not answer in time", ("sudo_form", "unmeasured", "assumed"), None),
+        (PasswordRefusedError("refused"), ("sudo_form", "unmeasured", "assumed"), None),
+    ],
+)
+async def test_the_sudo_form_is_reported_and_pinned_only_when_measured(answer, row, pinned):
+    """``sudo_form`` is a row like the others, and reaches the pin under its option's key."""
+    from otto.host.userland import _capability_rows
+
+    userland = _userland(applets=list(PROBED_APPLETS))
+    lines = await _report(userland, answer)
+    assert row in _capability_rows(userland, sudo_login=_PROBE_LOGIN)
+    assert _pinned(lines).get("sudo_form") == pinned
+    named = any(_PROBE_LOGIN in str(line) for line in lines)
+    assert named is (row[2] == "probed"), "a measured form is reported with the login it is for"
+
+
+@pytest.mark.asyncio
+async def test_a_declared_sudo_form_is_reported_declared_and_never_asked():
+    from otto.host.userland import _capability_rows
+
+    userland = _userland(UserlandOptions(sudo_form="validate"), applets=list(PROBED_APPLETS))
+    lines = await _report(userland, AssertionError("asked"))
+    assert ("sudo_form", "validate", "declared") in _capability_rows(userland)
+    assert _pinned(lines)["sudo_form"] == "validate"

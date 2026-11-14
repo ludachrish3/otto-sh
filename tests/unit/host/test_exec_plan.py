@@ -12,10 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host import DockerContainerHost, EmbeddedHost, LocalHost, UnixHost
+from otto.host.command_frame import ExecInput
 from otto.host.element import Element
 from otto.host.exec_route import ExecRoute
 from otto.host.login_proxy import Cred
-from otto.host.session import ExecPlan, typed_line_budget
+from otto.host.session import ExecPlan, SessionManager, typed_line_budget
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, NotRunResult
 from otto.utils import Status
@@ -210,10 +211,13 @@ def test_a_per_user_transfer_budget_reads_that_users_plan(monkeypatch):
     h._build_file_transfer(user="app")
 
     assert h._plan_exec(user="app", needs_shell=False).route is ExecRoute.POOLED_SHELL
-    budget = captured["ctx"].exec_line_budget()
+    budget = captured["ctx"].exec_line_room("")
     assert budget is not None
     assert budget == h._session_mgr.line_budget(route=ExecRoute.POOLED_SHELL)
-    assert budget == typed_line_budget(h._session_mgr._command_frame, echoes=True)
+    typed = ExecInput(
+        stdin_eof=True, restore=SessionManager._exec_restore_for(ExecRoute.POOLED_SHELL)
+    )
+    assert budget == typed_line_budget(h._session_mgr._command_frame, echoes=True, exec_input=typed)
     # The host's own plain exec still rides the bare channel, unbounded.
     plain = h._exec_plan(user=None, needs_shell=False).route
     assert h._session_mgr.line_budget(route=plain) is None
@@ -365,7 +369,7 @@ async def test_inside_as_user_the_transfer_budget_reads_the_plan_exec_dispatches
     await captured["ctx"].exec_cmd("true")
 
     assert [p.route for p in dispatched] == [ExecRoute.POOLED_SHELL]
-    assert captured["ctx"].exec_line_budget() == h._session_mgr.line_budget(
+    assert captured["ctx"].exec_line_room("") == h._session_mgr.line_budget(
         route=dispatched[0].route
     )
 

@@ -38,6 +38,16 @@ from tests.unit.host.test_interact_session_setup import _Console
 RESTORE_FOUND = f"stty {FOUND_SETTINGS}"
 
 
+def _saves(text: str) -> bool:
+    """Whether *text* carries the console save of the terminal's settings, under any session's tag.
+
+    Not the exec record every handshake also snapshots (``__otto_base``).
+    """
+    save = save_settings_command("TAG")
+    head, tail = save.split("TAG")
+    return re.search(re.escape(head) + r"\S+" + re.escape(tail), text) is not None
+
+
 # ---------------------------------------------------------------------------
 # The record
 # ---------------------------------------------------------------------------
@@ -169,7 +179,7 @@ async def test_a_console_session_restores_the_found_settings_before_it_logs_out(
     session, events = _session_on(console=True, record=FOUND_SETTINGS)
 
     await session._ensure_initialized()
-    assert "stty -g" in events[0]
+    assert _saves(events[0])
     await session.close()
 
     assert events[-1] == "logout"
@@ -187,7 +197,7 @@ async def test_a_telnet_session_neither_saves_nor_restores():
     handshakes = list(events)
     await session.close()
 
-    assert all("stty -g" not in e for e in handshakes)
+    assert not any(_saves(e) for e in handshakes)
     assert events == handshakes  # the close wrote nothing
 
 
@@ -255,8 +265,8 @@ async def test_the_console_bridge_hands_back_the_found_settings_at_both_restores
 
     first, second = _handshakes(writes)
     restores = [i for i, w in enumerate(writes) if RESTORE_FOUND in w]
-    assert "stty -g" in writes[first]
-    assert "stty -g" not in writes[second]
+    assert _saves(writes[first])
+    assert not _saves(writes[second])
     assert len(restores) == 2
     assert first < restores[0] < second < restores[1]
     assert not any("stty echo" in w for w in writes)
@@ -267,7 +277,7 @@ async def test_the_console_bridge_hands_back_the_found_settings_at_both_restores
 async def test_an_ssh_bridge_saves_nothing_and_hands_back_echo_only():
     writes = await _bridge(_Console(DialectShell()), console_client=None)
 
-    assert not any("stty -g" in w for w in writes)
+    assert not any(_saves(w) for w in writes)
     assert not any(FOUND_SETTINGS in w for w in writes)
     assert sum("2>/dev/null stty echo || :" in w for w in writes) == 2
 

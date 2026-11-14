@@ -181,11 +181,11 @@ Counts, derived from the records themselves rather than maintained by hand
 | Path state | Paths |
 | --- | --- |
 | `ADAPTED` | 1 |
-| `WIRED` | 6 |
+| `WIRED` | 7 |
 | `PROBE_REFUSED` | 2 |
 | `PROTECTED` | 1 |
 | `ATTRIBUTED` | 2 |
-| `OPEN` | 5 |
+| `OPEN` | 4 |
 
 The `WIRED`, `ADAPTED` and `ATTRIBUTED` paths — the ones whose message is this
 table's — reach {func}`~otto.host.userland.refuse_if_gapped`
@@ -208,7 +208,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device, so otto refuses the transfer up front rather than failing one file at a time. A device with a real `scp` installed is unaffected. Use the `shell` backend. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
-| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 4095 characters, or 1022 where the terminal still echoes, rather than let the terminal truncate it. `Host.exec()` is safe and is not refused, except on a `console` term, where it shares `run()`'s session and its bound. |
+| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 4095 characters, or 1022 where the terminal still echoes, rather than let the terminal truncate it. `Host.exec()` over ssh is safe and is not refused; on a `console`, `telnet` or proxied-login host it types into a shell session and is refused the same way. |
 | [`ssh-exec-string-cap`](#ssh-exec-string-cap) | `measured-broken` | A `shell` put of more than about 1 KB over ssh fails part-way on a device whose old dropbear caps an SSH string at 1400 bytes. Nothing is refused; use `nc`, or reach the device over telnet. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
@@ -585,9 +585,10 @@ answers a measurement by adapting rather than declining. The record stays
 **Status:** `measured-broken` — and this is a surface otto actually refuses *from
 this table*, on the path `Host.run()` takes. `Host.run()` reads the record through
 {func}`~otto.host.userland.refuse_if_gapped` and raises before it types anything,
-so nothing is attempted (and a line over 4095 opens no connection). **Other paths reach the same
-line editor and are still open**, deliberately; the paths list says which, and
-"What is not refused" below says why they must stay that way for now.
+so nothing is attempted (and a line over 4095 opens no connection). A pooled
+`exec()` is refused the same way. **One other path reaches the same line editor
+and is still open**, deliberately; the paths list says which, and "What is not
+refused" below says why it must stay that way for now.
 
 **Paths otto touches this from:**
 
@@ -600,10 +601,12 @@ line editor and are still open**, deliberately; the paths list says which, and
 - `otto.host.session.HostSession.run` — **OPEN**: a named session's `run()` calls
   `ShellSession.run_cmd` directly, one layer below the guard, so an over-long
   typed line is still silently truncated there.
-- `otto.host.session.SessionManager.exec_on_route` — **OPEN**: on a `term: telnet` host,
-  and on *any* host whose login is proxied, `exec()` has no stateless primitive
-  and routes through a pooled shell session — so it is line-edited like a typed
-  command, and the escape hatch below does not hold on those two host shapes.
+- `otto.host.session.SessionManager._exec_pooled` — **WIRED** by the same
+  function: on a `term: telnet` host, and on *any* host whose login is proxied,
+  `exec()` has no stateless primitive and types into a pooled shell session, so
+  it is line-edited like a typed command. The line is measured in the exec frame
+  it is typed in, against that session's bound, and refused before it is typed;
+  the message advises splitting it, since `exec()` is no escape there.
 
 A line typed into a shell through a terminal is **silently truncated** past
 4095 characters: the kernel holds one typed line in a 4096-byte buffer, its
@@ -637,20 +640,19 @@ session whose terminal still echoes). A multi-line
 script is judged line by line, because the terminal's buffer holds one line —
 a long here-doc is fine as long as no individual line is over.
 
-**What is not refused.** `Host.exec()` opens a bare exec channel with no pty, is
-unaffected, and is the way to send an over-long command. Two further paths stay
-unguarded deliberately: a named session's `HostSession.run()`, and `exec()` on a
-**telnet or proxied-login** host — neither has a stateless exec primitive, so
-the call routes through a pooled shell session and *is* line-edited. Guarding
-those would make {class}`~otto.host.transfer.shell.ShellFileTransfer` refuse its
-own chunk lines, which is the whole reason the `shell` backend
-exists. Those two remain measured-but-unfixed; on them, truncation is still
-possible.
+**What is not refused.** `Host.exec()` over ssh opens a bare exec channel with
+no pty, is unaffected, and is the way to send an over-long command there. One
+further path stays unguarded deliberately: a named session's
+`HostSession.run()`. Guarding it would make
+{class}`~otto.host.transfer.shell.ShellFileTransfer` refuse its own chunk
+lines, which is the whole reason the `shell` backend exists. It remains
+measured-but-unfixed; on it, truncation is still possible.
 
-On a `console` term there is no such escape: `exec()` runs on the default
-session, the one `run()` uses, so it passes the same guard and an over-long
-command is refused there too — split it. The `shell` transfer is not refused,
-because it sizes its lines by the session's typed budget.
+On a `console`, `telnet` or proxied-login host there is no such escape:
+`exec()` types into a shell session (the default one on a console, a pooled one
+otherwise), so it passes the same guard, measured in the exec frame, and an
+over-long command is refused there too — split it. The `shell` transfer is not
+refused, because it sizes its lines by the exec frame's typed budget.
 
 **Which hosts are refused.** Those whose declared shell dialect is `ash` — the
 `busybox` os_profile sets `command_frame: "ash"`, and a lab entry may set it

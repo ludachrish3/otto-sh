@@ -1,5 +1,7 @@
 """A bash shell that runs ``sudo -S`` and ``su -c`` the way the real ones prompt.
 
+It reads ``run``'s elevation lines and an ``exec``'s (the password on fd 3).
+
 The elevation tests need the other end of a pty that behaves like sudo and su
 around a password: the prompt arrives after the BEGIN marker (bash runs the
 ``echo BEGIN`` before it runs sudo), a wrong password makes sudo prompt again
@@ -24,14 +26,17 @@ from pydantic import SecretStr
 from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
-from tests._fixtures.fake_shell import probe_marker
+from tests._fixtures.fake_shell import BashFramed, end_record_for, parse_bash_frame, probe_marker
 
-_FRAME_RE = re.compile(
-    r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"\n',
+# `run`'s forms, and an exec's, which read the password on fd 3: sudo
+# validates (`-v`) and then runs `sudo -n`; su may lead its command with
+# `exec </dev/null; ` (privilege.PosixPrivilege._elevate).
+_SUDO_RE = re.compile(
+    r"\A(?:<&3 )?SUDO_PROMPT='([^']*)' sudo -S (?:-v \|\| exit; exec 3<&-; sudo -n )?(.*)\Z",
     re.DOTALL,
 )
-_SUDO_RE = re.compile(r"\ASUDO_PROMPT='([^']*)' sudo -S (.*)\Z", re.DOTALL)
-_SU_RE = re.compile(r"\Asu -c (.*)\Z", re.DOTALL)
+_SU_RE = re.compile(r"\A(?:<&3 3<&- )?su -c (.*)\Z", re.DOTALL)
+_SU_EOF = "exec </dev/null; "
 _SUDO_TRIES = 3
 
 
@@ -66,7 +71,7 @@ class ElevationShell:
         self.outputs = outputs or {}
         self.wedged = wedged
         self.writes: list[str] = []
-        self._pending: tuple[str, str, str, str] | None = None  # kind, prompt, cmd, end
+        self._pending: tuple[str, str, str, BashFramed] | None = None  # kind, prompt, cmd, end
         self._tries = 0
         self.prompt = ""
 
@@ -86,12 +91,12 @@ class ElevationShell:
             return self._answer_prompt(text)
         if (marker := probe_marker(text)) is not None and marker.endswith(RECOVER_SUFFIX):
             return "" if self.wedged else f"{marker}0__\n"
-        if (m := _FRAME_RE.search(text)) is not None:
+        if (framed := parse_bash_frame(text)) is not None:
             typed = text if self.echo else ""
-            return f"{typed}{m.group(1)}\n{self._start(m.group(2), m.group(3))}"
+            return f"{typed}{framed.begin}\n{self._start(framed.cmd, framed)}"
         return ""
 
-    def _start(self, body: str, end: str) -> str:
+    def _start(self, body: str, end: BashFramed) -> str:
         if (m := _SUDO_RE.match(body)) is not None:
             self.prompt = m.group(1)
             if self.cached or self.user == "root":
@@ -99,16 +104,16 @@ class ElevationShell:
             self._pending, self._tries = ("sudo", m.group(1), m.group(2), end), 0
             return m.group(1)
         if (m := _SU_RE.match(body)) is not None:
-            inner = shlex.split(m.group(1))[0]
+            inner = shlex.split(m.group(1))[0].removeprefix(_SU_EOF)
             if self.user == "root":
                 return self._finish(inner, end)
             self._pending = ("su", "Password: ", inner, end)
             return "Password: "
         return self._finish(body, end)
 
-    def _finish(self, cmd: str, end: str, code: int = 0) -> str:
+    def _finish(self, cmd: str, end: BashFramed, code: int = 0) -> str:
         out = self.outputs.get(cmd, "").replace("{prompt}", self.prompt)
-        return f"{out}{end}{code}__\n"
+        return f"{out}{end_record_for(end, code)}\n"
 
     def _answer_prompt(self, text: str) -> str:
         assert self._pending is not None
@@ -121,12 +126,12 @@ class ElevationShell:
             return "\n" + self._finish(cmd, end)
         if kind == "su":
             self._pending = None
-            return "\nsu: Authentication failure\n" + f"{end}1__\n"
+            return "\nsu: Authentication failure\n" + f"{end_record_for(end, 1)}\n"
         self._tries += 1
         if self._tries < _SUDO_TRIES:
             return f"\nSorry, try again.\n{prompt}"
         self._pending = None
-        return f"\nsudo: {_SUDO_TRIES} incorrect password attempts\n{end}1__\n"
+        return f"\nsudo: {_SUDO_TRIES} incorrect password attempts\n{end_record_for(end, 1)}\n"
 
 
 class ElevationSession(ShellSession):

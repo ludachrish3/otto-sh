@@ -2045,7 +2045,7 @@ _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
     _Leg("noxfile.py:chaos_embedded@default", "chaos and embedded", ("tests/e2e/chaos",)),
     # Chris, 2026-11-07 (#853): the every-offset probe-line cut sweep is nightly-only,
     # plus one by-hand pass when it landed. It is deterministic, and its fixed
-    # hazard cases run on every push; the sweep adds exhaustiveness (~13k
+    # hazard cases run on every push; the sweep adds exhaustiveness (~50k
     # fresh shells, about two hours serial), which a release need not wait
     # on. Nightly's `probe-cut-sweep` job runs it.
     _Leg(

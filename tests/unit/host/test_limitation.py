@@ -9,6 +9,7 @@ import pytest
 from otto.host.command_frame import (
     BUILTIN_FRAMES,
     BashFrame,
+    ExecInput,
     build_command_frame,
     register_command_frame,
 )
@@ -106,12 +107,12 @@ def test_the_line_budget_is_read_from_the_route_record():
     )
     assert manager.line_budget(route=ExecRoute.SSH_CHANNEL) is None
     assert manager.line_budget(route=ExecRoute.UNSUPPORTED) is None
-    assert manager.line_budget(route=ExecRoute.POOLED_SHELL) == typed_line_budget(
-        BashFrame(), echoes=True
-    )
-    assert manager.line_budget(route=ExecRoute.DEFAULT_SESSION) == typed_line_budget(
-        BashFrame(), echoes=True
-    )
+    # Each shell route is budgeted in the exec frame it types, with its restore.
+    for route in (ExecRoute.POOLED_SHELL, ExecRoute.DEFAULT_SESSION):
+        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
+        assert manager.line_budget(route=route) == typed_line_budget(
+            BashFrame(), echoes=True, exec_input=typed
+        )
 
 
 def test_the_line_budget_reads_its_measurements_from_their_one_home():

@@ -21,6 +21,7 @@ from otto.host.login_proxy import (
     run_undo,
 )
 from otto.host.secret_wire import reveal
+from otto.host.terminal_mapping import establish_exec_state
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
 from tests._fixtures.fake_shell import ModelIO, ShellModel, probe_marker
@@ -241,6 +242,11 @@ async def test_a_rejected_password_is_not_reported_as_success():
     with pytest.raises(LoginProxyError, match=r"answered as 'admin', not 'mysql'"):
         await run_proxy(io, wrong, via=ADMIN, host_id="h1")
     assert io.shell.auth_failures == 1, "exactly one attempt, never a retry loop"
+    # The probe the outer shell answered establishes only what is missing, so it
+    # keeps the outer shell's terminal record (test_exec_terminal.py, on a pty).
+    probes = [t for t, _mode in io.sent if _is_resync(t)]
+    assert probes
+    assert all(establish_exec_state(replace=False) in t for t in probes)
 
 
 @pytest.mark.asyncio

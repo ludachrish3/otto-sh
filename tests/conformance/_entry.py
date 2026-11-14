@@ -39,17 +39,18 @@ from typing import Any
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.exec_route import ExecRoute
 from otto.host.host import BaseHost
+from otto.host.identity import ROOT_LOGIN
 from otto.host.local_host import LocalHost
 from otto.result import CommandResult
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests._fixtures.session_setup_hooks import noop_session_setup as _temporary_noop_hook
+from tests._fixtures.session_setup_hooks import temporary_session_setup
 from tests.conformance._controls import mark_string_arguments, walk_test_functions
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 
 RUN, EXEC, EXEC_SHELL = "run", "exec", "exec-shell"
 """The three ways a command is issued: ``run``, ``exec``, and ``exec`` forced
-onto the pooled shell by a registered no-op ``session_setup`` hook."""
+onto the pooled shell by a registered marking ``session_setup`` hook."""
 
 ENTRIES_MARK = "entries"
 """``@pytest.mark.entries("run", "exec", "exec-shell")`` on a command contract."""
@@ -59,10 +60,14 @@ ALL_ENTRIES: list[str] = [RUN, EXEC, EXEC_SHELL]
 UNIX, EMBEDDED, LOCAL_FAMILY = "unix", "embedded", "local"
 """The values :attr:`ResolvedCell.family` takes."""
 
-NOOP_SETUP_HOOK = "conformance-exec-shell-noop"
+MARKING_SETUP_HOOK = "conformance-exec-shell-mark"
 """The name PREFIX of the one session-setup hook this suite registers (each context
 adds a unique suffix). Declaring any hook sends ``exec`` to the pooled shell;
-this one does nothing else."""
+this one also marks each session it sets up (:data:`HOOK_MARK`), so a contract
+can tell a pooled session's state from a fresh process's."""
+
+HOOK_MARK = "export OTTO_CF_HOOK=ran"
+"""What the marking hook runs on each session: the vocabulary's state read prints it."""
 
 _BUSYBOX_ARTIFACT = "busybox-artifact"
 _SSH, _TELNET, _CONSOLE = "ssh", "telnet", "console"
@@ -230,15 +235,20 @@ def check_route(resolved: ResolvedCell, result: CommandResult) -> None:
     )
 
 
-@contextlib.contextmanager
-def noop_session_setup() -> Iterator[str]:
-    """Register a no-op hook for the life of one hooked host; yield its name.
+async def _mark(session: Any, _ctx: Any) -> None:
+    """Run :data:`HOOK_MARK` on the session being set up, through the handle the hook gets."""
+    await session.run(HOOK_MARK)
 
-    :func:`tests._fixtures.session_setup_hooks.noop_session_setup`, under a
-    name of this context's own, so two overlapping hooked hosts never share
+
+@contextlib.contextmanager
+def marking_session_setup() -> Iterator[str]:
+    """Register the marking hook for the life of one hooked host; yield its name.
+
+    :func:`tests._fixtures.session_setup_hooks.temporary_session_setup`, under
+    a name of this context's own, so two overlapping hooked hosts never share
     (and never remove) one registry entry.
     """
-    with _temporary_noop_hook(NOOP_SETUP_HOOK) as name:
+    with temporary_session_setup(MARKING_SETUP_HOOK, hook=_mark) as name:
         yield name
 
 
@@ -255,7 +265,7 @@ def hooked(
 
     @contextlib.asynccontextmanager
     async def opener() -> AsyncIterator[BaseHost]:
-        with noop_session_setup() as hook:
+        with marking_session_setup() as hook:
             async with build(hook) as host:
                 yield host
 
@@ -271,6 +281,41 @@ def family_of(host: BaseHost) -> str:
     return UNIX
 
 
+def _login_cred(entry: "dict[str, Any]", term: str, *, family: str) -> "dict[str, Any] | None":
+    """The cred a login over *term* uses, read off *entry*; ``None`` where none applies.
+
+    The first cred with no ``protocols``, or ``protocols`` naming *term*
+    (docs/configuration/host-sources.md, "Scoping a cred to a protocol").
+    A local or embedded host logs in with no cred, so it answers ``None``
+    without reading anything.
+
+    Raises:
+        LookupError: *entry* is a unix host's and declares no ``creds``, so
+            the fact this reads is missing rather than False.
+        ValueError: *family* is none this suite builds.
+    """
+    if family in (LOCAL_FAMILY, EMBEDDED):
+        return None
+    if family != UNIX:
+        raise ValueError(f"unknown family {family!r}: cannot read its login's cred")
+    creds = entry.get("creds")
+    if creds is None:
+        raise LookupError(f"lab entry {entry.get('name', entry)!r} declares no creds")
+    return next((cred for cred in creds if term in cred.get("protocols", [term])), None)
+
+
+def password_sudo_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:
+    """Whether *entry*'s login over *term* is one sudo would ask a password of.
+
+    The cred :func:`proxied_on` reads has a ``password`` and its login is not
+    root. Whether the device's sudo then asks (no ``NOPASSWD``) is a fact of
+    the device, not of the entry, so a venue combines this with what it
+    measured.
+    """
+    pick = _login_cred(entry, term, family=family)
+    return pick is not None and bool(pick.get("password")) and pick.get("login") != ROOT_LOGIN
+
+
 def proxied_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:
     """Whether *entry*'s creds make a login over *term* a proxied one.
 
@@ -282,19 +327,8 @@ def proxied_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:
     it is proxied when that cred names a ``proxy``.
 
     A local or embedded host cannot proxy a login, so it answers False
-    without reading anything.
-
-    Raises:
-        LookupError: *entry* is a unix host's and declares no ``creds``, so
-            the fact this reads is missing rather than False.
-        ValueError: *family* is none this suite builds.
+    without reading anything. The cred is :func:`_login_cred`'s, whose
+    refusals this raises.
     """
-    if family in (LOCAL_FAMILY, EMBEDDED):
-        return False
-    if family != UNIX:
-        raise ValueError(f"unknown family {family!r}: cannot tell whether its login is proxied")
-    creds = entry.get("creds")
-    if creds is None:
-        raise LookupError(f"lab entry {entry.get('name', entry)!r} declares no creds")
-    pick = next((cred for cred in creds if term in cred.get("protocols", [term])), None)
+    pick = _login_cred(entry, term, family=family)
     return pick is not None and "proxy" in pick

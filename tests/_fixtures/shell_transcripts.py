@@ -81,10 +81,20 @@ def bash_transcript(case: OutputCase, m: SessionMarkers) -> str:
     return f"{m.begin}\n{case.text}{m.end_prefix}{case.retcode}__\n"
 
 
-def bash_recorded(output: str, *, retcode: int, m: SessionMarkers, ps1: str, first: bool) -> str:
-    r"""The bash frame's recorded buffer: README model, after the ``onlcr`` fold."""
+def bash_recorded(
+    output: str, *, retcode: int, m: SessionMarkers, ps1: str, first: bool, flag: str = ""
+) -> str:
+    r"""The bash frame's recorded buffer: README model, after the ``onlcr`` fold.
+
+    *flag* is the end record's flag: empty for a ``run``, :data:`EXEC_RESTORED`
+    for an ``exec`` on a healthy session (its restore record was there).
+    """
     lead = "" if first else "\n"
-    return f"{lead}{ps1}> {m.begin}\n{output}{m.end_prefix}{retcode}__"
+    return f"{lead}{ps1}> {m.begin}\n{output}{m.end_prefix}{flag}{retcode}__"
+
+
+EXEC_RESTORED = "B"
+"""The flag every recorded ``exec`` end record carries (``BashFrame.end_pattern``)."""
 
 
 def zephyr_output(text: str, *, error: bool) -> str:

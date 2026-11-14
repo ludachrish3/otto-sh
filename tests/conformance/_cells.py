@@ -85,6 +85,10 @@ LOCAL = "local"
 LOOPBACK_SSH = "loopback-ssh"
 BUSYBOX_ARTIFACT = "busybox-artifact"
 
+RUNNER_LOCAL_KINDS = frozenset({LOCAL, LOOPBACK_SSH, BUSYBOX_ARTIFACT})
+"""Every kind this venue builds: each one's host runs its commands on the runner itself, so a
+process it started is in the runner's own ``/proc`` (``tests/conformance/_witness.py``)."""
+
 # What no hermetic cell can be, whatever menu a host reports. A ``telnet``
 # term needs a console server in front of a real device and ``console``
 # transfer is the embedded filesystem path -- both are properties of a lab,
@@ -239,6 +243,10 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             vocabulary=POSIX,
             family=family,
             proxied_login=proxied[term],
+            # Never the runner's own sudo: its login's password is a
+            # placeholder (the loopback login is by key) and the hermetic venue
+            # drives no real elevation. The password arm is the unit tests'.
+            password_sudo=False,
             open_shell_host=(
                 hooked(partial(_loopback_build, term, transfer))
                 if term == "ssh" and not proxied[term]

@@ -107,12 +107,15 @@ from tests._fixtures.support_matrix import (
     element_accounting_errors,
     positive_control_errors,
 )
+from tests._fixtures.witness_shell import STOPPED
 from tests.conformance import _entry
 from tests.conformance import conftest as conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_signal_contract as _signal_contract
+from tests.conformance import test_state_contract as _state_contract
+from tests.conformance import test_stdin_contract as _stdin_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance import test_transfer_contract as _transfer_contract
 from tests.conformance._bed import bed_space
@@ -151,6 +154,7 @@ from tests.conformance._observation import (
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 from tests.conformance._vocabulary import POSIX, vocabulary_for
+from tests.conformance._witness import fake_witnesses
 from tests.conformance.test_transfer_contract import _MODE as _TRANSFER_MODE
 from tests.conformance.test_transfer_contract import _PAYLOAD
 
@@ -2546,6 +2550,10 @@ class _FakeHost:
         self._dirs: "set[str]" = set()
         self._modes: "dict[str, int]" = {}
         self._file_transfer = _FakeTransfer(mode_support)
+        # The run session's shell state, the fields `state_read_command` prints.
+        # An `exec` starts from a copy and leaves this as it was.
+        self._state = {"cwd": "/home/fake", "run": "unset", "exec": "unset", "opts": ""}
+        self._witnesses = fake_witnesses(POSIX)
 
     #: The route each opener's ``exec`` reports, set by :func:`_fake_cell`.
     exec_route = "ssh-channel"
@@ -2553,18 +2561,21 @@ class _FakeHost:
     async def run(self, command, timeout=None):
         commands = [command] if isinstance(command, str) else list(command)
         return Results.collect(
-            items=[self._routed(self._answer(one, timeout), "default-session") for one in commands]
+            items=[
+                self._routed(self._answer(one, timeout, self._state), "default-session")
+                for one in commands
+            ]
         )
 
     async def exec(self, command, timeout=None) -> CommandResult:
-        return self._routed(self._answer(command, timeout), self.exec_route)
+        return self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route)
 
     def _routed(self, result: CommandResult, route: str) -> CommandResult:
         if "reports-the-wrong-route" in self._twists:
             route = "local-subprocess"
         return dataclasses.replace(result, route=route)
 
-    def _answer(self, command: str, timeout) -> CommandResult:
+    def _answer(self, command: str, timeout, state: "dict[str, str]") -> CommandResult:
         if "always-times-out" in self._twists:
             return CommandResult(
                 status=Status.Error,
@@ -2573,7 +2584,13 @@ class _FakeHost:
                 retcode=-1,
                 timed_out=True,
             )
-        if command == POSIX.long_running_command and timeout is not None:
+        witnessed = self._witnesses.long_running_path(command)
+        if witnessed is not None and timeout is not None:
+            self._witnesses.record(witnessed, STOPPED)
+        if timeout is not None and (
+            command in {POSIX.long_running_command, POSIX.detached_long_running_command}
+            or witnessed is not None
+        ):
             return CommandResult(
                 status=Status.Error,
                 value=f"Command timed out after {timeout}s",
@@ -2581,6 +2598,10 @@ class _FakeHost:
                 retcode=-1,
                 timed_out=True,
             )
+        if (printed := self._witnesses.answer(command)) is not None:
+            if printed and "every-process-reads-stopped" in self._twists:
+                printed = STOPPED
+            return CommandResult(status=Status.Success, value=printed, command=command, retcode=0)
         if "one-exit-code" in self._twists:
             return CommandResult(status=Status.Failed, value="", command=command, retcode=7)
         if "every-command-fails" in self._twists:
@@ -2592,13 +2613,64 @@ class _FakeHost:
             retcode = 15 if "rewrites-a-genuine-143" in self._twists else 143
             return CommandResult(status=Status.Failed, value="", command=command, retcode=retcode)
         case = next((one for one in POSIX.output_cases if one.command == command), None)
+        if case is None and _is_state_command(command):
+            return CommandResult(
+                status=Status.Success,
+                value=self._state_answer(command, state),
+                command=command,
+                retcode=0,
+            )
         retcode, value = (case.retcode, case.value) if case else self._honest(command)
         status = Status.Success if retcode == 0 else Status.Failed
         return CommandResult(status=status, value=value, command=command, retcode=retcode)
 
-    def _honest(self, command: str) -> "tuple[int, str]":
+    def _state_answer(self, command: str, state: "dict[str, str]") -> str:
+        """Apply the state words *command* chains, in order, to *state*; return the last read.
+
+        *state* is the run session's own for a ``run`` and a copy for an
+        ``exec``. The twisted host answers every read with the state the host
+        started in, whatever was set.
+        """
+        read = ""
+        for word in _state_words(command) or []:
+            if word == POSIX.run_state_set_command:
+                state.update(cwd="/dev", run="run", opts=state["opts"] + "f")
+            elif word == POSIX.exec_state_set_command:
+                state.update(cwd="/", exec="exec", opts=state["opts"] + "C")
+            elif word == POSIX.terminal_change_command:
+                state["tty"] = "echo noicanon"
+            elif word == POSIX.terminal_read_command:
+                read = (
+                    POSIX.terminal_baseline_answer
+                    if "the-state-read-answers-one-value" in self._twists
+                    else state.get("tty", POSIX.terminal_baseline_answer)
+                ) or ""
+            else:
+                shown = (
+                    {"cwd": "/home/fake", "run": "unset", "exec": "unset", "opts": ""}
+                    if "the-state-read-answers-one-value" in self._twists
+                    else state
+                )
+                read = f"{shown['cwd']}|{shown['run']}|{shown['exec']}|unset|{shown['opts']}|fake"
+        return read
+
+    def _stdin_answer(self, command: str) -> "str | None":
+        """The value of the stdin words, or ``None`` for any other command.
+
+        The twisted host's command never reads what it is given.
+        """
+        words = POSIX.stdin_eof_command
+        if words is None or command not in (words, _stdin_contract.piped(words)):
+            return None
+        reads = command != words and "the-command-reads-no-stdin" not in self._twists
+        given = "x\n" if reads else ""
+        return f"{given}otto-cf-eof"
+
+    def _honest(self, command: str) -> "tuple[int, str]":  # noqa: PLR0911 — one arm per command the vocabulary names
         if command == POSIX.succeeding_command:
             return 0, ""
+        if (stdin := self._stdin_answer(command)) is not None:
+            return 0, stdin
         if command == POSIX.failing_command:
             return POSIX.failing_code, ""
         if command == POSIX.sequence_failing_command:
@@ -2819,6 +2891,34 @@ class _FakeHost:
         return Result(status=Status.Success)
 
 
+def _state_words(command: str) -> "list[str] | None":
+    """The POSIX vocabulary's state words *command* chains with ``; ``, in order; ``None`` if not.
+
+    Matched as whole words from the front, since the state read itself holds ``; ``.
+    """
+    words = [
+        POSIX.run_state_set_command,
+        POSIX.exec_state_set_command,
+        POSIX.state_read_command,
+        POSIX.terminal_change_command,
+        POSIX.terminal_read_command,
+    ]
+    found: list[str] = []
+    rest = command
+    while rest:
+        word = next((one for one in words if one is not None and rest.startswith(one)), None)
+        if word is None:
+            return None
+        found.append(word)
+        rest = rest[len(word) :].removeprefix("; ")
+    return found
+
+
+def _is_state_command(command: str) -> bool:
+    """Whether *command* is made only of the POSIX vocabulary's state words."""
+    return _state_words(command) is not None
+
+
 def _fake_cell(host: _FakeHost, entry: str = "") -> ResolvedCell:
     """A resolved cell whose host is *host*, whose vocabulary is POSIX, reached by *entry*.
 
@@ -2862,6 +2962,11 @@ CONTROLS = {
     "exec-signal-exit": (
         _signal_contract.test_control_143_is_reported_as_143_and_an_ordinary_command_as_success
     ),
+    "exec-isolated": _state_contract.test_control_state_set_inside_one_exec_is_seen_by_that_exec,
+    "run-keeps-state": (
+        _state_contract.test_control_a_run_that_sets_nothing_reads_the_same_and_one_that_sets_reads_it
+    ),
+    "exec-stdin": _stdin_contract.test_control_input_given_to_the_command_is_read,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -2913,6 +3018,30 @@ HOST_CASES = [
     ("143 and 0 both reach the caller", "exec-signal-exit", (), True, True),
     ("every command exits 143", "exec-signal-exit", ("every-command-exits-143",), True, False),
     ("a genuine 143 is rewritten", "exec-signal-exit", ("rewrites-a-genuine-143",), True, False),
+    ("an exec reads the state it set", "exec-isolated", (), True, True),
+    (
+        "the state read never moves, for exec",
+        "exec-isolated",
+        ("the-state-read-answers-one-value",),
+        True,
+        False,
+    ),
+    ("a run reads the state it set", "run-keeps-state", (), True, True),
+    (
+        "the state read never moves, for run",
+        "run-keeps-state",
+        ("the-state-read-answers-one-value",),
+        True,
+        False,
+    ),
+    ("a command reads the input it is given", "exec-stdin", (), True, True),
+    (
+        "the command reads nothing it is given",
+        "exec-stdin",
+        ("the-command-reads-no-stdin",),
+        True,
+        False,
+    ),
     ("get reads the far side", "transfer-roundtrip", (), True, True),
     (
         "get answers a constant",
@@ -2951,6 +3080,7 @@ HOST_CASES = [
     ),
     ("budget is respected", "timeout", (), True, True),
     ("everything times out", "timeout", ("always-times-out",), True, False),
+    ("every process reads stopped", "timeout", ("every-process-reads-stopped",), True, False),
 ]
 
 
@@ -3117,7 +3247,11 @@ def test_every_declared_observable_renders_against_every_vocabulary(userland, el
             continue
         rendered = render_observable(entry.template, resolved)
         assert rendered.strip(), entry.contract
-        assert "{" not in rendered, f"{entry.contract}: unrendered placeholder in {rendered!r}"
+        # A placeholder is `{name}` or `{name.field}`; a vocabulary word's own
+        # braces (`${OTTO_CF_RUN-unset}` in the state read) are not one.
+        assert re.search(r"\{[A-Za-z_][\w.]*\}", rendered) is None, (
+            f"{entry.contract}: unrendered placeholder in {rendered!r}"
+        )
 
 
 def test_no_declared_observable_is_a_restatement_of_its_surface(committed):
@@ -6161,6 +6295,9 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
             with_rules[surface.id] = rule
     narrowing = {
         "exec-signal-exit",
+        "exec-isolated",
+        "run-keeps-state",
+        "exec-stdin",
         "transfer-roundtrip",
         "transfer-mode",
         "transfer-progress",
@@ -6609,14 +6746,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: eight of the eleven surfaces are unbranched.
+    """The accept-control for all of the above: ten of the fourteen surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 8, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 10, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability
@@ -8020,3 +8157,77 @@ def test_the_overview_names_every_term_each_kind_is_reached_over_and_glosses_its
         assert f"`{cell.cell.term}`" in line, (cell.kind, line)
     for word in GLOSSARY:
         assert f"- **{word}**: " in page, word
+
+
+def test_a_known_gap_is_published_on_its_command_page_only():
+    from scripts.render_support_matrix import KNOWN_GAPS, known_gaps_label
+
+    pages = render_command_contracts()
+    for command in ("run", "exec"):
+        tail = pages[f"{command}.md"].split("## Declared exceptions and undefined", 1)[1]
+        assert f"({known_gaps_label(command)})=" in tail
+        assert "### Known gaps (not device limitations)" in tail
+        for gap in KNOWN_GAPS[command]:
+            assert f"- {gap}" in tail
+        # Only its own page carries a command's gaps.
+        other = pages["exec.md" if command == "run" else "run.md"]
+        assert not any(gap in other for gap in KNOWN_GAPS[command]), command
+
+
+def test_the_sudo_forms_are_declared_on_the_exec_page_only_and_are_not_a_gap():
+    from scripts.render_support_matrix import HOST_OPTION_FORMS, host_option_forms_label
+
+    pages = render_command_contracts()
+    tail = pages["exec.md"].split("## Declared exceptions and undefined", 1)[1]
+    forms = tail.split("### Per-host forms", 1)
+    assert f"({host_option_forms_label('exec')})=" in tail
+    for form in HOST_OPTION_FORMS["exec"]:
+        assert f"- {form}" in forms[1]
+        assert form not in forms[0]
+        assert form not in pages["run.md"]
+    declared = "\n".join(HOST_OPTION_FORMS["exec"])
+    for need in ("sudo_form", "`shell`", "`validate`", "login's shell", "timestamp_timeout=0"):
+        assert need in declared, need
+
+
+def test_per_host_forms_keyed_to_a_command_with_no_page_are_refused(monkeypatch):
+    import scripts.render_support_matrix as rsm
+
+    monkeypatch.setitem(rsm.HOST_OPTION_FORMS, "nonesuch", ["a form"])
+    with pytest.raises(ValueError, match="per-host forms keyed to 'nonesuch'"):
+        rsm._check_page_mapping()
+
+
+def test_a_known_gap_keyed_to_a_command_with_no_page_is_refused(monkeypatch):
+    import scripts.render_support_matrix as rsm
+
+    monkeypatch.setitem(rsm.KNOWN_GAPS, "nonesuch", ["a gap"])
+    with pytest.raises(ValueError, match="known gap keyed to 'nonesuch'"):
+        rsm._check_page_mapping()
+
+
+def test_a_host_every_entry_withholds_is_not_merged_into_the_domain_note():
+    """An exec-only contract's domain note names only hosts an exec entry reaches.
+
+    A BusyBox-artifact cell is ``run`` only, so ``exec-isolated`` (which declares
+    exec entries alone) withholds it for the entry's reason, in a note of its
+    own, never under the domain's narrowing.
+    """
+    from tests.conformance._entry import ENTRY_REASON, EXEC
+
+    cells = _suite_cells()
+    surface = next(s for s in SURFACES if s.id == "exec-isolated")
+    assert "run" not in entries_declared(surface.contract)
+    notes = not_checked_notes(
+        surface.id, surface.contract, cells, applies=_domain_of(surface.contract)
+    )
+    artifact = HOST_KIND_VOICE["busybox-artifact"]
+    domain_notes = [note for note in notes if note.entry is None]
+    assert domain_notes, notes
+    for note in domain_notes:
+        assert artifact not in note.text, note.text
+        assert all(kind != "busybox-artifact" for kind, _ in note.hosts), note.hosts
+    assert any(
+        note.entry == EXEC and artifact in note.text and ENTRY_REASON[EXEC] in note.text
+        for note in notes
+    ), notes

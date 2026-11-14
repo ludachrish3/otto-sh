@@ -157,7 +157,7 @@ from typing_extensions import final
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Opt, PerLoop, Status, cli_exposed
-from .errors import UnsupportedOnUserlandError
+from .errors import PasswordRefusedError, UnsupportedOnUserlandError
 from .host import is_dry_run
 from .options import UserlandOptions
 
@@ -390,6 +390,12 @@ Its paths are :data:`PATH_ATTRIBUTED` instead: the attempt is made, and the
 failure it produces is translated into the record's words. Read that state for
 why an exclusion here is the beginning of that story rather than a gap in it.
 """
+
+SUDO_FORM_SHELL = "shell"
+"""An ``exec`` under sudo is one sudo call running the whole command in the login's shell."""
+
+SUDO_FORM_VALIDATE = "validate"
+"""An ``exec`` under sudo validates first (``sudo -S -v``), then runs ``sudo -n <cmd>``."""
 
 APPLET_PRESENT = "present"
 """The device resolved this name to something it can run."""
@@ -675,6 +681,14 @@ class Userland:
         # Monotonic time before which another attempt is refused. Zero until an
         # attempt leaves something unasked, so the first caller never waits.
         self._retry_after = 0.0
+        # The sudo form, answered apart from the round: its probe is a sudo
+        # call that needs the elevation's password, so only an exec under sudo
+        # asks it, once per login. sudoers answers per user, so a measured
+        # form is keyed by the login sudo was asked as and never read for
+        # another; a declared one (the options) is host-wide.
+        self._sudo_forms: dict[str, str] = {}
+        self._sudo_forms_settled: set[str] = set()
+        self._sudo_forms_unread: dict[str, str] = {}
 
     async def _send(self, cmd: str) -> "CommandResult | None":
         """Issue *cmd* under the resolution budget; ``None`` if it could not be asked.
@@ -1081,6 +1095,84 @@ class Userland:
         """``"sudo"`` | ``"su"`` | ``"none"``."""
         return self._get("elevation")
 
+    def sudo_form(self, *, login: str) -> str:
+        """:data:`SUDO_FORM_SHELL` | :data:`SUDO_FORM_VALIDATE`: an ``exec`` under sudo as *login*.
+
+        The declared value when ``userland_options`` carries one (it holds for
+        every login), else what :meth:`resolve_sudo_form` answered for *login*:
+        sudoers answers per user, so one login's answer is never read for
+        another.
+
+        Raises:
+            RuntimeError: nothing is declared and :meth:`resolve_sudo_form`
+                was never awaited for *login*.
+        """
+        if self._options.sudo_form:
+            return self._options.sudo_form
+        form = self._sudo_forms.get(login)
+        if form is None:
+            msg = f"Userland.sudo_form read for {login!r} before resolve_sudo_form()"
+            raise RuntimeError(msg)
+        return form
+
+    def sudo_form_known(self, *, login: str) -> bool:
+        """Whether :meth:`sudo_form` can be read for *login*: declared, or asked at least once."""
+        return bool(self._options.sudo_form) or login in self._sudo_forms
+
+    def sudo_form_settled(self, *, login: str) -> bool:
+        """Whether *login*'s form is declared or measured, so worth pinning."""
+        return bool(self._options.sudo_form) or login in self._sudo_forms_settled
+
+    async def resolve_sudo_form(
+        self, *, login: str, probe: "Callable[[], Coroutine[Any, Any, bool | str]]"
+    ) -> None:
+        """Settle :meth:`sudo_form` for *login* with one *probe*, unless declared or settled.
+
+        *probe* asks the host's sudo, as *login*, whether it may run the
+        session's shell (``sudo -l "$SHELL"``): ``True`` settles
+        :data:`SUDO_FORM_SHELL`, ``False`` (authenticated, not allowed)
+        :data:`SUDO_FORM_VALIDATE`. A string is why it got no answer: the form
+        reads the default, :data:`SUDO_FORM_SHELL`, for this call, UNSETTLED,
+        with that reason kept (:meth:`sudo_form_unread`), and the next exec
+        under sudo asks again. A refused password (*probe* raises
+        :exc:`~otto.host.errors.PasswordRefusedError`) is unread too, and
+        propagates. Not part of :meth:`resolve`'s round, because the question
+        is itself an elevated call that answers the elevation's password; it
+        is serialized on the same lock, so concurrent first execs of one login
+        ask once, and of different logins once each.
+        """
+        if self._options.sudo_form:
+            return
+        async with self._lock.get():
+            if login in self._sudo_forms_settled:
+                return
+            try:
+                answer = await probe()
+            except PasswordRefusedError:
+                self._sudo_forms_unread[login] = "the password was refused"
+                raise
+            settled = isinstance(answer, bool)
+            form = SUDO_FORM_VALIDATE if answer is False else SUDO_FORM_SHELL
+            self._sudo_forms[login] = form
+            if settled:
+                self._sudo_forms_settled.add(login)
+                self._sudo_forms_unread.pop(login, None)
+            else:
+                self._sudo_forms_unread[login] = str(answer)
+            _logger.debug(
+                "userland: %s = %s (%s)",
+                f"sudo_form for {login!r}",
+                form,
+                "probed" if settled else "assumed",
+            )
+
+    def sudo_form_unread(self, *, login: str) -> "str | None":
+        """Why the last ``sudo -l`` question as *login* got no answer.
+
+        ``None`` if it did, or was not asked.
+        """
+        return self._sudo_forms_unread.get(login)
+
     @property
     def timeout_style(self) -> str:
         """``"coreutils"`` | ``"dash-t"`` | ``"absent"``."""
@@ -1186,8 +1278,12 @@ class Userland:
             )
         return name in self._settled
 
-    def as_lab_json(self) -> dict[str, str]:
+    def as_lab_json(self, *, sudo_login: "str | None" = None) -> dict[str, str]:
         """Return the SETTLED answers, as a table a user may safely pin.
+
+        ``sudo_form`` is in it when declared, or when it was measured for
+        *sudo_login*: a measured form is one login's answer, so the caller
+        names whose answer it pins.
 
         Deliberately not the complete map — read the properties for that. What
         this returns is what was declared or actually measured, and the
@@ -1209,7 +1305,12 @@ class Userland:
         at all, because ``_resolve_once`` asks only about names that are
         neither settled nor declared.
         """
-        return {k: v for k, v in sorted(self._resolved.items()) if k in self._settled}
+        pinned = {k: v for k, v in self._resolved.items() if k in self._settled}
+        if self._options.sudo_form or (
+            sudo_login is not None and self.sudo_form_settled(login=sudo_login)
+        ):
+            pinned["sudo_form"] = self.sudo_form(login=sudo_login or "")
+        return dict(sorted(pinned.items()))
 
 
 # ===========================================================================
@@ -1221,7 +1322,9 @@ class Userland:
 # and explain what it left behind.
 
 
-def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
+def _capability_rows(
+    userland: "Userland", *, sudo_login: "str | None" = None
+) -> "list[tuple[str, str, str]]":
     """``(capability, value, source)`` for every capability, sorted by name.
 
     EVERY capability, including the assumed ones :meth:`Userland.as_lab_json`
@@ -1257,7 +1360,26 @@ def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
         else:
             source = "probed"
         rows.append((name, values[name], source))
+    if userland.elevation == "sudo":
+        rows.append(_sudo_form_row(userland, sudo_login))
+        rows.sort()
     return rows
+
+
+def _sudo_form_row(userland: "Userland", sudo_login: "str | None") -> "tuple[str, str, str]":
+    """Return the ``sudo_form`` row for *sudo_login*: declared, probed, or ``unmeasured``.
+
+    Read from the same facts :meth:`Userland.resolve_sudo_form` keeps, so
+    the row and the pin agree: only a declared or probed form is pinned.
+    ``unmeasured`` is no form at all, never a guess: the question was not
+    asked (a session already root) or got no answer
+    (:meth:`Userland.sudo_form_unread` says why, and the report prints it).
+    """
+    if userland._options.sudo_form:  # noqa: SLF001 — same-module read of the declaration
+        return ("sudo_form", userland._options.sudo_form, "declared")  # noqa: SLF001 — same-module read of the declaration
+    if sudo_login is not None and userland.sudo_form_settled(login=sudo_login):
+        return ("sudo_form", userland.sudo_form(login=sudo_login), "probed")
+    return ("sudo_form", "unmeasured", "assumed")
 
 
 _SOURCE_LEGEND = (
@@ -1269,7 +1391,9 @@ _SOURCE_LEGEND = (
 )
 
 
-def _probe_report(userland: "Userland") -> "list[str | Table | Text]":
+def _probe_report(
+    userland: "Userland", *, sudo_login: "str | None" = None
+) -> "list[str | Table | Text]":
     """Lay out the resolved capabilities, then the pin, as :meth:`UserlandHost.probe` prints them.
 
     Two audiences in one output, in the order they are useful: the table says
@@ -1283,8 +1407,8 @@ def _probe_report(userland: "Userland") -> "list[str | Table | Text]":
     from rich.table import Table
     from rich.text import Text
 
-    rows = _capability_rows(userland)
-    pin = userland.as_lab_json()
+    rows = _capability_rows(userland, sudo_login=sudo_login)
+    pin = userland.as_lab_json(sudo_login=sudo_login)
     assumed = [n for n, _, s in rows if s == "assumed"]
     from ..console import id_column, literal_cell
 
@@ -1295,6 +1419,18 @@ def _probe_report(userland: "Userland") -> "list[str | Table | Text]":
     for n, v, s in rows:
         table.add_row(literal_cell(n), literal_cell(v), Text(s))
     lines: list[str | Table | Text] = [table, "", Text(_SOURCE_LEGEND), ""]
+    if ("sudo_form", "unmeasured", "assumed") in rows:
+        unread = None if sudo_login is None else userland.sudo_form_unread(login=sudo_login)
+        why = unread or "otto did not ask: the session is already root"
+        lines += [Text(f"sudo_form is unmeasured, so it is not pinned: {why}."), ""]
+    elif sudo_login is not None and any(r[0] == "sudo_form" and r[2] == "probed" for r in rows):
+        lines += [
+            Text(
+                f"sudo_form is the answer sudo gave as {sudo_login!r}; sudoers answers per "
+                "user, so another login may need the other form."
+            ),
+            "",
+        ]
     if not pin:
         lines.append(
             Text(
@@ -1500,6 +1636,28 @@ class UserlandHost:
         """Return the resolver the probe verb and the protocol survey share, or ``None``."""
         return self._userland()
 
+    async def _probe_sudo_form(self, user: "str | None") -> "str | None":
+        """Settle the sudo form through the exec's own resolver, for :meth:`probe` to report.
+
+        The same call an ``exec(sudo=True)`` makes
+        (``PosixPrivilege._prepare_exec_elevation``): one ``sudo -l "$SHELL"``,
+        answered with the password when the host's creds hold one and at end
+        of file otherwise, and nothing at all when the elevation is not
+        sudo, the form is declared, or the session is already root. A refused
+        password leaves the form unmeasured rather than failing the report.
+        Returns the login sudo was asked as (whose answer the report shows),
+        or ``None`` when none was asked.
+        """
+        prepare = getattr(self, "_prepare_exec_elevation", None)
+        if prepare is None:
+            return None
+        try:
+            await prepare(user)
+        except PasswordRefusedError as exc:
+            _logger.debug("userland: probe %r could not be asked (%s)", "sudo -l", exc)
+        acting = getattr(self, "_acting_user", None)
+        return None if acting is None else acting(user)
+
     @cli_exposed(output_dir=False)
     async def probe(
         self,
@@ -1585,7 +1743,8 @@ class UserlandHost:
             lines: "list[str | Table | Text]" = list(_no_resolver_report(type(self).__name__))
         else:
             await userland.resolve()
-            lines = _probe_report(userland)
+            sudo_login = await self._probe_sudo_form(user)
+            lines = _probe_report(userland, sudo_login=sudo_login)
         # One cast for both calls: the mixin is structurally a host to the
         # survey (it reads `valid_terms`/`valid_transfers` and opens a
         # session), but nothing in the hierarchy makes that a static fact --
@@ -2900,13 +3059,13 @@ GAPS: list[Gap] = [
             "refuses against it once the session is open, before typing anything. "
             f"{PTY_TYPED_LINE_MAX} is the Linux terminal's bound, measured on BusyBox "
             "guests, not on bash and not on a Zephyr board. "
-            "`Host.exec()` opens a bare exec channel with no pty, is unaffected, and is "
-            "NOT refused: it is the way to send this command. Two paths stay unguarded "
-            "deliberately -- a named session's `HostSession.run()`, and `exec()` on a "
-            "telnet or proxied-login host, which has no stateless primitive and so routes "
-            "through a pooled shell session. Guarding those would make "
-            "`ShellFileTransfer` refuse its own chunk lines, which is the "
-            "whole reason the `shell` backend exists"
+            "`Host.exec()` over ssh opens a bare exec channel with no pty, is unaffected, "
+            "and is NOT refused: it is the way to send this command there. `exec()` on a "
+            "telnet or proxied-login host has no stateless primitive and types into a "
+            "pooled shell session, so it is refused like `run()`, measured in the exec "
+            "frame it types; `ShellFileTransfer` sizes its chunk lines to the same "
+            "budget. One path stays unguarded deliberately -- a named session's "
+            "`HostSession.run()`, which `ShellFileTransfer` rides"
         ),
         measured_on=(
             "Measured in several runs; the 2026-11-13 ones explain the first two. "
@@ -2942,8 +3101,8 @@ GAPS: list[Gap] = [
             "deliberately: it is a pty-free `run()` path, not a larger buffer, "
             "because the buffer belongs to the device. The record stays `measured-broken` "
             "because the surface still is -- otto now declines the command instead of "
-            "running a shorter one. The two unguarded paths named in the reason are the "
-            "next candidates and are likewise unqueued"
+            "running a shorter one. The unguarded path named in the reason is the "
+            "next candidate and is likewise unqueued"
         ),
         paths=[
             GapPath(
@@ -2951,8 +3110,8 @@ GAPS: list[Gap] = [
                 state=PATH_WIRED,
                 checked_by="otto.host.session.refuse_if_typed_line_would_be_cut",
                 detail=(
-                    "the per-command path of `Host.run()` for every host family, and the "
-                    "only one of the three below that reads this record. The guard keys on "
+                    "the per-command path of `Host.run()` for every host family, and one of "
+                    "the two below that read this record. The guard keys on "
                     "`isinstance(frame, AshFrame)` -- the DECLARED dialect, free and "
                     "synchronous -- sizes the line otto would TYPE including its own framing, "
                     "and refuses a line over 4095 before `_ensure_session`, so it costs no "
@@ -2984,20 +3143,21 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.session.SessionManager.exec_on_route",
-                state=PATH_OPEN,
+                site="otto.host.session.SessionManager._exec_pooled",
+                state=PATH_WIRED,
+                checked_by="otto.host.session.refuse_if_typed_line_would_be_cut",
                 detail=(
                     "`exec()` is safe only where it has a stateless primitive. On a "
                     "`term: telnet` host, and on ANY host whose login is proxied, there is "
-                    "none, so the call takes `_acquire_exec_session()` -> `HostSession.run` "
-                    "-> `ShellSession.run_cmd` and is line-edited like a typed command. The "
-                    "record's escape hatch -- 'send it through `exec()`' -- is therefore not "
-                    "true on those two host shapes, which is what makes this path worth "
-                    "recording rather than filing under the one above"
+                    "none, so `exec_on_route` types the call into a pooled shell session, "
+                    "line-edited like a typed command. `_exec_pooled` therefore refuses a "
+                    "line over the acquired session's bound before typing it, measured in "
+                    "the exec frame, "
+                    "and its message does not advise `exec()`, which is no escape there"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_run_line_length.py::TestTheRefusalIsScoped"
-                    "::test_the_pooled_shell_session_exec_path_is_not_refused_either"
+                    "::test_a_pooled_exec_over_the_line_is_refused_before_anything_is_typed"
                 ),
             ),
         ],
@@ -3041,7 +3201,7 @@ GAPS: list[Gap] = [
                 detail=(
                     "the `shell` backend's put loop, which emits one chunk command per "
                     "stride through the host's exec path. On an ssh host the chunk is sized by "
-                    "`_fitted_chunk_bytes` against the transfer's `exec_line_budget`, which "
+                    "`_fitted_chunk_bytes` against the transfer's `exec_line_room`, which "
                     "is `None` for the bare exec channel, so the full 4096-byte stride goes "
                     "out and a "
                     "capped sshd drops the connection. Nothing refuses it: otto has no way "

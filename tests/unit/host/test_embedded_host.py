@@ -15,7 +15,7 @@ from pydantic import SecretStr
 
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
-from otto.host.command_frame import ZephyrFrame
+from otto.host.command_frame import ExecInput, ZephyrFrame
 from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.options import TelnetOptions
@@ -601,6 +601,7 @@ class TestDelegation:
             expects=None,
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
+            exec_input=ExecInput(stdin_eof=True),
         )
 
     @pytest.mark.asyncio
@@ -841,3 +842,71 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     mgr._set_current_user("root")
     with pytest.raises(NotImplementedError, match=r"exec\(user=\.\.\.\)"):
         await host.exec("kernel uptime")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frame_type", ["ash", "bash"])
+async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame_type: str):
+    """An embedded host's exec types into its one session, as a console's does.
+
+    So it takes that route's restore from the one predicate
+    (``SessionManager._exec_restore_for``), not a choice of its own: the same
+    command reaches the session with the same :class:`ExecInput` both ways.
+    """
+    from types import SimpleNamespace
+    from typing import cast
+
+    from otto.host.command_frame import build_command_frame
+    from otto.host.exec_route import ExecRoute
+    from otto.host.session import SessionManager, ShellSession
+
+    seen: list[ExecInput | None] = []
+
+    class _Recording(ShellSession):
+        async def open_transport(self) -> None: ...
+        async def write_transport(self, data: str) -> None: ...
+        async def read_transport_until(self, pattern):  # pragma: no cover - never reads
+            raise AssertionError("never reads")
+
+        async def _take_unread(self) -> str:
+            return ""
+
+        async def close(self) -> None:
+            self._alive = False
+
+        async def _ensure_initialized(self) -> None:
+            self._initialized = True
+            self._alive = True
+
+        async def run_cmd(self, cmd, *args, exec_input=None, **kwargs) -> CommandResult:
+            seen.append(exec_input)
+            return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+    def manager(frame) -> SessionManager:
+        return SessionManager(
+            connections=cast("object", SimpleNamespace(term="console", proxy_hops=[])),  # type: ignore[arg-type]
+            name="z",
+            command_frame=frame,
+            session_factory=lambda: _Recording(command_frame=frame),
+        )
+
+    frame = build_command_frame(type_name=frame_type)
+    host = EmbeddedHost(
+        ip="192.0.2.1", element=Element(name="z"), command_frame=frame, log=LogMode.QUIET
+    )
+    try:
+        host._session_mgr = manager(frame)
+        await host.exec("echo hi")
+        await manager(frame).exec_on_route(
+            route=ExecRoute.DEFAULT_SESSION,
+            cmd="echo hi",
+            timeout=10.0,
+            log=LogMode.QUIET,
+            exec_input=ExecInput(stdin_eof=True),
+        )
+    finally:
+        host._connections = None  # type: ignore[assignment]
+    assert len(seen) == 2
+    assert seen[0] == seen[1]
+    assert seen[0] is not None
+    assert seen[0].restore is SessionManager._exec_restore_for(ExecRoute.DEFAULT_SESSION)

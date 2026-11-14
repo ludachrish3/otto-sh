@@ -103,7 +103,7 @@ _SHELL_CHUNK_BYTES = 4096
 
 The size a chunk actually takes wherever nothing bounds the command line, and
 an upper bound everywhere else: :meth:`Base64Codec.send_chunks` reads a
-:attr:`PutChunkLoop.line_budget` when its transport has one and reads less
+:attr:`PutChunkLoop.line_room` when its transport has one and reads less
 than this. Never MORE than this, whatever the budget -- a roomy transport is
 not a reason to re-open a size that four separate limits below were measured
 against.
@@ -176,9 +176,10 @@ THE CEILING FOLLOWS WHETHER THE TERMINAL STILL ECHOES: the 1022-character
 line editor above engages only then, and otto's handshake turns echo off first.
 :func:`~otto.host.session.typed_line_ceiling` decides which bound applies, for
 ``run()``'s refusal and this budget alike (it has the full statement), and
-:meth:`~otto.host.session.SessionManager.line_budget` hands it out less otto's
-framing, from the echo fact its open sessions measured (1022-based while no
-session is open when the transfer is planned).
+:meth:`~otto.host.session.SessionManager.line_room` hands out what a chunk
+command leaves of it, rendered through otto's framing, from the echo fact its
+open sessions measured (1022-based while no session is open when the transfer
+is planned).
 
 THE RESPONSE IS A BUDGET, NOT A SMALLER CONSTANT AND NOT A DIFFERENT CODEC.
 ``exec``'s route decides whether a budget exists at all (``None`` on the ssh
@@ -463,17 +464,21 @@ class PutChunkLoop:
     calls it before has told the caller bytes landed that may not have.
     """
 
-    line_budget: int | None = None
-    """Characters this transport carries on ONE line of a command, or ``None``.
+    line_room: "Callable[[str], int | None] | None" = None
+    """Asks how many characters a quote-free payload inserted into a command's line may add.
 
-    ``None`` means no line discipline is in the way -- an ``ssh`` host's bare
-    exec channel, a local subprocess, a container's ``docker exec`` -- and a
-    codec should then do exactly what it did before this field existed. It is not "unknown"
-    and never a reason to guess: the number comes from
-    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan, which is the
+    Called with the command as it would be emitted with an empty payload; it
+    answers what is left of the line once otto's framing (and any quoting
+    the framing gives the command) is rendered around it, or ``None``.
+    ``None`` (as the answer, or for the field) means no line discipline is in
+    the way -- an ``ssh`` host's bare exec channel, a local subprocess, a
+    container's ``docker exec`` -- and a codec should then do exactly what it
+    did before this field existed. It is not "unknown" and never a reason to
+    guess: the number comes from
+    :meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan, which is the
     object that decides which primitive :meth:`~otto.host.session.SessionManager.exec_on_route`
-    routes through, and it is already net of otto's own BEGIN/END framing, so a
-    codec compares it against the command string it is about to emit and
+    routes through, and it is already net of otto's own framing and the command's
+    own characters as typed, so a codec spends it on the payload and
     nothing else.
 
     WHY THE CODEC SPENDS IT RATHER THAN THE SKELETON. What a chunk command
@@ -613,16 +618,18 @@ class Base64Codec(ShellCodec):
         """
         return f"printf '%s' '{encoded}' | base64 {self._decode_flag} {redirect} {quoted_temp}"
 
-    def _fitted_chunk_bytes(self, quoted_temp: str, line_budget: "int | None") -> int:
-        """Plaintext bytes per chunk whose emitted command line fits *line_budget*.
+    def _fitted_chunk_bytes(
+        self, quoted_temp: str, line_room: "Callable[[str], int | None] | None"
+    ) -> int:
+        """Plaintext bytes per chunk whose emitted command line fits what *line_room* answers.
 
-        :data:`_SHELL_CHUNK_BYTES` when there is no budget, unconditionally --
+        :data:`_SHELL_CHUNK_BYTES` when there is no bound, unconditionally --
         that is what keeps an ``ssh`` host's chunk lines byte-identical to what
         the dropbear rig measured.
 
-        With a budget, the arithmetic is derivation and no constant.
+        With a bound, the arithmetic is derivation and no constant.
         Everything the command spends that is not payload is MEASURED, by
-        building :meth:`_chunk_command` with an empty payload and the LONGER of
+        handing *line_room* :meth:`_chunk_command` with an empty payload and the LONGER of
         the two redirects (``>>``, one character more than the ``>`` the first
         chunk uses), so the first chunk lands one character under rather than
         every later one landing one over. What remains is what the base64 TEXT
@@ -640,9 +647,11 @@ class Base64Codec(ShellCodec):
         time. The caller turns it into a failed file with both numbers in the
         message.
         """
-        if line_budget is None:
+        available = (
+            None if line_room is None else line_room(self._chunk_command("", ">>", quoted_temp))
+        )
+        if available is None:
             return _SHELL_CHUNK_BYTES
-        available = line_budget - len(self._chunk_command("", ">>", quoted_temp))
         return min(_SHELL_CHUNK_BYTES, 3 * (available // 4))
 
     @override
@@ -674,14 +683,15 @@ class Base64Codec(ShellCodec):
         ever measured against a 4-character probe, and its escaping and
         ``-n`` handling are userland-dependent.
         """
-        read_size = self._fitted_chunk_bytes(loop.quoted_temp, loop.line_budget)
+        read_size = self._fitted_chunk_bytes(loop.quoted_temp, loop.line_room)
         if read_size <= 0:
-            empty = len(self._chunk_command("", ">>", loop.quoted_temp))
+            empty = self._chunk_command("", ">>", loop.quoted_temp)
+            left = loop.line_room(empty) if loop.line_room is not None else None
             return ChunkLoopOutcome(
                 0,
-                f"no chunk of {loop.temp} can be written: this host's exec path carries "
-                f"{loop.line_budget} characters on one command line, and the chunk command "
-                f"for an EMPTY payload is already {empty} -- the destination path is too "
+                f"no chunk of {loop.temp} can be written: the chunk command for an EMPTY "
+                f"payload ({len(empty)} characters) leaves {left} characters on this host's "
+                f"exec line, too few for one base64 quantum -- the destination path is too "
                 f"long to shell-transfer to this host. Nothing was sent",
             )
         sent = 0
@@ -1189,7 +1199,7 @@ class ShellFileTransfer(UnixFileTransfer):
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         userland: "Userland",
         max_filename_len: int = 255,
-        exec_line_budget: "Callable[[], int | None] | None" = None,
+        exec_line_room: "Callable[[str], int | None] | None" = None,
     ) -> None:
         super().__init__(
             connections=connections,
@@ -1200,10 +1210,10 @@ class ShellFileTransfer(UnixFileTransfer):
         self._userland = userland
         # How long one line of a chunk command may be on this host, ASKED of
         # the session manager rather than derived from `connections.term` here
-        # (see `_line_budget`). Optional so a builder that predates the seam --
+        # (see `_line_room`). Optional so a builder that predates the seam --
         # or a test constructing this class directly -- keeps the unbudgeted
         # behaviour, which is also what an `ssh` host gets.
-        self._exec_line_budget = exec_line_budget
+        self._exec_line_room = exec_line_room
 
     @override
     @classmethod
@@ -1228,7 +1238,7 @@ class ShellFileTransfer(UnixFileTransfer):
             exec_cmd=ctx.exec_cmd,
             userland=ctx.userland,
             max_filename_len=ctx.max_filename_len,
-            exec_line_budget=ctx.exec_line_budget,
+            exec_line_room=ctx.exec_line_room,
         )
 
     # ------------------------------------------------------------------
@@ -1444,8 +1454,8 @@ class ShellFileTransfer(UnixFileTransfer):
             )
         return UuencodeCodec(self._max_filename_len)
 
-    def _line_budget(self) -> int | None:
-        """Characters this host's exec path carries on ONE command line, or ``None``.
+    def _line_room(self) -> "Callable[[str], int | None] | None":
+        """Return what asks how much of ONE command line a payload may fill here, or ``None``.
 
         ASKED, NEVER PREDICTED. The obvious cheap answer is in reach from here
         -- ``self._connections.term`` is right there -- and it is wrong twice
@@ -1453,7 +1463,7 @@ class ShellFileTransfer(UnixFileTransfer):
         ``ssh`` host too, and the framing this number is net of belongs to the
         host's command frame, which no transfer backend can see. So the
         question goes to the object that decides both
-        (:meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan, reached
+        (:meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan, reached
         through the context this backend was built with) and a
         ``None`` callable -- an embedded builder, a direct construction in a
         test -- means the same thing an unbudgeted route means.
@@ -1463,7 +1473,7 @@ class ShellFileTransfer(UnixFileTransfer):
         half is the staged temp's path, which :meth:`_put_one` names one file
         at a time.
         """
-        return self._exec_line_budget() if self._exec_line_budget is not None else None
+        return self._exec_line_room
 
     # ------------------------------------------------------------------
     # Shell put
@@ -1499,7 +1509,7 @@ class ShellFileTransfer(UnixFileTransfer):
         ``base64`` one does). This method contributes exactly four things to
         the bytes: the temp's name, the empty-file case, the running state the
         codec reports into, and the transport's line budget (see
-        :meth:`_line_budget` and :attr:`PutChunkLoop.line_budget`) -- which is
+        :meth:`_line_room` and :attr:`PutChunkLoop.line_room`) -- which is
         a fact ABOUT the transport, handed over for a codec to spend or ignore,
         not a chunk size chosen here.
 
@@ -1573,7 +1583,7 @@ class ShellFileTransfer(UnixFileTransfer):
                     temp=temp,
                     quoted_temp=quoted_temp,
                     on_sent=_sent,
-                    line_budget=self._line_budget(),
+                    line_room=self._line_room(),
                 )
             )
             if outcome.error is not None:

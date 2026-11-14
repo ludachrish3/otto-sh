@@ -103,6 +103,7 @@ async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
 _OTHER_DECLARED_CAPABILITIES = {
     "shell_dialect": "ash",
     "elevation": "none",
+    "sudo_form": "shell",
     "base64_flag": "-d",
     "stat_size": "stat",
     "checksum": "md5sum",

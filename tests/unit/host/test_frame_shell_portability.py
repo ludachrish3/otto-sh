@@ -19,6 +19,7 @@ matrix carries are measured on the bed by
 import re
 import shutil
 import subprocess
+from typing import NamedTuple
 
 import pytest
 
@@ -48,6 +49,30 @@ _OPTIONAL = [
 ]
 
 SHELLS = _REQUIRED + [p for p in _OPTIONAL if shutil.which(p.values[0][0]) is not None]
+
+
+class FrameCase(NamedTuple):
+    """A command whose shape once broke the frame (#678), and what it must report."""
+
+    text: str
+    expected: str
+    code: int
+
+
+FRAME_EDGE_CASES: list[FrameCase] = [
+    FrameCase("sleep 0 >/dev/null 2>&1 &", "", 0),  # a trailing `&` spliced into `&;`
+    FrameCase("echo hi # a note", "hi", 0),  # a trailing comment hid the END echo
+    FrameCase("# just a note", "", 0),  # an empty group is a syntax error
+    FrameCase("echo a \\", "a", 0),  # a trailing backslash joined the closing line
+    FrameCase("""echo "it's" 'a "test"' $((1 + 2))""", 'it\'s a "test" 3', 0),
+    FrameCase("echo one\necho two", "one\ntwo", 0),
+    FrameCase("cat <<EOF\nhere\nEOF", "here", 0),
+]
+"""The frame's edge cases, shared by every frame that types a command into a shell
+(``BashFrame.frame`` here, ``BashFrame.frame_exec`` in ``test_exec_frame.py``)."""
+
+_JOB_ANNOUNCEMENT = re.compile(r"\A\[\d+\] \d+(\n|\Z)")
+"""What an interactive shell with job control prints for a job it backgrounds."""
 
 
 def _run(
@@ -82,30 +107,25 @@ def _run(
     return results
 
 
+@pytest.mark.parametrize("case", FRAME_EDGE_CASES)
 @pytest.mark.parametrize(("argv", "frame"), SHELLS)
-def test_a_backgrounded_command_and_a_trailing_comment_both_frame(argv, frame):
-    bg, comment = _run(argv, frame, "sleep 0 >/dev/null 2>&1 &", "echo hi # a note")
-    # An interactive shell with job control announces the job (`[1] 4242`),
-    # as it would to anyone typing the command; nothing else may appear.
-    assert re.fullmatch(r"(\[\d+\] \d+)?", bg[0]), bg
-    assert bg[1] == 0
-    assert comment == ("hi", 0)
+def test_every_frame_edge_case_frames(argv, frame, case):
+    """A command ending in ``&`` or a comment, a comment only, a trailing backslash,
+    quotes, several lines, a heredoc: each left the call waiting out its timeout or
+    corrupted its output once. Each is followed by a command, so a group that never
+    closed would swallow it."""
+    edge, after = _run(argv, frame, case.text, "echo next")
+    # An interactive shell with job control announces a job it backgrounds
+    # (`[1] 4242`), as it would to anyone typing the command; nothing else may appear.
+    assert (_JOB_ANNOUNCEMENT.sub("", edge[0]), edge[1]) == (case.expected, case.code)
+    assert after == ("next", 0)
 
 
 @pytest.mark.parametrize(("argv", "frame"), SHELLS)
-def test_quotes_state_and_multiple_lines_survive_the_frame(argv, frame):
-    quoted, cd, where, lines = _run(
-        argv,
-        frame,
-        """echo "it's" 'a "test"' $((1 + 2))""",
-        "cd /tmp && X=kept",
-        'pwd; echo "$X"',
-        "echo one\necho two",
-    )
-    assert quoted == ('it\'s a "test" 3', 0)
+def test_state_survives_the_frame(argv, frame):
+    cd, where = _run(argv, frame, "cd /tmp && X=kept", 'pwd; echo "$X"')
     assert cd[1] == 0
     assert where == ("/tmp\nkept", 0)
-    assert lines == ("one\ntwo", 0)
 
 
 @pytest.mark.parametrize(("argv", "frame"), SHELLS)
@@ -114,17 +134,6 @@ def test_the_exit_code_is_the_command_s_own(argv, frame):
     assert fails[1] == 1
     assert sets[1] == 7
     assert empty == ("", 0)
-
-
-@pytest.mark.parametrize(("argv", "frame"), SHELLS)
-def test_a_comment_only_command_and_a_trailing_backslash_both_frame(argv, frame):
-    """A group holding only a comment is empty, which every shell rejects; a
-    trailing backslash joins the closing brace onto the command's line, so the
-    group never closes. Both left the call waiting out its timeout."""
-    note, continued, after = _run(argv, frame, "# just a note", "echo a \\", "echo next")
-    assert note == ("", 0)
-    assert continued == ("a", 0)
-    assert after == ("next", 0)
 
 
 @pytest.mark.parametrize(("argv", "frame"), SHELLS)

@@ -1045,6 +1045,25 @@ class UserlandOptions:
     elevation: str | None = None
     """``"sudo"``, ``"su"``, ``"none"``, or ``None`` to probe."""
 
+    sudo_form: str | None = None
+    """How an ``exec(sudo=True)`` typed into a shell session (a pooled shell or a
+    console) elevates under sudo: ``"shell"``, ``"validate"``, or ``None`` to
+    probe. A declared value holds for every login on the host.
+
+    ``"shell"`` is one sudo call that runs the whole command string in the
+    login's shell (``"${SHELL:-/bin/sh}" -c``), so it needs that shell allowed
+    by the host's sudoers. ``"validate"``
+    is two calls, ``sudo -S -v`` on the password then ``sudo -n <cmd>``: sudo
+    receives the command itself, so only its first simple command is elevated,
+    and the host's sudo must keep its timestamp between the two calls
+    (``timestamp_timeout=0`` refuses it). Unset, each login's first such
+    ``exec`` asks ``sudo -l "$SHELL"`` once, as that login: ``"shell"`` on a
+    yes, ``"validate"`` on a no while sudo holds a timestamp, nothing settled
+    otherwise; see
+    :meth:`~otto.host.userland.Userland.resolve_sudo_form`.
+    ``run(sudo=True)`` does not read it. Ignored unless :attr:`elevation`
+    resolves ``"sudo"``."""
+
     # Measured in docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     base64_flag: str | None = None
     """Decode spelling (``"-d"`` / ``"--decode"``), ``"absent"``, or None.

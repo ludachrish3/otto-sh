@@ -30,6 +30,7 @@ from tests.conformance._entry import (
     entries_of,
     entries_of_node,
     expected_route,
+    password_sudo_on,
     project,
     proxied_on,
     space_for,
@@ -120,6 +121,23 @@ def test_proxied_on_fails_loudly_when_the_fact_is_missing():
     # Families that cannot proxy answer without reading the entry.
     assert proxied_on({}, "console", family=EMBEDDED) is False
     assert proxied_on({}, "local", family=LOCAL_FAMILY) is False
+
+
+def test_password_sudo_on_reads_the_login_s_password_and_identity():
+    """A non-root login with a password is one sudo would ask; root, or no password, is not."""
+    vagrant = {"creds": [{"login": "vagrant", "password": "vagrant"}]}
+    assert password_sudo_on(vagrant, "ssh", family=UNIX) is True
+    assert password_sudo_on({"creds": [{"login": "vagrant"}]}, "ssh", family=UNIX) is False
+    root = {"creds": [{"login": "root", "password": "x"}]}
+    assert password_sudo_on(root, "ssh", family=UNIX) is False
+    proxied = {"creds": [{"login": "root", "proxy": "su", "via": "vagrant"}]}
+    assert password_sudo_on(proxied, "ssh", family=UNIX) is False
+    scoped = {"creds": [{"login": "root", "protocols": ["telnet"]}, *vagrant["creds"]]}
+    assert password_sudo_on(scoped, "ssh", family=UNIX) is True
+    assert password_sudo_on(scoped, "telnet", family=UNIX) is False
+    assert password_sudo_on({}, "local", family=LOCAL_FAMILY) is False
+    with pytest.raises(LookupError, match="declares no creds"):
+        password_sudo_on({"name": "x"}, "ssh", family=UNIX)
 
 
 def test_an_embedded_telnet_cell_expects_the_default_session():

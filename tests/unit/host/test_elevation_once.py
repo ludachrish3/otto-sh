@@ -216,7 +216,11 @@ async def test_a_refusal_whose_probe_fails_discards_the_session(host, monkeypatc
 
 @pytest.mark.asyncio
 async def test_cancel_during_recovery_leaves_no_wedged_session(host):
-    """A cancellation landing while the refused command is being interrupted marks recovery due."""
+    """A cancellation landing while the refused command is being interrupted marks recovery due.
+
+    The stop could not confirm the wedged shell within its bound, so the
+    session is dead: the next command fails fast and is never typed into it.
+    """
     shell = ElevationShell(password="the-right-one", wedged=True, outputs={"echo ok": "ok\n"})
     session = ElevationSession(shell)
     task = asyncio.create_task(_run_elevated(host, session, "id"))
@@ -231,7 +235,9 @@ async def test_cancel_during_recovery_leaves_no_wedged_session(host):
     assert session._needs_recovery
 
     shell.wedged = False
-    assert (await session.run_cmd(cmd="echo ok", timeout=_TIMEOUT)).value == "ok"
+    with pytest.raises(RuntimeError, match="session is not alive"):
+        await session.run_cmd(cmd="echo ok", timeout=_TIMEOUT)
+    assert not any("echo ok" in w for w in shell.writes)
     assert shell.writes_of(PLANTED) == 1
 
 

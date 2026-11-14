@@ -42,6 +42,7 @@ from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .command_frame import ExecInput
 from .connections import teardown_step
 from .errors import (
     ContainerNotRunningError,
@@ -1075,6 +1076,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
     ) -> CommandResult:
         """Run a single command in the container via the parent.
 

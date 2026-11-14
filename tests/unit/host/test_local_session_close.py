@@ -1,0 +1,260 @@
+"""Closing a local shell session stops its process group, under the shared stop.
+
+The shell leads its own session and process group (``start_new_session``), so
+close reaches what it started; what survives is the shared stop's survivor
+rule (:func:`otto.host.process_stop.stop_timed_out` with
+:class:`~otto.host.process_stop.LocalStoppable`): a member that ignores
+``TERM`` when the shell exits promptly, a process that left the group, and
+everything once the shell's own exit is already recorded.
+
+Each stimulus writes a witness ``<pid> <starttime>`` so a test reads the very
+process it started, never a reused pid, through the one witness writer,
+observer and cleanup (:mod:`tests._fixtures.witness_shell`).
+"""
+
+import asyncio
+import contextlib
+import signal
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+import otto.host.session as session_mod
+from otto.host import process_stop
+from otto.host.session import LocalSession, SessionManager
+from otto.utils import Status, wait_for_async
+from scripts.process_group import proc_stat, signal_group
+from tests._fixtures.witness_shell import (
+    NO_WITNESS,
+    RUNNING,
+    STOPPED,
+    clean,
+    observation,
+    observe,
+    witness_write_template,
+)
+
+pytestmark = [pytest.mark.asyncio]
+
+_PGRP = 2  # field of proc_stat() after the `pid (comm)` prefix
+
+
+def _stamp(w: Path) -> str:
+    """Shell text that writes the running shell's witness to *w* (the one writer)."""
+    return witness_write_template(str(w))
+
+
+async def _await_witness(w: Path) -> int:
+    """Wait for the witness at *w*, check its process is running, and return its pid."""
+    await wait_for_async(
+        lambda: observe(w) != NO_WITNESS, 2.0, interval=0.01, on_timeout=f"no witness at {w}"
+    )
+    seen = observation(w)
+    assert seen.answer == RUNNING, seen
+    assert seen.pid is not None
+    return seen.pid
+
+
+@contextlib.contextmanager
+def _reaping(witnesses: "list[Path]") -> Iterator[None]:
+    """Clean every witness when the test ends (the one cleanup; test-only)."""
+    try:
+        yield
+    finally:
+        for w in witnesses:
+            clean(w)
+
+
+async def _gone(w: Path) -> None:
+    await wait_for_async(
+        lambda: observe(w) == STOPPED, 2.0, interval=0.01, on_timeout=f"{w}'s process still alive"
+    )
+
+
+@pytest.fixture(autouse=True)
+def reap_session_groups(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Kill every shell group a test opened whose shell is still unreaped (test-only cleanup).
+
+    A failing test then leaks nothing it started inside a session's group; a
+    process that left the group is the witness cleanup's (:func:`_reaping`).
+    """
+    opened: "list[asyncio.subprocess.Process]" = []
+    open_transport = LocalSession.open_transport
+
+    async def recording(self: LocalSession) -> None:
+        await open_transport(self)
+        assert self._process is not None
+        opened.append(self._process)
+
+    monkeypatch.setattr(LocalSession, "open_transport", recording)
+    try:
+        yield
+    finally:
+        for proc in opened:
+            if proc.returncode is None:
+                signal_group(proc.pid)
+
+
+@pytest.fixture
+def short_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 1.0)
+    monkeypatch.setattr(session_mod, "_RECOVERY_PROBE_TIMEOUT", 0.3)
+
+
+async def test_close_stops_a_background_member_that_obeys_term(tmp_path: Path) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    s = LocalSession()
+    with _reaping([a, b]):
+        try:
+            await s.run_cmd(cmd=f"sh -c '{_stamp(a)}; exec sleep 30' &")
+            await s.run_cmd(cmd=f"nohup sh -c '{_stamp(b)}; exec sleep 30' >/dev/null 2>&1 &")
+            await _await_witness(a)
+            await _await_witness(b)
+        finally:
+            await s.close()
+        await _gone(a)
+        await _gone(b)
+
+
+async def test_a_member_that_ignores_term_survives_a_prompt_leader_exit(tmp_path: Path) -> None:
+    w = tmp_path / "w"
+    s = LocalSession()
+    with _reaping([w]):
+        try:
+            await s.run_cmd(cmd=f"""sh -c 'trap "" TERM; {_stamp(w)}; exec sleep 30' &""")
+            pid = await _await_witness(w)
+            shell = s._pid
+        finally:
+            await s.close()
+        assert observe(w) == RUNNING
+        fields = proc_stat(pid)
+        assert fields is not None
+        assert fields[_PGRP] == str(shell)
+
+
+async def test_a_member_that_left_the_group_survives(tmp_path: Path) -> None:
+    w = tmp_path / "w"
+    s = LocalSession()
+    with _reaping([w]):
+        try:
+            await s.run_cmd(cmd=f"setsid sh -c '{_stamp(w)}; exec sleep 30' &")
+            await _await_witness(w)
+        finally:
+            await s.close()
+        assert observe(w) == RUNNING
+
+
+async def test_close_stops_the_running_command_of_a_busy_session(
+    tmp_path: Path, short_recovery: None
+) -> None:
+    w = tmp_path / "w"
+    s = LocalSession()
+    with _reaping([w]):
+        try:
+            result = await s.run_cmd(
+                cmd=f"sh -c '{_stamp(w)}; exec sleep 30' & while :; do sleep 1; done", timeout=0.3
+            )
+            assert result.status == Status.Error
+            assert not s.alive
+            await _await_witness(w)
+        finally:
+            await s.close()
+        await _gone(w)
+
+
+async def test_a_dead_session_is_stopped_by_the_next_default_session_operation(
+    tmp_path: Path, short_recovery: None
+) -> None:
+    w = tmp_path / "w"
+    mgr = SessionManager(name="local", session_factory=LocalSession)
+    with _reaping([w]):
+        try:
+            result = await mgr.run_cmd(
+                cmd=f"sh -c '{_stamp(w)}; exec sleep 30' & while :; do sleep 1; done", timeout=0.3
+            )
+            assert result.status == Status.Error
+            await _await_witness(w)
+            assert observe(w) == RUNNING  # the given-up session's group is not yet stopped
+            ok = await mgr.run_cmd(cmd="echo ok")
+            assert ok.value == "ok"
+            await _gone(w)
+        finally:
+            await mgr.close_all()
+
+
+async def test_a_cancel_landing_during_close_is_held_and_the_pipes_are_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(process_stop, "_EXEC_REAP_TIMEOUT", 0.2)
+    termed = asyncio.Event()
+    send = process_stop.LocalStoppable.send
+
+    def send_and_note(
+        self: process_stop.LocalStoppable, sig: "process_stop.StopSignal | str"
+    ) -> None:
+        send(self, sig)  # ty: ignore[invalid-argument-type]
+        termed.set()
+
+    monkeypatch.setattr(process_stop.LocalStoppable, "send", send_and_note)
+    s = LocalSession()
+    await s.run_cmd(cmd="trap '' TERM")
+    proc = s._process
+    assert proc is not None
+    task = asyncio.create_task(s.close())
+    try:
+        await asyncio.wait_for(termed.wait(), 2.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), 2.0)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+    assert proc.returncode == -signal.SIGKILL
+    assert s._process is None
+    assert s._transport is None
+
+
+async def test_a_cancelled_run_keeps_running_until_the_session_is_closed(tmp_path: Path) -> None:
+    w = tmp_path / "w"
+    s = LocalSession()
+    with _reaping([w]):
+        try:
+            await s.run_cmd(cmd="echo init")
+            task = asyncio.create_task(s.run_cmd(cmd=f"sh -c '{_stamp(w)}; exec sleep 30'"))
+            await _await_witness(w)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), 2.0)
+            assert observe(w) == RUNNING  # cancellation alone sends the command nothing
+        finally:
+            await s.close()
+        await _gone(w)
+
+
+async def test_close_twice_is_quiet() -> None:
+    s = LocalSession()
+    await s.run_cmd(cmd="echo init")
+    await s.close()
+    await s.close()
+    assert not s.alive
+
+
+async def test_a_shell_that_already_exited_closes_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = LocalSession()
+    await s.run_cmd(cmd="echo init")
+    proc = s._process
+    assert proc is not None
+    await s.send("exit\n")
+    await asyncio.wait_for(proc.wait(), 5.0)
+    signalled: "list[int]" = []
+
+    def killpg(pgid: int, sig: int) -> None:
+        signalled.append(sig)
+
+    monkeypatch.setattr(process_stop.os, "killpg", killpg)
+    await s.close()
+    assert signalled == []
+    assert s._process is None

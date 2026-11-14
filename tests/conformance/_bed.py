@@ -66,7 +66,7 @@ from otto.host.host import BaseHost
 from otto.host.remote_host import RemoteHost
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.profiles import Cell, _ensure_custom_frames, axes_for, axis_space
-from tests.conformance._entry import family_of, hooked, proxied_on
+from tests.conformance._entry import family_of, hooked, password_sudo_on, proxied_on
 from tests.conformance._lab_context import bed_lab_context
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._vocabulary import Vocabulary, vocabulary_for
@@ -96,6 +96,15 @@ BED_LABS: list[str] = ["unix", "busybox", "embedded"]
 # `test_bed_labs_names_every_lab_the_bed_data_declares` holds every declared
 # lab to one list or the other, so a new lab still has to be placed by hand.
 LABS_NOT_CROSSED: frozenset[str] = frozenset({"chaos"})
+
+# Whether any bed login's sudo asks for a password otto answers. MEASURED
+# 2026-11-14 (tests/measurements/a2_exec_frame/policy-classes.findings.txt):
+# `vagrant` is NOPASSWD on every GNU guest (test1-test4, ssh and telnet), and
+# `test` may not run sudo at all; every su host logs in as root. So no bed
+# cell is a `password_sudo` cell, whatever its lab entry's cred says, and the
+# password arm of `exec-stdin` is proved only by the hermetic unit tests
+# with the stand-in sudo (tests/unit/host/test_exec_stdin.py).
+BED_SUDO_ASKS_A_PASSWORD = False
 
 BED_UNIX = "bed-unix"
 BED_BUSYBOX = "bed-busybox"
@@ -181,7 +190,9 @@ def bed_kind(element: str) -> str:
 _ANSWER_TIMEOUT_S = 60.0
 
 
-def build_bed_host(cell: "Cell", *, session_setup: "str | None" = None) -> "RemoteHost":
+def build_bed_host(
+    cell: "Cell", *, session_setup: "str | None" = None, login: "str | None" = None
+) -> "RemoteHost":
     """Build *cell*'s host through otto's factory, PINNED to the cell's pair.
 
     THE SAME CALL THE BED'S OWN FIXTURES MAKE. ``tests/conftest.py`` builds
@@ -233,10 +244,22 @@ def build_bed_host(cell: "Cell", *, session_setup: "str | None" = None) -> "Remo
     *session_setup* names a registered hook for the host to carry, which is
     how the ``exec-shell`` entry forces ``exec`` onto the pooled shell
     (``tests/conformance/_entry.py``); the caller registers it first.
+
+    *login* selects which of the entry's ``creds`` the host logs in as: that
+    cred moves to the front of the list, since a protocol logs in as the
+    first entry that applies to it (``RemoteHost.creds``). ``None`` keeps
+    the lab's order. A *login* the entry does not hold raises, rather than
+    quietly logging in as someone else.
     """
     _ensure_custom_frames()
     entry = dict(host_data(cell.element, BED_TECH))
     pinned = {**entry, "term": cell.term, "transfer": cell.transfer}
+    if login is not None:
+        creds = list(entry.get("creds", []))
+        chosen = [c for c in creds if c.get("login") == login]
+        if not chosen:
+            raise ValueError(f"bed host {cell.element!r} has no login {login!r} in its lab entry")
+        pinned["creds"] = chosen + [c for c in creds if c.get("login") != login]
     if session_setup is not None:
         pinned["session_setup"] = session_setup
     host = create_host_from_dict(pinned, element=element_for(cell.element, BED_TECH))
@@ -412,7 +435,7 @@ def _scratch_for(dest: "Path | None") -> "Callable[[Path], Path] | None":
 
 
 def _opener_for(
-    cell: "Cell", *, session_setup: "str | None" = None
+    cell: "Cell", *, session_setup: "str | None" = None, login: "str | None" = None
 ) -> "Callable[[], AbstractAsyncContextManager[BaseHost]]":
     """Open *cell*'s real bed host, pinned to its pair, or fail naming the host.
 
@@ -464,13 +487,14 @@ def _opener_for(
     construction condition nothing else in the suite uses.
 
     *session_setup* is passed through to :func:`build_bed_host`: the
-    ``exec-shell`` entry's opener is this one with a hook.
+    ``exec-shell`` entry's opener is this one with a hook. *login* is passed
+    through the same way (:meth:`BedCell.open_host_as`).
     """
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
         with bed_lab_context(BED_TECH):
-            host = build_bed_host(cell, session_setup=session_setup)
+            host = build_bed_host(cell, session_setup=session_setup, login=login)
             async with host:
                 await _require_an_answer(cell, host)
                 yield host
@@ -495,6 +519,10 @@ class BedCell:
     cell: "Cell"
     kind: str
     open_host: "Callable[[], AbstractAsyncContextManager[BaseHost]]"
+
+    def open_host_as(self, login: str) -> "AbstractAsyncContextManager[BaseHost]":
+        """:attr:`open_host`'s open of this cell, logged in as *login* (one of its lab creds)."""
+        return _opener_for(self.cell, login=login)()
 
 
 def bed_topology() -> "list[BedCell]":
@@ -580,8 +608,10 @@ def bed_space() -> "list[ResolvedCell]":
             # session manager's own exec route.
             unpinned[cell.element] = _unpinned_bed_host(cell.element)
         host = unpinned[cell.element]
-        proxied = proxied_on(
-            dict(host_data(cell.element, BED_TECH)), cell.term, family=family_of(host)
+        entry = dict(host_data(cell.element, BED_TECH))
+        proxied = proxied_on(entry, cell.term, family=family_of(host))
+        password_sudo = BED_SUDO_ASKS_A_PASSWORD and password_sudo_on(
+            entry, cell.term, family=family_of(host)
         )
         resolved.append(
             ResolvedCell(
@@ -592,6 +622,7 @@ def bed_space() -> "list[ResolvedCell]":
                 vocabulary=words[cell.element],
                 family=family_of(host),
                 proxied_login=proxied,
+                password_sudo=password_sudo,
                 open_shell_host=(
                     hooked(partial(_hooked_open, cell))
                     if cell.term == "ssh" and not proxied

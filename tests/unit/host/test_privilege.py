@@ -44,6 +44,50 @@ def _sudo_answer(cmd: str, password: str, user: str, host: str = "box") -> Crede
     )
 
 
+_V_LINE = re.compile(
+    r"<&3 SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S -v \|\| exit; exec 3<&-; sudo -n (.*)",
+    re.DOTALL,
+)
+"""An ``exec``'s sudo line: validate on fd 3, then run non-interactively; group 2 sudo's argv."""
+
+
+def _v_parts(cmd: str) -> tuple[str, str]:
+    """Split an exec's sudo line into (prompt, argv tail), failing if it is not one."""
+    m = _V_LINE.fullmatch(cmd)
+    assert m is not None, f"not otto's exec sudo line: {cmd!r}"
+    return m.group(1), m.group(2)
+
+
+def _v_answer(cmd: str, password: str, user: str, host: str = "box") -> CredentialExpect:
+    """The one answer an exec's sudo line *cmd*, either form, must carry: its own prompt, once."""
+    prompt = _exec_prompt(cmd)
+    return CredentialExpect(
+        re.escape(prompt), SecretStr(password), user=user, host=host, refused_on_repeat=True
+    )
+
+
+_S_LINE = re.compile(
+    r"<&3 3<&- SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S \"\$\{SHELL:-/bin/sh\}\" -c (.*)",
+    re.DOTALL,
+)
+"""An exec's shell-form sudo line, password on fd 3; group 2 the session shell's script."""
+
+
+def _s_parts(cmd: str) -> tuple[str, str]:
+    """Split an exec's shell-form sudo line into (prompt, the script ``sh -c`` runs)."""
+    import shlex
+
+    m = _S_LINE.fullmatch(cmd)
+    assert m is not None, f"not otto's exec shell-form sudo line: {cmd!r}"
+    (script,) = shlex.split(m.group(2))
+    return m.group(1), script
+
+
+def _exec_prompt(cmd: str) -> str:
+    """The prompt of an exec's sudo line in either form."""
+    return (_s_parts if cmd.startswith("<&3 3<&-") else _v_parts)(cmd)[0]
+
+
 def _su_answer(password: str, host: str = "box") -> CredentialExpect:
     return CredentialExpect("[Pp]assword:", SecretStr(password), user="root", host=host)
 
@@ -818,12 +862,12 @@ async def _answers_no(cmd: str, **_kwargs: object) -> CommandResult:
     return CommandResult(status=Status.Error, value="", command=cmd, retcode=127)
 
 
-def _declared_userland(elevation: str) -> Userland:
-    """A ``Userland`` declaring *elevation*, deliberately left unresolved."""
-    return Userland(UserlandOptions(elevation=elevation), _answers_no)
+def _declared_userland(elevation: str, sudo_form: str | None = None) -> Userland:
+    """A ``Userland`` declaring *elevation* (and *sudo_form*), deliberately left unresolved."""
+    return Userland(UserlandOptions(elevation=elevation, sudo_form=sudo_form), _answers_no)
 
 
-def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None):
+def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None, **fields: object):
     """A ``UnixHost`` whose ``_userland()`` hook returns *userland*.
 
     Production hosts now build their own from ``userland_options``, but that
@@ -832,7 +876,8 @@ def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None):
     hand them directly: ``None``, and a resolver deliberately left unresolved.
     Overriding the hook is how they get one. It has to be a subclass rather
     than an assignment: the hosts are ``@dataclass(slots=True)``, so there is
-    nowhere to hang one on an instance.
+    nowhere to hang one on an instance. *fields* are further ``UnixHost``
+    fields (a ``term``).
     """
     from otto.host.unix_host import UnixHost
 
@@ -845,12 +890,15 @@ def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None):
         element=Element(name="box"),
         creds=_ADMIN_AND_ROOT if creds is None else creds,
         log=LogMode.QUIET,
+        **fields,
     )
 
 
-async def _host_with_userland(elevation: str, creds: list[Cred] | None = None):
-    """A host carrying a RESOLVED userland that declares *elevation*."""
-    userland = _declared_userland(elevation)
+async def _host_with_userland(
+    elevation: str, creds: list[Cred] | None = None, sudo_form: str | None = None
+):
+    """A host carrying a RESOLVED userland that declares *elevation* (and *sudo_form*)."""
+    userland = _declared_userland(elevation, sudo_form)
     await userland.resolve()
     return _host_wired_to(userland, creds)
 
@@ -923,6 +971,133 @@ async def test_a_host_without_sudo_elevates_with_su():
     """BusyBox has no sudo at all; ``sudo: not found`` is not an answer."""
     host = await _host_with_userland("su")
     assert host._elevate("id -u") == ElevatedCommand("su -c 'id -u'", [_su_answer("rootpw")])
+
+
+# An exec's elevation: the password is read on the frame's credential
+# descriptor, so the command reads the stdin the exec frame gave it.
+_ADMIN = [Cred(login="admin", password="secret")]
+_SU_LOGIN = [Cred(login="admin", password="secret"), Cred(login="root", password="secret")]
+
+
+@pytest.mark.asyncio
+async def test_run_s_elevation_is_byte_identical():
+    host = await _host_with_userland("sudo", _ADMIN)
+    _assert_todays_sudo(host._elevate("apt update"))
+    _assert_todays_sudo(host._elevate("apt update", exec_input=None))
+
+
+@pytest.mark.asyncio
+async def test_an_exec_s_password_sudo_validates_on_the_credential_fd_then_runs_non_interactively():
+    from otto.host.command_frame import ExecInput
+
+    host = await _host_with_userland("sudo", _ADMIN, "validate")
+    e = host._elevate("cat; echo eof", exec_input=ExecInput(stdin_eof=True))
+    assert _v_parts(e.command)[1] == "cat; echo eof"
+    assert e.expects == [_v_answer(e.command, "secret", "admin")]
+    assert e.reads_credential_fd
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stdin_eof", "inner"), [(True, "exec </dev/null; cat; echo eof"), (False, "cat; echo eof")]
+)
+async def test_an_exec_s_password_sudo_shell_form_is_one_sudo_call_on_the_whole_string(
+    stdin_eof, inner
+):
+    """``<&3 3<&- SUDO_PROMPT=... sudo -S "${SHELL:-/bin/sh}" -c '<inner>'``, quoted as su's."""
+    from otto.host.command_frame import ExecInput
+
+    host = await _host_with_userland("sudo", _ADMIN, "shell")
+    e = host._elevate("cat; echo eof", exec_input=ExecInput(stdin_eof=stdin_eof))
+    assert _s_parts(e.command)[1] == inner
+    assert e.expects == [_v_answer(e.command, "secret", "admin")]
+    assert e.reads_credential_fd
+
+
+@pytest.mark.asyncio
+async def test_a_host_with_no_resolver_types_the_shell_form():
+    from otto.host.command_frame import ExecInput
+
+    host = _host_wired_to(None, _ADMIN)
+    e = host._elevate("id", exec_input=ExecInput(stdin_eof=True))
+    assert _s_parts(e.command)[1] == "exec </dev/null; id"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["shell", "validate"])
+async def test_run_s_elevation_is_the_same_in_either_form(form):
+    """``run(sudo=True)`` does not read the form: its line is today's, unchanged."""
+    host = await _host_with_userland("sudo", _ADMIN, form)
+    _assert_todays_sudo(host._elevate("apt update"))
+
+
+@pytest.mark.asyncio
+async def test_an_undeclared_form_is_not_guessed_by_the_elevation():
+    """Unresolved and unprobed, the elevation refuses rather than pick a form."""
+    from otto.host.command_frame import ExecInput
+
+    host = await _host_with_userland("sudo", _ADMIN)
+    with pytest.raises(RuntimeError, match="resolve_sudo_form"):
+        host._elevate("id", exec_input=ExecInput(stdin_eof=True))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stdin_eof", "inner"), [(True, "exec </dev/null; cat; echo eof"), (False, "cat; echo eof")]
+)
+async def test_an_exec_s_password_su_reads_the_credential_fd_and_follows_the_one_stdin_decision(
+    stdin_eof, inner
+):
+    import shlex
+
+    from otto.host.command_frame import ExecInput
+    from otto.host.identity import ROOT_LOGIN
+
+    host = await _host_with_userland("su", _SU_LOGIN)
+    e = host._elevate("cat; echo eof", exec_input=ExecInput(stdin_eof=stdin_eof))
+    assert e.command == f"<&3 3<&- su -c {shlex.quote(inner)}"
+    assert [x.user for x in e.expects] == [ROOT_LOGIN]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mechanism", "form", "line"),
+    [
+        ("sudo", "validate", None),
+        ("sudo", "shell", "\"${SHELL:-/bin/sh}\" -c 'exec </dev/null; apt update'"),
+        ("su", None, "su -c 'apt update'"),
+    ],
+)
+async def test_an_exec_s_passwordless_elevation_keeps_its_form_s_meaning(mechanism, form, line):
+    """No password: ``validate`` is ``run``'s line, ``shell`` is still one session-shell call."""
+    from otto.host.command_frame import ExecInput
+
+    host = await _host_with_userland(mechanism, [Cred(login="admin")], form)
+    e = host._elevate("apt update", exec_input=ExecInput(stdin_eof=True))
+    assert (e.expects, e.reads_credential_fd) == ([], False)
+    if mechanism == "su":
+        assert e.command == line
+    elif form == "validate":
+        assert _sudo_parts(e.command)[1] == "apt update"
+    else:
+        assert _sudo_parts(e.command)[1] == line
+
+
+@pytest.mark.asyncio
+async def test_an_exec_s_password_elevation_refuses_a_frame_that_keeps_no_credential_fd():
+    from otto.host.command_frame import ExecInput, RawFrame
+    from otto.host.host import BaseHost
+
+    userland = _declared_userland("sudo", "shell")
+    await userland.resolve()
+    host = _host_wired_to(userland, _ADMIN, command_frame=RawFrame())
+    with pytest.raises(RuntimeError, match="fd 3"):
+        host._elevate("id", exec_input=ExecInput(stdin_eof=True))
+    # run's form needs no descriptor, so it is still built there.
+    assert host._elevate("id").expects != []
+    # A host that cannot elevate refuses with exec_input as without it.
+    with pytest.raises(RuntimeError):
+        BaseHost._elevate(host, "id", exec_input=ExecInput(stdin_eof=True))
 
 
 @pytest.mark.parametrize(
@@ -1071,12 +1246,12 @@ async def test_exec_as_another_user_answers_sudo_with_that_users_password():
 
     await host.exec("id", sudo=True, user="alice")
     assert seen[-1]["user"] == "alice"
-    assert seen[-1]["expects"] == [_sudo_answer(seen[-1]["cmd"], "alicepw", "alice")]
+    assert seen[-1]["expects"] == [_v_answer(seen[-1]["cmd"], "alicepw", "alice")]
 
     # No user: the ambient/login identity still answers, exactly as `run` does.
     await host.exec("id", sudo=True)
     assert seen[-1]["user"] is None
-    assert seen[-1]["expects"] == [_sudo_answer(seen[-1]["cmd"], "adminpw", "admin")]
+    assert seen[-1]["expects"] == [_v_answer(seen[-1]["cmd"], "adminpw", "admin")]
 
 
 def _declared_elevations() -> set[str]:
@@ -1261,7 +1436,10 @@ def test_every_elevation_rewrite_is_dominated_by_a_resolution():
     # `rewrites` already proven non-empty, an empty `resolutions` cannot
     # produce an empty `undominated`, so such a line could never be the one
     # that fails.
-    resolutions = _calls_to("_prepare_elevation", awaited=True)
+    resolutions = [
+        *_calls_to("_prepare_elevation", awaited=True),
+        *_calls_to("_prepare_exec_elevation", awaited=True),
+    ]
 
     undominated = []
     for call in rewrites:

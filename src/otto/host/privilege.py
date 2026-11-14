@@ -38,6 +38,7 @@ the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
 same cred list ``_sudo_password`` does.
 """
 
+import logging
 import re
 import secrets
 import shlex
@@ -49,8 +50,13 @@ from pydantic import SecretStr
 
 from ..logger.mode import LogMode
 from ..models.base import Cred
-from .command_frame import history_prefix
-from .errors import UnsupportedOnUserlandError
+from .command_frame import (
+    EXEC_CREDENTIAL_FD,
+    SESSION_SHELL,
+    frame_or_default,
+    history_prefix,
+)
+from .errors import PasswordRefusedError, UnsupportedOnUserlandError
 from .host import (
     DEFAULT_COMMAND_TIMEOUT,
     CredentialExpect,
@@ -66,12 +72,13 @@ from .login_proxy import (
     perform_switch,
     run_undo,
 )
-from .userland import UserlandHost
+from .userland import SUDO_FORM_SHELL, UserlandHost
 
 if TYPE_CHECKING:
     from typing_extensions import Never
 
     from ..result import Results
+    from .command_frame import ExecInput
     from .host import Expect, Host
 
 
@@ -95,8 +102,24 @@ async def run_sh_elevated(host: "Host", script: str, *, timeout: float | None = 
     return await host.run(command, sudo=True, timeout=timeout)
 
 
+_logger = logging.getLogger(__name__)
+
 _ELEVATING_MECHANISMS = frozenset({"sudo", "su"})
 """The resolved ``Userland.elevation`` values that elevate; any other (``"none"``) cannot."""
+
+_SUDO_FORM_PROBE_TIMEOUT_S = 10.0
+"""Seconds the ``sudo -l <shell>`` question may take, its one password answer included."""
+
+_SUDO_SHELL_PROBE = f"-l {SESSION_SHELL}"
+"""sudo's argv for "may this user run the session's shell": status 0 is a yes."""
+
+_SUDO_PROBE_REFUSED_HELD = 100
+"""The probe's status when ``sudo -l <shell>`` was refused and ``sudo -n -v`` then
+succeeded on the same terminal: authenticated, the shell not allowed (``validate``)."""
+
+_SUDO_PROBE_REFUSED_UNHELD = 101
+"""The probe's status when ``sudo -l <shell>`` was refused and sudo holds no
+timestamp: unread, a refused password as far as otto can tell."""
 
 _SUDO_NONCE_LEN = 16
 """Random characters in each sudo prompt: unguessable, and nothing sudo expands."""
@@ -146,6 +169,22 @@ class _HostProxyIO:
         self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
         return await self._host.expect(pattern, timeout=timeout)  # ty: ignore[unresolved-attribute]
+
+
+def _on_credential_fd(fd: int, call: str) -> str:
+    """Return *call* reading stdin from credential descriptor *fd*, closed for what it runs."""
+    return f"<&{fd} {fd}<&- {call}"
+
+
+def _exec_inner(cmd: str, exec_input: "ExecInput") -> str:
+    """Return the script an exec's ``su -c`` or sudo shell form runs: *cmd*, at end of file if due.
+
+    The elevation reads its password on the caller's terminal, which is
+    therefore the stdin it hands what it runs; ``exec </dev/null`` puts the
+    command back at end of file when the exec's one stdin decision says so,
+    and leaves the terminal to a caller that passed its own ``expects=``.
+    """
+    return ("exec </dev/null; " if exec_input.stdin_eof else "") + cmd
 
 
 class PosixPrivilege(UserlandHost):
@@ -309,8 +348,148 @@ class PosixPrivilege(UserlandHost):
         if userland is not None:
             await userland.resolve()
 
+    async def _prepare_exec_elevation(self, user: str | None = None) -> None:
+        """Resolve what an ``exec``'s :meth:`_elevate` reads: the userland, then the sudo form.
+
+        The sudo form (:meth:`~otto.host.userland.Userland.sudo_form`) is asked
+        only here, on the first ``exec`` under sudo by each login (the
+        :meth:`_acting_user`, so after ``as_user`` the switched user), and only
+        when nothing declares it: one ``sudo -l "$SHELL"``
+        (:meth:`_probe_sudo_shell`), as that login. A session that already acts
+        as root asks nothing; its exec types the shell form unless one is
+        declared (root may run any shell). ``run`` never reads the form and
+        never calls this.
+        """
+        await self._prepare_elevation()
+        userland = self._userland()
+        if userland is None or userland.elevation != "sudo" or self._acts_as_root(user):
+            return
+        await userland.resolve_sudo_form(
+            login=self._acting_user(user), probe=lambda: self._probe_sudo_shell(user)
+        )
+
+    async def _probe_sudo_shell(self, user: str | None) -> "bool | str":
+        """Ask the host's sudo whether the acting user may run the session's shell.
+
+        Answers ``True`` (allowed), ``False`` (authenticated, and sudo said
+        not allowed), or a string saying why there is no answer. Typed
+        through :meth:`_sudo_command`, the same line builder and the same
+        password answer as the exec it decides: on the credential descriptor
+        with ``-S`` when otto holds a password, at end of file on stdin
+        otherwise. At most one password answer, never a pending prompt: the
+        exec's own recovery applies.
+
+        Only an authenticated answer is a measurement. With a password, a
+        refused one is the session's second-prompt detection and raises
+        :exc:`~otto.host.errors.PasswordRefusedError` (so the exec is not
+        tried again with it). Any other refusal after otto answered is
+        ambiguous (a sudo that tries a password once exits 1 on a wrong one,
+        as it does on "not allowed"), so it is settled without reading sudo's
+        messages and without a second password: in the SAME typed command,
+        so on the same terminal (sudo keeps its timestamp per terminal by
+        default), a refused ``-l`` is followed by ``sudo -n -v``, which reads
+        no password and succeeds only while sudo holds a valid timestamp.
+        The command's status alone answers (:data:`_SUDO_PROBE_REFUSED_HELD`,
+        :data:`_SUDO_PROBE_REFUSED_UNHELD`): a timestamp held means the
+        authentication succeeded and the shell was refused, the validate form
+        (which needs exactly that timestamp). Anything else raises
+        :exc:`~otto.host.errors.PasswordRefusedError` naming
+        ``userland_options.sudo_form``, so the exec sends the password no
+        second time. Without a password a non-zero status is unread: sudo may
+        have needed the password otto does not hold. A dry run, a transport
+        failure or a timeout is unread too.
+        """
+        if is_dry_run():
+            return "a dry run reaches no device"
+        from .command_frame import ExecInput
+
+        x = ExecInput(stdin_eof=True)
+        e = self._sudo_command(_SUDO_SHELL_PROBE, user, exec_input=x)
+        question = (
+            f"{e.command} || if sudo -n -v </dev/null 2>/dev/null; "
+            f"then (exit {_SUDO_PROBE_REFUSED_HELD}); else (exit {_SUDO_PROBE_REFUSED_UNHELD}); fi"
+        )
+        try:
+            r = await self._exec_one(  # ty: ignore[unresolved-attribute]
+                question,
+                timeout=_SUDO_FORM_PROBE_TIMEOUT_S,
+                log=LogMode.NEVER,
+                user=user,
+                expects=e.expects,
+                needs_shell=True,
+                exec_input=ExecInput(stdin_eof=True, credential=e.reads_credential_fd),
+            )
+        except PasswordRefusedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a question that cannot be asked is no answer, not an error
+            _logger.debug("sudo -l: could not be asked (%s: %s)", type(exc).__name__, exc)
+            return f"the question could not be asked ({type(exc).__name__})"
+        if r.timed_out:
+            return "sudo did not answer in time"
+        if r.retcode == 0:
+            return True
+        if not e.expects:
+            return f"sudo answered {r.retcode} and otto holds no password to authenticate with"
+        if r.retcode == _SUDO_PROBE_REFUSED_HELD:
+            return False
+        raise PasswordRefusedError(
+            f"{getattr(self, 'name', '')}: sudo refused {self._acting_user(user)!r}. otto gave "
+            "the password once and sudo turned the request down. The cause is one of: "
+            "(1) this login may not use sudo on this host; "
+            "(2) the configured password is wrong; "
+            "(3) sudo refuses the login's shell and keeps no timestamp "
+            "(timestamp_timeout=0), where neither sudo form can run. "
+            "sudo answers all three the same way, and otto does not send the password a "
+            "second time to tell them apart. If the login may use sudo, set "
+            "userland_options.sudo_form to 'shell' or 'validate' to skip this check."
+        )
+
+    def _sudo_form(self, user: str | None) -> str:
+        """Return the sudo form an ``exec`` types: declared, probed, else the shell form.
+
+        A host with no resolver (``LocalHost``, ``DockerContainerHost``) and a
+        root session that asked nothing type :data:`~otto.host.userland.SUDO_FORM_SHELL`.
+        """
+        userland = self._userland()
+        if userland is None:
+            return SUDO_FORM_SHELL
+        login = self._acting_user(user)
+        if self._acts_as_root(user) and not userland.sudo_form_known(login=login):
+            return SUDO_FORM_SHELL
+        return userland.sudo_form(login=login)
+
+    def _sudo_command(
+        self, tail: str, user: str | None, *, exec_input: "ExecInput | None" = None
+    ) -> ElevatedCommand:
+        """Return ONE sudo call on argv *tail*, with its password answer.
+
+        ``SUDO_PROMPT='<prompt>' sudo -S <tail>``; with *exec_input* and a
+        password armed, stdin is the caller's terminal on
+        ``EXEC_CREDENTIAL_FD`` (``<&3 3<&- ...``), so sudo reads the password
+        there and the descriptor is closed for what it runs. The line every
+        ``run``, the shell form and the ``sudo -l "$SHELL"`` question share.
+        """
+        prompt = _sudo_prompt()
+        pw = self._elevation_password("sudo", user)
+        sudo = f"SUDO_PROMPT='{prompt}' sudo -S {tail}"
+        if pw is None:
+            return ElevatedCommand(sudo, [])
+        answer = CredentialExpect(
+            re.escape(prompt),
+            pw,
+            user=self._acting_user(user),
+            host=getattr(self, "name", ""),
+            refused_on_repeat=True,
+        )
+        if exec_input is None:
+            return ElevatedCommand(sudo, [answer])
+        fd = self._exec_credential_fd()
+        return ElevatedCommand(_on_credential_fd(fd, sudo), [answer], reads_credential_fd=True)
+
     # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
-    def _elevate(self, cmd: str, user: str | None = None) -> ElevatedCommand:
+    def _elevate(
+        self, cmd: str, user: str | None = None, *, exec_input: "ExecInput | None" = None
+    ) -> ElevatedCommand:
         """Wrap *cmd* in this host's elevation mechanism, with its password answer.
 
         **Whose password.** ``sudo`` authenticates as the user running the
@@ -368,7 +547,26 @@ class PosixPrivilege(UserlandHost):
         (:func:`~otto.host.login_proxy._may_challenge`): a ``Password:`` in
         such a command's output is output.
 
+        **An ``exec``'s password is read off its own descriptor.** With
+        *exec_input* (an ``exec``'s, whose frame may give the command a stdin
+        at end of file) and a password armed, the result says so
+        (:attr:`~otto.host.host.ElevatedCommand.reads_credential_fd`), the
+        exec frame then keeps the caller's terminal on ``EXEC_CREDENTIAL_FD``,
+        the password is read from that descriptor and the command reads the
+        frame's stdin:
+        sudo validates first, ``<&3 SUDO_PROMPT='<prompt>' sudo -S -v || exit;
+        exec 3<&-; sudo -n <cmd>``, so a failed authentication runs nothing and
+        the command never reads the terminal through sudo; su reads the
+        password on ``<&3 3<&- su -c '<cmd>'``, with ``exec </dev/null; ``
+        ahead of *cmd* when the frame gives end of file. With no password
+        armed (passwordless, or already root) the form is ``run``'s, and the
+        elevated command reads whatever stdin the frame gave it, so a sudo that
+        asks unexpectedly reads end of file and fails at once.
+
         Raises:
+            RuntimeError: *exec_input* is given with a password armed, on a
+                host whose command frame does not isolate ``exec``: there is no
+                credential descriptor to read the password from.
             UnsupportedOnUserlandError: the host resolved an elevation of
                 ``none`` (neither sudo nor su present), or a spelling this
                 build has never been taught. Loudly, at the call site: a
@@ -381,7 +579,6 @@ class PosixPrivilege(UserlandHost):
         userland = self._userland()
         elevation = "sudo" if userland is None else userland.elevation
         host = getattr(self, "name", "")
-        acting = self._acting_user(user)
         if elevation not in _ELEVATING_MECHANISMS:
             raise UnsupportedOnUserlandError(
                 f"{getattr(self, 'name', '')}: this host's userland provides no elevation "
@@ -393,21 +590,51 @@ class PosixPrivilege(UserlandHost):
         # `SecretStr(f"{pw}\n")` (that would wrap the mask): the session
         # writes it as its value and a newline, unwrapped inside the
         # transport write (`otto.host.secret_wire.reveal`).
-        answers: list[Expect | CredentialExpect] = []
         if elevation == "sudo":
-            prompt = _sudo_prompt()
-            pw = self._elevation_password("sudo", user)
-            if pw is not None:
-                answers.append(
-                    CredentialExpect(
-                        re.escape(prompt), pw, user=acting, host=host, refused_on_repeat=True
-                    )
-                )
-            return ElevatedCommand(f"SUDO_PROMPT='{prompt}' sudo -S {cmd}", answers)
+            if exec_input is None:
+                return self._sudo_command(cmd, user)
+            if self._sudo_form(user) == SUDO_FORM_SHELL:
+                shell = f"{SESSION_SHELL} -c {shlex.quote(_exec_inner(cmd, exec_input))}"
+                return self._sudo_command(shell, user, exec_input=exec_input)
+            if self._elevation_password("sudo", user) is None:
+                return self._sudo_command(cmd, user)
+            validated = self._sudo_command("-v", user)
+            fd = self._exec_credential_fd()
+            return ElevatedCommand(
+                f"<&{fd} {validated.command} || exit; exec {fd}<&-; sudo -n {cmd}",
+                validated.expects,
+                reads_credential_fd=True,
+            )
         pw = self._elevation_password("su", user)
-        if pw is not None:
-            answers.append(CredentialExpect(_SU_PROMPT, pw, user=ROOT_LOGIN, host=host))
-        return ElevatedCommand(f"su -c {shlex.quote(cmd)}", answers)
+        su = f"su -c {shlex.quote(cmd)}"
+        if pw is None:
+            return ElevatedCommand(su, [])
+        answers: list[Expect | CredentialExpect] = [
+            CredentialExpect(_SU_PROMPT, pw, user=ROOT_LOGIN, host=host)
+        ]
+        if exec_input is None:
+            return ElevatedCommand(su, answers)
+        fd = self._exec_credential_fd()
+        inner = _exec_inner(cmd, exec_input)
+        return ElevatedCommand(
+            _on_credential_fd(fd, f"su -c {shlex.quote(inner)}"), answers, reads_credential_fd=True
+        )
+
+    def _exec_credential_fd(self) -> int:
+        """Return the descriptor an ``exec``'s elevation reads its password from; refuse if none.
+
+        Only a frame that isolates ``exec`` keeps the caller's terminal on
+        ``EXEC_CREDENTIAL_FD``; on any other the
+        password would be read from a descriptor nothing opened.
+        """
+        frame = frame_or_default(getattr(self, "command_frame", None))
+        if not frame.isolates_exec:
+            raise RuntimeError(
+                f"{getattr(self, 'name', '')}: an exec's elevation reads its password from "
+                f"fd {EXEC_CREDENTIAL_FD}, which the {type(frame).__name__} frame does not "
+                "keep (it does not isolate exec)"
+            )
+        return EXEC_CREDENTIAL_FD
 
     def _history_prefix(self) -> str:
         """Return this host's history-suppression payload ("" when history is kept).

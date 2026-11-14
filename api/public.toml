@@ -609,11 +609,23 @@ positional = ["model"]
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:BashFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:BashFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:BashFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:BashFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -641,14 +653,34 @@ why = "implementer-facing"
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:BashFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:BashFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host.command_frame:BashFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host.command_frame:BashFrame.save_terminal"]
 positional = ["m"]
 
+[symbols."otto.host.command_frame:BashFrame.terminal_restore"]
+positional = ["restore"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:CommandFrame.end_pattern"]
 positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.extract_exec_retcode"]
+positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.extract_retcode"]
@@ -656,6 +688,10 @@ positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -690,8 +726,16 @@ why = "implementer-facing"
 [symbols."otto.host.command_frame:CommandFrame.restore_interactive"]
 implementer = true
 
+[symbols."otto.host.command_frame:CommandFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:CommandFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host.command_frame:CommandFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.save_terminal"]
 positional = ["m"]
@@ -700,11 +744,23 @@ positional = ["m"]
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:RawFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:RawFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:RawFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:RawFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -732,8 +788,16 @@ why = "implementer-facing"
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:RawFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:RawFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host.command_frame:RawFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host.command_frame:RawFrame.save_terminal"]
 positional = ["m"]
@@ -746,11 +810,23 @@ subclass = false
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:ZephyrFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:ZephyrFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:ZephyrFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -785,8 +861,16 @@ why = "implementer-facing"
 [symbols."otto.host.command_frame:ZephyrFrame.region_before_end"]
 positional = ["buffer"]
 
+[symbols."otto.host.command_frame:ZephyrFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:ZephyrFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host.command_frame:ZephyrFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host.command_frame:ZephyrFrame.save_terminal"]
 positional = ["m"]
@@ -1288,11 +1372,23 @@ why = "implementer-facing"
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host:BashFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host:BashFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host:BashFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:BashFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -1320,14 +1416,34 @@ why = "implementer-facing"
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host:BashFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host:BashFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host:BashFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host:BashFrame.save_terminal"]
 positional = ["m"]
 
+[symbols."otto.host:BashFrame.terminal_restore"]
+positional = ["restore"]
+why = "implementer-facing"
+
 [symbols."otto.host:CommandFrame.end_pattern"]
 positional = ["m"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.extract_exec_retcode"]
+positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.extract_retcode"]
@@ -1335,6 +1451,10 @@ positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -1369,8 +1489,16 @@ why = "implementer-facing"
 [symbols."otto.host:CommandFrame.restore_interactive"]
 implementer = true
 
+[symbols."otto.host:CommandFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host:CommandFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host:CommandFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.save_terminal"]
 positional = ["m"]
@@ -1971,11 +2099,23 @@ subclass = false
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host:RawFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host:RawFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host:RawFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -2003,8 +2143,16 @@ why = "implementer-facing"
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host:RawFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host:RawFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host:RawFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host:RawFrame.save_terminal"]
 positional = ["m"]
@@ -2286,11 +2434,23 @@ subclass = false
 positional = ["m"]
 why = "implementer-facing"
 
+[symbols."otto.host:ZephyrFrame.exec_baseline_present"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.extract_exec_retcode"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host:ZephyrFrame.extract_retcode"]
 positional = ["buffer"]
 why = "implementer-facing"
 
 [symbols."otto.host:ZephyrFrame.frame"]
+positional = ["cmd"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.frame_exec"]
 positional = ["cmd"]
 why = "implementer-facing"
 
@@ -2325,8 +2485,16 @@ why = "implementer-facing"
 [symbols."otto.host:ZephyrFrame.region_before_end"]
 positional = ["buffer"]
 
+[symbols."otto.host:ZephyrFrame.restore_line"]
+positional = ["restore", "m"]
+why = "implementer-facing"
+
 [symbols."otto.host:ZephyrFrame.restore_terminal"]
 positional = ["saved"]
+
+[symbols."otto.host:ZephyrFrame.restored_pattern"]
+positional = ["m"]
+why = "implementer-facing"
 
 [symbols."otto.host:ZephyrFrame.save_terminal"]
 positional = ["m"]

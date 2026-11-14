@@ -848,8 +848,16 @@ jobs:
   # matrix of tests/_fixtures/interactive_shell.py; a shell the runner lacks
   # is left out of the matrix, never skipped, so its absence shows in the
   # test ids. 16 workers: each case mostly waits on the probe interval.
+  #
+  # Four shards (CUT_SWEEP_SHARD=i/4, a round robin the sweep module owns and
+  # tests/unit/host/test_cut_sweep_shards.py proves a partition of), so each
+  # stays well inside the bound below: ~12.7k cases a shard.
   probe-cut-sweep:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     # ABOVE the Makefile's LANE_TIMEOUT wrap (2400s) around `make
     # stability-cut-sweep`, plus the sync and apt setup ahead of it, so a
     # stall reports through `timeout`'s exit 124 rather than a GitHub cancel.
@@ -873,7 +881,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh ksh mksh busybox
 
       - name: Probe-line cut sweep, every offset, every shell
-        run: make stability-cut-sweep CUT_SWEEP_WORKERS=16
+        run: CUT_SWEEP_SHARD=${{ matrix.shard }}/4 make stability-cut-sweep CUT_SWEEP_WORKERS=16
 
       # The JUnit XML names every failing case by shell, line, history,
       # nounset and offset, so a red night is readable without a rerun.
@@ -881,7 +889,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: probe-cut-sweep-junit
+          name: probe-cut-sweep-junit-${{ matrix.shard }}
           path: reports/junit/stability-cut-sweep/
           retention-days: 30
 

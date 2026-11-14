@@ -30,6 +30,7 @@ from .command_frame import RECOVER_SUFFIX, BashFrame, SessionMarkers, whole_line
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .identity import ROOT_LOGIN, is_root
 from .shell_liveness import confirm_live
+from .terminal_mapping import establish_exec_state
 
 __all__ = [
     "LOGIN_PROXIES",
@@ -472,8 +473,16 @@ def _identity_probe(m: SessionMarkers, history_prefix: str) -> str:
     su flushes the tty the same way login(1) does, and a probe whose head
     was flushed must print no identity reply, or otto would accept a shell
     that skipped the history suppression riding after the anchor.
+
+    It also establishes the exec frame's variables where the shell has none
+    (:func:`~otto.host.terminal_mapping.establish_exec_state` without
+    *replace*): every forward switch and every undo resyncs through here, so
+    a fresh shell gets its terminal record, the terminal as it is at the
+    transition, and a shell that already holds one (the outer shell a
+    rejected ``su`` returned to, the one an undo lands back in) keeps it.
     """
-    return whole_line_echo(m.recover, RECOVER_SUFFIX, history_prefix, after="$?__$(id -un)__")
+    statements = f"{history_prefix}{establish_exec_state(replace=False)}; "
+    return whole_line_echo(m.recover, RECOVER_SUFFIX, statements, after="$?__$(id -un)__")
 
 
 def _identity_pattern(m: SessionMarkers) -> re.Pattern[str]:

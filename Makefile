@@ -1606,17 +1606,17 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 	    $(call junitxml,stability-unit)
 
 # The every-offset cut sweep (#853): each tail of the handshake, the resync
-# probe and the recovery probe, typed into a fresh interactive shell on a
-# controlling pty, then the line whole once; the resend must answer.
-# Deterministic, but exhaustive and slow (~13k cases, each a fresh shell plus the session's 0.5 s probe
-# interval), so it is nightly's (`probe-cut-sweep`, CUT_SWEEP_WORKERS=16) and
+# probe, the recovery probe and the exec restore line, typed into a fresh
+# interactive shell on a controlling pty, then the line whole once; the
+# resend must answer. Deterministic, but exhaustive and slow (~50k cases, each a fresh shell plus the session's 0.5 s probe
+# interval), so it is nightly's (`probe-cut-sweep`, four CUT_SWEEP_SHARD shards at CUT_SWEEP_WORKERS=16) and
 # no release stage's; its fast fixed hazard cases run on every push
 # (tests/unit/host/test_history_suppression_portability.py). Hostless: no bed
 # lease. `-p no:randomly` keeps collection order deterministic. The default of
 # 4 workers keeps the dev VM usable.
 CUT_SWEEP_WORKERS ?= 4
 
-stability-cut-sweep: ## Run the nightly every-offset probe-line cut sweep (#853, `stability`-marked; hostless, no lease) over every installed shell. CUT_SWEEP_WORKERS=N sets xdist workers (default 4; nightly passes 16); a dev-VM pass takes ~30 min at the default; pass LANE_TIMEOUT=3600s if the VM is loaded. JUnit XML lands in reports/junit/stability-cut-sweep/.
+stability-cut-sweep: ## Run the nightly every-offset probe-line cut sweep (#853, `stability`-marked; hostless, no lease) over every installed shell. CUT_SWEEP_WORKERS=N sets xdist workers (default 4; nightly passes 16); CUT_SWEEP_SHARD=i/n runs one shard of a round-robin split (nightly runs four, each inside the default LANE_TIMEOUT); unset, every case runs, about two hours on the dev VM at the default, so a full local pass needs LANE_TIMEOUT=9000s. JUnit XML lands in reports/junit/stability-cut-sweep/.
 	@$(SAY) "pytest sweep: every tail of the probe lines into each interactive shell (-n $(CUT_SWEEP_WORKERS))"
 	@$(TIMEOUT_CMD) uv run pytest \
 	    tests/unit/host/test_probe_line_cut_sweep.py \

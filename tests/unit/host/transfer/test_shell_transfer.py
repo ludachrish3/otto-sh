@@ -152,13 +152,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.host.command_frame import AshFrame, BashFrame
+from otto.host.command_frame import AshFrame, BashFrame, ExecInput
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.exec_route import ExecRoute
 from otto.host.factory import create_host_from_dict
 from otto.host.options import UserlandOptions
-from otto.host.session import ShellSession, framed_line_overhead, typed_line_budget
+from otto.host.session import (
+    SessionManager,
+    ShellSession,
+    framed_line_overhead,
+    typed_line_budget,
+)
 from otto.host.transfer import shell as shell_module
 from otto.host.transfer.base import TransferContext
 from otto.host.transfer.shell import (
@@ -185,6 +191,13 @@ from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 # ---------------------------------------------------------------------------
 # Shared fakes
 # ---------------------------------------------------------------------------
+
+
+def _pooled_exec_input() -> ExecInput:
+    """What a pooled shell exec types: the exec frame, with that route's restore."""
+    return ExecInput(
+        stdin_eof=True, restore=SessionManager._exec_restore_for(ExecRoute.POOLED_SHELL)
+    )
 
 
 def _ok(output: str = "") -> CommandResult:
@@ -408,7 +421,9 @@ def _make_ft(
         exec_cmd=exec_cmd,
         userland=_declared_userland(base64_flag, stat_size, checksum, applets),
         max_filename_len=max_filename_len,
-        exec_line_budget=None if line_budget is None else (lambda: line_budget),
+        # The pooled frame types a command as written, so what a command
+        # leaves of the budget is the budget less its own length.
+        exec_line_room=None if line_budget is None else (lambda cmd: line_budget - len(cmd)),
     )
 
 
@@ -1053,7 +1068,9 @@ class TestChunkLinesFitTheTransportsLineBudget:
 
         assert per_file[src].status is Status.Error
         msg = per_file[src].msg or ""
-        assert "20 characters on one command line" in msg, msg
+        both = re.search(r"EMPTY payload \((\d+) characters\) leaves (-?\d+) characters", msg)
+        assert both is not None, msg
+        assert int(both.group(1)) + int(both.group(2)) == 20, msg
         assert "Nothing was sent" in msg, msg
         assert [c for c in exec_cmd.calls if c.startswith("printf ")] == [], (
             "a chunk command was typed at the device even though no chunk could fit"
@@ -1159,7 +1176,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
     login routes ``exec`` through the same pooled shell on an ``ssh`` host, and
     the framing the budget is net of belongs to the host's command frame, which
     a transfer backend cannot see. So the backend asks
-    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan through the
+    :meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan through the
     context it was built with, and these two tests are the wiring's guard: a
     build that stops passing the callable, or a backend that starts computing
     its own, reds here rather than on the bed.
@@ -1190,11 +1207,14 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
             "the busybox profile stopped declaring an ash frame, so this test is no "
             "longer about an ash host's budget"
         )
-        budget = host._file_transfer._line_budget()
+        budget = host._file_transfer._line_room()("")
         # No session has measured echo off yet, so the transfer plans on the
         # line editor's 1022: the same answer the manager gives run().
-        assert budget == typed_line_budget(host.command_frame, echoes=True)
-        assert budget == ASH_ECHOING_LINE_MAX - framed_line_overhead(host.command_frame)
+        typed = _pooled_exec_input()
+        assert budget == typed_line_budget(host.command_frame, echoes=True, exec_input=typed)
+        assert budget == ASH_ECHOING_LINE_MAX - framed_line_overhead(
+            host.command_frame, exec_input=typed
+        )
 
     @pytest.mark.parametrize(
         ("echoes", "ceiling"), [(False, PTY_TYPED_LINE_MAX), (True, ASH_ECHOING_LINE_MAX)]
@@ -1205,14 +1225,16 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
         # An open default session that measured *echoes* at its handshake.
         session = SimpleNamespace(alive=True, echoes=echoes)
         host._session_mgr._session = cast("ShellSession", session)
-        budget = host._file_transfer._line_budget()
-        assert budget == ceiling - framed_line_overhead(host.command_frame)
+        budget = host._file_transfer._line_room()("")
+        assert budget == ceiling - framed_line_overhead(
+            host.command_frame, exec_input=_pooled_exec_input()
+        )
         assert budget == host._session_mgr.line_budget(route=host._session_mgr.exec_route())
 
     def test_an_ssh_host_is_handed_no_budget_at_all(self) -> None:
         """The path that was never broken must not move, and this is where that starts."""
         host = self._busybox_host("ssh")
-        assert host._file_transfer._line_budget() is None
+        assert host._file_transfer._line_room()("") is None
 
 
 # ---------------------------------------------------------------------------

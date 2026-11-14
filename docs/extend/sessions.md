@@ -38,20 +38,211 @@ async with await host.open_session("monitor") as mon:
 # session is closed automatically
 ```
 
+(named-sessions-vs-exec)=
 ### When to use named sessions vs exec
 
 | | Named session | `exec` |
 | --- | --- | --- |
-| Shell state | Persistent (per session) | None (fresh process) |
+| Shell state | Persistent (per session) | Carried to no later command; on a `console` route, `exec` starts in a clean login shell ({ref}`by route <exec-frame-shell-state>`; routes are listed in {ref}`Command contracts <command-contracts>`) |
 | Setup cost | One connection, reused | New process per call |
 | Use case | Multi-step workflows in parallel | One-off independent commands |
 
-A process-route `exec` (the ssh exec channel and local `exec`) gives its command
-end of file on stdin, so a command that reads stdin gets none of otto's and
-does not wait for input. How such a command ends, times out or is stopped is on
+Some hosts give `exec` no process of its own: over `telnet`, and over `ssh`
+when the call needs a shell (`expects=`, `sudo=True`, a user otto cannot log
+in as directly), otto types the command into a **pooled shell**, a shell
+session it keeps for `exec` beside the one `run` uses. Over `console`, `exec`
+is typed into the console's one shell, the one `run` uses. Which route a call
+takes is on {doc}`../command-contracts/exec`.
+
+When otto types an `exec` into a shell, it wraps the command in an **exec
+frame**: a line that runs the command in a subshell, then restores the
+terminal and prints otto's **end record**, a marker line carrying the
+command's exit status that tells otto the command is over.
+
+#### What the command reads on stdin
+
+Without `expects=`, an `exec`'s command reads end of file on stdin, so a
+command that reads stdin does not wait for input. The ssh exec channel (the
+`ssh-channel` route of {doc}`../command-contracts/exec`) and local `exec`
+have no stdin to give; the exec frame redirects the command's
+stdin away from the terminal.
+
+With `expects=`, the command's stdin is the terminal, since otto types its
+answers there.
+
+File descriptor 3 exists only for an `exec` typed into a shell for which otto
+answers a sudo or su password. That `exec` starts with fd 3 open on the
+session's terminal, the password is read from fd 3, and fd 3 is closed before
+the command runs, so the command still reads end of file on stdin. Every other
+`exec` opens no fd 3, so its command never sees one. On BusyBox 1.16.1, whose
+shell refuses to open fd 3 this way, an `exec` for which otto answers a
+password fails ({ref}`Undefined <command-contracts-undefined>` says why).
+
+sudo runs the command in one of two forms, chosen per host
+({ref}`sudo-form`): by default one call,
+`sudo -S "${SHELL:-/bin/sh}" -c 'exec </dev/null; <cmd>'`, whose `sudo` reads the password on
+fd 3's terminal; or, under `validate`, `sudo -S -v` on fd 3 and then
+`sudo -n <cmd>`. Either way a failed authentication runs nothing. su runs
+`su -c 'exec </dev/null; <cmd>'`. With `expects=`, the shell form's
+`"${SHELL:-/bin/sh}" -c` and `su -c` drop the redirect, and the command reads
+the terminal.
+
+#### What the exec frame restores
+
+The frame puts the terminal's settings back after the command, so an `stty`
+in the command, or a program that left the terminal raw, does not reach the
+next command.
+
+On a pooled shell, the settings put back are the shell's **terminal record**:
+the terminal settings otto saved for that shell when it opened the session, in
+its **handshake** (the first line otto types into a new shell,
+{ref}`described here <per-host-session-setup>`). That record is
+taken after otto's own `stty`, so a `session_setup` hook's terminal changes
+are part of it.
+
+On a console, `exec` shares the shell `run` uses. There it puts back the
+terminal settings it found when it started, so a change a `run` made stays.
+
+Where the settings cannot be read (no `stty`, or a pipe rather than a
+terminal), nothing is restored and the command runs as before.
+
+The record lives in a shell variable (listed below). If a command removes it,
+otto logs one WARNING, restores nothing more in that shell, and does not reuse
+a pooled one. After a user switch, or its undo, a shell that has no record
+yet saves the terminal's current settings as its record. A shell that already
+has one keeps it. How such a command ends, times out or is stopped is on
 {ref}`the results page <command-ends-abnormally>`.
 
+(exec-frame-shell-state)=
+#### Shell state, by route
+
+Where an `exec` starts, and what it can leave behind:
+
+- **The ssh exec channel and local `exec`** start a process of their own, from
+  the login's environment; nothing they change outlives them.
+- **A pooled shell** runs nothing but `exec`s, each in a subshell. Each one
+  starts from the state the session was set up with (its handshake and any
+  `session_setup` hook); no `run` touches it, and nothing an `exec` changes
+  reaches the next one.
+- **A console's `exec`** runs in a clean login shell that the console's one
+  shell (the shell `run` uses) starts for it: `env -i` keeps only `HOME`,
+  `TERM`, `USER`, `LOGNAME` and `PATH`, and sets `SHELL` to the program it
+  starts (`"${SHELL:-/bin/sh}"`, so the sudo `shell` form inside it names the
+  same shell), then `"${SHELL:-/bin/sh}" -l -c`
+  reads the login profile, changes to `$HOME` (`/` when it is unset or
+  empty, as a login with no home starts) and runs the command. So it
+  starts in the login's home directory with the login's environment and
+  options, not from what a `run` left, and its own changes reach no later
+  `run` or `exec`. What differs from a pooled shell, and what the console
+  promises, is on {ref}`the console's promise <command-contracts-narrower>`.
+  Anything the profile prints comes before otto's BEGIN marker, which the
+  login shell prints, so it is not part of the command's output, and no
+  `expects=` pattern is answered to it (on every frame, nothing before BEGIN
+  is matched). What a logout file prints is: bash runs `~/.bash_logout` when
+  a command ends the login shell with the `exit` builtin, after BEGIN. A login
+  shell that never gets as far as the command (no `env`, no such `$SHELL`, a
+  `$SHELL` that does not take `-l -c`, a profile that exits or `exec`s)
+  prints no BEGIN marker, and the `exec` is a failed result whatever status
+  its end record carries ({py:data}`~otto.host.session.NEVER_RAN`); the raw
+  text is in the session's DEBUG log. otto has no fallback for a device
+  without `env` or with a csh-family `$SHELL`.
+
+A pooled shell's subshell inherits the shell's `set -e`: under it, the
+command stops at its first failing statement and reports that status, while
+the shell itself does not exit and still prints otto's end record. A
+console's login shell starts with the login's own options, so the console
+shell's `set -e` is neither inherited nor changed.
+
+When an `exec` times out, has its password refused, or is cancelled, the
+frame's own end never ran. otto then types one line of its own once the shell
+is back (for a cancelled `exec`, at the next use of the session): it puts the
+terminal record back and turns `set -e` on again where the shell had it. A
+session that cannot confirm that line is dead
+({ref}`closing-a-session`), and a pooled one is discarded instead of handed
+out again.
+
+To do this the shell keeps a few unexported variables of otto's:
+
+- `__otto_base`: the terminal record of the handshake, kept for the
+  session's life;
+- `__otto_tty`: the terminal as a console `exec` found it;
+- `__otto_e`: whether `set -e` was on;
+- `__otto_rc` and `__otto_f`: the status and flag of the end record;
+- `__otto_probe`: the handshake's readiness marker.
+
+Each restore unsets `__otto_e` and `__otto_tty` once it has applied them, so
+an `exec` whose frame never ran (`timeout=0`, or a frame cut before it saved
+anything) restores nothing an earlier `exec` saved. A command that changes
+these variables changes what otto restores.
+
+On a host declared as an ash shell (`command_frame: "ash"`, as BusyBox
+devices are), a line the terminal would cut is refused before anything is
+typed, for `run` and a shell-routed `exec` alike. To send such a command,
+split it into shorter lines, put it in a script file and run that, or, over
+`ssh`, use an `exec` that takes its own channel, which types nothing. The
+limits are a
+{ref}`declared exception <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>`.
+
+#### Which shells this was measured on
+
+Measured on the dev machine with bash 5.2, dash 0.5.12, BusyBox 1.36 `sh`,
+ksh93, zsh 5.9 and mksh, on 2026-11-13 and 2026-11-14. The lab's devices run
+bash and BusyBox ash only; zsh and mksh are not lab shells, and zsh is not
+claimed at all.
+
+The subshell frame, its status and its `set -e` rule:
+
+- measured on bash, dash, BusyBox ash, ksh93, zsh and mksh.
+
+Putting the terminal back, including after a timeout:
+
+- measured on bash, dash, BusyBox ash and ksh93; on mksh by otto's unit
+  tests on a local terminal (2026-11-14);
+- cannot be told apart on zsh, whose line editor resets the terminal at each
+  prompt.
+
+A sudo or su password answered with the command still reading end of file:
+
+- measured on bash, dash, BusyBox ash, ksh93 and mksh, against a stand-in
+  sudo and su on local shells;
+- known failing on zsh: the command reads the password's line ending instead
+  of end of file;
+- password sudo over `ssh` measured on the lab's test1 (sudo 1.9.15p5,
+  default timestamp) and test3 (`timestamp_timeout=0`) by otto's lab
+  integration tests, on 2026-11-14;
+- password sudo on a `telnet` or `console` route, and password su on any
+  route, checked only against the stand-in
+  ({ref}`Undefined <command-contracts-undefined>` says why).
+
+Whether one `exec` changes the state the next one sees:
+
+- not measured on a Zephyr board (the `exec-isolated` promise of
+  {doc}`../command-contracts/exec`).
+
 To share one host connection across many tests, see {doc}`../setup/host-scopes`.
+
+(closing-a-session)=
+### Closing a session and a given-up session
+
+A session whose timed-out command could not be stopped is given up: it is
+marked unusable, and its working directory and variables are lost. A given-up
+session that is the host's default session is closed by the next operation
+that uses that session; any other is closed when it or its host is closed.
+On the local machine, which commands can leave a session given up is a
+{ref}`known gap of run <command-contract-run-known-gaps>`.
+
+Closing a local shell session sends TERM to its process group, and KILL to the
+group only if the shell outlives TERM. A process that ignores TERM survives
+when the shell exits on TERM; a process that left the group is never
+signalled; and if the shell had already exited before the close, nothing is
+signalled.
+
+The local shell runs in a session of its own, with no controlling terminal, so
+a Ctrl-C typed at otto's terminal does not reach the commands running in it.
+Cancelling a `run` does not stop its command by itself: the command is
+stopped when the session or its host is closed, which the CLI does as it
+exits. A library caller that cancels a `run` and keeps the host open must
+close the session, or the host, to stop the command.
 
 ## Send and expect
 

@@ -28,10 +28,11 @@ never repeat itself (which spins).
 import asyncio
 import re
 import shlex
+from typing import NamedTuple, Protocol
 
 from pydantic import SecretBytes, SecretStr
 
-from otto.host.command_frame import _PROBE_VAR, RECOVER_SUFFIX
+from otto.host.command_frame import _PROBE_VAR, RECOVER_SUFFIX, BashFrame
 from otto.host.secret_wire import reveal, reveal_bytes
 from otto.logger.mode import LogMode
 
@@ -41,6 +42,103 @@ from otto.logger.mode import LogMode
 _PROBE_ASSIGN_RE = re.compile(rf"{_PROBE_VAR}=(\w+); ")
 _PROBE_ECHO_RE = re.compile(rf"echo ([^\s$]+)\${_PROBE_VAR}(?!\w)")
 _SWITCH_RE = re.compile(r"^\s*(?:sudo\s+)?su\b(.*)$", re.MULTILINE)
+
+# The two shapes a bash-family frame types: run's brace group and exec's
+# subshell (otto.host.command_frame.BashFrame.frame / frame_exec). Pinned to
+# the product by a round-trip test (test_the_test_side_frame_reader_reads_both_shapes).
+_RUN_FRAME_RE = re.compile(
+    r'echo "(__OTTO_\w+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_\w+_END__)\$\?__"\n',
+    re.DOTALL,
+)
+_EXEC_FRAME_RE = re.compile(
+    r'echo "(__OTTO_\w+_BEGIN__)"; case \$- in .*?; set \+e; '
+    r"\( " + re.escape(BashFrame().errexit_restore()) + r"; (.*)\n"
+    r"\)( 3<&0)?( </dev/null)?; __otto_rc=\$\?; .*"
+    r'echo "(__OTTO_\w+_END__)\$\{__otto_f\}\$\{__otto_rc\}__"\n',
+    re.DOTALL,
+)
+
+# A console's exec frame: the subshell becomes a clean login shell, whose one
+# quoted word changes to $HOME, prints BEGIN and holds the command.
+_CONSOLE_EXEC_FRAME_RE = re.compile(
+    r"case \$- in .*?; set \+e; \( exec env -i .*? -l -c ('.*')\n"
+    r"\)( 3<&0)?( </dev/null)?; __otto_rc=\$\?; .*"
+    r'echo "(__OTTO_\w+_END__)\$\{__otto_f\}\$\{__otto_rc\}__"\n',
+    re.DOTALL,
+)
+_CONSOLE_WORD_RE = re.compile(
+    r'cd "\$\{HOME:-/\}" \|\| exit; echo "(__OTTO_\w+_BEGIN__)"; (.*)\n\Z', re.DOTALL
+)
+
+
+class BashFramed(NamedTuple):
+    """What :func:`parse_bash_frame` reads off a typed bash-family frame."""
+
+    begin: str
+    cmd: str
+    end_prefix: str
+    isolated: bool
+    """The exec frame (a subshell), rather than run's brace group."""
+    stdin_eof: bool
+    """The exec frame gives the command a stdin at end of file."""
+    credential: bool = False
+    """The exec frame keeps the caller's terminal on the credential descriptor (``3<&0``)."""
+
+
+def parse_bash_frame(text: str) -> "BashFramed | None":
+    """Read a bash-family frame out of *text*, any shape; ``None`` when *text* holds none.
+
+    The shapes are run's, a pooled exec's and a console exec's.
+
+    The one test-side reader of what ``BashFrame.frame`` and
+    ``BashFrame.frame_exec`` type, for the doubles that answer frames.
+    """
+    if (run := _RUN_FRAME_RE.search(text)) is not None:
+        return BashFramed(run.group(1), run.group(2), run.group(3), False, False)
+    if (exec_ := _EXEC_FRAME_RE.search(text)) is not None:
+        return BashFramed(
+            exec_.group(1),
+            exec_.group(2),
+            exec_.group(5),
+            True,
+            exec_.group(4) is not None,
+            exec_.group(3) is not None,
+        )
+    if (console := _CONSOLE_EXEC_FRAME_RE.search(text)) is not None:
+        word = _CONSOLE_WORD_RE.match(shlex.split(console.group(1))[0])
+        if word is not None:
+            return BashFramed(
+                word.group(1),
+                word.group(2),
+                console.group(4),
+                True,
+                console.group(3) is not None,
+                console.group(2) is not None,
+            )
+    return None
+
+
+class _HasEndPrefix(Protocol):
+    @property
+    def end_prefix(self) -> str: ...
+
+
+def end_record(m: _HasEndPrefix, code: int, *, flag: str = "") -> str:
+    """The end record a bash-family shell prints for a finished frame: no trailing newline.
+
+    *flag* is ``""`` for run's frame and ``"B"`` (or ``"N"``, the record
+    lost) for the exec frame. *m* is the session's markers, or anything
+    holding the end prefix (a :class:`BashFramed`). The one builder every
+    double answering a frame uses.
+    """
+    return f"{m.end_prefix}{flag}{code}__"
+
+
+def end_record_for(framed: BashFramed, code: int) -> str:
+    """The end record a shell prints for *framed*: flagged ``B`` when it is the exec frame."""
+    return end_record(framed, code, flag="B" if framed.isolated else "")
+
+
 _EXIT_RE = re.compile(r"^\s*exit\s*$", re.MULTILINE)
 
 

@@ -698,6 +698,7 @@ _STATEMENT_NAMES = {
     "command set": "set-group",
     "eval": "eval",
     "stty tab0": "stty-tabs",
+    "stty -g": "stty-snapshot",
     "stty": "stty",
     "printf": "printf",
 }
@@ -825,9 +826,10 @@ def _hazards() -> list[tuple[str, str, int]]:
         render_probe("resync", TAIL_MARKERS),
         render_probe("recovery", TAIL_MARKERS),
     )
-    _redirections(resync, {"export-group", "set-group", "eval"})
+    resync_redirect = _redirections(resync, {"export-group", "set-group", "eval", "stty-snapshot"})
     redirect = _redirections(
-        handshake, {"export-group", "set-group", "eval", "stty", "stty-tabs", "printf"}
+        handshake,
+        {"export-group", "set-group", "eval", "stty", "stty-tabs", "printf", "stty-snapshot"},
     )
     return [
         ("calibration", "handshake", _after_the_calibration_x(handshake)),
@@ -836,6 +838,8 @@ def _hazards() -> list[tuple[str, str, int]]:
         ("redirection-eval", "handshake", redirect["eval"]),
         ("redirection-stty", "handshake", redirect["stty"]),
         ("redirection-stty-tabs", "handshake", redirect["stty-tabs"]),
+        ("redirection-stty-snapshot", "handshake", redirect["stty-snapshot"]),
+        ("redirection-stty-snapshot-resync", "resync", resync_redirect["stty-snapshot"]),
         *(
             (f"or-{statement}-{cut}", "handshake", k)
             for statement, cuts in _inside_the_or_colons(handshake).items()

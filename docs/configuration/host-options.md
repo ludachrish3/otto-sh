@@ -516,8 +516,12 @@ session on it:
 
 - `run()` works, on that session. So does `exec()` (and
   `otto host <id> exec`): on a console it is a special case of `run()`, one
-  command on the same session with the same exit-code handling. It shares
-  that session's shell state (a `cd` stays). Concurrent `run()`, `exec()`
+  command on the same session with the same exit-code handling. It runs in a
+  clean login shell that session's shell starts for it, so it starts in the
+  login's home directory with the login's environment, not from the state
+  `run()` left there, and what it changes (a `cd`, a variable, an `exit`)
+  does not stay ({ref}`shell state, by route <exec-frame-shell-state>`).
+  Concurrent `run()`, `exec()`
   and `shell`-transfer commands take turns on the one line. A user switch
   (`run(user=...)`, `as_user`) happens outside that turn-taking, so keep
   switched calls sequential rather than gathering them with other commands.
@@ -764,8 +768,14 @@ the history file at exit.
 otto runs two commands of its own on every shell it opens — the readiness
 handshake (`__otto_probe=READY__; __otto_echo=; stty -echo || __otto_echo=E; stty tab0 || :;
 echo; printf %sX\\r\\nY\\nZ\\rW\\tT\\012 $__otto_echo || :; unset __otto_echo;
-echo __OTTO_<id>_$__otto_probe` on bash) and, on Unix hosts, history
-suppression — and then, by default, nothing else. The `printf` is the
+__otto_base=$(stty -g) || __otto_base=; __otto_e=; __otto_tty=;
+echo __OTTO_<id>_$__otto_probe` on bash, every `stty` silenced with `2>/dev/null`)
+and, on Unix hosts, history suppression — and then, by default, nothing else.
+`__otto_base` keeps the terminal's settings as otto left them, which a pooled
+`exec` puts back after its command ({ref}`the exec frame <named-sessions-vs-exec>`);
+it is empty where `stty -g` cannot read them, and then nothing is put back.
+`__otto_echo` is unset on the same line; `__otto_probe` and the exec frame's
+variables stay ({ref}`the full list <exec-frame-shell-state>`). The `printf` is the
 handshake's calibration line: how its known bytes come back shows how the
 session's terminal translates line endings, which is what lets otto return a
 command's output exactly ({ref}`what a command's value holds <command-output-contract>`), and an `E` before its

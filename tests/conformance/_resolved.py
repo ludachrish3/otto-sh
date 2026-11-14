@@ -121,6 +121,13 @@ class ResolvedCell:
     cred with a ``proxy``, replayed as ``proxy_hops``). NOT a network ``hop``:
     a jump host does not change the exec route."""
 
+    password_sudo: bool = False
+    """Whether ``exec(sudo=True)`` on this cell makes sudo ask for a password
+    otto answers: the login the cell uses has a password and is not root
+    (:func:`~tests.conformance._entry.password_sudo_on`), and the device's
+    sudo asks it (no ``NOPASSWD``). Set by the venues beside
+    :attr:`proxied_login`."""
+
     open_shell_host: "Callable[[], AbstractAsyncContextManager[BaseHost]] | None" = None
     """The same host as :attr:`open_host`, built with a registered no-op
     ``session_setup`` so ``exec`` is forced onto the pooled shell. Set by both

@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from ..invocation import HostRegistration
     from .app_shell import AppShell
     from .capability_grid import HostCapabilities
+    from .command_frame import ExecInput
     from .dev_tool import DevTool
     from .element import Element
     from .power import PowerController
@@ -134,6 +135,20 @@ class CredentialExpect:
     """
 
 
+def exec_stdin_eof(expects: "Sequence[Expect | CredentialExpect] | None") -> bool:
+    """Whether an ``exec``'s command reads stdin at end of file: unless the caller answers on it.
+
+    A caller's own pair (an :data:`Expect`) keeps the terminal as the
+    command's stdin, so its answer reaches the program that prompts. A
+    :class:`CredentialExpect` does not: an elevation reads its password from
+    the caller's terminal on its own descriptor
+    (``EXEC_CREDENTIAL_FD``), and the command it
+    elevates still reads end of file. The one place this is decided;
+    :meth:`BaseHost.exec` asks it once per call, from the caller's pairs.
+    """
+    return not any(not isinstance(e, CredentialExpect) for e in expects or [])
+
+
 @dataclass(frozen=True, slots=True)
 class ElevatedCommand:
     """What ``BaseHost._elevate`` returns: the elevated command line and its answers."""
@@ -143,6 +158,13 @@ class ElevatedCommand:
 
     expects: "list[Expect | CredentialExpect]"
     """The password answer for the elevation prompt; empty when none is needed."""
+
+    reads_credential_fd: bool = False
+    """Whether :attr:`command` reads the password off ``EXEC_CREDENTIAL_FD``.
+
+    Only an ``exec``'s elevation with a password armed does; the exec frame
+    opens the descriptor exactly then (:attr:`~otto.host.command_frame.ExecInput.credential`).
+    """
 
 
 DEFAULT_COMMAND_TIMEOUT = 30.0
@@ -586,6 +608,8 @@ class _PreparedCommand:
     expects: "list[Expect | CredentialExpect] | None"
     timeout: float | None
     log: "LogMode | None"
+    reads_credential_fd: bool = False
+    """The elevation's :attr:`ElevatedCommand.reads_credential_fd`; ``False`` unelevated."""
 
 
 def _prepared(sc: ShellCommand, elevated: ElevatedCommand | None = None) -> _PreparedCommand:
@@ -595,7 +619,11 @@ def _prepared(sc: ShellCommand, elevated: ElevatedCommand | None = None) -> _Pre
         plain: list[Expect | CredentialExpect] | None = None if caller is None else [*caller]
         return _PreparedCommand(sc.cmd, plain, sc.timeout, sc.log)
     return _PreparedCommand(
-        elevated.command, [*elevated.expects, *(caller or [])], sc.timeout, sc.log
+        elevated.command,
+        [*elevated.expects, *(caller or [])],
+        sc.timeout,
+        sc.log,
+        reads_credential_fd=elevated.reads_credential_fd,
     )
 
 
@@ -1790,7 +1818,13 @@ class BaseHost(ABC):
     #  Privilege
     ####################
 
-    def _elevate(self, cmd: str, user: str | None = None) -> ElevatedCommand:
+    def _elevate(
+        self,
+        cmd: str,
+        user: str | None = None,
+        *,
+        exec_input: "ExecInput | None" = None,
+    ) -> ElevatedCommand:
         """Return the command line that runs *cmd* elevated, with its password answer.
 
         Default raises — only posix-shell hosts (via the ``PosixPrivilege``
@@ -1800,6 +1834,12 @@ class BaseHost(ABC):
         user of an ``exec(user=...)``, whose switch happens before the command
         and therefore before the elevation prompt. ``None`` means the session's
         own current identity, which is what ``run`` always passes.
+
+        *exec_input* is the :class:`~otto.host.command_frame.ExecInput` of the
+        ``exec`` this elevation runs in; ``None`` (every ``run``) keeps the
+        ``run`` form. An ``exec``'s password is read from the caller's terminal
+        on ``EXEC_CREDENTIAL_FD``, so the elevated
+        command reads the stdin the exec frame gave it.
 
         Synchronous by contract, which is why :meth:`_prepare_elevation`
         exists: an implementation needing an awaited answer resolves it there.
@@ -1823,6 +1863,15 @@ class BaseHost(ABC):
         those call sites.
         """
         return
+
+    async def _prepare_exec_elevation(self, user: str | None = None) -> None:  # noqa: ARG002 — the parameter belongs to the seam: this default resolves nothing per user
+        """Resolve anything an ``exec``'s :meth:`_elevate` reads. Awaited by ``exec(sudo=True)``.
+
+        Default: :meth:`_prepare_elevation`, what ``run`` resolves.
+        ``PosixPrivilege`` also settles the host's sudo form there, for the
+        user *user* the exec runs as.
+        """
+        await self._prepare_elevation()
 
     async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """Switch the persistent session to another user via ``su``.
@@ -1882,7 +1931,13 @@ class BaseHost(ABC):
         """
         return self._live_session_mgr().terminal_mapping
 
-    def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> _PreparedCommand:
+    def _apply_sudo(
+        self,
+        sc: "ShellCommand",
+        user: str | None = None,
+        *,
+        exec_input: "ExecInput | None" = None,
+    ) -> _PreparedCommand:
         """Prepare a ``ShellCommand`` to run elevated.
 
         Puts the elevation's password answer ahead of any caller-supplied
@@ -1893,8 +1948,10 @@ class BaseHost(ABC):
         :meth:`_elevate`, so the prompt is answered with the password of the
         user the command actually runs as. ``run``'s two call sites pass
         ``None`` — their commands run as the session's current user.
+        *exec_input* is the ``exec``'s own (``None`` for ``run``), handed to
+        :meth:`_elevate` unchanged.
         """
-        return _prepared(sc, self._elevate(sc.cmd, user))
+        return _prepared(sc, self._elevate(sc.cmd, user, exec_input=exec_input))
 
     ####################
     #  Command execution
@@ -2343,8 +2400,17 @@ class BaseHost(ABC):
         if sc.expects:
             self._refuse_exec_expects()
         if sudo:
-            await self._prepare_elevation()
-        pc = self._apply_sudo(sc, user) if sudo else _prepared(sc)
+            await self._prepare_exec_elevation(user)
+        # Imported here: the frame module is needed only once a command runs.
+        from .command_frame import ExecInput
+
+        # Decided once, from the caller's own pairs, before the elevation:
+        # the elevation and the frame read this one object. The elevation
+        # alone knows whether it reads a password off the credential
+        # descriptor, so the frame's copy takes that fact from it, here.
+        exec_input = ExecInput(stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)))
+        pc = self._apply_sudo(sc, user, exec_input=exec_input) if sudo else _prepared(sc)
+        exec_input = replace(exec_input, credential=pc.reads_credential_fd)
         if is_dry_run():
             return self._dry_run_result(pc.cmd, log)
         return await self._exec_one(
@@ -2354,6 +2420,7 @@ class BaseHost(ABC):
             user=user,
             expects=pc.expects,
             needs_shell=sudo or bool(pc.expects),
+            exec_input=exec_input,
         )
 
     def _refuse_exec_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: most families honour user= and have nothing to refuse
@@ -2414,6 +2481,7 @@ class BaseHost(ABC):
         *,
         expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         """Run one command: plan its route once, then run that plan.
 
@@ -2426,7 +2494,9 @@ class BaseHost(ABC):
 
         *expects* and *needs_shell* are the call's own reasons to want a
         shell; a family whose raw channel cannot honour them plans its
-        pooled shell instead.
+        pooled shell instead. *exec_input* is what a shell route's exec frame
+        needs (:class:`~otto.host.command_frame.ExecInput`), built once by
+        :meth:`exec` and carried unchanged to the session.
 
         The result's ``route`` is recorded by the primitive that ran, never
         copied from the plan, and is checked against it here: a ``_run_plan``
@@ -2439,7 +2509,13 @@ class BaseHost(ABC):
         """
         plan = self._exec_plan(user=user, needs_shell=needs_shell)
         result = await self._run_plan(
-            plan, cmd=cmd, timeout=timeout, log=log, user=user, expects=expects
+            plan,
+            cmd=cmd,
+            timeout=timeout,
+            log=log,
+            user=user,
+            expects=expects,
+            exec_input=exec_input,
         )
         if isinstance(result, NotRunResult):
             return result
@@ -2489,11 +2565,13 @@ class BaseHost(ABC):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
     ) -> CommandResult:
         """Run *cmd* on the route *plan* names. Families override.
 
         The only place a family calls its exec primitive; the route is
-        already decided, so this chooses nothing.
+        already decided, so this chooses nothing. A shell route forwards
+        *exec_input* to its session; a process route ignores it.
         """
         raise NotImplementedError from None
 
