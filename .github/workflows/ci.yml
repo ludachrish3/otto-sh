@@ -160,7 +160,7 @@ jobs:
   # by interpreter. Same timeout reasoning as `tests-primary`.
   tests-canary:
     needs: [gate-admission]
-    name: ${{ matrix.session }}-3.14
+    name: ${{ matrix.session }}-3.15
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -181,14 +181,14 @@ jobs:
 
       - uses: ./.github/actions/hostless-setup
         with:
-          python: "3.14"
+          python: "3.15"
 
-      - name: Run ${{ matrix.session }} under Python 3.14
-        run: uv run nox -s ${{ matrix.session }}-3.14
+      - name: Run ${{ matrix.session }} under Python 3.15
+        run: uv run nox -s ${{ matrix.session }}-3.15
 
       - name: Repeat the test files this pull request adds or changes
         if: github.event_name == 'pull_request'
-        run: uv run nox -s ${{ matrix.repeat }}-3.14
+        run: uv run nox -s ${{ matrix.repeat }}-3.15
 
   # The interior Pythons run the unit session alone. They keep the
   # `tests_hostless-<python>` names because those are required contexts.
@@ -201,7 +201,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       # Depth 2: on a pull request the checkout is the merge commit, and the
       # changed-test repeat below reads its diff against the first parent.
@@ -249,7 +249,7 @@ jobs:
         run: make coverage-hostless-fold
 
   # THE BOOKEND CERTIFICATES keep the required contexts `tests_hostless-3.10`
-  # and `tests_hostless-3.14`. GitHub treats a SKIPPED required check as
+  # and `tests_hostless-3.15`. GitHub treats a SKIPPED required check as
   # passing, so a certificate must never be skipped: `if: always()` makes it
   # run whatever its needs did, and its one step fails unless every need's
   # result is `success` (`failure`, `cancelled` and `skipped` all fail it).
@@ -267,7 +267,7 @@ jobs:
   # The same certificate over the canary legs.
   hostless-canary:
     needs: [gate-admission, tests-canary]
-    name: tests_hostless-3.14
+    name: tests_hostless-3.15
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -764,7 +764,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up uv
@@ -860,7 +860,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7.0.1
         with:

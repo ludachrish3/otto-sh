@@ -3,7 +3,7 @@
 Two numbers gate Python coverage: ``COVERAGE_THRESHOLD`` (the full fold —
 ``make coverage``'s Python legs plus the dashboard browser process's
 ``--cov-append``) and ``CI_COVERAGE_THRESHOLD`` (the hostless selection CI
-runs and gates on the primary Python, 3.10; the 3.14 canary runs the unit
+runs and gates on the primary Python, 3.10; the 3.15 canary runs the unit
 and e2e tiers minus the ``interpreter_agnostic`` family without coverage
 instrumentation, and the interior versions a trimmed, uninstrumented unit tier —
 see ``noxfile.py``'s ``HOSTLESS_MIDDLE_TEST_ARGS`` and

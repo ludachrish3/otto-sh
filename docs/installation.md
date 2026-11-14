@@ -10,7 +10,7 @@ working without internet access, or managing otto alongside other Python depende
 
 ## Requirements
 
-- **Python 3.10 or later** (otto supports CPython 3.10 through 3.14).
+- **Python 3.10 or later** (otto supports CPython 3.10 through 3.15).
 - Linux, macOS, or Windows.
 - Internet access to PyPI — or one of the offline sources described under
   [Air-gapped installation](#air-gapped-installation).
@@ -405,7 +405,7 @@ single directory:
 ```bash
 # `--no-project` matters: without it, `uv run --python` rebuilds the current
 # directory's .venv at each version. `--with pip` supplies pip to the ephemeral env.
-for PYVER in 3.10 3.11 3.12 3.13 3.14; do
+for PYVER in 3.10 3.11 3.12 3.13 3.14 3.15; do
     uv run --no-project --python "$PYVER" --with pip -- python -m pip download otto-sh \
         --dest ./wheels \
         --python-version "$PYVER" \
@@ -448,7 +448,7 @@ route goes through an export. From a project with the recommended
 
 ```bash
 uv export --no-dev --no-hashes > requirements.txt
-for PYVER in 3.10 3.11 3.12 3.13 3.14; do
+for PYVER in 3.10 3.11 3.12 3.13 3.14 3.15; do
     uv run --no-project --python "$PYVER" --with pip -- python -m pip download \
         -r requirements.txt --dest ./wheels \
         --python-version "$PYVER" --platform manylinux2014_x86_64 --only-binary :all:

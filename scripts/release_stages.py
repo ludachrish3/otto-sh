@@ -21,7 +21,8 @@ EVIDENCE: "dict[str, list[str]]" = {
     "noxfile.py:tests_hostless_unit@3.11": ["tests_hostless-3.11"],
     "noxfile.py:tests_hostless_unit@3.12": ["tests_hostless-3.12"],
     "noxfile.py:tests_hostless_unit@3.13": ["tests_hostless-3.13"],
-    "noxfile.py:tests_all@3.14:hostless": ["tests_hostless-3.14"],
+    "noxfile.py:tests_hostless_unit@3.14": ["tests_hostless-3.14"],
+    "noxfile.py:tests_all@3.15:hostless": ["tests_hostless-3.15"],
     # chromium is not CI-only evidence: coverage-python's `dashboard` runs it locally
     "Makefile:dashboard-all": ["dashboard-e2e (firefox)", "dashboard-e2e (webkit)"],
     "Makefile:check-ts": ["check-ts"],

@@ -260,14 +260,14 @@ job that enforces it on the pull request and again on the push to `main`.
 | tsc | `typecheck-ts` | — | `check-ts` |
 | vendored-source hash | `check-ts` | — | `check-ts` |
 | vitest + unit coverage floor | `coverage-ts-unit` | — | `check-ts` |
-| pytest (hostless matrix) | `coverage-hostless` (by hand, the whole selection in one run) | `tests_hostless_unit` (3.10–3.14), `tests_hostless_e2e` (3.10, 3.14), `tests_hostless_guards` (3.10) | `tests-primary` (the three sessions on 3.10, instrumented), `tests-canary` (the unit and e2e sessions on 3.14, coverage off), `tests` (`tests_hostless_unit` on 3.11–3.13); the session shapes are in [the cross-Python matrix](testing.md#other-axes-typescript-doctests-cross-python) |
+| pytest (hostless matrix) | `coverage-hostless` (by hand, the whole selection in one run) | `tests_hostless_unit` (3.10–3.15), `tests_hostless_e2e` (3.10, 3.15), `tests_hostless_guards` (3.10) | `tests-primary` (the three sessions on 3.10, instrumented), `tests-canary` (the unit and e2e sessions on 3.15, coverage off), `tests` (`tests_hostless_unit` on 3.11–3.14); the session shapes are in [the cross-Python matrix](testing.md#other-axes-typescript-doctests-cross-python) |
 | the hostless coverage floor, judged on the fold of the primary's three data files | `coverage-hostless` — by hand; CI runs `make coverage-hostless-fold`, which enforces the same `CI_COVERAGE_THRESHOLD` and runs no test | none — the noxfile enforces no floor | `coverage-hostless` (needs `tests-primary`) |
-| the bookend certificates: the required contexts `tests_hostless-3.10` and `tests_hostless-3.14` | — | — | `hostless-primary` (needs `gate-admission`, `tests-primary` and `coverage-hostless`) and `hostless-canary` (needs `gate-admission` and `tests-canary`): each runs under `if: always()` and fails unless every need succeeded, so a failed, cancelled or skipped producer, or a head `gate-admission` refused, turns the certificate red within seconds rather than leaving the required context pending |
+| the bookend certificates: the required contexts `tests_hostless-3.10` and `tests_hostless-3.15` | — | — | `hostless-primary` (needs `gate-admission`, `tests-primary` and `coverage-hostless`) and `hostless-canary` (needs `gate-admission` and `tests-canary`): each runs under `if: always()` and fails unless every need succeeded, so a failed, cancelled or skipped producer, or a head `gate-admission` refused, turns the certificate red within seconds rather than leaving the required context pending |
 | scoped per-commit run: `make quick PATHS="<paths>"` — the named paths, uninstrumented, parallel plus the `-n0` `serial_timing` twin; one empty leg is tolerated, two are red | `quick` | — | **not in CI** — the commit column only (`make gate-scope`), never a tip lane |
 | the repository guards (the `interpreter_agnostic` family over `tests/unit`, uninstrumented) | `quick-guards` | — | **not in CI** — the commit column only (`make gate-scope`), never a tip lane; `make coverage` runs the same modules instrumented |
 | scoped-gate oracle: the exact lanes a diff needs, this commit and the tip | `gate-scope` | — | **not in CI** — enforced by `tests/unit/scripts/test_gate_scope.py` (every tracked path has a row; the oracle census: every collected item of every test module is selected by a lane the oracle emits) |
 | public-API golden: `tests/unit/api_snapshot/public_api.txt` is, byte for byte, the API dump of the tree (`scripts/api_snapshot.py`) | `check-api-snapshot` | via `tests_hostless_unit` | `tests-primary`, `tests-canary`, `tests` — enforced by `tests/unit/api_snapshot/test_public_api_snapshot.py` |
-| public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.14) |
+| public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.15) |
 | uv floor: otto's env code and the `otto env` e2e run against the declared minimum uv, binary and package both | — | `tests_uv_floor` | `uv-floor` |
 | breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking` (the one live goal of every tip; the hook runs it at the push) | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
 | docs teach only declared names, called in the shapes the API dump records, in code blocks and in prose spans (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
@@ -307,7 +307,8 @@ pending` prints one skip line per row):
 | noxfile.py:tests_hostless_unit@3.11 | tests_hostless-3.11 |
 | noxfile.py:tests_hostless_unit@3.12 | tests_hostless-3.12 |
 | noxfile.py:tests_hostless_unit@3.13 | tests_hostless-3.13 |
-| noxfile.py:tests_all@3.14:hostless | tests_hostless-3.14 |
+| noxfile.py:tests_hostless_unit@3.14 | tests_hostless-3.14 |
+| noxfile.py:tests_all@3.15:hostless | tests_hostless-3.15 |
 | Makefile:dashboard-all | dashboard-e2e (firefox), dashboard-e2e (webkit) |
 | Makefile:check-ts | check-ts |
 | Makefile:coverage-ts | coverage stamp |
@@ -457,7 +458,7 @@ The declaration in spec 1 of
   alone: its archive, its lock, its manifest. `check-breaking` refuses a
   commit whose committed dump differs from its regeneration, marked or not.
 - CI's `api-dump-invariance` job regenerates the dump on every supported
-  Python (3.10–3.14), each under its own `PYTHONHASHSEED`, from runtime
+  Python (3.10–3.15), each under its own `PYTHONHASHSEED`, from runtime
   dependencies alone, and requires it byte-identical to the golden (nox
   `api_dump_invariance-<python>`).
 - `scripts/api_teaching.py` checks every otto name the docs and the shipped

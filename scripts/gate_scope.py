@@ -642,7 +642,7 @@ because the tip stamps `check-python` and runs no TypeScript lane (CI's `check-t
 TEST_SUITE_LANES = ["make coverage-bed"]
 """The full commit column's lanes that run test suites; every static lane precedes them.
 
-The hostless half (`tests_hostless-3.10` … `3.14`) is not here: it is the pull request's
+The hostless half (`tests_hostless-3.10` … `3.15`) is not here: it is the pull request's
 CI, which runs before the landing (#795). The local gate owns what CI cannot run: the bed
 half of the coverage selection and the diff's bed lanes."""
 FULL_GATE = STATIC_LANES + TEST_SUITE_LANES
