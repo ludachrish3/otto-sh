@@ -2679,3 +2679,31 @@ async def test_a_failing_container_lookup_warns_once_not_on_every_probe(monkeypa
     assert [r.getMessage() for r in caplog.records].count(
         "[docker] looking up p/api on test3 failed: permission denied"
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_after_a_cancellation_is_bounded_by_the_teardown_deadline(caplog):
+    """The caller's caught cancellation arms the deadline at entry (before:
+    unbounded until a second cancel), and no further ``down`` starts after it."""
+    from otto.invocation import RunPolicy, install_policy, reset_binding
+
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    sent: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        sent.append(cmd)
+        await asyncio.Event().wait()  # a down that never returns
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+    stacks = [StartedStack(parent, "p", ["/a.yml"]), StartedStack(parent, "q", ["/b.yml"])]
+    cancelled = asyncio.CancelledError()
+    binding = install_policy(RunPolicy(teardown_deadline=0))
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            # A bound that only turns a hang into a failure, never a pass.
+            await asyncio.wait_for(roll_back(lab, stacks, unwinding=cancelled), 5)
+    finally:
+        reset_binding(binding)
+    assert len(sent) == 1  # the second down never started
+    assert "rolling back p on test3, q on test3 abandoned" in caplog.text

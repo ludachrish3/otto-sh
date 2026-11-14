@@ -856,30 +856,32 @@ async def test_overlapping_global_suppressions_leave_command_output_on():
         assert current_policy().log_command_output is True
 
 
-async def _lines_of(data: bytes) -> list[str]:
-    from otto.host.local_host import _decoded_lines
+async def _chunks_of(data: bytes) -> list[str]:
+    from otto.host.local_host import _decoded_chunks
 
     stream = asyncio.StreamReader(limit=4 * READ_CHUNK)
     stream.feed_data(data)
     stream.feed_eof()
-    return [line async for line in _decoded_lines(stream)]
+    return [c async for c in _decoded_chunks(stream)]
 
 
+@pytest.mark.parametrize(
+    ("data", "text"),
+    [
+        pytest.param(
+            b"x" * (READ_CHUNK - 1) + "é".encode() + b"x" * (READ_CHUNK - 1) + b"\r\n",
+            "x" * (READ_CHUNK - 1) + "é" + "x" * (READ_CHUNK - 1) + "\r\n",
+            id="char-and-crlf-split-across-reads",
+        ),
+        pytest.param(b"ok\n" + "€".encode()[:2], "ok\n�", id="incomplete-char-at-eof"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_decoded_lines_join_a_character_and_a_crlf_split_across_chunks():
-    """Chunk 1 ends inside ``é``; chunk 2 ends on ``\\r``; chunk 3 opens with ``\\n``."""
-    head = b"a" * (READ_CHUNK - 1) + "é".encode()
-    middle = b"b" * (READ_CHUNK - 2) + b"\r"
-    data = head + middle + b"\nz"
-    assert data[READ_CHUNK - 1 : READ_CHUNK + 1] == "é".encode()  # split by the first read
-    assert data[2 * READ_CHUNK - 1 : 2 * READ_CHUNK + 1] == b"\r\n"  # split by the second
+async def test_decoded_chunks_keep_one_decoder_across_reads(data: bytes, text: str):
+    """One decoder across reads: a character split by a read stays whole, a cut one is replaced."""
+    from otto.host.session import ExecOutput
 
-    assert await _lines_of(data) == [
-        "a" * (READ_CHUNK - 1) + "é" + "b" * (READ_CHUNK - 2) + "\r\n",
-        "z",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_decoded_lines_end_an_incomplete_character_at_end_of_stream_as_a_replacement():
-    assert await _lines_of(b"ok\n" + "€".encode()[:2]) == ["ok\n", "�"]
+    out = ExecOutput()
+    for c in await _chunks_of(data):
+        out.feed(c)
+    assert out.raw() == text

@@ -86,6 +86,9 @@ class FakeSession(ShellSession):
                     self._read_queue.put_nowait(f"{line}\n")
             self._read_queue.put_nowait(f"{self._end_marker_prefix}{retcode}__\n")
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         buf = ""
         while True:

@@ -39,6 +39,9 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
     async def write_transport(self, data: str) -> None:
         self.written.append(data)
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""
@@ -260,7 +263,7 @@ class TestRecoverSessionLogging:
         caplog: pytest.LogCaptureFixture,
     ):
         """recover_session logs its marker + recover command on entry and the
-        partial-output length on success."""
+        length of the recovery traffic it consumed on success."""
         s = initialized_session
         caplog.clear()
         caplog.set_level(logging.DEBUG, logger="otto")
@@ -271,10 +274,9 @@ class TestRecoverSessionLogging:
         feed_task = asyncio.create_task(
             s.feed_after_write(f"interrupted stuff\n{s._recover_marker}0__\n")
         )
-        partial = await s._recover_session()
+        await s._recover_session()
         await feed_task
 
-        assert partial.endswith("interrupted stuff")
         log = _messages(caplog)
         assert "recover_session entry" in log
         assert s._recover_marker in log
@@ -315,6 +317,9 @@ class _AliveStubSession(ShellSession):
 
     async def open_transport(self) -> None: ...
     async def write_transport(self, data: str) -> None: ...
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern):  # pragma: no cover - unused
         raise AssertionError("stub does not read")
 

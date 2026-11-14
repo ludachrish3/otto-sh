@@ -239,10 +239,13 @@ class Voice:
     reads plainly. Not pinned to the domain rule's tokens, as :attr:`narrowed` is:
     it is the same fact, rewritten, beside the clause that is pinned, so a change
     to the rule meets both (:func:`reader_narrowed`)."""
+    reader_entry_narrowed: str = ""
+    """Why the domain drops an ENTRY on hosts that entry reaches, for the same reader;
+    empty when :attr:`reader_narrowed` already says it (:func:`reader_entry_narrowed`)."""
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is seven of the nine today.
+    Empty for a surface with a single observable, which is eight of the eleven today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -318,6 +321,27 @@ VOICE: "dict[str, Voice]" = {
             "as a failure rather than as success"
         ),
         narrowed="the contract declares such a device outside its own domain",
+    ),
+    "exec-signal-exit": Voice(
+        short="signal exit",
+        capability=(
+            "read `retcode` 128+N for a command killed by signal N, as a shell reports it, "
+            "and keep using the host afterwards"
+        ),
+        narrowed=(
+            "this suite's vocabulary for such a target declares no `signal_kill_command`, "
+            "or `exec` there runs outside `_PROCESS_ROUTES`, typed into a shell session "
+            "that the stimulus would end as well"
+        ),
+        reader_narrowed=(
+            "the Zephyr shell runs each command on its own thread rather than as a "
+            "process, so there is no command a signal can kill there"
+        ),
+        reader_entry_narrowed=(
+            "on every other host `exec` types the command into otto's own shell session, "
+            "and a killed command would take that session down with it, so otto does not "
+            "check it there yet"
+        ),
     ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",
@@ -2185,6 +2209,11 @@ HOST_KIND_VOICE = {
 }
 
 
+def reader_entry_narrowed(surface_id: str) -> str:
+    """Say why a domain drops an entry where that entry reaches, in a reader's words."""
+    return VOICE[surface_id].reader_entry_narrowed or reader_narrowed(surface_id)
+
+
 def reader_narrowed(surface_id: str) -> str:
     """Why *surface_id*'s contract leaves some hosts out, in a first-time user's words."""
     voice = VOICE[surface_id]
@@ -2268,10 +2297,11 @@ def not_checked_notes(
     why in :func:`reader_narrowed`'s words; an entry that reaches fewer hosts
     than the domain names where it is, or is not, checked.
     """
-    from tests.conformance._entry import ENTRY_REASON, project
+    from tests.conformance._entry import ENTRY_REASON, project, space_for
 
     declared = entries_declared(contract)
     universe = project(cells)
+    reachable = space_for(contract, cells)
     collected = collected_cells(contract, cells, applies=applies)
     notes: "list[NotChecked]" = []
     every = {(cell.kind, cell.cell.term) for cell in universe}
@@ -2297,24 +2327,38 @@ def not_checked_notes(
         missing = domain - checked
         if not missing:
             continue
-        order = list(HOST_KIND_VOICE)
-        if len(checked) <= len(missing):
-            phrases = [
-                _host_phrase(*pair)
-                for pair in sorted(checked, key=lambda p: (order.index(p[0]), p[1]))
-            ]
-            text = f"`{entry}` is checked only on {_join(phrases)}"
-            short = f"`{entry}` only on {_join(phrases)}"
-        else:
-            phrases = [
-                _host_phrase(*pair)
-                for pair in sorted(missing, key=lambda p: (order.index(p[0]), p[1]))
-            ]
-            text = f"`{entry}` is not checked on {_join(phrases)}"
-            short = f"`{entry}` not on {_join(phrases)}"
-        reason = ENTRY_REASON.get(entry)
-        notes.append(NotChecked(short=short, text=f"{text}{f': {reason}' if reason else ''}."))
+        # A host the entry reaches but the domain drops for that entry is not
+        # checked for the domain's reason, not the entry's: each gets its note.
+        admitted = {(cell.kind, cell.cell.term) for cell in reachable if cell.entry == entry}
+        for left_out, among, reason in (
+            (missing - admitted, admitted, ENTRY_REASON.get(entry)),
+            (missing & admitted, checked, reader_entry_narrowed(surface_id)),
+        ):
+            if left_out:
+                notes.append(_entry_note(entry, among=among, left_out=left_out, reason=reason))
     return notes
+
+
+def _entry_note(
+    entry: str,
+    *,
+    among: "set[tuple[str, str]]",
+    left_out: "set[tuple[str, str]]",
+    reason: "str | None",
+) -> NotChecked:
+    """Say that *entry* is checked on *among* and not on *left_out*, by the shorter list."""
+    order = list(HOST_KIND_VOICE)
+    only = bool(among) and len(among) <= len(left_out)
+    pairs = among if only else left_out
+    phrases = [
+        _host_phrase(*pair) for pair in sorted(pairs, key=lambda p: (order.index(p[0]), p[1]))
+    ]
+    text, short = (
+        (f"`{entry}` is checked only on {_join(phrases)}", f"`{entry}` only on {_join(phrases)}")
+        if only
+        else (f"`{entry}` is not checked on {_join(phrases)}", f"`{entry}` not on {_join(phrases)}")
+    )
+    return NotChecked(short=short, text=f"{text}{f': {reason}' if reason else ''}.")
 
 
 def contract_rows(cells: "list[ResolvedCell] | None" = None) -> "list[ContractRow]":

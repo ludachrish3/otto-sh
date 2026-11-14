@@ -255,6 +255,9 @@ class DialectSession(ShellSession):
     async def write_transport(self, data: str | SecretStr) -> None:
         self.shell.wrote(reveal(data))  # what the transport writes
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.shell.reply()
         if reply is None or pattern.search(reply) is None:

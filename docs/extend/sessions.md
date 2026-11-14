@@ -46,6 +46,11 @@ async with await host.open_session("monitor") as mon:
 | Setup cost | One connection, reused | New process per call |
 | Use case | Multi-step workflows in parallel | One-off independent commands |
 
+A process-route `exec` (the ssh exec channel and local `exec`) gives its command
+end of file on stdin, so a command that reads stdin gets none of otto's and
+does not wait for input. How such a command ends, times out or is stopped is on
+{ref}`the results page <command-ends-abnormally>`.
+
 To share one host connection across many tests, see {doc}`../setup/host-scopes`.
 
 ## Send and expect
@@ -132,6 +137,40 @@ While a shell is attached (either entry point), the session's sentinel-framed
 never be typed into the app itself. Raw `send`/`expect` stay available for
 power users (`cmd()` is built on them), so the low-level pattern above is
 still there when a REPL's quirks don't fit the `AppShell` mold.
+
+(session-transport-hooks)=
+## Implementing a session transport
+
+A new way to reach a shell (a transport other than ssh, telnet or a local
+process) is a {class}`~otto.host.session.ShellSession` subclass. The session
+owns the framing, the handshake and recovery; the subclass implements the
+transport's hooks, and the class cannot be constructed until every one is
+implemented:
+
+| Hook | What it does |
+|------|--------------|
+| `open_transport()` | Bring the transport up; the session calls it before its handshake. |
+| `write_transport(data=...)` | Write raw text; a `SecretStr` is revealed inside the transport call itself. |
+| `read_transport_until(pattern=...)` | Read until `pattern` matches; return the data, match included. |
+| `_take_unread()` | Return what has arrived and no read has returned yet, and consume it. |
+| `close()` | Close the transport. |
+
+`_take_unread()` is called once a command's budget has run out, before
+anything is written to interrupt it, so the timed-out result carries what the
+command had printed ({ref}`what a timed-out value holds <timed-out-command-result>`). It must:
+
+- **never wait**: return only what has already arrived, `""` when nothing has;
+- **consume**: a piece it returns is never returned again, by it or by
+  `read_transport_until`;
+- **include held state**: text the transport keeps between reads (data read
+  past the last match, a buffered line, a partly decoded character once it is
+  whole) is part of what it returns.
+
+A wrong implementation shows up in the timed-out result and in the next
+command: one that waits holds the timeout past its budget; one that returns
+nothing drops the command's last lines from the result; one that does not
+consume hands the same text to the next read, where it is taken for that
+command's output or makes it miss its BEGIN marker.
 
 ## Periodic tasks
 

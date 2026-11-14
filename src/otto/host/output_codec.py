@@ -242,6 +242,19 @@ class PatternReader:
             raise asyncio.IncompleteReadError(self.unmatched.encode(OUTPUT_ENCODING), None)
         return matched
 
+    def take_unmatched(self) -> str:
+        """Return and clear the text read and not yet matched, keeping the decoder.
+
+        A character the last read left split stays in the decoder, so the
+        next read completes it. After a command's timeout that next read is
+        the recovery's, whose text is dropped: the taken text then ends one
+        character short, with no replacement character.
+        """
+        text = self.unmatched
+        self._head = []
+        self._tail = ""
+        return text
+
     def take_residual(self) -> bytes:
         """Return and clear whatever was read past the last match, as bytes.
 

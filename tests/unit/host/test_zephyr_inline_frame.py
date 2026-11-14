@@ -85,6 +85,12 @@ class TestRetcode:
 
 
 class TestOutput:
+    def test_an_unfinished_command_keeps_what_it_wrote(self):
+        # A timed-out command: BEGIN's three shell lines, then its output so
+        # far; no retCode of its own yet.
+        buf = f"\r\n{M.begin}: command not found\r\nretCode = -8\r\n~$ \r\nline1\r\nha"
+        assert FRAME.parse_partial_output(buf, m=M) == "line1\nha"
+
     def test_single_line(self):
         buf = inline_response("Zephyr version 2.7.6", 0)
         assert FRAME.parse_output(buf, cmd="version", m=M) == "Zephyr version 2.7.6"

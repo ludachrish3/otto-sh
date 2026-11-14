@@ -169,6 +169,9 @@ class _StabilityFakeSession(ShellSession):
             # the patient retry budgets live.
             self._read_queue.put_nowait(f"{self._recover_marker}0__\n")
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         buf = ""
         while True:

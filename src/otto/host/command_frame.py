@@ -345,6 +345,28 @@ class CommandFrame(ABC):
         """Recover the command's exit code; ``-1`` when none can be read."""
         ...
 
+    def parse_partial_output(self, buffer: str, *, m: SessionMarkers) -> str:
+        r"""Extract what an UNFINISHED command had written from *buffer*: its timed-out value.
+
+        *buffer* is what the session read up to the deadline, with the
+        terminal mapping undone as for :meth:`parse_output`; it holds no END
+        marker and nothing the frame sends after the command (a prompt, an
+        exit-code line). The default is the text after the last BEGIN marker
+        and the one line ending BEGIN's own line contributes, through
+        :func:`command_value` (one final line ending removed), and ``""``
+        before BEGIN has arrived. A frame whose shell prints more lines
+        between BEGIN and the command's output (a prompt, an exit-code report)
+        overrides it, as :class:`ZephyrFrame` does.
+        """
+        begin = buffer.rfind(m.begin)
+        if begin == -1:
+            return ""
+        start = begin + len(m.begin)
+        line_ending = "\r\n" if buffer.startswith("\r\n", start) else "\n"
+        if buffer.startswith(line_ending, start):
+            start += len(line_ending)
+        return command_value(buffer[start:], line_ending=line_ending)
+
     # --- liveness confirmation (concrete default; dialects may strengthen) ---
 
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
@@ -857,6 +879,13 @@ class ZephyrFrame(CommandFrame):
         # always "" here: Zephyr has no history to suppress.
         return f"{prefix}{m.ready}\n"
 
+    shell_lines_after_begin: ClassVar[int] = 2
+    """Shell lines between the BEGIN marker and the command's output.
+
+    The BEGIN rejection and the prompt that follows it; a dialect that also
+    reports each exit code inline (the getting-started 2.7 frame) has three.
+    :meth:`parse_output` and :meth:`parse_partial_output` both read it."""
+
     @override
     def frame(self, cmd: str, *, m: SessionMarkers) -> str:
         # Four CR-separated lines (see class docstring). The order
@@ -913,7 +942,22 @@ class ZephyrFrame(CommandFrame):
             return ""
         prompt = lines[-2]
         region = "\r\n".join(lines[:-3]).removesuffix(prompt)
-        return self.output_value(region, m=m, lines_after_begin=2)
+        return self.output_value(region, m=m, lines_after_begin=self.shell_lines_after_begin)
+
+    @override
+    def parse_partial_output(self, buffer: str, *, m: SessionMarkers) -> str:
+        r"""Return what an unfinished command had written: everything after BEGIN's shell lines.
+
+        A command still running has printed no trailing prompt, ``retval``
+        line or END yet, so the positional parse of :meth:`parse_output`
+        does not apply: the output is all that follows the
+        :attr:`shell_lines_after_begin` lines after the last BEGIN, its
+        unfinished last line included, through :meth:`output_value`.
+        """
+        if m.begin not in buffer:
+            return ""
+        region = "\r\n".join(self.region_before_end(buffer, m=m))
+        return self.output_value(region, m=m, lines_after_begin=self.shell_lines_after_begin)
 
     def output_value(self, region: str, *, m: SessionMarkers, lines_after_begin: int) -> str:
         r"""Return the ``value`` of the output that ends *region*.

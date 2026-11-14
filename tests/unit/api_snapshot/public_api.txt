@@ -799,6 +799,7 @@ member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:- KO:prefix:
 member	otto.host.command_frame:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:BashFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:BashFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host.command_frame:BashFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:BashFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:BashFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.recover_pattern	method	sync	PK:m:-
@@ -820,6 +821,7 @@ member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:- KO:pref
 member	otto.host.command_frame:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:CommandFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host.command_frame:CommandFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:CommandFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:CommandFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.recover_pattern	method	sync	PK:m:-
@@ -841,6 +843,7 @@ member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S
 member	otto.host.command_frame:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:RawFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:RawFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host.command_frame:RawFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:RawFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:RawFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.recover_pattern	method	sync	PK:m:-
@@ -875,6 +878,7 @@ member	otto.host.command_frame:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:
 member	otto.host.command_frame:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:ZephyrFrame.output_value	method	sync	PK:region:- KO:m:- KO:lines_after_begin:-
 member	otto.host.command_frame:ZephyrFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host.command_frame:ZephyrFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:ZephyrFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.recover_pattern	method	sync	PK:m:-
@@ -882,6 +886,7 @@ member	otto.host.command_frame:ZephyrFrame.region_before_end	method	sync	PK:buff
 member	otto.host.command_frame:ZephyrFrame.restore_interactive	method	sync	-
 member	otto.host.command_frame:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host.command_frame:ZephyrFrame.save_terminal	method	sync	PK:m:-
+member	otto.host.command_frame:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host.command_frame:ZephyrFrame.single_client_console	attribute
 member	otto.host.command_frame:ZephyrFrame.streams_output_live	attribute
 member	otto.host.command_frame:ZephyrFrame.type_name	attribute
@@ -1509,6 +1514,7 @@ member	otto.host:BashFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
 member	otto.host:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:BashFrame.measures_terminal_mapping	attribute
 member	otto.host:BashFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host:BashFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host:BashFrame.quiet_history	method	sync	-
 member	otto.host:BashFrame.recover	method	sync	PK:m:-
 member	otto.host:BashFrame.recover_pattern	method	sync	PK:m:-
@@ -1530,6 +1536,7 @@ member	otto.host:CommandFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
 member	otto.host:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host:CommandFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host:CommandFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host:CommandFrame.quiet_history	method	sync	-
 member	otto.host:CommandFrame.recover	method	sync	PK:m:-
 member	otto.host:CommandFrame.recover_pattern	method	sync	PK:m:-
@@ -2477,6 +2484,7 @@ member	otto.host:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
 member	otto.host:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:RawFrame.measures_terminal_mapping	attribute
 member	otto.host:RawFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host:RawFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host:RawFrame.quiet_history	method	sync	-
 member	otto.host:RawFrame.recover	method	sync	PK:m:-
 member	otto.host:RawFrame.recover_pattern	method	sync	PK:m:-
@@ -3099,6 +3107,7 @@ member	otto.host:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host:ZephyrFrame.output_value	method	sync	PK:region:- KO:m:- KO:lines_after_begin:-
 member	otto.host:ZephyrFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
+member	otto.host:ZephyrFrame.parse_partial_output	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.quiet_history	method	sync	-
 member	otto.host:ZephyrFrame.recover	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.recover_pattern	method	sync	PK:m:-
@@ -3106,6 +3115,7 @@ member	otto.host:ZephyrFrame.region_before_end	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.restore_interactive	method	sync	-
 member	otto.host:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host:ZephyrFrame.save_terminal	method	sync	PK:m:-
+member	otto.host:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host:ZephyrFrame.single_client_console	attribute
 member	otto.host:ZephyrFrame.streams_output_live	attribute
 member	otto.host:ZephyrFrame.type_name	attribute

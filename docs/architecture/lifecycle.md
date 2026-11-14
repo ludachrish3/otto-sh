@@ -236,6 +236,24 @@ raising). Both
 stages land on the same exit code; only how much cleanup happened differs, so
 a supervisor reads the interrupt identically either way.
 
+A cleanup that runs *because* its body was interrupted (an `as_user` undo,
+`composed()`'s compose down and `deployed()`'s teardown, a compose or deploy
+rollback, a link impair or tunnel add rollback, the tunnel check teardown, a
+coverage scan's cleanup, a survey login's close, an nc listener reap, the
+stop of an interrupted `exec`) runs under {func}`otto.lifecycle.compensate`
+with that interrupt held: a further cancellation of the task does not tear it
+(a second Ctrl-C still forces the exit, as above), a failure of the cleanup is
+logged and never replaces the interrupt, and the cleanup is abandoned once the
+teardown deadline (the 10 seconds, `OTTO_TEARDOWN_DEADLINE`, above) has passed
+since it started, whether or not a second signal comes. An abandoned cleanup
+is simply not finished: a `docker compose down` that is abandoned leaves the
+stack up, and an `as_user` undo that is abandoned leaves the session as the
+switched user. A cleanup made of several steps starts no step once the
+deadline has passed: a coverage scan's cleanup names what it did not remove,
+which carries its expiry label for the next sweep, and a rollback of several
+stacks does not reach the later ones. A cleanup with a tighter bound of its
+own (the nc reap's 5 seconds) keeps it.
+
 Registration is the whole opt-in. A leaf never mentions `otto.lifecycle`: the
 invoke wrapper detects the coroutine a plain `async def` leaf returned and
 bridges it through `run_command()`, so a third-party command gets a cleanup

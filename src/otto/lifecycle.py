@@ -29,7 +29,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from typing import Any, ClassVar, NoReturn, TypeVar, overload
 
 R = TypeVar("R")
@@ -904,6 +904,54 @@ async def _shielded_or_expired(
             shielded.cancel()
 
 
+def _arm_teardown_deadline(
+    task: "asyncio.Task[Any]", deadline: "float | None"
+) -> "asyncio.TimerHandle":
+    """Arm :func:`compensate`'s *deadline*: cancel *task* once teardown pressure has run out.
+
+    ``None`` reads the installed run policy's ``teardown_deadline``.
+    """
+    from .invocation import current_policy
+
+    bound = current_policy().teardown_deadline if deadline is None else deadline
+    return asyncio.get_running_loop().call_later(bound, task.cancel)
+
+
+def held_cancellation(exc: BaseException) -> "asyncio.CancelledError | None":
+    """Return *exc* when it is a cancellation, else ``None``: :func:`compensate`'s *held*.
+
+    The one place that decides which caught exception a compensating action
+    must keep: a cancellation is held (a cleanup failure never replaces it),
+    any other error keeps today's precedence.
+    """
+    return exc if isinstance(exc, asyncio.CancelledError) else None
+
+
+@contextlib.asynccontextmanager
+async def undone_after(
+    undo: "Callable[[], Coroutine[Any, Any, None]]", *, what: str
+) -> "AsyncGenerator[None, None]":
+    """Run *undo* through :func:`compensate` when the body ends, however it ends.
+
+    The one spelling of "do, then always undo" for an undo that must not be
+    torn by an interrupt: on a normal exit the undo runs as a compensating
+    action; when the body raised, the undo runs with the body's cancellation
+    held (:func:`held_cancellation`), so a failing or expired undo cannot
+    replace it, and the body's exception is re-raised. Any other body error
+    keeps its precedence: a failing undo replaces it.
+
+    *undo* is called once, only when the body has ended, and *what* names the
+    action in ``compensate``'s log lines.
+    """
+    try:
+        yield
+    except BaseException as exc:
+        await compensate(undo(), what=what, held=held_cancellation(exc))
+        raise
+    else:
+        await compensate(undo(), what=what)
+
+
 # Two overloads for one runtime signature: the ``None`` in the return type is
 # the *timeout* expiry's answer (see the docstring), so it exists only for
 # callers that opt in — a caller that passes no bound still gets ``R``, and the
@@ -915,6 +963,7 @@ async def compensate(
     deadline: "float | None" = ...,
     timeout: None = ...,
     what: str = ...,
+    held: "asyncio.CancelledError | None" = ...,
 ) -> "R": ...
 
 
@@ -925,6 +974,7 @@ async def compensate(
     deadline: "float | None" = ...,
     timeout: float,
     what: str = ...,
+    held: "asyncio.CancelledError | None" = ...,
 ) -> "R | None": ...
 
 
@@ -934,6 +984,7 @@ async def compensate(
     deadline: "float | None" = None,
     timeout: "float | None" = None,
     what: str = "compensating action",
+    held: "asyncio.CancelledError | None" = None,
 ) -> "R | None":
     """Run a rollback/undo coroutine to completion even if the caller is cancelled.
 
@@ -988,13 +1039,25 @@ async def compensate(
     ``None`` is the "bound fired, nothing to report" answer, and it exists
     only for callers that opt in.
 
+    *held* is a cancellation the CALLER HAS ALREADY CAUGHT — a cleanup run
+    from ``except BaseException as exc:`` passes ``held_cancellation(exc)``.
+    Supplied, the call starts exactly as if that cancellation had just landed
+    on it: *deadline* is armed at entry (teardown pressure has already
+    started), the supplied object is the one re-raised whatever later
+    cancellations or work failures happen (a failure is logged at WARNING),
+    and an expiry of either bound re-raises it rather than returning
+    ``None``. Without it, a failing cleanup in an ``except CancelledError``
+    handler would replace the caller's interrupt with its own error.
+    Omitted, the call is unchanged.
+
     Tier-1 determinism: both expiries are ``call_later`` timers — tests drive
     them with ``deadline=0`` / ``timeout=0`` (fires on the next loop turn),
     never wall-clock waits.
     """
     task = asyncio.ensure_future(coro)
-    held: "asyncio.CancelledError | None" = None
     deadline_timer: "asyncio.TimerHandle | None" = None
+    if held is not None:
+        deadline_timer = _arm_teardown_deadline(task, deadline)
     timeout_timer: "asyncio.TimerHandle | None" = None
     expiry: "asyncio.Future[None] | None" = None
     if timeout is not None:
@@ -1029,10 +1092,7 @@ async def compensate(
                     # cancellation, keep the work running, bound it.
                     if held is None:
                         held = exc
-                        from .invocation import current_policy
-
-                        bound = current_policy().teardown_deadline if deadline is None else deadline
-                        deadline_timer = asyncio.get_running_loop().call_later(bound, task.cancel)
+                        deadline_timer = _arm_teardown_deadline(task, deadline)
                     continue
                 # The deadline (or loop shutdown) cancelled the work itself.
                 logger.warning(f"otto: {what} abandoned before completion")

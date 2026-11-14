@@ -7,7 +7,7 @@ gone either way; a nohup'd one is SUPPOSED to remain, so it is not a leftover).
 
 These scenarios drive the ``exec`` verb, which on a hop-less ssh host takes a
 raw SSH exec channel: no pty, so a teardown hangs the remote command up
-explicitly (``SessionManager._reap_exec_process``) instead of inheriting the
+explicitly (``otto.host.process_stop.stop_process``) instead of inheriting the
 pty's own hangup the way the ``run`` verb's persistent shell does. Either way
 a *shell* parses each command line like any interactive shell would --
 including stripping everything after a
@@ -153,7 +153,7 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
     The mechanism moved when the CLI verb became ``exec``: this argv now takes
     the raw SSH exec channel, which has no pty, so there is no terminal whose
     close would hang the command up for free. otto sends the HUP itself (see
-    ``SessionManager._reap_exec_process``), which lands on the remote
+    ``otto.host.process_stop.stop_process``), which lands on the remote
     command's whole process group — the foreground hold below dies of it, the
     nohup'd child ignores it and lives. The contract a reader can hold onto is
     unchanged from the pty days; only who sends the signal is new.

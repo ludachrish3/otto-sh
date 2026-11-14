@@ -275,6 +275,70 @@ class Vocabulary:
     read out of.
     """
 
+    run_state_set_command: str | None
+    """The state ``run`` sets: cwd, an exported variable and an option, each different from
+    :attr:`exec_state_set_command`'s (M1).
+    """
+
+    exec_state_set_command: str | None
+    """The state an exec entry sets, different from :attr:`run_state_set_command` in every
+    dimension (M1).
+    """
+
+    state_read_command: str | None
+    """Prints cwd, both variables, the hook mark, four options and the effective user,
+    ``|``-separated (M1).
+    """
+
+    terminal_change_command: str | None
+    """Changes two tty flags AWAY from the handshake baseline (``-echo icanon``), so a restore is
+    observable (M3).
+    """
+
+    terminal_read_command: str | None
+    """Prints the echo and canonical state, or ``unread`` when ``stty`` fails; never a default
+    answer. The group redirect silences the failed open on all five shells, zsh included (M15).
+    """
+
+    terminal_baseline_answer: str | None
+    """What :attr:`terminal_read_command` answers right after the handshake (M3)."""
+
+    exit_session_command: str | None
+    """A command that ends the session's shell with code 7."""
+
+    distinct_answer_template: str
+    """Prints ``{token}``; fills in per call so two answers cannot be confused. A Zephyr shell can
+    only quote an unknown command back.
+    """
+
+    signal_kill_command: str | None
+    """Dies of SIGTERM in a child, for ``run``; never kills the session's shell (M1)."""
+
+    exec_signal_kill_command: str | None
+    """The exec entries' spelling: the top process dies of the signal on every process route (M8);
+    in the exec frame ``exec`` replaces only the subshell (M1).
+    """
+
+    signal_exit_code: int | None
+    """The code a SIGTERM death reports (128 + 15)."""
+
+    signal_lookalike_command: str | None
+    """The control: exits with :attr:`signal_exit_code` without any signal."""
+
+    stdin_eof_command: str | None
+    """Reads its stdin to EOF, then prints a marker."""
+
+    pid_long_running_template: str | None
+    """Writes its pid to ``{path}`` and execs a sleeper, so the leader is the sleeper."""
+
+    process_alive_template: str | None
+    """Exits 0 only for a live, non-zombie pid read from ``{path}`` (M9)."""
+
+    detached_long_running_command: str | None
+    """Closes output in the command's own outer shell, so EOF precedes exit (M8); exec entries
+    only.
+    """
+
 
 #: Bash, ash and any other POSIX shell: the vocabulary the seven contracts were
 #: originally written in. Serves BOTH venues -- every hermetic cell is a GNU or
@@ -306,6 +370,34 @@ POSIX = Vocabulary(
     remove_file_template="rm {path}",
     long_running_command="sleep 10",
     long_running_seconds=10.0,
+    run_state_set_command="cd /dev && export OTTO_CF_RUN=run && set -f",
+    exec_state_set_command="cd / && export OTTO_CF_EXEC=exec && set -C",
+    state_read_command=(
+        'printf \'%s|%s|%s|%s|%s|%s\\n\' "$PWD" "${OTTO_CF_RUN-unset}" "${OTTO_CF_EXEC-unset}" '
+        '"${OTTO_CF_HOOK-unset}" '
+        '"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; '
+        'case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)" "$(id -un)"'
+    ),
+    terminal_change_command="stty echo -icanon </dev/tty",
+    terminal_read_command=(
+        "if s=$({ stty -a </dev/tty; } 2>/dev/null); then "
+        "case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; "
+        "case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; "
+        "else echo unread; fi"
+    ),
+    terminal_baseline_answer="noecho icanon",
+    exit_session_command="exit 7",
+    distinct_answer_template="printf '%s\\n' {token}",
+    signal_kill_command="sh -c 'kill -TERM $$'",
+    exec_signal_kill_command="exec sh -c 'kill -TERM $$'",
+    signal_exit_code=143,
+    signal_lookalike_command="sh -c 'exit 143'",
+    stdin_eof_command="cat; echo otto-cf-eof",
+    pid_long_running_template="sh -c 'echo $$ > {path}; echo otto-cf-started; exec sleep 10'",
+    process_alive_template=(
+        "case $(cat /proc/$(cat {path})/stat 2>/dev/null) in *') Z '*|'') exit 1;; esac"
+    ),
+    detached_long_running_command="exec >/dev/null 2>&1; sleep 10",
 )
 
 #: The Zephyr RTOS shell. Every spelling below is MEASURED on real guests
@@ -362,6 +454,22 @@ _ZEPHYR_BASE = Vocabulary(
     remove_file_template="fs rm {path}",
     long_running_command=None,
     long_running_seconds=None,
+    run_state_set_command=None,
+    exec_state_set_command=None,
+    state_read_command=None,
+    terminal_change_command=None,
+    terminal_read_command=None,
+    terminal_baseline_answer=None,
+    exit_session_command=None,
+    distinct_answer_template="{token}",
+    signal_kill_command=None,
+    exec_signal_kill_command=None,
+    signal_exit_code=None,
+    signal_lookalike_command=None,
+    stdin_eof_command=None,
+    pid_long_running_template=None,
+    process_alive_template=None,
+    detached_long_running_command=None,
 )
 
 

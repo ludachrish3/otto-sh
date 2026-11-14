@@ -50,11 +50,18 @@ from .._terminal import interactive_terminal_size
 from ..logger.mode import LogMode
 from ..models.base import Cred
 from .command_frame import CommandFrame
+from .exit_status import exit_status_of
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import run_proxy
 from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, PatternReader
 from .secret_wire import reveal, reveal_bytes
-from .session import BridgeSetup, HostSession, ShellSession, _SessionProxyIO
+from .session import (
+    BridgeSetup,
+    HostSession,
+    ShellSession,
+    _PatternReaderTransport,
+    _SessionProxyIO,
+)
 from .telnet import TELNET_EOL, telnet_line_ends
 
 if TYPE_CHECKING:
@@ -462,7 +469,7 @@ class _BridgeProxyIO:
         return await asyncio.wait_for(_until_match(), timeout)
 
 
-class _BridgeShellSession(ShellSession):
+class _BridgeShellSession(_PatternReaderTransport, ShellSession):
     r"""A framed ShellSession over the bridge's own ``write_remote``/``read_remote``.
 
     Built only for a host with a session-setup hook: the hook needs
@@ -523,6 +530,7 @@ class _BridgeShellSession(ShellSession):
 
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
+        assert self._reader is not None  # noqa: S101 — internal invariant: the reader is built in __init__
         return await self._reader.read_transport_until(pattern)
 
     @override
@@ -549,6 +557,7 @@ class _BridgeShellSession(ShellSession):
 
         See :meth:`~otto.host.output_codec.PatternReader.take_residual`.
         """
+        assert self._reader is not None  # noqa: S101 — internal invariant: the reader is built in __init__
         return self._reader.take_residual()
 
 
@@ -831,25 +840,6 @@ async def _run_bridge(
     return remote_ended
 
 
-def _bridged_exit_status(process: Any) -> int | None:
-    """Report a finished bridged SSH process as its status, ``128 + signal``, or ``None``.
-
-    asyncssh's ``returncode`` is the exit status, or the negative of the
-    signal's number when the remote ended by one (``asyncio``'s convention),
-    or ``None`` when neither was sent. A name its table lacks -- one Python
-    does not know, or one sent with a ``SIG`` prefix against RFC 4254's bare
-    spelling -- comes back as ``-99``, which is no signal: ``None`` rather
-    than a guess.
-    """
-    rc = process.returncode
-    if rc is None or rc >= 0:
-        return rc
-    try:
-        return 128 + signal.Signals(-rc).value
-    except ValueError:
-        return None
-
-
 _STATUS_WAIT_S = 5.0
 """How long a remote-ended bridge waits for the exit status, which precedes the close."""
 
@@ -996,7 +986,7 @@ async def run_ssh_login(
                 await asyncio.wait_for(
                     process.wait_closed(), timeout=_STATUS_WAIT_S if remote_ended else 0.2
                 )
-        return _bridged_exit_status(process)
+        return exit_status_of(process.returncode)
     finally:
         with contextlib.suppress(Exception):
             process.close()

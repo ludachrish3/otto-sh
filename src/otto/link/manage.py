@@ -1523,19 +1523,22 @@ async def impair_link(
             if expire is not None:
                 await _launch_timer(host, link, placement, impairer, expire)
             applied.append(AppliedPlacement(placement, merged))
-    except BaseException:
+    except BaseException as exc:
         # BaseException, not Exception: a Ctrl+C (CancelledError) mid-impair
         # must trigger the same no-half-impairments restore. compensate()
         # shields the restore from a further interrupt (chaos spec: shielded
-        # compensating actions) and re-raises the cancellation after.
+        # compensating actions), and holds the caught cancellation, so a
+        # failing restore cannot replace it; any other error keeps its
+        # precedence (a failing restore replaces it, as before).
         # Imported here, not at module scope: otto.lifecycle is only needed once
         # a compensating action actually runs, and a top-level import drags it
         # onto every CLI --help path (import-budget guard).
-        from ..lifecycle import compensate
+        from ..lifecycle import compensate, held_cancellation
 
         await compensate(
             _rollback(link.id, rollback_entries, selector=selector),
             what=f"link {link.id} rollback",
+            held=held_cancellation(exc),
         )
         raise
     return ImpairReport(link.id, applied)

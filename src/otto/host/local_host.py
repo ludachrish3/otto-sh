@@ -20,7 +20,6 @@ from dataclasses import (
 )
 from errno import (
     EIO,
-    ERANGE,
 )
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -30,11 +29,12 @@ from typing_extensions import final, override
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
+from . import process_stop
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .exec_route import ExecRoute
+from .exit_status import exit_status_of, no_return_code_result
 from .file_ops import PosixFileOps
 from .host import (
-    _EXEC_REAP_TIMEOUT,
     CONCURRENT_HELP,
     PROBE_TIMEOUT_S,
     BaseHost,
@@ -44,11 +44,13 @@ from .host import (
 from .output_codec import READ_CHUNK, output_decoder
 from .privilege import PosixPrivilege
 from .session import (
+    ExecOutput,
     ExecPlan,
     Expect,
     LocalSession,
     SessionManager,
-    drain_exec_output,
+    drain_and_wait,
+    timed_out_result,
 )
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 
@@ -56,32 +58,21 @@ if TYPE_CHECKING:
     from .recursive_transfer import RemoteListing
 
 
-async def _decoded_lines(stream: asyncio.StreamReader) -> AsyncIterator[str]:
-    r"""Yield what *stream* carries as decoded lines, each ending in its ``\n``.
+async def _decoded_chunks(stream: asyncio.StreamReader) -> AsyncIterator[str]:
+    """Yield what *stream* carries, decoded, in the pieces it was read in.
 
-    The last line is yielded without one when the output had no final newline.
     It reads in chunks rather than with ``readline``, so a line has no length
     limit: ``readline`` raises once a line outgrows the stream's buffer limit.
     A pipe carries bytes and the shared drain reads text: a byte that is not
     UTF-8 is replaced, never raised (the command-output contract), and the
-    incremental decoder keeps a character split across two chunks whole.
+    one incremental decoder keeps a character split across two reads whole.
+    Lines are :class:`~otto.host.session.ExecOutput`'s to find.
     """
     decoder = output_decoder()
-    # The unfinished line, as the pieces it arrived in: each chunk is split on
-    # its own, never the line so far, so a long line costs work in proportion
-    # to its length.
-    pending: list[str] = []
     while chunk := await stream.read(READ_CHUNK):
-        first, *rest = decoder.decode(chunk).split("\n")
-        pending.append(first)
-        if rest:
-            *complete, last = rest
-            yield "".join(pending) + "\n"
-            for line in complete:
-                yield line + "\n"
-            pending = [last]
-    tail = "".join(pending) + decoder.decode(b"", final=True)
-    if tail:
+        if text := decoder.decode(chunk):
+            yield text
+    if tail := decoder.decode(b"", final=True):
         yield tail
 
 
@@ -333,7 +324,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Fire-and-forget subprocess execution; every result it returns records its route."""
         route = ExecRoute.LOCAL_SUBPROCESS.value
         status = Status.Error
-        lines: list[str] = []
+        output = ExecOutput()
         mode = log
 
         if mode is not LogMode.NEVER:
@@ -343,20 +334,22 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         # asyncio.create_subprocess_shell(), for the same reason
         # LocalSession.open_transport() does: it hands back the transport, so the
         # `finally` below can release the pipe fds without reaching into the
-        # private Process._transport. stdin=None is not a default — it is what
-        # create_subprocess_shell passed, and loop.subprocess_shell would
-        # otherwise give the child a pipe instead of our stdin.
+        # private Process._transport. stdin is end-of-file, as on the ssh
+        # channel: a command that reads stdin must not read otto's. A new
+        # session gives the command its own process group (id = its pid) and
+        # no controlling terminal, so a stop reaches the command's group.
         loop = asyncio.get_running_loop()
 
-        def protocol_factory() -> asyncio.subprocess.SubprocessStreamProtocol:
-            return asyncio.subprocess.SubprocessStreamProtocol(limit=2**16, loop=loop)
+        def protocol_factory() -> process_stop.LeaderExitProtocol:
+            return process_stop.LeaderExitProtocol(limit=2**16, loop=loop)
 
         transport, protocol = await loop.subprocess_shell(
             protocol_factory,
             cmd,
-            stdin=None,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         proc = asyncio.subprocess.Process(transport, protocol, loop)
 
@@ -370,71 +363,54 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                     route=route,
                 )
 
-            raw_lines = _decoded_lines(proc.stdout)
-
+            stoppable = process_stop.LocalStoppable(proc, protocol.leader_exited)
             try:
-                # The whole drain is wrapped in a single wait_for so *timeout*
-                # bounds the command, not each individual readline -- a command
-                # that emits output more often than the timeout period (e.g.
-                # `ping`) would otherwise never trip the per-line wait and run
-                # forever.
-                value = await asyncio.wait_for(
-                    drain_exec_output(raw_lines, lines, self._log_output, mode),
+                # One wait_for over the drain AND the wait for exit, so
+                # *timeout* bounds the command, not each read, and not only
+                # its output: a command that closes its output and keeps
+                # running still times out (#1063).
+                returncode = await asyncio.wait_for(
+                    drain_and_wait(
+                        _decoded_chunks(proc.stdout), output, proc.wait, self._log_output, mode
+                    ),
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                proc.terminate()
-                # A process can trap SIGTERM, so bound the reap -- an unbounded wait
-                # here would defeat the timeout it implements. If the bound fires,
-                # escalate to SIGKILL (untrappable) rather than leaving the process
-                # running with our pipes held open.
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    with contextlib.suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
-                return CommandResult(
-                    status=Status.Error,
-                    value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
-                    command=cmd,
-                    retcode=-1,
-                    timed_out=True,
-                    route=route,
+                await process_stop.stop_timed_out(
+                    stoppable, what=f"{self.name}: stop the timed-out command"
                 )
-
-            await proc.wait()
-            if proc.returncode is None:
-                return CommandResult(
-                    status=status,
-                    value="Process did not provide a return code",
-                    command=cmd,
-                    retcode=ERANGE,
-                    route=route,
+                return timed_out_result(
+                    cmd=cmd, timeout=timeout, output=output, route=ExecRoute.LOCAL_SUBPROCESS
                 )
+            except BaseException as exc:
+                await process_stop.stop_interrupted(
+                    stoppable, exc, what=f"{self.name}: stop the interrupted command"
+                )
+                raise
 
-            status = Status.Success if proc.returncode == 0 else Status.Failed
+            retcode = exit_status_of(returncode)
+            if retcode is None:
+                return no_return_code_result(cmd=cmd, route=ExecRoute.LOCAL_SUBPROCESS)
+
+            status = Status.Success if retcode == 0 else Status.Failed
 
             return CommandResult(
-                status=status, value=value, command=cmd, retcode=proc.returncode, route=route
+                status=status, value=output.value(), command=cmd, retcode=retcode, route=route
             )
         finally:
             # asyncio retires a subprocess transport only once the child has
-            # exited AND every pipe has reached EOF. The timeout path above
-            # cancels the drain mid-stream, so stdout never reaches EOF: the
-            # child is reaped, but the read-pipe transport, that pipe's fd and
-            # the subprocess transport itself all survive until the garbage
-            # collector complains -- three ResourceWarnings per timed-out
-            # command. Under pytest those are unraisable exceptions billed to
-            # whichever test the collector was running when it noticed, so the
-            # cost landed on a stranger in a different file each run.
-            #
-            # In a `finally` rather than on the timeout branch alone so that
-            # cancellation from outside is covered too: there the child is
-            # still running, and close() kills it rather than orphaning it.
-            # Free where nothing leaked -- close() returns immediately if the
-            # transport already finished, which is every non-timeout path.
-            transport.close()
+            # exited AND every pipe has reached EOF. The timeout and interrupt
+            # paths cancel the drain mid-stream, so stdout never reaches EOF:
+            # the child is reaped, but the read-pipe transport, that pipe's fd
+            # and the subprocess transport itself all survive until the
+            # garbage collector complains -- three ResourceWarnings per
+            # timed-out command, billed under pytest to whichever test the
+            # collector was running when it noticed. The stop above has
+            # already signalled the command; close() only releases, and
+            # returns at once where nothing leaked. It kills a leader the
+            # bounded stop left unreaped, which may by then be gone.
+            with contextlib.suppress(ProcessLookupError):
+                transport.close()
 
     ####################
     #  File transfer

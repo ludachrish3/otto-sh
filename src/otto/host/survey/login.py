@@ -230,7 +230,9 @@ def _who(copy: "UnixHost", protocol: str, *, login: str | None) -> str:
     return f"login {cred_identity(cred.login, cred.protocols)!r}{marker}"
 
 
-async def _close_on_cancel(copy: "UnixHost | RemoteHost", name: str, step: str) -> None:
+async def _close_on_cancel(
+    copy: "UnixHost | RemoteHost", name: str, step: str, cancelled: asyncio.CancelledError
+) -> None:
     """Close *copy* so the close survives the cancellation that is propagating.
 
     The survey's OUTER bound (`engine._bounded`) grants each attempt
@@ -250,7 +252,10 @@ async def _close_on_cancel(copy: "UnixHost | RemoteHost", name: str, step: str) 
     own docstring names it): it HOLDS a further cancellation under a shield
     until the close finishes, then re-raises it. The awaited close therefore
     never sits in a bare ``finally`` -- the architecture gate's rule -- and
-    the caller's cancellation still wins.
+    the caller's cancellation still wins. *cancelled* is the cancellation the
+    caller caught, passed as ``held=``: the teardown deadline is armed at
+    entry, so a close that never returns is abandoned at it rather than held
+    until a further cancellation, and *cancelled* is the one re-raised.
 
     Imported here, not at module scope: ``otto.lifecycle`` is only needed once
     a compensating action actually runs, and a top-level import drags it onto
@@ -259,7 +264,7 @@ async def _close_on_cancel(copy: "UnixHost | RemoteHost", name: str, step: str) 
     from ...lifecycle import compensate
 
     with teardown_step(name, step):
-        await compensate(copy.close(), what=f"{name}: {step}")
+        await compensate(copy.close(), what=f"{name}: {step}", held=cancelled)
 
 
 async def session_login(host: "BaseHost", *, who: str, timeout: float) -> LoginOutcome:
@@ -290,8 +295,8 @@ async def attempt_term_login(
     who = _who(copy, protocol, login=login)
     try:
         outcome = await session_login(copy, who=who, timeout=timeout)
-    except asyncio.CancelledError:
-        await _close_on_cancel(copy, host.name, "survey login close")
+    except asyncio.CancelledError as cancelled:
+        await _close_on_cancel(copy, host.name, "survey login close", cancelled)
         raise
     with teardown_step(host.name, "survey login close"):
         await copy.close()
@@ -312,8 +317,8 @@ async def attempt_ftp_login(
     try:
         await asyncio.wait_for(copy.connections.ftp(), timeout)
         outcome = LoginOutcome("supported", f"{who}: 230 logged in")
-    except asyncio.CancelledError:
-        await _close_on_cancel(copy, host.name, "survey login close")
+    except asyncio.CancelledError as cancelled:
+        await _close_on_cancel(copy, host.name, "survey login close", cancelled)
         raise
     except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
         outcome = classify_login_error(exc, who=who)
@@ -328,8 +333,8 @@ async def attempt_console_open(host: "RemoteHost", port: int, *, timeout: float)
     try:
         await asyncio.wait_for(copy.connections.telnet(), timeout)
         outcome = LoginOutcome("supported", "console connected")
-    except asyncio.CancelledError:
-        await _close_on_cancel(copy, host.name, "survey console close")
+    except asyncio.CancelledError as cancelled:
+        await _close_on_cancel(copy, host.name, "survey console close", cancelled)
         raise
     except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
         outcome = classify_login_error(exc, who="console")

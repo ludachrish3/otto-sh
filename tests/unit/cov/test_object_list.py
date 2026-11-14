@@ -1806,6 +1806,37 @@ async def test_a_cleanup_timeout_keeps_a_successful_scan(
 
 
 @pytest.mark.asyncio
+async def test_a_cancelled_scan_whose_cleanup_outruns_its_budget_names_what_is_left(
+    tmp_path, token, monkeypatch, caplog
+):
+    import asyncio
+
+    from otto.coverage import objects
+
+    # The backstop fires during the stalled rm, as in the "backstop" case above.
+    monkeypatch.setattr(objects, "SCAN_TEARDOWN_BUDGET", 1.0)
+    monkeypatch.setattr(objects, "_TEARDOWN_STEP_CAP", 1.0)
+    monkeypatch.setattr(objects, "SCAN_REAP_BOUND", -0.3)
+    started = asyncio.Event()
+
+    async def stalled(cmd, timeout):
+        started.set()
+        await asyncio.Event().wait()
+
+    host = _DockerHost(_TWO, answers={_START: stalled, _RM_SCAN: _stall()})
+    task = asyncio.ensure_future(_snapshot(host, tmp_path))
+    await started.wait()
+    with caplog.at_level("WARNING"):
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    left = [r.getMessage() for r in caplog.records if "left for the expiry sweep" in r.getMessage()]
+    assert len(left) == 1, [r.getMessage() for r in caplog.records]
+    assert f"otto-scan-{_TOKEN}" in left[0]  # the container
+    assert f"otto-scan:{_TOKEN}" in left[0]  # the snapshot tag
+
+
+@pytest.mark.asyncio
 async def test_the_total_deadline_does_not_cut_the_cleanup(tmp_path, token, monkeypatch):
     from otto.coverage import objects
 
@@ -2051,3 +2082,59 @@ async def test_a_scan_held_in_its_cleanup_at_the_budget_edge_is_never_swept(
         "container otto-scan-aaaa",
         "image otto-scan:aaaa",
     ]
+
+
+@pytest.mark.asyncio
+async def test_no_cleanup_step_starts_once_the_teardown_deadline_has_expired(
+    tmp_path, token, caplog
+):
+    """The held cancellation arms the deadline at entry; it expires during the
+    first step, so the container and snapshot removals never start and the
+    warning names both (before: both started after expiry, each with up to
+    its 40 s share, and the abandonment waited for them)."""
+    import asyncio
+
+    from otto.coverage import objects
+    from otto.invocation import RunPolicy, install_policy, reset_binding
+
+    host = _DockerHost(_TWO, answers={_RM: _stall()})
+    res = objects._ScanResources(_TOKEN, staging=True, container=True, snapshot=True)
+    binding = install_policy(RunPolicy(teardown_deadline=0))
+    try:
+        with caplog.at_level("WARNING"), pytest.raises(asyncio.CancelledError):
+            # A bound that only turns a hang into a failure, never a pass.
+            await asyncio.wait_for(
+                ObjectListCache(tmp_path)._cleanup_once(
+                    _RefImg(), host, res, held=asyncio.CancelledError()
+                ),
+                5,
+            )
+    finally:
+        reset_binding(binding)
+    assert host.issued(_RM_SCAN) == []
+    assert host.issued(_RMI_SCAN) == []
+    left = [r.getMessage() for r in caplog.records if "left for the expiry sweep" in r.getMessage()]
+    assert len(left) == 1, [r.getMessage() for r in caplog.records]
+    assert f"otto-scan-{_TOKEN}" in left[0]
+    assert f"otto-scan:{_TOKEN}" in left[0]
+
+
+@pytest.mark.asyncio
+async def test_a_cleanup_that_removed_everything_under_a_held_cancellation_warns_nothing(
+    tmp_path, token, caplog
+):
+    """A held cancellation re-raises after a successful cleanup; that is no
+    abandonment (before: both resources were named as left for the sweep)."""
+    import asyncio
+
+    from otto.coverage import objects
+
+    host = _DockerHost(_TWO)
+    res = objects._ScanResources(_TOKEN, staging=True, container=True, snapshot=True)
+    with caplog.at_level("WARNING"), pytest.raises(asyncio.CancelledError):
+        await ObjectListCache(tmp_path)._cleanup_once(
+            _RefImg(), host, res, held=asyncio.CancelledError()
+        )
+    assert host.issued(_RM_SCAN) == [_RM_SCAN_CMD]
+    assert host.issued(_RMI_SCAN) == [_RMI_SCAN_CMD]
+    assert [r.getMessage() for r in caplog.records if r.levelno >= 30] == []  # WARNING

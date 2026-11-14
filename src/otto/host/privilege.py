@@ -515,23 +515,23 @@ class PosixPrivilege(UserlandHost):
             protocol=getattr(self, "term", None),
         )
         self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
-        try:
-            yield self
-        finally:
-            # The undo chain is a compensating action: an interrupt landing
-            # while it runs must not strand the session as the switched user
-            # (chaos spec: shielded compensating actions). compensate() holds
-            # the cancellation until every hop is unwound (bounded by the
-            # teardown deadline), then re-raises it.
-            # Imported here, not at module scope: otto.lifecycle is only needed
-            # once a compensating action actually runs, and a top-level import
-            # drags it onto every CLI --help path (import-budget guard).
-            from ..lifecycle import compensate
+        # The undo chain is a compensating action: an interrupt landing while
+        # it runs must not strand the session as the switched user (chaos
+        # spec: shielded compensating actions). compensate() holds a
+        # cancellation until every hop is unwound (bounded by the teardown
+        # deadline), then re-raises it; a cancellation of the body is passed
+        # in as held=, so a failing undo cannot replace it. Any other body
+        # error keeps its precedence (a failing undo replaces it, as before).
+        # Imported here, not at module scope: otto.lifecycle is only needed
+        # once a compensating action actually runs, and a top-level import
+        # drags it onto every CLI --help path (import-budget guard).
+        from ..lifecycle import undone_after
 
-            await compensate(
-                self._undo_switch(applied, prev),
-                what=f"{getattr(self, 'name', '')}: as_user undo to {prev or 'login user'!r}",
-            )
+        async with undone_after(
+            lambda: self._undo_switch(applied, prev),
+            what=f"{getattr(self, 'name', '')}: as_user undo to {prev or 'login user'!r}",
+        ):
+            yield self
 
     async def _undo_switch(self, applied: "list[Cred]", prev: str) -> None:
         """Unwind *applied* innermost-first, restoring ``current_user`` to *prev*."""

@@ -266,3 +266,10 @@ async def test_a_caller_s_anchored_pattern_still_matches_where_an_unlimited_sear
         want = await _session(whole).read_transport_until(pattern=pattern)
         assert got == want == "x" * size + "\nPASSWORD:", source
         assert await reader.read(4096) == b"rest", source
+
+
+def test_the_buffer_the_timeout_take_reads_is_the_readers_own() -> None:
+    """``TelnetSession._take_unread`` reads telnetlib3's private ``_buffer`` length."""
+    reader = TelnetReader()
+    reader.feed_data(b"held")
+    assert bytes(reader._buffer) == b"held"  # pyright: ignore[reportPrivateUsage]

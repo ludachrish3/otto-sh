@@ -46,7 +46,7 @@ Subclass `CommandFrame` and implement seven methods — a *render half* (command
 | `recover(m)` | render | Post-timeout re-sync payload echoing `m.recover`. |
 | `end_pattern(m)` | parse | Regex marking the end of a command's output (the session compiles it once and uses it to detect completion and bound parsing). |
 | `marks_begin(data, m=m)` | parse | `True` if `data` is the chunk carrying the BEGIN sentinel. |
-| `parse_output(buffer, cmd=cmd, m=m)` | parse | Extract the command's output from the accumulated `buffer`. When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
+| `parse_output(buffer, cmd=cmd, m=m)` | parse | Extract a finished command's output from the accumulated `buffer` (END has arrived). When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
 | `extract_retcode(buffer, m=m)` | parse | Recover the exit code; return `-1` when none can be read. |
 | `restore_interactive()` | render | *Optional.* Line that undoes what `handshake` did to a terminal for a human (`None` by default); the `login` bridge sends it after a session-setup hook. |
 | `save_terminal(m)` / `restore_terminal(saved)` | render | *Optional.* On a console, whose line outlives the session: a handshake-prefix statement that prints the terminal's settings behind `m.saved` (empty by default), and the line that puts the printed record back (`restore_interactive()` by default), sent at the `login` hand-back and before the session closes. |
@@ -63,13 +63,14 @@ the END marker; `ZephyrFrame` sends four CR-separated lines
 
 ### Optional overrides and class flags
 
-Beyond the seven methods, `CommandFrame` has two methods with working
+Beyond the seven methods, `CommandFrame` has three methods with working
 defaults and four class attributes. Override them only when your dialect differs
 from the default:
 
 | Member | Default | Override when |
 |--------|---------|---------------|
 | `quiet_history()` | `""`: nothing to suppress | Your shell keeps a persistent command history. Return a statement prefix that stops it recording. otto hands it to `handshake` as `prefix`, to place in the first line written into a fresh shell, and resends that line until it lands, so it must print nothing and be safe to repeat. |
+| `parse_partial_output(buffer, m=m)` | The text after the last BEGIN marker and BEGIN's own line ending, with one final line ending removed; `""` before BEGIN has arrived | Your shell prints more between BEGIN and the command's output than BEGIN's own line (a prompt, an exit-code report), so `parse_output`'s parse needs a finished frame. It is a timed-out command's value: `buffer` is what was read up to the deadline, folded as for `parse_output`, with no END and nothing printed after the command. `ZephyrFrame` overrides it to skip the BEGIN rejection and its prompt (`shell_lines_after_begin`, `2`; the getting-started 2.7 frame sets `3`). Without an override such a frame's timed-out value carries those shell lines. |
 | `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. Waiting for the line to go quiet before closing it is the host's setting, not this one: `telnet_options.single_client_console` ({ref}`single-client-console`). |

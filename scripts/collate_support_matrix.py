@@ -568,14 +568,30 @@ def _verdict(
             "move a verdict"
         )
     order = _element_order(matrix, profile)
-    observed = [e for e in order if any(r["element"] == e for r in evidence.observations)]
-    excluded = [e for e in order if any(r["element"] == e for r in evidence.exclusions)]
-    both = sorted(set(observed) & set(excluded))
+    # THE CONTRADICTION IS PER DRAWN CELL, never per element. A domain can
+    # depend on the entry and the route (`exec-signal-exit`: `exec` is in it
+    # only where it takes a process route), so one element honestly has
+    # observations on some cells and exclusions on others. What no honest run
+    # pair can say is that the SAME cell was evaluated and was not.
+    both = sorted(
+        {r["cell_label"] for r in evidence.observations}
+        & {r["cell_label"] for r in evidence.exclusions}
+    )
     if both:
         return None, (
             f"{both} carry BOTH an observation and a domain exclusion -- one run says the "
             f"contract was evaluated there and another says it was not"
         )
+    # An element with any observation is observed, and its verdict is its
+    # observations'; it is not-observable only when EVERY record for it is an
+    # exclusion (the schema forbids filing one element both ways, and the
+    # page's entry-level notes already say where an entry is not checked).
+    observed = [e for e in order if any(r["element"] == e for r in evidence.observations)]
+    excluded = [
+        e
+        for e in order
+        if e not in observed and any(r["element"] == e for r in evidence.exclusions)
+    ]
     not_observable = [
         {
             "element": element,

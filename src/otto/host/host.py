@@ -269,14 +269,13 @@ bounded — an unbounded wait here would defeat the timeout it implements.
 """
 
 EXEC_CANCEL_REAP_BOUND = 2 * _EXEC_REAP_TIMEOUT
-"""Seconds a cancelled or timed-out ``exec`` can take to unwind on the ssh channel route.
+"""Seconds a cancelled or timed-out process-route ``exec`` can take to stop its command.
 
-The only shielded work its cancel path runs (``session.py``'s ``except
-BaseException`` around the channel drain) is the reap, which signals the
-process, waits ``_EXEC_REAP_TIMEOUT``, then kills it and waits once more
-(``_reap_exec_process``); the timeout path runs the same reap. A second cancel
-abandons even that. Connection acquisition and channel creation are asyncssh's
-own and not bounded here.
+Local exec and the ssh channel stop a command with
+``otto.host.process_stop.stop_process``, which signals it, waits
+``_EXEC_REAP_TIMEOUT``, then kills it and waits once more; the stop runs
+under :func:`otto.lifecycle.compensate` bounded by this. Connection
+acquisition and channel creation are asyncssh's own and not bounded here.
 """
 
 

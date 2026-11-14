@@ -35,6 +35,7 @@ from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests.conftest import active_context
+from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
 
 
 def _cs(
@@ -702,33 +703,9 @@ class TestExec:
         conn.wait_closed = AsyncMock()
         return conn
 
-    def _mock_ssh_process(self, lines: list[str], exit_status: int = 0) -> MagicMock:
-        """Create a mock SSH process with async-iterable stdout."""
-        process = MagicMock()
-
-        class AsyncLineIter:
-            def __init__(self, data: list[str]):
-                self._data = iter(data)
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                try:
-                    return next(self._data)
-                except StopIteration:
-                    raise StopAsyncIteration from None
-
-        process.stdout = AsyncLineIter(lines)
-        mock_wait_result = MagicMock()
-        mock_wait_result.exit_status = exit_status
-        process.wait = AsyncMock(return_value=mock_wait_result)
-        process.terminate = MagicMock()
-        return process
-
     @pytest.mark.asyncio
     async def test_exec_ssh_success(self, host: UnixHost):
-        process = self._mock_ssh_process(["hello\n"])
+        process = FakeChannelProcess(["hello\n"])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
@@ -740,7 +717,7 @@ class TestExec:
 
     @pytest.mark.asyncio
     async def test_exec_ssh_nonzero_exit(self, host: UnixHost):
-        process = self._mock_ssh_process(["not found\n"], exit_status=1)
+        process = FakeChannelProcess(["not found\n"], returncode=1, exit_status=1)
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
@@ -1008,7 +985,7 @@ class TestExec:
 
     @pytest.mark.asyncio
     async def test_exec_timeout_forwarded(self, host: UnixHost):
-        process = self._mock_ssh_process([])
+        process = FakeChannelProcess([])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
@@ -3141,6 +3118,11 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     assert "rmmod foo" in str(exc.value)
 
 
+def _exec_on_channel(process: FakeChannelProcess, *, element: str, cmd: str, timeout: float):
+    """``exec`` *cmd* on the ssh channel of a host whose channel is *process*."""
+    return channel_host(FakeConn(process), element=element).exec(cmd, timeout=timeout)
+
+
 class TestSshExecTimeout:
     """Regression: UnixHost.exec over SSH must honour its timeout.
 
@@ -3150,131 +3132,64 @@ class TestSshExecTimeout:
 
     @pytest.mark.asyncio
     async def test_ssh_exec_stalling_command_times_out(self):
-        h = UnixHost(
-            ip="10.0.0.1",
-            element=Element(name="stalled"),
-            creds=[Cred(login="u", password="p")],
-            term="ssh",
-            log=LogMode.QUIET,
+        process = FakeChannelProcess([], eof=False)  # never yields, never returns
+
+        result = await asyncio.wait_for(
+            _exec_on_channel(process, element="stalled", cmd="sleep 3600", timeout=0.1),
+            timeout=10.0,
         )
-
-        class _StalledStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                await asyncio.sleep(3600)  # never yields, never returns
-                raise StopAsyncIteration
-
-        class _StalledProcess:
-            stdout = _StalledStdout()
-            terminated = False
-
-            def terminate(self):
-                type(self).terminated = True
-
-            async def wait(self):
-                return SimpleNamespace(exit_status=-1)
-
-        class _Conn:
-            async def create_process(self, cmd, **kw):
-                return _StalledProcess()
-
-        h._session_mgr._connections = MagicMock()
-        h._session_mgr._connections.term = "ssh"
-        h._session_mgr._connections.proxy_hops = []
-        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
-
-        result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=10.0)
 
         assert result.status == Status.Error
         assert result.timed_out is True
         assert "timed out" in result.value
-        assert _StalledProcess.terminated is True
+        assert process.signals == ["TERM"]
 
 
 class TestSshExecKillEscalation:
     """Regression: when a remote command ignores terminate(), SSH exec must
     escalate to kill() rather than hang on the post-terminate reap.
 
-    The fake process's ``wait()`` blocks on an ``asyncio.Event`` that only
-    ``kill()`` sets; ``terminate()`` deliberately does nothing, mirroring a
-    remote command that ignores its termination signal. If the escalation
-    branch in ``SessionManager.exec`` were missing or broken, ``wait()``
-    would never unblock and the outer ``asyncio.wait_for(..., timeout=5.0)``
-    below would fail the test rather than let it hang the suite.
+    The fake process's ``wait()`` returns only once ``kill()`` is sent;
+    ``terminate()`` is recorded and ignored, mirroring a remote command that
+    ignores its termination signal. If the escalation branch in
+    ``otto.host.process_stop.stop_process`` were missing or broken, ``wait()`` would never
+    unblock and the outer ``asyncio.wait_for(..., timeout=5.0)`` below would
+    fail the test rather than let it hang the suite.
     """
 
     @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_ssh_exec_escalates_to_kill_when_terminate_is_ignored(self, monkeypatch):
-        # Patched where the name is *used* -- session.py binds its own
+        # Patched where the name is *used* -- process_stop.py binds its own
         # module-local `_EXEC_REAP_TIMEOUT` via `from .host import
         # _EXEC_REAP_TIMEOUT`, so patching otto.host.host's copy would not
         # bite here.
-        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
-
-        h = UnixHost(
-            ip="10.0.0.1",
-            element=Element(name="stalled"),
-            creds=[Cred(login="u", password="p")],
-            term="ssh",
-            log=LogMode.QUIET,
-        )
-
-        class _StalledStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                await asyncio.sleep(3600)  # never yields, never returns
-                raise StopAsyncIteration
-
-        class _IgnoresTerminateProcess:
-            stdout = _StalledStdout()
-            terminated = False
-            killed = False
-
-            def __init__(self):
-                self._killed_event = asyncio.Event()
-
-            def terminate(self):
-                # Remote command ignores SIGTERM: recorded, but the wait()
-                # below stays blocked until kill() is called.
-                type(self).terminated = True
-
-            def kill(self):
-                type(self).killed = True
-                self._killed_event.set()
-
-            async def wait(self):
-                await self._killed_event.wait()
-                return SimpleNamespace(exit_status=-1)
-
-        process = _IgnoresTerminateProcess()
-
-        class _Conn:
-            async def create_process(self, cmd, **kw):
-                return process
-
-        h._session_mgr._connections = MagicMock()
-        h._session_mgr._connections.term = "ssh"
-        h._session_mgr._connections.proxy_hops = []
-        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
+        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
+        process = FakeChannelProcess([], eof=False, obeys=frozenset({"KILL"}))
 
         start = asyncio.get_running_loop().time()
-        result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=5.0)
+        result = await asyncio.wait_for(
+            _exec_on_channel(process, element="stalled", cmd="sleep 3600", timeout=0.1),
+            timeout=5.0,
+        )
         elapsed = asyncio.get_running_loop().time() - start
 
         assert result.status == Status.Error
         assert result.timed_out is True
-        assert _IgnoresTerminateProcess.terminated is True
-        assert _IgnoresTerminateProcess.killed is True
+        assert process.signals == ["TERM", "KILL"]
         # Sanity check that the _EXEC_REAP_TIMEOUT monkeypatch actually took
         # effect: with the real 5.0s default this would take >5s per bounded
         # reap attempt and blow the outer 5.0s wait_for above instead of
         # completing. At the patched 0.2s it finishes in well under a second.
         assert elapsed < 1.0
+
+
+class _DeadChannelProcess(FakeChannelProcess):
+    """A channel already gone when the reap signals it: asyncssh raises ``OSError`` there."""
+
+    def send_signal(self, name: str) -> None:
+        self.signals.append(name)
+        raise OSError("channel closed")
 
 
 class TestSshExecCancelReap:
@@ -3291,72 +3206,20 @@ class TestSshExecCancelReap:
     yields, and every signal is recorded in order.
     """
 
-    @staticmethod
-    def _rigged_host(element: str):
-        return UnixHost(
-            ip="10.0.0.1",
-            element=Element(name=element),
-            creds=[Cred(login="u", password="p")],
-            term="ssh",
-            log=LogMode.QUIET,
-        )
-
-    @staticmethod
-    def _wire(h, process):
-        class _Conn:
-            async def create_process(self, cmd, **kw):
-                return process
-
-        h._session_mgr._connections = MagicMock()
-        h._session_mgr._connections.term = "ssh"
-        h._session_mgr._connections.proxy_hops = []
-        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
-
     @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_ssh_exec_hangs_up_then_kills_when_the_hangup_is_ignored(self, monkeypatch):
         """The signal ORDER is the contract: HUP first, KILL only as escalation."""
         # Patched where the name is *used* -- see TestSshExecKillEscalation.
-        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
-
-        h = self._rigged_host("cancelled")
-
-        class _StalledStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                await asyncio.sleep(3600)  # never yields, never returns
-                raise StopAsyncIteration
-
-        class _IgnoresHangupProcess:
-            stdout = _StalledStdout()
-
-            def __init__(self):
-                self.signals: list[str] = []
-                self._killed_event = asyncio.Event()
-
-            def send_signal(self, signal):
-                # A command that ignores the hangup: recorded, but wait()
-                # below stays blocked until kill() is called.
-                self.signals.append(signal)
-
-            def terminate(self):
-                self.signals.append("TERM")
-
-            def kill(self):
-                self.signals.append("KILL")
-                self._killed_event.set()
-
-            async def wait(self):
-                await self._killed_event.wait()
-                return SimpleNamespace(exit_status=-1)
-
-        process = _IgnoresHangupProcess()
-        self._wire(h, process)
+        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
+        # A command that ignores the hangup: recorded, but wait() stays
+        # blocked until kill() is called.
+        process = FakeChannelProcess([], eof=False, obeys=frozenset({"KILL"}))
 
         # A long timeout: the ONLY thing that ends this call is the cancel.
-        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        task = asyncio.create_task(
+            _exec_on_channel(process, element="cancelled", cmd="sleep 3600", timeout=3600)
+        )
         await asyncio.sleep(0.2)  # the drain is running on the channel
         task.cancel()
 
@@ -3373,44 +3236,12 @@ class TestSshExecCancelReap:
         """A command that dies on HUP is never killed — that is what keeps a
         deliberately nohup'd child (which ignores HUP) alive, since the signal
         reaches the command's whole process group."""
-        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
+        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
+        process = FakeChannelProcess([], eof=False)  # the command dies on the hangup
 
-        h = self._rigged_host("hangs-up")
-
-        class _StalledStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                await asyncio.sleep(3600)
-                raise StopAsyncIteration
-
-        class _ObeysHangupProcess:
-            stdout = _StalledStdout()
-
-            def __init__(self):
-                self.signals: list[str] = []
-                self._done = asyncio.Event()
-
-            def send_signal(self, signal):
-                self.signals.append(signal)
-                self._done.set()  # the command dies on the hangup
-
-            def terminate(self):
-                self.signals.append("TERM")
-
-            def kill(self):
-                self.signals.append("KILL")
-                self._done.set()
-
-            async def wait(self):
-                await self._done.wait()
-                return SimpleNamespace(exit_status=-1)
-
-        process = _ObeysHangupProcess()
-        self._wire(h, process)
-
-        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        task = asyncio.create_task(
+            _exec_on_channel(process, element="hangs-up", cmd="sleep 3600", timeout=3600)
+        )
         await asyncio.sleep(0.2)
         task.cancel()
 
@@ -3430,36 +3261,11 @@ class TestSshExecCancelReap:
         the CANCEL is the story, and it must still propagate, or an
         interrupted otto would exit 0 because its teardown broke.
         """
-        h = self._rigged_host("reap-explodes")
+        process = _DeadChannelProcess([], eof=False)
 
-        class _StalledStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                await asyncio.sleep(3600)
-                raise StopAsyncIteration
-
-        class _DeadChannelProcess:
-            stdout = _StalledStdout()
-
-            def __init__(self):
-                self.signals: list[str] = []
-
-            def send_signal(self, signal):
-                self.signals.append(signal)
-                raise OSError("channel closed")
-
-            def kill(self):  # pragma: no cover — the hangup never got that far
-                self.signals.append("KILL")
-
-            async def wait(self):  # pragma: no cover — same
-                return SimpleNamespace(exit_status=-1)
-
-        process = _DeadChannelProcess()
-        self._wire(h, process)
-
-        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        task = asyncio.create_task(
+            _exec_on_channel(process, element="reap-explodes", cmd="sleep 3600", timeout=3600)
+        )
         await asyncio.sleep(0.2)
         task.cancel()
 

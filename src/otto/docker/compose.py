@@ -410,7 +410,7 @@ async def compose_up(
     brought_up_here = await _stack_already_up(parent_host, proj) is not True
     try:
         return await _up_and_register(project, lab, parent_host, proj, remote_file_strs)
-    except BaseException:
+    except BaseException as exc:
         # Every raise below this point happens AFTER `up -d` has run, and the
         # caller cannot clean up what it never received: `composed()` arms its
         # try/finally only on a successful return, and a direct caller has no
@@ -419,7 +419,7 @@ async def compose_up(
         # failing loud without this would be strictly worse than the bug.
         # Only what WE started; a stack that was already up is someone else's.
         if brought_up_here:
-            await roll_back(lab, [StartedStack(parent_host, proj, remote_file_strs)])
+            await roll_back(lab, [StartedStack(parent_host, proj, remote_file_strs)], unwinding=exc)
         raise
 
 
@@ -437,7 +437,9 @@ class StartedStack:
     """The services ``up`` named, when it named any; empty means all the files declare."""
 
 
-async def roll_back(lab: "Lab", started: "list[StartedStack]") -> None:
+async def roll_back(
+    lab: "Lab", started: "list[StartedStack]", *, unwinding: "BaseException | None" = None
+) -> None:
     """Take down every stack in *started*: the one rollback for every path that starts one.
 
     The rule: a rollback undoes exactly what its call did. Each stack goes
@@ -449,30 +451,32 @@ async def roll_back(lab: "Lab", started: "list[StartedStack]") -> None:
     registered nothing, and a placeholder or a peer's id is never this call's
     to remove.
 
-    Each ``down`` is a compensating action: an interrupt that lands while it
-    runs waits for it, up to the run's teardown deadline
-    (:func:`~otto.lifecycle.compensate`), because a half-run rollback is worse
-    than none.
+    The whole sequence is ONE compensating action
+    (:func:`~otto.lifecycle.compensate`): an interrupt that lands while it
+    runs waits for every ``down``, up to the run's teardown deadline, because
+    a half-run rollback is worse than none; once the deadline has expired no
+    further ``down`` starts. *unwinding* is the exception the caller is
+    propagating: a cancellation is passed on as ``held=``, so the deadline is
+    armed at entry (as for ``composed()``'s and ``deployed()``'s teardown)
+    and that cancellation is the one re-raised once the rollback resolves.
 
-    Never raises and never masks: the caller is already propagating the real
-    error. A failed ``down``, raised or returned, is reported, though: residue
-    the user has to clean up by hand deserves to be named. Under a held
-    interrupt, compensate re-raises the cancellation once the ``down``
-    resolves, so its own warning names a failure instead of this function's
-    line, and any later stack in *started* is not reached.
+    Never raises anything else and never masks: the caller is already
+    propagating the real error. A failed ``down``, raised or returned, is
+    reported, though: residue the user has to clean up by hand deserves to be
+    named.
     """
     # Imported here, not at module scope: otto.lifecycle is only needed once a
     # compensating action actually runs (import-budget guard).
-    from ..lifecycle import compensate
+    from ..lifecycle import compensate, held_cancellation
 
-    for stack in started:
-        what = (
-            f"{stack.project} could not be rolled back on {stack.parent.id}; "
-            f"whatever its up created there is still up"
-        )
-        try:
-            result = await compensate(
-                compose_down_project(
+    async def down_each() -> None:
+        for stack in started:
+            what = (
+                f"{stack.project} could not be rolled back on {stack.parent.id}; "
+                f"whatever its up created there is still up"
+            )
+            try:
+                result = await compose_down_project(
                     stack.parent,
                     stack.project,
                     lab=lab,
@@ -480,16 +484,21 @@ async def roll_back(lab: "Lab", started: "list[StartedStack]") -> None:
                     files=stack.files,
                     launcher=stack.launcher,
                     services=stack.services,
-                ),
-                what=f"rolling back {stack.project} on {stack.parent.id}",
-            )
-        except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
-            # .error, not .exception: the traceback the user needs belongs to the
-            # error being propagated, not to the rollback that failed after it.
-            logger.error(f"[docker] {what}: {e}")  # noqa: TRY400 — see above
-            continue
-        if not result.is_ok:
-            logger.error(f"[docker] {what}: {result.value}")
+                )
+            except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
+                # .error, not .exception: the traceback the user needs belongs to the
+                # error being propagated, not to the rollback that failed after it.
+                logger.error(f"[docker] {what}: {e}")  # noqa: TRY400 — see above
+                continue
+            if not result.is_ok:
+                logger.error(f"[docker] {what}: {result.value}")
+
+    names = ", ".join(f"{stack.project} on {stack.parent.id}" for stack in started)
+    await compensate(
+        down_each(),
+        what=f"rolling back {names}",
+        held=held_cancellation(unwinding) if unwinding is not None else None,
+    )
 
 
 def merge_declared_users(composes: "Iterable[DockerCompose]") -> "dict[str, str]":
@@ -977,24 +986,33 @@ async def composed(
     hosts = await compose_up(
         project=project, lab=lab, parent=parent, project_name=proj, build=build
     )
-    try:
-        yield hosts
-    finally:
-        if own or not was_up:
-            # Teardown is a compensating action: an interrupt landing while
-            # compose_down runs must not strand a half-torn stack (chaos
-            # spec: shielded compensating actions). compensate() holds the
-            # cancellation until the down completes (bounded by the teardown
-            # deadline), then re-raises it.
-            # Imported here, not at module scope: otto.lifecycle is only needed
-            # once a compensating action actually runs, and a top-level import
-            # drags it onto every CLI --help path (import-budget guard).
-            from ..lifecycle import compensate
+    # Teardown is a compensating action: an interrupt landing while
+    # compose_down runs must not strand a half-torn stack (chaos spec:
+    # shielded compensating actions). compensate() holds a cancellation until
+    # the down completes (bounded by the teardown deadline), then re-raises
+    # it; a cancellation of the body is passed in as held=, so a failing down
+    # cannot replace it. Any other body error keeps its precedence (a failing
+    # down replaces it, as before).
+    # Imported here, not at module scope: otto.lifecycle is only needed once
+    # a stack is up, and a top-level import drags it onto every CLI --help
+    # path (import-budget guard).
+    from ..lifecycle import compensate, held_cancellation
 
+    async def tear_down(held: "asyncio.CancelledError | None") -> None:
+        if own or not was_up:
             await compensate(
                 compose_down(project=project, lab=lab, parent=parent, project_name=proj),
                 what=f"docker compose down {proj}",
+                held=held,
             )
+
+    try:
+        yield hosts
+    except BaseException as exc:
+        await tear_down(held_cancellation(exc))
+        raise
+    else:
+        await tear_down(None)
 
 
 def _default_parent_or_none(lab: "Lab") -> UnixHost | None:

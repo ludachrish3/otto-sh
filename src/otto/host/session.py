@@ -41,6 +41,7 @@ from .command_frame import (
 )
 from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
 from .exec_route import ExecRoute
+from .exit_status import exit_status_of, no_return_code_result
 from .identity import ROOT_LOGIN
 from .limitation import Limitation
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
@@ -89,8 +90,8 @@ from typing_extensions import final
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
+from . import process_stop
 from .host import (
-    _EXEC_REAP_TIMEOUT,
     DEFAULT_COMMAND_TIMEOUT,
     CredentialExpect,
     Expect,
@@ -754,6 +755,22 @@ class ShellSession(ABC):
         """
         ...
 
+    @abstractmethod
+    async def _take_unread(self) -> str:
+        """Return and consume what the transport has received and no read has matched yet.
+
+        A hook, called by :meth:`~otto.host.session.ShellSession.run_cmd` when a
+        command's budget runs out and before anything is written to stop it,
+        so a timed-out result keeps the unfinished output its read loop was
+        still waiting on. It never waits: it takes only what has already
+        arrived, and each piece once, including any the transport holds
+        between reads (a buffer, a partly decoded character). Every transport
+        implements it; the contract and what a wrong implementation breaks are
+        in the "Implementing a session transport" section of the sessions
+        extension page.
+        """
+        ...
+
     async def _refused_login(self) -> Exception | None:
         """Name a refused login from the output the failed handshake left behind, or ``None``.
 
@@ -1265,22 +1282,22 @@ class ShellSession(ABC):
             )
         await self._ensure_ready()
         sink = on_output if on_output is not None else self._on_output
+        output = ExecOutput(valuer=self._partial_value())
         try:
             # Always bounded: `inf` never fires, so an intentionally unbounded
             # command needs no separate branch.
             return await asyncio.wait_for(
-                self._run_cmd_inner(cmd, expects, sink, redact, write_progress),
+                self._run_cmd_inner(cmd, expects, sink, output, redact, write_progress),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            partial = await self._interrupt_command()
-            return CommandResult(
-                status=Status.Error,
-                value=f"Command timed out after {timeout}s" + (f"\n{partial}" if partial else ""),
-                command=cmd,
-                retcode=-1,
-                timed_out=True,
-            )
+            # The value is what the command had written when the budget ran
+            # out: what the reader holds past its last match, taken before
+            # the interrupt is written. What the recovery reads after it (the
+            # echoed ^C, the prompt) is the shell's, never the command's.
+            output.feed(await self._take_unread())
+            await self._interrupt_command()
+            return timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
         except _CredentialRefusedError as refused:
             # The prompt came back after the one answer: typing the password
             # again would spend another authentication attempt on a password
@@ -1325,7 +1342,30 @@ class ShellSession(ABC):
 
     # --- Internal implementation ---
 
-    async def _interrupt_command(self) -> str:
+    def _undo_terminal_mapping(self, text: str) -> str:
+        r"""Undo what the session's terminal added to *text*: the ``onlcr`` fold, or nothing.
+
+        Under ``onlcr`` every ``\n`` arrived with a CR the terminal added in
+        front of it, so turning ``\r\n`` back into ``\n`` is the exact
+        inverse, and a CR the program wrote stays. A finished command and a
+        timed-out one's partial output are both folded here.
+        """
+        if self._terminal.mapping == ONLCR:
+            return text.replace("\r\n", "\n")
+        return text
+
+    def _partial_value(self) -> Callable[[str], str]:
+        """Return how a command's unfinished buffer becomes its timed-out ``value``.
+
+        The frame's :meth:`~otto.host.command_frame.CommandFrame.parse_partial_output`
+        over the buffer with the terminal mapping undone, as a finished
+        command's :meth:`~otto.host.command_frame.CommandFrame.parse_output` is.
+        """
+        return lambda raw: self._frame.parse_partial_output(
+            self._undo_terminal_mapping(raw), m=self._markers
+        )
+
+    async def _interrupt_command(self) -> None:
         """Interrupt the running command and probe the shell, from outside the command's timeout.
 
         The one recovery for a command otto gives up on (a timeout, a refused
@@ -1335,7 +1375,7 @@ class ShellSession(ABC):
         for recovery on next use, as a cancelled command is.
         """
         try:
-            return await self._recover_session()
+            await self._recover_session()
         except asyncio.CancelledError:
             self._needs_recovery = True
             raise
@@ -1345,6 +1385,7 @@ class ShellSession(ABC):
         cmd: str,
         expects: list[Expect | CredentialExpect] | None,
         on_output: Callable[[str], None],
+        read: "ExecOutput",  # defined below, with the drain that shares it
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandResult:
@@ -1357,7 +1398,9 @@ class ShellSession(ABC):
         Zephyr) emits nothing mid-stream and surfaces ``parse_output(buffer)``
         once on completion, so shell prompts and retcode scaffolding never reach
         the log. ``on_output`` is the per-command sink (the host's logger, or a
-        no-op when the effective mode is ``LogMode.NEVER``).
+        no-op when the effective mode is ``LogMode.NEVER``). Every chunk read
+        is fed to *read*, the command's :class:`ExecOutput`, which the caller
+        still holds when a timeout cancels this read.
         """
         live = self._frame.streams_output_live
         # Build regex that matches any expect pattern OR the end sentinel OR
@@ -1392,13 +1435,13 @@ class ShellSession(ABC):
         finally:
             self._write_progress = None
 
-        # Read loop: handle expect responses and accumulate output
-        buffer = ""
+        # Read loop: handle expect responses; *read* accumulates every chunk
+        # read, so a timeout that cancels this loop keeps them.
         seen_begin = False
         answered: set[int] = set()
         while True:
             data = await self.read_transport_until(pattern=combined)
-            buffer += data
+            read.feed(data)
 
             # Check if the end sentinel was matched
             end_match = self._end_pattern.search(data)
@@ -1432,11 +1475,7 @@ class ShellSession(ABC):
                 if line:
                     on_output(line)
 
-        if self._terminal.mapping == ONLCR:
-            # Undo the terminal's \n -> \r\n and nothing else: every \n
-            # arrived with a CR the terminal added in front of it, so this is
-            # the exact inverse, and a CR the program wrote stays.
-            buffer = buffer.replace("\r\n", "\n")
+        buffer = self._undo_terminal_mapping(read.raw())
         output = self._frame.parse_output(buffer, cmd=cmd, m=self._markers)
         retcode = self._frame.extract_retcode(buffer, m=self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
@@ -1540,7 +1579,7 @@ class ShellSession(ABC):
         # contract bounded_pattern states is otto's to keep, never a caller's.
         return combined if expects else bounded_pattern(combined)
 
-    async def _recover_session(self, deadline: float | None = None) -> str:
+    async def _recover_session(self, deadline: float | None = None) -> None:
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
         Sends Ctrl+C, then drives :func:`~otto.host.shell_liveness.confirm_live`
@@ -1552,7 +1591,7 @@ class ShellSession(ABC):
         On bash the probe is exit-code framed,
         so a session parked inside a REPL (which can only echo the literal ``$?``)
         correctly fails to confirm and is marked dead rather than falsely
-        "recovered". Returns any partial output captured before the probe reply.
+        "recovered". What the probe reads is consumed and returned to no one.
 
         ``deadline`` bounds the confirm-live resend loop (``None`` reads
         :data:`_RECOVERY_TIMEOUT` at CALL time — a def-time default would
@@ -1571,7 +1610,7 @@ class ShellSession(ABC):
             # for AppShell._exit's graceful path, which enters there directly.
             logger.debug(f"{self._log_tag}: recovery in a raw landing; session marked dead")
             self._alive = False
-            return ""
+            return
 
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
         try:
@@ -1593,11 +1632,11 @@ class ShellSession(ABC):
                 f"{self._log_tag}: recover_session entry write failed; session marked dead"
             )
             self._alive = False
-            return ""
+            return
         await asyncio.sleep(0.1)
-        return await self._confirm_recovered(deadline)
+        await self._confirm_recovered(deadline)
 
-    async def _confirm_recovered(self, deadline: float | None = None) -> str:
+    async def _confirm_recovered(self, deadline: float | None = None) -> None:
         """Drive :func:`~otto.host.shell_liveness.confirm_live` to confirm recovery.
 
         Shared by every ``_recover_session`` override — only how the hung
@@ -1609,8 +1648,8 @@ class ShellSession(ABC):
         persists before declaring the shell dead — a responsive shell
         confirms on the first probe regardless.
 
-        Returns any partial output captured before the probe reply, or ``""``
-        if the shell never confirmed (``self._alive`` is set to False then).
+        What it reads is recovery traffic, consumed and returned to no one; a
+        shell that never confirms leaves ``self._alive`` False.
         """
         if isinstance(self._frame, RawFrame):
             # A raw landing has no probe to render. A recovery here means an
@@ -1618,7 +1657,7 @@ class ShellSession(ABC):
             # console's state, so the session is dead rather than crashed.
             logger.debug(f"{self._log_tag}: recovery in a raw landing; session marked dead")
             self._alive = False
-            return ""
+            return
 
         if deadline is None:
             deadline = _RECOVERY_TIMEOUT
@@ -1663,23 +1702,29 @@ class ShellSession(ABC):
         if not confirmed:
             logger.debug(f"{self._log_tag}: recover_session failed; session marked dead")
             self._alive = False
-            return ""
-        # Return the output that arrived before the probe reply. The bash recover
-        # probe is framed on the RECOVER marker (distinct from the end-of-command
-        # marker — see BashFrame.recover), so it never collides with the framing
-        # of the interrupted command: split off our probe reply, then drop any
-        # leftover dying-command tail echo (`{end_prefix}<code>__`) so it can't
-        # leak forward.
-        partial = (
-            captured.split(self._markers.recover, maxsplit=1)[0]
-            .split(self._markers.end_prefix, maxsplit=1)[0]
-            .strip()
-        )
-        logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
-        return partial
+            return
+        # What the probe read is recovery traffic (the echoed ^C, the prompt,
+        # the probe's reply): consumed so it cannot reach the next command,
+        # and never a command's output. A timed-out command's value was taken
+        # before the interrupt (ShellSession._take_unread).
+        logger.debug(f"{self._log_tag}: recover_session ok consumed={len(captured)}")
 
 
-class SshSession(ShellSession):
+class _PatternReaderTransport:
+    """The one :meth:`ShellSession._take_unread` of the sessions that read through a PatternReader.
+
+    Mixed in ahead of :class:`ShellSession` by the ssh, local and
+    interactive-bridge sessions, which all keep their reader in ``_reader``.
+    """
+
+    _reader: "PatternReader | None"
+
+    async def _take_unread(self) -> str:
+        """Return :meth:`PatternReader.take_unmatched`, or ``""`` before the transport opened."""
+        return self._reader.take_unmatched() if self._reader is not None else ""
+
+
+class SshSession(_PatternReaderTransport, ShellSession):
     """SSH persistent shell session via asyncssh create_process()."""
 
     def __init__(
@@ -1750,7 +1795,9 @@ class SshSession(ShellSession):
         self._initialized = False
 
 
-async def _readuntil_past_limit(reader: Any, pattern: re.Pattern[bytes], *, bounded: bool) -> bytes:
+async def _readuntil_past_limit(
+    reader: Any, pattern: re.Pattern[bytes], *, bounded: bool, taken: bytearray
+) -> bytes:
     r"""telnetlib3's ``readuntil_pattern``, for a match further away than the reader's limit.
 
     telnetlib3 raises :exc:`asyncio.LimitOverrunError` once the bytes up to a
@@ -1789,19 +1836,24 @@ async def _readuntil_past_limit(reader: Any, pattern: re.Pattern[bytes], *, boun
     everything read since the call, as ``readuntil_pattern`` does. The bound
     is in bytes, as telnetlib3's limit is.
 
+    *taken* is the caller's: the bytes otto's own pattern took past the limit
+    wait there until the match returns them, so a read cancelled before its
+    match (a command's timeout) leaves them where the caller can take them.
+
     The reader's transport pauses at twice the limit and its wait resumes it.
     telnetlib3 5.0.1 has no public setter for the limit; ``_limit`` is pinned
     by tests/unit/host/test_telnet_long_line.py, so an upgrade that renames it
     fails there by name.
     """
     if bounded:
-        return await _readuntil_taking_prefix(reader, pattern)
+        return await _readuntil_taking_prefix(reader, pattern, taken)
     return await _readuntil_raising_limit(reader, pattern)
 
 
-async def _readuntil_taking_prefix(reader: Any, pattern: re.Pattern[bytes]) -> bytes:
-    """Read past the limit for otto's own pattern: take all but a tail, search again."""
-    taken = bytearray()
+async def _readuntil_taking_prefix(
+    reader: Any, pattern: re.Pattern[bytes], taken: bytearray
+) -> bytes:
+    """Read past the limit for otto's own pattern: take all but a tail into *taken*, retry."""
     while True:
         try:
             raw: bytes = await reader.readuntil_pattern(pattern)  # ty: ignore[unsound-assignment] — telnetlib3 reader is untyped here (Any)
@@ -1809,8 +1861,12 @@ async def _readuntil_taking_prefix(reader: Any, pattern: re.Pattern[bytes]) -> b
             taken += await reader.readexactly(max(1, exc.consumed - MAX_SEPARATOR_LEN))
             continue
         except asyncio.IncompleteReadError as exc:
-            raise asyncio.IncompleteReadError(bytes(taken) + exc.partial, exc.expected) from exc
-        return bytes(taken) + raw
+            head = bytes(taken)
+            taken.clear()
+            raise asyncio.IncompleteReadError(head + exc.partial, exc.expected) from exc
+        head = bytes(taken)
+        taken.clear()
+        return head + raw
 
 
 async def _readuntil_raising_limit(reader: Any, pattern: re.Pattern[bytes]) -> bytes:
@@ -1886,6 +1942,13 @@ class TelnetSession(ShellSession):
         # be inside a multi-byte character; the held decoder keeps that
         # character's bytes until read_transport_until reads the rest.
         self._decoder = output_decoder()
+        # What a read has taken from the stream and not yet returned: bytes
+        # taken past the reader's limit before the match, and the decoded
+        # match while the rest of a split character is read. Held here, not
+        # in the read's locals, so a read cancelled by a command's timeout
+        # leaves them for _take_unread.
+        self._taken = bytearray()
+        self._unreturned = ""
         # On a console term (``console_client``, held by the base) the
         # *reader*/*writer* are that client's streams, and closing this
         # session closes it (logout, then release). Every telnet-term session
@@ -1945,7 +2008,7 @@ class TelnetSession(ShellSession):
         with self._read_gate.reading():
             try:
                 raw = await _readuntil_past_limit(
-                    reader, bytes_pattern, bounded=is_bounded(pattern)
+                    reader, bytes_pattern, bounded=is_bounded(pattern), taken=self._taken
                 )
             except asyncio.IncompleteReadError as exc:
                 # End of stream: flush the decoder, as every output reader does,
@@ -1953,10 +2016,45 @@ class TelnetSession(ShellSession):
                 # U+FFFD.
                 tail = self._decoder.decode(exc.partial, final=True)
                 raise asyncio.IncompleteReadError(tail.encode(), exc.expected) from exc
-            text = self._decoder.decode(raw)
+            self._unreturned = self._decoder.decode(raw)
             # The byte match can end inside a character: read the rest of it,
             # so the text holds the whole match.
-            return text + await finish_character(self._decoder, reader.readuntil_pattern)
+            rest = await finish_character(self._decoder, reader.readuntil_pattern)
+            text, self._unreturned = self._unreturned + rest, ""
+            return text
+
+    @override
+    async def _take_unread(self) -> str:
+        """Return what the cancelled read held, then what telnetlib3 buffered, in order.
+
+        The read's own held state comes first (the decoded match waiting on a
+        split character, or the bytes taken past the reader's limit), then
+        the reader's buffer, which a cancelled ``readuntil_pattern`` leaves
+        whole. The buffer is taken with ``readexactly`` of its length, which
+        never waits (the bytes are there) and resumes a paused transport, and
+        under the read gate like every other read of the stream: entering the
+        gate never blocks, it only refuses once the client's release began.
+        A refused gate or a reader carrying the connection's failure takes
+        nothing from the stream: the recovery that follows meets the dead
+        transport and gives the session's verdict on it. telnetlib3 5.0.1 has
+        no public buffered length; ``_buffer`` is pinned by
+        tests/unit/host/test_telnet_long_line.py as ``_limit`` is.
+        """
+        held = self._unreturned
+        self._unreturned = ""
+        if self._reader.exception() is not None:
+            taken = bytes(self._taken)
+            self._taken.clear()
+            return held + self._decoder.decode(taken)
+        try:
+            with self._read_gate.reading():
+                size = len(self._reader._buffer)  # noqa: SLF001 — telnetlib3 exposes no buffered length; pinned by test_telnet_long_line.py
+                buffered = await self._reader.readexactly(size) if size else b""
+        except tuple(self._connection_lost_errors()):
+            buffered = b""
+        taken = bytes(self._taken) + buffered
+        self._taken.clear()
+        return held + self._decoder.decode(taken)
 
     @override
     def _connection_lost_errors(self) -> list[type[BaseException]]:
@@ -2028,7 +2126,7 @@ class TelnetSession(ShellSession):
 
 
 @final
-class LocalSession(ShellSession):
+class LocalSession(_PatternReaderTransport, ShellSession):
     """Local persistent bash shell session via asyncio subprocess.
 
     Implements the ShellSession I/O primitives using a long-running bash
@@ -2102,7 +2200,7 @@ class LocalSession(ShellSession):
         return await self._reader.read_transport_until(pattern)
 
     @override
-    async def _recover_session(self, deadline: float | None = None) -> str:
+    async def _recover_session(self, deadline: float | None = None) -> None:
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
         SIGINT is sent to the child processes instead of a Ctrl+C byte, since a
@@ -2119,7 +2217,7 @@ class LocalSession(ShellSession):
         if self._pid is not None:
             self._signal_children(self._pid, signal.SIGINT)
         await asyncio.sleep(0.1)
-        return await self._confirm_recovered(deadline)
+        await self._confirm_recovered(deadline)
 
     @staticmethod
     def _signal_children(parent_pid: int, sig: int) -> None:
@@ -2444,33 +2542,32 @@ class HostSession:
         # doesn't cross closure boundaries), so bind it here where the
         # `is None` check above still narrows it.
         creds = self._creds
-        try:
+
+        async def _undo() -> None:
+            for i, hop in enumerate(reversed(applied)):
+                via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
+                # Full via cred (password/params intact) under this
+                # session's own term, mirroring the forward path — keeps
+                # forward/undo symmetric for custom undo callables, and a
+                # term-scoped cred cannot answer the two directions with
+                # different passwords for one login.
+                via = cred_for(creds, via_login, self._term) or Cred(login=via_login)
+                await run_undo(self, hop, via, self._host_id, self._history_prefix)
+            self._session.current_user = prev
+
+        # Same contract as PosixPrivilege.as_user's shielded undo: hold a
+        # cancellation until every hop is unwound, then re-raise; the body's
+        # own cancellation is passed in as held=, so a failing undo cannot
+        # replace it. Any other body error keeps its precedence.
+        # Imported here, not at module scope: otto.lifecycle is only needed
+        # once a switch has been applied, and a top-level import drags it
+        # onto every CLI --help path (import-budget guard).
+        from ..lifecycle import undone_after
+
+        async with undone_after(
+            _undo, what=f"{self._host_id}: session as_user undo to {prev or 'login user'!r}"
+        ):
             yield self
-        finally:
-
-            async def _undo() -> None:
-                for i, hop in enumerate(reversed(applied)):
-                    via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                    # Full via cred (password/params intact) under this
-                    # session's own term, mirroring the forward path — keeps
-                    # forward/undo symmetric for custom undo callables, and a
-                    # term-scoped cred cannot answer the two directions with
-                    # different passwords for one login.
-                    via = cred_for(creds, via_login, self._term) or Cred(login=via_login)
-                    await run_undo(self, hop, via, self._host_id, self._history_prefix)
-                self._session.current_user = prev
-
-            # Same contract as PosixPrivilege.as_user's shielded undo: hold a
-            # cancellation until every hop is unwound, then re-raise.
-            # Imported here, not at module scope: otto.lifecycle is only needed
-            # once a compensating action actually runs, and a top-level import
-            # drags it onto every CLI --help path (import-budget guard).
-            from ..lifecycle import compensate
-
-            await compensate(
-                _undo(),
-                what=f"{self._host_id}: session as_user undo to {prev or 'login user'!r}",
-            )
 
     async def run(
         self,
@@ -2772,6 +2869,11 @@ class _NoTransport(ShellSession):
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         raise CommandNotRunError(f"read until {pattern.pattern!r}", host=self._host_id)
+
+    @override
+    async def _take_unread(self) -> str:
+        """Nothing was read, so nothing is held."""
+        return ""
 
     @override
     async def close(self) -> None:
@@ -3210,36 +3312,146 @@ def output_line(raw: str) -> str | None:
     return command_value(raw)
 
 
+class ExecOutput:
+    r"""The one owner of a command's output as it is read, the unfinished last line included.
+
+    Every exec route feeds it the decoded text it reads, at whatever boundary
+    the text arrived (:func:`drain_exec_output` on the process routes,
+    :meth:`ShellSession.run_cmd` on the shell routes), so a timed-out command
+    keeps what it printed up to the deadline, its last unfinished line too.
+    *valuer* turns everything fed into the command's ``value``: the process
+    routes use :func:`~otto.host.command_frame.command_value`, a shell
+    session its frame's parse of the folded buffer.
+
+    >>> from otto.host.session import ExecOutput
+    >>> out = ExecOutput()
+    >>> out.feed("a\nha"), out.feed("lf"), out.raw(), out.value()
+    (['a\n'], [], 'a\nhalf', 'a\nhalf')
+    """
+
+    def __init__(self, valuer: Callable[[str], str] = command_value) -> None:
+        self._valuer = valuer
+        self._fed: list[str] = []
+        # The unfinished line, as the pieces it arrived in: each chunk is split
+        # on its own, never the line so far, so a long line costs work in
+        # proportion to its length.
+        self._pending: list[str] = []
+
+    def feed(self, text: str) -> list[str]:
+        r"""Record *text*; return the complete raw lines it finished, each ending in ``\n``."""
+        if not text:
+            return []
+        self._fed.append(text)
+        first, *rest = text.split("\n")
+        if not rest:
+            self._pending.append(first)
+            return []
+        *complete, last = rest
+        lines = ["".join(self._pending) + first + "\n", *(line + "\n" for line in complete)]
+        self._pending = [last] if last else []
+        return lines
+
+    def tail(self) -> str:
+        """Return the unfinished last line fed so far, ``""`` when the output ended on a newline."""
+        return "".join(self._pending)
+
+    def raw(self) -> str:
+        """Everything fed, the unfinished tail included."""
+        return "".join(self._fed)
+
+    def value(self) -> str:
+        """Return the command's ``value`` for everything fed so far."""
+        return self._valuer(self.raw())
+
+
+def timed_out_result(
+    *, cmd: str, timeout: float, output: ExecOutput, route: ExecRoute | None
+) -> CommandResult:
+    """Build the one result of a command that ran past its *timeout*, on every route.
+
+    Its ``value`` is ``Command timed out after <timeout>s``, then a newline and
+    *output*'s value when the command printed anything before the deadline.
+    *route* is ``None`` for a shell session's command, whose route is recorded
+    by the caller that chose the session.
+    """
+    printed = output.value()
+    return CommandResult(
+        status=Status.Error,
+        value=f"Command timed out after {timeout}s" + (f"\n{printed}" if printed else ""),
+        command=cmd,
+        retcode=-1,
+        timed_out=True,
+        route=route.value if route is not None else "",
+    )
+
+
 async def drain_exec_output(
-    raw_lines: AsyncIterable[str],
-    lines: list[str],
+    chunks: AsyncIterable[str],
+    output: ExecOutput,
     log_output: Callable[[str, LogMode], None],
     mode: LogMode,
-) -> str:
-    """Read an exec's output, logging each line under *mode*; return the command's ``value``.
+) -> None:
+    """Read an exec's output into *output*, logging each line under *mode*.
 
-    The one drain both line-reading exec routes run (the ssh channel's and
-    local exec's; a shell-routed ``exec`` reads through its session instead).
-    The returned ``value`` is :func:`~otto.host.command_frame.command_value`
-    of the raw text read, so the two routes cannot disagree about it. Each
-    raw line goes through :func:`output_line` and what is kept is appended to
-    *lines* and logged. Both routes decode the bytes they read with
+    The one drain both process exec routes run (the ssh channel's and local
+    exec's; a shell-routed ``exec`` reads through its session instead). They
+    hand it decoded text of any boundary, decoded with
     :data:`~otto.host.output_codec.OUTPUT_ENCODING` and
-    :data:`~otto.host.output_codec.OUTPUT_ERRORS` before they get here.
-    *lines* is filled in place, so a caller that times the drain out (and so
-    never gets the return value) still holds the lines read before the
-    deadline.
+    :data:`~otto.host.output_codec.OUTPUT_ERRORS`; *output* holds all of it,
+    so a caller that times the drain out still has everything read before
+    the deadline, an unfinished last line included. Each complete line is
+    logged through :func:`output_line`, and at end-of-file the unfinished
+    last line too. On a timeout there is no end-of-file: the unfinished line
+    is in the timed-out result's value but never logged as an output line.
     """
     on_output = _sink_for(log_output, mode)
-    raw_text: list[str] = []
-    async for raw in raw_lines:
-        line = output_line(raw)
-        if line is None:
-            continue
-        raw_text.append(raw)
-        lines.append(line)
-        on_output(line)
-    return command_value("".join(raw_text))
+    async for chunk in chunks:
+        for raw in output.feed(chunk):
+            line = output_line(raw)
+            if line is not None:
+                on_output(line)
+    tail = output_line(output.tail())
+    if tail is not None:
+        on_output(tail)
+
+
+async def drain_and_wait(
+    chunks: AsyncIterable[str],
+    output: ExecOutput,
+    wait: Callable[[], Awaitable["int | None"]],
+    log_output: Callable[[str, LogMode], None],
+    mode: LogMode,
+) -> "int | None":
+    """Read an exec's output to end-of-file, then wait for the command's exit; return its code.
+
+    Both process exec routes run this inside ONE ``asyncio.wait_for``, so
+    their *timeout* bounds the command, not only its output: a command that
+    closes its output and keeps running times out at its budget (#1063).
+    *wait* returns the route's raw return code (``None`` when there is none),
+    which ``otto.host.exit_status.exit_status_of`` maps.
+    """
+    await drain_exec_output(chunks, output, log_output, mode)
+    return await wait()
+
+
+async def _channel_returncode(process: Any) -> "int | None":
+    """Wait for an exec channel's command; return asyncssh's ``returncode``.
+
+    The exit status, or ``-N`` for a death by signal N, or ``None`` when
+    neither came.
+    """
+    return (await process.wait()).returncode
+
+
+async def _channel_chunks(stdout: Any) -> AsyncGenerator[str, None]:
+    """Yield what an exec channel's *stdout* carries, in the pieces asyncssh reads, to ``""``.
+
+    asyncssh decodes with the channel's ``encoding=``; reading by size rather
+    than by line leaves no unfinished line in asyncssh's own buffer when the
+    drain is timed out.
+    """
+    while chunk := await stdout.read(READ_CHUNK):
+        yield str(chunk)
 
 
 def _ran_on(result: CommandResult, route: ExecRoute) -> CommandResult:
@@ -4048,93 +4260,44 @@ class SessionManager:
             encoding=OUTPUT_ENCODING,
             errors=OUTPUT_ERRORS,
         )
-        lines: list[str] = []
-
+        output = ExecOutput()
+        stoppable = process_stop.ChannelStoppable(process)
         try:
-            value = await asyncio.wait_for(
-                drain_exec_output(process.stdout, lines, self._log_output, mode),
+            returncode = await asyncio.wait_for(
+                drain_and_wait(
+                    _channel_chunks(process.stdout),
+                    output,
+                    lambda: _channel_returncode(process),
+                    self._log_output,
+                    mode,
+                ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            await self._reap_exec_process(process)
-            return CommandResult(
-                status=Status.Error,
-                value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
-                command=cmd,
-                retcode=-1,
-                timed_out=True,
-                route=ExecRoute.SSH_CHANNEL.value,
+            await process_stop.stop_timed_out(
+                stoppable, what=f"{self._name}: stop the timed-out command"
             )
-        except BaseException:
-            # An INTERRUPT unwinds the drain (a signal cancels the running
-            # task, and cancellation is not an Exception) — and a one-shot
-            # command has a concrete end: it must not outlive the process
-            # that asked for it. Closing a pty-less exec channel signals
-            # nothing, so the reap has to be explicit here, and it hangs up
-            # rather than terminating: this is the terminal going away, the
-            # same end the shell route's commands meet when their pty
-            # closes, which keeps a deliberately nohup'd child alive. It runs
-            # shielded because this teardown is ITSELF running under
-            # cancellation, and stays bounded by the reap deadline, so a host
-            # that never answers cannot hold the exit open.
-            reap = asyncio.ensure_future(self._reap_exec_process(process, hangup=True))
-            try:
-                await asyncio.shield(reap)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                # A second interrupt: give up the reap, never the exit.
-                reap.cancel()
-            except (OSError, asyncssh.Error) as exc:
-                logger.debug("%s: reap after interrupt failed: %s", self._name, exc)
+            return timed_out_result(
+                cmd=cmd, timeout=timeout, output=output, route=ExecRoute.SSH_CHANNEL
+            )
+        except BaseException as exc:
+            # An INTERRUPT unwinds the drain, and a one-shot command must not
+            # outlive the process that asked for it: closing a pty-less exec
+            # channel signals nothing, so the stop is explicit.
+            await process_stop.stop_interrupted(
+                stoppable, exc, what=f"{self._name}: stop the interrupted command"
+            )
             raise
-        result = await process.wait()
-        status = Status.Success if result.exit_status == 0 else Status.Failed
+        retcode = exit_status_of(returncode)
+        if retcode is None:
+            return no_return_code_result(cmd=cmd, route=ExecRoute.SSH_CHANNEL)
         return CommandResult(
-            status=status,
-            value=value,
+            status=Status.Success if retcode == 0 else Status.Failed,
+            value=output.value(),
             command=cmd,
-            retcode=result.exit_status or 0,
+            retcode=retcode,
             route=ExecRoute.SSH_CHANNEL.value,
         )
-
-    @staticmethod
-    async def _reap_exec_process(process: Any, *, hangup: bool = False) -> None:
-        """Bounded first-signal → kill escalation for one raw exec channel.
-
-        The single escalation both of :meth:`exec_on`'s losing arms run.
-        They differ only in what the FIRST signal means, and so in which
-        signal it is:
-
-        * a timeout is "you took too long" — ``TERM``, the ordinary ask to
-          stop (``hangup`` false, the default);
-        * an interrupted teardown is "the terminal went away" — ``HUP``,
-          which is exactly what the shell-session route's commands receive
-          when their pty is closed, so the two routes end a command the same
-          way (``hangup`` true).
-
-        The distinction is load-bearing, not cosmetic: the signal reaches the
-        remote command's whole PROCESS GROUP, so a background child the
-        command launched is signalled too. Under ``HUP`` a child the user
-        deliberately ``nohup``'d ignores it and survives — the documented
-        contract of the shell route. Under ``TERM``/``KILL`` nothing survives.
-
-        Either way the remote command can ignore the first signal (it is a
-        signal to a *remote* process, exactly like one to a local
-        subprocess), so each wait is bounded by ``_EXEC_REAP_TIMEOUT`` and
-        escalates to ``kill()`` (untrappable) rather than leaving the channel
-        open indefinitely. The escalation fires only if the COMMAND itself
-        outlived the first signal, so a hangup the command obeys never
-        reaches its nohup'd children.
-        """
-        if hangup:
-            process.send_signal("HUP")
-        else:
-            process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
-        except asyncio.TimeoutError:
-            process.kill()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
 
     async def _exec_on_default_session(
         self,
