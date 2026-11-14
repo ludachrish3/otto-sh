@@ -260,6 +260,11 @@ library does not know) gives one named error result instead: `status`
 code`. The rule is `otto.host.exit_status.exit_status_of`. A shell route (`run`,
 and an `exec` that otto types into a shell session) reports what the shell
 itself reports for its command, which is the same `128 + N` on a POSIX shell.
+Such an `exec` runs in a subshell. Of the shells measured, only ksh93 reports
+a killed subshell's status differently, as `256 + N`; otto reports that as
+`128 + N` too
+(`otto.host.exit_status.subshell_status_of`), and the session's shell outlives
+the command.
 
 (timed-out-command-result)=
 **Timed out.** A command that is still running when its budget expires gives
@@ -286,8 +291,31 @@ most 10 seconds (`EXEC_CANCEL_REAP_BOUND` in `otto.host.host`). An interrupted
 stop is also cut by the teardown deadline ({doc}`../lifecycle`), counted from
 the interrupt, so a deadline under 5 seconds ends it before `KILL` is sent. A
 further cancellation while the stop runs is held until it ends, on both
-routes. A stop that fails (the channel already gone) is logged, and the exec
+routes. An interrupt that lands while the command is still being started
+(the local process is spawning, the ssh exec channel is opening) waits for the
+start to finish, bounded by the teardown deadline, and the command it started
+gets the same stop. A start still pending at that deadline is abandoned as
+before: asyncio kills only the local leader, and the ssh channel is closed,
+which signals nothing. A stop that fails (the channel already gone) is logged, and the exec
 still returns the timed-out result or re-raises what interrupted it.
+
+On a shell route (`run`, and an `exec` typed into a shell session: over
+`telnet`, over `console`, or over `ssh` when the call needs a shell), a
+timed-out command, and one whose password was refused, is stopped this way:
+
+1. otto types an interrupt (`^C`) to the command.
+2. It checks that the shell answers again, under one bound: the settle after
+   the interrupt, the recovery deadline and one probe wait, added together.
+3. For an `exec`, it then puts the terminal settings and `set -e` back
+   ({ref}`what the exec frame restores <exec-frame-shell-state>`).
+
+What you can rely on: once the call returns, either the session's shell is
+answering again, with its terminal and `set -e` as before the `exec`, or the
+session is dead and will not be used again
+({ref}`when a dead session is closed <closing-a-session>`); a dead pooled
+session is discarded. What happens to the other processes the command
+started is not promised ({ref}`Undefined <command-contracts-undefined>`). A
+cancellation landing during the stop is held until it ends.
 
 **What survives a stop.** Only the command's own exit is waited for, never its
 output: a member that still holds the output once the command has exited does

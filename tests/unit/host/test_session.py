@@ -2078,6 +2078,7 @@ class _StubExecSession(ShellSession):
         on_output=None,
         redact: bool = False,
         write_progress=None,
+        exec_input=None,
     ) -> CommandResult:
         self.run_cmd_calls.append(cmd)
         return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)

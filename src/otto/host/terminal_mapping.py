@@ -96,6 +96,7 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
+    "BASELINE_VAR",
     "CALIBRATION_COMMAND",
     "ECHO_OFF_COMMAND",
     "ECHO_ON",
@@ -103,17 +104,21 @@ __all__ = [
     "ECHO_STILL_ON",
     "ECHO_UNSET",
     "ECHO_VAR",
+    "ERREXIT_VAR",
     "IDENTITY",
     "ONLCR",
     "SAVED_SETTINGS_PROBE",
+    "START_VAR",
     "TABS_EXPANDED",
     "TABS_OFF_COMMAND",
     "UNMEASURED",
     "Measurement",
+    "establish_exec_state",
     "is_unknown",
     "measure",
     "reported",
     "save_settings_command",
+    "saved_into",
     "saved_settings",
 ]
 
@@ -179,6 +184,64 @@ SAVED_SETTINGS_PROBE = "2>/dev/null stty -g"
 coreutils and BusyBox alike), the form ``stty`` takes back as its argument.
 Silent on failure, so a target without ``stty`` (or one without ``-g``)
 prints nothing (#953)."""
+
+
+BASELINE_VAR = "__otto_base"
+"""The unexported variable holding the terminal record a pooled ``exec`` restores.
+
+A ``stty -g`` snapshot (:func:`saved_into`), empty where the settings cannot
+be read. Set by :func:`establish_exec_state` on every bash-family handshake,
+and on a shell transition's resync where it is empty or unset."""
+
+START_VAR = "__otto_tty"
+"""The unexported variable a console's ``exec`` snapshots the terminal into at its start."""
+
+ERREXIT_VAR = "__otto_e"
+"""The unexported variable the exec frame saves its parent shell's ``set -e`` in."""
+
+_EXEC_STATE_VARS = (BASELINE_VAR, ERREXIT_VAR, START_VAR)
+
+
+def saved_into(var: str) -> str:
+    """Return the statement snapshotting the terminal's settings (``stty -g``) into *var*.
+
+    *var* is empty when the settings cannot be read (no terminal, no
+    ``stty``, no ``-g``), and the statement never aborts, under an
+    inherited ``set -e`` or ``set -u`` included: the ``||`` branch both
+    catches the failure and leaves the variable set. Quote-free, so it can
+    ride a probe line (:func:`~otto.host.command_frame.whole_line_echo`'s
+    cut rules).
+    """
+    return f"{var}=$({SAVED_SETTINGS_PROBE}) || {var}="
+
+
+def establish_exec_state(*, replace: bool) -> str:
+    """Return the statements setting the variables the exec frame's tail reads.
+
+    The terminal record :data:`BASELINE_VAR` is a snapshot of the terminal's
+    settings as they are when the statement runs (:func:`saved_into`), empty
+    where they cannot be read; :data:`ERREXIT_VAR` and :data:`START_VAR` are
+    set empty.
+
+    *replace* assigns all three afresh: the form every bash-family handshake
+    carries, after otto's own ``stty`` statements, so the record is the
+    terminal otto set up (a session-setup hook's changes included, through
+    the re-handshake after it). Without *replace*, each is assigned only
+    where it is empty or unset, and a value already in the shell is left as
+    it is: the form a shell transition's resync carries, which establishes a
+    fresh shell's record and keeps the one a shell already holds.
+
+    Quote-free, adds no round trip, and never aborts: every variable it reads
+    is read with a default (``${V-}``), so under ``set -u``, ``set -e`` or
+    both the line it rides reaches its final echo.
+    """
+    assignments = {var: f"{var}=" for var in _EXEC_STATE_VARS}
+    assignments[BASELINE_VAR] = saved_into(BASELINE_VAR)
+    if replace:
+        return "; ".join(assignments[var] for var in _EXEC_STATE_VARS)
+    return "; ".join(
+        f"case ${{{var}-}} in ?*) ;; *) {assignments[var]};; esac" for var in _EXEC_STATE_VARS
+    )
 
 
 def save_settings_command(tag: str) -> str:

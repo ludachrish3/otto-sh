@@ -22,9 +22,10 @@ has a command that can outlive a budget at all. See :func:`applicable_cell`.
 import pytest
 
 from otto.utils import Status
-from tests.conformance._entry import issue, opened
+from tests.conformance._entry import RUN, issue, opened
 from tests.conformance._framing import assert_single_line_answer
 from tests.conformance._resolved import ResolvedCell
+from tests.conformance._witness import witness
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
@@ -118,8 +119,11 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 @pytest.mark.observable(
     "CommandResult.timed_out, .status, .retcode and .exit_code for "
     "`{words.long_running_command}` ({words.long_running_seconds}s) run under a shorter "
-    "budget, and whether the SAME session still answers `{words.single_line_command}` "
-    "afterwards"
+    "budget, then (off `run`) `timed_out` of `{words.detached_long_running_command}`, and "
+    "whether the process a witnessed `{words.long_running_command}` recorded (its pid and "
+    "start time) is still running once the call returned, read off the route under test (on "
+    "a console, by the same session after the stop), and whether the SAME session still "
+    "answers `{words.single_line_command}` afterwards"
 )
 async def test_a_command_exceeding_its_budget_fails_the_documented_way(
     resolved_cell: ResolvedCell,
@@ -150,6 +154,37 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
 
     async with opened(resolved_cell) as host:
         timed_out = await issue(host, resolved_cell, words.long_running_command, timeout=_BUDGET_S)
+        # The stimulus is selected by entry, never the property: this one closes the
+        # command's own output, and under `run` it would close the session's.
+        if resolved_cell.entry != RUN:
+            assert words.detached_long_running_command is not None
+            detached = await issue(
+                host, resolved_cell, words.detached_long_running_command, timeout=_BUDGET_S
+            )
+            assert detached.timed_out is True, (
+                f"{resolved_cell.cell}: the call waited past its budget for a command that "
+                f"closed its output (#1063) -- {detached.status!r} {detached.value!r}"
+            )
+            assert detached.value == f"Command timed out after {_BUDGET_S}s", detached.value
+        # Off `run` the exec spelling makes the witnessed process the exec's own
+        # (the vocabulary says why); under `run` an `exec` would replace the session.
+        stimulus = (
+            words.pid_long_running_template
+            if resolved_cell.entry == RUN
+            else words.exec_pid_long_running_template
+        )
+        assert stimulus is not None
+        async with witness(resolved_cell, host) as w:
+            witnessed = await issue(
+                host, resolved_cell, stimulus.format(path=w.path), timeout=_BUDGET_S
+            )
+            assert witnessed.timed_out is True, (
+                f"{resolved_cell.cell}: the witnessed command did not time out -- "
+                f"{witnessed.status!r} {witnessed.value!r}"
+            )
+            assert await w.state() == "stopped", (
+                f"{resolved_cell.cell}: the timed-out command is still running"
+            )
         afterwards = await issue(host, resolved_cell, words.single_line_command)
 
     cell = resolved_cell.cell
@@ -214,7 +249,11 @@ async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
     report the instrument as inert when what was slow was the network, so the
     budgeted command here is never the session's first.
 
-    Nothing is written on the far side; nothing to restore.
+    THE WITNESS ARMS discriminate the contract's pid read the same way: a
+    process left running in the background must read ``"running"``, and one
+    that exited must read ``"stopped"``, through the same observer the
+    contract uses. Each witness's context removes its file, and kills the
+    background process, on the way out.
     """
     words = resolved_cell.vocabulary
     assert words.long_running_command is not None, (
@@ -225,6 +264,27 @@ async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
     async with opened(resolved_cell) as host:
         await issue(host, resolved_cell, words.succeeding_command)
         inside = await issue(host, resolved_cell, words.single_line_command, timeout=_BUDGET_S)
+        # The witness arms: an observer that answered one state for every process
+        # fails one of them.
+        assert words.witness_running_template is not None
+        assert words.witness_finished_template is not None
+        async with witness(resolved_cell, host, purpose="running") as live:
+            started = await issue(
+                host, resolved_cell, words.witness_running_template.format(path=live.path)
+            )
+            assert started.is_ok, f"{resolved_cell.cell}: {started.status!r} {started.value!r}"
+            assert await live.state() == "running", (
+                f"{resolved_cell.cell}: a process left running reads as stopped, so the "
+                f"contract's `stopped` is true of every process"
+            )
+        async with witness(resolved_cell, host, purpose="finished") as done:
+            finished = await issue(
+                host, resolved_cell, words.witness_finished_template.format(path=done.path)
+            )
+            assert finished.is_ok, f"{resolved_cell.cell}: {finished.status!r} {finished.value!r}"
+            assert await done.state() == "stopped", (
+                f"{resolved_cell.cell}: a process that exited reads as running"
+            )
 
     cell = resolved_cell.cell
     assert inside.timed_out is False, (

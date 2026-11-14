@@ -56,12 +56,8 @@ from otto.host.command_frame import _PROBE_VAR, READY_SUFFIX, RECOVER_SUFFIX
 from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
 from otto.host.terminal_mapping import CALIBRATION_COMMAND, SAVED_SETTINGS_PROBE
-from tests._fixtures.fake_shell import probe_marker, replay
+from tests._fixtures.fake_shell import end_record_for, parse_bash_frame, probe_marker, replay
 
-_BASH_FRAME_RE = re.compile(
-    r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"',
-    re.DOTALL,
-)
 _ZEPHYR_FRAME_RE = re.compile(
     r"(__OTTO_[0-9a-f]+_BEGIN__)\r(.*)\rretval\r(__OTTO_[0-9a-f]+_END__)\r"
 )
@@ -148,9 +144,11 @@ class DialectShell:
     def _bash_reply(self, text: str) -> str | None:
         if self.menu:
             return None
-        if (m := _BASH_FRAME_RE.search(text)) is not None:
-            self.commands.append(("bash", m.group(2)))
-            return f"{self._prompt()}{m.group(1)}\nbash:{m.group(2)}\n{m.group(3)}0__\n"
+        if (framed := parse_bash_frame(text)) is not None:
+            self.commands.append(("bash", framed.cmd))
+            return (
+                f"{self._prompt()}{framed.begin}\nbash:{framed.cmd}\n{end_record_for(framed, 0)}\n"
+            )
         marker = probe_marker(text)
         if marker is not None and marker.endswith(RECOVER_SUFFIX):
             # The resync probe names the user after the status; the

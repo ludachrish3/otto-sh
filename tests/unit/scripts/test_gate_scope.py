@@ -1167,6 +1167,7 @@ def test_the_reader_census_is_one_function_for_matrices_and_workflows():
 
 _WORKFLOW_QUICK = (
     'make quick PATHS="tests/unit/host/test_busybox_artifacts.py '
+    "tests/unit/host/test_cut_sweep_shards.py "
     'tests/unit/test_declared_harness_bounds.py"'
 )
 

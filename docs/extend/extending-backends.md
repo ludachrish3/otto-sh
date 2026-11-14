@@ -220,8 +220,10 @@ backend. A custom backend overrides `create` and reads only the fields it needs:
   `scp_options`, `sftp_options` (the host's SFTP option table, or `None`),
   `get_local_ip`, `userland` — the host's shared capability
   resolver, whose answers are only readable after `await ctx.userland.resolve()`
-  — and `exec_line_budget`, a callable answering how long ONE line of a command
-  `exec_cmd` can carry on this host (`None` when nothing bounds it), which a
+  — and `exec_line_room`, a callable that takes a command and answers how many
+  characters a quote-free payload inserted into its line may add on this host,
+  otto's framing and its quoting of the command counted (`None` when nothing
+  bounds it), which a
   backend that puts its payload *in* the command line needs and one that opens
   its own data channel does not;
 - an **embedded** transfer backend reads `exec_cmd` and `filesystem`.

@@ -443,6 +443,9 @@ class UserlandOptionsSpec(OttoModel):
     elevation: Literal["sudo", "su", "none"] | None = rt.field_default(
         rt.UserlandOptions, "elevation"
     )
+    sudo_form: Literal["shell", "validate"] | None = rt.field_default(
+        rt.UserlandOptions, "sudo_form"
+    )
     base64_flag: Literal["-d", "--decode", "absent"] | None = rt.field_default(
         rt.UserlandOptions, "base64_flag"
     )
@@ -487,6 +490,7 @@ class UserlandOptionsSpec(OttoModel):
         return rt.UserlandOptions(
             shell_dialect=self.shell_dialect,
             elevation=self.elevation,
+            sudo_form=self.sudo_form,
             base64_flag=self.base64_flag,
             stat_size=self.stat_size,
             checksum=self.checksum,

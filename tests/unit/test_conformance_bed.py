@@ -61,6 +61,7 @@ from tests._fixtures.profiles import (
 from tests._fixtures.run_state import cleared_run_state
 from tests._fixtures.shell_transcripts import recordings, zephyr_recorded_output
 from tests._fixtures.support_matrix import discover_contracts
+from tests._fixtures.witness_shell import RUNNING, STOPPED, FakeWitnesses
 from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
@@ -113,6 +114,7 @@ from tests.conformance._vocabulary import (
     Vocabulary,
     vocabulary_for,
 )
+from tests.conformance._witness import fake_witnesses
 from tests.conformance.test_timeout_contract import _BUDGET_S
 from tests.conformance.test_transfer_contract import _PAYLOAD_NAME, applicable_cell
 from tests.conftest import remote_name
@@ -2348,6 +2350,8 @@ LIES: dict[str, set[str]] = {
     "stops_after_the_failure": {"sequence"},
     "never_times_out": {"timeout"},
     "wedges_the_session": {"timeout"},
+    # The budget is reported, but the command otto started is left running.
+    "leaves_the_command_running": {"timeout"},
     # Every command answered with a value one character off its case's.
     "garbles_the_output": {"output"},
     # Every result names a route no entry of the cell takes.
@@ -2394,11 +2398,20 @@ class _ScriptedHost:
     bed, which is the failure this task exists to end.
     """
 
-    def __init__(self, words: Vocabulary, lie: "str | None", exec_route: str) -> None:
+    def __init__(
+        self,
+        words: Vocabulary,
+        lie: "str | None",
+        exec_route: str,
+        witnesses: "FakeWitnesses | None" = None,
+    ) -> None:
         self._words = words
         self._lie = lie
         self._exec_route = exec_route
         self._timed_out = False
+        # Shared by every host one cell opens: the witness observer reads the
+        # process the host under test started through a second host.
+        self._witnesses = witnesses or fake_witnesses(words)
 
     async def run(self, command, timeout=None) -> Results:
         commands = [command] if isinstance(command, str) else list(command)
@@ -2432,7 +2445,12 @@ class _ScriptedHost:
 
     def _answer(self, command: str, timeout: "float | None") -> CommandResult:
         words = self._words
-        if command == words.long_running_command and timeout is not None:
+        witnessed = self._witnesses.long_running_path(command)
+        long_running = {words.long_running_command, words.detached_long_running_command}
+        if timeout is not None and (command in long_running or witnessed is not None):
+            if witnessed is not None:
+                left = self._lie == "leaves_the_command_running"
+                self._witnesses.record(witnessed, RUNNING if left else STOPPED)
             if self._lie == "never_times_out":
                 return CommandResult(status=Status.Success, value="", command=command, retcode=0)
             self._timed_out = True
@@ -2449,6 +2467,8 @@ class _ScriptedHost:
             return CommandResult(
                 status=Status.Failed, value="", command=command, retcode=1, msg="session is gone"
             )
+        if (printed := self._witnesses.answer(command)) is not None:
+            return CommandResult(status=Status.Success, value=printed, command=command, retcode=0)
         return self._ordinary(command)
 
     def _ordinary(self, command: str) -> CommandResult:
@@ -2521,10 +2541,12 @@ def _scripted_cell(words: Vocabulary, lie: "str | None", entry: str = RUN) -> Re
     hooked opener's the pooled shell, as a real one's does.
     """
 
+    witnesses = fake_witnesses(words)
+
     def opener_for(exec_route: str):
         @contextlib.asynccontextmanager
         async def opener():
-            yield _ScriptedHost(words, lie, exec_route)
+            yield _ScriptedHost(words, lie, exec_route, witnesses)
 
         return opener
 
@@ -2930,7 +2952,7 @@ def test_the_lie_matrix_drops_a_case_only_where_the_contract_does_not_apply() ->
     assert dropped == {
         (zephyr, lie)
         for zephyr in ZEPHYR_SHELLS
-        for lie in ("never_times_out", "wedges_the_session")
+        for lie in ("never_times_out", "wedges_the_session", "leaves_the_command_running")
     }, (
         f"the set of unmeasured (vocabulary, lie) pairs moved to {sorted(dropped)}; "
         f"every drop must be a contract outside that vocabulary's domain, not a "
@@ -3238,7 +3260,11 @@ NEW_STIMULUS_FIELDS = [
     "signal_lookalike_command",
     "stdin_eof_command",
     "pid_long_running_template",
-    "process_alive_template",
+    "exec_pid_long_running_template",
+    "witness_running_template",
+    "witness_finished_template",
+    "process_state_template",
+    "witness_cleanup_template",
     "detached_long_running_command",
 ]
 
@@ -3272,12 +3298,16 @@ def test_zephyr_declares_no_blocking_signal_stdin_state_or_terminal_stimulus():
     for words in ZEPHYR_SHELLS.values():
         for name in [
             "pid_long_running_template",
+            "exec_pid_long_running_template",
             "signal_kill_command",
             "exec_signal_kill_command",
             "stdin_eof_command",
             "run_state_set_command",
             "terminal_change_command",
-            "process_alive_template",
+            "witness_running_template",
+            "witness_finished_template",
+            "process_state_template",
+            "witness_cleanup_template",
             "detached_long_running_command",
         ]:
             assert getattr(words, name) is None, name

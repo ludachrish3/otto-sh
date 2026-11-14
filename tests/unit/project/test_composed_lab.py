@@ -81,9 +81,17 @@ class _FleetHost(BaseHost):
         self.events = events
 
     async def _exec_one(
-        self, cmd, timeout, log=LogMode.NORMAL, user=None, *, expects=None, needs_shell=False
+        self,
+        cmd,
+        timeout,
+        log=LogMode.NORMAL,
+        user=None,
+        *,
+        expects=None,
+        needs_shell=False,
+        exec_input=None,
     ):
-        del timeout, log, user, expects, needs_shell
+        del timeout, log, user, expects, needs_shell, exec_input
         self.events.append((self.id, f"exec:{cmd}"))
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 

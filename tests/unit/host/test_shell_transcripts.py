@@ -21,6 +21,7 @@ from otto.host.command_frame import (
 from otto.testing import OutputCase, assert_command_frame_conforms
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 from tests._fixtures.shell_transcripts import (
+    EXEC_RESTORED,
     ZEPHYR_EXTRA_COMMANDS,
     ZEPHYR_MODELS,
     bash_recorded,
@@ -76,8 +77,14 @@ def test_each_model_reproduces_its_recorded_transcript(stem):
             output = buffer[start:end]
             head = buffer[:begin].removesuffix("> ")
             ps1 = head.removeprefix("\n")
-            assert bash_recorded(output, retcode=rc, m=m, ps1=ps1, first=i == 0) == buffer
+            flag = EXEC_RESTORED if entry["entry"] == "exec" else ""
+            assert (
+                bash_recorded(output, retcode=rc, m=m, ps1=ps1, first=i == 0, flag=flag) == buffer
+            )
             frame = BashFrame()
+            found = frame.end_pattern(m).search(buffer)
+            assert found is not None
+            assert found.group(frame.END_FLAG_GROUP) == flag
             assert frame.parse_output(buffer, cmd=entry["cmd"], m=m) == command_value(output)
             assert command_value(output) == entry["value"]
         else:

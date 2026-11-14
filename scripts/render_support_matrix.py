@@ -167,6 +167,10 @@ class Branch:
         arm no ``declared_by`` places: the contract page names the device from it.
         PINNED to the matrix: ``tests/unit/test_support_matrix.py`` requires it to be
         exactly the kinds of the drawn cells whose observable carries ``marker``.
+    ``where``
+        The devices this arm covers, in a reader's words, for an arm with no
+        ``kinds`` and no ``declared_by``: without it the bullet says "some
+        devices", and two such arms read as one.
     """
 
     marker: str
@@ -176,6 +180,7 @@ class Branch:
     grid_word: str = ""
     declared_by: str = ""
     kinds: "tuple[str, ...]" = ()
+    where: str = ""
 
 
 @dataclass(frozen=True)
@@ -248,7 +253,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is eight of the eleven today.
+    Empty for a surface with a single observable, which is nine of the thirteen today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -331,20 +336,101 @@ VOICE: "dict[str, Voice]" = {
             "read `retcode` 128+N for a command killed by signal N, as a shell reports it, "
             "and keep using the host afterwards"
         ),
-        narrowed=(
-            "this suite's vocabulary for such a target declares no `signal_kill_command`, "
-            "or `exec` there runs outside `_PROCESS_ROUTES`, typed into a shell session "
-            "that the stimulus would end as well"
-        ),
+        narrowed="this suite's vocabulary for such a target declares no `signal_kill_command`",
         reader_narrowed=(
             "the Zephyr shell runs each command on its own thread rather than as a "
             "process, so there is no command a signal can kill there"
         ),
-        reader_entry_narrowed=(
-            "on every other host `exec` types the command into a shell session (the "
-            "`pooled-shell` or `default-session` route), "
-            "and a killed command would take that session down with it, so otto does not "
-            "check it there yet"
+    ),
+    "exec-isolated": Voice(
+        short="exec isolation",
+        capability=(
+            "run an `exec` that starts from the state its session was set up with (a "
+            "console's narrower promise is linked below the table), and trust that its "
+            "`cd`, "
+            "variables, options, `exit` and, where it runs on a terminal, its terminal "
+            "settings reach no later `exec` or `run`"
+        ),
+        branches=(
+            Branch(
+                marker="; no terminal on this route",
+                where="a route that gives `exec` a process of its own (ssh channel, local)",
+                capability=(
+                    "run an `exec` that starts from the state its session was set up with "
+                    "-- nothing a `run` or an earlier `exec` changed -- and trust that its "
+                    "`cd`, variables, options and `exit` reach no later `exec` or `run`"
+                ),
+            ),
+            Branch(
+                marker="and a 1,400-character exec: the terminal kept",
+                where="a host whose `exec` goes through a pooled shell",
+                capability=(
+                    "run an `exec` that starts from the state its session was set up with "
+                    "-- nothing a `run` or an earlier `exec` changed -- and trust that its "
+                    "`cd`, variables, options, `exit` and terminal settings reach no later "
+                    "`exec` or `run`"
+                ),
+            ),
+            Branch(
+                marker="in a clean login shell as run's user",
+                where="a console",
+                capability=(
+                    "run an `exec` in a clean login shell started from the console's one "
+                    "shell -- in the login's home directory, with the login's environment "
+                    "and options, nothing a `run` or an earlier `exec` changed -- and trust "
+                    "that its `cd`, variables, options, `exit` and terminal settings reach no "
+                    "later `exec` or `run`. Where it differs from a pooled shell's `exec`: it "
+                    "runs as whoever the console's shell is at that moment (after a `su`, the "
+                    "switched user); its `HOME`, `TERM`, `USER`, `LOGNAME` and `PATH` are the "
+                    "console shell's as they are then, so a `run` that changed one of them is "
+                    "seen through it, and its `SHELL` names the program it runs in (the "
+                    "console shell's `$SHELL`, `/bin/sh` when that is unset); a session setup "
+                    "hook's effect on the console's shell is not carried into it; what the "
+                    "login profile prints when the shell starts does not reach its output, "
+                    "and no `expects` pattern is answered to it; what a login shell's logout "
+                    "file prints (bash's `~/.bash_logout`, run when the command ends the "
+                    "shell with the `exit` builtin) does reach its output; a login with no "
+                    "`HOME` (unset or empty) "
+                    "starts in `/`; a login shell that never reaches the command (no `env`, "
+                    "no such `$SHELL`, a `$SHELL` that does not take `-l -c` such as csh, or a "
+                    "profile that exits or `exec`s) gives a failed result, never a success, "
+                    'with `retcode` -1 and the value "the command never ran: its end record '
+                    'arrived with no BEGIN marker before it"; and a console whose `$SHELL` '
+                    "is not a POSIX shell (the csh family) cannot run `exec` at all"
+                ),
+            ),
+        ),
+        narrowed="this suite's vocabulary for such a target declares no `state_read_command`",
+        reader_narrowed=(
+            "otto has not measured whether one `exec` on a Zephyr board can change the "
+            "shell state the next one sees, so this is not checked there"
+        ),
+    ),
+    "run-keeps-state": Voice(
+        short="run keeps state",
+        capability=(
+            "`cd`, `export` or `set` in one `run` and have the next `run` on that host start there"
+        ),
+        narrowed="this suite's vocabulary for such a target declares no `state_read_command`",
+        reader_narrowed=(
+            "otto has not measured how the Zephyr shell's state carries from one `run` to "
+            "the next, so this is not checked there"
+        ),
+    ),
+    "exec-stdin": Voice(
+        short="exec stdin",
+        # One promise. Its elevated arm (under `sudo=True`, after a password
+        # otto answers) runs on no device: no bed or hermetic cell's sudo asks
+        # a password (tests/conformance/_bed.py, BED_SUDO_ASKS_A_PASSWORD), so
+        # the page states that case under "Undefined" and promises it nowhere.
+        capability=(
+            "run an `exec` without `expects=` and have its command read end of file on "
+            "stdin, rather than wait on a terminal nobody types into"
+        ),
+        narrowed="this suite's vocabulary for such a target declares no `stdin_eof_command`",
+        reader_narrowed=(
+            "the Zephyr shell runs each command on its own thread rather than as a "
+            "process with a stdin, so there is nothing to read there"
         ),
     ),
     "transfer-roundtrip": Voice(
@@ -474,8 +560,10 @@ VOICE: "dict[str, Voice]" = {
     "timeout": Voice(
         short="timeout",
         capability=(
-            "give a command a time budget and have a breach reported the documented way, "
-            "with the session still usable afterwards"
+            "give a command a time budget and have a breach reported the same way on every "
+            "route, with the process otto started stopped, the call returned once the budget "
+            "and otto's bounded cleanup have passed, even when the command closed its output, "
+            "and the session usable afterwards"
         ),
         narrowed=(
             "no command there can be made to outlive a budget -- this suite's "
@@ -489,7 +577,8 @@ VOICE: "dict[str, Voice]" = {
             "otto does not test what happens when a Zephyr command runs longer than its "
             "timeout, so it promises nothing about it. The Zephyr shell runs one command "
             "at a time, on its own thread, so a command made to outlive its budget would "
-            "block the very shell the test then has to find still answering"
+            "block the very shell the test then has to find still answering; and the bed "
+            "firmware has no command that blocks for a chosen time (issue #1066)"
         ),
         narrowed_detail=(
             "Driving a single-client console to a timeout and then asserting the session "
@@ -501,6 +590,74 @@ VOICE: "dict[str, Voice]" = {
             'not describe a userland as "can be made to block".'
         ),
     ),
+}
+
+#: command page -> its known gaps: measured behaviour otto does not promise
+#: and no device limitation explains, in a first-time reader's words. Each
+#: renders under that page's "Declared exceptions and undefined behaviour";
+#: a key with no page in :data:`COMMAND_PAGES` refuses the build
+#: (:func:`_check_page_mapping`).
+KNOWN_GAPS: "dict[str, list[str]]" = {
+    "exec": [
+        (
+            "On the local machine, a timed-out `exec` sends TERM to the other processes of "
+            "the command's process group, but they may still be exiting when the call "
+            "returns, and one that ignores TERM survives "
+            "(`tests/unit/host/test_process_stop.py`)."
+        ),
+    ],
+    "run": [
+        (
+            "On the local machine, a timed-out `run` of a command inside a subshell, or of a "
+            "list or loop whose remainder runs long, can end the session: it is marked "
+            "unusable, and its working directory and variables are lost; a lone command or "
+            "pipeline is stopped and the session kept. Closing that session sends TERM to its "
+            "process group: a process that ignores TERM can outlive a shell that exits "
+            "promptly, and a process that left the group is not signalled. When a given-up "
+            "session is closed is on {ref}`Closing a session <closing-a-session>` "
+            "(issue #1101)."
+        ),
+    ],
+}
+
+#: command page -> what a per-host option changes about the command, and what each
+#: of its values needs of the host. Not a gap: each value is a promise with a
+#: requirement. Each renders under that page's "Per-host forms"; a key with no page
+#: in :data:`COMMAND_PAGES` refuses the build (:func:`_check_page_mapping`).
+HOST_OPTION_FORMS: "dict[str, list[str]]" = {
+    "exec": [
+        (
+            "An `exec(sudo=True)` sent through a shell session on a host that elevates "
+            "with sudo types one of two forms, set per host by `userland_options."
+            "sudo_form` ({ref}`sudo-form`). Unset, otto asks the host's sudo "
+            '`sudo -l "$SHELL"` once per login, on that login\'s first such `exec`: '
+            "`shell` on a yes, `validate` when sudo says not allowed and then holds a "
+            "timestamp (`sudo -n -v`); a refusal after the password with no timestamp "
+            "fails that `exec` without a second password; any other outcome is "
+            "unread, uses `shell` and is asked again. One login's answer is never used "
+            "for another. `run(sudo=True)` "
+            "does not read it and types "
+            "`sudo -S <cmd>` (issue #1086)."
+        ),
+        (
+            "`shell` (the default): one sudo call, `sudo -S \"$SHELL\" -c '<cmd>'`, so "
+            "the whole command string runs as root, in a new shell of the login's own "
+            "kind (not the pooled shell: its functions, aliases and unexported "
+            "variables are not seen). It needs the host's sudoers to allow the "
+            "login's shell; "
+            "where it does not, the `exec` returns sudo's refusal (status 1) and "
+            "nothing runs: set `sudo_form` to `validate` "
+            "(`tests/unit/host/test_exec_stdin.py`)."
+        ),
+        (
+            "`validate`: `sudo -S -v`, then `sudo -n <cmd>`, so only the command's "
+            "first simple command runs as root. It needs the host's sudo to keep its "
+            "timestamp between the two calls; on a sudo with `timestamp_timeout=0` the "
+            "password is accepted and the command is then refused (`sudo: a password "
+            "is required`, status 1) and does not run: set `sudo_form` to `shell` "
+            "(`tests/unit/host/test_exec_stdin.py`)."
+        ),
+    ],
 }
 
 #: How an ``observed_cells`` outcome reads to someone who does not run the suite.
@@ -2340,7 +2497,10 @@ def not_checked_notes(
     reachable = space_for(contract, cells)
     collected = collected_cells(contract, cells, applies=applies)
     notes: "list[NotChecked]" = []
-    every = {(cell.kind, cell.cell.term) for cell in universe}
+    # The domain note speaks only of hosts some declared entry reaches: a host
+    # every entry withholds is not checked for the entry's reason, below.
+    every = {(cell.kind, cell.cell.term) for cell in reachable}
+    withheld = {(cell.kind, cell.cell.term) for cell in universe} - every
     domain = {(cell.kind, cell.cell.term) for cell in collected}
     outside_kinds = sorted(
         {kind for kind, _ in every} - {kind for kind, _ in domain}, key=list(HOST_KIND_VOICE).index
@@ -2361,7 +2521,7 @@ def not_checked_notes(
         )
     for entry in declared:
         checked = {(cell.kind, cell.cell.term) for cell in collected if cell.entry == entry}
-        missing = domain - checked
+        missing = (domain | withheld) - checked
         if not missing:
             continue
         # A host the entry reaches but the domain drops for that entry is not
@@ -2576,7 +2736,9 @@ def _narrower_promise(
             f"  - Otherwise you can {_esc(branch.capability.rstrip('.'))}.\n"
             f"  - What is lost: {{ref}}`{_capitalise(declared.affects)} <{exception_label(item)}>`."
         )
-    where = _join([HOST_KIND_VOICE[kind] for kind in branch.kinds]) or "some devices"
+    where = (
+        _join([HOST_KIND_VOICE[kind] for kind in branch.kinds]) or branch.where or "some devices"
+    )
     bullet = (
         f"On {where}, `{surface_id}` holds in a narrower form.\n"
         f"  - You can {_esc(branch_capability(branch).rstrip('.'))}."
@@ -2882,7 +3044,10 @@ COMMAND_PAGES = {
         summary="runs a one-off command, with no state carried from one call to the next",
         opening=(
             "`exec` runs a one-off command: nothing one call changes is carried to the",
-            "next. From the CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from",
+            "next. On a console it starts in a clean login shell, not from what `run`",
+            "left in the console's shell",
+            "({ref}`shell state, by route <exec-frame-shell-state>`). From the",
+            "CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from",
             "Python, {meth}`Host.exec <otto.host.host.Host.exec>`.",
         ),
         routes=("ssh-channel", "pooled-shell", "default-session", "local-subprocess", "container"),
@@ -2942,6 +3107,16 @@ def _check_page_mapping() -> None:
         f"entry {entry!r} maps to {voice.page!r}, which COMMAND_PAGES does not hold"
         for entry, voice in ENTRY_VOICE.items()
         if voice.page not in COMMAND_PAGES
+    ]
+    problems += [
+        f"known gap keyed to {command!r}, which COMMAND_PAGES does not hold"
+        for command in KNOWN_GAPS
+        if command not in COMMAND_PAGES
+    ]
+    problems += [
+        f"per-host forms keyed to {command!r}, which COMMAND_PAGES does not hold"
+        for command in HOST_OPTION_FORMS
+        if command not in COMMAND_PAGES
     ]
     problems += [
         f"command page {command!r} carries no entry"
@@ -3159,6 +3334,8 @@ def _not_checked_example(rows: "list[ContractRow]") -> str:
     pairs = sorted(note.hosts, key=lambda p: (order.index(p[0]), p[1]))
     where = _join([_host_phrase(*pair) for pair in pairs])
     through = f" through `{note.entry}`" if note.entry else ""
+    if note.entry == "exec-shell":
+        through += " (an `exec` an `ssh` host sends through a shell session)"
     if note.only:
         return f"`{row.surface_id}` is checked{through} only on {where}."
     return f"`{row.surface_id}` is not checked{through} on {where}."
@@ -3442,6 +3619,28 @@ def render_contracts_overview(
         "  measure again until a new session opens",
         "  ({ref}`What a command's value holds <command-output-contract>`).",
         _zephyr_unrecorded(),
+        "- An `exec(sudo=True)` whose sudo or su asks for a password that otto answers,",
+        "  where no device measures it. Password sudo over `ssh` is measured on the",
+        "  lab's test1 (sudo's default timestamp) and test3 (`timestamp_timeout=0`):",
+        "  the command reads end of file. Password sudo on a `telnet` or `console`",
+        "  route, and password su on any route (every lab host that elevates with su",
+        "  logs in as root), are checked only against a stand-in sudo and su.",
+        "  Whether the password prompt otto answers appears in the returned value is",
+        "  not promised either, for `run` and `exec` alike.",
+        "  On BusyBox 1.16.1, a shell-routed `exec` for which otto answers a password",
+        "  is expected to fail with that shell's `Bad file descriptor` (status 2): otto",
+        "  keeps the terminal for the password on file descriptor 3 (`3<&0`), and",
+        "  BusyBox 1.16.1's shell refuses to copy file descriptor 0. The refusal of",
+        "  `3<&0` itself was seen on the lab's BusyBox 1.16.1 device on 2026-11-14;",
+        "  the password case has not been run on a device. An `exec` for which otto",
+        "  answers no password does not open file descriptor 3 and runs there.",
+        "- After a timed-out command on an ssh `exec`, or on a shell session (`run`, or an",
+        "  `exec` through a shell session), what happens to the processes the command",
+        "  started other than the one otto stops has never been measured.",
+        "- A command whose output reproduces this session's own end record (the session",
+        "  marker, optionally `B` or `N`, digits, `__`), or a time budget that expires",
+        "  while that record is arriving: its value and status are not promised",
+        "  (issue #1103).",
         "- How long a line the Zephyr shell itself accepts. Its command buffer is a",
         "  firmware build setting (`CONFIG_SHELL_CMD_BUFF_SIZE`) and has never been",
         "  measured. Where otto sizes its own lines on a Zephyr board it uses the",
@@ -3569,7 +3768,26 @@ def render_command_page(
         "{ref}`Undefined <command-contracts-undefined>`.",
         "",
     ]
+    gaps = KNOWN_GAPS.get(command, [])
+    if gaps:
+        lines += [f"({known_gaps_label(command)})=", "### Known gaps (not device limitations)", ""]
+        lines += [f"- {gap}" for gap in gaps]
+        lines.append("")
+    forms = HOST_OPTION_FORMS.get(command, [])
+    if forms:
+        lines += [f"({host_option_forms_label(command)})=", "### Per-host forms", ""]
+        lines += [f"- {form}" for form in forms]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def host_option_forms_label(command: str) -> str:
+    """Name the cross-reference label of *command*'s per-host forms list."""
+    return f"{command_page_label(command)}-host-forms"
+
+
+def known_gaps_label(command: str) -> str:
+    """Name the cross-reference label of *command*'s known-gaps list."""
+    return f"{command_page_label(command)}-known-gaps"
 
 
 def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:

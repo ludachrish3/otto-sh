@@ -27,7 +27,9 @@ The command is wrapped as `SUDO_PROMPT='otto-sudo-<random>:' sudo -S <cmd>`,
 or as `su -c '<cmd>'` on a host whose userland has `su` and no `sudo`. On a
 {class}`~otto.host.unix_host.UnixHost` the password (from `creds`: the login
 user's for sudo, root's for su) is auto-answered through the expect channel;
-`LocalHost`/Docker assume passwordless sudo by default. Caller-supplied
+`LocalHost`/Docker assume passwordless sudo by default. `exec(sudo=True)`
+on a shell session types one of two sudo forms, a per-host option
+({ref}`sudo-form`). Caller-supplied
 `expects` are preserved (the password answer is tried first). The password
 travels as the cred's own `SecretStr` and is unwrapped only inside the
 session's transport write (what a traceback then shows is

@@ -35,6 +35,7 @@ select ``integration and not embedded and not stability``) rather than a
 import pytest
 
 from otto import register_login_proxy
+from otto.host.errors import PasswordRefusedError
 from otto.host.factory import create_host_from_dict
 from otto.utils import Status
 from tests._fixtures.labdata import element_for, host_data
@@ -64,16 +65,15 @@ _CREDS: list[dict[str, str]] = [
 ]
 
 
-def _host(term: str):
-    """A ``test1`` UnixHost on *term*, carrying the two extra accounts inline."""
-    return create_host_from_dict(
-        {
-            "ip": host_data(_NE)["ip"],
-            "creds": [dict(c) for c in _CREDS],
-            "term": term,
-        },
-        element=element_for(_NE),
-    )
+def _host(term: str, ne: str = _NE, userland_options: "dict[str, str] | None" = None):
+    """A *ne* (default ``test1``) UnixHost on *term*, carrying the two extra accounts inline.
+
+    *userland_options* is the host entry's table of that name, when given.
+    """
+    entry: dict = {"ip": host_data(ne)["ip"], "creds": [dict(c) for c in _CREDS], "term": term}
+    if userland_options is not None:
+        entry["userland_options"] = userland_options
+    return create_host_from_dict(entry, element=element_for(ne))
 
 
 @pytest.mark.parametrize("term", ["ssh", "telnet"])
@@ -112,5 +112,92 @@ async def test_exec_sudo_user_answers_with_that_users_own_password() -> None:
         assert "Sorry, try again" not in result.value, (
             f"sudo was handed the wrong user's password: {result.value!r}"
         )
+    finally:
+        await host.close()
+
+
+# The sudo form of `exec(sudo=True)` against the lab's password sudo, run as
+# `test` (password Password1). The Vagrantfile's `sudo_policy`: on test1 `test`
+# is a sudoer with sudo's default timestamp, on test3 a sudoer with
+# `timestamp_timeout=0`, on test2 not a sudoer. Every password typed here is
+# the right one: a wrong one counts toward the account's lockout.
+
+
+@pytest.mark.parametrize("ne", ["test1", "test3"])
+@pytest.mark.asyncio
+async def test_an_unconfigured_host_probes_to_the_shell_form_and_elevates_the_whole_string(
+    ne: str,
+) -> None:
+    host = _host("ssh", ne)
+    try:
+        both = await host.exec("id -un; id -un", sudo=True, user="test")
+        bash = await host.exec("[[ a == a ]] && echo {x,y}", sudo=True, user="test")
+        assert bash.value.splitlines()[-1].endswith("x y"), f"{bash.value!r}"
+        # Settled as a measurement, not the unread default.
+        assert host._userland().as_lab_json(sudo_login="test").get("sudo_form") == "shell"
+        assert both.status == Status.Success, f"{both.value!r}"
+        assert both.value.splitlines()[-2:] == ["root", "root"], f"{both.value!r}"
+        reader = await host.exec("cat; echo otto-sudo-eof", sudo=True, user="test")
+        assert reader.status == Status.Success, f"{reader.value!r}"
+        # The reader read end of file: it returned at once, its marker last.
+        assert reader.value.splitlines()[-1] == "otto-sudo-eof", f"{reader.value!r}"
+    finally:
+        await host.close()
+
+
+@pytest.mark.parametrize(("ne", "ok"), [("test1", True), ("test3", False)])
+@pytest.mark.asyncio
+async def test_the_validate_form_needs_a_sudo_that_keeps_its_timestamp(ne: str, ok: bool) -> None:
+    """Configured ``validate``: runs on test1; on test3 sudo refuses the ``sudo -n`` step."""
+    host = _host("ssh", ne, userland_options={"sudo_form": "validate"})
+    try:
+        result = await host.exec("id -un", sudo=True, user="test")
+        if ok:
+            assert result.status == Status.Success, f"{result.value!r}"
+            assert result.value.splitlines()[-1] == "root", f"{result.value!r}"
+        else:
+            assert result.retcode == 1, f"{result!r}"
+            assert result.value.endswith("sudo: a password is required"), f"{result.value!r}"
+        after = await host.exec("echo alive", user="test")
+        assert after.value == "alive", f"{after.value!r}"
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_login_that_is_not_a_sudoer_is_refused_once_with_nothing_pending() -> None:
+    """test2: ``test`` is not a sudoer, so the probe is refused and ``sudo -n -v`` holds nothing.
+
+    That is unread, never a measured form: the exec fails as a refused
+    password naming ``userland_options.sudo_form``, with no second password.
+    """
+    host = _host("ssh", "test2")
+    try:
+        with pytest.raises(PasswordRefusedError, match=r"userland_options\.sudo_form") as refused:
+            await host.exec("id -un", sudo=True, user="test")
+        assert "Sorry, try again" not in str(refused.value)
+        assert "sudo_form" not in host._userland().as_lab_json(sudo_login="test")
+        after = await host.exec("echo alive", user="test")
+        assert after.value == "alive", f"{after.value!r}"
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_one_login_s_sudo_answer_is_not_another_s() -> None:
+    """test2: ``test``'s refusal leaves ``vagrant`` (a NOPASSWD sudoer) to be asked as itself.
+
+    ``vagrant`` is asked after ``test`` was refused, measures the ``shell``
+    form, and its compound command runs whole as root.
+    """
+    host = _host("ssh", "test2")
+    try:
+        with pytest.raises(PasswordRefusedError):
+            await host.exec("id -un", sudo=True, user="test")
+        both = await host.exec("id -un; id -un", sudo=True)
+        userland = host._userland()
+        assert userland.as_lab_json(sudo_login="vagrant").get("sudo_form") == "shell"
+        assert "sudo_form" not in userland.as_lab_json(sudo_login="test")
+        assert both.value.splitlines()[-2:] == ["root", "root"], f"{both.value!r}"
     finally:
         await host.close()

@@ -1773,6 +1773,7 @@ class _RecordingShellSession(ShellSession):
         on_output=None,
         redact: bool = False,
         write_progress=None,
+        exec_input=None,
     ) -> CommandResult:
         self.ran.append(cmd)
         return CommandResult(status=Status.Success, value=self._output, command=cmd, retcode=0)

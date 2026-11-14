@@ -50,6 +50,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from otto.testing import EXACT_OUTPUT_CASES, OutputCase
+from tests._fixtures import witness_shell
 from tests._fixtures.shell_transcripts import (
     ZEPHYR_EXTRA_COMMANDS,
     recordings,
@@ -329,10 +330,29 @@ class Vocabulary:
     """Reads its stdin to EOF, then prints a marker."""
 
     pid_long_running_template: str | None
-    """Writes its pid to ``{path}`` and execs a sleeper, so the leader is the sleeper."""
+    """Writes its witness (DEF-WIT) to ``{path}`` and execs a sleeper, so the witnessed process is
+    the sleeper; it outlives any budget the timeout contract sets."""
 
-    process_alive_template: str | None
-    """Exits 0 only for a live, non-zombie pid read from ``{path}`` (M9)."""
+    exec_pid_long_running_template: str | None
+    """The exec entries' spelling of :attr:`pid_long_running_template`: ``exec`` makes the
+    witnessed process the exec's own top process on every route (as
+    :attr:`exec_signal_kill_command` does), so the stop's wait for that process is a wait
+    for the witnessed one. Measured 2026-11-14: a local exec's ``/bin/sh -c`` (dash) does
+    not exec its last command, so without it the witnessed sleeper is a group member
+    that can still read as running, TERM pending, when the leader's reap returns."""
+
+    witness_running_template: str | None
+    """Writes its witness to ``{path}`` and is left sleeping in the background, output closed."""
+
+    witness_finished_template: str | None
+    """Writes its witness to ``{path}`` and exits before the call returns."""
+
+    process_state_template: str | None
+    """The one witness observer (DEF-WIT) of ``{path}``: prints one of the four answers in
+    :mod:`tests._fixtures.witness_shell`, and never fails or exits."""
+
+    witness_cleanup_template: str | None
+    """The one witness cleanup of ``{path}``: ``kill -9`` only a running witness, then remove it."""
 
     detached_long_running_command: str | None
     """Closes output in the command's own outer shell, so EOF precedes exit (M8); exec entries
@@ -393,10 +413,19 @@ POSIX = Vocabulary(
     signal_exit_code=143,
     signal_lookalike_command="sh -c 'exit 143'",
     stdin_eof_command="cat; echo otto-cf-eof",
-    pid_long_running_template="sh -c 'echo $$ > {path}; echo otto-cf-started; exec sleep 10'",
-    process_alive_template=(
-        "case $(cat /proc/$(cat {path})/stat 2>/dev/null) in *') Z '*|'') exit 1;; esac"
+    # The witness statements are `witness_shell`'s own (DEF-WIT), as `{path}` templates.
+    pid_long_running_template=witness_shell.format_template(
+        functools.partial(witness_shell.long_running_template, seconds=10)
     ),
+    exec_pid_long_running_template=witness_shell.format_template(
+        lambda path: "exec " + witness_shell.long_running_template(path, seconds=10)
+    ),
+    witness_running_template=witness_shell.format_template(
+        witness_shell.running_in_background_template
+    ),
+    witness_finished_template=witness_shell.format_template(witness_shell.finished_template),
+    process_state_template=witness_shell.format_template(witness_shell.process_state_template),
+    witness_cleanup_template=witness_shell.format_template(witness_shell.witness_cleanup_template),
     detached_long_running_command="exec >/dev/null 2>&1; sleep 10",
 )
 
@@ -468,7 +497,11 @@ _ZEPHYR_BASE = Vocabulary(
     signal_lookalike_command=None,
     stdin_eof_command=None,
     pid_long_running_template=None,
-    process_alive_template=None,
+    exec_pid_long_running_template=None,
+    witness_running_template=None,
+    witness_finished_template=None,
+    process_state_template=None,
+    witness_cleanup_template=None,
     detached_long_running_command=None,
 )
 

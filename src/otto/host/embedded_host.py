@@ -60,7 +60,7 @@ from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
-from .command_frame import CommandFrame, ZephyrFrame
+from .command_frame import CommandFrame, ExecInput, ZephyrFrame
 from .connections import ConnectionManager, TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .exec_route import ExecRoute
@@ -404,6 +404,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
@@ -418,7 +419,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         the shared shell, so the plan has nothing to choose.
         """
         return await self._live_session_mgr().run_cmd(
-            cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+            cmd=cmd,
+            expects=expects,
+            timeout=timeout,
+            log=self._effective_log(log),
+            exec_input=exec_input,
         )
 
     @override

@@ -94,9 +94,10 @@ class TransferContext:
     # that needs to know how the device spells something reads it here rather
     # than probing on its own account.
     userland: "Userland | None" = None
-    # How long a single line of a command this host's `exec_cmd` can carry, or
-    # None when nothing bounds it -- asked of the host's SessionManager (see
-    # `otto.host.session.SessionManager.line_budget`, for the route the host's
+    # How much of a single line of a command this host's `exec_cmd` can carry
+    # a payload inserted into a given command may fill, or None when nothing
+    # bounds it -- asked of the host's SessionManager (see
+    # `otto.host.session.SessionManager.line_room`, for the route the host's
     # exec plan names) rather than derived
     # here, because the answer depends on which primitive `exec` routes
     # through and on the host's shell dialect, neither of which a transfer
@@ -106,7 +107,7 @@ class TransferContext:
     # `ShellFileTransfer`, whose commands carry their payload IN the command
     # line; a backend that moves bytes some other way ignores it, and the
     # default None keeps every builder that does not pass it unchanged.
-    exec_line_budget: "Callable[[], int | None] | None" = None
+    exec_line_room: "Callable[[str], int | None] | None" = None
     # embedded-family fields
     filesystem: "EmbeddedFileSystem | None" = None
 

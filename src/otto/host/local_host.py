@@ -55,6 +55,7 @@ from .session import (
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 
 if TYPE_CHECKING:
+    from .command_frame import ExecInput
     from .recursive_transfer import RemoteListing
 
 
@@ -276,6 +277,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -343,13 +345,36 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         def protocol_factory() -> process_stop.LeaderExitProtocol:
             return process_stop.LeaderExitProtocol(limit=2**16, loop=loop)
 
-        transport, protocol = await loop.subprocess_shell(
-            protocol_factory,
-            cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+        async def stop_started(
+            started: "tuple[asyncio.SubprocessTransport, process_stop.LeaderExitProtocol]",
+            exc: BaseException,
+        ) -> None:
+            # Cancelled while the spawn was still returning: the command is
+            # already running, so it gets the same stop as a cancelled drain,
+            # then the release the `finally` below gives.
+            started_transport, started_protocol = started
+            started_proc = asyncio.subprocess.Process(started_transport, started_protocol, loop)
+            try:
+                await process_stop.stop_interrupted(
+                    process_stop.LocalStoppable(started_proc, started_protocol.leader_exited),
+                    exc,
+                    what=f"{self.name}: stop the interrupted command",
+                )
+            finally:
+                with contextlib.suppress(ProcessLookupError):
+                    started_transport.close()
+
+        transport, protocol = await process_stop.started_or_stopped(
+            loop.subprocess_shell(
+                protocol_factory,
+                cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            ),
+            stop_started,
+            what=f"{self.name}: start the command",
         )
         proc = asyncio.subprocess.Process(transport, protocol, loop)
 

@@ -1,10 +1,15 @@
 # Recorded shell transcripts
 
-What each bed shell sent back for a framed command, recorded on 2026-11-13 by
+What each bed shell sent back for a framed command, recorded on 2026-11-14 by
 `make shell-transcripts` (`scripts/capture_shell_transcripts.py`, under the bed
 lease). One file per `(element, term)`; `test1-ssh-pooled.json` is `test1` over
 ssh through the hook-built pooled shell (`host.exec`), every other file is
 `host.run` on the cell's default shell session.
+
+The POSIX files (`test1-ssh.json`, `test1-ssh-pooled.json`) were recorded with
+the exec frame (#935): the pooled file's `host.exec` entries carry the frame's
+subshell and its flagged end record. No file holds the handshake or a resync
+line, and the replay test compares command output only.
 
 Each command entry carries:
 

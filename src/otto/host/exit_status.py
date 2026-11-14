@@ -25,6 +25,19 @@ def _signalled(n: int) -> int:
     return 128 + n
 
 
+def subshell_status_of(reported: int) -> int:
+    """Return the status a subshell reported as the exit status a shell reports for its command.
+
+    Only ksh93 reports a command a signal killed inside a subshell as
+    ``256 + N``; every other shell, and every other ksh93 status, is already
+    ``0..255``. A status above 255 is therefore ksh93's signal death and
+    becomes ``128 + N``; any other is unchanged.
+    """
+    if reported > 255:  # noqa: PLR2004 — the largest exit status a shell reports
+        return _signalled(reported - 256)
+    return reported
+
+
 def exit_status_of(returncode: "int | None") -> "int | None":
     """Return a process route's return code as the exit status a shell would report.
 

@@ -72,7 +72,7 @@ from ..utils import (
 )
 from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
-from .command_frame import build_command_frame
+from .command_frame import ExecInput, build_command_frame
 from .connections import (
     ConnectionManager,
     TermContext,
@@ -647,8 +647,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     # without a direct cred, rides the pooled shell on ssh
                     # too), and the framing it subtracts is the session
                     # manager's frame's.
-                    exec_line_budget=lambda: self._session_mgr.line_budget(
-                        route=self._exec_plan(user=user, needs_shell=False).route
+                    exec_line_room=lambda cmd: self._session_mgr.line_room(
+                        route=self._exec_plan(user=user, needs_shell=False).route, cmd=cmd
                     ),
                     max_filename_len=self.max_filename_len,
                 ),
@@ -1061,11 +1061,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
     ) -> CommandResult:
         """Run *cmd* on the route :meth:`_plan_exec` chose."""
         if plan.route is ExecRoute.DEFAULT_SESSION:
             return await self._exec_on_console(
-                cmd, timeout=timeout, log=log, user=user, expects=expects
+                cmd, timeout=timeout, log=log, user=user, expects=expects, exec_input=exec_input
             )
         mgr = self._live_session_mgr()
         if plan.as_user is not None:
@@ -1080,6 +1081,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             log=self._effective_log(log),
             expects=expects,
             user=user,
+            exec_input=exec_input,
         )
 
     def _console_line(self) -> asyncio.Lock:
@@ -1132,6 +1134,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         log: LogMode,
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         """``exec`` on a ``console`` term: one command on the default session, one call at a time.
 
@@ -1162,6 +1165,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     timeout=timeout,
                     log=self._effective_log(log),
                     expects=expects,
+                    exec_input=exec_input,
                 )
             async with self.as_user(user=user):
                 return await mgr.exec_on_route(
@@ -1170,6 +1174,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     timeout=timeout,
                     log=self._effective_log(log),
                     expects=expects,
+                    exec_input=exec_input,
                 )
 
     ####################

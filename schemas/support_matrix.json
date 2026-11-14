@@ -28,6 +28,21 @@
       "contract": "tests/conformance/test_signal_contract.py::test_a_command_killed_by_a_signal_reports_128_plus_n"
     },
     {
+      "id": "exec-isolated",
+      "title": "exec: what one exec changes reaches no later command, and no run reaches it",
+      "contract": "tests/conformance/test_state_contract.py::test_an_exec_starts_from_its_own_state_and_leaves_none"
+    },
+    {
+      "id": "run-keeps-state",
+      "title": "run: what one run does to its session, the next run sees",
+      "contract": "tests/conformance/test_state_contract.py::test_what_one_run_does_to_its_session_the_next_run_sees"
+    },
+    {
+      "id": "exec-stdin",
+      "title": "exec: a command reads end of file on stdin, also after otto answers a password",
+      "contract": "tests/conformance/test_stdin_contract.py::test_an_exec_without_expects_reads_end_of_file"
+    },
+    {
       "id": "transfer-roundtrip",
       "title": "transfer: put/get roundtrip preserves content",
       "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content"
@@ -2787,6 +2802,93 @@
             "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
           }
         ]
+      }
+    },
+    "exec-isolated": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
+      }
+    },
+    "run-keeps-state": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
+      }
+    },
+    "exec-stdin": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
       }
     },
     "transfer-roundtrip": {

@@ -29,7 +29,8 @@ import enum
 import logging
 import os
 import signal
-from typing import Any, Literal, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal, Protocol, TypeVar
 
 from typing_extensions import override
 
@@ -140,6 +141,45 @@ async def stop_interrupted(proc: StoppableProcess, exc: BaseException, *, what: 
         what=what,
         held=held_cancellation(exc),
     )
+
+
+_T = TypeVar("_T")
+
+
+async def started_or_stopped(
+    start: "Awaitable[_T]",
+    stop: "Callable[[_T, BaseException], Awaitable[None]]",
+    *,
+    what: str,
+) -> _T:
+    """Await *start* (a process start) to the end, even when the caller is cancelled meanwhile.
+
+    A process is running before the await that starts it returns, so a
+    cancellation landing inside it would be handled by the library, which
+    stops the leader only. Here the start runs under
+    :func:`~otto.lifecycle.compensate` instead: a cancellation is held until
+    it has finished (bounded by the run policy's teardown deadline once one
+    is held; unbounded, as before, when nobody cancels), then *stop* is
+    called with what it returned and the cancellation, and the cancellation
+    is re-raised. A start that fails raises its own error; with no
+    cancellation this is a plain await. A start the teardown deadline
+    abandons is cancelled, and what it started is left to the library: the
+    local leader killed alone, the ssh channel closed.
+    """
+    from ..lifecycle import compensate
+
+    started: list[_T] = []
+
+    async def _start() -> None:
+        started.append(await start)
+
+    try:
+        await compensate(_start(), what=what)
+    except asyncio.CancelledError as exc:
+        if started:
+            await stop(started[0], exc)
+        raise
+    return started[0]
 
 
 _LOCAL_SIGNALS = {

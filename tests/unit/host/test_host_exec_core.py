@@ -2,6 +2,8 @@
 normalisation, elevation, refusal ordering, ambient identity, and the
 one-command differential against `run(cmd).only`."""
 
+import dataclasses
+
 import pytest
 
 from otto.host.host import BaseHost, ElevatedCommand, ShellCommand
@@ -39,7 +41,15 @@ class _Recording(BaseHost):
         return self._ambient
 
     async def _exec_one(
-        self, cmd, timeout, log=LogMode.NORMAL, user=None, *, expects=None, needs_shell=False
+        self,
+        cmd,
+        timeout,
+        log=LogMode.NORMAL,
+        user=None,
+        *,
+        expects=None,
+        needs_shell=False,
+        exec_input=None,
     ):
         self.exec_calls.append(
             {
@@ -49,6 +59,7 @@ class _Recording(BaseHost):
                 "user": user,
                 "expects": expects,
                 "needs_shell": needs_shell,
+                "exec_input": exec_input,
             }
         )
         return CommandResult(status=Status.Success, value="out", command=cmd, retcode=0)
@@ -125,12 +136,14 @@ class TestTheSharedCore:
             def __init__(self, ambient=None):
                 super().__init__(ambient)
                 self.elevated_as: list[str | None] = []
+                self.elevated_inputs: list = []
 
             async def _prepare_elevation(self):
                 self.prepared += 1
 
-            def _elevate(self, cmd, user=None):
+            def _elevate(self, cmd, user=None, *, exec_input=None):
                 self.elevated_as.append(user)
+                self.elevated_inputs.append(exec_input)
                 return ElevatedCommand(f"sudo -S {cmd}", [("assword", "pw\n")])
 
         host = _Elevating()
@@ -141,6 +154,22 @@ class TestTheSharedCore:
         assert call["expects"] == [("assword", "pw\n")]
         assert call["needs_shell"] is True
         assert host.elevated_as == [None], "no user: the session's own identity elevates"
+        # One ExecInput per call, decided from the caller's pairs (none here),
+        # reaches the elevation; the frame's is that one with the elevation's
+        # own credential fact (this elevation reads no credential descriptor).
+        assert call["exec_input"] == dataclasses.replace(host.elevated_inputs[0], credential=False)
+        assert call["exec_input"].stdin_eof is True
+
+        class _ReadsTheDescriptor(_Elevating):
+            def _elevate(self, cmd, user=None, *, exec_input=None):
+                plain = super()._elevate(cmd, user, exec_input=exec_input)
+                return ElevatedCommand(plain.command, plain.expects, reads_credential_fd=True)
+
+        reading = _ReadsTheDescriptor()
+        await reading.exec("id", sudo=True)
+        assert reading.exec_calls[0]["exec_input"] == dataclasses.replace(
+            reading.elevated_inputs[0], credential=True
+        )
 
         # The EFFECTIVE user reaches the elevation seam, so a family that
         # authenticates as the user it switched to answers with that user's
@@ -170,7 +199,7 @@ class TestTheSharedCore:
             async def _prepare_elevation(self):
                 pass
 
-            def _elevate(self, cmd, user=None):
+            def _elevate(self, cmd, user=None, *, exec_input=None):
                 return ElevatedCommand(f"sudo -S {cmd}", [])
 
         host = _Elevating()

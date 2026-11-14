@@ -170,8 +170,9 @@ class _Host(UnixHost):
         *,
         expects: "list[Expect] | None" = None,
         needs_shell: bool = False,
+        exec_input: object = None,
     ) -> CommandResult:
-        del user, expects, needs_shell
+        del user, expects, needs_shell, exec_input
         return self.device.answer(cmd)
 
 
@@ -545,7 +546,9 @@ class TestTheFamiliesWithNoResolver:
 _EVERY_NON_APPLET_CAPABILITY = {
     f.name
     for f in dataclasses.fields(UserlandOptions)
-    if f.name != "version" and f.name not in {applet_capability(a) for a in PROBED_APPLETS}
+    # `sudo_form` is not the round's: an exec under sudo asks it on its own.
+    if f.name not in {"version", "sudo_form"}
+    and f.name not in {applet_capability(a) for a in PROBED_APPLETS}
 }
 
 

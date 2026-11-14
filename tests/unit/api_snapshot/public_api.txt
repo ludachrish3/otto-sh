@@ -791,11 +791,18 @@ call	otto.host.app_shell:parse_one	sync	PK:model:- KO:text:-
 name	otto.host.command_frame:BashFrame	class
 mro	otto.host.command_frame:BashFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host.command_frame:BashFrame	sync	-
+member	otto.host.command_frame:BashFrame.END_CODE_GROUP	attribute
+member	otto.host.command_frame:BashFrame.END_FLAG_GROUP	attribute
 member	otto.host.command_frame:BashFrame.end_pattern	method	sync	PK:m:-
+member	otto.host.command_frame:BashFrame.errexit_restore	method	sync	-
 member	otto.host.command_frame:BashFrame.exact_output	attribute
+member	otto.host.command_frame:BashFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host.command_frame:BashFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:BashFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:BashFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host.command_frame:BashFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:BashFrame.isolates_exec	property:g--
 member	otto.host.command_frame:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:BashFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:BashFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -804,10 +811,13 @@ member	otto.host.command_frame:BashFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:BashFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.restore_interactive	method	sync	-
+member	otto.host.command_frame:BashFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host.command_frame:BashFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host.command_frame:BashFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.single_client_console	attribute
 member	otto.host.command_frame:BashFrame.streams_output_live	attribute
+member	otto.host.command_frame:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host.command_frame:BashFrame.type_name	attribute
 abstract	otto.host.command_frame:BashFrame	-
 name	otto.host.command_frame:CommandFrame	class
@@ -815,9 +825,13 @@ mro	otto.host.command_frame:CommandFrame	-
 call	otto.host.command_frame:CommandFrame	sync	-
 member	otto.host.command_frame:CommandFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.exact_output	attribute
+member	otto.host.command_frame:CommandFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host.command_frame:CommandFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:CommandFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:CommandFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host.command_frame:CommandFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:CommandFrame.isolates_exec	property:g--
 member	otto.host.command_frame:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:CommandFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -826,20 +840,39 @@ member	otto.host.command_frame:CommandFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:CommandFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.restore_interactive	method	sync	-
+member	otto.host.command_frame:CommandFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host.command_frame:CommandFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host.command_frame:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.single_client_console	attribute
 member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
 abstract	otto.host.command_frame:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
+name	otto.host.command_frame:ExecInput	class
+mro	otto.host.command_frame:ExecInput	-
+call	otto.host.command_frame:ExecInput	sync	KO:stdin_eof:- KO:restore:E:{otto.host.command_frame:ExecRestore}:BASELINE=S:"baseline" KO:credential:B:false
+member	otto.host.command_frame:ExecInput.__eq__	method	sync	PK:other:-
+member	otto.host.command_frame:ExecInput.__hash__	method	sync	-
+member	otto.host.command_frame:ExecInput.credential	field
+member	otto.host.command_frame:ExecInput.restore	field
+member	otto.host.command_frame:ExecInput.stdin_eof	field
+abstract	otto.host.command_frame:ExecInput	-
+name	otto.host.command_frame:ExecRestore	enum
+mro	otto.host.command_frame:ExecRestore	-
+enum	otto.host.command_frame:ExecRestore	BASELINE	S:"baseline"
+enum	otto.host.command_frame:ExecRestore	START	S:"start"
 name	otto.host.command_frame:FRAME_CLASSES	value
 name	otto.host.command_frame:RawFrame	class
 mro	otto.host.command_frame:RawFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host.command_frame:RawFrame	sync	-
 member	otto.host.command_frame:RawFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.exact_output	attribute
+member	otto.host.command_frame:RawFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host.command_frame:RawFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:RawFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:RawFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host.command_frame:RawFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:RawFrame.isolates_exec	property:g--
 member	otto.host.command_frame:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:RawFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:RawFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -848,7 +881,9 @@ member	otto.host.command_frame:RawFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:RawFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.restore_interactive	method	sync	-
+member	otto.host.command_frame:RawFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host.command_frame:RawFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host.command_frame:RawFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.single_client_console	attribute
 member	otto.host.command_frame:RawFrame.streams_output_live	attribute
@@ -864,6 +899,7 @@ member	otto.host.command_frame:SessionMarkers.end_prefix	field
 member	otto.host.command_frame:SessionMarkers.for_session	classmethod	sync	KO:session_id:-
 member	otto.host.command_frame:SessionMarkers.ready	field
 member	otto.host.command_frame:SessionMarkers.recover	field
+member	otto.host.command_frame:SessionMarkers.restored	field
 member	otto.host.command_frame:SessionMarkers.saved	field
 abstract	otto.host.command_frame:SessionMarkers	@final @manifest:subclass=false
 name	otto.host.command_frame:ZephyrFrame	class
@@ -871,9 +907,13 @@ mro	otto.host.command_frame:ZephyrFrame	{otto.host.command_frame:CommandFrame,ot
 call	otto.host.command_frame:ZephyrFrame	sync	-
 member	otto.host.command_frame:ZephyrFrame.end_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.exact_output	attribute
+member	otto.host.command_frame:ZephyrFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host.command_frame:ZephyrFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host.command_frame:ZephyrFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host.command_frame:ZephyrFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:ZephyrFrame.isolates_exec	property:g--
 member	otto.host.command_frame:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:ZephyrFrame.output_value	method	sync	PK:region:- KO:m:- KO:lines_after_begin:-
@@ -884,7 +924,9 @@ member	otto.host.command_frame:ZephyrFrame.recover	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.region_before_end	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.restore_interactive	method	sync	-
+member	otto.host.command_frame:ZephyrFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host.command_frame:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host.command_frame:ZephyrFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host.command_frame:ZephyrFrame.single_client_console	attribute
@@ -1378,7 +1420,7 @@ member	otto.host.transfer:TransferContext.__eq__	method	sync	PK:other:-
 member	otto.host.transfer:TransferContext.__hash__	method	sync	-
 member	otto.host.transfer:TransferContext.connections	field
 member	otto.host.transfer:TransferContext.exec_cmd	field
-member	otto.host.transfer:TransferContext.exec_line_budget	field
+member	otto.host.transfer:TransferContext.exec_line_room	field
 member	otto.host.transfer:TransferContext.filesystem	field
 member	otto.host.transfer:TransferContext.get_local_ip	field
 member	otto.host.transfer:TransferContext.host_name	field
@@ -1507,11 +1549,18 @@ abstract	otto.host:BaseHost	get put
 name	otto.host:BashFrame	class
 mro	otto.host:BashFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host:BashFrame	sync	-
+member	otto.host:BashFrame.END_CODE_GROUP	attribute
+member	otto.host:BashFrame.END_FLAG_GROUP	attribute
 member	otto.host:BashFrame.end_pattern	method	sync	PK:m:-
+member	otto.host:BashFrame.errexit_restore	method	sync	-
 member	otto.host:BashFrame.exact_output	attribute
+member	otto.host:BashFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host:BashFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:BashFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:BashFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host:BashFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host:BashFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:BashFrame.isolates_exec	property:g--
 member	otto.host:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:BashFrame.measures_terminal_mapping	attribute
 member	otto.host:BashFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -1520,10 +1569,13 @@ member	otto.host:BashFrame.quiet_history	method	sync	-
 member	otto.host:BashFrame.recover	method	sync	PK:m:-
 member	otto.host:BashFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host:BashFrame.restore_interactive	method	sync	-
+member	otto.host:BashFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:BashFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host:BashFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:BashFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:BashFrame.single_client_console	attribute
 member	otto.host:BashFrame.streams_output_live	attribute
+member	otto.host:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host:BashFrame.type_name	attribute
 abstract	otto.host:BashFrame	-
 name	otto.host:CommandFrame	class
@@ -1531,9 +1583,13 @@ mro	otto.host:CommandFrame	-
 call	otto.host:CommandFrame	sync	-
 member	otto.host:CommandFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.exact_output	attribute
+member	otto.host:CommandFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host:CommandFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:CommandFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:CommandFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host:CommandFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host:CommandFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:CommandFrame.isolates_exec	property:g--
 member	otto.host:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host:CommandFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -1542,7 +1598,9 @@ member	otto.host:CommandFrame.quiet_history	method	sync	-
 member	otto.host:CommandFrame.recover	method	sync	PK:m:-
 member	otto.host:CommandFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.restore_interactive	method	sync	-
+member	otto.host:CommandFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:CommandFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:CommandFrame.single_client_console	attribute
 member	otto.host:CommandFrame.streams_output_live	attribute
@@ -2141,6 +2199,7 @@ member	otto.host:HostSession.console_login	method	coroutine	-
 member	otto.host:HostSession.current_user	property:g--
 member	otto.host:HostSession.echoes	property:g--
 member	otto.host:HostSession.enter_frame	method	coroutine	KO:timeout:N
+member	otto.host:HostSession.exec_baseline_lost	property:g--
 member	otto.host:HostSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:HostSession.name	property:g--
 member	otto.host:HostSession.run	method	coroutine	PK:cmds:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
@@ -2323,12 +2382,13 @@ member	otto.host:LocalSession.close	method	coroutine	-
 member	otto.host:LocalSession.console_login	method	coroutine	-
 member	otto.host:LocalSession.echoes	property:g--
 member	otto.host:LocalSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
+member	otto.host:LocalSession.exec_baseline_lost	property:g--
 member	otto.host:LocalSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:LocalSession.markers	property:g--
 member	otto.host:LocalSession.open_transport	method	coroutine	-
 member	otto.host:LocalSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:LocalSession.reads_a_terminal	attribute
-member	otto.host:LocalSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N
+member	otto.host:LocalSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:LocalSession.send	method	coroutine	PK:text:-
 member	otto.host:LocalSession.terminal_mapping	property:g--
 member	otto.host:LocalSession.terminal_outlives_session	property:g--
@@ -2479,9 +2539,13 @@ mro	otto.host:RawFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFr
 call	otto.host:RawFrame	sync	-
 member	otto.host:RawFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:RawFrame.exact_output	attribute
+member	otto.host:RawFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host:RawFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:RawFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:RawFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host:RawFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:RawFrame.isolates_exec	property:g--
 member	otto.host:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:RawFrame.measures_terminal_mapping	attribute
 member	otto.host:RawFrame.parse_output	method	sync	PK:buffer:- KO:cmd:- KO:m:-
@@ -2490,7 +2554,9 @@ member	otto.host:RawFrame.quiet_history	method	sync	-
 member	otto.host:RawFrame.recover	method	sync	PK:m:-
 member	otto.host:RawFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host:RawFrame.restore_interactive	method	sync	-
+member	otto.host:RawFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:RawFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host:RawFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:RawFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:RawFrame.single_client_console	attribute
 member	otto.host:RawFrame.streams_output_live	attribute
@@ -2644,15 +2710,16 @@ member	otto.host:SessionManager.ambient_user	property:g--
 member	otto.host:SessionManager.close_all	method	coroutine	-
 member	otto.host:SessionManager.current_user	property:g--
 member	otto.host:SessionManager.exec_on	method	coroutine	KO:conn:- KO:cmd:- KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
-member	otto.host:SessionManager.exec_on_route	method	coroutine	KO:route:- KO:cmd:- KO:timeout:- KO:log:- KO:expects:N KO:user:N
+member	otto.host:SessionManager.exec_on_route	method	coroutine	KO:route:- KO:cmd:- KO:timeout:- KO:log:- KO:expects:N KO:user:N KO:exec_input:N
 member	otto.host:SessionManager.exec_route	method	sync	KO:needs_shell:B:false
 member	otto.host:SessionManager.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:SessionManager.has_live_default_session	property:g--
 member	otto.host:SessionManager.has_live_sessions	property:g--
 member	otto.host:SessionManager.line_budget	method	sync	KO:route:-
+member	otto.host:SessionManager.line_room	method	sync	KO:route:- KO:cmd:-
 member	otto.host:SessionManager.open_budget	method	sync	KO:term:N
 member	otto.host:SessionManager.open_session	method	coroutine	KO:name:-
-member	otto.host:SessionManager.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:write_progress:N
+member	otto.host:SessionManager.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:write_progress:N KO:exec_input:N
 member	otto.host:SessionManager.send	method	coroutine	PK:text:- KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:SessionManager.terminal_mapping	property:g--
 abstract	otto.host:SessionManager	@final @manifest:subclass=false
@@ -2666,6 +2733,7 @@ member	otto.host:SessionMarkers.end_prefix	field
 member	otto.host:SessionMarkers.for_session	classmethod	sync	KO:session_id:-
 member	otto.host:SessionMarkers.ready	field
 member	otto.host:SessionMarkers.recover	field
+member	otto.host:SessionMarkers.restored	field
 member	otto.host:SessionMarkers.saved	field
 abstract	otto.host:SessionMarkers	@final @manifest:subclass=false
 name	otto.host:SessionSetupError	class
@@ -2721,12 +2789,13 @@ member	otto.host:ShellSession.close	method	coroutine	-
 member	otto.host:ShellSession.console_login	method	coroutine	-
 member	otto.host:ShellSession.echoes	property:g--
 member	otto.host:ShellSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
+member	otto.host:ShellSession.exec_baseline_lost	property:g--
 member	otto.host:ShellSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:ShellSession.markers	property:g--
 member	otto.host:ShellSession.open_transport	method	coroutine	-
 member	otto.host:ShellSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:ShellSession.reads_a_terminal	attribute
-member	otto.host:ShellSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N
+member	otto.host:ShellSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:ShellSession.send	method	coroutine	PK:text:-
 member	otto.host:ShellSession.terminal_mapping	property:g--
 member	otto.host:ShellSession.terminal_outlives_session	property:g--
@@ -2748,12 +2817,13 @@ member	otto.host:TelnetSession.close	method	coroutine	-
 member	otto.host:TelnetSession.console_login	method	coroutine	-
 member	otto.host:TelnetSession.echoes	property:g--
 member	otto.host:TelnetSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
+member	otto.host:TelnetSession.exec_baseline_lost	property:g--
 member	otto.host:TelnetSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:TelnetSession.markers	property:g--
 member	otto.host:TelnetSession.open_transport	method	coroutine	-
 member	otto.host:TelnetSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:TelnetSession.reads_a_terminal	attribute
-member	otto.host:TelnetSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N
+member	otto.host:TelnetSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:TelnetSession.send	method	coroutine	PK:text:-
 member	otto.host:TelnetSession.terminal_mapping	property:g--
 member	otto.host:TelnetSession.terminal_outlives_session	property:g--
@@ -3085,15 +3155,20 @@ enum	otto.host:UserSupport	refused	S:"refused"
 name	otto.host:Userland	class
 mro	otto.host:Userland	-
 call	otto.host:Userland	sync	@manifest:construct=false
-member	otto.host:Userland.as_lab_json	method	sync	-
+member	otto.host:Userland.as_lab_json	method	sync	KO:sudo_login:N
 member	otto.host:Userland.base64_flag	property:g--
 member	otto.host:Userland.checksum	property:g--
 member	otto.host:Userland.elevation	property:g--
 member	otto.host:Userland.has_applet	method	sync	KO:applet:-
 member	otto.host:Userland.is_settled	method	sync	KO:name:-
 member	otto.host:Userland.resolve	method	coroutine	-
+member	otto.host:Userland.resolve_sudo_form	method	coroutine	KO:login:- KO:probe:-
 member	otto.host:Userland.shell_dialect	property:g--
 member	otto.host:Userland.stat_size	property:g--
+member	otto.host:Userland.sudo_form	method	sync	KO:login:-
+member	otto.host:Userland.sudo_form_known	method	sync	KO:login:-
+member	otto.host:Userland.sudo_form_settled	method	sync	KO:login:-
+member	otto.host:Userland.sudo_form_unread	method	sync	KO:login:-
 member	otto.host:Userland.timeout_style	property:g--
 abstract	otto.host:Userland	@final @manifest:subclass=false
 name	otto.host:ZephyrFrame	class
@@ -3101,9 +3176,13 @@ mro	otto.host:ZephyrFrame	{otto.host.command_frame:CommandFrame,otto.host:Comman
 call	otto.host:ZephyrFrame	sync	-
 member	otto.host:ZephyrFrame.end_pattern	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.exact_output	attribute
+member	otto.host:ZephyrFrame.exec_baseline_present	method	sync	PK:buffer:- KO:m:-
+member	otto.host:ZephyrFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.frame	method	sync	PK:cmd:- KO:m:-
+member	otto.host:ZephyrFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
 member	otto.host:ZephyrFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:ZephyrFrame.isolates_exec	property:g--
 member	otto.host:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host:ZephyrFrame.output_value	method	sync	PK:region:- KO:m:- KO:lines_after_begin:-
@@ -3114,7 +3193,9 @@ member	otto.host:ZephyrFrame.recover	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.recover_pattern	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.region_before_end	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.restore_interactive	method	sync	-
+member	otto.host:ZephyrFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
+member	otto.host:ZephyrFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host:ZephyrFrame.single_client_console	attribute

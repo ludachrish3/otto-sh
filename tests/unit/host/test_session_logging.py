@@ -332,7 +332,14 @@ class _AliveStubSession(ShellSession):
         self._alive = True
 
     async def run_cmd(
-        self, cmd, expects=None, timeout=None, on_output=None, redact=False, write_progress=None
+        self,
+        cmd,
+        expects=None,
+        timeout=None,
+        on_output=None,
+        redact=False,
+        write_progress=None,
+        exec_input=None,
     ):
         sink = on_output if on_output is not None else self._on_output
         sink("OUT")

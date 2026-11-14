@@ -372,6 +372,7 @@ writers of these; a commit of one is a tests-leaf change over the readers, never
 WORKFLOW_READERS = [
     "tests/unit/api_snapshot/test_api_gate_wiring.py",
     "tests/unit/host/test_busybox_artifacts.py",
+    "tests/unit/host/test_cut_sweep_shards.py",
     "tests/unit/scripts/test_ci_breaking_marks_checkout.py",
     "tests/unit/scripts/test_ci_failure_report.py",
     "tests/unit/test_changed_repeat_lanes.py",

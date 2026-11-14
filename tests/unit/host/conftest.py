@@ -41,6 +41,7 @@ allowlist here and nothing for a future author to remember to update.
 
 import asyncio
 import multiprocessing as mp
+import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -51,6 +52,7 @@ import pytest
 import pytest_asyncio
 
 from otto.host.binary_loader import LlextHexLoader
+from otto.host.command_frame import ExecInput
 from otto.host.element import Element
 from otto.host.file_ops import PosixFileOps
 from otto.host.host import BaseHost, Expect, is_dry_run, refuse_declined_elevation
@@ -218,8 +220,9 @@ class RecordingHost(BaseHost):
         *,
         expects: "list[Expect] | None" = None,
         needs_shell: bool = False,
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
-        del timeout, log, user, expects, needs_shell
+        del timeout, log, user, expects, needs_shell, exec_input
         self.exec_calls.append(cmd)
         self.event_log.append(f"exec:{cmd}")
         return self._next_exec_result(cmd)
@@ -389,9 +392,17 @@ class PlanRecorder(UnixHost):
         raise TypeError("the plan vocabulary has no exec(sudo=True); use run(sudo=True)")
 
     async def _exec_one(
-        self, cmd, timeout, log=LogMode.NORMAL, user=None, *, expects=None, needs_shell=False
+        self,
+        cmd,
+        timeout,
+        log=LogMode.NORMAL,
+        user=None,
+        *,
+        expects=None,
+        needs_shell=False,
+        exec_input=None,
     ):
-        del timeout, log, user, expects, needs_shell
+        del timeout, log, user, expects, needs_shell, exec_input
         self.lines.append(cmd)
         queued = self._scripts.get(cmd)
         output = queued.pop(0) if queued else ""
@@ -453,10 +464,11 @@ class EmbeddedPlanRecorder(RecordingHost):
         *,
         expects: "list[Expect] | None" = None,
         needs_shell: bool = False,
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         self.lines.append(cmd)
         return await super()._exec_one(
-            cmd, timeout, log, user, expects=expects, needs_shell=needs_shell
+            cmd, timeout, log, user, expects=expects, needs_shell=needs_shell, exec_input=exec_input
         )
 
 
@@ -579,3 +591,99 @@ def stalled_transport() -> Callable[..., StalledTransport]:
     Or ``stalled_transport(release_after_seconds=...)`` for a timed release.
     """
     return StalledTransport
+
+
+@pytest.fixture
+def failing_stty_on_path(tmp_path: Path) -> dict[str, str]:
+    """An environment overlay putting a ``stty`` that exits 1 first on ``PATH``.
+
+    For :func:`tests.unit.host._pty_session.pty_session`'s *env*: every
+    ``stty`` the shell runs from ``PATH`` fails, so the terminal's settings
+    cannot be read and the session's terminal record is empty. A shell with
+    its own ``stty`` builtin or applet ahead of ``PATH`` still runs that one.
+    """
+    fake = tmp_path / "stty"
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    return {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"}
+
+
+#: The password the stand-in ``sudo`` and ``su`` of the two fixtures below accept.
+FAKE_ELEVATION_PASSWORD = "secret"
+
+
+@pytest.fixture
+def fake_sudo_on_path(tmp_path: Path) -> dict[str, str]:
+    """An environment overlay putting the stand-in ``sudo`` first on ``PATH``.
+
+    For :func:`tests.unit.host._pty_session.pty_session`'s *env*: the one
+    stand-in (:mod:`tests._fixtures.fake_elevation`), accepting
+    :data:`FAKE_ELEVATION_PASSWORD` from fd 0 and keeping its timestamp, so
+    ``sudo -n`` after a ``sudo -S -v`` runs its command.
+    """
+    from tests._fixtures.fake_elevation import install_fake_elevation
+
+    return install_fake_elevation(
+        tmp_path / "elevation", password=FAKE_ELEVATION_PASSWORD, keeps_timestamp=True
+    )
+
+
+@pytest.fixture
+def fake_sudo_without_timestamp_on_path(tmp_path: Path) -> dict[str, str]:
+    """:func:`fake_sudo_on_path`, but the stand-in keeps no timestamp (``timestamp_timeout=0``).
+
+    A ``sudo -S -v`` validates the password and keeps nothing, so a later
+    ``sudo -n`` answers ``sudo: a password is required``.
+    """
+    from tests._fixtures.fake_elevation import install_fake_elevation
+
+    return install_fake_elevation(
+        tmp_path / "elevation", password=FAKE_ELEVATION_PASSWORD, keeps_timestamp=False
+    )
+
+
+@pytest.fixture
+def fake_su_on_path(fake_sudo_on_path: dict[str, str]) -> dict[str, str]:
+    """An environment overlay putting the stand-in ``su`` first on ``PATH``.
+
+    The same installation as :func:`fake_sudo_on_path` (one directory holds
+    both): ``su -c CMD`` reads root's password, :data:`FAKE_ELEVATION_PASSWORD`,
+    from fd 0 once, then runs ``sh -c CMD``. A BusyBox shell's own ``su``
+    applet runs ahead of ``PATH``.
+    """
+    return fake_sudo_on_path
+
+
+async def unix_host_over_scripted(
+    term: str,
+    *,
+    elevation: str,
+    creds: "list[Cred]",
+    replies: "dict[str, tuple[str, int]] | None" = None,
+    refuses_fd0_dup: bool = False,
+) -> "tuple[UnixHost, list[Any]]":
+    """A ``UnixHost`` over *term* whose shell sessions are scripted shells, and those sessions.
+
+    The host is ``test_privilege._host_wired_to``'s, with a resolved userland
+    declaring *elevation*; its manager's session factory builds
+    ``scripted_shell_unopened(replies=replies, refuses_fd0_dup=refuses_fd0_dup)``
+    sessions and appends each to
+    the returned list, so an ``exec`` goes through the real ``BaseHost.exec``,
+    ``_exec_one``, ``UnixHost._run_plan``, ``SessionManager.exec_on_route``,
+    the pooled session and ``ShellSession.run_cmd``.
+    """
+    from tests.unit.host._session_feed import scripted_shell_unopened
+    from tests.unit.host.test_privilege import _declared_userland, _host_wired_to
+
+    userland = _declared_userland(elevation)
+    await userland.resolve()
+    host = _host_wired_to(userland, creds, term=term)
+    sessions: list[Any] = []
+
+    def factory(**_kw: object) -> Any:
+        session = scripted_shell_unopened(replies=replies, refuses_fd0_dup=refuses_fd0_dup)
+        sessions.append(session)
+        return session
+
+    host._live_session_mgr()._session_factory = factory
+    return host, sessions

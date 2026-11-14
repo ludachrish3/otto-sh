@@ -64,6 +64,7 @@ class TestBashFrame:
             "__otto_probe=READY__; __otto_echo=; 2>/dev/null stty -echo || __otto_echo=E; "
             "2>/dev/null stty tab0 || :; echo; "
             f"{CALIBRATION_COMMAND} || :; unset __otto_echo; "
+            "__otto_base=$(2>/dev/null stty -g) || __otto_base=; __otto_e=; __otto_tty=; "
             "echo __OTTO_cafef00d_$__otto_probe; unset __otto_probe\n"
         )
 
@@ -114,7 +115,7 @@ class TestBashFrame:
 
     def test_end_pattern_captures_retcode_digits(self):
         pat = self.frame.end_pattern(M)
-        assert pat.search(f"{M.end_prefix}127__").group(1) == "127"
+        assert pat.search(f"{M.end_prefix}127__").group(BashFrame.END_CODE_GROUP) == "127"
 
     def test_extract_retcode_reads_end_marker_digits(self):
         buf = f"{M.begin}\nhi\n{M.end_prefix}0__\n"

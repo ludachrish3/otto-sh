@@ -10,7 +10,10 @@
 # `exec`: a one-off command
 
 `exec` runs a one-off command: nothing one call changes is carried to the
-next. From the CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from
+next. On a console it starts in a clean login shell, not from what `run`
+left in the console's shell
+({ref}`shell state, by route <exec-frame-shell-state>`). From the
+CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from
 Python, {meth}`Host.exec <otto.host.host.Host.exec>`.
 The rules every command shares -- what a contract is, what its promises
 mean, and how to read what is not promised -- are on
@@ -45,8 +48,10 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | run a command and trust the exit code otto hands back | not on BusyBox's applets run on the local machine (note 1) | `exec-exit-code` |
 | read a command's output without otto's own prompts, echo and markers mixed into it | not on BusyBox's applets run on the local machine (note 1) | `exec-framing` |
 | read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | not on BusyBox's applets run on the local machine (note 1) | `exec-output-exact` |
-| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | only on some hosts (note 2) | `exec-signal-exit` |
-| give a command a time budget and have a breach reported the documented way, with the session still usable afterwards | not on a Zephyr board (note 3); not on BusyBox's applets run on the local machine (note 1) | `timeout` |
+| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | not on a Zephyr board (note 2); not on BusyBox's applets run on the local machine (note 1) | `exec-signal-exit` |
+| run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | not on a Zephyr board (note 3); not on BusyBox's applets run on the local machine (note 1) | `exec-isolated` |
+| run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | not on a Zephyr board (note 4); not on BusyBox's applets run on the local machine (note 1) | `exec-stdin` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 5); not on BusyBox's applets run on the local machine (note 1) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -64,10 +69,13 @@ notes on the table below do not apply to them.
 
 | With `exec` sent through a shell session you can | Not checked | {ref}`Promise id <command-contracts-promise-id>` |
 | --- | --- | --- |
-| run a command and trust the exit code otto hands back | only on some hosts (note 4) | `exec-exit-code` |
-| read a command's output without otto's own prompts, echo and markers mixed into it | only on some hosts (note 4) | `exec-framing` |
-| read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | only on some hosts (note 4) | `exec-output-exact` |
-| give a command a time budget and have a breach reported the documented way, with the session still usable afterwards | only on some hosts (note 4) | `timeout` |
+| run a command and trust the exit code otto hands back | only on some hosts (note 6) | `exec-exit-code` |
+| read a command's output without otto's own prompts, echo and markers mixed into it | only on some hosts (note 6) | `exec-framing` |
+| read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | only on some hosts (note 6) | `exec-output-exact` |
+| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | only on some hosts (note 6) | `exec-signal-exit` |
+| run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | only on some hosts (note 6) | `exec-isolated` |
+| run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | only on some hosts (note 6) | `exec-stdin` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | only on some hosts (note 6) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -75,9 +83,11 @@ On some devices a promise above is narrower: see
 ## Where a promise is not checked
 
 1. Not checked on BusyBox's applets run on the local machine: there the applets are put on the `PATH` of the `run` session only, which a one-off `exec` process never sees.
-2. Checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh`, the local machine and the local machine logged in to over SSH: on every other host `exec` types the command into a shell session (the `pooled-shell` or `default-session` route), and a killed command would take that session down with it, so otto does not check it there yet.
-3. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering.
-4. Checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH: only there does `exec` otherwise get an SSH channel of its own, which `exec-shell` sends through a shell session instead.
+2. Not checked on a Zephyr board, so not promised there: the Zephyr shell runs each command on its own thread rather than as a process, so there is no command a signal can kill there.
+3. Not checked on a Zephyr board, so not promised there: otto has not measured whether one `exec` on a Zephyr board can change the shell state the next one sees, so this is not checked there.
+4. Not checked on a Zephyr board, so not promised there: the Zephyr shell runs each command on its own thread rather than as a process with a stdin, so there is nothing to read there.
+5. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
+6. Checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH: only there does `exec` otherwise get an SSH channel of its own, which `exec-shell` sends through a shell session instead.
 
 ## Declared exceptions and undefined behaviour
 
@@ -90,3 +100,15 @@ These declared exceptions apply to `exec`; each is described on
 
 What is never measured, so not promised, for `exec` as for every command:
 {ref}`Undefined <command-contracts-undefined>`.
+
+(command-contract-exec-known-gaps)=
+### Known gaps (not device limitations)
+
+- On the local machine, a timed-out `exec` sends TERM to the other processes of the command's process group, but they may still be exiting when the call returns, and one that ignores TERM survives (`tests/unit/host/test_process_stop.py`).
+
+(command-contract-exec-host-forms)=
+### Per-host forms
+
+- An `exec(sudo=True)` sent through a shell session on a host that elevates with sudo types one of two forms, set per host by `userland_options.sudo_form` ({ref}`sudo-form`). Unset, otto asks the host's sudo `sudo -l "$SHELL"` once per login, on that login's first such `exec`: `shell` on a yes, `validate` when sudo says not allowed and then holds a timestamp (`sudo -n -v`); a refusal after the password with no timestamp fails that `exec` without a second password; any other outcome is unread, uses `shell` and is asked again. One login's answer is never used for another. `run(sudo=True)` does not read it and types `sudo -S <cmd>` (issue #1086).
+- `shell` (the default): one sudo call, `sudo -S "$SHELL" -c '<cmd>'`, so the whole command string runs as root, in a new shell of the login's own kind (not the pooled shell: its functions, aliases and unexported variables are not seen). It needs the host's sudoers to allow the login's shell; where it does not, the `exec` returns sudo's refusal (status 1) and nothing runs: set `sudo_form` to `validate` (`tests/unit/host/test_exec_stdin.py`).
+- `validate`: `sudo -S -v`, then `sudo -n <cmd>`, so only the command's first simple command runs as root. It needs the host's sudo to keep its timestamp between the two calls; on a sudo with `timestamp_timeout=0` the password is accepted and the command is then refused (`sudo: a password is required`, status 1) and does not run: set `sudo_form` to `shell` (`tests/unit/host/test_exec_stdin.py`).

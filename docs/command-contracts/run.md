@@ -37,7 +37,8 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | -- | `exec-output-exact` |
 | trust that a command that failed part-way through a sequence is reported as a failure rather than as success | -- | `exec-failure-in-sequence` |
 | read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | not on a Zephyr board (note 1) | `exec-signal-exit` |
-| give a command a time budget and have a breach reported the documented way, with the session still usable afterwards | not on a Zephyr board (note 2) | `timeout` |
+| `cd`, `export` or `set` in one `run` and have the next `run` on that host start there | not on a Zephyr board (note 2) | `run-keeps-state` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 3) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -45,7 +46,8 @@ On some devices a promise above is narrower: see
 ## Where a promise is not checked
 
 1. Not checked on a Zephyr board, so not promised there: the Zephyr shell runs each command on its own thread rather than as a process, so there is no command a signal can kill there.
-2. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering.
+2. Not checked on a Zephyr board, so not promised there: otto has not measured how the Zephyr shell's state carries from one `run` to the next, so this is not checked there.
+3. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
 
 ## Declared exceptions and undefined behaviour
 
@@ -57,3 +59,8 @@ These declared exceptions apply to `run`; each is described on
 
 What is never measured, so not promised, for `run` as for every command:
 {ref}`Undefined <command-contracts-undefined>`.
+
+(command-contract-run-known-gaps)=
+### Known gaps (not device limitations)
+
+- On the local machine, a timed-out `run` of a command inside a subshell, or of a list or loop whose remainder runs long, can end the session: it is marked unusable, and its working directory and variables are lost; a lone command or pipeline is stopped and the session kept. Closing that session sends TERM to its process group: a process that ignores TERM can outlive a shell that exits promptly, and a process that left the group is not signalled. When a given-up session is closed is on {ref}`Closing a session <closing-a-session>` (issue #1101).

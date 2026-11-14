@@ -120,9 +120,15 @@ def _applet_answer(present=()) -> str:
 # of quietly going unresolved.
 _NEVER_PROBED = {"version"}
 
+# ``sudo_form`` is probed, but not by the round: its question is an elevated
+# call that answers the elevation's password, so only an ``exec`` under sudo
+# asks it (``Userland.resolve_sudo_form``; ``tests/unit/host/test_sudo_form.py``).
+_OUTSIDE_THE_ROUND = {"sudo_form"}
+
 
 def _probeable_field_names() -> list[str]:
-    return sorted(f.name for f in fields(UserlandOptions) if f.name not in _NEVER_PROBED)
+    skipped = _NEVER_PROBED | _OUTSIDE_THE_ROUND
+    return sorted(f.name for f in fields(UserlandOptions) if f.name not in skipped)
 
 
 # The applet capabilities, and the six that are not. Derived from

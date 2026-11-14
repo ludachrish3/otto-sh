@@ -131,7 +131,7 @@ otherwise. Anything else is not promised, in one of three ways:
 1. **Not checked.** The promise exists, but no test covers this kind of host
    or this entry, so it is not promised there. A command's page says where,
    beside each promise, with a numbered note saying why. For example,
-   `exec-exit-code` is checked through `exec-shell` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH.
+   `exec-exit-code` is checked through `exec-shell` (an `exec` an `ssh` host sends through a shell session) only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH.
 2. **A declared exception.** The device, or a library otto is built on (such
    as telnetlib3), makes the promise impossible, and otto says so in its
    code. Each is listed [below](#declared-exceptions) with its measurements.
@@ -184,6 +184,10 @@ page says, and only the narrower one is promised there, for every command:
 - On a Zephyr board, `exec-output-exact` holds in a narrower form.
   - You can read a command's output exactly as the device's firmware wrote it, with only the one final newline and the colour codes the shell puts around its error and warning lines removed (checked against recordings of the firmware's own commands, because the Zephyr shell has no command that prints text you choose).
   - The colour codes removed are exactly `\x1b[1;31m`, `\x1b[1;33m` and `\x1b[m`, wherever they occur in the output, so a command that writes one of those sequences itself loses it.
+- On a host whose `exec` goes through a pooled shell, `exec-isolated` holds in a narrower form.
+  - You can run an `exec` that starts from the state its session was set up with -- nothing a `run` or an earlier `exec` changed -- and trust that its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`.
+- On a console, `exec-isolated` holds in a narrower form.
+  - You can run an `exec` in a clean login shell started from the console's one shell -- in the login's home directory, with the login's environment and options, nothing a `run` or an earlier `exec` changed -- and trust that its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`. Where it differs from a pooled shell's `exec`: it runs as whoever the console's shell is at that moment (after a `su`, the switched user); its `HOME`, `TERM`, `USER`, `LOGNAME` and `PATH` are the console shell's as they are then, so a `run` that changed one of them is seen through it, and its `SHELL` names the program it runs in (the console shell's `$SHELL`, `/bin/sh` when that is unset); a session setup hook's effect on the console's shell is not carried into it; what the login profile prints when the shell starts does not reach its output, and no `expects` pattern is answered to it; what a login shell's logout file prints (bash's `~/.bash_logout`, run when the command ends the shell with the `exit` builtin) does reach its output; a login with no `HOME` (unset or empty) starts in `/`; a login shell that never reaches the command (no `env`, no such `$SHELL`, a `$SHELL` that does not take `-l -c` such as csh, or a profile that exits or `exec`s) gives a failed result, never a success, with `retcode` -1 and the value "the command never ran: its end record arrived with no BEGIN marker before it"; and a console whose `$SHELL` is not a POSIX shell (the csh family) cannot run `exec` at all.
 
 (command-contracts-not-covered)=
 
@@ -293,6 +297,28 @@ producing them:
   measure again until a new session opens
   ({ref}`What a command's value holds <command-output-contract>`).
 - On a Zephyr board, output that no recording of a firmware command shows (`tests/unit/host/shell_transcripts/README.md`): a `\r` the program itself writes; output that does not end with a newline; empty output on Zephyr 3.7 and 4.4 (on Zephyr 2.7 a command with no output was recorded, and it arrives as nothing); spaces at the end of a line (spaces at the start of a line, as `help` writes, are recorded and kept); an info-level coloured line; plain output followed by an error line; a `\r\n` the command writes itself (seen once, not recorded: `log status` arrives as `\r\r\n`). Exact output is promised there only for the firmware's own commands, as above.
+- An `exec(sudo=True)` whose sudo or su asks for a password that otto answers,
+  where no device measures it. Password sudo over `ssh` is measured on the
+  lab's test1 (sudo's default timestamp) and test3 (`timestamp_timeout=0`):
+  the command reads end of file. Password sudo on a `telnet` or `console`
+  route, and password su on any route (every lab host that elevates with su
+  logs in as root), are checked only against a stand-in sudo and su.
+  Whether the password prompt otto answers appears in the returned value is
+  not promised either, for `run` and `exec` alike.
+  On BusyBox 1.16.1, a shell-routed `exec` for which otto answers a password
+  is expected to fail with that shell's `Bad file descriptor` (status 2): otto
+  keeps the terminal for the password on file descriptor 3 (`3<&0`), and
+  BusyBox 1.16.1's shell refuses to copy file descriptor 0. The refusal of
+  `3<&0` itself was seen on the lab's BusyBox 1.16.1 device on 2026-11-14;
+  the password case has not been run on a device. An `exec` for which otto
+  answers no password does not open file descriptor 3 and runs there.
+- After a timed-out command on an ssh `exec`, or on a shell session (`run`, or an
+  `exec` through a shell session), what happens to the processes the command
+  started other than the one otto stops has never been measured.
+- A command whose output reproduces this session's own end record (the session
+  marker, optionally `B` or `N`, digits, `__`), or a time budget that expires
+  while that record is arriving: its value and status are not promised
+  (issue #1103).
 - How long a line the Zephyr shell itself accepts. Its command buffer is a
   firmware build setting (`CONFIG_SHELL_CMD_BUFF_SIZE`) and has never been
   measured. Where otto sizes its own lines on a Zephyr board it uses the
@@ -308,6 +334,9 @@ By promise id:
 - `exec-output-exact`: `tests/conformance/test_output_contract.py::test_a_commands_value_is_its_exact_output`
 - `exec-failure-in-sequence`: `tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success`
 - `exec-signal-exit`: `tests/conformance/test_signal_contract.py::test_a_command_killed_by_a_signal_reports_128_plus_n`
+- `exec-isolated`: `tests/conformance/test_state_contract.py::test_an_exec_starts_from_its_own_state_and_leaves_none`
+- `run-keeps-state`: `tests/conformance/test_state_contract.py::test_what_one_run_does_to_its_session_the_next_run_sees`
+- `exec-stdin`: `tests/conformance/test_stdin_contract.py::test_an_exec_without_expects_reads_end_of_file`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`
 
 The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host

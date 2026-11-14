@@ -162,6 +162,30 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="exec-isolated",
+        title="exec: what one exec changes reaches no later command, and no run reaches it",
+        contract=(
+            "tests/conformance/test_state_contract.py"
+            "::test_an_exec_starts_from_its_own_state_and_leaves_none"
+        ),
+    ),
+    Surface(
+        id="run-keeps-state",
+        title="run: what one run does to its session, the next run sees",
+        contract=(
+            "tests/conformance/test_state_contract.py"
+            "::test_what_one_run_does_to_its_session_the_next_run_sees"
+        ),
+    ),
+    Surface(
+        id="exec-stdin",
+        title="exec: a command reads end of file on stdin, also after otto answers a password",
+        contract=(
+            "tests/conformance/test_stdin_contract.py"
+            "::test_an_exec_without_expects_reads_end_of_file"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(

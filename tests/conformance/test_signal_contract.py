@@ -16,15 +16,12 @@ WHAT THIS CONTRACT IS ABOUT, declared rather than assumed: see
 
 import pytest
 
-from otto.host.exec_route import ExecRoute
 from otto.utils import Status
-from tests.conformance._entry import RUN, expected_route, issue, opened
+from tests.conformance._entry import RUN, issue, opened
 from tests.conformance._framing import assert_single_line_answer
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
-
-_PROCESS_ROUTES = {ExecRoute.LOCAL_SUBPROCESS.value, ExecRoute.SSH_CHANNEL.value}
 
 
 def applicable_cell(resolved: ResolvedCell) -> bool:
@@ -32,17 +29,15 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 
     A vocabulary with no ``signal_kill_command`` has no command that can be
     made to die by a signal (the Zephyr shell runs its commands on the shell
-    thread). On ``exec``, only the process routes are in the domain for now:
-    where ``exec`` types the command into a shell session, the exec stimulus
-    would end that session's shell itself until otto runs an exec frame of its
-    own there.
+    thread). Every route of every other target is in the domain: where
+    ``exec`` types the command into a shell session, the exec frame runs it
+    in a subshell of its own, so the stimulus ends that subshell and not the
+    session's shell.
     """
-    if resolved.vocabulary.signal_kill_command is None:
-        return False
-    return resolved.entry == RUN or expected_route(resolved) in _PROCESS_ROUTES
+    return resolved.vocabulary.signal_kill_command is not None
 
 
-@pytest.mark.entries("run", "exec")
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.observable(
     "retcode of the signal stimulus, then whether `{words.single_line_command}` answers "
     "on the same host"
@@ -69,7 +64,7 @@ async def test_a_command_killed_by_a_signal_reports_128_plus_n(resolved_cell: Re
 
 
 @pytest.mark.positive_control("exec-signal-exit")
-@pytest.mark.entries("run", "exec")
+@pytest.mark.entries("run", "exec", "exec-shell")
 async def test_control_143_is_reported_as_143_and_an_ordinary_command_as_success(
     resolved_cell: ResolvedCell,
 ) -> None:

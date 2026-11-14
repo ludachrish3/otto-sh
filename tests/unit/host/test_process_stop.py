@@ -21,7 +21,8 @@ from otto.host.local_host import LocalHost
 from otto.host.process_stop import LocalStoppable, StopSignal, stop_process
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
-from scripts.process_group import group_members, signal_group
+from scripts.process_group import alive, group_members, signal_group
+from tests._fixtures import witness_shell as wit
 from tests._fixtures.liveness import pid_running
 from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_manager
 
@@ -135,6 +136,48 @@ async def test_local_cancel_hangs_up_the_whole_group_first(tmp_path):
         _kill_if_running(leader)
 
 
+async def test_a_cancel_during_the_local_spawn_still_hangs_up_the_whole_group(tmp_path):
+    """The cancel lands while ``subprocess_shell`` is still pending, the command already running.
+
+    The spawn is held open until the command has written its marker, as a
+    cold or loaded process holds it; a cancellation there must still reach
+    the command's group through otto's stop, not only asyncio's kill of the
+    leader.
+    """
+    log, child, leader = tmp_path / "log", tmp_path / "child", tmp_path / "leader"
+    loop = asyncio.get_running_loop()
+    real = loop.subprocess_shell
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_spawn(*args, **kwargs):
+        transport, protocol = await real(*args, **kwargs)
+        try:
+            await _written(log, "ready")
+            await _written(leader)
+            started.set()
+            await release.wait()
+        except BaseException:
+            transport.close()  # what asyncio does to a spawn it cancels: the leader only
+            raise
+        return transport, protocol
+
+    loop.subprocess_shell = slow_spawn
+    task = asyncio.ensure_future(LocalHost().exec(_signal_logger(log, child, leader)))
+    try:
+        await asyncio.wait_for(started.wait(), 10)
+        task.cancel()  # lands inside the pending spawn, at its `release.wait()`
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await _written(log, "HUP")
+        assert log.read_text().splitlines() == ["ready", "HUP"]
+        assert not pid_running(int(leader.read_text()))
+    finally:
+        del loop.subprocess_shell
+        _kill_if_running(child)
+        _kill_if_running(leader)
+
+
 async def test_local_timeout_terminates_the_whole_group_first(tmp_path, monkeypatch):
     log, child, leader = tmp_path / "log", tmp_path / "child", tmp_path / "leader"
     real = process_stop.stop_process
@@ -155,6 +198,62 @@ async def test_local_timeout_terminates_the_whole_group_first(tmp_path, monkeypa
     finally:
         _kill_if_running(child)
         _kill_if_running(leader)
+
+
+def _gate_the_stop_on(monkeypatch, ready: Path) -> None:
+    """Send the timed-out stop only once *ready* is written, so the budget is no race."""
+    real = process_stop.stop_process
+
+    async def gated(p, *, first):
+        await _written(ready)
+        await real(p, first=first)
+
+    monkeypatch.setattr(process_stop, "stop_process", gated)
+
+
+async def test_local_timeout_signals_a_foreground_member_that_is_not_the_leader(
+    tmp_path, monkeypatch
+):
+    # The declared member case: the leader is the exec's /bin/sh, the witnessed
+    # process its foreground child. The call returns on the leader's reap; the
+    # member has been sent TERM, but whether it has finished exiting is not
+    # promised, so only the signal is asserted (its trap's marker).
+    witness, marker = tmp_path / "witness", tmp_path / "marker"
+    write = wit.witness_write_template(str(witness))
+    member = (
+        f'sh -c \'trap "echo TERM > {marker}; exit" TERM; {write}; '
+        f"while :; do sleep 1 & wait $!; done' >/dev/null 2>&1; :"
+    )
+    _gate_the_stop_on(monkeypatch, witness)
+    try:
+        r = await LocalHost().exec(member, timeout=0.5)
+        assert r.timed_out
+        await _written(marker, "TERM")
+    finally:
+        wit.clean(witness)
+
+
+async def test_local_timeout_leaves_a_member_that_ignores_term_running(tmp_path, monkeypatch):
+    # The documented survivor: TERM goes to the group, KILL only to a leader
+    # that outlives it, so a member that ignores TERM is still running.
+    witness = tmp_path / "witness"
+    member = (
+        f"sh -c 'trap \"\" TERM; {wit.witness_write_template(str(witness))}; exec sleep 30' "
+        f">/dev/null 2>&1; :"
+    )
+    _gate_the_stop_on(monkeypatch, witness)
+    try:
+        r = await LocalHost().exec(member, timeout=0.5)
+        assert r.timed_out
+        assert wit.observe(witness) == wit.RUNNING
+    finally:
+        recorded = witness.read_text().split() if witness.exists() else []
+        wit.clean(witness)
+        if len(recorded) == 2:
+            pid, started = int(recorded[0]), int(recorded[1])
+            await wait_for_async(
+                lambda: not alive(pid, started), 5.0, on_timeout="the member survived its kill"
+            )
 
 
 async def test_local_cancel_leaves_a_nohup_child_running(tmp_path):
@@ -270,6 +369,27 @@ async def test_an_interrupted_channel_exec_hangs_up_and_keeps_the_cancellation_w
     with pytest.raises(asyncio.CancelledError):  # not OSError (M10)
         await task
     assert firsts == [StopSignal.HANG_UP]
+
+
+async def test_a_cancel_while_the_channel_opens_still_hangs_up_the_command():
+    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
+    opening, release = asyncio.Event(), asyncio.Event()
+
+    class SlowConn(FakeConn):
+        async def create_process(self, _cmd: str, **kw):
+            opening.set()
+            await release.wait()
+            return self.process
+
+    task = asyncio.ensure_future(
+        channel_manager().exec_on(conn=SlowConn(proc), cmd="x", timeout=60, log=LogMode.NEVER)
+    )
+    await opening.wait()
+    task.cancel()  # lands inside the pending create_process
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert proc.signals[:1] == ["HUP"]
 
 
 async def test_a_failing_stop_never_replaces_a_non_cancellation_error(monkeypatch):

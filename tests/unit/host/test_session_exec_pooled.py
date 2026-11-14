@@ -218,6 +218,20 @@ class TestPooledExec:
         await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert mgr._exec_pool == []
 
+    @pytest.mark.asyncio
+    async def test_a_session_whose_terminal_record_was_lost_is_closed_not_pooled(self):
+        mgr = _mgr(term="telnet")
+
+        class _LosesRecord(_StubExecSession):
+            async def run_cmd(self, cmd, **kw):
+                self._exec_baseline_lost = True  # whatever `exec_baseline_lost` reads
+                return await super().run_cmd(cmd=cmd, **kw)
+
+        mgr._session_factory = _LosesRecord
+        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
+        assert result.value == "OUT"
+        assert mgr._exec_pool == []
+
 
 class TestAmbientUser:
     @pytest.mark.asyncio
@@ -379,7 +393,9 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
     def _spy_default(mgr: SessionManager, monkeypatch: pytest.MonkeyPatch) -> list:
         ran: list = []
 
-        async def fake_run_cmd(cmd, expects=None, timeout=0.0, log=None, write_progress=None):
+        async def fake_run_cmd(
+            cmd, expects=None, timeout=0.0, log=None, write_progress=None, exec_input=None
+        ):
             ran.append((cmd, expects, timeout))
             return CommandResult(status=Status.Success, value="out", command=cmd, retcode=0)
 
@@ -443,9 +459,12 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
 
     def test_the_line_budget_is_the_typed_one(self):
         """exec types into the console's shell, so a transfer must size its lines to it."""
+        from otto.host.command_frame import ExecInput
         from otto.host.session import typed_line_budget
 
         mgr, _console = self._console_mgr()
-        assert mgr.line_budget(route=mgr.exec_route()) == typed_line_budget(
-            mgr._command_frame, echoes=True
+        route = mgr.exec_route()
+        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
+        assert mgr.line_budget(route=route) == typed_line_budget(
+            mgr._command_frame, echoes=True, exec_input=typed
         )
