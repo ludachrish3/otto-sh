@@ -4,9 +4,12 @@
 // duplicated. This module is the one copy; every covapp test file that
 // needs a fixture IndexPayload imports from here instead of
 // re-declaring it.
+import { act } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { afterEach } from "vitest";
 import { ToastViewport } from "@/ui/Toast";
 import { FocusProvider } from "./focus";
+import { SourceColumnsProvider } from "./sourceColumns";
 import type { DirNode, IndexPayload, RunJson, Stats } from "./types";
 import { EXPECTED_DATA_FORMAT } from "./types";
 
@@ -131,8 +134,69 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <FocusProvider>
-      {children}
+      <SourceColumnsProvider>{children}</SourceColumnsProvider>
       <ToastViewport />
     </FocusProvider>
   );
 }
+
+// jsdom has no `matchMedia`. One controllable stub, installed at import, is the
+// only viewport model covapp tests use: it answers `not all and (min-width:
+// Npx)` queries (width < N) from a settable width and fires `change` listeners (a bare `resize` event
+// never reaches a media-query listener). Default width is wide.
+type MediaListener = (e: MediaQueryListEvent) => void;
+const DEFAULT_VIEWPORT_WIDTH = 1280;
+let viewportWidth = DEFAULT_VIEWPORT_WIDTH;
+const mediaListeners = new Set<{ query: string; listener: MediaListener }>();
+
+const BELOW_WIDTH_QUERY = /^not all and \(min-width:\s*(?<px>\d+(?:\.\d+)?)px\)$/u;
+
+function mediaMatches(query: string): boolean {
+  const px = BELOW_WIDTH_QUERY.exec(query)?.groups?.["px"];
+  return px === undefined ? false : viewportWidth < Number(px);
+}
+
+// The deprecated addListener/removeListener pair is never used by the module.
+const unused = () => undefined;
+
+window.matchMedia = ((query: string) => ({
+  media: query,
+  get matches() {
+    return mediaMatches(query);
+  },
+  onchange: null,
+  addEventListener: (_type: string, listener: MediaListener) => {
+    mediaListeners.add({ query, listener });
+  },
+  removeEventListener: (_type: string, listener: MediaListener) => {
+    for (const entry of mediaListeners) {
+      if (entry.query === query && entry.listener === listener) mediaListeners.delete(entry);
+    }
+  },
+  addListener: unused,
+  removeListener: unused,
+  dispatchEvent: () => false,
+})) as unknown as typeof window.matchMedia;
+
+/** Set the viewport width and notify every media-query `change` listener
+ * whose answer flipped. Wrap in `act()` when components are mounted. */
+export function setViewportWidth(px: number): void {
+  const before = new Map([...mediaListeners].map((e) => [e, mediaMatches(e.query)]));
+  viewportWidth = px;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: px });
+  for (const entry of [...mediaListeners]) {
+    const now = mediaMatches(entry.query);
+    if (before.get(entry) !== now) {
+      entry.listener({ matches: now, media: entry.query } as MediaQueryListEvent);
+    }
+  }
+}
+
+// The harness owns its own reset: every test file that imports this module
+// gets the default width back, and no listener survives, after each test.
+// Registered at import, so it runs after the importing file's own afterEach
+// hooks (vitest runs after-hooks in stack order), i.e. after unmounting.
+afterEach(() => {
+  act(() => setViewportWidth(DEFAULT_VIEWPORT_WIDTH));
+  mediaListeners.clear();
+});

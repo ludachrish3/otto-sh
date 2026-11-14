@@ -257,8 +257,8 @@ function renderCellsFor(
         // cannot split back apart, so a real-looking 0.0% beside a Lines
         // cell reading "8/20" would be fabricated, not merely coarse. Same
         // `NaCell` treatment the ticket branch above gives its per-tier
-        // columns, and the same answer FilePage's `buildCellsFocused`
-        // already gives by passing `null` to every tier column. A
+        // columns, and the same answer FilePage's `tierEntriesFocused`
+        // already gives by returning `null` for every tier. A
         // single-tier scope (a context, with or without a product) is
         // unchanged: its own column mirrors the scoped percentage and the
         // others read a real 0.0%.

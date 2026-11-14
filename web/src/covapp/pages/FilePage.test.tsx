@@ -6,13 +6,16 @@
 // pure JS, so real highlighting runs under vitest; every rendering
 // assertion below `await`s past the chunk-load + highlight promises via
 // `findBy*` queries.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { FocusScope } from "../contexts";
 import * as dataModule from "../data";
 import { _resetForTests, StampMismatchError } from "../data";
 import { MATCH_HIGHLIGHT_NAME } from "../matchHighlight";
-import { emptyStats, makeIndex, Providers } from "../testUtils";
+import { useSourceColumns } from "../sourceColumns";
+import { emptyStats, makeIndex, makeRun, Providers } from "../testUtils";
 import type { FileChunk, FileNode, IndexPayload, RunJson } from "../types";
 import {
   FilePage,
@@ -20,6 +23,9 @@ import {
   parseLinesRange,
   rowClassFor,
   rowClassForFocus,
+  tierEntries,
+  tierEntriesFocused,
+  totalEntry,
 } from "./FilePage";
 
 function renderPage(props: { index: IndexPayload; segments: string[]; node: FileNode }) {
@@ -157,6 +163,127 @@ describe("lineAssertedIn", () => {
   it("false when the line has no `asserted` field at all, or no line", () => {
     expect(lineAssertedIn({ hits: {}, branches: [], state: null }, "system")).toBe(false);
     expect(lineAssertedIn(undefined, "system")).toBe(false);
+  });
+});
+
+describe("totalEntry", () => {
+  it("every value null is a null total", () => {
+    expect(
+      totalEntry([
+        { value: null, asserted: false },
+        { value: null, asserted: false },
+      ]),
+    ).toEqual({ value: null, asserted: false });
+  });
+
+  it("counts null entries as 0 once any entry has a value", () => {
+    expect(
+      totalEntry([
+        { value: null, asserted: false },
+        { value: 3, asserted: false },
+        { value: null, asserted: false },
+      ]),
+    ).toEqual({ value: 3, asserted: false });
+  });
+
+  it("all-zero entries total a real 0, not null", () => {
+    expect(
+      totalEntry([
+        { value: 0, asserted: false },
+        { value: 0, asserted: false },
+      ]),
+    ).toEqual({ value: 0, asserted: false });
+  });
+
+  it("is asserted when every entry with hits is asserted", () => {
+    expect(
+      totalEntry([
+        { value: 5, asserted: true },
+        { value: 0, asserted: false },
+      ]),
+    ).toEqual({ value: 5, asserted: true });
+  });
+
+  it("a total that includes real hits is plain", () => {
+    expect(
+      totalEntry([
+        { value: 5, asserted: true },
+        { value: 2, asserted: false },
+      ]),
+    ).toEqual({ value: 7, asserted: false });
+  });
+});
+
+describe("tierEntries", () => {
+  const index = makeIndex({ tier_order: ["system", "unit"] });
+  const line = {
+    hits: { system: 4, unit: 2 },
+    branches: [],
+    state: null,
+    asserted: { system: [0] },
+  };
+
+  it("hideAsserted zeroes an asserted tier and keeps its flag", () => {
+    expect(tierEntries(line, index, true)).toEqual([
+      { value: 0, asserted: true },
+      { value: 2, asserted: false },
+    ]);
+  });
+
+  it("without hideAsserted, the line's real counts and the asserted flag", () => {
+    expect(tierEntries(line, index, false)).toEqual([
+      { value: 4, asserted: true },
+      { value: 2, asserted: false },
+    ]);
+  });
+
+  it("no line record is null in every tier", () => {
+    expect(tierEntries(undefined, index, false)).toEqual([
+      { value: null, asserted: false },
+      { value: null, asserted: false },
+    ]);
+  });
+});
+
+describe("tierEntriesFocused", () => {
+  const index = makeIndex({ tier_order: ["system", "unit", "bench"] });
+  const line = {
+    hits: { system: 7, unit: 9, bench: 0 },
+    branches: [],
+    state: null,
+    run: { "11": 4, "12": 3, "21": 9 },
+  };
+  const members: RunJson[] = [
+    makeRun({ id: 11, tier: "system", label: "h1/app" }),
+    makeRun({ id: 12, tier: "unit", label: "h1/app" }),
+  ];
+
+  it("sums member runs per tier, excludes non-members, never asserted", () => {
+    const scope: FocusScope = {
+      label: "h1/app",
+      tier: "",
+      runs: members,
+      ctxLabel: "h1/app",
+      product: null,
+    };
+    // system: run 11 (4); unit: run 12 (3) — run 21's 9 is not a member;
+    // bench: no member capture, so null.
+    expect(tierEntriesFocused(line, index, scope)).toEqual([
+      { value: 4, asserted: false },
+      { value: 3, asserted: false },
+      { value: null, asserted: false },
+    ]);
+  });
+
+  it("a bare product scope (ctxLabel null) is null in every tier", () => {
+    const scope: FocusScope = {
+      label: "app",
+      tier: "",
+      runs: members,
+      ctxLabel: null,
+      product: "app",
+    };
+    expect(tierEntriesFocused(line, index, scope).map((e) => e.value)).toEqual([null, null, null]);
   });
 });
 
@@ -1379,5 +1506,114 @@ describe("FilePage", () => {
       fireEvent.click(screen.getByTestId("search-pill-clear"));
       await waitFor(() => expect(registry.has(MATCH_HIGHLIGHT_NAME)).toBe(false));
     });
+  });
+});
+
+/** Reaches the page's column settings from a sibling under the same
+ * provider, the way the Columns menu will. */
+let columnsApi: ReturnType<typeof useSourceColumns> | undefined;
+function ColumnsProbe() {
+  columnsApi = useSourceColumns(2);
+  return null;
+}
+
+describe("source columns", () => {
+  function renderWithColumns(chunk: FileChunk) {
+    mockChunkLoad({ resolve: chunk });
+    return render(
+      <>
+        <FilePage index={makeFileIndex()} segments={["src", "net", "tcp.c"]} node={NODE} />
+        <ColumnsProbe />
+      </>,
+      { wrapper: Providers },
+    );
+  }
+  function headerIds(): string[] {
+    return [...screen.getByTestId("code-columns").querySelectorAll("[data-testid^=code-col-]")].map(
+      (el) => el.getAttribute("data-testid") ?? "",
+    );
+  }
+
+  it("wide defaults keep today's headers: a dot per tier, then Branches", async () => {
+    renderWithColumns(makeChunk());
+    await screen.findByTestId("code-row-1");
+    expect(headerIds()).toEqual([
+      "code-col-num",
+      "code-col-tier:system",
+      "code-col-tier:unit",
+      "code-col-branches",
+    ]);
+    expect(screen.getByTestId("code-col-branches").textContent).toBe("Branches");
+  });
+
+  it("Total shows one Hits column holding the sum of the line's tier hits", async () => {
+    const chunk = makeChunk();
+    const line1 = chunk.lines["1"];
+    if (line1) line1.hits = { system: 5, unit: 3 };
+    renderWithColumns(chunk);
+    await screen.findByTestId("code-row-1");
+    act(() => columnsApi?.choose({ hitMode: "total" }));
+    expect(headerIds()).toEqual(["code-col-num", "code-col-hits", "code-col-branches"]);
+    expect(screen.getByTestId("code-col-hits").textContent).toBe("Hits");
+    // Row DOM: [0] ticket gutter, [1] num, [2] hits, [3] branches.
+    // Line 1's tier hits as set above: system 5 + unit 3.
+    const row1 = screen.getByTestId("code-row-1");
+    expect(row1.children[2]?.textContent).toBe(String(5 + 3));
+  });
+
+  it("hiding Tickets drops every chip and collapses the gutter to 0px", async () => {
+    renderWithColumns(chunkWithTickets({ 1: ["PROJ-1"] }));
+    await screen.findByTestId("ticket-gutter-1");
+    act(() => columnsApi?.choose({ tickets: false }));
+    expect(screen.queryByTestId(/^ticket-gutter-/u)).toBeNull();
+    expect(screen.getByTestId("code-columns").style.gridTemplateColumns).toBe(
+      "0px 46px 40px 40px 96px 1fr 66px",
+    );
+  });
+
+  it("a ticket only on a past-EOF record never opens the gutter", async () => {
+    renderWithColumns(chunkWithTickets({ 999: ["PROJ-9"] }));
+    const cols = await screen.findByTestId("code-columns");
+    await screen.findByTestId("code-row-1");
+    expect(cols.style.gridTemplateColumns).toBe("0px 46px 40px 40px 96px 1fr 66px");
+  });
+
+  it("the header's Columns menu sits before Expand contexts and drives the table", async () => {
+    const user = userEvent.setup();
+    renderWithColumns(chunkWithTickets({ 1: ["PROJ-1"] }));
+    await screen.findByTestId("code-row-1");
+    const trigger = screen.getByTestId("columns-menu");
+    expect(trigger.compareDocumentPosition(screen.getByTestId("expand-contexts"))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    await user.click(trigger);
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Branches" }));
+    expect(headerIds()).toEqual(["code-col-num", "code-col-tier:system", "code-col-tier:unit"]);
+  });
+
+  it("the Columns menu offers Tickets only when the file has tickets", async () => {
+    const user = userEvent.setup();
+    renderWithColumns(chunkWithTickets({ 999: ["PROJ-9"] }));
+    await screen.findByTestId("code-row-1");
+    await user.click(screen.getByTestId("columns-menu"));
+    await screen.findByRole("menu");
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Tickets" })).toBeNull();
+  });
+
+  it("everything hidden leaves only source and expander, and rows still expand", async () => {
+    renderWithColumns(chunkWithTickets({ 1: ["PROJ-1"] }));
+    await screen.findByTestId("code-row-1");
+    act(() =>
+      columnsApi?.choose({
+        lineNumbers: false,
+        hitCounts: false,
+        branches: false,
+        tickets: false,
+      }),
+    );
+    expect(screen.getByTestId("code-columns").style.gridTemplateColumns).toBe("0px 1fr 66px");
+    expect(headerIds()).toEqual([]);
+    fireEvent.click(screen.getByTestId("code-expander-5"));
+    expect(screen.getByTestId("ctx-panel-5")).toBeTruthy();
   });
 });

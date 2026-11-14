@@ -27,8 +27,10 @@ import { hashQueryOf, useHash } from "../hashState";
 import { highlightLines, langForPath } from "../highlight";
 import { clearMatches, paintMatches } from "../matchHighlight";
 import { compileQuery, matchesInLines, statesFromChunk } from "../search";
+import { type EffectiveColumns, useSourceColumns } from "../sourceColumns";
 import { ticketFileRow } from "../tickets";
 import type { BranchJson, FileChunk, FileNode, IndexPayload, LineJson } from "../types";
+import { CARD_HEADER_BUTTON_CLASS, ColumnsMenu } from "./ColumnsMenu";
 import { GuardScreen } from "./GuardScreen";
 
 /** Row precedence (Global Constraints, verbatim): excluded beats the
@@ -124,7 +126,7 @@ function ownedByTicket(line: LineJson | undefined, ticketId: string): boolean {
  * sees it, so a line with ONLY asserted evidence in every tier falls
  * through to `rowClassFor`'s uncovered/stale/aging branches instead of
  * tinting by that tier — the row-tint half of "hide asserted coverage",
- * mirroring `buildCells`'s cell-level zeroing above. A no-op (`line`
+ * mirroring `tierEntries`' cell-level zeroing below. A no-op (`line`
  * unchanged) when `hideAsserted` is `false`. */
 function lineForRowClass(line: LineJson | undefined, hideAsserted: boolean): LineJson | undefined {
   if (!hideAsserted || !line?.asserted) return line;
@@ -163,20 +165,32 @@ function TierHeaderDot({ color, label }: { color?: string | undefined; label: st
   );
 }
 
-function buildColumns(index: IndexPayload): GutterCol[] {
-  return [
-    { id: "num", width: "46px", header: "#" },
-    ...index.tier_order.map(
-      (tier): GutterCol => ({
-        id: `tier:${tier}`,
-        width: "40px",
-        header: (
-          <TierHeaderDot color={index.tier_colors[tier]} label={index.tier_labels[tier] ?? tier} />
-        ),
-      }),
-    ),
-    { id: "branches", width: "96px", header: "Branches" },
-  ];
+/** The gutter columns, read from the same `EffectiveColumns` as
+ * `buildCells` and in the same order, so `columns[i]` ↔ `cells[i]` holds by
+ * construction. A hidden column is not emitted at all. */
+function buildColumns(index: IndexPayload, cols: EffectiveColumns): GutterCol[] {
+  const columns: GutterCol[] = [];
+  if (cols.lineNumbers) columns.push({ id: "num", width: "46px", header: "#" });
+  if (cols.hitCounts) {
+    if (cols.hitMode === "total") {
+      columns.push({ id: "hits", width: "40px", header: "Hits" });
+    } else {
+      for (const tier of index.tier_order) {
+        columns.push({
+          id: `tier:${tier}`,
+          width: "40px",
+          header: (
+            <TierHeaderDot
+              color={index.tier_colors[tier]}
+              label={index.tier_labels[tier] ?? tier}
+            />
+          ),
+        });
+      }
+    }
+  }
+  if (cols.branches) columns.push({ id: "branches", width: "96px", header: "Branches" });
+  return columns;
 }
 
 function HitCell({ value, asserted = false }: { value: number | null; asserted?: boolean }) {
@@ -254,8 +268,8 @@ function BranchPill({
   );
 }
 
-/** Shared by `buildCells`/`buildCellsFocused` — branch pills render
- * UNCHANGED under focus (spec §4: branch data isn't per-run, v4's
+/** `buildCells`' branches cell — branch pills render the same focused or
+ * not (spec §4: branch data isn't per-run, v4's
  * `run_hits` is line-only, so there's nothing context-specific to show
  * here either way). */
 function branchesCell(line: LineJson | undefined, index: IndexPayload): ReactNode {
@@ -272,72 +286,102 @@ function branchesCell(line: LineJson | undefined, index: IndexPayload): ReactNod
   );
 }
 
-/** `hideAsserted` (default `false` — byte-identical when omitted):
- * a tier column whose SOLE hits are override-sourced (`lineAssertedIn`)
- * renders as a plain zero — `HitCell`'s muted "·" glyph, same as a real
- * uncovered cell — instead of the dashed asserted pill, so hiding asserted
- * coverage genuinely hides it from the grid, not just from its own dashed
- * styling. A tier with BOTH real and override evidence can't occur
- * (`LineJson.asserted`'s doc comment: the marker exists only while a
- * tier's hits are ENTIRELY override-sourced), so zeroing is never lossy for
- * a tier that also has real hits. */
-function buildCells(
-  lineNo: number,
-  line: LineJson | undefined,
-  index: IndexPayload,
-  hideAsserted = false,
-): ReactNode[] {
-  const cells: ReactNode[] = [
-    <span key="num" className="text-quaternary tabular-nums">
-      {lineNo}
-    </span>,
-  ];
-  for (const tier of index.tier_order) {
-    const asserted = lineAssertedIn(line, tier);
-    const hidden = hideAsserted && asserted;
-    cells.push(
-      <HitCell
-        key={tier}
-        value={hidden ? 0 : line ? (line.hits[tier] ?? 0) : null}
-        asserted={asserted && !hideAsserted}
-      />,
-    );
-  }
-  cells.push(branchesCell(line, index));
-  return cells;
+/** One tier's hit number for one line, resolved before rendering.
+ * `value: null` means "no data" (`HitCell` draws it as the muted "·", the
+ * same glyph as 0). */
+export interface TierEntry {
+  value: number | null;
+  asserted: boolean;
 }
 
-/** `buildCells`'s under-focus counterpart. A focused CONTEXT's tier columns
- * each show the summed hits of its member runs IN THAT TIER on this line:
- * one `<host>/<product>` label can hold captures from several tiers (store
- * v9), so a context with a `manual` and a `bench` capture fills both columns.
- * A tier the context has no capture in reads `null` (HitCell's muted "·"),
- * as does every column when there's no `LineJson` at all — a spec-pinned
- * "other tiers ·", distinct from `DirectoryPage`'s tree columns, which show
- * a real 0.0% instead. A bare PRODUCT scope (`ctxLabel: null`) spans tiers
- * without being a run grouping, so every tier column reads `null`. Branch
- * pills unchanged (see `branchesCell`). */
-function buildCellsFocused(
-  lineNo: number,
+/** One entry per `index.tier_order` tier, unfocused; `null` in every tier
+ * when there is no `LineJson` at all. `hideAsserted`: a tier whose SOLE hits
+ * are override-sourced (`lineAssertedIn`) reads as a plain zero, so hiding
+ * asserted coverage genuinely hides it from the grid, not just its dashed
+ * styling. The entry keeps `asserted: true`; a zero value never draws the
+ * pill. A tier with BOTH real and override evidence can't occur
+ * (`LineJson.asserted`'s doc comment: the marker exists only while a tier's
+ * hits are ENTIRELY override-sourced), so zeroing is never lossy for a tier
+ * that also has real hits. */
+export function tierEntries(
+  line: LineJson | undefined,
+  index: IndexPayload,
+  hideAsserted: boolean,
+): TierEntry[] {
+  return index.tier_order.map((tier) => {
+    const asserted = lineAssertedIn(line, tier);
+    if (!line) return { value: null, asserted };
+    return { value: hideAsserted && asserted ? 0 : (line.hits[tier] ?? 0), asserted };
+  });
+}
+
+/** `tierEntries`' under-focus counterpart. Each tier gets the summed hits of
+ * the focused CONTEXT's member runs IN THAT TIER on this line: one
+ * `<host>/<product>` label can hold captures from several tiers (store v9),
+ * so a context with a `manual` and a `bench` capture fills both. A tier the
+ * context has no capture in reads `null`, as does every tier when there's
+ * no `LineJson` at all — a spec-pinned "other tiers ·", distinct from
+ * `DirectoryPage`'s tree columns, which show a real 0.0% instead. A bare
+ * PRODUCT scope (`ctxLabel: null`) spans tiers without being a run
+ * grouping, so every tier reads `null`. Never asserted: member-run hits are
+ * recorded evidence. */
+export function tierEntriesFocused(
   line: LineJson | undefined,
   index: IndexPayload,
   scope: FocusScope,
-): ReactNode[] {
-  const cells: ReactNode[] = [
-    <span key="num" className="text-quaternary tabular-nums">
-      {lineNo}
-    </span>,
-  ];
+): TierEntry[] {
   const perTier = new Map<string, number>();
   if (line && scope.ctxLabel !== null) {
     for (const run of scope.runs) {
       perTier.set(run.tier, (perTier.get(run.tier) ?? 0) + (line.run?.[String(run.id)] ?? 0));
     }
   }
-  for (const tier of index.tier_order) {
-    cells.push(<HitCell key={tier} value={perTier.get(tier) ?? null} />);
+  return index.tier_order.map((tier) => ({ value: perTier.get(tier) ?? null, asserted: false }));
+}
+
+/** The Total column's entry: `null` when every entry is null, otherwise the
+ * sum with nulls as 0. Asserted only when every entry with hits is asserted
+ * (and one exists), so a total that includes any real hit shows plain. */
+export function totalEntry(entries: TierEntry[]): TierEntry {
+  if (entries.every((e) => e.value === null)) return { value: null, asserted: false };
+  const hit = entries.filter((e) => (e.value ?? 0) > 0);
+  return {
+    value: entries.reduce((sum, e) => sum + (e.value ?? 0), 0),
+    asserted: hit.length > 0 && hit.every((e) => e.asserted),
+  };
+}
+
+/** The ONE cell renderer: `entries` (from `tierEntries` or
+ * `tierEntriesFocused`) plus `cols`, in `buildColumns`' order. */
+function buildCells(
+  lineNo: number,
+  line: LineJson | undefined,
+  entries: TierEntry[],
+  index: IndexPayload,
+  cols: EffectiveColumns,
+): ReactNode[] {
+  const cells: ReactNode[] = [];
+  if (cols.lineNumbers) {
+    cells.push(
+      <span key="num" className="text-quaternary tabular-nums">
+        {lineNo}
+      </span>,
+    );
   }
-  cells.push(branchesCell(line, index));
+  if (cols.hitCounts) {
+    if (cols.hitMode === "total") {
+      const total = totalEntry(entries);
+      cells.push(<HitCell key="hits" value={total.value} asserted={total.asserted} />);
+    } else {
+      index.tier_order.forEach((tier, i) => {
+        const entry = entries[i];
+        cells.push(
+          <HitCell key={tier} value={entry?.value ?? null} asserted={entry?.asserted ?? false} />,
+        );
+      });
+    }
+  }
+  if (cols.branches) cells.push(branchesCell(line, index));
   return cells;
 }
 
@@ -508,6 +552,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [openLines, setOpenLines] = useState<Set<number>>(new Set());
   const { focus, ticket, hideAsserted, product } = useFocus();
+  const { columns: cols } = useSourceColumns(index.tier_order.length);
   // Independently re-resolved against THIS page's own `index` prop, same
   // defensive pattern AppShell.tsx/DirectoryPage.tsx use — a pin
   // that doesn't resolve here just renders unscoped instead of crashing.
@@ -657,7 +702,22 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   const excludedSet = new Set(chunk.excluded);
   const sourceLines = chunk.source.split("\n");
   const lang = langForPath(chunk.path);
-  const columns = buildColumns(index);
+  const columns = buildColumns(index, cols);
+
+  // Built over the rendered source lines BEFORE visibility: whether the file
+  // has tickets is a fact about the file, which hiding the column must not
+  // change. Only RENDERED rows count — a past-EOF `chunk.lines` record (see
+  // FilePage.test.tsx's "past-EOF" regressions) can carry ticket data with
+  // nowhere to render it, and must not by itself turn the column on. Keeps
+  // a report with no `[coverage.tickets]` attribution anywhere
+  // byte-identical to before this feature (design §6.2, Global Constraints).
+  const ticketGutters = sourceLines.map((_line, i) =>
+    buildTicketGutter(i + 1, chunk.lines[String(i + 1)], index),
+  );
+  const fileHasTickets = ticketGutters.some((g) => g !== undefined);
+  // Hidden by the reader's choice, the gutter collapses to its existing
+  // "0px" width and its chips are not passed (`ticketGutter` below).
+  const ticketGutterWidth = fileHasTickets && cols.tickets ? "72px" : "0px";
 
   const codeLines: CodeLine[] = sourceLines.map((_line, i) => {
     const lineNo = i + 1;
@@ -671,29 +731,22 @@ export function FilePage({ index, segments, node }: FilePageProps) {
     // to `rowClass`'s coverage-state tinting above, so an
     // excluded/stale/aging/blank line dims exactly the same as a hit one.
     const dimmed = ticket !== null && !ownedByTicket(line, ticket);
+    const entries =
+      scope && memberRunIds
+        ? tierEntriesFocused(line, index, scope)
+        : tierEntries(line, index, hideAsserted);
     return {
       number: lineNo,
       html: htmlLines[i] ?? "",
       rowClass,
-      cells:
-        scope && memberRunIds
-          ? buildCellsFocused(lineNo, line, index, scope)
-          : buildCells(lineNo, line, index, hideAsserted),
+      cells: buildCells(lineNo, line, entries, index, cols),
       expandable: collectRunIds(line).size > 0 || Object.keys(line?.asserted ?? {}).length > 0,
       style: dimStyleFor(rowClass, index, dimmed),
-      ticketGutter: buildTicketGutter(lineNo, line, index),
+      ticketGutter: cols.tickets ? ticketGutters[i] : undefined,
       highlighted: highlight !== null && lineNo >= highlight.start && lineNo <= highlight.end,
       matched: matchSpans?.has(lineNo) ?? false,
     };
   });
-
-  // Gutter column only activates when some RENDERED row actually carries a
-  // ticket — a past-EOF `chunk.lines` record (see FilePage.test.tsx's
-  // "past-EOF" regression) can carry ticket data with nowhere to render
-  // it, and must not by itself turn the column on. Keeps a report with no
-  // `[coverage.tickets]` attribution anywhere byte-identical to before this
-  // feature (design §6.2, Global Constraints).
-  const hasTicketGutter = codeLines.some((l) => l.ticketGutter !== undefined);
 
   // Meta line ("N lines · M covered") always reflects the file's OVERALL
   // coverage, unaffected by focus — only the stats card below rescopes.
@@ -740,20 +793,22 @@ export function FilePage({ index, segments, node }: FilePageProps) {
           {lang.toUpperCase()}
         </span>
       </div>
-      <button
-        type="button"
-        data-testid="expand-contexts"
-        aria-pressed={allOpen}
-        onClick={() => setOpenLines(allOpen ? new Set() : new Set(expandableNumbers))}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-secondary px-2.5
-          py-1 text-xs font-medium text-tertiary outline-none hover:bg-tertiary hover:text-primary"
-      >
-        <ChevronDown
-          aria-hidden
-          className={cx("size-3 transition-transform", allOpen && "rotate-180")}
-        />
-        Expand contexts
-      </button>
+      <div className="flex shrink-0 items-center gap-2">
+        <ColumnsMenu tierCount={index.tier_order.length} fileHasTickets={fileHasTickets} />
+        <button
+          type="button"
+          data-testid="expand-contexts"
+          aria-pressed={allOpen}
+          onClick={() => setOpenLines(allOpen ? new Set() : new Set(expandableNumbers))}
+          className={CARD_HEADER_BUTTON_CLASS}
+        >
+          <ChevronDown
+            aria-hidden
+            className={cx("size-3 transition-transform", allOpen && "rotate-180")}
+          />
+          Expand contexts
+        </button>
+      </div>
     </div>
   );
 
@@ -830,7 +885,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
           renderExpansion={renderExpansionFor(chunk, index)}
           openLines={openLines}
           onToggleLine={onToggleLine}
-          ticketGutterWidth={hasTicketGutter ? "72px" : "0px"}
+          ticketGutterWidth={ticketGutterWidth}
         />
       </div>
     </AppShell>
