@@ -47,7 +47,15 @@ from typing_extensions import final, override
 
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
-from .terminal_mapping import CALIBRATION_COMMAND
+from .limitation import Limitation
+from .terminal_mapping import (
+    CALIBRATION_COMMAND,
+    ECHO_OFF_COMMAND,
+    ECHO_RESET,
+    ECHO_UNSET,
+    TABS_OFF_COMMAND,
+    save_settings_command,
+)
 
 __all__ = [
     "FRAME_CLASSES",
@@ -56,8 +64,26 @@ __all__ = [
     "RawFrame",
     "SessionMarkers",
     "ZephyrFrame",
+    "command_value",
     "register_command_frame",
 ]
+
+
+def command_value(output: str, *, line_ending: str = "\n") -> str:
+    r"""Return a command's ``value``: *output* with exactly one trailing *line_ending* removed.
+
+    The one statement of the rule in :ref:`command-output-contract`. Nothing
+    else is stripped or added: earlier newlines, trailing spaces and tabs and
+    the program's own ``\r`` are all kept. Every route that builds a
+    ``value`` from output it read calls this, so no two routes can disagree.
+
+    >>> from otto.host.command_frame import command_value
+    >>> command_value("a\n\n"), command_value("a \r\n"), command_value("abc")
+    ('a\n', 'a \r', 'abc')
+    >>> command_value("a\r\n", line_ending="\r\n")
+    'a'
+    """
+    return output.removesuffix(line_ending)
 
 
 READY_SUFFIX = "READY__"
@@ -95,6 +121,11 @@ class SessionMarkers:
     recover: str
     """Post-timeout re-sync token — ``__OTTO_<id>_RECOVER__``."""
 
+    saved: str
+    """Tag the handshake prints the saved terminal settings behind — ``__OTTO_<id>_SAVED__``.
+
+    See :func:`~otto.host.terminal_mapping.save_settings_command`."""
+
     @classmethod
     def for_session(cls, *, session_id: str) -> "SessionMarkers":
         """Build the marker set for a session id.
@@ -110,6 +141,7 @@ class SessionMarkers:
             end_prefix=f"__OTTO_{session_id}_END__",
             ready=f"__OTTO_{session_id}_{READY_SUFFIX}",
             recover=f"__OTTO_{session_id}_{RECOVER_SUFFIX}",
+            saved=f"__OTTO_{session_id}_SAVED__",
         )
 
 
@@ -170,6 +202,19 @@ class CommandFrame(ABC):
     or retcode scaffolding. A dialect sets this True only when its raw stream
     has no scaffolding to strip (e.g. bash with echo off)."""
 
+    exact_output: ClassVar["Limitation | None"] = None
+    """``None``: :meth:`parse_output` follows the exact-output rule -- a
+    command's ``value`` is its output with exactly one trailing newline
+    removed (:data:`otto.testing.EXACT_OUTPUT_CASES`). A
+    :class:`~otto.host.limitation.Limitation`: this dialect's device cannot
+    report the exact output, and the record says why and what it was
+    measured on.
+
+    A limitation is declared on the class body of the frame it applies to,
+    never inherited: registration refuses a subclass that would silently
+    carry its parent's. :func:`otto.testing.assert_command_frame_conforms`
+    proves either answer against the table."""
+
     # --- render half: command -> bytes to write ---
 
     @abstractmethod
@@ -225,6 +270,15 @@ class CommandFrame(ABC):
         The interactive ``login`` bridge runs a session-setup hook over a
         framed session and then hands the pty to a person; whatever the
         handshake changed (bash turns echo off) has to be put back first.
+        On a terminal that outlives the session, where the handshake saved
+        the settings it found
+        (:meth:`~otto.host.command_frame.CommandFrame.save_terminal`), the
+        session sends
+        :meth:`~otto.host.command_frame.CommandFrame.restore_terminal`
+        instead; this line is the hand-back where nothing was saved, so
+        bash's tab setting (``stty tab0``) stays for the rest of a login
+        whose pty goes away with it
+        (:mod:`otto.host.terminal_mapping`).
         ``None`` (the default) means the handshake changed nothing a human
         would notice. Dialect-owned for the same reason the handshake is.
 
@@ -235,6 +289,35 @@ class CommandFrame(ABC):
         ``shell_history`` field says, so the human keeps their own recall.
         """
         return None
+
+    def save_terminal(self, m: SessionMarkers) -> str:  # noqa: ARG002 — the default saves nothing
+        """Statement prefix printing the settings behind ``m.saved``, for :meth:`restore_terminal`.
+
+        Sent only where the terminal outlives the session
+        (:attr:`~otto.host.session.ShellSession.terminal_outlives_session`),
+        and only in the first handshake on it: the session places it first
+        in the handshake's prefix, before anything the handshake changes, and
+        keeps what it printed behind :attr:`SessionMarkers.saved`
+        (:func:`~otto.host.terminal_mapping.saved_settings`), so no other
+        text on the line can pass for the record.
+        Empty (the default) for a dialect with no terminal settings to save,
+        which is how Zephyr's frames are left untouched. An override keeps
+        the rules of :meth:`quiet_history`'s payload (silent on failure, no
+        output but the record) and :func:`whole_line_echo`'s cut rules.
+        """
+        return ""
+
+    def restore_terminal(self, saved: str) -> str | None:  # noqa: ARG002 — the default saved nothing, so restores as restore_interactive does
+        """Line that puts back the settings :meth:`save_terminal` printed as *saved*.
+
+        The one restore step on a terminal that outlives the session, sent
+        at the hand-back to an interactive user and before the session
+        closes: it supersedes :meth:`restore_interactive` there, since the
+        saved settings include what that line puts back. The default is
+        :meth:`restore_interactive`, for a dialect that saves nothing. A bare
+        line, written through the frame like :meth:`restore_interactive`'s.
+        """
+        return self.restore_interactive()
 
     # --- parse half: bytes read -> structured result ---
 
@@ -390,8 +473,24 @@ class BashFrame(CommandFrame):
         # With echo still on (the first handshake) the echoed line already ends
         # in a newline, so the extra blank line is harmless.
         #
-        # The calibration line between them shows the session how this
-        # terminal maps line endings (see otto.host.terminal_mapping). It sits
+        # `stty -echo` also sets how long a line otto may type: BusyBox ash's
+        # line editor cuts a typed line at 1022 characters only while the
+        # terminal echoes, so with echo off the kernel's 4095 is the bound
+        # (otto.host.session.typed_line_ceiling, measured 2026-11-13). So the
+        # statement's failure is observable: ECHO_RESET empties the echo
+        # variable, ECHO_OFF_COMMAND's `||` branch sets it, the calibration
+        # prints it before its X and ECHO_UNSET removes it, all on this line
+        # (otto.host.terminal_mapping).
+        #
+        # TABS_OFF_COMMAND turns the terminal's tab expansion off, which has no
+        # exact inverse (BusyBox telnetd's pty has it on), in a statement of
+        # its own so a `stty` that refuses `tab0` cannot take `-echo` with it.
+        # On a terminal that outlives the session the session's *prefix*
+        # starts with save_terminal's `stty -g`, so the settings are read
+        # before either changes them (see otto.host.terminal_mapping).
+        # The calibration line after it shows the session how this terminal
+        # maps line endings and whether tabs now survive (see
+        # otto.host.terminal_mapping). It sits
         # immediately before READY, so the session reads it from the output
         # copy and never from an echo of the typed line.
         #
@@ -410,7 +509,8 @@ class BashFrame(CommandFrame):
         return whole_line_echo(
             m.ready,
             READY_SUFFIX,
-            f"{prefix}2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; ",
+            f"{prefix}{ECHO_RESET}; {ECHO_OFF_COMMAND}; {TABS_OFF_COMMAND}; echo; "
+            f"{CALIBRATION_COMMAND} || :; {ECHO_UNSET}; ",
         )
 
     @override
@@ -543,10 +643,24 @@ class BashFrame(CommandFrame):
 
     @override
     def restore_interactive(self) -> str | None:
-        # Mirrors the handshake's `2>/dev/null stty -echo || :`; silent on a
+        # Mirrors the handshake's `2>/dev/null stty -echo` (ECHO_OFF_COMMAND); silent on a
         # pty-less channel, where there is nothing to restore either, and
-        # harmless under `set -e` on a target without `stty` (#953).
+        # harmless under `set -e` on a target without `stty` (#953). The
+        # handshake's `stty tab0` is NOT undone here: this is the hand-back
+        # on a pty that goes away with the login. A terminal that outlives
+        # the session gets restore_terminal instead (otto.host.terminal_mapping).
         return "2>/dev/null stty echo || :"
+
+    @override
+    def save_terminal(self, m: SessionMarkers) -> str:
+        return f"{save_settings_command(m.saved)}; "
+
+    @override
+    def restore_terminal(self, saved: str) -> str | None:
+        # *saved* is a `stty -g` record (hex and colons only, checked by
+        # saved_settings), so it is typed unquoted. It carries echo and tab
+        # expansion as the handshake found them: one step puts both back.
+        return f"2>/dev/null stty {saved} || :"
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
@@ -595,7 +709,7 @@ class BashFrame(CommandFrame):
         output = buffer[start:end]
         # END's `echo` starts where the output stops and contributes no line
         # ending, so the output's own last line ending is the one to remove.
-        return output.removesuffix(line_ending)
+        return command_value(output, line_ending=line_ending)
 
     @override
     def extract_retcode(self, buffer: str, *, m: SessionMarkers) -> int:
@@ -673,13 +787,36 @@ class AshFrame(BashFrame):
     type_name = "ash"
 
 
-# Terminal control sequences (colored prompt, cursor moves). otto is not a
-# terminal — strip them before parsing the Zephyr shell stream.
+# Terminal control sequences (colored prompt, cursor moves). An application
+# shell's parser strips them; a Zephyr frame keeps every one inside a
+# command's output.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+ZEPHYR_LEVEL_SEQUENCES = ["\x1b[1;31m", "\x1b[1;33m", "\x1b[m"]
+r"""The colouring the Zephyr shell's message-level API adds, measured on 2.7, 3.7 and 4.4.
+
+``shell_error`` opens its line with ``\x1b[1;31m`` and ``shell_warn`` with
+``\x1b[1;33m``; each closes with ``\x1b[m`` after the line's ``\r\n``, every
+call wrapped on its own, so they fall anywhere in a command's output
+(``tests/unit/host/shell_transcripts/README.md``, "Message-level colouring").
+"""
+
+_SHELL_LEVEL_RE = re.compile("|".join(re.escape(seq) for seq in ZEPHYR_LEVEL_SEQUENCES))
+
+
+def strip_zephyr_levels(output: str) -> str:
+    r"""Remove the Zephyr shell's message-level colouring from *output*, wherever it falls.
+
+    Exactly the :data:`ZEPHYR_LEVEL_SEQUENCES` are removed; every
+    other byte stays, the ``help`` formatter's cursor moves (``\x1b[17C``)
+    included. A command that itself writes one of those sequences loses it:
+    the bytes cannot tell it from the shell's.
+    """
+    return _SHELL_LEVEL_RE.sub("", output)
 
 
 class ZephyrFrame(CommandFrame):
-    """Stock Zephyr RTOS shell dialect (3.7 / 4.4 LTS).
+    r"""Stock Zephyr RTOS shell dialect (3.7 / 4.4 LTS).
 
     The Zephyr shell is not bash: no command substitution, no ``$?``, no
     generic ``echo``. otto frames each command as four CR-separated lines::
@@ -699,8 +836,11 @@ class ZephyrFrame(CommandFrame):
     line and does not echo input, so between the BEGIN error line and
     ``retval``'s integer line the slice is exactly
     ``[prompt, <output...>, prompt]`` — dropping the bracketing prompt lines
-    yields the output without ever reading the prompt text. ANSI escapes (the
-    colored prompt) are stripped first.
+    yields the output without hard-coding the prompt text. The value is the
+    command's exact output (:func:`command_value`): only what the shell adds
+    is removed — the prompts, the ``retval`` line, the marker lines, the
+    colouring of every error and warning line (``strip_zephyr_levels``)
+    and the ``\r`` of each ``\r\n``.
     """
 
     type_name = "zephyr"
@@ -756,49 +896,70 @@ class ZephyrFrame(CommandFrame):
 
     @override
     def parse_output(self, buffer: str, *, cmd: str, m: SessionMarkers) -> str:
-        """Extract the command's output from the framed response, positionally.
+        r"""Return the command's exact output, found positionally.
 
-        Between the BEGIN error line and ``retval``'s integer line the shell
-        emitted ``[prompt, <command output...>, prompt]`` (a prompt after each
-        of the two executed lines: the rejected BEGIN, then the command). Drop
-        the bracketing prompt lines.
+        The shell sends, after the rejected BEGIN line and its prompt::
+
+            <output>  <prompt> \r\n  <retval's integer> \r\n  <prompt> \r\n  <END>
+
+        The last three ``\r\n``-separated pieces before END are the prompt
+        that runs END (with END's own error colour), the ``retval`` line and the
+        prompt that runs ``retval``; that prompt's text is read from the final
+        prompt, never hard-coded, and removed from where the output stops. What
+        remains after BEGIN goes to :meth:`output_value`.
         """
         lines = self.region_before_end(buffer, m=m)
+        if len(lines) < 3:  # noqa: PLR2004 -- the prompt, retval and END pieces
+            return ""
+        prompt = lines[-2]
+        region = "\r\n".join(lines[:-3]).removesuffix(prompt)
+        return self.output_value(region, m=m, lines_after_begin=2)
 
-        # The BEGIN block: BEGIN is an unknown command, so the shell emits
-        # `<token>: command not found`. The last line carrying the token is it.
-        begin_line = -1
-        for i, line in enumerate(lines):
-            if m.begin in line:
-                begin_line = i
+    def output_value(self, region: str, *, m: SessionMarkers, lines_after_begin: int) -> str:
+        r"""Return the ``value`` of the output that ends *region*.
 
-        # The retcode: `retval`'s output — the last bare integer line.
-        retcode_line = len(lines)
-        for i in range(len(lines) - 1, begin_line, -1):
-            if re.fullmatch(r"-?\d+", lines[i].strip()):
-                retcode_line = i
-                break
-
-        # [prompt, <command output...>, prompt] — drop the bracketing prompts.
-        block = lines[begin_line + 1 : retcode_line]
-        output = block[1:-1] if len(block) >= 2 else []  # noqa: PLR2004 — block needs ≥2 lines for [1:-1] slice to yield non-empty output
-        return "\n".join(output).strip()
-
-    def region_before_end(self, buffer: str, *, m: SessionMarkers) -> list[str]:
-        r"""Return the buffer's lines up to (not including) the END token.
-
-        ANSI terminal sequences and the carriage returns from telnet ``\r\n``
-        line endings are stripped from each line. The END token's own line and
-        anything after it are excluded.
+        *region* runs from the start of the buffer to where the command's
+        output stops. The output starts after the last BEGIN marker and the
+        *lines_after_begin* shell lines that follow it (each ending ``\r\n``):
+        the BEGIN rejection, then its prompt (and, on a shell that reports
+        each exit code inline, that report's line before the prompt). From
+        what remains this removes only what the shell adds: the colouring of
+        each error and warning line, wherever it falls
+        (``strip_zephyr_levels``), and the ``\r`` of each ``\r\n`` line
+        ending. Every
+        other byte, escape sequences and blank lines included, is kept, and
+        the result is :func:`command_value` of it.
 
         A helper for a subclass that parses the framed response itself (the
         Zephyr 2.7 frame in the getting-started example does). Subclasses call
         it; they do not override it.
         """
-        clean = _ANSI_RE.sub("", buffer)
-        end_idx = clean.find(m.end_prefix)
-        region = clean if end_idx == -1 else clean[:end_idx]
-        return [line.replace("\r", "") for line in region.split("\n")]
+        begin = region.rfind(m.begin)
+        start = 0
+        if begin != -1:
+            start = begin
+            for _ in range(lines_after_begin):
+                end = region.find("\r\n", start)
+                if end == -1:
+                    return ""
+                start = end + 2
+        output = strip_zephyr_levels(region[start:])
+        return command_value(output.replace("\r\n", "\n"))
+
+    def region_before_end(self, buffer: str, *, m: SessionMarkers) -> list[str]:
+        r"""Return the buffer up to (not including) the END token, split into lines.
+
+        The split is at the shell's ``\r\n`` line endings, which are removed.
+        The END token and anything after it are excluded. Nothing else is
+        removed: escape sequences, a lone ``\r`` and blank lines are kept.
+
+        A helper for a subclass that parses the framed response itself (the
+        Zephyr 2.7 frame in the getting-started example does). Subclasses call
+        it; they do not override it.
+        """
+        end_idx = buffer.find(m.end_prefix)
+        region = buffer if end_idx == -1 else buffer[:end_idx]
+        return region.split("\r\n")
 
 
 class ZephyrSerialFrame(ZephyrFrame):
@@ -908,11 +1069,29 @@ def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     return (frame or BashFrame()).quiet_history()
 
 
+def handshake_prefix(
+    frame: CommandFrame, m: SessionMarkers, *, shell_history: bool, save_terminal: bool
+) -> str:
+    """Return the prefix a session's readiness handshake carries after its anchor.
+
+    The frame's :meth:`~CommandFrame.save_terminal` first when
+    *save_terminal* (the first handshake on a terminal that outlives the
+    session), so it reads the settings before anything changes them; then
+    :func:`history_prefix`. The one composition, for the session and the
+    tests that type the session's line into real shells.
+    """
+    save = frame.save_terminal(m) if save_terminal else ""
+    return save + history_prefix(frame, shell_history)
+
+
 def _check_frame_class(type_name: str, cls: object) -> None:
     """Refuse anything but a :class:`CommandFrame` subclass whose ``type_name`` is its name.
 
     One check, two call sites: ``validate`` runs it on a class registered
     eagerly, ``check_resolved`` on the class a ``Ref`` names, once imported.
+    It also holds :attr:`CommandFrame.exact_output` to ``None`` or a
+    :class:`~otto.host.limitation.Limitation` declared on the class's own
+    body, so a subclass never inherits a parent's limitation unseen.
     """
     if not (isinstance(cls, type) and issubclass(cls, CommandFrame)):
         raise TypeError(
@@ -922,6 +1101,18 @@ def _check_frame_class(type_name: str, cls: object) -> None:
         raise ValueError(
             f"register_command_frame: type_name {type_name!r} doesn't match "
             f"{cls.__name__}.type_name = {cls.type_name!r}"
+        )
+    limitation = cls.exact_output
+    if limitation is not None and not isinstance(limitation, Limitation):
+        raise TypeError(
+            f"register_command_frame({type_name!r}): {cls.__name__}.exact_output must be "
+            f"None or a Limitation, got {limitation!r}"
+        )
+    if limitation is not None and "exact_output" not in vars(cls):
+        raise ValueError(
+            f"register_command_frame({type_name!r}): {cls.__name__} must declare "
+            "exact_output on its own class body -- it would inherit a parent's Limitation "
+            "it never measured. Declare None, or its own Limitation."
         )
 
 
@@ -986,19 +1177,36 @@ def build_command_frame(*, type_name: str) -> CommandFrame:
     return resolved(FRAME_CLASSES.get(type_name).cls)()
 
 
+@dataclass(frozen=True, kw_only=True)
+class BuiltinFrame:
+    """One frame otto ships: its dialect name, and a reference to its class."""
+
+    name: str
+    ref: Ref
+
+
+BUILTIN_FRAMES: "list[BuiltinFrame]" = [
+    BuiltinFrame(name="bash", ref=Ref(target="otto.host.command_frame:BashFrame")),
+    BuiltinFrame(name="ash", ref=Ref(target="otto.host.command_frame:AshFrame")),
+    BuiltinFrame(name="zephyr", ref=Ref(target="otto.host.command_frame:ZephyrFrame")),
+    BuiltinFrame(name="zephyr-serial", ref=Ref(target="otto.host.command_frame:ZephyrSerialFrame")),
+    BuiltinFrame(name="raw", ref=Ref(target="otto.host.command_frame:RawFrame")),
+]
+"""The frames otto ships, in registration order: the one list of them.
+
+:func:`_register_builtin_frames` registers exactly these, and anything that
+must speak about the built-in frames alone (not a caller's registrations,
+nor a built-in a caller overwrote) reads this list rather than
+:data:`FRAME_CLASSES`."""
+
+
 def _register_builtin_frames() -> None:
-    """Register otto's built-in frames by reference.
+    """Register :data:`BUILTIN_FRAMES` by reference.
 
     Mirrors ``os_profile._register_builtin_host_classes``.
     """
-    for name, target in [
-        ("bash", "otto.host.command_frame:BashFrame"),
-        ("ash", "otto.host.command_frame:AshFrame"),
-        ("zephyr", "otto.host.command_frame:ZephyrFrame"),
-        ("zephyr-serial", "otto.host.command_frame:ZephyrSerialFrame"),
-        ("raw", "otto.host.command_frame:RawFrame"),
-    ]:
-        FRAME_CLASSES.register(name=name, entry=ClassEntry(cls=Ref(target=target)))
+    for frame in BUILTIN_FRAMES:
+        FRAME_CLASSES.register(name=frame.name, entry=ClassEntry(cls=frame.ref))
 
 
 _register_builtin_frames()

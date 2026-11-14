@@ -260,6 +260,11 @@ it directly, see "Calling an instruction by name" in
 
 ## Host lifetimes
 
+`run` and `exec` return results whose exit code, output and timeout mean the
+same on each kind of host they are checked on, except where a declared exception
+says otherwise; {ref}`the command contract page <command-contract>` says where
+each promise is checked and lists the exceptions.
+
 There are three patterns for managing individual host connections inside an
 `open_context` block. All three are safe — the block's exit closes whatever
 is still open.

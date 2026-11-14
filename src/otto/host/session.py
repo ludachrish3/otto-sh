@@ -17,11 +17,11 @@ import math
 import os
 import re
 import uuid
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic import SecretStr
@@ -35,17 +35,39 @@ from .command_frame import (
     CommandFrame,
     RawFrame,
     SessionMarkers,
+    command_value,
+    handshake_prefix,
     history_prefix,
 )
 from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
+from .exec_route import ExecRoute
 from .identity import ROOT_LOGIN
+from .limitation import Limitation
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
-from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, finish_character, output_decoder
+from .output_codec import (
+    MAX_SEPARATOR_LEN,
+    OUTPUT_ENCODING,
+    OUTPUT_ERRORS,
+    READ_CHUNK,
+    PatternReader,
+    bounded_pattern,
+    finish_character,
+    is_bounded,
+    output_decoder,
+)
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
 from .telnet import TELNET_EOL, ReadGate, ReadGateClosed, TelnetClient, telnet_line_ends
-from .terminal_mapping import ONLCR, UNMEASURED, is_unknown, measure
-from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped
+from .terminal_mapping import (
+    ONLCR,
+    UNMEASURED,
+    Measurement,
+    is_unknown,
+    measure,
+    reported,
+    saved_settings,
+)
+from .userland import ASH_ECHOING_LINE_MAX, PTY_TYPED_LINE_MAX, gap_for, refuse_if_gapped
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -80,6 +102,9 @@ from .host import (
 
 logger = logging.getLogger(__name__)
 
+_UNMEASURED = Measurement(UNMEASURED, calibrated=False)
+"""A session no handshake has measured (or one whose dialect has no calibration line)."""
+
 
 class _CredentialRefusedError(Exception):
     """A :class:`~otto.host.host.CredentialExpect` matched again after its one answer.
@@ -95,12 +120,9 @@ class _CredentialRefusedError(Exception):
         self.expect = expect
 
 
-# Max length hint for asyncssh regex readuntil (performance optimization)
-_MAX_SEPARATOR_LEN = 256
-
 # Hex characters of ``uuid.uuid4()`` that become a session id, and so the
 # length of every marker built from it. Named because a second reader depends
-# on it: ``refuse_if_line_editor_would_truncate`` has to size otto's own
+# on it: ``refuse_if_typed_line_would_be_cut`` has to size otto's own
 # framing BEFORE any session exists, and it does that by rendering the frame
 # against a synthetic marker set of exactly this shape. Pinned against a real
 # session's markers by ``tests/unit/host/test_run_line_length.py``.
@@ -177,6 +199,95 @@ def resolve_init_timeout(
 _HANDSHAKE_RETRY_BACKOFF = 2.0
 
 
+_GLOBAL_FLAG = re.compile(r"\(\?([aiLmsux]+)\)")
+"""One global inline flag group such as ``(?i)``, which :func:`scoped_source` scopes."""
+
+_INLINE_COMMENT = re.compile(r"\(\?#[^)]*\)")
+"""An inline comment, ``(?#...)``, which matches nothing wherever it sits."""
+
+_VERBOSE_FILLER = re.compile(r"\s+|#[^\n]*(?:\n|\Z)")
+"""Whitespace or a ``#`` comment, which a VERBOSE pattern ignores."""
+
+
+def _without_leading_flags(source: str, *, verbose: bool = False) -> str:
+    """*source* with its leading global flags removed, and whatever sits between them.
+
+    Python accepts global flags only at the start, but the start is read past
+    inline comments and, once a leading flag turned VERBOSE on, past
+    whitespace and ``#`` comments: ``(?x) (?i)a`` and ``(?x)(?#c)(?i)a`` are
+    valid alone. *verbose* starts it in that state, for a pattern compiled
+    with ``re.VERBOSE``, whose source needs no ``(?x)`` for it. So the scan
+    skips those, and only those, while it collects the flags; leading
+    whitespace without ``x`` (`` (?x)a``) ends it, and the flag left behind is
+    then refused by the compile of the scoped group.
+    What it removes matches nothing, so the rest matches as before.
+    """
+    at, end = 0, 0
+    while True:
+        flag = _GLOBAL_FLAG.match(source, at)
+        if flag is not None:
+            verbose = verbose or "x" in flag.group(1)
+            at = end = flag.end()
+            continue
+        skip = _INLINE_COMMENT.match(source, at) or (
+            _VERBOSE_FILLER.match(source, at) if verbose else None
+        )
+        if skip is None or skip.end() == at:
+            return source[end:]
+        at = skip.end()
+
+
+_SCOPED_LETTERS = [
+    (re.IGNORECASE, "i"),
+    (re.MULTILINE, "m"),
+    (re.DOTALL, "s"),
+    (re.VERBOSE, "x"),
+    (re.ASCII, "a"),
+]
+"""The flags a str pattern can carry into a scoped group, with their letters.
+
+``u`` is left out: it is every str pattern's default and cannot be combined
+with ``a``. ``L`` is invalid for a str pattern, and ``re.DEBUG`` changes no
+match."""
+
+
+def scoped_source(pattern: str | re.Pattern[str]) -> str:
+    r"""Render *pattern* as one group that matches as *pattern* alone does, whatever surrounds it.
+
+    A caller's ``expects`` pattern joins otto's framing parts in one regex
+    (``ShellSession._build_combined_pattern``), and a pattern's source
+    alone loses its compiled flags (``re.compile(p, re.IGNORECASE)``), while a
+    leading global flag such as ``(?i)`` would land mid-regex, where Python
+    3.11+ rejects it and 3.10 applies it to every part. So the flags, from the
+    source and the compile alike, become the group's own: ``(?i:...)``. A
+    VERBOSE pattern's group closes on a new line, so a trailing ``#`` comment
+    cannot swallow the ``)``.
+
+    Raises:
+        ValueError: *pattern* is invalid alone, carries ``re.TEMPLATE``, or
+            has a global inline flag anywhere but at its start, which no
+            group can scope (Python 3.10 only warns about one alone).
+    """
+    source = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
+    with warnings.catch_warnings():
+        # Python 3.10 only warns about a global flag past the start; 3.11+ raises.
+        warnings.simplefilter("error", DeprecationWarning)
+        try:
+            flags = pattern.flags if isinstance(pattern, re.Pattern) else re.compile(source).flags
+            if flags & getattr(re, "TEMPLATE", 0):
+                raise ValueError(f"expects pattern {source!r}: re.TEMPLATE cannot be scoped")
+            letters = "".join(letter for flag, letter in _SCOPED_LETTERS if flags & flag)
+            close = "\n)" if flags & re.VERBOSE else ")"
+            body = _without_leading_flags(source, verbose=bool(flags & re.VERBOSE))
+            scoped = f"(?{letters}:{body}{close}"
+            re.compile(scoped)
+        except (re.error, DeprecationWarning) as exc:
+            # An invalid pattern, or a global inline flag past its start
+            # (open it with the flag, or scope it as `(?i:...)`).
+            raise ValueError(f"expects pattern {source!r} is not a valid pattern: {exc}") from exc
+    return scoped
+
+
 def ready_pattern(m: SessionMarkers, *, line_ending: bool = False) -> re.Pattern[str]:
     r"""Compile the pattern a readiness handshake's reply has to satisfy.
 
@@ -217,10 +328,42 @@ def _sink_for(
     return lambda line: log_output(line, mode)
 
 
-def refuse_if_line_editor_would_truncate(
-    frame: CommandFrame | None, cmd: str, *, host: str = "", exec_escapes: bool = True
+_BEFORE_ANY_SESSION_ECHOES = False
+"""The echo fact that gives the widest typed-line ceiling: what a check made before any session
+opens assumes, so a line no session here could carry is refused without costing a connection."""
+
+
+def typed_line_ceiling(frame: "CommandFrame | None", *, echoes: bool) -> int:
+    """Longest line, framing included, a terminal delivers intact into *frame*'s shell.
+
+    THE ONE PLACE THE TYPED-LINE CEILING IS DECIDED; :func:`typed_line_budget`,
+    :func:`refuse_if_typed_line_would_be_cut`, :meth:`SessionManager.line_budget`
+    and through it the shell transfer's chunk sizing all ask it.
+
+    :data:`~otto.host.userland.ASH_ECHOING_LINE_MAX` (1022) for an ash frame
+    whose terminal *echoes*: BusyBox ash's line editor cuts there, and engages
+    only while the terminal echoes. :data:`~otto.host.userland.PTY_TYPED_LINE_MAX`
+    (4095, the Linux terminal's canonical line) otherwise. *echoes* is the
+    session's :attr:`~otto.host.terminal_mapping.Measurement.echoes`, which is
+    ``True`` where the handshake could not show echo off (no ``stty``, #953, or
+    no calibration line at all), so an unmeasured ash terminal gets the
+    conservative 1022. Keyed on ``isinstance(frame, AshFrame)`` for the reasons
+    :func:`refuse_if_typed_line_would_be_cut` gives.
+    """
+    if echoes and isinstance(frame, AshFrame):
+        return ASH_ECHOING_LINE_MAX
+    return PTY_TYPED_LINE_MAX
+
+
+def refuse_if_typed_line_would_be_cut(
+    frame: CommandFrame | None,
+    cmd: str,
+    *,
+    echoes: bool,
+    host: str = "",
+    exec_escapes: bool = True,
 ) -> None:
-    """Refuse *cmd* when the far shell's line editor would silently shorten it.
+    """Refuse *cmd* when the terminal it is typed through would silently shorten it.
 
     **The gap registry's first product call site.** Everything otto knows about
     this failure lives in the ``run-command-line-length`` record in
@@ -235,7 +378,7 @@ def refuse_if_line_editor_would_truncate(
     different shell, and ``userland_options`` deliberately refuses to be named
     ``busybox_*`` for the mirror-image reason -- see
     :class:`~otto.host.options.UserlandOptions`), not ``has_bash=False`` (dash
-    and ksh hosts are not ash and have no such buffer), and not
+    and ksh hosts are not ash, and otto has measured the bound only on ash), and not
     :attr:`~otto.host.userland.Userland.shell_dialect`. That last one is the
     tempting wrong answer: it is the probe that MEASURES ash-ness, but reading
     it here would drag a whole userland resolution -- up to
@@ -254,18 +397,25 @@ def refuse_if_line_editor_would_truncate(
     * otto never types the caller's command bare -- it wraps it in the frame's
       BEGIN/END sentinels. On the bash/ash frame the command's line carries
       the BEGIN half, 38 characters (the END half has a line of its own). A
-      guard on ``len(cmd)`` would leave every command between 985 and 1022
+      guard on ``len(cmd)`` would leave every command between 4058 and 4095
       characters silently truncated, which is the original defect with a
       narrower mouth.
     * the buffer holds ONE line. A multi-line script is many lines, each
       independently edited, so the total is the wrong number: summing it would
       refuse a here-doc every line of which the device handles fine.
 
+    WHAT IT COMPARES AGAINST: :func:`typed_line_ceiling` for *frame* and
+    *echoes*, the session's measured echo fact. :meth:`SessionManager.run_cmd`
+    asks twice: before the session opens with ``_BEFORE_ANY_SESSION_ECHOES`` (the widest
+    ceiling any session here can have, so a line over it is refused without
+    costing a connection), and once the session is open, before anything is
+    typed, with that session's measured fact.
+
     Renders the framing against a synthetic marker set rather than a real
-    session's, because it runs BEFORE ``_ensure_session`` -- the refusal must
-    not cost a connection. Only the marker LENGTH affects the arithmetic and
-    that is fixed by this module's ``_SESSION_ID_LEN``, which
-    ``tests/unit/host/test_run_line_length.py`` pins against a real session.
+    session's, so the first check needs no session. Only the marker LENGTH
+    affects the arithmetic and that is fixed by this module's
+    ``_SESSION_ID_LEN``, which ``tests/unit/host/test_run_line_length.py``
+    pins against a real session.
 
     *exec_escapes* says whether ``exec()`` on this host avoids the bound, and
     so whether the message may advise it. It does everywhere but a ``console``
@@ -273,7 +423,7 @@ def refuse_if_line_editor_would_truncate(
 
     Raises:
         ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
-            typed line is over :data:`~otto.host.userland.ASH_TYPED_LINE_MAX`.
+            typed line is over :func:`typed_line_ceiling`.
             Never raised for another dialect, and never raised while the record
             is anything but ``measured-broken`` -- the firing rule stays in
             :func:`~otto.host.userland.refuse_if_gapped`.
@@ -282,9 +432,16 @@ def refuse_if_line_editor_would_truncate(
         return
     markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
     longest = max(len(line) for line in frame.frame(cmd, m=markers).rstrip("\n").split("\n"))
-    if longest <= ASH_TYPED_LINE_MAX:
+    ceiling = typed_line_ceiling(frame, echoes=echoes)
+    if longest <= ceiling:
         return
     overhead = framed_line_overhead(frame)
+    terminal = (
+        "BusyBox ash's line editor keeps intact on one line while the terminal still "
+        "echoes (`stty -echo` did not take at the handshake)"
+        if ceiling == ASH_ECHOING_LINE_MAX
+        else "a terminal delivers intact on one line"
+    )
     way_out = (
         "Send it through `exec()`, which allocates no pty and took 9000 characters "
         "in the same measurement, or split it"
@@ -297,56 +454,18 @@ def refuse_if_line_editor_would_truncate(
         attempted=(
             f"a {len(cmd)}-character command, which otto types as a {longest}-character "
             f"line once otto's framing ({overhead} characters) is added to it — over "
-            f"the {ASH_TYPED_LINE_MAX} this shell's line editor delivers intact, so "
-            f"{ASH_TYPED_LINE_MAX - overhead} characters is the most any one line of a "
+            f"the {ceiling} {terminal}, so "
+            f"{ceiling - overhead} characters is the most any one line of a "
             f"command may be here. {way_out}"
         ),
     )
 
 
-PTY_TYPED_LINE_MAX = 4000
-"""Longest single line a pty-routed console delivers intact. A DISCRIMINATOR.
-
-THE SECOND CEILING ON A TYPED LINE, and unlike
-:data:`~otto.host.userland.ASH_TYPED_LINE_MAX` it belongs to the KERNEL rather
-than to the far shell. A pty in canonical mode holds one line at a time in
-N_TTY's 4096-byte buffer, so this bounds every line-disciplined transport
-whatever shell is reading on the other side -- which is why the two ceilings
-are separate constants and why :func:`typed_line_budget` takes whichever is
-smaller.
-
-MEASURED 2026-08-21 on the five BusyBox QEMU guests (telnet consoles behind a
-hop; ``tests/integration/busybox_bed``), with a raw ``echo <pad> | wc -c``
-probe that counts what ARRIVED, so a truncation shows up as a short count
-rather than as a pass. 500, 1000, 1022, 1023, 1100, 2000 and 4000 characters
-all arrive intact; at 4090 the command never returns at all -- the shell sits
-at its PS2 continuation prompt waiting for the rest of a line it never got.
-
-4000 is the largest value MEASURED intact, and that is deliberately what this
-constant is rather than the 4095 the buffer size would allow: the line's own
-terminator shares that buffer, a telnet transport is free to spell it
-``\\r\\n``, and the 95 characters between the two numbers buy nothing worth a
-wedge on a device with no way to report one.
-
-The same probes rule the far shell's line editor OUT on these guests -- 1022
-and 1023 both arrive intact, which is exactly where
-:data:`~otto.host.userland.ASH_TYPED_LINE_MAX` would have shown itself. Neither
-ceiling subsumes the other: a stock BusyBox build truncates at 1022 through a
-pty of any size, and these guests wedge at 4090 with no line editor in play at
-all.
-
-NEVER WIDEN THIS on an arithmetic argument, for
-:data:`~otto.host.userland.ASH_TYPED_LINE_MAX`'s reason: it is the far side's
-buffer, not a budget otto chose. Only a new measurement moves it, and then it
-moves to whatever that measurement answered.
-"""
-
-
-def typed_line_budget(frame: "CommandFrame | None") -> int:
+def typed_line_budget(frame: "CommandFrame | None", *, echoes: bool) -> int:
     """Characters of ONE line of a caller's command a line-disciplined path carries.
 
-    The BUDGET half of what :func:`refuse_if_line_editor_would_truncate`
-    REFUSES on, reading the same two measurements, and the difference between
+    The BUDGET half of what :func:`refuse_if_typed_line_would_be_cut`
+    REFUSES on, reading the same measurement, and the difference between
     the two verbs is the whole reason this exists. A refusal is right for
     ``run()``, whose caller wrote the command and can shorten it. It is wrong
     for a caller that is generating the line itself -- ``ShellFileTransfer``
@@ -356,14 +475,7 @@ def typed_line_budget(frame: "CommandFrame | None") -> int:
     ``otto.host.transfer.shell``). Handed a number instead, it emits a shorter
     line and the transfer works.
 
-    Both ceilings that can apply are applied, smaller first:
-    :data:`PTY_TYPED_LINE_MAX` for the kernel's canonical-mode buffer, which
-    bounds any pty, and :data:`~otto.host.userland.ASH_TYPED_LINE_MAX` for
-    BusyBox ash's line editor, which bounds a host whose DECLARED dialect is
-    ash -- ``isinstance(frame, AshFrame)``, the same free, synchronous
-    evidence the refusal keys on, and never a userland probe (see that
-    function for why reading the probed dialect here would be the tempting
-    wrong answer).
+    The ceiling is :func:`typed_line_ceiling`'s for *frame* and *echoes*.
 
     Returns the budget for the caller's COMMAND, with what otto's frame adds to
     the command's own line already subtracted (see
@@ -381,10 +493,7 @@ def typed_line_budget(frame: "CommandFrame | None") -> int:
     the shape of a command the caller has not built yet.
     """
     frame = frame or BashFrame()
-    ceiling = PTY_TYPED_LINE_MAX
-    if isinstance(frame, AshFrame):
-        ceiling = min(ceiling, ASH_TYPED_LINE_MAX)
-    return ceiling - framed_line_overhead(frame)
+    return typed_line_ceiling(frame, echoes=echoes) - framed_line_overhead(frame)
 
 
 def framed_line_overhead(frame: "CommandFrame") -> int:
@@ -448,8 +557,19 @@ class ShellSession(ABC):
         init_timeout: float | None = None,
         shell_history: bool = True,
         failure_context: str = "",
+        console_client: "ConsoleClient | None" = None,
     ) -> None:
         self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
+        # The console term's client, when this session is a shell on a serial
+        # console (TelnetSession's own line, or the login bridge's): it owns
+        # the line. ``None`` on every other transport. Held here because it
+        # is also what decides terminal_outlives_session.
+        self.console_client = console_client
+        # The terminal's settings as the first handshake on it found them
+        # (a `stty -g` record), on a terminal that outlives the session; put
+        # back by the one restore step (_restore_line). None until saved,
+        # and wherever nothing is saved.
+        self._saved_terminal: str | None = None
         # Words naming WHAT this session is a shell on, appended in brackets
         # to a failed-readiness message. Empty for ssh/telnet, whose message
         # needs none; a console term names its server, port and dial mode, so
@@ -507,11 +627,14 @@ class ShellSession(ABC):
         # SessionManager from the host's login user; mutated only by the
         # elevation flow (switch_user/as_user). '' on loginless shells.
         self.current_user: str = ""
-        # How this session's terminal maps line endings, as the last
-        # handshake measured it (see otto.host.terminal_mapping), and whether
-        # an unknown mapping has been warned about yet: once per session.
-        self.terminal_mapping: str = UNMEASURED
+        # How this session's terminal maps its output, as the last handshake
+        # measured it (see otto.host.terminal_mapping), and whether an unknown
+        # mapping, or tabs still expanded, has been warned about yet: each
+        # once per session.
+        self._terminal = _UNMEASURED
         self._warned_terminal_mapping = False
+        self._warned_tabs = False
+        self._warned_echo = False
         # App-shell lock: the AppShell instance currently attached to this
         # session, or None. Typed `object` (not AppShell) to avoid an import
         # cycle — session.py must not import app_shell at module load. While
@@ -523,6 +646,65 @@ class ShellSession(ABC):
     def alive(self) -> bool:
         """Whether the session is initialized and responsive."""
         return self._alive
+
+    reads_a_terminal: bool = True
+    """Whether this session's shell reads a terminal; ``False`` for a pipe (:class:`LocalSession`).
+
+    A pipe echoes nothing, so its ``stty -echo`` failing (there is no
+    terminal to set) is no echo: the session records echo as off."""
+
+    @property
+    def terminal_outlives_session(self) -> bool:
+        """Whether this session's terminal stays after the session ends.
+
+        The one place that decides it. True on a serial console (the session
+        holds a :class:`~otto.host.console.ConsoleClient`): the line is
+        still there for the next user once otto logs out, so what the
+        handshake changed on it is put back
+        (:mod:`otto.host.terminal_mapping`). False on an ssh, telnet or local
+        session, whose pty or pipe goes away with it.
+        """
+        return self.console_client is not None
+
+    def _restore_line(self, frame: CommandFrame | None = None) -> str | None:
+        """Return the one line undoing what the handshake did to the terminal, in *frame*'s dialect.
+
+        *frame* defaults to the session's current one. Where the settings
+        were saved, :meth:`~otto.host.command_frame.CommandFrame.restore_terminal`
+        of them (echo and tabs as they were found); elsewhere
+        :meth:`~otto.host.command_frame.CommandFrame.restore_interactive`.
+        Used at the login bridge's hand-back and by :meth:`_put_terminal_back`.
+        """
+        frame = frame or self._frame
+        if self._saved_terminal is not None:
+            return frame.restore_terminal(self._saved_terminal)
+        return frame.restore_interactive()
+
+    async def _put_terminal_back(self) -> None:
+        """Before a close, restore the settings the handshake saved; a no-op where none were.
+
+        Only a terminal that outlives the session has saved settings, so an
+        ssh, telnet or local close sends nothing. The restore is written as
+        one framed command and its reply is NOT awaited: the close's next
+        step (a console's logout) reads the line through to the login
+        prompt, and the shell runs the restore before it reads the logout's
+        EOF, so the close costs no round trip more and cannot wait on a
+        shell that is going away (a reboot). A write that fails is logged
+        and the close goes on. A session killed without a clean close never
+        gets here; that is documented, not guarded (no timer, no watchdog).
+        """
+        saved, self._saved_terminal = self._saved_terminal, None
+        # Not into a command still running (it would read the line as its
+        # input) nor into an attached app shell.
+        if saved is None or not self._alive or self._needs_recovery or self._app_shell is not None:
+            return
+        line = self._frame.restore_terminal(saved)
+        if line is None:
+            return
+        try:
+            await self.write_transport(data=self._frame.frame(line, m=self._markers))
+        except Exception as exc:  # noqa: BLE001 — best-effort courtesy on close, like the console logout
+            logger.warning(f"{self._log_tag}: could not restore the terminal's settings: {exc}")
 
     @property
     def _log_tag(self) -> str:
@@ -640,9 +822,26 @@ class ShellSession(ABC):
         on the FIRST line the shell executes — anything written before it is
         already in the history list. The frame places it in the line
         (:meth:`~otto.host.command_frame.CommandFrame.handshake`), after the
-        anchor that has to open it.
+        anchor that has to open it. On the first handshake of a terminal that
+        outlives the session the settings save rides in front of it
+        (:func:`~otto.host.command_frame.handshake_prefix`).
         """
-        return self._frame.handshake(m, prefix=history_prefix(self._frame, self._shell_history))
+        prefix = handshake_prefix(
+            self._frame,
+            m,
+            shell_history=self._shell_history,
+            save_terminal=self._saves_terminal(),
+        )
+        return self._frame.handshake(m, prefix=prefix)
+
+    def _saves_terminal(self) -> bool:
+        """Whether this handshake saves the terminal's settings.
+
+        Only where the terminal outlives the session, and only while nothing
+        is saved: a second handshake (frame entry) on the same line must not
+        save otto's own settings as the user's.
+        """
+        return self.terminal_outlives_session and self._saved_terminal is None
 
     async def _ensure_initialized(self) -> None:
         """Open the transport, then run the dialect handshake. Idempotent.
@@ -677,15 +876,19 @@ class ShellSession(ABC):
         contract :class:`~otto.host.command_frame.RawFrame` relies on — and
         marks the session ready without writing a byte.
 
-        On bash that payload is ``__otto_probe=READY__; stty -echo || :; echo;
-        <calibration> || :; echo __OTTO_<id>_$__otto_probe``, read back until
+        On bash that payload is ``__otto_probe=READY__; __otto_echo=;
+        stty -echo || __otto_echo=E; stty tab0 || :; echo; <calibration> || :;
+        unset __otto_echo; echo __OTTO_<id>_$__otto_probe`` (on the first handshake of a terminal
+        that outlives the session, ``stty -g || :;`` right after the anchor,
+        whose record the session keeps: :mod:`otto.host.terminal_mapping`), read back until
         the marker and its line ending return: the deterministic readiness
         check that replaced telnet login's silence-drain — prompt-independent
         and content-independent. The calibration line
         (:data:`~otto.host.terminal_mapping.CALIBRATION_COMMAND`) is how the
-        session learns its terminal's line-ending mapping, recorded as
-        ``terminal_mapping``. READY is typed split across a variable that
-        only the line's first statement sets
+        session learns its terminal's line-ending mapping, whether tabs
+        survive and whether ``stty -echo`` took (its ``%s`` prints
+        ``__otto_echo`` before the ``X``), reported as ``terminal_mapping``. READY is typed split
+        across a variable that only the line's first statement sets
         (:func:`~otto.host.command_frame.whole_line_echo`): an echo of the
         typed line (echo is still on at the first handshake) never carries
         it, even where a wrapped echo puts a carriage return before it, and a
@@ -709,10 +912,13 @@ class ShellSession(ABC):
         a SECOND handshake, in a different dialect, on the same transport.
         """
         deadline = self._init_timeout if timeout is None else timeout
+        # Decided once per handshake, before any send: every resend of this
+        # handshake carries the save (or not) alike.
+        saves = self._saves_terminal() and self._frame.save_terminal(self._markers) != ""
         handshake_cmd = self._handshake_payload(self._markers)
         if handshake_cmd == "":
             logger.debug(f"{self._log_tag}: raw landing — no handshake to send")
-            self.terminal_mapping = UNMEASURED
+            self._terminal = _UNMEASURED
             self._initialized = True
             self._alive = True
             return
@@ -752,9 +958,35 @@ class ShellSession(ABC):
         # to confirm the handshake landed.
         logger.debug(f"{self._log_tag}: handshake matched")
         self._measure_terminal_mapping(reply if measures else None)
+        if saves:
+            # The reply holds everything the line printed up to READY, so the
+            # first record behind this session's tag is the first run's: the
+            # settings as found.
+            self._saved_terminal = saved_settings(reply, self._markers.saved)
 
         self._initialized = True
         self._alive = True
+
+    @property
+    def terminal_mapping(self) -> str:
+        """How this session's terminal maps its output, as the last handshake measured it.
+
+        The line-ending mapping, with ``, tabs expanded`` after it where tabs
+        did not survive and ``, echo on`` where echo is still on
+        (:func:`~otto.host.terminal_mapping.reported`).
+        """
+        return reported(self._terminal)
+
+    @property
+    def echoes(self) -> bool:
+        """Whether this session's terminal may still echo, as the last handshake measured it.
+
+        :attr:`~otto.host.terminal_mapping.Measurement.echoes`: ``True`` where
+        ``stty -echo`` failed and where nothing was measured (no handshake yet,
+        no calibration line, a dialect that sends none). It sets the typed-line
+        ceiling of an ash shell (:func:`typed_line_ceiling`).
+        """
+        return self._terminal.echoes
 
     def _measure_terminal_mapping(self, reply: str | None) -> None:
         """Record how the terminal maps line endings, from the handshake's *reply*.
@@ -762,15 +994,45 @@ class ShellSession(ABC):
         ``None`` (a frame with no calibration line) records ``unmeasured``.
         Measured afresh at every handshake; an ``unknown(...)`` mapping logs a
         WARNING the first time this session sees one, and never fails anything:
-        the output is then returned as it arrived.
+        the output is then returned as it arrived. Tabs still expanded after
+        the handshake's ``stty tab0`` log a WARNING of their own, once, and
+        so does a terminal that still echoes after ``stty -echo``, where the
+        frame's typed-line ceiling depends on it (:func:`typed_line_ceiling`);
+        elsewhere that is only a debug line.
         """
         if reply is None:
-            self.terminal_mapping = UNMEASURED
+            self._terminal = _UNMEASURED
             return
         seen = measure(reply, self._markers.ready)
+        if not self.reads_a_terminal:
+            seen = replace(seen, echoes=False)
         mapping = seen.mapping
-        self.terminal_mapping = mapping
-        logger.debug(f"{self._log_tag}: terminal mapping: {mapping}")
+        self._terminal = seen
+        logger.debug(f"{self._log_tag}: terminal mapping: {reported(seen)}")
+        if seen.tabs_expanded and not self._warned_tabs:
+            self._warned_tabs = True
+            logger.warning(
+                f"{self._log_tag}: terminal mapping: {reported(seen)}. The terminal "
+                f"expands tabs and `stty tab0` could not turn it off, so a tab a "
+                f"command writes arrives as spaces"
+            )
+        if seen.calibrated and seen.echoes and not self._warned_echo:
+            self._warned_echo = True
+            note = (
+                f"{self._log_tag}: terminal mapping: {reported(seen)}. `stty -echo` did "
+                f"not take (no `stty` on the target?), so the terminal still echoes "
+                f"what otto types"
+            )
+            if typed_line_ceiling(self._frame, echoes=True) != typed_line_ceiling(
+                self._frame, echoes=False
+            ):
+                # Where the answer matters, decided where the ceiling is.
+                logger.warning(
+                    f"{note}; on an ash shell a typed line is then limited to "
+                    f"{ASH_ECHOING_LINE_MAX} characters"
+                )
+            else:
+                logger.debug(note)
         if is_unknown(mapping) and not self._warned_terminal_mapping:
             self._warned_terminal_mapping = True
             why = (
@@ -1098,6 +1360,12 @@ class ShellSession(ABC):
         no-op when the effective mode is ``LogMode.NEVER``).
         """
         live = self._frame.streams_output_live
+        # Build regex that matches any expect pattern OR the end sentinel OR
+        # a newline.  The newline alternative causes read_transport_until to
+        # return after every line, enabling incremental output streaming.
+        # Built before the write, so a caller pattern it refuses
+        # (scoped_source) sends nothing.
+        combined = self._build_combined_pattern(expects)
 
         # Write the framed command. The framing — BEGIN/END sentinels and how
         # the exit code is captured — is supplied by the session's CommandFrame
@@ -1123,11 +1391,6 @@ class ShellSession(ABC):
             await self.write_transport(data=framed)
         finally:
             self._write_progress = None
-
-        # Build regex that matches any expect pattern OR the end sentinel OR
-        # a newline.  The newline alternative causes read_transport_until to
-        # return after every line, enabling incremental output streaming.
-        combined = self._build_combined_pattern(expects)
 
         # Read loop: handle expect responses and accumulate output
         buffer = ""
@@ -1169,7 +1432,7 @@ class ShellSession(ABC):
                 if line:
                     on_output(line)
 
-        if self.terminal_mapping == ONLCR:
+        if self._terminal.mapping == ONLCR:
             # Undo the terminal's \n -> \r\n and nothing else: every \n
             # arrived with a CR the terminal added in front of it, so this is
             # the exact inverse, and a CR the program wrote stays.
@@ -1257,17 +1520,25 @@ class ShellSession(ABC):
 
         The ``\\n`` alternative (lowest priority) causes
         ``read_transport_until`` to return after every line, enabling
-        incremental output streaming.
+        incremental output streaming. Without *expects* the pattern is
+        otto's own and is recorded as such
+        (:func:`~otto.host.output_codec.bounded_pattern`).
+
+        Each caller pattern joins as :func:`scoped_source` renders it, so it
+        matches with its own flags, as it would alone under ``re.search``,
+        and lends none of them to otto's parts or to another caller's.
         """
         parts: list[str] = []
         if expects:
             for i, expect in enumerate(expects):
                 pattern = expect.pattern if isinstance(expect, CredentialExpect) else expect[0]
-                pat_str = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
-                parts.append(f"(?P<expect_{i}>{pat_str})")
+                parts.append(f"(?P<expect_{i}>{scoped_source(pattern)})")
         parts.append(f"(?P<sentinel>{self._end_pattern.pattern})")
         parts.append(r"(?P<newline>\n)")
-        return re.compile("|".join(parts))
+        combined = re.compile("|".join(parts))
+        # Recorded only when no caller pattern joined otto's parts: the
+        # contract bounded_pattern states is otto's to keep, never a caller's.
+        return combined if expects else bounded_pattern(combined)
 
     async def _recover_session(self, deadline: float | None = None) -> str:
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
@@ -1425,6 +1696,8 @@ class SshSession(ShellSession):
         )
         self._conn = conn
         self._process: Any = None
+        # One per channel: open_transport replaces it with each new process.
+        self._reader: PatternReader | None = None
         # When set by a subclass, open_transport passes this as the command to
         # create_process() instead of opening the channel's default shell.
         self._open_cmd: str | None = None
@@ -1440,39 +1713,122 @@ class SshSession(ShellSession):
         import asyncssh
 
         assert self._conn is not None, "SshSession._conn must be set before open_transport()"  # noqa: S101 — internal invariant: _conn set by subclass before open_transport()
-        if self._open_cmd is not None:
-            self._process = await self._conn.create_process(
-                self._open_cmd,
-                term_type="dumb",
-                stderr=asyncssh.STDOUT,
-                encoding=OUTPUT_ENCODING,
-                errors=OUTPUT_ERRORS,
-            )
-        else:
-            self._process = await self._conn.create_process(
-                term_type="dumb",
-                stderr=asyncssh.STDOUT,
-                encoding=OUTPUT_ENCODING,
-                errors=OUTPUT_ERRORS,
-            )
+        # Bytes (``encoding=None``), read in chunks through the session's
+        # PatternReader: decoded by otto's one output decoder and searched the
+        # way every chunked reader searches, so a pattern matches here exactly
+        # as it does on a local, bridge or telnet session. The channel is this
+        # session's own and nothing else reads it, so what the reader holds
+        # past a match is never another reader's.
+        args = [] if self._open_cmd is None else [self._open_cmd]
+        self._process = await self._conn.create_process(
+            *args, term_type="dumb", stderr=asyncssh.STDOUT, encoding=None
+        )
+        stdout = self._process.stdout
+
+        async def read_chunk() -> bytes:
+            return await stdout.read(READ_CHUNK)
+
+        self._reader = PatternReader(read_chunk)
 
     @override
     async def write_transport(self, *, data: str | SecretStr) -> None:
         assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before write_transport()
-        self._process.stdin.write(reveal(data))
+        self._process.stdin.write(reveal(data).encode(OUTPUT_ENCODING))
 
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before read_transport_until()
-        return await self._process.stdout.readuntil(pattern, _MAX_SEPARATOR_LEN)
+        assert self._reader is not None  # noqa: S101 — internal invariant: open_transport() must run before read_transport_until()
+        return await self._reader.read_transport_until(pattern)
 
     @override
     async def close(self) -> None:
         if self._process is not None:
             self._process.close()
             self._process = None
+            self._reader = None
         self._alive = False
         self._initialized = False
+
+
+async def _readuntil_past_limit(reader: Any, pattern: re.Pattern[bytes], *, bounded: bool) -> bytes:
+    r"""telnetlib3's ``readuntil_pattern``, for a match further away than the reader's limit.
+
+    telnetlib3 raises :exc:`asyncio.LimitOverrunError` once the bytes up to a
+    match, or the unmatched buffer, outgrow its limit (64 KiB by default), and
+    leaves every byte in its buffer. One long line with no newline would fail
+    the read. Below the limit this is ``readuntil_pattern`` itself; past it,
+    *bounded* (the caller asked
+    :func:`~otto.host.output_codec.is_bounded` of the pattern it was given)
+    picks one of two ways on.
+
+    **Otto's own pattern** (*bounded*): every match is at most
+    :data:`~otto.host.output_codec.MAX_SEPARATOR_LEN` long and needs no
+    context further back, so on each overrun all but the last
+    ``MAX_SEPARATOR_LEN`` bytes of what telnetlib3 reports as ``consumed``
+    (the match's end, or the buffer's length) are taken with ``readexactly``
+    (at least one, so the read always moves), and the read is asked again.
+    The buffer telnetlib3 rescans on every feed stays under the limit, so a
+    long line costs work in proportion to its length.
+
+    **A caller's pattern**: the reader's limit is raised for this read (at
+    least doubled, and past the match the overrun reports) and the same read
+    is asked again; nothing is taken, so every search is over the whole line
+    since the call, in its true context: ``^``, ``\A`` and a lookbehind see
+    the bytes that really precede them, never a cut that taking a prefix
+    would have made look like the start of the text. That is the match
+    :func:`~otto.host.output_codec.bounded_pattern` states for every
+    pattern, and its cost here is the one case left QUADRATIC:
+    telnetlib3 searches its whole buffer after every feed, so a caller's
+    pattern waiting past 64 KiB of one line costs work in proportion to the
+    line's length times the number of pieces it arrived in.
+
+    Either way the match is the one a reader with no limit would find, only
+    the bytes up to its end are consumed, so the other readers of the stream
+    see what follows it, and the reader's limit is the one it had when the
+    read ends. End of stream raises :exc:`asyncio.IncompleteReadError` with
+    everything read since the call, as ``readuntil_pattern`` does. The bound
+    is in bytes, as telnetlib3's limit is.
+
+    The reader's transport pauses at twice the limit and its wait resumes it.
+    telnetlib3 5.0.1 has no public setter for the limit; ``_limit`` is pinned
+    by tests/unit/host/test_telnet_long_line.py, so an upgrade that renames it
+    fails there by name.
+    """
+    if bounded:
+        return await _readuntil_taking_prefix(reader, pattern)
+    return await _readuntil_raising_limit(reader, pattern)
+
+
+async def _readuntil_taking_prefix(reader: Any, pattern: re.Pattern[bytes]) -> bytes:
+    """Read past the limit for otto's own pattern: take all but a tail, search again."""
+    taken = bytearray()
+    while True:
+        try:
+            raw: bytes = await reader.readuntil_pattern(pattern)  # ty: ignore[unsound-assignment] — telnetlib3 reader is untyped here (Any)
+        except asyncio.LimitOverrunError as exc:
+            taken += await reader.readexactly(max(1, exc.consumed - MAX_SEPARATOR_LEN))
+            continue
+        except asyncio.IncompleteReadError as exc:
+            raise asyncio.IncompleteReadError(bytes(taken) + exc.partial, exc.expected) from exc
+        return bytes(taken) + raw
+
+
+async def _readuntil_raising_limit(reader: Any, pattern: re.Pattern[bytes]) -> bytes:
+    """Read past the limit for a caller's pattern: raise the limit, search again."""
+    original: int | None = None  # the reader's own limit, once this read has raised it
+    try:
+        while True:
+            try:
+                raw: bytes = await reader.readuntil_pattern(pattern)  # ty: ignore[unsound-assignment] — telnetlib3 reader is untyped here (Any)
+            except asyncio.LimitOverrunError as exc:
+                if original is None:
+                    original = reader._limit  # noqa: SLF001  # ty: ignore[unsound-assignment] — telnetlib3 is untyped (Any) and has no public limit setter; pinned by test_telnet_long_line.py
+                reader._limit = max(2 * reader._limit, exc.consumed + 1)  # noqa: SLF001 — as above
+                continue
+            return raw
+    finally:
+        if original is not None:
+            reader._limit = original  # noqa: SLF001 — as above
 
 
 @final
@@ -1513,6 +1869,7 @@ class TelnetSession(ShellSession):
             init_timeout=init_timeout,
             shell_history=shell_history,
             failure_context=failure_context,
+            console_client=console_client,
         )
         self._reader = reader
         self._writer = writer
@@ -1529,11 +1886,10 @@ class TelnetSession(ShellSession):
         # be inside a multi-byte character; the held decoder keeps that
         # character's bytes until read_transport_until reads the rest.
         self._decoder = output_decoder()
-        # The console term's client, when this session is a shell on a serial
-        # console: *reader*/*writer* are its streams, it owns the line, and
-        # closing this session closes it (logout, then release). ``None`` for
-        # every telnet-term session, which has ``_client`` instead.
-        self.console_client = console_client
+        # On a console term (``console_client``, held by the base) the
+        # *reader*/*writer* are that client's streams, and closing this
+        # session closes it (logout, then release). Every telnet-term session
+        # has ``_client`` instead.
         if console_client is not None and console_client.logged_in:
             self._retry_failed_handshake = False
         # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
@@ -1577,8 +1933,10 @@ class TelnetSession(ShellSession):
 
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
-        # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
-        bytes_pattern = re.compile(pattern.pattern.encode())
+        # telnetlib3 operates in bytes mode — compile a bytes version of the
+        # pattern, with its flags (MULTILINE, DOTALL...): only re.UNICODE, which
+        # every str pattern carries and a bytes pattern refuses, is dropped.
+        bytes_pattern = re.compile(pattern.pattern.encode(), pattern.flags & ~re.UNICODE)
         # Bound once, and both reads run inside the gate: a read admitted
         # before the client's release began finishes on the reader it started
         # with, and the release waits for it; a read that starts afterwards
@@ -1586,7 +1944,9 @@ class TelnetSession(ShellSession):
         reader = self._reader
         with self._read_gate.reading():
             try:
-                raw: bytes = await reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
+                raw = await _readuntil_past_limit(
+                    reader, bytes_pattern, bounded=is_bounded(pattern)
+                )
             except asyncio.IncompleteReadError as exc:
                 # End of stream: flush the decoder, as every output reader does,
                 # so an incomplete character still held shows in ``partial`` as
@@ -1655,7 +2015,10 @@ class TelnetSession(ShellSession):
         a single-client line is drained to quiet before it is closed. It is
         idempotent and joins a close already running, so a default session
         and its manager closing the same shared client release it once.
+        Before that, a console's settings go back to what the handshake found
+        (``_put_terminal_back``), while the shell can still run it.
         """
+        await self._put_terminal_back()
         if self.console_client is not None:
             await self.console_client.close()
         elif self._client is not None:
@@ -1673,19 +2036,18 @@ class LocalSession(ShellSession):
     handling, and timeout recovery that remote sessions enjoy.
     """
 
+    reads_a_terminal = False  # a pipe: nothing echoes, whatever `stty -echo` answers
+
     def __init__(self) -> None:
         super().__init__()
         self._process: asyncio.subprocess.Process | None = None
         self._transport: asyncio.SubprocessTransport | None = None
         self._pid: int | None = None
-        # Reads are one byte each, so every multi-byte character is split
-        # across reads; the held decoder puts it back together. One per
-        # stream: open_transport replaces it with each new process.
-        self._decoder = output_decoder()
+        # One per stream: open_transport replaces it with each new process.
+        self._reader: PatternReader | None = None
 
     @override
     async def open_transport(self) -> None:
-        self._decoder = output_decoder()  # a fresh stream gets a fresh decoder
         # Drive loop.subprocess_exec() directly (rather than the higher-level
         # asyncio.create_subprocess_exec) so that we hold an explicit reference
         # to the transport. close() uses it to release the pipe fds without
@@ -1710,6 +2072,21 @@ class LocalSession(ShellSession):
         self._transport = transport
         self._process = asyncio.subprocess.Process(transport, protocol, loop)
         self._pid = self._process.pid
+        assert self._process.stdout is not None  # noqa: S101 — internal invariant: stdout=PIPE above
+        self._bind_stdout(self._process.stdout)
+
+    def _bind_stdout(self, stdout: asyncio.StreamReader) -> None:
+        """Read the session from *stdout*, a fresh stream, through a fresh reader.
+
+        The reader asks for :data:`~otto.host.output_codec.READ_CHUNK` bytes
+        at a time and searches once per chunk, so a long line with no newline
+        costs a few searches, not one per byte.
+        """
+
+        async def read_chunk() -> bytes:
+            return await stdout.read(READ_CHUNK)
+
+        self._reader = PatternReader(read_chunk)
 
     @override
     async def write_transport(self, *, data: str | SecretStr) -> None:
@@ -1721,17 +2098,8 @@ class LocalSession(ShellSession):
     @override
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
-        assert self._process.stdout is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
-        buf = ""
-        while True:
-            chunk = await self._process.stdout.read(1)
-            if not chunk:
-                # End of stream: flush the decoder, as every output reader does.
-                buf += self._decoder.decode(b"", final=True)
-                raise asyncio.IncompleteReadError(buf.encode(), None)
-            buf += self._decoder.decode(chunk)
-            if pattern.search(buf):
-                return buf
+        assert self._reader is not None  # noqa: S101 — internal invariant: reader created in open_transport() before read_transport_until()
+        return await self._reader.read_transport_until(pattern)
 
     @override
     async def _recover_session(self, deadline: float | None = None) -> str:
@@ -1976,12 +2344,18 @@ class HostSession:
 
     @property
     def terminal_mapping(self) -> str:
-        """How this session's terminal maps line endings, as its last handshake measured it.
+        """How this session's terminal maps its output, as its last handshake measured it.
 
-        ``identity``, ``onlcr``, ``unknown(<observed>)`` or ``unmeasured``; see
-        :mod:`otto.host.terminal_mapping`.
+        ``identity``, ``onlcr``, ``unknown(<observed>)`` or ``unmeasured``,
+        with ``, tabs expanded`` after it where tabs did not survive and
+        ``, echo on`` where echo is still on; see :mod:`otto.host.terminal_mapping`.
         """
         return self._session.terminal_mapping
+
+    @property
+    def echoes(self) -> bool:
+        """Whether this session's terminal may still echo (:attr:`ShellSession.echoes`)."""
+        return self._session.echoes
 
     def _refuse_elevation(self, verb: str, user: str) -> Never:
         """Bind this session's identity to the shared elevation refusal.
@@ -2600,41 +2974,186 @@ class _SessionProxyIO:
         return out
 
 
-class _ExecRoute(Enum):
-    """Which primitive :meth:`SessionManager.exec` runs a command on for this host.
+_LINE_EDITOR_RECORD = "run-command-line-length"
+"""The :data:`~otto.host.userland.GAPS` record holding BusyBox ash's line-editor measurement."""
 
-    Named rather than recomputed at each reader because a SECOND reader now
-    exists: :attr:`SessionManager.exec_line_budget` has to answer whether a
-    command typed through ``exec`` meets a line discipline, and the honest way
-    to answer that is to ask ``exec`` which path it takes -- not to keep a
-    parallel copy of the same three conditions that drifts the first time one
-    of them moves.
 
-    ``POOLED_SHELL`` is the one that costs anything. It is a full shell session
-    on a pty, so a command typed into it is line-edited and bounded by
-    :func:`typed_line_budget`; the other two are not (``SSH_CHANNEL`` opens a
-    bare pty-less channel, ``FACTORY`` hands the command to a caller-supplied
-    primitive -- a local subprocess, a ``docker exec`` -- that types it into no
-    shell of otto's). ``DEFAULT_SESSION`` types into a pty shell too -- the
-    one ``run`` uses -- so it carries the same budget.
+# The typed-line measurements, as short dated entries for the user-facing record.
+# The investigation behind them -- why the 2026-08-13 harness saw BusyBox ash's
+# 1022-character line editor and otto's own sessions never do (the editor engages
+# only while the terminal echoes, and otto's handshake turns echo off), and that
+# the same harness carried 18437 characters into bash and over 20000 into dash and
+# so ruled itself out -- is the `measured_on` of the :data:`_LINE_EDITOR_RECORD`
+# gap record, its one home. The 2026-08-21 telnet entry's stall at 4090 did not
+# reproduce on 2026-11-13 and is no longer recorded here.
+_TYPED_LINE_MEASUREMENTS = [
+    (
+        "2026-08-13, BusyBox 1.35.0 over dropbear 2022.83, OpenSSH and a local pty, typed "
+        "by a raw harness into a shell whose terminal still echoed: 1022 characters "
+        "arrive intact; at 1023 the line is cut, with no error"
+    ),
+    (
+        "2026-08-13, BusyBox 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 through a local "
+        "pty, the same harness: the same 1022/1023 boundary on every release"
+    ),
+    (
+        "2026-11-13, the five BusyBox QEMU guests over telnet, and BusyBox 1.35.0 over "
+        "dropbear ssh and its serial console, through otto's own session after its "
+        f"handshake (echo off): {PTY_TYPED_LINE_MAX} characters arrive intact; at "
+        f"{PTY_TYPED_LINE_MAX + 1} the line is cut to {PTY_TYPED_LINE_MAX}, with no error"
+    ),
+    (
+        "2026-11-13, the same sessions after `stty echo`: cut at 1022 on every release "
+        "and route, the 2026-08-13 boundary"
+    ),
+    (
+        "2026-11-13, BusyBox 1.35.0 over telnet, dropbear ssh and its serial console, "
+        "through otto's session under the bed's normal (bash) frame after a hook turned "
+        "echo back on and made `stty` fail: the handshake read `onlcr, echo on`, and a raw "
+        f"line of {ASH_ECHOING_LINE_MAX + 1} characters was cut to {ASH_ECHOING_LINE_MAX}; "
+        "GNU bash on test1 over ssh, the same way, cut nothing"
+    ),
+    (
+        "2026-11-13, the same three routes with the `ash` frame declared and the same hook: "
+        f"the line budget read {typed_line_budget(AshFrame(), echoes=True)} and a "
+        f"{ASH_ECHOING_LINE_MAX + 1}-character `run` was refused naming {ASH_ECHOING_LINE_MAX}"
+    ),
+]
+
+SSH_CHANNEL_COMMAND_MAX = 9000
+"""Longest command measured intact on a bare ssh exec channel, on dropbear 2022.83 only.
+
+One server, one version: 9000 characters arrived whole and 9001 failed. It
+is the far server's bound, not otto's, and OpenSSH was not measured; otto
+refuses nothing on it. Declared on the ``ssh-channel`` route as its
+``command_length`` limitation."""
+
+_SSH_CHANNEL_COMMAND_MEASUREMENT = (
+    f"2026-08-13, BusyBox 1.35.0 over dropbear 2022.83: a command on its own exec "
+    f"channel arrives intact at {SSH_CHANNEL_COMMAND_MAX} characters and fails at "
+    f"{SSH_CHANNEL_COMMAND_MAX + 1}"
+)
+"""The measurement behind :data:`SSH_CHANNEL_COMMAND_MAX`, one entry of the
+:data:`_LINE_EDITOR_RECORD` gap record's ``measured_on``."""
+
+
+def _line_budget_limitation() -> Limitation:
+    """Build the ``line_budget`` limitation of a route that types into a pty shell.
+
+    Its measurements are :data:`_TYPED_LINE_MEASUREMENTS`; the gap record they
+    summarise must exist.
+
+    Raises:
+        LookupError: if the gap record is missing, so a renamed record breaks
+            the import instead of silently dropping its measurement.
+    """
+    gap = gap_for(_LINE_EDITOR_RECORD)
+    if gap is None:
+        raise LookupError(
+            f"the {_LINE_EDITOR_RECORD!r} record is missing from otto.host.userland.GAPS; "
+            "the line_budget limitation reads its measurement from it"
+        )
+    return Limitation(
+        kind="device",
+        affects="how long one line of a command can be",
+        reason=(
+            "On these routes otto types the command into a terminal, and the characters "
+            "otto adds around the command count against the line limit. Through a Linux "
+            f"terminal one line is cut past {PTY_TYPED_LINE_MAX} characters with no error: "
+            "the kernel holds a typed line in a 4096-byte buffer, its newline included "
+            "(measured on BusyBox guests). BusyBox ash's line editor cuts a line at "
+            f"{ASH_ECHOING_LINE_MAX} characters, but only while the terminal echoes. otto "
+            "turns echo off when it opens a session and records whether that took, so an "
+            f"ash shell's limit is {PTY_TYPED_LINE_MAX} where echo is off and "
+            f"{ASH_ECHOING_LINE_MAX} where it is still on (no `stty`, or one that refuses "
+            "it), and for a transfer planned before any session has opened. On an ash "
+            "shell `run` counts each line before typing it and refuses one over that "
+            "limit, with an error naming it. The measurements below show both. A Zephyr "
+            "board's own shell buffer is a separate limit, not measured. "
+            "A local host's session reads the command from a pipe, not a terminal, and is "
+            "not limited this way. `exec` on the `ssh-channel` route, a channel of its "
+            "own, is not limited this way either; its own limit is declared on that route."
+        ),
+        measured_on=_TYPED_LINE_MEASUREMENTS,
+    )
+
+
+def _ssh_channel_command_limitation() -> Limitation:
+    """Build the ``command_length`` limitation of the bare ssh exec channel.
+
+    Not a ``line_budget``: nothing is typed, so :meth:`SessionManager.line_budget`
+    answers ``None`` for this route and no transfer sizes its lines to it.
+    """
+    return Limitation(
+        kind="device",
+        affects="how long one command can be",
+        reason=(
+            "On this route the command travels as the ssh exec request itself, and the "
+            "ssh server decides how long a request it accepts. On dropbear 2022.83, the "
+            f"one server measured, a command of {SSH_CHANNEL_COMMAND_MAX} characters ran "
+            f"whole and one of {SSH_CHANNEL_COMMAND_MAX + 1} failed; other servers and "
+            "versions were not measured."
+        ),
+        measured_on=[_SSH_CHANNEL_COMMAND_MEASUREMENT],
+    )
+
+
+_LINE_BUDGET = _line_budget_limitation()
+
+
+@dataclass(frozen=True, kw_only=True)
+class RouteRecord:
+    """Who implements one :class:`ExecRoute`, and where it falls short.
+
+    The record is the one place a route's differences from otto's behaviour
+    promises are declared. A route otto implements itself may declare only a
+    ``"device"`` limitation; a route a library carries may also declare
+    ``"library"`` for what that library does intrinsically.
     """
 
-    FACTORY = "exec-factory"
-    """A caller-supplied stateless primitive (``LocalHost``, ``DockerContainerHost``)."""
+    implemented_by: str
+    """``"otto"``, ``"asyncssh"`` or ``"docker"``: whose code runs the command."""
 
-    POOLED_SHELL = "pooled-shell"
-    """A pooled pty-backed shell session: telnet, or ANY host whose login is proxied."""
+    limitations: "dict[str, Limitation]"
+    """Capability name to the :class:`~otto.host.limitation.Limitation` that
+    says why it is not ideal on this route. Empty: every promise holds."""
 
-    SSH_CHANNEL = "ssh-channel"
-    """A bare ssh exec channel, no pty allocated."""
 
-    DEFAULT_SESSION = "default-session"
-    """The host's one default session, the one ``run`` uses: a ``console`` term,
-    which serves a single client, so neither a raw channel nor a pooled
-    session exists to run on."""
+EXEC_ROUTES: "dict[ExecRoute, RouteRecord]" = {
+    ExecRoute.SSH_CHANNEL: RouteRecord(
+        implemented_by="asyncssh",
+        limitations={"command_length": _ssh_channel_command_limitation()},
+    ),
+    ExecRoute.POOLED_SHELL: RouteRecord(
+        implemented_by="otto", limitations={"line_budget": _LINE_BUDGET}
+    ),
+    ExecRoute.DEFAULT_SESSION: RouteRecord(
+        implemented_by="otto", limitations={"line_budget": _LINE_BUDGET}
+    ),
+    ExecRoute.LOCAL_SUBPROCESS: RouteRecord(implemented_by="otto", limitations={}),
+    ExecRoute.CONTAINER: RouteRecord(implemented_by="docker", limitations={}),
+}
+"""Every route ``exec`` can dispatch, and its declared limitations.
 
-    UNSUPPORTED = "unsupported"
-    """A term this manager cannot exec on at all; ``exec`` raises for it."""
+``UNSUPPORTED`` has no record: it runs nothing. :meth:`SessionManager.line_budget`
+budgets exactly the routes whose record declares ``line_budget``, on a manager
+whose sessions type into a terminal. ``command_length`` on ``SSH_CHANNEL`` is
+published, never budgeted.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExecPlan:
+    """How one ``exec`` call runs: the route, and whose connection carries it.
+
+    A host family states one per call (``BaseHost._plan_exec``) and runs it
+    (``BaseHost._run_plan``); every reader of the decision reads this value.
+    """
+
+    route: ExecRoute
+    as_user: str | None = None
+    """The user whose own direct-credential ssh connection carries the call,
+    on ``SSH_CHANNEL``; ``None`` means the host's own connection."""
 
 
 @dataclass(frozen=True)
@@ -2666,12 +3185,13 @@ class BridgeSetup:
 
 
 def output_line(raw: str) -> str | None:
-    r"""Turn one raw line an exec drain read into its contribution to ``value``.
+    r"""Turn one raw line an exec drain read into the line it logs.
 
     :func:`drain_exec_output`, the drain both line-reading exec routes run (the
-    ssh channel's and local exec's), appends what this returns to its lines,
-    which ``value`` joins with ``\n``, so the same output gives the same
-    ``value`` on both: the contract in :ref:`command-output-contract`.
+    ssh channel's and local exec's), logs what this returns and keeps it for a
+    timed-out result's text. The per-line form of
+    :func:`~otto.host.command_frame.command_value`, so a logged line is cut by
+    the same rule as ``value``: the contract in :ref:`command-output-contract`.
 
     *raw* is one line as read, ending in its ``\n`` unless it is the last
     line of output that had no final newline. The result is *raw* with at most
@@ -2687,7 +3207,7 @@ def output_line(raw: str) -> str | None:
     """
     if raw == "":
         return None
-    return raw.removesuffix("\n")
+    return command_value(raw)
 
 
 async def drain_exec_output(
@@ -2695,26 +3215,44 @@ async def drain_exec_output(
     lines: list[str],
     log_output: Callable[[str, LogMode], None],
     mode: LogMode,
-) -> None:
-    """Read an exec's output into *lines*, logging each line under *mode*.
+) -> str:
+    """Read an exec's output, logging each line under *mode*; return the command's ``value``.
 
     The one drain both line-reading exec routes run (the ssh channel's and
-    local exec's; a shell-routed ``exec`` reads through its session instead):
-    each raw line goes through :func:`output_line`, so the two routes cannot
-    disagree about what a line contributes to ``value``, and what is kept is
-    logged the same way. Both routes decode the bytes they read with
+    local exec's; a shell-routed ``exec`` reads through its session instead).
+    The returned ``value`` is :func:`~otto.host.command_frame.command_value`
+    of the raw text read, so the two routes cannot disagree about it. Each
+    raw line goes through :func:`output_line` and what is kept is appended to
+    *lines* and logged. Both routes decode the bytes they read with
     :data:`~otto.host.output_codec.OUTPUT_ENCODING` and
     :data:`~otto.host.output_codec.OUTPUT_ERRORS` before they get here.
-    *lines* is filled in place, so a caller that times the drain out still
-    holds the lines read before the deadline.
+    *lines* is filled in place, so a caller that times the drain out (and so
+    never gets the return value) still holds the lines read before the
+    deadline.
     """
     on_output = _sink_for(log_output, mode)
+    raw_text: list[str] = []
     async for raw in raw_lines:
         line = output_line(raw)
         if line is None:
             continue
+        raw_text.append(raw)
         lines.append(line)
         on_output(line)
+    return command_value("".join(raw_text))
+
+
+def _ran_on(result: CommandResult, route: ExecRoute) -> CommandResult:
+    """Return *result* recording that it ran on *route*; a decline is returned as it is.
+
+    Each exec primitive calls this where it returns, so a result's route is
+    what ran, never what a plan expected. A :class:`~otto.result.NotRunResult`
+    ran on nothing, and ``dataclasses.replace`` would read its ``value``,
+    which raises.
+    """
+    if isinstance(result, NotRunResult):
+        return result
+    return replace(result, route=route.value)
 
 
 @final
@@ -2727,8 +3265,7 @@ class SessionManager:
     Session creation is pluggable: provide a ``session_factory`` callable to
     control how sessions are created (e.g. ``LocalSession`` for local hosts),
     or pass a ``ConnectionManager`` to use the default SSH/Telnet dispatch.
-    Similarly, ``exec_factory`` controls stateless command execution. The
-    shell *dialect* is selected by ``command_frame`` (default bash; an embedded
+    The shell *dialect* is selected by ``command_frame`` (default bash; an embedded
     host passes a :class:`~otto.host.command_frame.ZephyrFrame`) — it is handed
     to every session this manager builds, independent of the transport — unless
     the host also declares a ``landing_frame``, in which case THAT is what
@@ -2748,7 +3285,6 @@ class SessionManager:
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
         named_session_factory: "Callable[[], ShellSession] | None" = None,
-        exec_factory: "Callable[[str, float], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         default_init_timeout: float | None = None,
@@ -2758,8 +3294,14 @@ class SessionManager:
         shell_history: bool = True,
         session_setup: "SessionSetup | None" = None,
         landing_frame: CommandFrame | None = None,
+        types_into_terminal: bool = True,
     ) -> None:
         self._connections = connections
+        # Whether this manager's sessions read a command through a terminal's
+        # line discipline: its session class's `reads_a_terminal` (False for
+        # LocalHost, whose shell reads a pipe), which the caller passes because
+        # the manager needs it before any session exists.
+        self._types_into_terminal = types_into_terminal
         self._name = name
         self._log_command = log_command
         self._log_output = log_output
@@ -2772,7 +3314,6 @@ class SessionManager:
         # tests reassign on a live manager — snapshotting the fallback would
         # silently ignore every such reassignment.
         self._named_session_factory = named_session_factory
-        self._exec_factory = exec_factory
         # Creds forwarded to HostSessions so named sessions can elevate via
         # otto.host.login_proxy.perform_switch. None on non-posix hosts →
         # named-session elevation is unsupported there; [] means supported
@@ -3075,9 +3616,10 @@ class SessionManager:
 
     @property
     def terminal_mapping(self) -> str:
-        """How the default session's terminal maps line endings; ``unmeasured`` before it opens.
+        """How the default session's terminal maps its output; ``unmeasured`` before it opens.
 
-        See :mod:`otto.host.terminal_mapping` for the four outcomes.
+        See :mod:`otto.host.terminal_mapping` for the four line-ending
+        outcomes and the ``, tabs expanded`` and ``, echo on`` suffixes.
         """
         if self._session is not None:
             return self._session.terminal_mapping
@@ -3252,7 +3794,7 @@ class SessionManager:
         console has no such path — the line serves ONE client, and the
         default session already holds it — so a named request there is
         refused by name rather than dialled. ``exec`` never asks for one on a
-        console: :meth:`_exec_route` sends it to the default session.
+        console: :meth:`exec_route` sends it to the default session.
         """
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
         # Resolved before anything dials: an unusable OTTO_INIT_TIMEOUT is
@@ -3370,27 +3912,42 @@ class SessionManager:
         ``console`` term, which runs on this same session. Everywhere else
         ``exec()`` and named sessions reach a :class:`ShellSession` without
         passing through here. That is what makes this the right and only home
-        for :func:`refuse_if_line_editor_would_truncate`: the
+        for :func:`refuse_if_typed_line_would_be_cut`: the
         ``run-command-line-length`` gap belongs to the default session, and the
         two paths this method does not cover are two paths that MUST keep
         working unguarded (see that function, and the gap record). On a console
         there is no unguarded path, so the refusal does not advise ``exec()``.
 
-        The refusal is checked BEFORE ``_ensure_session``, so a command otto
-        will not send costs no connection either.
+        The refusal is checked twice, through the same function. BEFORE
+        ``_ensure_session`` against the widest ceiling any session here can
+        have (echo off), so a line no session could carry costs no connection;
+        then, once the session is open and before anything is typed, against
+        the ceiling of the session the line will be typed into, from its
+        measured echo fact (:func:`typed_line_ceiling`). ``run()`` opens the
+        session anyway, so the second check costs nothing on the sunny path.
         """
-        refuse_if_line_editor_would_truncate(
+        exec_escapes = getattr(self._connections, "term", None) != "console"
+        refuse_if_typed_line_would_be_cut(
             self._command_frame,
             cmd,
+            echoes=_BEFORE_ANY_SESSION_ECHOES,
             host=self._name,
-            exec_escapes=getattr(self._connections, "term", None) != "console",
+            exec_escapes=exec_escapes,
         )
         await self._ensure_session()
+        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
+        refuse_if_typed_line_would_be_cut(
+            self._command_frame,
+            cmd,
+            echoes=self._session.echoes,
+            host=self._name,
+            exec_escapes=exec_escapes,
+        )
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        return await self._session.run_cmd(
+        result = await self._session.run_cmd(
             cmd=cmd,
             expects=expects,
             timeout=timeout,
@@ -3398,18 +3955,24 @@ class SessionManager:
             redact=mode is LogMode.NEVER,
             write_progress=write_progress,
         )
+        return _ran_on(result, ExecRoute.DEFAULT_SESSION)
 
-    async def exec(
+    async def exec_on_route(
         self,
         *,
+        route: ExecRoute,
         cmd: str,
-        timeout: float = DEFAULT_COMMAND_TIMEOUT,
-        log: LogMode = LogMode.NORMAL,
+        timeout: float,
+        log: LogMode,
         expects: "list[Expect | CredentialExpect] | None" = None,
         user: str | None = None,
-        needs_shell: bool = False,
     ) -> CommandResult:
-        """Run *cmd* without sharing state with the default session.
+        """Run *cmd* on *route*, without sharing state with the default session.
+
+        The route is the caller's: a host family plans it (``_plan_exec``,
+        reading :meth:`exec_route`) and this dispatches it. Deciding and
+        running are kept apart so every reader of the decision — this
+        dispatch and :meth:`line_budget` — reads the same plan.
 
         Concurrent calls are safe: for SSH each call opens an independent
         channel on the existing connection; for Telnet (which has no stateless
@@ -3417,61 +3980,34 @@ class SessionManager:
         a new one is opened, preserving the independence contract without the
         overhead of a fresh TCP + auth round-trip per call.
 
-        When the login is proxied (:attr:`~otto.host.connections.ConnectionManager.proxy_hops`
-        non-empty) or the host declares a ``session_setup`` hook (the raw
-        channel cannot run setup), both raw-exec fast paths below — the
-        ``_exec_factory`` callable and the :meth:`exec_on` SSH exec channel —
-        are skipped in favor of the pooled named-session path (the same one
-        Telnet always uses). Neither raw exec channel can replay proxy hops:
-        they authenticate as the resolved DIRECT cred, so a proxied exec on
-        either fast path would silently run as the via-user rather than the
-        target. Nor is either one a shell a hook could manoeuvre into an
-        application. Only a full shell session (built via ``open_session``,
-        which replays hops through ``_apply_login_proxy`` and runs the hook
-        through ``_apply_session_setup``) ends up as the effective user — which
-        is what makes nc transfers (whose ``exec_cmd`` is ``UnixHost.exec``)
-        land files owned by the proxied target.
-
         On a ``console`` term there is neither a raw channel nor a pool: the
         line serves one client, so the command runs on the default session
         (see ``_exec_on_default_session``), and concurrent callers are
         serialised by the host, not here.
 
-        WHICH of these it is comes from ``_exec_route`` rather than
-        from conditions spelled out here, because a second caller needs the
-        same answer: :attr:`exec_line_budget` has to know whether this command
-        will be TYPED into a pty, and a caller that re-derived that from
-        ``term`` would get the proxied case wrong in the expensive direction.
+        *user* switches the pooled session for the call only — see
+        ``_exec_pooled``. The bare ssh channel authenticates as the host's own
+        connection; a direct-credential user's connection is the host's to
+        open (:meth:`exec_on`).
 
-        *expects*, *user* and *needs_shell* are all reasons the call needs a
-        real shell rather than a stateless channel: answering a prompt,
-        switching identity for the one command, or an explicit ask. Any of
-        them forces ``needs_shell`` true before the route is read, so the
-        pooled path is taken even when the fast path would otherwise apply
-        (see ``_exec_route``). *user* switches the pooled session for the
-        call only — see ``_exec_pooled``.
+        Raises:
+            ValueError: *route* is ``UNSUPPORTED``, or a route this manager
+                does not own (a local subprocess, a container).
         """
-        needs_shell = needs_shell or bool(expects) or user is not None
-        route = self._exec_route(needs_shell=needs_shell)
-        if route is _ExecRoute.FACTORY:
-            assert self._exec_factory is not None  # noqa: S101 — internal invariant: this route is defined by the factory's presence
-            return await self._exec_factory(cmd, timeout)
-
-        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no exec_factory (or hops force the pool path)
-        # NO logging here: each surviving arm logs the command itself, exactly
-        # once. The pooled arm's `HostSession.run` logs every command it sends,
-        # and `exec_on` logs its own; a pre-match log would double the line on
-        # both (as it did on the pooled route before `exec_on` was extracted).
+        assert self._connections is not None  # noqa: S101 — internal invariant: a manager that dispatches an exec route has a transport
+        # NO logging here: each arm logs the command itself, exactly once.
+        # The pooled arm's `HostSession.run` logs every command it sends, and
+        # `exec_on` logs its own; a pre-match log would double the line.
         match route:
-            case _ExecRoute.POOLED_SHELL:
+            case ExecRoute.POOLED_SHELL:
                 return await self._exec_pooled(
                     cmd, timeout=timeout, log=log, expects=expects, user=user
                 )
-            case _ExecRoute.DEFAULT_SESSION:
+            case ExecRoute.DEFAULT_SESSION:
                 return await self._exec_on_default_session(
                     cmd, timeout=timeout, log=log, expects=expects, user=user
                 )
-            case _ExecRoute.SSH_CHANNEL:
+            case ExecRoute.SSH_CHANNEL:
                 ssh_conn = await self._connections.ssh()
                 return await self.exec_on(conn=ssh_conn, cmd=cmd, timeout=timeout, log=log)
             case _:
@@ -3489,7 +4025,7 @@ class SessionManager:
     ) -> CommandResult:
         """Run *cmd* on a fresh exec channel of *conn* — the SSH stateless arm.
 
-        Extracted from :meth:`exec`'s ``SSH_CHANNEL`` route so per-user exec
+        Extracted from :meth:`exec_on_route`'s ``SSH_CHANNEL`` route so per-user exec
         (``UnixHost``'s :meth:`~otto.host.host.BaseHost.exec` with ``user=``,
         spec 2026-09-01 §4) runs the byte-same channel body on a DIFFERENT
         connection — the one :meth:`otto.host.connections.ConnectionManager.ssh_as`
@@ -3497,7 +4033,7 @@ class SessionManager:
         (terminate → kill) and status mapping are unchanged.
 
         This method logs the command itself (unless *log* is
-        :attr:`~otto.logger.mode.LogMode.NEVER`), so :meth:`exec` must NOT log
+        :attr:`~otto.logger.mode.LogMode.NEVER`), so :meth:`exec_on_route` must NOT log
         before dispatching here.
         """
         import asyncssh
@@ -3515,7 +4051,7 @@ class SessionManager:
         lines: list[str] = []
 
         try:
-            await asyncio.wait_for(
+            value = await asyncio.wait_for(
                 drain_exec_output(process.stdout, lines, self._log_output, mode),
                 timeout=timeout,
             )
@@ -3527,6 +4063,7 @@ class SessionManager:
                 command=cmd,
                 retcode=-1,
                 timed_out=True,
+                route=ExecRoute.SSH_CHANNEL.value,
             )
         except BaseException:
             # An INTERRUPT unwinds the drain (a signal cancels the running
@@ -3553,9 +4090,10 @@ class SessionManager:
         status = Status.Success if result.exit_status == 0 else Status.Failed
         return CommandResult(
             status=status,
-            value="\n".join(lines),
+            value=value,
             command=cmd,
             retcode=result.exit_status or 0,
+            route=ExecRoute.SSH_CHANNEL.value,
         )
 
     @staticmethod
@@ -3619,7 +4157,7 @@ class SessionManager:
         the session's identity. Both belong to the host, which owns the
         switch (:meth:`~otto.host.privilege.PosixPrivilege.as_user`) and so
         must hold one lock across the switch, the command and the switch
-        back (see ``UnixHost._exec_one``). A *user* other than the
+        back (see ``UnixHost._exec_on_console``). A *user* other than the
         session's current one reaching here is refused by name rather than
         run as the wrong user.
         """
@@ -3674,7 +4212,10 @@ class SessionManager:
         switched_ok = user is None
         try:
             if user is None:
-                return await session._run_one(cmd, expects=expects, timeout=timeout, log=log)  # noqa: SLF001 — the manager's own pooled session, on its internal entry
+                return _ran_on(
+                    await session._run_one(cmd, expects=expects, timeout=timeout, log=log),  # noqa: SLF001 — the manager's own pooled session, on its internal entry
+                    ExecRoute.POOLED_SHELL,
+                )
             result: CommandResult | None = None
             try:
                 async with session.as_user(user=user):
@@ -3705,7 +4246,7 @@ class SessionManager:
                     user,
                     exc,
                 )
-            return result
+            return _ran_on(result, ExecRoute.POOLED_SHELL)
         finally:
             if session.alive and switched_ok and session.current_user == acquired_as:
                 self._exec_pool.append(session)
@@ -3723,29 +4264,40 @@ class SessionManager:
                 with suppress(Exception):
                     await session.close()
 
-    def _exec_route(self, *, needs_shell: bool = False) -> _ExecRoute:
-        """Which primitive :meth:`exec` would run a command on right now.
+    def exec_route(self, *, needs_shell: bool = False) -> ExecRoute:
+        """Which primitive an ``exec`` on this manager's transport would run on right now.
 
-        THE CONDITIONS LIVE HERE AND NOWHERE ELSE, because :meth:`exec`
-        and :attr:`exec_line_budget` both need the answer and a second copy
-        would be a prediction of this method rather than a reading of it.
+        The TRANSPORT's conditions live here: the term, proxy hops, a
+        ``session_setup`` hook and the call's own need for a shell. They are
+        one part of a host's plan, and the plan is the only reader:
 
-        Order matters and is :meth:`exec`'s own. A ``console`` term answers
+        * ``UnixHost._plan_exec`` reads this, after its own two conditions --
+          a user with a direct credential on an ssh host whose call needs no
+          shell gets ``SSH_CHANNEL`` on that user's own connection, and any
+          other user forces *needs_shell*.
+        * ``EmbeddedHost``, ``LocalHost`` and ``DockerContainerHost`` never
+          ask: their ``_plan_exec`` answers ``DEFAULT_SESSION``,
+          ``LOCAL_SUBPROCESS`` and ``CONTAINER`` outright.
+
+        Ask the host's plan (``BaseHost._exec_plan``), not this method, for
+        the route a call takes; this answers only for the host's own
+        connection.
+
+        Order matters. A ``console`` term answers
         ``DEFAULT_SESSION`` before anything else is read, since it serves one
         client and so has nothing else to offer. Otherwise a raw exec
         primitive wins unless the login is PROXIED, the host declares a ``session_setup``
         hook (the raw channel cannot run setup), or the call itself needs a
-        shell, in which case nothing raw can be used at all (neither the
-        factory nor ssh's channel can replay the hops, and neither is a shell
-        a hook — or a switched user, or a prompt — could manoeuvre; see
-        :meth:`exec`), and everything else falls to the term. Read fresh on
+        shell, in which case nothing raw can be used at all (ssh's channel
+        cannot replay the hops, and is not a shell a hook — or a switched
+        user, or a prompt — could manoeuvre), and everything else falls to the term. Read fresh on
         every call rather than cached at construction: ``term`` has a setter,
         and ``proxy_hops`` is derived from creds that a ``login_target`` change
         can move, so a cached route would answer for the host as it was.
 
         ``UNSUPPORTED`` is a real answer rather than a raise, because one of
-        the two callers is a QUERY. :meth:`exec` raises on it, exactly as it
-        always did, at the point where it has a term to name.
+        the callers is a QUERY. :meth:`exec_on_route` raises on it, at the
+        point where it has a term to name.
 
         *needs_shell* is the call's own reason for a pty: a prompt to answer,
         a user to switch to, an elevation. A raw channel cannot do any of
@@ -3759,48 +4311,74 @@ class SessionManager:
             # client, so there is no raw channel and no second (pooled)
             # session to consider. Hops, a hook, a prompt or a user switch
             # all happen on the session `run` uses.
-            return _ExecRoute.DEFAULT_SESSION
+            return ExecRoute.DEFAULT_SESSION
         hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
         hooked = self._session_setup is not None
-        if self._exec_factory is not None and not hops and not hooked and not needs_shell:
-            return _ExecRoute.FACTORY
         if hops or hooked or needs_shell:
-            return _ExecRoute.POOLED_SHELL
+            return ExecRoute.POOLED_SHELL
         match term:
             case "ssh":
-                return _ExecRoute.SSH_CHANNEL
+                return ExecRoute.SSH_CHANNEL
             case "telnet":
-                return _ExecRoute.POOLED_SHELL
+                return ExecRoute.POOLED_SHELL
             case _:
-                return _ExecRoute.UNSUPPORTED
+                return ExecRoute.UNSUPPORTED
 
-    @property
-    def exec_line_budget(self) -> int | None:
-        """Longest line of a command :meth:`exec` can carry here, or ``None`` if unbounded.
+    def line_budget(self, *, route: ExecRoute) -> int | None:
+        """Longest line of a command *route* can carry here, or ``None`` if unbounded.
 
         ``None`` is not "unknown" and not zero -- it is the answer for a route
-        that types into no line discipline at all
-        (the bare ssh exec channel, a caller-supplied exec primitive), and a
-        caller reading it should keep doing whatever it did before this
-        property existed. That is what keeps an ``ssh`` host's behaviour
-        byte-identical: the path that was never broken is asked the same
-        question and answers "nothing here bounds you".
+        that types into no line discipline at all (the bare ssh exec channel,
+        a local subprocess, a container's ``docker exec``, or a shell route on a
+        manager whose shell reads a pipe -- ``LocalHost``'s), and a caller
+        reading it should keep doing whatever it did before. That is what
+        keeps an ``ssh`` host's behaviour byte-identical: the path that was
+        never broken is asked the same question and answers "nothing here
+        bounds you".
 
         WHO ASKS, AND WHY IT IS ANSWERED HERE. ``ShellFileTransfer`` builds its
         own command lines and needs to know how long one may be, but the two
-        facts that decide it -- which primitive ``exec`` routes through, and
-        what otto's own framing costs on this host's dialect -- are both this
-        manager's, and neither is visible from a transfer backend. Answering
-        the whole question here is what stops the backend from re-deriving a
-        routing rule it cannot see all of (a host with an ``exec_factory``
-        looks like a plain ``term`` host from outside).
+        facts that decide it -- which route its ``exec`` takes (the host's
+        plan, handed in as *route*), and what otto's own framing costs on this
+        host's dialect -- are not visible from a transfer backend. Answering
+        it from the plan is what stops the backend from re-deriving a routing
+        rule it cannot see all of.
 
-        ``UNSUPPORTED`` answers ``None`` too: :meth:`exec` raises on that term
-        before any line is typed, so there is no line to budget.
+        ``UNSUPPORTED`` answers ``None`` too: dispatching it raises before any
+        line is typed, so there is no line to budget.
+
+        The number is :func:`typed_line_budget`'s, with the echo fact the open
+        sessions measured: echo off only once every open session showed it.
         """
-        if self._exec_route() not in (_ExecRoute.POOLED_SHELL, _ExecRoute.DEFAULT_SESSION):
+        record = EXEC_ROUTES.get(route)
+        if record is None or "line_budget" not in record.limitations:
             return None
-        return typed_line_budget(self._command_frame)
+        if not self._types_into_terminal:
+            # The route types into a shell, but this manager's shell reads a
+            # pipe (LocalHost): no line discipline, so nothing bounds a line.
+            return None
+        return typed_line_budget(self._command_frame, echoes=self._measured_echoes())
+
+    def _measured_echoes(self) -> bool:
+        """Whether a line typed on this host may meet an echoing terminal, from the open sessions.
+
+        ``False`` only when at least one session is open and every open session
+        measured echo off at its handshake; ``True`` otherwise, which is the
+        conservative answer :func:`typed_line_ceiling` wants for an unmeasured
+        terminal. A caller that plans before any session opened (a transfer
+        sized ahead of its first command) therefore gets the 1022 budget on an
+        ash host, which only shortens its chunks.
+
+        It may be more conservative than the session a ``run`` uses (this
+        host's budget reads 1022 because a named session echoes, while the
+        default session a ``run`` types into allows 4095); that is safe,
+        because a smaller budget only shortens a transfer's chunks and
+        ``run_cmd`` checks its own session's measured fact before typing.
+        """
+        opened = [
+            s for s in [self._session, *self._named_sessions.values()] if s is not None and s.alive
+        ]
+        return not opened or any(s.echoes for s in opened)
 
     async def _acquire_exec_session(self) -> "HostSession":
         """Pop an idle exec session off the free-list, or open a new one.

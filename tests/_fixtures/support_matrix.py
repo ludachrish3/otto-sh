@@ -76,6 +76,8 @@ from tests.conformance._controls import (
     positive_control_for,
     walk_test_functions,
 )
+from tests.conformance._entry import space_for
+from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 
 SCHEMA_PATH = CHECKOUT_ROOT / "schemas" / "support-matrix.schema.json"
@@ -94,10 +96,13 @@ both spellings).
 
 CONFORMANCE_ROOT = CHECKOUT_ROOT / "tests" / "conformance"
 
-FORMAT = 1
+FORMAT = 2
 """The artifact's document version, spelled the way ``monitor-export`` spells
 its own: required, no default, so an unversioned file fails loud rather than
-validating as an empty modern one."""
+validating as an empty modern one.
+
+Format 2 gave every ``observed_cells`` entry its own ``observable``, and an
+``entry`` for a command contract's cell (``tests/conformance/_entry.py``)."""
 
 #: The fixture a test takes to declare itself a CONTRACT over a resolved cell.
 CELL_FIXTURE = "resolved_cell"
@@ -114,9 +119,9 @@ class Surface:
 
 
 #: nodeid -> (row id, human title). Order is the rendered row order, and it is
-#: a real declaration rather than a sort: the three exec contracts, then the
-#: five transfer ones, then timeout -- the order the contract modules and the
-#: spec's §4 list both use.
+#: a real declaration rather than a sort: the four exec contracts (exact
+#: output beside framing), then the five transfer ones, then timeout -- the
+#: order the contract modules and the spec's §4 list both use.
 SURFACES: "tuple[Surface, ...]" = (
     Surface(
         id="exec-exit-code",
@@ -130,6 +135,13 @@ SURFACES: "tuple[Surface, ...]" = (
         title="exec: frames output without prompt noise",
         contract=(
             "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise"
+        ),
+    ),
+    Surface(
+        id="exec-output-exact",
+        title="exec: a command's value is its exact output",
+        contract=(
+            "tests/conformance/test_output_contract.py::test_a_commands_value_is_its_exact_output"
         ),
     ),
     Surface(
@@ -416,9 +428,12 @@ def cell_outcome_errors(matrix: dict) -> "list[str]":
        device is exactly the uniform reading this field exists to prevent,
        wearing the field's own clothes. ``observed_on`` and ``observed_cells``
        must name the same element set.
-    3. **A ``cell_label`` names a cell the bed venue does not draw**, or names
-       axes that disagree with its own spelling. Resolved against
-       :func:`~tests.conformance._bed.bed_space` the same way
+    3. **A ``cell_label`` names a cell the bed venue does not draw** for this
+       row's contract, or names axes (``[element:term:transfer]``, plus
+       ``:entry`` when the entry carries one) that disagree with its own
+       spelling. Resolved against the contract's own space --
+       :func:`~tests.conformance._entry.space_for` over
+       :func:`~tests.conformance._bed.bed_space` -- the same way
        :func:`acceptable_controls` resolves a control nodeid, because a
        plausible-looking label is precisely what this artifact must not accept
        on trust -- the item's own fixture once cited a positive control that
@@ -434,15 +449,18 @@ def cell_outcome_errors(matrix: dict) -> "list[str]":
     have.
     """
     errors: "list[str]" = []
-    labels = _labels_by_element()
     for surface_id, row in matrix["cells"].items():
+        labels = _labels_by_element(_contract_of(surface_id))
         for profile_id, cell in row.items():
             where = f"cells.{surface_id}.{profile_id}"
             entries = cell.get("observed_cells", [])
             observed = set(cell.get("observed_on", []))
             for entry in entries:
                 element, label = entry["element"], entry["cell_label"]
-                axes = f"[{element}:{entry['term']}:{entry['transfer']}]"
+                fields = [element, entry["term"], entry["transfer"]]
+                if entry.get("entry"):
+                    fields.append(entry["entry"])
+                axes = f"[{':'.join(fields)}]"
                 if element not in observed:
                     errors.append(
                         f"{where}: observed_cells names {label!r} on {element!r}, "
@@ -482,19 +500,36 @@ def cell_outcome_errors(matrix: dict) -> "list[str]":
 
 
 @lru_cache(maxsize=1)
-def _labels_by_element() -> "dict[str, list[str]]":
-    """element -> the ``cell_label`` of every BED cell that element appears in.
+def _bed_space() -> "tuple[ResolvedCell, ...]":
+    """:func:`~tests.conformance._bed.bed_space`, built once per process.
 
-    Memoised because :func:`~tests.conformance._bed.bed_space` builds hosts
-    through otto's factory to resolve each cell (measured 0.06s cold, 0.011s
-    warm for the 49 bed cells; nothing is opened and nothing is fetched).
+    Memoised because it builds hosts through otto's factory to resolve each
+    cell (measured 0.06s cold for the 49 bed cells; nothing is opened and
+    nothing is fetched). A tuple, so no caller can edit the memo.
+    """
+    return tuple(bed_space())
+
+
+def _contract_of(surface_id: str) -> str:
+    """The contract nodeid of the row *surface_id*, from :data:`SURFACES`."""
+    return next(surface.contract for surface in SURFACES if surface.id == surface_id)
+
+
+def _labels_by_element(contract: str) -> "dict[str, list[str]]":
+    """element -> the ``cell_label`` of every BED cell *contract* is parametrised over.
+
+    PER CONTRACT, because the space is: a command contract
+    (``@pytest.mark.entries``) runs over :func:`~tests.conformance._entry.space_for`'s
+    projected, entry-crossed space, whose labels carry a fourth field, while
+    an unmarked contract keeps the full entry-less one. One map shared by every
+    contract would accept a label the contract never draws.
 
     BED cells and no others, per the ruling of 2026-08-24: the profile axis is
     built from the bed labs' elements, so the hermetic venue populates NO
     matrix cell and its labels can never be a cell's evidence.
     """
     labels: "dict[str, list[str]]" = {}
-    for resolved in bed_space():
+    for resolved in space_for(contract, list(_bed_space())):
         labels.setdefault(resolved.cell.element, []).append(cell_label(resolved))
     return labels
 
@@ -521,6 +556,9 @@ def acceptable_controls(surface_id: str, observed_on: "list[str]") -> "set[str]"
     evidence is per cell. (This is why the schema's ``NodeId`` pattern had to
     learn to match a nested-bracket parametrization -- see that ``$def``.)
 
+    The labels are the CONTRACT's (:func:`_labels_by_element`): a control runs
+    on exactly the cells its contract runs on, entries included.
+
     Built by joining a control's nodeid to ``cell_label``, the SAME function
     ``tests/conformance/conftest.py`` passes as ``ids=`` -- so this cannot
     drift from the ids a run really produces, and
@@ -528,7 +566,7 @@ def acceptable_controls(surface_id: str, observed_on: "list[str]") -> "set[str]"
     nodeid against a real ``--collect-only``.
     """
     control = positive_control_for(surface_id)
-    labels = _labels_by_element()
+    labels = _labels_by_element(_contract_of(surface_id))
     return {f"{control}[{label}]" for element in observed_on for label in labels.get(element, [])}
 
 

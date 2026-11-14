@@ -55,7 +55,7 @@ from pydantic import SecretStr
 from otto.host.command_frame import _PROBE_VAR, READY_SUFFIX, RECOVER_SUFFIX
 from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
-from otto.host.terminal_mapping import CALIBRATION_COMMAND
+from otto.host.terminal_mapping import CALIBRATION_COMMAND, SAVED_SETTINGS_PROBE
 from tests._fixtures.fake_shell import probe_marker, replay
 
 _BASH_FRAME_RE = re.compile(
@@ -68,6 +68,16 @@ _ZEPHYR_FRAME_RE = re.compile(
 _ZEPHYR_RECOVER_RE = re.compile(r"(__OTTO_[0-9a-f]+_RECOVER__)\n")
 _ZEPHYR_READY_RE = re.compile(r"\A(__OTTO_[0-9a-f]+_READY__)\n\Z")
 
+FOUND_SETTINGS = (
+    "500:5:bf:8a3b:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"
+)
+"""The ``stty -g`` record :class:`DialectShell` prints while echo is on: the settings found."""
+
+CHANGED_SETTINGS = (
+    "500:5:bf:8a33:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"
+)
+"""The record it prints once a handshake turned echo off: what a save after the first would read."""
+
 
 class DialectShell:
     def __init__(
@@ -76,6 +86,7 @@ class DialectShell:
         transition: str = "python3\n",
         menu: bool = False,
         user: str = "admin",
+        has_stty_g: bool = True,
         app_launch: str | None = None,
         app_prompt: str = "app> ",
         app_quit: str = "quit\n",
@@ -83,6 +94,9 @@ class DialectShell:
         self.transition = transition
         self.menu = menu
         self.user = user
+        # Whether `stty -g` prints a record: False models a target without
+        # `stty` (#953), whose save prints nothing.
+        self.has_stty_g = has_stty_g
         # *app_launch* and *app_quit* are whole LINES, terminator included,
         # exactly as ``AppShell`` writes them (``launch + "\n"``).
         self.app_launch = app_launch
@@ -174,17 +188,18 @@ class DialectShell:
         dialect that reaches none still produces the bed's ``PS1READY``.
         """
         lead = payload.rstrip("\r\n") + "\r\n" if self.echo_on else self._prompt()
+        printed = self._printed_before(payload)  # read before the payload's own changes
         self.echo_on = False  # the payload's own `stty -echo`
-        return f"{lead}{self._printed_before(payload)}{ready}\r\n"
+        return f"{lead}{printed}{ready}\r\n"
 
-    @staticmethod
-    def _printed_before(payload: str) -> str:
+    def _printed_before(self, payload: str) -> str:
         """What the clauses preceding the marker's clause print, on an ``onlcr`` terminal.
 
         One empty line per bare ``echo``, and the terminal-mapping calibration
         line as a default Linux tty returns it, so a session on this fake
-        measures ``onlcr``. The marker's clause is the one carrying the probe
-        variable's expansion; the anchor's assignment, the history prefix and
+        measures ``onlcr``; and the settings save's record, where the payload
+        carries one and this shell has ``stty -g``. The marker's clause is the
+        one carrying the probe variable's expansion; the anchor's assignment, the history prefix and
         the trailing ``unset`` print nothing.
         """
         # A clause's `|| :` only ignores its failure; it prints what the bare clause does.
@@ -192,15 +207,31 @@ class DialectShell:
         expansion = "$" + _PROBE_VAR
         at = next((i for i, c in enumerate(clauses) if expansion in c), len(clauses))
         before = clauses[:at]
-        printed = {"echo": "\r\n", CALIBRATION_COMMAND: "X\r\r\nY\r\nZ\rW\r\n"}
-        return "".join(printed.get(c, "") for c in before)
+        settings = FOUND_SETTINGS if self.echo_on else CHANGED_SETTINGS
+        printed = {
+            "echo": "\r\n",
+            CALIBRATION_COMMAND: "X\r\r\nY\r\nZ\rW\tT\r\n",
+        }
+        save = f"$({SAVED_SETTINGS_PROBE})"
+        record = settings if self.has_stty_g else ""
+        return "".join(
+            f"{c.removeprefix('echo ').removesuffix(save)}{record}\r\n"
+            if c.startswith("echo ") and c.endswith(save)
+            else printed.get(c, "")
+            for c in before
+        )
 
     def _zephyr_reply(self, text: str) -> str | None:
         if (m := _ZEPHYR_FRAME_RE.search(text)) is not None:
             self.commands.append(("zephyr", m.group(2)))
+            # The bytes the recorded Zephyr UART shell sends (the model in
+            # tests/unit/host/shell_transcripts/README.md): CRLF line endings,
+            # a coloured prompt after each line, rejected markers in red.
+            prompt, red, reset = "\x1b[1;32muart:~$ \x1b[m", "\x1b[1;31m", "\x1b[m"
             return (
-                f"{m.group(1)}: command not found\nuart:~$ \n"
-                f"zephyr:{m.group(2)}\nuart:~$ \n0\nuart:~$ \n{m.group(3)}: command not found\n"
+                f"{red}{m.group(1)}: command not found\r\n{reset}{prompt}\r\n"
+                f"zephyr:{m.group(2)}\r\n{prompt}\r\n0\r\n{prompt}\r\n"
+                f"{red}{m.group(3)}: command not found\r\n{reset}{prompt}\r\n"
             )
         if (m := _ZEPHYR_RECOVER_RE.search(text)) is not None:
             return f"{m.group(1)}: command not found\n"

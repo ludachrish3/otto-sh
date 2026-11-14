@@ -24,11 +24,10 @@ a single command, and this rule is written down because it has already cost
 this workstream one bug.
 """
 
-from collections.abc import Callable
-
 import pytest
 
 from otto.utils import Status
+from tests.conformance._entry import check_route, issue, opened
 from tests.conformance._framing import assert_single_line_answer, framing_leak
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX
@@ -36,6 +35,7 @@ from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.observable(
     "otto's CommandResult.retcode, .exit_code and .status for "
     "`{words.failing_command}` (must report {words.failing_code}) and "
@@ -67,9 +67,9 @@ async def test_exec_reports_the_documented_exit_code(resolved_cell: ResolvedCell
     retcode verbatim, so ``-8`` satisfies both of these as written.
     """
     words = resolved_cell.vocabulary
-    async with resolved_cell.open_host() as host:
-        failed = (await host.run(words.failing_command)).only
-        succeeded = (await host.run(words.succeeding_command)).only
+    async with opened(resolved_cell) as host:
+        failed = await issue(host, resolved_cell, words.failing_command)
+        succeeded = await issue(host, resolved_cell, words.succeeding_command)
 
     cell = resolved_cell.cell
     assert failed.retcode == words.failing_code, (
@@ -95,58 +95,33 @@ async def test_exec_reports_the_documented_exit_code(resolved_cell: ResolvedCell
     )
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.observable(
     "the framed stdout of `{words.multiline_command}`: more than one line, and none of "
     "otto's `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line "
     "surviving into it"
 )
-async def test_exec_frames_output_without_prompt_noise(
-    resolved_cell: ResolvedCell, note_observable: "Callable[[str], None]"
-) -> None:
+async def test_exec_frames_output_without_prompt_noise(resolved_cell: ResolvedCell) -> None:
     """Stdout carries the command's output and nothing the shell added.
 
-    Three assertions, and the first two are the ones every cell gets: the
-    output is more than one line (so this measures LINE STRUCTURE and not just
-    "some text came back"), and none of otto's own framing scaffolding reached
-    the caller (``tests/conformance/_framing.py``'s ``framing_leak``).
+    Two assertions, and every cell gets both: the output is more than one
+    line (so this measures LINE STRUCTURE and not just "some text came
+    back"), and none of otto's own framing scaffolding reached the caller
+    (``tests/conformance/_framing.py``'s ``framing_leak``).
 
-    THE THIRD IS AVAILABLE ONLY WHERE THE TESTER CHOSE THE OUTPUT, and its
-    absence is a real fidelity loss rather than a tidier spelling. ``printf``
-    lets a POSIX cell assert exact equality, which also catches truncation,
-    reordering, interleaving and a leaked prompt. A Zephyr shell has no
-    ``printf`` and no ``echo``; the stimulus is the stock ``help`` builtin,
-    whose text belongs to the firmware, so there is nothing to compare
-    against. Stated here, at the assertion, rather than left for a reader to
-    infer from a ``None``.
+    EXACT EQUALITY IS ITS OWN SURFACE. It used to be a third assertion here,
+    available only where the tester chose the output; it now lives in
+    ``tests/conformance/test_output_contract.py`` (``exec-output-exact``),
+    which compares every output case a userland can produce, so this
+    contract no longer needs a per-cell observable.
 
     No ``.strip()``: ``value`` is the command's output with exactly one
     trailing newline removed (``docs/architecture/utilities/results.md``,
-    "What a command's ``value`` holds"), so the exact comparison and the leak
-    scan both read the raw value. A Zephyr frame trims its output, so the
-    unchosen ``help`` text arrives unpadded too.
-
-    THE THIRD ASSERTION'S PRESENCE IS ALSO WHAT THIS CELL'S SUPPORT-MATRIX
-    OBSERVABLE IS, which is why :func:`~tests.conformance._observable.note_observable`
-    is called from the body rather than left to the marker's template. The
-    marker declares the floor every cell gets; only the running test knows
-    whether this userland could afford exact equality, and a matrix cell that
-    published the strong observable for a cell that only got the weak one would
-    overstate its own evidence -- §5's shell-history example, in this tree.
+    "What a command's ``value`` holds"), so the leak scan reads the raw value.
     """
     words = resolved_cell.vocabulary
-    note_observable(
-        f"the framed stdout of `{words.multiline_command}`: more than one line, no otto "
-        f"`__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and "
-        + (
-            f"exact equality against the {len(words.multiline_expected.splitlines())} lines "
-            f"the tester chose"
-            if words.multiline_expected is not None
-            else "NO exact comparison -- the stimulus is a stock builtin whose text belongs "
-            "to the firmware, so there is nothing to compare against"
-        ),
-    )
-    async with resolved_cell.open_host() as host:
-        framed = (await host.run(words.multiline_command)).only
+    async with opened(resolved_cell) as host:
+        framed = await issue(host, resolved_cell, words.multiline_command)
 
     cell = resolved_cell.cell
     assert framed.is_ok, (
@@ -160,13 +135,8 @@ async def test_exec_frames_output_without_prompt_noise(
     leak = framing_leak(body, words.multiline_command)
     assert leak is None, f"{cell}: {leak} -- {framed.value!r}"
 
-    if words.multiline_expected is not None:
-        assert body == words.multiline_expected, (
-            f"{cell}: framed output was {framed.value!r}; anything beyond the "
-            f"printed lines is noise the session was supposed to strip"
-        )
 
-
+@pytest.mark.entries("run")
 @pytest.mark.observable(
     "the aggregate Results of a sequence whose middle command "
     "`{words.sequence_failing_command}` exits {words.sequence_failing_code}: its is_ok, "
@@ -204,10 +174,12 @@ async def test_a_failing_command_is_not_reported_as_success(resolved_cell: Resol
     fail-fast would be a red rather than a silent narrowing.
     """
     words = resolved_cell.vocabulary
-    async with resolved_cell.open_host() as host:
+    async with opened(resolved_cell) as host:
         results = await host.run(
             [words.succeeding_command, words.sequence_failing_command, words.single_line_command]
         )
+    for entry in results:
+        check_route(resolved_cell, entry)
 
     cell = resolved_cell.cell
     assert results.is_ok is False, (
@@ -252,6 +224,7 @@ async def test_a_failing_command_is_not_reported_as_success(resolved_cell: Resol
 # a control from a contract, is in `tests/conformance/_controls.py`.
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.positive_control("exec-exit-code")
 async def test_control_the_exit_code_channel_reports_more_than_one_code(
     resolved_cell: ResolvedCell,
@@ -286,9 +259,9 @@ async def test_control_the_exit_code_channel_reports_more_than_one_code(
     Nothing here is written back to the host, so there is nothing to restore.
     """
     words = resolved_cell.vocabulary
-    async with resolved_cell.open_host() as host:
-        failed = (await host.run(words.failing_command)).only
-        succeeded = (await host.run(words.succeeding_command)).only
+    async with opened(resolved_cell) as host:
+        failed = await issue(host, resolved_cell, words.failing_command)
+        succeeded = await issue(host, resolved_cell, words.succeeding_command)
 
     cell = resolved_cell.cell
     assert failed.retcode != succeeded.retcode, (
@@ -311,6 +284,7 @@ async def test_control_the_exit_code_channel_reports_more_than_one_code(
     )
 
 
+@pytest.mark.entries("run", "exec", "exec-shell")
 @pytest.mark.positive_control("exec-framing")
 async def test_control_the_framing_check_sees_planted_pollution(
     resolved_cell: ResolvedCell,
@@ -342,9 +316,9 @@ async def test_control_the_framing_check_sees_planted_pollution(
     ``printf`` on a POSIX one. Nothing to restore.
     """
     words = resolved_cell.vocabulary
-    async with resolved_cell.open_host() as host:
-        planted = (await host.run(words.sentinel_plant_command)).only
-        single = (await host.run(words.single_line_command)).only
+    async with opened(resolved_cell) as host:
+        planted = await issue(host, resolved_cell, words.sentinel_plant_command)
+        single = await issue(host, resolved_cell, words.single_line_command)
 
     cell = resolved_cell.cell
     body = planted.value
@@ -376,6 +350,7 @@ async def test_control_the_framing_check_sees_planted_pollution(
     )
 
 
+@pytest.mark.entries("run")
 @pytest.mark.positive_control("exec-failure-in-sequence")
 async def test_control_a_succeeding_sequence_is_not_reported_as_failed(
     resolved_cell: ResolvedCell,
@@ -396,10 +371,12 @@ async def test_control_a_succeeding_sequence_is_not_reported_as_failed(
     Nothing is written on the far side; nothing to restore.
     """
     words = resolved_cell.vocabulary
-    async with resolved_cell.open_host() as host:
+    async with opened(resolved_cell) as host:
         results = await host.run(
             [words.succeeding_command, words.single_line_command, words.succeeding_command]
         )
+    for entry in results:
+        check_route(resolved_cell, entry)
 
     cell = resolved_cell.cell
     assert results.is_ok is True, (

@@ -59,9 +59,11 @@ class TestBashFrame:
     def test_type_name(self):
         assert BashFrame.type_name == "bash"
 
-    def test_handshake_opens_with_the_anchor_then_silences_echo_calibrates_and_prints_ready(self):
+    def test_handshake_silences_echo_and_tabs_calibrates_and_prints_ready(self):
         assert self.frame.handshake(M) == (
-            f"__otto_probe=READY__; 2>/dev/null stty -echo || :; echo; {CALIBRATION_COMMAND} || :; "
+            "__otto_probe=READY__; __otto_echo=; 2>/dev/null stty -echo || __otto_echo=E; "
+            "2>/dev/null stty tab0 || :; echo; "
+            f"{CALIBRATION_COMMAND} || :; unset __otto_echo; "
             "echo __OTTO_cafef00d_$__otto_probe; unset __otto_probe\n"
         )
 
@@ -518,6 +520,22 @@ def test_builtins_are_registered_and_build():
     # one resolves it through the registry's validator, as a third party's is.
     assert set(cf.FRAME_CLASSES.names()) >= {"bash", "zephyr", "zephyr-serial"}
     assert cf.build_command_frame(type_name="bash").type_name == "bash"
+
+
+def test_the_registry_registers_exactly_the_builtin_frames_list():
+    """BUILTIN_FRAMES is the one list: registration reads it, nothing else lists them."""
+    from otto.host import command_frame as cf
+
+    registered = [
+        name
+        for name in cf.FRAME_CLASSES.names()
+        if name in {frame.name for frame in cf.BUILTIN_FRAMES}
+    ]
+    assert registered == [frame.name for frame in cf.BUILTIN_FRAMES]
+    for frame in cf.BUILTIN_FRAMES:
+        cls = cf.FRAME_CLASSES.peek(name=frame.name).cls
+        # As registered, or as the first read resolved it.
+        assert cls is frame.ref or f"{cls.__module__}:{cls.__qualname__}" == frame.ref.target
 
 
 class TestRestoreInteractive:

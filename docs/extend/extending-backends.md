@@ -620,7 +620,11 @@ recovery fails, and the open fails as
   session log — where the plain `--user` replay on a host without a hook
   logs nothing.
 - For frame authors: `CommandFrame.restore_interactive()` returns the line
-  that undoes what your handshake did to a terminal (`None` if nothing).
+  that undoes what your handshake did to a terminal (`None` if nothing). On
+  a console, whose line outlives the session, a frame can also save the
+  settings it found (`save_terminal(m)`) and put exactly those back
+  (`restore_terminal(saved)`); the defaults save nothing and restore with
+  `restore_interactive()`.
 
 ### Selecting a hook from lab data
 

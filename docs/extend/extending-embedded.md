@@ -49,6 +49,7 @@ Subclass `CommandFrame` and implement seven methods — a *render half* (command
 | `parse_output(buffer, cmd=cmd, m=m)` | parse | Extract the command's output from the accumulated `buffer`. When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
 | `extract_retcode(buffer, m=m)` | parse | Recover the exit code; return `-1` when none can be read. |
 | `restore_interactive()` | render | *Optional.* Line that undoes what `handshake` did to a terminal for a human (`None` by default); the `login` bridge sends it after a session-setup hook. |
+| `save_terminal(m)` / `restore_terminal(saved)` | render | *Optional.* On a console, whose line outlives the session: a handshake-prefix statement that prints the terminal's settings behind `m.saved` (empty by default), and the line that puts the printed record back (`restore_interactive()` by default), sent at the `login` hand-back and before the session closes. |
 
 Set a unique `type_name` class attribute — the string lab data uses to select
 the frame.
@@ -63,7 +64,7 @@ the END marker; `ZephyrFrame` sends four CR-separated lines
 ### Optional overrides and class flags
 
 Beyond the seven methods, `CommandFrame` has two methods with working
-defaults and three class flags. Override them only when your dialect differs
+defaults and four class attributes. Override them only when your dialect differs
 from the default:
 
 | Member | Default | Override when |
@@ -73,6 +74,7 @@ from the default:
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. Waiting for the line to go quiet before closing it is the host's setting, not this one: `telnet_options.single_client_console` ({ref}`single-client-console`). |
 | `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. Such an override should build its line with {func}`otto.host.command_frame.whole_line_echo`, as `BashFrame` does, so a line the shell ran only the tail of never prints READY. |
+| `exact_output` | `None`: `parse_output` returns the command's exact output, with one trailing newline removed ({ref}`command-output-contract`) | Your device makes the exact output impossible to recover (it trims every answer, say). An `unknown(...)` terminal mapping is not a limitation to declare: it is undefined behaviour, which the session reports with a WARNING. Set it to a {class}`~otto.host.limitation.Limitation` with `kind="device"`, the `reason`, and `measured_on` naming what you measured it on. Declare it on the frame's own class body: registration refuses a subclass that would inherit its parent's `Limitation` unseen. |
 
 The getting-started example's `PyReplFrame`
 (`docs/examples/getting-started/libs/gs_example/pyrepl_frame.py`) overrides
@@ -128,6 +130,42 @@ register_command_frame("myshell", MyShellFrame)
   "hosts": [{ "ip": "192.0.2.7", "os_type": "embedded", "command_frame": "myshell" }]
 }
 ```
+
+### Proving the frame reports exact output
+
+{func}`otto.testing.assert_command_frame_conforms` runs your frame against
+every case of {data}`otto.testing.EXACT_OUTPUT_CASES` and raises one
+`AssertionError` listing every case it gets wrong:
+
+```python
+from otto.testing import assert_command_frame_conforms
+
+
+def myshell_transcript(case, m):
+    # What the device sends back for case.command: BEGIN, the output, END.
+    return f"{m.begin}\n{case.text}{m.end_prefix}{case.retcode}__\n"
+
+
+def test_myshell_frame_conforms():
+    assert_command_frame_conforms(MyShellFrame, transcript=myshell_transcript)
+```
+
+- **`transcript(case, m)`** builds the buffer your device sends back for one
+  case: the bytes the program writes (`case.text`) inside your frame's markers
+  (`m`, a {class}`~otto.host.command_frame.SessionMarkers`), as the session
+  hands it to `parse_output` after any terminal translation is undone. Write
+  it from a real reply your device gave, so the kit checks the frame against
+  the device rather than against itself. The kit expects `extract_retcode` to
+  return `case.retcode` and `parse_output` to return `case.value`.
+- **`holds_instead(case)`** is required exactly when the frame declares an
+  `exact_output` {class}`~otto.host.limitation.Limitation`, and refused
+  otherwise. It returns what `parse_output` holds for the case instead of
+  `case.value` (for a frame that trims, `case.value.strip()`). At least one
+  case must differ from its `value`: a limitation that no case shows is
+  refused.
+
+Each failure line starts with the case's id, so the report names the command
+that broke.
 
 For a target that should carry the frame as its default (the way `ZephyrHost`
 defaults to `ZephyrFrame`), ship a host subclass instead — see

@@ -86,10 +86,11 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         cmd: str,  # noqa: ARG002 -- override signature; the AST guard forbids a rename
         m: SessionMarkers,
     ) -> str:
-        """Extract the command's output from the framed response.
+        r"""Return the command's exact output.
 
         Region layout after the BEGIN marker (prompt printed after each
-        executed line; echo is disabled in the handshake)::
+        executed line; echo is disabled in the handshake; every line ends
+        ``\r\n``)::
 
             <BEGIN>: command not found
             retCode = -8          <- BEGIN's code (first retCode after BEGIN)
@@ -98,19 +99,24 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
             retCode = <n>         <- command's code (last retCode after BEGIN)
             <prompt>
 
-        The output is the slice between those two ``retCode`` lines, with the
-        single leading prompt dropped positionally — the prompt is structurally
-        the first line the shell prints after BEGIN's code, so this never reads
-        or hard-codes the prompt text.
+        The output is everything between the prompt after BEGIN's code and
+        the command's ``retCode``: the three shell lines after BEGIN are
+        skipped positionally, so the prompt text is never read or hard-coded.
+        :meth:`~otto.host.command_frame.ZephyrFrame.output_value` then removes
+        only what the shell adds; blank lines and escapes the command wrote
+        are kept.
         """
         lines = self.region_before_end(buffer, m=m)
         begin = self._begin_line(lines, m)
-        rc_idx = [i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])]
-        if len(rc_idx) < 2:  # noqa: PLR2004 -- arity check; the AST guard forbids a named constant
+        codes = [
+            (i, code)
+            for i in range(begin + 1, len(lines))
+            if (code := _RETCODE_RE.search(lines[i])) is not None
+        ]
+        if len(codes) < 2:  # noqa: PLR2004 -- arity check; the AST guard forbids a named constant
             # Need both BEGIN's and the command's code to bracket the output.
             return ""
-        begin_rc, cmd_rc = rc_idx[0], rc_idx[-1]
-        # Between the two codes: [prompt, <output...>] once empties are dropped.
-        block = [ln for ln in lines[begin_rc + 1 : cmd_rc] if ln.strip()]
-        output = block[1:] if block else []  # drop the bracketing prompt
-        return "\n".join(output).strip()
+        # The command's own code ends its output, even mid-line.
+        cmd_rc, code = codes[-1]
+        region = "\r\n".join([*lines[:cmd_rc], lines[cmd_rc][: code.start()]])
+        return self.output_value(region, m=m, lines_after_begin=3)

@@ -64,6 +64,7 @@ import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
+from functools import partial
 from pathlib import Path
 
 from otto.host.factory import create_host_from_dict
@@ -73,6 +74,7 @@ from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_bina
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
 from tests._fixtures.profiles import Cell
 from tests.conformance._bed import bed_space
+from tests.conformance._entry import LOCAL_FAMILY, family_of, hooked, proxied_on
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
 from tests.conformance._vocabulary import POSIX
@@ -179,6 +181,7 @@ def _local_cells() -> "list[ResolvedCell]":
             open_host=opener,
             remote_scratch=_runner_scratch,
             vocabulary=POSIX,
+            family=LOCAL_FAMILY,
         )
     ]
 
@@ -221,6 +224,12 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             for transfer in host.valid_transfers
             if _servable(term, transfer)
         ]
+        # Read off the same built host as the menus: the lab entry's facts,
+        # never the session manager's own route.
+        family = family_of(host)
+        proxied = {
+            term: proxied_on(entry_of(entry), term, family=family) for term in host.valid_terms
+        }
     return [
         ResolvedCell(
             cell=Cell(element, term, transfer),
@@ -228,19 +237,37 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             open_host=_loopback_opener(term, transfer),
             remote_scratch=_runner_scratch,
             vocabulary=POSIX,
+            family=family,
+            proxied_login=proxied[term],
+            open_shell_host=(
+                hooked(partial(_loopback_build, term, transfer))
+                if term == "ssh" and not proxied[term]
+                else None
+            ),
         )
         for term, transfer in pairs
     ]
 
 
+def _loopback_build(
+    term: str, transfer: str, session_setup: str
+) -> "AbstractAsyncContextManager[BaseHost]":
+    """:func:`_loopback_opener`'s host, carrying the hook *session_setup* names."""
+    return _loopback_opener(term, transfer, session_setup=session_setup)()
+
+
 def _loopback_opener(
-    term: str, transfer: str
+    term: str, transfer: str, *, session_setup: "str | None" = None
 ) -> "Callable[[], AbstractAsyncContextManager[BaseHost]]":
     """Stand up a throwaway ``sshd`` and a ``UnixHost`` pinned to this pair.
 
     Per cell rather than per session, so a contract that leaves the daemon in
     a bad state cannot make the next cell's result depend on the order the
     sampler drew them.
+
+    *session_setup* names a registered hook for the host to carry: the
+    ``exec-shell`` entry's opener (``tests/conformance/_entry.py``) is this
+    same opener with one.
     """
 
     @contextlib.asynccontextmanager
@@ -262,6 +289,8 @@ def _loopback_opener(
             # `{"transfer": "nc"}` raise the transfer analogue.
             flat = _loopback_entry(root)
             pinned = entry_of(flat) | {"term": term, "transfer": transfer}
+            if session_setup is not None:
+                pinned["session_setup"] = session_setup
             async with create_host_from_dict(pinned, element=element_of(flat)) as host:
                 yield host
 
@@ -303,6 +332,7 @@ def _busybox_cells() -> "list[ResolvedCell]":
             # (`tests/conformance/_bed.py`'s `bed_vocabulary`) -- there is no
             # lab entry to derive one from.
             vocabulary=POSIX,
+            family=LOCAL_FAMILY,
         )
         for release in BUSYBOX_MATRIX
         if can_run(release.arch)

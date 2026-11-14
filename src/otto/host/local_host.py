@@ -13,6 +13,7 @@ import contextlib
 import logging
 import os
 import shutil
+from collections.abc import AsyncIterator
 from dataclasses import (
     dataclass,
     field,
@@ -30,6 +31,7 @@ from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .exec_route import ExecRoute
 from .file_ops import PosixFileOps
 from .host import (
     _EXEC_REAP_TIMEOUT,
@@ -39,9 +41,10 @@ from .host import (
     CredentialExpect,
     is_dry_run,
 )
-from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
+from .output_codec import READ_CHUNK, output_decoder
 from .privilege import PosixPrivilege
 from .session import (
+    ExecPlan,
     Expect,
     LocalSession,
     SessionManager,
@@ -51,6 +54,35 @@ from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFac
 
 if TYPE_CHECKING:
     from .recursive_transfer import RemoteListing
+
+
+async def _decoded_lines(stream: asyncio.StreamReader) -> AsyncIterator[str]:
+    r"""Yield what *stream* carries as decoded lines, each ending in its ``\n``.
+
+    The last line is yielded without one when the output had no final newline.
+    It reads in chunks rather than with ``readline``, so a line has no length
+    limit: ``readline`` raises once a line outgrows the stream's buffer limit.
+    A pipe carries bytes and the shared drain reads text: a byte that is not
+    UTF-8 is replaced, never raised (the command-output contract), and the
+    incremental decoder keeps a character split across two chunks whole.
+    """
+    decoder = output_decoder()
+    # The unfinished line, as the pieces it arrived in: each chunk is split on
+    # its own, never the line so far, so a long line costs work in proportion
+    # to its length.
+    pending: list[str] = []
+    while chunk := await stream.read(READ_CHUNK):
+        first, *rest = decoder.decode(chunk).split("\n")
+        pending.append(first)
+        if rest:
+            *complete, last = rest
+            yield "".join(pending) + "\n"
+            for line in complete:
+                yield line + "\n"
+            pending = [last]
+    tail = "".join(pending) + decoder.decode(b"", final=True)
+    if tail:
+        yield tail
 
 
 class LocalFileTransfer(BaseFileTransfer):
@@ -214,9 +246,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_command=self._log_command,
             log_output=self._log_output,
             session_factory=LocalSession,
-            exec_factory=self._exec_subprocess,
             creds=[],
             host_id=self.id,
+            types_into_terminal=LocalSession.reads_a_terminal,
         )
         self._file_transfer = LocalFileTransfer(name=self.name)
 
@@ -239,15 +271,20 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ) from None
 
     @override
-    async def _exec_one(
+    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
+        """Every ``exec`` here is a fresh local subprocess."""
+        return ExecPlan(route=ExecRoute.LOCAL_SUBPROCESS)
+
+    @override
+    async def _run_plan(
         self,
+        plan: ExecPlan,
+        *,
         cmd: str,
         timeout: float,
-        log: LogMode = LogMode.NORMAL,
-        user: str | None = None,
-        *,
-        expects: "list[Expect | CredentialExpect] | None" = None,
-        needs_shell: bool = False,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -256,9 +293,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         asyncio.gather().
 
         The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm. *expects* and *needs_shell*
-        are accepted here for signature parity; this family's behaviour is
-        unchanged until a later task.
+        so it lands above ``exec``'s dry-run arm. *expects* is accepted here
+        for signature parity; a subprocess has no pty to answer a prompt on.
         """
         return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
 
@@ -294,7 +330,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
-        """Fire-and-forget subprocess execution."""
+        """Fire-and-forget subprocess execution; every result it returns records its route."""
+        route = ExecRoute.LOCAL_SUBPROCESS.value
         status = Status.Error
         lines: list[str] = []
         mode = log
@@ -326,12 +363,14 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         try:
             if proc.stdout is None:
                 return CommandResult(
-                    status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
+                    status=status,
+                    value="Failed to set up stdout",
+                    command=cmd,
+                    retcode=EIO,
+                    route=route,
                 )
 
-            # A pipe carries bytes and the shared drain reads text: a byte that
-            # is not UTF-8 is replaced, never raised (the command-output contract).
-            raw_lines = (data.decode(OUTPUT_ENCODING, OUTPUT_ERRORS) async for data in proc.stdout)
+            raw_lines = _decoded_lines(proc.stdout)
 
             try:
                 # The whole drain is wrapped in a single wait_for so *timeout*
@@ -339,7 +378,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # that emits output more often than the timeout period (e.g.
                 # `ping`) would otherwise never trip the per-line wait and run
                 # forever.
-                await asyncio.wait_for(
+                value = await asyncio.wait_for(
                     drain_exec_output(raw_lines, lines, self._log_output, mode),
                     timeout=timeout,
                 )
@@ -361,6 +400,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                     command=cmd,
                     retcode=-1,
                     timed_out=True,
+                    route=route,
                 )
 
             await proc.wait()
@@ -370,12 +410,13 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                     value="Process did not provide a return code",
                     command=cmd,
                     retcode=ERANGE,
+                    route=route,
                 )
 
             status = Status.Success if proc.returncode == 0 else Status.Failed
 
             return CommandResult(
-                status=status, value="\n".join(lines), command=cmd, retcode=proc.returncode
+                status=status, value=value, command=cmd, retcode=proc.returncode, route=route
             )
         finally:
             # asyncio retires a subprocess transport only once the child has

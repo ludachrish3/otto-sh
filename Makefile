@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts wheel-check wheel-smoke check-api-keywords
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed shell-transcripts kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts wheel-check wheel-smoke check-api-keywords
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1426,6 +1426,14 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 	$(call bed_reap)
 	$(call bed_release)
 
+shell-transcripts: ## Record the raw buffer every bed Zephyr guest, one BusyBox cell (it runs the bash frame) and test1's bash (run and pooled exec) send back per framed command, into tests/unit/host/shell_transcripts/ (dev VM only; holds the bed lease; restarts no guest).
+	$(call bed_acquire,shell-transcripts)
+	$(call bed_reap)
+	@$(SAY) "capture: raw shell transcripts from the bed"
+	@timeout --foreground --kill-after=10s 900 uv run python -m scripts.capture_shell_transcripts
+	$(call bed_reap)
+	$(call bed_release)
+
 # --- otto_kmodcov toolchain proofs ---------------------------------------------
 #
 # RARELY BY HAND, ALWAYS BEFORE A RELEASE (Chris, 2026-09-18). The routine
@@ -2067,6 +2075,8 @@ land: ## (Quality) The landing in one command, from a feature branch: gate-tip, 
 # schemas/support_matrix.json and its renderer are docs inputs like any page:
 # docs/architecture/support-matrix.md is rendered from them at builder-inited, so a
 # re-collated matrix has to re-trigger the build the same way editing a page does.
+# The same renderer writes the command contract page from the conformance
+# contracts' `entries` markers, so tests/conformance/*.py are inputs too.
 # schemas/kmodcov_matrix.json and its renderer are the same shape, for the
 # instrumenting docs' kmodcov-matrix page: without both entries here, a release
 # where `release-kmodcov-matrix` refreshes the artifact but no docs/** file
@@ -2091,6 +2101,7 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 src/otto/kmodcov/consumer.mk        \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
+                $(shell find tests/conformance -name '*.py') \
                 schemas/kmodcov_matrix.json           \
                 scripts/render_kmodcov_matrix.py      \
                 src/otto/check/proven.json          \

@@ -327,9 +327,24 @@ def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"collection failed (rc={result.returncode}):\n{output}"
 
-    drew = [line for line in output.splitlines() if "conformance: drew " in line]
-    assert len(drew) == 1, f"the run did not report its draw exactly once:\n{output}"
-    logged = set(drew[0].split("conformance: drew ", 1)[1].split(", "))
+    # One draw per distinct space: the session-start draw (``venue=<v> space=``)
+    # and one per declared-entries tuple (``venue=<v> entries=<e> space=``),
+    # each reported by a header line followed by its ``drew`` line. Each draw
+    # is made and logged once (``_drawn_cells`` / ``_drawn_for`` memoise on
+    # the config stash), so a header repeated is a draw computed twice.
+    lines = output.splitlines()
+    headers = [i for i, line in enumerate(lines) if "conformance: venue=" in line]
+    draws: "dict[str, list[str]]" = {}
+    for i in headers:
+        header = lines[i].split("conformance: venue=", 1)[1].split(" space=", 1)[0]
+        assert header not in draws, f"the draw {header!r} was reported twice:\n{output}"
+        assert "conformance: drew " in lines[i + 1], f"{header!r} has no drew line:\n{output}"
+        draws[header] = lines[i + 1].split("conformance: drew ", 1)[1].split(", ")
+    drew = [line for line in lines if "conformance: drew " in line]
+    assert len(drew) == len(draws), f"a drew line without its header:\n{output}"
+    session_draws = [h for h in draws if " entries=" not in h]
+    assert len(session_draws) == 1, f"the session-start draw is not reported once:\n{output}"
+    logged = {label for cells in draws.values() for label in cells}
 
     # Only the items parametrized over CELLS, and the set is derived rather
     # than listed: `tests/conformance/` also holds the bed openers' witness,
@@ -352,17 +367,25 @@ def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
         if any(line.startswith(f"{module}::") for module in cell_modules)
     ]
     assert node_ids, f"the run collected no cell-parametrized item at all:\n{output}"
-    per_cell = Counter(line[line.index("[") + 1 : line.rindex("]")] for line in node_ids)
+    per_contract: "dict[str, set[str]]" = {}
+    for line in node_ids:
+        per_contract.setdefault(line[: line.index("[")], set()).add(
+            line[line.index("[") + 1 : line.rindex("]")]
+        )
+    collected = {label for labels in per_contract.values() for label in labels}
 
-    assert len(logged) == 2, f"the budget of 2 did not reach the draw:\n{output}"
-    assert set(per_cell) == logged, (
-        f"the run collected {sorted(per_cell)} but its log named {sorted(logged)}"
+    for header, cells in draws.items():
+        assert len(cells) == 2, f"the budget of 2 did not reach the draw {header!r}:\n{output}"
+    assert collected == logged, (
+        f"the run collected {sorted(collected)} but its log named {sorted(logged)}"
     )
-    # Every drawn cell carries every contract, so the run's selected-test count
-    # is budget x contracts -- the number the lane is read by.
-    assert len(set(per_cell.values())) == 1, (
-        f"the contracts did not fan out evenly over the drawn cells: {dict(per_cell)}"
-    )
+    # Every contract is parametrized over exactly one of the logged draws --
+    # the session draw, or its entries' projected one -- whole: a contract
+    # collected over part of a draw, or over cells from two, is a draw the log
+    # does not describe.
+    drawn_sets = [set(cells) for cells in draws.values()]
+    uneven = {c: sorted(labels) for c, labels in per_contract.items() if labels not in drawn_sets}
+    assert not uneven, f"contracts collected over no single logged draw: {uneven}"
 
 
 @pytest.mark.parametrize("budget", [1, 4, 8])

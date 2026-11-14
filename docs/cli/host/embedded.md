@@ -19,6 +19,10 @@ The key differences are:
   `console` term, through the telnet server fronting its serial port
   ({ref}`console-term`). Either way there is no login step: an embedded
   host always runs with `login` off.
+- **Output, exit codes and line length.** Which promises about a command's
+  output, exit code and timeout hold on a Zephyr board or a BusyBox device,
+  and the longest command line each route accepts, are on
+  {ref}`the command contract page <command-contract>`.
 
 ## Host class taxonomy
 

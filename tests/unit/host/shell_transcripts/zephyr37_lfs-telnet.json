@@ -1,0 +1,94 @@
+{
+  "element": "zephyr37_lfs",
+  "term": "telnet",
+  "release": "zephyr-3.7",
+  "frame": "zephyr",
+  "terminal_mapping": "unmeasured",
+  "captured": "2026-11-13",
+  "markers": {
+    "begin": "__OTTO_d8f0d5a02d55_BEGIN__",
+    "end_prefix": "__OTTO_d8f0d5a02d55_END__"
+  },
+  "commands": [
+    {
+      "cmd": "kernel version",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nZephyr version 3.7.2\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nZephyr version 3.7.2\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "Zephyr version 3.7.2",
+      "retcode": 0
+    },
+    {
+      "cmd": "help",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  bypass       : Bypass shell\r\n  clear        : Clear screen.\r\n  date         : Date commands\r\n  demo         : Demo commands\r\n  device       : Device commands\r\n  devmem       : Read/write physical memory\r\n\u001b[17CUsage:\r\n\u001b[17CRead memory at address with optional width:\r\n\u001b[17Cdevmem <address> [<width>]\r\n\u001b[17CWrite memory at address with mandatory width and value:\r\n\u001b[17Cdevmem <address> <width> <value>\r\n  dynamic      : Demonstrate dynamic command usage.\r\n  fs           : File system commands\r\n  help         : Prints the help message.\r\n  history      : Command history.\r\n  kernel       : Kernel commands\r\n  log          : Commands for controlling logger\r\n  log_test     : Log test\r\n  rem          : Ignore lines beginning with 'rem '\r\n  resize       : Console gets terminal screen size or assumes default in case\r\n\u001b[17Cthe readout fails. It must be executed after each terminal\r\n\u001b[17Cwidth change to ensure correct text display.\r\n  retval       : Print return value of most recent command\r\n  section_cmd  : Demo command using section for subcommand registration\r\n  shell        : Useful, not Unix-like shell commands.\r\n  stats        : Stats commands\r\n  version      : Show kernel version\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nPlease press the <Tab> button to see all available commands.\r\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\r\nYou can try to call commands with <-h> or <--help> parameter for more information.\r\n\r\nShell supports following meta-keys:\r\n  Ctrl + (a key from: abcdefklnpuw)\r\n  Alt  + (a key from: bf)\r\nPlease refer to shell documentation for more details.\r\n\r\nAvailable commands:\r\n  bypass       : Bypass shell\r\n  clear        : Clear screen.\r\n  date         : Date commands\r\n  demo         : Demo commands\r\n  device       : Device commands\r\n  devmem       : Read/write physical memory\r\n\u001b[17CUsage:\r\n\u001b[17CRead memory at address with optional width:\r\n\u001b[17Cdevmem <address> [<width>]\r\n\u001b[17CWrite memory at address with mandatory width and value:\r\n\u001b[17Cdevmem <address> <width> <value>\r\n  dynamic      : Demonstrate dynamic command usage.\r\n  fs           : File system commands\r\n  help         : Prints the help message.\r\n  history      : Command history.\r\n  kernel       : Kernel commands\r\n  log          : Commands for controlling logger\r\n  log_test     : Log test\r\n  rem          : Ignore lines beginning with 'rem '\r\n  resize       : Console gets terminal screen size or assumes default in case\r\n\u001b[17Cthe readout fails. It must be executed after each terminal\r\n\u001b[17Cwidth change to ensure correct text display.\r\n  retval       : Print return value of most recent command\r\n  section_cmd  : Demo command using section for subcommand registration\r\n  shell        : Useful, not Unix-like shell commands.\r\n  stats        : Stats commands\r\n  version      : Show kernel version\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "Please press the <Tab> button to see all available commands.\nYou can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.\nYou can try to call commands with <-h> or <--help> parameter for more information.\n\nShell supports following meta-keys:\n  Ctrl + (a key from: abcdefklnpuw)\n  Alt  + (a key from: bf)\nPlease refer to shell documentation for more details.\n\nAvailable commands:\n  bypass       : Bypass shell\n  clear        : Clear screen.\n  date         : Date commands\n  demo         : Demo commands\n  device       : Device commands\n  devmem       : Read/write physical memory\n\u001b[17CUsage:\n\u001b[17CRead memory at address with optional width:\n\u001b[17Cdevmem <address> [<width>]\n\u001b[17CWrite memory at address with mandatory width and value:\n\u001b[17Cdevmem <address> <width> <value>\n  dynamic      : Demonstrate dynamic command usage.\n  fs           : File system commands\n  help         : Prints the help message.\n  history      : Command history.\n  kernel       : Kernel commands\n  log          : Commands for controlling logger\n  log_test     : Log test\n  rem          : Ignore lines beginning with 'rem '\n  resize       : Console gets terminal screen size or assumes default in case\n\u001b[17Cthe readout fails. It must be executed after each terminal\n\u001b[17Cwidth change to ensure correct text display.\n  retval       : Print return value of most recent command\n  section_cmd  : Demo command using section for subcommand registration\n  shell        : Useful, not Unix-like shell commands.\n  stats        : Stats commands\n  version      : Show kernel version",
+      "retcode": 0
+    },
+    {
+      "cmd": "kernel uptime",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nUptime: 130559140 ms\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nUptime: 130559140 ms\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "Uptime: 130559140 ms",
+      "retcode": 0
+    },
+    {
+      "cmd": "otto_not_a_command",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n-8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_not_a_command: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n-8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "otto_not_a_command: command not found",
+      "retcode": -8
+    },
+    {
+      "cmd": "device list",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\ndevices:\r\n- ioapic@fec00000 (READY)\r\n- loapic@fee00000 (READY)\r\n- uart@2f8 (READY)\r\n- uart@3f8 (READY)\r\n- sim_flash (READY)\r\n- eth0 (READY)\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\ndevices:\r\n- ioapic@fec00000 (READY)\r\n- loapic@fee00000 (READY)\r\n- uart@2f8 (READY)\r\n- uart@3f8 (READY)\r\n- sim_flash (READY)\r\n- eth0 (READY)\r\n\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "devices:\n- ioapic@fec00000 (READY)\n- loapic@fee00000 (READY)\n- uart@2f8 (READY)\n- uart@3f8 (READY)\n- sim_flash (READY)\n- eth0 (READY)",
+      "retcode": 0
+    },
+    {
+      "cmd": "devmem",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mdevmem: wrong parameter count\r\n\u001b[mdevmem - Read/write physical memory\r\n\u001b[9CUsage:\r\n\u001b[9CRead memory at address with optional width:\r\n\u001b[9Cdevmem <address> [<width>]\r\n\u001b[9CWrite memory at address with mandatory width and value:\r\n\u001b[9Cdevmem <address> <width> <value>\r\nSubcommands:\r\n  dump  : Usage:\r\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\r\n\r\n  load  : Usage:\r\n\u001b[10Cdevmem load [options] [address]\r\nOptions:\r\n-e\tlittle-endian parse\r\n\u001b[1;32m~$ \u001b[m\r\n-22\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mdevmem: wrong parameter count\r\n\u001b[mdevmem - Read/write physical memory\r\n\u001b[9CUsage:\r\n\u001b[9CRead memory at address with optional width:\r\n\u001b[9Cdevmem <address> [<width>]\r\n\u001b[9CWrite memory at address with mandatory width and value:\r\n\u001b[9Cdevmem <address> <width> <value>\r\nSubcommands:\r\n  dump  : Usage:\r\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\r\n\r\n  load  : Usage:\r\n\u001b[10Cdevmem load [options] [address]\r\nOptions:\r\n-e\tlittle-endian parse\r\n\u001b[1;32m~$ \u001b[m\r\n-22\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "devmem: wrong parameter count\ndevmem - Read/write physical memory\n\u001b[9CUsage:\n\u001b[9CRead memory at address with optional width:\n\u001b[9Cdevmem <address> [<width>]\n\u001b[9CWrite memory at address with mandatory width and value:\n\u001b[9Cdevmem <address> <width> <value>\nSubcommands:\n  dump  : Usage:\n\u001b[10Cdevmem dump -a <address> -s <size> [-w <width>]\n\n  load  : Usage:\n\u001b[10Cdevmem load [options] [address]\nOptions:\n-e\tlittle-endian parse",
+      "retcode": -22
+    },
+    {
+      "cmd": "fs cat /nonexistent /nonexistent2",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mFailed to obtain file /nonexistent (err: -2)\r\n\u001b[m\u001b[1;31mFailed to obtain file /nonexistent2 (err: -2)\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31mFailed to obtain file /nonexistent (err: -2)\r\n\u001b[m\u001b[1;31mFailed to obtain file /nonexistent2 (err: -2)\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "Failed to obtain file /nonexistent (err: -2)\nFailed to obtain file /nonexistent2 (err: -2)",
+      "retcode": 0
+    },
+    {
+      "cmd": "log enable inf otto_nope1 otto_nope2",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_nope1: unknown source name.\r\n\u001b[m\u001b[1;31motto_nope2: unknown source name.\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31motto_nope1: unknown source name.\r\n\u001b[m\u001b[1;31motto_nope2: unknown source name.\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n0\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "otto_nope1: unknown source name.\notto_nope2: unknown source name.",
+      "retcode": 0
+    },
+    {
+      "cmd": "dynamic show",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;33mPlease add some commands first.\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n-8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;33mPlease add some commands first.\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n-8\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "Please add some commands first.",
+      "retcode": -8
+    },
+    {
+      "cmd": "kernel log_level otto_nope 1",
+      "entry": "run",
+      "buffer": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles     : Kernel cycles.\r\n  stacks     : List threads stack usage.\r\n  threads    : List kernel threads.\r\n  heap       : System heap usage statistics.\r\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\r\n  version    : Kernel version.\r\n  sleep      : ms\r\n  log-level  : <module name> <severity (0-4)>\r\n\u001b[1;32m~$ \u001b[m\r\n1\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "raw": ": command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_BEGIN__: command not found\r\n\u001b[m\u001b[1;32m~$ \u001b[m\r\nkernel - Kernel commands\r\nSubcommands:\r\n  cycles     : Kernel cycles.\r\n  stacks     : List threads stack usage.\r\n  threads    : List kernel threads.\r\n  heap       : System heap usage statistics.\r\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\r\n  version    : Kernel version.\r\n  sleep      : ms\r\n  log-level  : <module name> <severity (0-4)>\r\n\u001b[1;32m~$ \u001b[m\r\n1\r\n\u001b[1;32m~$ \u001b[m\r\n\u001b[1;31m__OTTO_d8f0d5a02d55_END__",
+      "value": "kernel - Kernel commands\nSubcommands:\n  cycles     : Kernel cycles.\n  stacks     : List threads stack usage.\n  threads    : List kernel threads.\n  heap       : System heap usage statistics.\n  uptime     : Kernel uptime. Can be called with the -p or --pretty options\n  version    : Kernel version.\n  sleep      : ms\n  log-level  : <module name> <severity (0-4)>",
+      "retcode": 1
+    }
+  ]
+}

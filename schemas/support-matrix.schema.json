@@ -18,7 +18,7 @@
       "description": "Editor hint; the guard validates against this file by path regardless."
     },
     "format": {
-      "const": 1,
+      "const": 2,
       "type": "integer",
       "title": "Format",
       "description": "Document version. Required with no default, the way `monitor-export`'s own `format` is: an unversioned file (the field's absence is its marker) must fail loud here, never validate as an empty modern one."
@@ -421,7 +421,8 @@
         "element",
         "term",
         "transfer",
-        "outcome"
+        "outcome",
+        "observable"
       ],
       "title": "CellOutcome",
       "description": "One (element, term, transfer) cell the contract was evaluated on, and what it answered.\n\n`element`, `term` and `transfer` are carried BESIDE `cell_label` rather than left to be parsed out of it. A renderer that has to split `bed-busybox[bb1161:telnet:nc]` on brackets and colons to learn the transport is doing string surgery on an id whose spelling belongs to `tests/conformance/_sample.py::cell_label`, and it would keep parsing successfully -- against the wrong fields -- the day that spelling changes. The label stays because it is the identity a reader reproduces the measurement with; the axes are what the page renders.",
@@ -430,7 +431,7 @@
           "type": "string",
           "minLength": 1,
           "title": "Cell Label",
-          "description": "The parametrization id of the item that measured this cell -- `kind[element:term:transfer]`, exactly as `cell_label` spells it."
+          "description": "The parametrization id of the item that measured this cell -- `kind[element:term:transfer]`, or `kind[element:term:transfer:entry]` for a command contract's cell, exactly as `cell_label` spells it."
         },
         "element": {
           "type": "string",
@@ -458,6 +459,22 @@
           ],
           "title": "Outcome",
           "description": "What pytest reported for this cell. ONLY THE THREE EVIDENTIAL OUTCOMES (`tests/conformance/_observation.py`): a skip, a setup error and an unexpected pass are statements about the RUN rather than about the contract, the collate step discards them with a reason, and enumerating them here means one that reached the artifact anyway fails validation instead of rendering as evidence. `xfailed` IS evidence -- a strict xfail is an assertion about a known product defect, and the ten `nc` cells are exactly that."
+        },
+        "observable": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Observable",
+          "description": "What THIS cell's contract watched, read off its own observation record. The cell-level `observable` is the join over the cell's drawn cells, which renders a surface whose cells agree; this per-cell field is what lets a limitation that applies to ONE term or ONE entry of a device be published for that cell instead of hidden inside the join."
+        },
+        "entry": {
+          "type": "string",
+          "enum": [
+            "run",
+            "exec",
+            "exec-shell"
+          ],
+          "title": "Entry",
+          "description": "How the command was issued (`tests/conformance/_entry.py`). Present exactly when the row's contract declares `@pytest.mark.entries(...)`; an entry-less contract's cell carries none. `tests/_fixtures/support_matrix.py` checks it agrees with the label's fourth field."
         },
         "positive_control": {
           "$ref": "#/$defs/NodeId",

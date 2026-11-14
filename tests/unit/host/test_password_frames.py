@@ -169,6 +169,7 @@ def _local_session(received: _Received, output: bytes) -> LocalSession:
     stdout.feed_data(output)
     session = LocalSession()
     session._process = SimpleNamespace(stdin=_FakeStdin(received), stdout=stdout)  # type: ignore[assignment]
+    session._bind_stdout(stdout)
     session._initialized = True
     session._alive = True
     return session
@@ -468,7 +469,7 @@ async def test_an_ssh_session_writes_a_secret_as_its_value_and_a_newline():
     session = SshSession(conn=MagicMock())
     session._process = MagicMock()
     await session.write_transport(data=SecretStr(PLANTED))
-    session._process.stdin.write.assert_called_once_with(PLANTED + "\n")
+    session._process.stdin.write.assert_called_once_with((PLANTED + "\n").encode())
 
 
 @pytest.mark.asyncio

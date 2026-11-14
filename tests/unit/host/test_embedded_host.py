@@ -509,6 +509,7 @@ class TestDelegation:
             value="3.7.0",
             command="kernel version",
             retcode=0,
+            route="default-session",
         )
         result = await host.run("kernel version")
         assert result.only.value == "3.7.0"
@@ -524,6 +525,7 @@ class TestDelegation:
             value="42",
             command="kernel uptime",
             retcode=0,
+            route="default-session",
         )
         result = await host.exec("kernel uptime")
         assert result.value == "42"
@@ -541,6 +543,7 @@ class TestDelegation:
             value="ok",
             command="kernel uptime",
             retcode=0,
+            route="default-session",
         )
         await host.exec("kernel uptime", expects=[("more", " ")])
         _, kwargs = host._session_mgr.run_cmd.await_args
@@ -589,6 +592,7 @@ class TestDelegation:
             value="",
             command="c",
             retcode=0,
+            route="default-session",
         )
         # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
         await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
@@ -608,6 +612,7 @@ class TestDelegation:
             value="",
             command="c",
             retcode=0,
+            route="default-session",
         )
         await host.run("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         _, kwargs = host._session_mgr.run_cmd.await_args
@@ -826,7 +831,6 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     mgr = SessionManager(
         connections=conn,
         session_factory=_StubExecSession,
-        exec_factory=None,
         host_id="z",
     )
     host._session_mgr = mgr

@@ -20,6 +20,8 @@ are *derived* from results.
   "never ran" on its own — it is shared by "never ran", "timed out", and
   "skipped: cumulative budget exhausted". `timed_out` is how a caller tells a
   timeout apart from an ordinary failure, since `retcode` alone cannot.
+  Everything a timed-out command's result holds is on
+  {ref}`the command contract page <command-contract>`.
 - {class}`~otto.result.Results` — the aggregate `run()` returns: a `Result`
   that is also a `Sequence[CommandResult]`. Its status is the first non-ok
   entry's status; `only` asserts exactly one command ran and returns it;
@@ -45,6 +47,9 @@ branch must take its failure arm rather than proceed on a fiction.
 
 ## What a command's `value` holds
 
+Which hosts and routes keep this rule, and the declared exceptions to it, are
+on {ref}`the command contract page <command-contract>`.
+
 A {class}`~otto.result.CommandResult`'s `value` is the command's output with
 **exactly one trailing newline removed**: nothing stripped, nothing added.
 That holds on the ssh `exec` channel; on a local host, for both `exec` and
@@ -52,7 +57,8 @@ That holds on the ssh `exec` channel; on a local host, for both `exec` and
 whose frame calibrates its terminal (the `bash` and `ash` frames) on every
 term (`ssh`, `telnet`, `console`) and both routes (`run` and `exec`). A
 docker container's `exec` runs `docker exec` through its parent host, so its
-`value` follows whichever of these routes the parent takes:
+`value` is designed to follow whichever of these routes the parent takes; the
+command contract does not check the container route yet:
 
 | The command prints | `value` |
 | --- | --- |
@@ -68,8 +74,26 @@ returns. stderr arrives in the same stream as stdout. The bytes are decoded as
 UTF-8, with any invalid byte replaced. (The ssh channel and local `exec` share
 one line rule, {func}`otto.host.session.output_line`.)
 
-The Zephyr frames (`zephyr` and `zephyr-serial`) keep their existing parsing:
-they trim whitespace from both ends of the output and delete every `\r`.
+The Zephyr frames (`zephyr` and `zephyr-serial`, and the `zephyr-inline`
+example frame for Zephyr 2.7) follow the same rule. They remove exactly what
+the Zephyr shell adds — its prompt lines, the `retval` (or 2.7's
+`retCode = <n>`) line, the rejected marker lines, the colour the shell puts
+around each error and warning line (the three sequences are listed on the
+command contract page, [Where the promise is narrower](../../command-contract.md#where-a-device-gets-a-narrower-promise)), and the `\r`
+of each `\r\n` line ending — and keep every byte the command wrote, other
+escape sequences (such as the cursor moves in `help`) and blank lines
+included: a Zephyr command's `value` is its exact output, with the one final
+newline removed as on every host. Because those three colour sequences are
+removed wherever they appear, a Zephyr command that writes one of them itself
+loses it from its `value`. This changed in the release after 0.20.0; before it, the Zephyr frames
+deleted every escape sequence and every `\r` and trimmed both ends, and the
+2.7 example frame also dropped blank lines. The model each frame follows is
+recorded from the bed in `tests/unit/host/shell_transcripts/README.md`.
+
+A Zephyr command's `retcode` is the integer the shell's own status line
+reports right after the command: the stock `retval` builtin's output (2.7's
+`retCode = <n>` line). The values are the firmware's, in negative-errno style
+(`-8`, `-ENOEXEC`, for an unknown command), not POSIX shell exit codes.
 
 To return the exact output, otto undoes two things that sit between the program and otto,
 and nothing else:
@@ -82,7 +106,7 @@ and nothing else:
   on a terminal. By default a Linux terminal sends each `\n` as `\r\n` (`onlcr`).
   otto never changes that setting. The session's readiness handshake measures
   it instead with a **calibration line**, a `printf` of known bytes that runs
-  just before the handshake's READY marker ({ref}`per-host-session-setup`),
+  just before the handshake's READY marker ({ref}`the session setup section of the host options page <per-host-session-setup>`),
   and the session undoes exactly that translation. The measurement is the
   session's `terminal_mapping`, and `otto host <id> probe` reports it per
   term:
@@ -93,15 +117,52 @@ and nothing else:
     exactly, or no calibration line came back at all (a target with no
     `printf`). The output comes back as it arrived, and the session logs one
     WARNING saying which;
-  - `unmeasured`: a dialect with no calibration line, such as Zephyr's.
+  - `unmeasured`: the session's dialect (the shell language its command
+    frame speaks, such as `bash`, `ash` or `zephyr`) sends no calibration
+    line, so the terminal mapping undoes nothing. That is Zephyr's case, and
+    it does not mean Zephyr output arrives untouched: the Zephyr frame itself
+    removes the `\r` of each `\r\n`, as described above.
 
   The ssh `exec` channel has no terminal, so there is nothing to undo there,
   and `terminal_mapping` always reports the shell session's terminal.
+- **The terminal's tab expansion.** A terminal with `tab3` sends each tab as
+  the spaces up to the next tab stop, and that has no exact inverse: `a\tb`
+  and `a       b` arrive the same. The pty BusyBox telnetd allocates has it
+  on (measured on every BusyBox release in otto's lab). So, unlike line
+  endings, otto changes this setting: the handshake runs `stty tab0` on the
+  session it opened, in a statement of its own so a `stty` that refuses it
+  still turns echo off, and the calibration line carries a tab to measure
+  whether it took. Where it did not (no `stty`, or one that rejects `tab0`),
+  `terminal_mapping` reads, for example, `onlcr, tabs expanded`: the line
+  endings are still folded exactly, a tab a command writes arrives as spaces,
+  and the session logs one WARNING. On an ssh or telnet login the change
+  lasts only as long as that login's pty: handing the session to a person
+  (`otto host <id> login` after a session-setup hook) turns echo back on and
+  leaves tabs unexpanded, which a terminal emulator draws itself. A serial
+  console's line outlives otto's session, so there otto reads the settings
+  (`stty -g`) on the same handshake line before changing anything, and puts
+  them back, echo and tabs together, when it hands the line to a person and
+  before it logs out. The settings are printed behind a marker of the
+  session's own, so other text on the console can't pass for them. A
+  session that ends without a clean close (otto killed, the link cut)
+  leaves them changed, and so does a close while a timed-out command still
+  holds the line or the session is inside an application shell: otto types
+  nothing into either. The module docstring of
+  `otto.host.terminal_mapping` has the details.
+- **Whether the terminal still echoes.** The handshake turns echo off
+  (`stty -echo`) and the calibration line shows whether that took. Where it
+  did not (no `stty` on the target, or one that refuses it),
+  `terminal_mapping` gains `, echo on` (for example `onlcr, echo on`) and the
+  session logs one WARNING on an `ash` host and only a debug line elsewhere.
+  The `, echo on` suffix is an observation: it only limits line length on an
+  `ash` shell, where `run` then refuses a line over 1022 characters instead of
+  4095 ({doc}`the line-length record <../subsystems/busybox-support>`).
 
 A command that changes its own terminal (`stty -onlcr`, or a program that puts
 the terminal in raw mode and leaves it that way) changes what later output on
 that session looks like. The session measured its terminal when it opened, and
-it doesn't measure again until a new session opens.
+it doesn't measure again until a new session opens. What otto leaves
+undefined is listed once, on {ref}`the command contract page <command-contract>`.
 
 The log is a separate view. Live output lines are cleaned for reading, so
 carriage returns are removed and the shell route skips blank lines. `value` is
@@ -125,10 +186,36 @@ NVT decoding also changes what `expect()` patterns see on telnet and console:
 a pattern that matched telnet's padding NULs (`\r\x00`) must drop them.
 ```
 
+## Which route ran a command
+
+A {class}`~otto.result.CommandResult`'s `route` names the route that ran the
+command, so a caller (or a test) can assert how a call was carried out and not
+only what it returned. It is one of the {class}`~otto.host.exec_route.ExecRoute`
+values:
+
+| `route` | The command ran on |
+| --- | --- |
+| `ssh-channel` | a bare ssh exec channel, no pty |
+| `pooled-shell` | a pty shell session kept for `exec` beside the one `run` uses |
+| `default-session` | the host's one default session; every `run` reports this |
+| `local-subprocess` | a local process |
+| `container/<route>` | a container, prefixed to its parent host's route |
+
+`route` is `""` for a result no host route produced: a dry run's
+{class}`~otto.result.NotRunResult`, a command on a named session
+({meth}`~otto.host.session.SessionManager.open_session`), or a docker build. It is informational
+and takes no part in equality or hashing, so two results that differ only in
+route compare equal.
+
+Which route a given call takes is decided by the host's configuration and the
+call's arguments; the rule is on the command contract page,
+[Which route your command takes](../../command-contract.md#which-route-your-command-takes).
+
 ## Exit codes
 
 `Result.exit_code` is `0` when ok, else the status value.
-`CommandResult.exit_code` follows the ssh convention users already know:
+`CommandResult.exit_code` follows the ssh convention users already know
+(on which hosts it holds is on {ref}`the command contract page <command-contract>`):
 
 | Situation | Exit code |
 | --- | --- |
@@ -136,6 +223,13 @@ a pattern that matched telnet's padding NULs (`\r\x00`) must drop them.
 | Command ran and failed | the shell's own `retcode` |
 | Command never ran (connection/timeout) | `255` |
 | Failed without a retcode | the `Status` value |
+
+On a Zephyr board the shell's own `retcode` is the firmware's return value,
+in negative-errno style, so a failed command's `exit_code` is negative (`-8`
+for an unknown command). `-1` is the one value it cannot carry: `retcode -1`
+is also how otto records a command that never ran, so a firmware command that
+returns `-1` (`-EPERM`) reads as `exit_code` `255`, and `status` and
+`timed_out` are what tell the two apart.
 
 A `@cli_exposed` host verb returning any `Result` gets these semantics on the
 CLI for free; returning a `bool` exits `0`/`1` for `True`/`False`, and any

@@ -23,6 +23,7 @@ from otto.host import HostSession, UnixHost
 from otto.host.capability_grid import UserSupport
 from otto.host.connections import _UserConnections
 from otto.host.element import Element
+from otto.host.exec_route import ExecRoute
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SftpOptions, SshOptions, UserlandOptions
@@ -37,15 +38,20 @@ from tests.conftest import active_context
 
 
 def _cs(
-    *, command: str = "", output: str = "", status: Status = Status.Success, retcode: int = 0
+    *,
+    command: str = "",
+    output: str = "",
+    status: Status = Status.Success,
+    retcode: int = 0,
+    route: str = "",
 ) -> CommandResult:
     """Build a :class:`~otto.result.CommandResult` for the netcat-transfer fakes.
 
     The nc backend reads command output from ``.value``; this keeps the old
     ``command=/output=/status=/retcode=`` keyword call shape, mapping ``output``
-    onto ``value``.
+    onto ``value``. *route* is what the faked primitive would record.
     """
-    return CommandResult(command=command, value=output, status=status, retcode=retcode)
+    return CommandResult(command=command, value=output, status=status, retcode=retcode, route=route)
 
 
 def _sm(result) -> tuple[Status, str]:
@@ -765,7 +771,9 @@ class TestExec:
             seen["exec_conn"] = conn
             seen["cmd"] = cmd
             seen["log"] = log
-            return CommandResult(status=Status.Success, value="uid=70", command=cmd, retcode=0)
+            return CommandResult(
+                status=Status.Success, value="uid=70", command=cmd, retcode=0, route="ssh-channel"
+            )
 
         monkeypatch.setattr(host._connections, "ssh_as", fake_ssh_as, raising=False)
         monkeypatch.setattr(host._session_mgr, "exec_on", fake_exec_on, raising=False)
@@ -794,14 +802,17 @@ class TestExec:
             term="telnet",
             log=LogMode.QUIET,
         )
-        h._session_mgr.exec = AsyncMock(
-            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+        h._session_mgr.exec_on_route = AsyncMock(
+            return_value=CommandResult(
+                status=Status.Success, value="root", command="id", retcode=0, route="pooled-shell"
+            )
         )
         h._connections.ssh_as = AsyncMock()
         result = await h.exec("id", user="root")
         assert result.value == "root"
-        h._session_mgr.exec.assert_awaited_once()
-        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+        h._session_mgr.exec_on_route.assert_awaited_once()
+        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
+        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
         h._connections.ssh_as.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -816,13 +827,16 @@ class TestExec:
         conn = object()
         h._connections.ssh_as = AsyncMock(return_value=conn)
         h._session_mgr.exec_on = AsyncMock(
-            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+            return_value=CommandResult(
+                status=Status.Success, value="root", command="id", retcode=0, route="ssh-channel"
+            )
         )
-        h._session_mgr.exec = AsyncMock()
+        h._session_mgr.exec_on_route = AsyncMock()
         await h.exec("id", user="root")
         h._connections.ssh_as.assert_awaited_once_with(user="root")
         h._session_mgr.exec_on.assert_awaited_once()
-        h._session_mgr.exec.assert_not_awaited()
+        assert h._session_mgr.exec_on.await_args.kwargs["conn"] is conn
+        h._session_mgr.exec_on_route.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
@@ -834,12 +848,15 @@ class TestExec:
             log=LogMode.QUIET,
         )
         h._connections.ssh_as = AsyncMock()
-        h._session_mgr.exec = AsyncMock(
-            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+        h._session_mgr.exec_on_route = AsyncMock(
+            return_value=CommandResult(
+                status=Status.Success, value="root", command="id", retcode=0, route="pooled-shell"
+            )
         )
         await h.exec("id", user="root")
         h._connections.ssh_as.assert_not_awaited()
-        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
+        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
 
     @pytest.mark.asyncio
     async def test_exec_user_with_a_direct_cred_but_a_prompt_takes_the_shell(self):
@@ -852,12 +869,17 @@ class TestExec:
             log=LogMode.QUIET,
         )
         h._connections.ssh_as = AsyncMock()
-        h._session_mgr.exec = AsyncMock(
-            return_value=CommandResult(status=Status.Success, value="", command="cat", retcode=0)
+        h._session_mgr.exec_on_route = AsyncMock(
+            return_value=CommandResult(
+                status=Status.Success, value="", command="cat", retcode=0, route="pooled-shell"
+            )
         )
         await h.exec("cat", user="root", expects=[("more", " ")])
         h._connections.ssh_as.assert_not_awaited()
-        assert h._session_mgr.exec.await_args.kwargs["needs_shell"] is True
+        kwargs = h._session_mgr.exec_on_route.await_args.kwargs
+        assert kwargs["route"] is ExecRoute.POOLED_SHELL
+        assert kwargs["user"] == "root"
+        assert kwargs["expects"] == [("more", " ")]
 
     @pytest.mark.asyncio
     async def test_exec_telnet_success(self):
@@ -1010,21 +1032,24 @@ class TestExec:
         )
         h._session_mgr = AsyncMock()
         h._session_mgr.ambient_user = None
-        h._session_mgr.exec.return_value = CommandResult(
+        h._session_mgr.exec_route = MagicMock(return_value=ExecRoute.SSH_CHANNEL)
+        h._session_mgr.exec_on_route.return_value = CommandResult(
             command="c",
             value="",
             status=Status.Success,
             retcode=0,
+            route="ssh-channel",
         )
         # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
         await h.exec("base64 /bin/ls", log=LogMode.QUIET)
-        h._session_mgr.exec.assert_awaited_once_with(
+        h._session_mgr.exec_route.assert_called_once_with(needs_shell=False)
+        h._session_mgr.exec_on_route.assert_awaited_once_with(
+            route=ExecRoute.SSH_CHANNEL,
             cmd="base64 /bin/ls",
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
             expects=None,
             user=None,
-            needs_shell=False,
         )
 
 
@@ -1239,11 +1264,14 @@ class TestPutGetUser:
             transfer="nc",
             log=LogMode.QUIET,
         )
-        h._session_mgr.exec = AsyncMock(
-            return_value=CommandResult(status=Status.Success, value="", command="true", retcode=0)
+        h._session_mgr.exec_on_route = AsyncMock(
+            return_value=CommandResult(
+                status=Status.Success, value="", command="true", retcode=0, route="pooled-shell"
+            )
         )
         result = await h._transfer_for("root")._exec_cmd("true")
-        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
+        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
         assert result.status == Status.Success
 
 
@@ -1273,7 +1301,7 @@ class TestConsoleTermTransfers:
 
         async def fake_run_cmd(cmd, expects=None, timeout=0.0, log=None, write_progress=None):
             calls.append((cmd, timeout))
-            return _cs(command=cmd, output="ok")
+            return _cs(command=cmd, output="ok", route=ExecRoute.DEFAULT_SESSION.value)
 
         async def no_second_session(name):
             raise AssertionError(f"a console has one session; {name!r} would be a second")
@@ -1423,7 +1451,7 @@ class TestConsoleExec:
             events.append(f"run {cmd} as {who['user']}")
             if cmd == "boom":
                 raise ConnectionError("line dropped mid-command")
-            return _cs(command=cmd, output=who["user"])
+            return _cs(command=cmd, output=who["user"], route="default-session")
 
         monkeypatch.setattr(host, "as_user", fake_as_user)
         monkeypatch.setattr(mgr, "run_cmd", run_cmd)
@@ -1456,7 +1484,8 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            return _cs(command=cmd, output="")
+            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
+            return _cs(command=cmd, output="", route=route.value)
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
         await asyncio.gather(host.exec("a"), host.exec("b"))
@@ -1471,9 +1500,10 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            return _cs(command=cmd, output="")
+            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
+            return _cs(command=cmd, output="", route=route.value)
 
-        monkeypatch.setattr(host._session_mgr, "exec", slow)
+        monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
         await asyncio.gather(host.exec("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
         assert host._console_exec_lock is None
@@ -1488,7 +1518,8 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            return _cs(command=cmd, output="")
+            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
+            return _cs(command=cmd, output="", route=route.value)
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
         await asyncio.gather(host.run("a"), host.exec("b"), host.run("c"))
@@ -1503,10 +1534,11 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            return _cs(command=cmd, output="")
+            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
+            return _cs(command=cmd, output="", route=route.value)
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
-        monkeypatch.setattr(host._session_mgr, "exec", slow)
+        monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
         await asyncio.gather(host.run("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
         assert host._console_exec_lock is None
@@ -1531,7 +1563,7 @@ class TestConsoleExec:
 
         async def run_cmd(cmd, *_a, **_kw):
             events.append(f"run {cmd}")
-            return _cs(command=cmd, output="")
+            return _cs(command=cmd, output="", route="default-session")
 
         monkeypatch.setattr(host, "as_user", fake_as_user)
         monkeypatch.setattr(host._session_mgr, "run_cmd", run_cmd)
@@ -1590,7 +1622,7 @@ class TestConsoleExec:
 
         async def fake_run_cmd(cmd, *_a, **_kw):
             calls.append(cmd)
-            return _cs(command=cmd, output="/home/test")
+            return _cs(command=cmd, output="/home/test", route="default-session")
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", fake_run_cmd)
 
@@ -3152,7 +3184,6 @@ class TestSshExecTimeout:
         h._session_mgr._connections.term = "ssh"
         h._session_mgr._connections.proxy_hops = []
         h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
-        h._session_mgr._exec_factory = None
 
         result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=10.0)
 
@@ -3230,7 +3261,6 @@ class TestSshExecKillEscalation:
         h._session_mgr._connections.term = "ssh"
         h._session_mgr._connections.proxy_hops = []
         h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
-        h._session_mgr._exec_factory = None
 
         start = asyncio.get_running_loop().time()
         result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=5.0)
@@ -3281,7 +3311,6 @@ class TestSshExecCancelReap:
         h._session_mgr._connections.term = "ssh"
         h._session_mgr._connections.proxy_hops = []
         h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
-        h._session_mgr._exec_factory = None
 
     @pytest.mark.serial_timing
     @pytest.mark.asyncio
@@ -3907,7 +3936,6 @@ def _real_session_mgr(*, creds=None):
     return SessionManager(
         connections=conn,
         session_factory=_StubExecSession,
-        exec_factory=None,
         host_id="h",
         creds=creds,
     )
@@ -3932,7 +3960,7 @@ async def test_exec_runs_as_the_ambient_user_of_the_switched_default_session(mon
     `async with host.as_user("root")` mean what it says.
 
     Asserted on the identity the pooled session actually ran the command as,
-    not on the argument `_session_mgr.exec` was handed: a host that read the
+    not on the argument `_session_mgr.exec_on_route` was handed: a host that read the
     ambient user and then dropped it on the floor would satisfy the latter.
     """
     monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)

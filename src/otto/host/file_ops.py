@@ -76,7 +76,7 @@ async def refuse_if_base64_is_absent(
     **THIS PREDICATE COSTS A RESOLUTION, and that is a real change of cost.**
     It is the opposite of the call the first two call sites made, and the
     difference is the point rather than an inconsistency:
-    :func:`otto.host.session.refuse_if_line_editor_would_truncate` and
+    :func:`otto.host.session.refuse_if_typed_line_would_be_cut` and
     :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash` both key on a
     DECLARED fact and both explicitly refuse to read a probe, because both sit
     on paths where a resolution would be paid per command. There is no declared

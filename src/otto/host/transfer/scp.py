@@ -146,7 +146,7 @@ async def refuse_if_scp_is_absent(
     otto uses it as a per-command primitive. It is charged ONCE per
     ``put``/``get`` call and not once per file — the guard sits above the
     per-file fan-out, so a 200-file put pays it once. That is the opposite of
-    the call :func:`otto.host.session.refuse_if_line_editor_would_truncate` and
+    the call :func:`otto.host.session.refuse_if_typed_line_would_be_cut` and
     :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash` made, both of
     which sit on per-command paths and both of which key on a DECLARED fact for
     that reason. There is no declared scp fact to key on: ``has_bash`` is

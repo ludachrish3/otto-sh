@@ -6,7 +6,8 @@ what the terminal added (the ``onlcr`` fold, when the handshake measured
 ``onlcr``) and the frame drops only BEGIN's own line ending and the output's
 last newline.
 
-Each command in the table is given as the bytes the PROGRAM writes. The tests
+Each case in :data:`otto.testing.EXACT_OUTPUT_CASES` is given as the bytes the
+PROGRAM writes. The tests
 deliver them as each terminal mapping would, through a session whose
 handshake measured that mapping, and assert the exact ``value``.
 """
@@ -16,37 +17,11 @@ import asyncio
 import pytest
 
 from otto.host.command_frame import BashFrame, SessionMarkers
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
 from tests.unit.host.test_session import MockSession
 from tests.unit.host.test_terminal_mapping import identity_reply, lossy_reply, onlcr_reply
 
 M = SessionMarkers.for_session(session_id="cafef00d")
-
-# (shell command, what the program writes, its exit status). The command text
-# is documentation only here; the real-host test runs the same table.
-TABLE = [
-    ("true", "", 0),
-    ("echo 3", "3\n", 0),
-    ("printf 'a\\n\\n'", "a\n\n", 0),
-    ("printf 'abc'", "abc", 0),
-    ("printf '\\n'", "\n", 0),
-    ("printf '\\na\\n'", "\na\n", 0),
-    ("printf '\\n\\na\\n'", "\n\na\n", 0),
-    ("printf ' \\n'", " \n", 0),
-    ("printf 'a  \\n'", "a  \n", 0),
-    ("printf 'a\\tb\\n'", "a\tb\n", 0),
-    ("printf 'a\\nb\\nc\\n'", "a\nb\nc\n", 0),
-    ("printf 'a\\nb'", "a\nb", 0),
-    ("seq 1 2000", "".join(f"{i}\n" for i in range(1, 2001)), 0),
-    ("echo err >&2", "err\n", 0),
-    ("sh -c 'echo x; exit 3'", "x\n", 3),
-    ("printf 'é\\n'", "é\n", 0),
-    ("printf 'a\\r\\nb\\rc\\n\\n'", "a\r\nb\rc\n\n", 0),
-]
-IDS = [cmd for cmd, _, _ in TABLE]
-
-
-def _expected(out: str) -> str:
-    return out.removesuffix("\n")
 
 
 def _onlcr(text: str) -> str:
@@ -57,17 +32,17 @@ def _onlcr(text: str) -> str:
 class TestParseOutput:
     """The frame alone, on a buffer with nothing to fold (a pipe, or after the session's fold)."""
 
-    @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
-    def test_exact(self, cmd: str, out: str, rc: int):
-        buf = f"{M.begin}\n{out}{M.end_prefix}{rc}__\n"
-        assert BashFrame().parse_output(buf, cmd=cmd, m=M) == _expected(out)
-        assert BashFrame().extract_retcode(buf, m=M) == rc
+    @pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
+    def test_exact(self, case: OutputCase):
+        buf = f"{M.begin}\n{case.text}{M.end_prefix}{case.retcode}__\n"
+        assert BashFrame().parse_output(buf, cmd=case.command, m=M) == case.value
+        assert BashFrame().extract_retcode(buf, m=M) == case.retcode
 
-    @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
-    def test_the_echoed_command_is_still_skipped(self, cmd: str, out: str, rc: int):
-        echoed = BashFrame().frame(cmd, m=M)
-        buf = f"{echoed}{M.begin}\n{out}{M.end_prefix}{rc}__\n"
-        assert BashFrame().parse_output(buf, cmd=cmd, m=M) == _expected(out)
+    @pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
+    def test_the_echoed_command_is_still_skipped(self, case: OutputCase):
+        echoed = BashFrame().frame(case.command, m=M)
+        buf = f"{echoed}{M.begin}\n{case.text}{M.end_prefix}{case.retcode}__\n"
+        assert BashFrame().parse_output(buf, cmd=case.command, m=M) == case.value
 
 
 async def _measured(reply) -> MockSession:
@@ -105,25 +80,26 @@ class TestAnUnfoldedCrlfBuffer:
 
 
 class TestThroughTheSession:
-    @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
+    @pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
     @pytest.mark.asyncio
-    async def test_identity(self, cmd: str, out: str, rc: int):
+    async def test_identity(self, case: OutputCase):
         s = await _measured(identity_reply)
         m = s.markers
-        result = await _run(s, cmd, f"{m.begin}\n{out}{m.end_prefix}{rc}__\n")
-        assert result.value == _expected(out)
-        assert result.retcode == rc
+        raw = f"{m.begin}\n{case.text}{m.end_prefix}{case.retcode}__\n"
+        result = await _run(s, case.command, raw)
+        assert result.value == case.value
+        assert result.retcode == case.retcode
 
-    @pytest.mark.parametrize(("cmd", "out", "rc"), TABLE, ids=IDS)
+    @pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
     @pytest.mark.asyncio
-    async def test_onlcr(self, cmd: str, out: str, rc: int):
+    async def test_onlcr(self, case: OutputCase):
         s = await _measured(onlcr_reply)
         assert s.terminal_mapping == "onlcr"
         m = s.markers
-        raw = _onlcr(f"{m.begin}\n{out}{m.end_prefix}{rc}__\n")
-        result = await _run(s, cmd, raw)
-        assert result.value == _expected(out)
-        assert result.retcode == rc
+        raw = _onlcr(f"{m.begin}\n{case.text}{m.end_prefix}{case.retcode}__\n")
+        result = await _run(s, case.command, raw)
+        assert result.value == case.value
+        assert result.retcode == case.retcode
 
     @pytest.mark.asyncio
     async def test_an_unknown_mapping_leaves_the_bytes_as_they_arrived(self):

@@ -154,8 +154,9 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 # already excludes the whole hermetic space -- this predicate cannot reach a
 # hermetic cell no matter what it checks after that.
 #
-# WHY IT IS NOT FIXED HERE. `SessionManager.exec_line_budget` answers `None`
-# for the bare ssh exec route by design (`session.py:2981-3006`), so
+# WHY IT IS NOT FIXED HERE. `SessionManager.line_budget(route=...)`, asked for
+# the route the host plans for the chunk command, answers `None` for the bare
+# ssh exec route by design (`session.py`, `SessionManager.line_budget`), so
 # `ShellFileTransfer._fitted_chunk_bytes` has no budget to fit the chunk to;
 # only the pooled-shell (telnet/pty) route reports one. Giving the exec route
 # a per-host budget is a product change that needs a new host field, which
@@ -167,9 +168,9 @@ _DROPBEAR_SHELL_AT_FULL_STRIDE = (
     "exits the connection, while a full 4096-byte chunk command is ~5.5 KB on one line; "
     "measured 2026-09-24 on bb1350 (guest journal: 'Exit (root): String too long' at each "
     "failure). exec, transfer and timeout contracts pass on this cell (the transfer payload "
-    "is 78 bytes, one short command). otto's SessionManager.exec_line_budget answers None "
-    "for the bare exec route by design, so ShellFileTransfer has no budget to fit the chunk "
-    "to; a per-host exec line budget is the follow-up, #437."
+    "is 78 bytes, one short command). otto's SessionManager.line_budget, asked for the "
+    "planned route, answers None for the bare exec route by design, so ShellFileTransfer "
+    "has no budget to fit the chunk to; a per-host exec line budget is the follow-up, #437."
 )
 
 

@@ -117,10 +117,15 @@ from tests.conformance._sample import cell_label
 _T = TypeVar("_T")
 """What a stash slot holds: the key's type and its factory's return, tied together."""
 
-FORMAT = 1
+FORMAT = 2
 """The record's document version, spelled the way the matrix artifact spells
 its own: required, no default, so an unversioned record fails loud in the
-collator rather than being read as an empty modern one."""
+collator rather than being read as an empty modern one.
+
+Format 2 added ``entry`` (``tests/conformance/_entry.py``): the way a command
+contract issued its command is part of the cell, so it is part of the record's
+identity. A format-1 record carries no entry and cannot say which entry it
+measured; the collator discards it, counted, like any other unreadable one."""
 
 OBSERVATION = "observation"
 DOMAIN_EXCLUSION = "domain-exclusion"
@@ -336,6 +341,9 @@ class CellFacts:
     transfer: str
     cell_kind: str
     label: str
+    entry: str
+    """How the command was issued (``run``, ``exec``, ``exec-shell``); ``""``
+    for a contract that declares no entries."""
 
 
 def cell_facts(resolved: ResolvedCell) -> CellFacts:
@@ -354,6 +362,7 @@ def cell_facts(resolved: ResolvedCell) -> CellFacts:
         transfer=cell.transfer,
         cell_kind=resolved.kind,
         label=cell_label(resolved),
+        entry=resolved.entry,
     )
 
 
@@ -373,6 +382,7 @@ def _common(kind: str, resolved: ResolvedCell, venue: str, contract: str) -> dic
         "transfer": facts.transfer,
         "cell_kind": facts.cell_kind,
         "cell_label": facts.label,
+        "entry": facts.entry,
     }
 
 
@@ -479,17 +489,29 @@ def exclusion_record(*, resolved: ResolvedCell, venue: str, contract: str) -> di
 
 
 def record_filename(record: dict) -> str:
-    """A name that is stable per (surface, cell, venue) and unique across workers.
+    """A name that is stable per (surface, cell, entry, venue) and unique across workers.
 
     Stable so that re-running a cell REPLACES its record rather than growing
     a pile whose newest member has to be guessed at; unique so that the
     suite's default ``-n auto`` cannot have two workers write one file. The
     digest covers the identity fields rather than the whole record, because
     ``as_of`` and the outcome are exactly the parts that should overwrite.
+
+    The ENTRY is part of the identity: two entries of one cell are two
+    measurements, and without it the second would overwrite the first.
     """
     identity = "\x1f".join(
         str(record.get(field))
-        for field in ("kind", "contract", "venue", "cell_label", "element", "term", "transfer")
+        for field in (
+            "kind",
+            "contract",
+            "venue",
+            "cell_label",
+            "element",
+            "term",
+            "transfer",
+            "entry",
+        )
     )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     surface = record.get("surface") or "unmapped"

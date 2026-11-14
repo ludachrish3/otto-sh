@@ -1,9 +1,11 @@
 """
 API-level contract that every otto host backend must satisfy.
 
-This is the *cross-OS* contract: tests assert on otto behavior — status,
-retcode shape, output presence, file-transfer round-trip — never on
-backend-specific command text. There is no command both Unix and Zephyr can
+This is the *cross-OS* contract: tests assert on otto behavior — the raw
+send/expect surface, file-transfer round-trip, transfer progress — never on
+backend-specific command text. A command's status and exact output are not
+asserted here: the conformance contracts assert them over every cell, and
+the exact-output table over every entry. There is no command both Unix and Zephyr can
 run (Zephyr has no ``echo`` builtin), so each backend's kit (``host1_kit``,
 defined in :mod:`tests.conftest`) supplies backend-appropriate command
 strings. The test treats those strings as opaque.
@@ -78,42 +80,12 @@ pytestmark = pytest.mark.timeout(45)
 
 
 # ---------------------------------------------------------------------------
-# run / exec
+# send / expect
 # ---------------------------------------------------------------------------
 
 
 @_ALL_BACKENDS
-class TestRunContract:
-    @pytest.mark.asyncio
-    async def test_successful_command_returns_status_success(self, host1, host1_kit):
-        """A command that exits 0 must yield ``Status.Success`` with retcode
-        0 and non-empty output. The *command text* differs per backend; the
-        *otto behavior* does not."""
-        result = (await host1.run(host1_kit.successful_cmd)).only
-        assert result.status == Status.Success
-        assert result.retcode == 0
-        assert result.value != "", "successful command produced empty output"
-
-    @pytest.mark.asyncio
-    async def test_failing_command_returns_status_failed(self, host1, host1_kit):
-        """A command that produces a non-zero retcode must yield
-        ``Status.Failed``. The retcode value itself varies (Unix: 127 for
-        unknown; Zephyr: -8 for unknown — signed errno), so the contract is
-        on the Status mapping, not the integer."""
-        result = (await host1.run(host1_kit.failing_cmd)).only
-        assert result.status == Status.Failed
-        assert result.retcode != 0
-
-    @pytest.mark.asyncio
-    async def test_exec_works_cold(self, host1, host1_kit):
-        """``exec`` must succeed without a prior ``run`` warming the
-        session. On UnixHost this exercises the stateless exec primitive;
-        on EmbeddedHost it shares the persistent session (documented
-        single-console caveat) but is still expected to work cold."""
-        result = await host1.exec(host1_kit.successful_cmd)
-        assert result.status == Status.Success
-        assert result.retcode == 0
-
+class TestSendExpectContract:
     @pytest.mark.asyncio
     async def test_send_expect_drives_raw_output(self, host1, host1_kit):
         """``send`` writes a raw command to the shell's stdin; ``expect``

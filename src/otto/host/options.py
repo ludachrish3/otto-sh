@@ -32,6 +32,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import final
 
 from ..models.base import as_secret
+from .limitation import Limitation
 
 __all__ = [
     "FtpOptions",
@@ -483,6 +484,45 @@ class TelnetOptions:
 # ---------------------------------------------------------------------------
 
 
+UNESCAPED_IAC = Limitation(
+    kind="device",
+    affects="a 0xFF byte in a command's output",
+    reason=(
+        "This console's server sends a 0xFF byte the command wrote without doubling it, so "
+        "otto reads it as the start of a telnet command and loses it together with that "
+        "command's bytes: followed by an ordinary byte only the 0xFF is lost, two 0xFF arrive "
+        "as one, followed by 0xF1-0xF9 that byte is lost too, followed by 0xFB-0xFE that byte "
+        "and the next, and followed by 0xFA all output after it, the prompt included, is "
+        "swallowed until a 0xFF 0xF0 arrives, so the command can appear to hang until its "
+        "timeout. When the output must be byte-exact, reach the host over ssh or telnet "
+        "where it has one, or serve its console through a telnet server that doubles 0xFF."
+    ),
+    measured_on=[
+        (
+            "2026-11-13, BusyBox 1.35.0 guest bb1350, its ttyS1 bridged by QEMU's "
+            "`-serial telnet:` on test1:2450: printf 'SA\\377BE' arrives on the wire as "
+            "53 41 ff 42 45 (not ff ff), which telnetlib3 5.0.1 reads as 'SABE'; "
+            "\\377\\377 arrives as ff ff and reads as one 0xFF; `run` and `exec` of "
+            "printf '\\377\\n' answer ''"
+        ),
+        (
+            "2026-11-13, same console: 0x00, 0x0D, 0xFB, 0xFD and 0xFE each arrive intact "
+            "between two ASCII bytes"
+        ),
+        (
+            "2026-11-13, replayed through telnetlib3 5.0.1 and otto's reader behind the "
+            "captured QEMU greeting (no wire capture): after 'SA', ff 42 reads 'B', ff 00 "
+            "reads 0x00, ff f0 reads 0xF0, ff f1 to ff f9 lose both bytes, ff fb to ff fe "
+            "lose those and the option byte after them, ff fa 01 42 43 44 ff f0 45 reads only "
+            "'E', and ff fa with no ff f0 after it reads nothing more at all"
+        ),
+    ],
+)
+"""What a console whose server does not escape 0xFF costs.
+
+See :attr:`ConsoleOptions.escapes_iac`."""
+
+
 @dataclass(slots=True)
 class ConsoleOptions:
     """Connection options for the ``console`` term: a serial console behind a telnet server.
@@ -555,6 +595,12 @@ class ConsoleOptions:
     echo_negotiation_timeout: float = 3.0
     """Seconds to wait for the remote to honor ``DONT ECHO`` during connect."""
 
+    escapes_iac: bool = True
+    """Whether the console server doubles a 0xFF data byte (``IAC IAC``), as the
+    telnet protocol requires. Set ``False`` for a server that does not, such
+    as QEMU's ``-serial telnet:`` bridge; such a console declares
+    ``UNESCAPED_IAC`` (:attr:`exact_output`)."""
+
     _reserved_extra: ClassVar[frozenset[str]] = frozenset()
     """``extra`` keys refused although no field has the name: none here.
 
@@ -565,6 +611,39 @@ class ConsoleOptions:
 
     def __post_init__(self) -> None:
         _refuse_shadowing(self)
+
+    declared_limitations: ClassVar[dict[str, Limitation]] = {"escapes_iac": UNESCAPED_IAC}
+    """Boolean field name to the limitation a console declares when that field
+    is set to the opposite of its default. The command-contract page lists
+    these; :attr:`exact_output` reads them."""
+
+    @classmethod
+    def declaring_value(cls, name: str) -> bool:
+        """Return the value of :attr:`declared_limitations` field *name* that declares it.
+
+        The opposite of the field's default: the one answer to "is this field
+        at the value that declares", read by :attr:`exact_output` and by the
+        command-contract page's "where" text.
+        """
+        return not _CONSOLE_DEFAULTS[name]
+
+    @property
+    def exact_output(self) -> Limitation | None:
+        """``None`` when this console carries every byte; else what it cannot carry.
+
+        The one lookup for "is this console limited": the conformance arm and
+        the command-contract page both read :attr:`declared_limitations`
+        through it or beside it.
+
+        It returns the FIRST declared field's limitation. With one entry in
+        :attr:`declared_limitations` that is all of them; a second entry
+        would need this to return every declared limitation, and its callers
+        to expect a list.
+        """
+        for name, limitation in self.declared_limitations.items():
+            if getattr(self, name) == self.declaring_value(name):
+                return limitation
+        return None
 
     def _open_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``telnetlib3.open_connection()``."""
@@ -578,6 +657,12 @@ class ConsoleOptions:
         }
         kw.update(self.extra)
         return kw
+
+
+_CONSOLE_DEFAULTS: dict[str, Any] = {f.name: f.default for f in fields(ConsoleOptions)}
+"""Each :class:`ConsoleOptions` field's default.
+
+:meth:`ConsoleOptions.declaring_value` reads these."""
 
 
 # ---------------------------------------------------------------------------

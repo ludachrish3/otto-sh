@@ -33,12 +33,20 @@ from tests.conftest import active_context
 pytestmark = pytest.mark.usefixtures("trusted_container_staging")
 
 
+_PARENT_ROUTE = "ssh-channel"
+"""The route a faked parent ``exec`` records, as the real parent's primitive would."""
+
+
 def _ok(cmd: str = "", out: str = "") -> CommandResult:
-    return CommandResult(status=Status.Success, value=out, command=cmd, retcode=0)
+    return CommandResult(
+        status=Status.Success, value=out, command=cmd, retcode=0, route=_PARENT_ROUTE
+    )
 
 
 def _fail(cmd: str = "", out: str = "boom") -> CommandResult:
-    return CommandResult(status=Status.Failed, value=out, command=cmd, retcode=1)
+    return CommandResult(
+        status=Status.Failed, value=out, command=cmd, retcode=1, route=_PARENT_ROUTE
+    )
 
 
 def _sm(result) -> tuple[Status, str]:
@@ -200,6 +208,7 @@ async def test_exec_preserves_every_field_through_the_command_rebuild():
         command=wrapped_cmd,
         retcode=-1,
         timed_out=True,
+        route=_PARENT_ROUTE,
     )
 
     result = await h.exec("sleep 10")
@@ -279,7 +288,9 @@ async def test_exec_sudo_runs_as_root_in_the_container():
     parent = _mock_parent()
     container = _make_container(parent)
     container.parent.exec = AsyncMock(
-        return_value=CommandResult(status=Status.Success, value="uid=0", command="x", retcode=0)
+        return_value=CommandResult(
+            status=Status.Success, value="uid=0", command="x", retcode=0, route=_PARENT_ROUTE
+        )
     )
     container._ensure_running = AsyncMock()
     await container.exec("id", sudo=True)

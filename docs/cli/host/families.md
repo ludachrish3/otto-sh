@@ -10,6 +10,8 @@ same way. A serial console has no second user to become; a container has no
 credentials for one; a unix box has both. Each row below is what that family's
 host class **declares** in its `capabilities` object. What a run **measured**
 against real hardware, cell by cell, is in {doc}`../../architecture/support-matrix`.
+What a command's exit code, output and timeout mean on each kind of host is on
+{ref}`the command contract page <command-contract>`.
 
 A class registered from your own repository must declare one too:
 `register_host_class` refuses a class without it.

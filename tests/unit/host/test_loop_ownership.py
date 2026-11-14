@@ -631,7 +631,9 @@ def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(c
         return _ClosableConn()
 
     async def exec_on(self, conn, cmd, timeout=0.0, log=None):
-        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+        return CommandResult(
+            status=Status.Success, value="", command=cmd, retcode=0, route="ssh-channel"
+        )
 
     monkeypatch.setattr(connections, "connect_and_describe", connect)
     monkeypatch.setattr(SessionManager, "exec_on", exec_on)

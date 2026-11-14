@@ -19,14 +19,16 @@ no predicate, no callable and no assertion, which
 moment a vocabulary can carry behaviour, a userland can quietly answer a
 different question.
 
-DERIVED FROM LAB DATA, NOT KEYED BY ELEMENT. :func:`vocabulary_for_userland`
-takes the USERLAND axis
+DERIVED FROM LAB DATA, NOT A HAND-WRITTEN TABLE KEYED BY ELEMENT.
+:func:`vocabulary_for` splits on the USERLAND axis
 (:func:`tests._fixtures.profiles.axes_for`), which is itself resolved from the
 host otto builds out of ``lab.json`` -- so a new guest added to the lab gets a
-correct vocabulary for free, which is the same reason ``tests/conftest.py``'s
+correct dialect for free, which is the same reason ``tests/conftest.py``'s
 ``_zephyr_kit`` derives rather than tabulates. A hand-written table keyed by
 element goes stale silently, because a missing entry looks like a passing cell.
-An unrecognised userland RAISES here for that reason.
+An unrecognised userland RAISES here for that reason. The one per-element
+datum, a Zephyr guest's recorded ``help`` (:data:`ZEPHYR_SHELLS`), is derived
+from that guest's recording, and a guest with none raises too.
 
 WHY NOT ``HostKit``. ``tests/conftest.py``'s :class:`~tests.conftest.HostKit`
 is the prior art and it is not enough: it carries "a command that succeeds" and
@@ -41,7 +43,18 @@ Not to be confused with :mod:`otto.testing.conformance`, which asserts that
 pluggable BACKEND INTERFACES conform. This tree is about HOST CONTRACTS.
 """
 
-from dataclasses import dataclass
+import enum
+import functools
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, replace
+from typing import Any
+
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
+from tests._fixtures.shell_transcripts import (
+    ZEPHYR_EXTRA_COMMANDS,
+    recordings,
+    zephyr_recorded_output,
+)
 
 #: The sentinel prefix every otto command frame builds its markers from
 #: (``otto.host.command_frame``: ``__OTTO_<session-id>_BEGIN__`` and friends).
@@ -58,11 +71,33 @@ _FRAME_TOKEN = "otto-conformance-frame"
 _TAIL_TOKEN = "otto-conformance-tail"
 
 
+class OutputArm(enum.Enum):
+    """Which evidence a vocabulary's :attr:`Vocabulary.output_cases` are.
+
+    One rule, two strengths of evidence: the output contract names the arm a
+    cell ran in its observable, and this is where that is decided, once, at
+    each vocabulary's definition.
+    """
+
+    SHIPPED_TABLE = "shipped-table"
+    """:data:`otto.testing.EXACT_OUTPUT_CASES`: programs whose bytes the tester chose."""
+
+    FIRMWARE_OUTPUT = "firmware-output"
+    """Stock commands whose output the firmware, not the tester, fixes."""
+
+    UNESCAPED_IAC = "unescaped-iac"
+    """The shipped table, with each row holding 0xFF expected as a console
+    declaring :data:`otto.host.options.UNESCAPED_IAC` carries it. Chosen by the
+    output contract from the opened host's declaration, never by a vocabulary."""
+
+
 @dataclass(frozen=True)
 class Vocabulary:
     """One userland's spellings, and what each of them is expected to answer.
 
-    Every field is a plain ``str``, ``int``, ``float`` or ``None`` on purpose.
+    Every field but :attr:`output_cases` and :attr:`output_arm` is a plain
+    ``str``, ``int``, ``float`` or ``None`` on purpose; those two are a list
+    of frozen records and an enum member.
     A callable field would let a userland supply its own checker, and the
     contract would then be measuring whatever that userland chose to be
     measured on -- the one failure mode this whole layer is built against.
@@ -123,18 +158,26 @@ class Vocabulary:
     multiline_command: str
     """A command whose output is more than one line, and which exits 0."""
 
-    multiline_expected: str | None
-    """:attr:`multiline_command`'s exact output, or ``None`` where it cannot be chosen.
+    output_cases: "list[OutputCase]"
+    """The commands whose exact ``value`` and return code the output contract checks.
 
-    ``None`` IS A REAL FIDELITY LOSS AND IS STATED AT THE ASSERTION. Where the
-    tester writes the output (``printf``), exact equality also catches
-    truncation, reordering, interleaving and a leaked shell prompt -- the
-    ``vagrant@otto:~$`` measured on a loopback-ssh cell in this worktree is
-    caught by nothing weaker. Where the tester can only pick a stock builtin,
-    the assertion falls back to the framing contract itself: no otto sentinel,
-    no ``retval`` line, no ANSI escape, no echoed command line, and more than
-    one line of output.
+    Never empty; ``tests/unit/test_conformance_bed.py`` refuses an empty list.
+    On a POSIX shell it is :data:`otto.testing.EXACT_OUTPUT_CASES` itself, the
+    one table every route is judged on: programs whose bytes the tester
+    chose, so exact equality also catches truncation, reordering,
+    interleaving and a leaked prompt. A Zephyr shell has no ``printf`` and no
+    ``echo``, so nothing there writes chosen bytes; its list is the stock
+    commands whose output the FIRMWARE fixes, as recorded in
+    ``tests/unit/host/shell_transcripts/`` -- see :data:`ZEPHYR_SHELLS`. The
+    same rule, weaker evidence.
+
+    The one field that is not a scalar, and still data: an
+    :class:`~otto.testing.OutputCase` is a frozen record of a command, the
+    bytes it writes and its exit status, with no behaviour of its own.
     """
+
+    output_arm: OutputArm
+    """Which evidence :attr:`output_cases` are; the output contract's observable names it."""
 
     single_line_command: str
     """A command whose output is a single line, and which exits 0.
@@ -253,7 +296,8 @@ POSIX = Vocabulary(
     sequence_failing_command="(exit 5)",
     sequence_failing_code=5,
     multiline_command=f"printf '%s\\n%s\\n' {_FRAME_TOKEN}-1 {_FRAME_TOKEN}-2",
-    multiline_expected=f"{_FRAME_TOKEN}-1\n{_FRAME_TOKEN}-2",
+    output_cases=EXACT_OUTPUT_CASES,
+    output_arm=OutputArm.SHIPPED_TABLE,
     single_line_command=f"printf '%s\\n' {_TAIL_TOKEN}",
     single_line_expected=_TAIL_TOKEN,
     # Exact equality already subsumes any shape assertion here.
@@ -292,7 +336,11 @@ POSIX = Vocabulary(
 #: Zephyr's ``-8`` is arguably a BETTER discriminator than bash's 42: a backend
 #: that collapses every failure to ``1`` fails it, and so does one that mangles
 #: the sign.
-ZEPHYR_SHELL = Vocabulary(
+#:
+#: The base every guest's vocabulary is built from; only
+#: :attr:`Vocabulary.output_cases` differs between guests (see
+#: :data:`ZEPHYR_SHELLS`).
+_ZEPHYR_BASE = Vocabulary(
     succeeding_command="kernel version",
     failing_command="definitely_not_a_zephyr_command",
     failing_code=-8,
@@ -302,7 +350,8 @@ ZEPHYR_SHELL = Vocabulary(
     sequence_failing_command="otto_conformance_not_a_command",
     sequence_failing_code=-8,
     multiline_command="help",
-    multiline_expected=None,
+    output_cases=[],
+    output_arm=OutputArm.FIRMWARE_OUTPUT,
     single_line_command="kernel uptime",
     single_line_expected=None,
     single_line_pattern=r"\d+",
@@ -316,8 +365,128 @@ ZEPHYR_SHELL = Vocabulary(
 )
 
 
-def vocabulary_for_userland(userland: str) -> Vocabulary:
-    """The vocabulary a host of this userland is asked the contracts in.
+#: The Zephyr version string ``kernel version`` prints, per release (the
+#: userland :func:`tests._fixtures.profiles.axes_for` resolves). Recorded in
+#: ``tests/unit/host/shell_transcripts/`` on every bed guest of that release;
+#: ``tests/unit/test_conformance_bed.py`` checks each row against them.
+_ZEPHYR_KERNEL_VERSIONS: "dict[str, str]" = {
+    "zephyr-2.7": "2.7.6",
+    "zephyr-3.7": "3.7.2",
+    "zephyr-4.4": "4.4.1",
+}
+
+
+def _zephyr_release_cases(version: str) -> "list[OutputCase]":
+    """The stock commands whose output every guest of a Zephyr *version* shares.
+
+    ``kernel version`` names the release; an unknown command is answered by
+    the shell itself, identically on every release (its error colour is the
+    shell's addition, not output).
+    """
+    return [
+        OutputCase(
+            id="kernel version",
+            command="kernel version",
+            writes=f"Zephyr version {version}\n".encode(),
+        ),
+        OutputCase(
+            id="unknown command",
+            command="otto_not_a_command",
+            writes=b"otto_not_a_command: command not found\n",
+            retcode=-8,
+        ),
+    ]
+
+
+def _zephyr_recorded_case(recording: "dict[str, Any]", entry: "dict[str, Any]") -> OutputCase:
+    r"""*entry*'s command as *recording*'s guest sent it, by the recordings' README rule.
+
+    Cut from the recording's RAW bytes by
+    :func:`tests._fixtures.shell_transcripts.zephyr_recorded_output`: the
+    frame's lines, the shell's message-level colouring and the shell's ``\r``
+    of each ``\r\n`` removed, everything the command wrote kept -- blank
+    lines, leading spaces and the help formatter's cursor moves (``\x1b[17C``)
+    included. Never by otto's own frame, which would make the contract agree
+    with otto by construction.
+    """
+    text = zephyr_recorded_output(recording, entry).text
+    return OutputCase(
+        id=entry["cmd"], command=entry["cmd"], writes=text.encode(), retcode=entry["retcode"]
+    )
+
+
+def _zephyr_recorded_cases(recording: "dict[str, Any]") -> "list[OutputCase]":
+    """``help``, then each message-level command *recording*'s guest was asked, as it sent them."""
+    entries = {one["cmd"]: one for one in recording["commands"]}
+    wanted = ["help", *ZEPHYR_EXTRA_COMMANDS]
+    return [_zephyr_recorded_case(recording, entries[cmd]) for cmd in wanted if cmd in entries]
+
+
+@functools.cache
+def _zephyr_recordings() -> "dict[str, dict[str, Any]]":
+    """Every recorded Zephyr guest's recording, by element."""
+    return {
+        recording["element"]: recording
+        for recording in recordings().values()
+        if recording["release"].startswith("zephyr-")
+    }
+
+
+def _zephyr_shell(recording: "dict[str, Any]") -> Vocabulary:
+    """The vocabulary of the guest *recording* was made on."""
+    cases = _zephyr_release_cases(_ZEPHYR_KERNEL_VERSIONS[recording["release"]])
+    return replace(_ZEPHYR_BASE, output_cases=[*cases, *_zephyr_recorded_cases(recording)])
+
+
+@functools.cache
+def _zephyr_shell_of(element: str) -> Vocabulary:
+    return _zephyr_shell(_zephyr_recordings()[element])
+
+
+class _RecordedShells(Mapping[str, Vocabulary]):
+    """:data:`ZEPHYR_SHELLS`: each recorded guest's vocabulary, cut on first use.
+
+    LAZY so importing this module cuts no recording: the bed's topology
+    (``tests/conformance/_bed.py``'s ``bed_topology``) imports it, and
+    ``make shell-transcripts`` must open a guest whose recording does not
+    exist yet, or is being replaced.
+    """
+
+    def __getitem__(self, element: str) -> Vocabulary:
+        return _zephyr_shell_of(element)
+
+    def __iter__(self) -> "Iterator[str]":
+        return iter(_zephyr_recordings())
+
+    def __len__(self) -> int:
+        return len(_zephyr_recordings())
+
+
+#: The Zephyr RTOS shell's vocabulary, per bed GUEST (element): :data:`_ZEPHYR_BASE`
+#: with that guest's :attr:`Vocabulary.output_cases`.
+#:
+#: PER ELEMENT, NOT PER RELEASE, because of ``help``. ``kernel version`` and
+#: the unknown-command answer are the same on every guest of a release, and
+#: are written per release; ``help`` is not -- its command list and the
+#: column its formatter's cursor moves jump to depend on which shell modules
+#: the build enabled, so ``zephyr37_fat`` and ``zephyr37_nofs`` (both 3.7.2)
+#: answer differently. ``help`` is the one stock command that is multi-line,
+#: has blank lines, leading spaces and in-output escapes, and whose bytes the
+#: firmware fixes, so it is the case that makes this arm evidence about more
+#: than one line. Its expected bytes are read from that guest's recording.
+#:
+#: Two stock commands stay out. ``kernel uptime`` is a clock. ``device list``
+#: prints each device's runtime state (``- eth0 (READY)``), which a device
+#: whose initialisation failed answers differently on the same firmware, so
+#: its bytes are fixed by the guest's state rather than by the build.
+#:
+#: Derived from the recordings, so a Zephyr guest with no recording has no
+#: vocabulary and :func:`vocabulary_for` raises for it.
+ZEPHYR_SHELLS: "Mapping[str, Vocabulary]" = _RecordedShells()
+
+
+def vocabulary_for(*, userland: str, element: str) -> Vocabulary:
+    """The vocabulary *element*, a host of *userland*, is asked the contracts in.
 
     Split on the USERLAND string
     :func:`tests._fixtures.profiles.axes_for` resolved, for the same three
@@ -325,16 +494,28 @@ def vocabulary_for_userland(userland: str) -> Vocabulary:
     gives: the element NAME is a naming convention rather than a fact about
     the host, the LAB is wrong (``test4`` is in the ``embedded`` lab and is a
     plain GNU VM), and ``os_type`` is wrong (the five BusyBox guests declare
-    ``os_type: "unix"``).
+    ``os_type: "unix"``). *element* only picks WHICH Zephyr guest's recorded
+    output the output contract compares (:data:`ZEPHYR_SHELLS`); it never
+    decides the dialect.
 
     An unrecognised userland RAISES rather than falling back to POSIX. A
     default would be the failure this module is shaped to avoid: a new
     userland layer would be asked bash's questions, its cells would go red for
     a reason that looks like a product bug, or -- worse, if its shell happened
-    to accept them -- would go green having measured the wrong dialect.
+    to accept them -- would go green having measured the wrong dialect. A
+    Zephyr guest with no recording, or recorded running another release,
+    raises for the same reason: its output contract would have nothing true
+    to compare.
     """
-    if userland.startswith("zephyr-"):
-        return ZEPHYR_SHELL
+    if userland in _ZEPHYR_KERNEL_VERSIONS:
+        recording = _zephyr_recordings().get(element)
+        if recording is None or recording["release"] != userland:
+            raise ValueError(
+                f"no conformance vocabulary for {element!r} on userland {userland!r} -- "
+                f"tests/unit/host/shell_transcripts/ holds no recording of that guest on "
+                f"that release (`make shell-transcripts`)"
+            )
+        return ZEPHYR_SHELLS[element]
     if userland.startswith("busybox-") or userland == "gnu":
         return POSIX
     raise ValueError(

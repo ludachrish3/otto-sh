@@ -146,7 +146,8 @@ import shlex
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO
+from types import SimpleNamespace
+from typing import IO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -157,7 +158,7 @@ from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.factory import create_host_from_dict
 from otto.host.options import UserlandOptions
-from otto.host.session import PTY_TYPED_LINE_MAX, typed_line_budget
+from otto.host.session import ShellSession, framed_line_overhead, typed_line_budget
 from otto.host.transfer import shell as shell_module
 from otto.host.transfer.base import TransferContext
 from otto.host.transfer.shell import (
@@ -169,7 +170,14 @@ from otto.host.transfer.shell import (
     _uu_frame,
     staged_temp_name,
 )
-from otto.host.userland import APPLET_ABSENT, APPLET_PRESENT, PROBED_APPLETS, Userland
+from otto.host.userland import (
+    APPLET_ABSENT,
+    APPLET_PRESENT,
+    ASH_ECHOING_LINE_MAX,
+    PROBED_APPLETS,
+    PTY_TYPED_LINE_MAX,
+    Userland,
+)
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
@@ -386,7 +394,7 @@ def _make_ft(
 
     ``line_budget=None`` is the default because it is what an ``ssh`` host --
     and every test written before the budget existed -- gets from
-    :attr:`~otto.host.session.SessionManager.exec_line_budget`: no line
+    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan: no line
     discipline in the way, full ``_SHELL_CHUNK_BYTES`` chunks. Passed as a
     plain number here rather than as a real manager because what these tests
     are about is how the backend SPENDS a budget; where the number comes from
@@ -911,7 +919,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         line, over by 1598 -- which on the guests was not an assertion failure
         but a 30-second wedge at the shell's continuation prompt.
         """
-        budget = typed_line_budget(BashFrame())
+        budget = typed_line_budget(BashFrame(), echoes=False)
         payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
         src = tmp_path / "payload.bin"
         src.write_bytes(payload)
@@ -943,7 +951,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         each quantum surrendered is round trips on a device whose console is
         the slow part.
         """
-        budget = typed_line_budget(BashFrame())
+        budget = typed_line_budget(BashFrame(), echoes=False)
         payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
         src = tmp_path / "payload.bin"
         src.write_bytes(payload)
@@ -998,7 +1006,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         against one path length would be over the bound at another; a budget
         spent against the command it is about to emit cannot be.
         """
-        budget = typed_line_budget(BashFrame())
+        budget = typed_line_budget(BashFrame(), echoes=False)
         payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
         src = tmp_path / "payload.bin"
         src.write_bytes(payload)
@@ -1031,7 +1039,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         The one case where the budget cannot be spent at all. Clamping to some
         minimum would emit exactly the line that wedges, one byte of payload
         at a time; refusing the whole BACKEND (see the note on
-        ``refuse_if_line_editor_would_truncate``) would take out every other
+        ``refuse_if_typed_line_would_be_cut``) would take out every other
         file on a host over one long path. So it is this file's failure, with
         both numbers in it, and nothing is typed at the device.
         """
@@ -1134,7 +1142,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         """
         total = _SHELL_CHUNK_BYTES * 2
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
-        ft = _make_ft(exec_cmd, line_budget=typed_line_budget(BashFrame()))
+        ft = _make_ft(exec_cmd, line_budget=typed_line_budget(BashFrame(), echoes=False))
 
         per_file = await ft.run_get([Path("/remote/f.bin")], tmp_path, progress_factory=None)
         assert per_file[Path("/remote/f.bin")].status is Status.Success
@@ -1151,7 +1159,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
     login routes ``exec`` through the same pooled shell on an ``ssh`` host, and
     the framing the budget is net of belongs to the host's command frame, which
     a transfer backend cannot see. So the backend asks
-    :attr:`~otto.host.session.SessionManager.exec_line_budget` through the
+    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan through the
     context it was built with, and these two tests are the wiring's guard: a
     build that stops passing the callable, or a backend that starts computing
     its own, reds here rather than on the bed.
@@ -1180,14 +1188,26 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
         host = self._busybox_host("telnet")
         assert isinstance(host.command_frame, AshFrame), (
             "the busybox profile stopped declaring an ash frame, so this test is no "
-            "longer about the tighter of the two ceilings"
+            "longer about an ash host's budget"
         )
         budget = host._file_transfer._line_budget()
-        assert budget == typed_line_budget(host.command_frame)
-        assert budget < PTY_TYPED_LINE_MAX, (
-            "an ash host was handed the kernel's pty ceiling rather than its own line "
-            "editor's, which is the tighter of the two and the one that applies here"
-        )
+        # No session has measured echo off yet, so the transfer plans on the
+        # line editor's 1022: the same answer the manager gives run().
+        assert budget == typed_line_budget(host.command_frame, echoes=True)
+        assert budget == ASH_ECHOING_LINE_MAX - framed_line_overhead(host.command_frame)
+
+    @pytest.mark.parametrize(
+        ("echoes", "ceiling"), [(False, PTY_TYPED_LINE_MAX), (True, ASH_ECHOING_LINE_MAX)]
+    )
+    def test_the_transfer_budget_follows_the_open_sessions_echo(self, echoes, ceiling) -> None:
+        """Once the default session measured its terminal, the chunks size to that fact."""
+        host = self._busybox_host("telnet")
+        # An open default session that measured *echoes* at its handshake.
+        session = SimpleNamespace(alive=True, echoes=echoes)
+        host._session_mgr._session = cast("ShellSession", session)
+        budget = host._file_transfer._line_budget()
+        assert budget == ceiling - framed_line_overhead(host.command_frame)
+        assert budget == host._session_mgr.line_budget(route=host._session_mgr.exec_route())
 
     def test_an_ssh_host_is_handed_no_budget_at_all(self) -> None:
         """The path that was never broken must not move, and this is where that starts."""

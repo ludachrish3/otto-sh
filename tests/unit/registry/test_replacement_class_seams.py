@@ -8,12 +8,12 @@ what comes back. The root isolation fixture restores each table afterwards.
 import pytest
 
 from otto.host.binary_loader import build_binary_loader, register_binary_loader
-from otto.host.command_frame import build_command_frame, register_command_frame
+from otto.host.command_frame import BUILTIN_FRAMES, build_command_frame, register_command_frame
 from otto.host.embedded_filesystem import build_filesystem, register_filesystem
 from otto.link.impairer import build_impairer, register_impairer
 from otto.tunnel.carrier import build_carrier, register_carrier
 
-_FRAMES = ["bash", "ash", "zephyr", "zephyr-serial", "raw"]
+_FRAMES = [frame.name for frame in BUILTIN_FRAMES]
 _LOADERS = ["llext-hex"]
 _FILESYSTEMS = ["none", "fat-ram", "littlefs"]
 _IMPAIRERS = ["netem"]

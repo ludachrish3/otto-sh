@@ -49,8 +49,9 @@ import datetime as dt
 import json
 import sys
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from scripts.collate_support_matrix import FAILURE_SUMMARY_LIMIT
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -62,15 +63,21 @@ from tests._fixtures.support_matrix import (
     discover_contracts,
     discover_profiles,
 )
+from tests.conformance._entry import entries_declared
 
 if TYPE_CHECKING:
     # The product is reached at RUNTIME only from inside the two functions that
     # need it, for the ``sys.path`` reason the module docstring gives; these are
     # for the annotations alone.
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from enum import Enum
 
     from otto.host.capability_grid import HostCapabilities
+    from otto.host.command_frame import CommandFrame
+    from otto.host.exec_route import ExecRoute
+    from otto.host.limitation import Limitation
+    from otto.host.session import RouteRecord
+    from tests.conformance._resolved import ResolvedCell
 
 PAGE_PATH = CHECKOUT_ROOT / "docs" / "architecture" / "support-matrix.md"
 """The rendered page.
@@ -90,6 +97,16 @@ reader of the repository can see the promise without building the docs, and
 ``tests/unit/test_support_matrix.py`` re-renders it and compares byte for byte,
 so a declaration edited without regenerating this page reds. It carries no
 date and no measurement, which is what makes a byte comparison meaningful.
+"""
+
+COMMAND_CONTRACT_PATH = CHECKOUT_ROOT / "docs" / "command-contract.md"
+"""The rendered command contract page.
+
+COMMITTED, for the reason :data:`FAMILIES_PAGE_PATH` is: its sources are the
+tree's own declarations (the ``entries`` marker on each command contract, and
+every :class:`~otto.host.limitation.Limitation` on a built-in frame or exec
+route), it carries no date and no measurement, and
+``tests/unit/test_support_matrix.py`` compares it byte for byte.
 """
 
 
@@ -133,6 +150,20 @@ class Branch:
         The at-a-glance word for a refusal arm. The grid is read first and by people
         in a hurry, so it may not publish ``works`` for a cell whose row says otto
         refuses -- that is the same false promise one level up.
+    ``declared_by``
+        The declaration this arm publishes, as ``module:attr.path``
+        (``otto.host.command_frame:ZephyrFrame.exact_output``). Empty for an arm no
+        :class:`~otto.host.limitation.Limitation` stands behind. When set it must
+        resolve to one: :func:`promise_mismatch` reports a name that does not, so a
+        renamed or deleted declaration fails the build instead of leaving the page
+        citing nothing. The arm's ``capability`` then states the promise WITHOUT the
+        exception, and :func:`branch_capability` appends the declaration's own
+        ``affects`` and ``reason``, so correcting the declaration corrects the promise.
+    ``kinds``
+        The cell kinds (:data:`HOST_KIND_VOICE`'s keys) this arm is watched on, for an
+        arm no ``declared_by`` places: the contract page names the device from it.
+        PINNED to the matrix: ``tests/unit/test_support_matrix.py`` requires it to be
+        exactly the kinds of the drawn cells whose observable carries ``marker``.
     """
 
     marker: str
@@ -140,6 +171,8 @@ class Branch:
     headline: str = ""
     instead: str = ""
     grid_word: str = ""
+    declared_by: str = ""
+    kinds: "tuple[str, ...]" = ()
 
 
 @dataclass(frozen=True)
@@ -200,6 +233,12 @@ class Voice:
     capability: str
     narrowed: str
     narrowed_detail: str = ""
+    reader_narrowed: str = ""
+    """:attr:`narrowed` for a first-time user, on the command contract page, where
+    the suite's own vocabulary means nothing; empty when :attr:`narrowed` already
+    reads plainly. Not pinned to the domain rule's tokens, as :attr:`narrowed` is:
+    it is the same fact, rewritten, beside the clause that is pinned, so a change
+    to the rule meets both (:func:`reader_narrowed`)."""
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
@@ -225,6 +264,50 @@ VOICE: "dict[str, Voice]" = {
         short="output framing",
         capability=(
             "read a command's output without otto's own prompts, echo and markers mixed into it"
+        ),
+        narrowed="the contract declares such a device outside its own domain",
+    ),
+    "exec-output-exact": Voice(
+        short="exact output",
+        capability=(
+            "read a command's output exactly as the command wrote it -- blank lines, "
+            "spaces, tabs and carriage returns intact -- with only the one final "
+            "newline removed"
+        ),
+        # The same rule on both arms; what differs is the evidence. A POSIX
+        # shell runs the shipped table of chosen bytes, a Zephyr shell only
+        # the stock commands its firmware fixes.
+        branches=(
+            Branch(
+                marker="every row of the table",
+                capability=(
+                    "read a command's output exactly as the command wrote it -- blank "
+                    "lines, spaces, tabs and carriage returns intact -- with only the one "
+                    "final newline removed"
+                ),
+            ),
+            Branch(
+                marker="as a console that does not escape 0xFF carries them",
+                # The exception is NOT worded here: :func:`branch_capability`
+                # appends the declaration's own `affects` and `reason`.
+                capability=(
+                    "read a command's output exactly as the command wrote it -- blank "
+                    "lines, spaces, tabs and carriage returns intact -- with only the one "
+                    "final newline removed"
+                ),
+                declared_by="otto.host.options:UNESCAPED_IAC",
+            ),
+            Branch(
+                marker="the stock commands whose output this firmware fixes",
+                capability=(
+                    "read a command's output exactly as the device's firmware wrote it, "
+                    "with only the one final newline and the colour codes the shell puts "
+                    "around its error and warning lines removed (checked against "
+                    "recordings of the firmware's own commands, because the Zephyr shell "
+                    "has no command that prints text you choose)"
+                ),
+                kinds=("bed-zephyr",),
+            ),
         ),
         narrowed="the contract declares such a device outside its own domain",
     ),
@@ -374,6 +457,12 @@ VOICE: "dict[str, Voice]" = {
             "the budget's duration would block the very shell whose survival the other "
             "half of this contract asserts"
         ),
+        reader_narrowed=(
+            "otto does not test what happens when a Zephyr command runs longer than its "
+            "timeout, so it promises nothing about it. The Zephyr shell runs one command "
+            "at a time, on its own thread, so a command made to outlive its budget would "
+            "block the very shell the test then has to find still answering"
+        ),
         narrowed_detail=(
             "Driving a single-client console to a timeout and then asserting the session "
             "recovered is also the sequence that has wedged guests before (issue #260). "
@@ -402,9 +491,13 @@ AXIS_PHRASE = {
     "transfer": "over {}",
     "term": "over the {} console",
     "element": "on {}",
+    "entry": "through {}",
 }
 
 _AXES = ("element", "term", "transfer")
+
+_ENTRY_AXIS = "entry"
+"""The axis a command contract's drawn cells carry, and only theirs: see :func:`split_of`."""
 
 #: How many distinct values the grid will name before it gives up and says
 #: "partly broken". Two fits a table cell; a list of five does not.
@@ -473,9 +566,17 @@ def _where(entries: "list[dict]", varying: "list[str]") -> str:
 
 
 def split_of(cell: dict) -> Split:
-    """Group *cell*'s ``observed_cells`` by outcome, and note which axes vary."""
+    """Group *cell*'s ``observed_cells`` by outcome, and note which axes vary.
+
+    ``entry`` (how a command was issued: ``run``, ``exec``, ``exec-shell``) is an
+    axis only when EVERY drawn cell carries one, which is exactly a command
+    contract's cell; a transfer cell carries none and splits as it always has.
+    """
     entries = list(cell.get("observed_cells", []))
-    varying = [axis for axis in _AXES if len({entry[axis] for entry in entries}) > 1]
+    axes = list(_AXES)
+    if entries and all(entry.get(_ENTRY_AXIS) for entry in entries):
+        axes.append(_ENTRY_AXIS)
+    varying = [axis for axis in axes if len({entry[axis] for entry in entries}) > 1]
     by_outcome: "dict[str, list[dict]]" = {}
     for entry in entries:
         by_outcome.setdefault(entry["outcome"], []).append(entry)
@@ -665,19 +766,102 @@ def promise_of(surface_id: str, cell: dict) -> Promise:
     voice = VOICE[surface_id]
     if not voice.branches:
         return Promise(capability=voice.capability)
-    observable = cell.get("observable")
-    if not observable:
+    if not cell.get("observable"):
         if cell.get("status") in _UNWATCHED_STATES:
             return Promise(capability=voice.capability)
         return _UNINTERPRETED
-    matched = [branch for branch in voice.branches if branch.marker in observable]
-    if len(matched) != 1:
+    arms = arms_of(surface_id, cell)
+    if any(arm.promise is _UNINTERPRETED for arm in arms):
+        return _UNINTERPRETED
+    if len(arms) == 1:
+        return arms[0].promise
+    return _PER_CELL
+
+
+@dataclass(frozen=True)
+class Arm:
+    """The drawn cells of one cell that watched the same :class:`Branch`, and its promise."""
+
+    promise: Promise
+    cells: "list[dict]"
+
+
+_PER_CELL = Promise(
+    headline="It depends on how you reach the device.",
+    grid_word="varies",
+)
+"""What :func:`promise_of` answers for a cell whose drawn cells ran different arms.
+
+Not a promise of its own: :func:`meaning` sees it and says one line per
+:class:`Arm` instead, each naming the drawn cells it applies to.
+"""
+
+
+def _watched(cell: dict, entry: dict) -> "str | None":
+    """Return what drawn cell *entry* of *cell* watched: its own ``observable``.
+
+    Falls back to the cell-level one for an entry that carries none, the
+    shape every drawn cell had before each carried its own.
+    """
+    return entry.get("observable") or cell.get("observable")
+
+
+def _arm_matching(voice: "Voice", observable: "str | None") -> "Branch | None":
+    """Return the ONE declared arm *observable* names, or ``None`` for zero or two."""
+    matched = [branch for branch in voice.branches if observable and branch.marker in observable]
+    return matched[0] if len(matched) == 1 else None
+
+
+def arms_of(surface_id: str, cell: dict) -> "list[Arm]":
+    """Group *cell*'s drawn cells by the arm each one's own observable names.
+
+    In declaration order; the drawn cells matching no arm, or two, group under
+    :data:`_UNINTERPRETED`, last. A cell with no drawn cells is answered from
+    its cell-level observable alone, as one arm with no cells.
+    """
+    voice = VOICE[surface_id]
+    entries = list(cell.get("observed_cells", []))
+    if not entries:
+        branch = _arm_matching(voice, cell.get("observable"))
+        return [Arm(promise=_promise_for(branch), cells=[])]
+    grouped: "dict[int, list[dict]]" = {}
+    for entry in entries:
+        branch = _arm_matching(voice, _watched(cell, entry))
+        index = len(voice.branches) if branch is None else voice.branches.index(branch)
+        grouped.setdefault(index, []).append(entry)
+    return [
+        Arm(
+            promise=_promise_for(voice.branches[index] if index < len(voice.branches) else None),
+            cells=grouped[index],
+        )
+        for index in sorted(grouped)
+    ]
+
+
+def branch_capability(branch: Branch) -> str:
+    """*branch*'s promise, with the exception its ``declared_by`` names in that declaration's words.
+
+    An arm with no declaration, or a declaration that resolves to no
+    :class:`~otto.host.limitation.Limitation` (which :func:`promise_mismatch`
+    reports), is its own ``capability``.
+    """
+    from otto.host.limitation import Limitation
+
+    declared = _resolve_declaration(branch.declared_by) if branch.declared_by else None
+    if not branch.capability or not isinstance(declared, Limitation):
+        return branch.capability
+    return f"{branch.capability}, except for {declared.affects}: {declared.reason}"
+
+
+def _promise_for(branch: "Branch | None") -> Promise:
+    """Return what one arm licenses; :data:`_UNINTERPRETED` for no arm."""
+    if branch is None:
         return _UNINTERPRETED
     return Promise(
-        capability=matched[0].capability,
-        headline=matched[0].headline,
-        instead=matched[0].instead,
-        grid_word=matched[0].grid_word,
+        capability=branch_capability(branch),
+        headline=branch.headline,
+        instead=branch.instead,
+        grid_word=branch.grid_word,
     )
 
 
@@ -739,6 +923,12 @@ def meaning(surface_id: str, cell: dict, coverage: CellCoverage) -> str:
         if not unexpected
         else "**a failure nothing predicted**, so it is not a registered gap"
     )
+    if promise is _PER_CELL:
+        # ★ A LIMITATION ON ONE TERM OR ONE ENTRY IS PUBLISHED WHERE IT APPLIES. The
+        # drawn cells ran different arms, so no one sentence is true of the whole
+        # cell; each arm gets its own, naming the drawn cells it covers.
+        lines = [_arm_sentence(arm, split.varying, predicted) for arm in arms_of(surface_id, cell)]
+        return f"**{promise.headline}** " + " ".join(lines) + tail
     if not promise.capability:
         # ★ THIS CELL'S CONTRACT WATCHED SOMETHING THAT IS NOT THE PROMISE, so no
         # sentence here contains "you can". Every other branch below composes one,
@@ -804,6 +994,44 @@ def meaning(surface_id: str, cell: dict, coverage: CellCoverage) -> str:
     return (
         f"**No.** Every drawn cell failed when asked to {promise.capability} -- {predicted}.{tail}"
     )
+
+
+def _arm_sentence(arm: Arm, varying: "list[str]", predicted: str) -> str:
+    """Say what ONE arm of a per-cell cell means, for the drawn cells it covers.
+
+    The same rules as :func:`meaning`'s whole-cell sentences, one arm wide: a
+    refusal arm never says "you can", and a pass with no positive control on
+    it is an observation, not a promise.
+    """
+    where = _capitalise(_where(arm.cells, varying))
+    passed = [entry for entry in arm.cells if entry["outcome"] == "passed"]
+    broken = [entry for entry in arm.cells if entry["outcome"] != "passed"]
+    promise = arm.promise
+    if not promise.capability:
+        if not broken:
+            saw = "it passed"
+        elif passed:
+            saw = (
+                f"it held {_where(passed, varying)} and failed {_where(broken, varying)} "
+                f"-- {predicted}"
+            )
+        else:
+            saw = f"it failed -- {predicted}"
+        return f"{where}: {promise.headline} {_capitalise(promise.instead)}, and {saw}."
+    if broken and passed:
+        return (
+            f"{where}: you can {promise.capability} {_where(passed, varying)}; "
+            f"{_where(broken, varying)} it fails -- {predicted}."
+        )
+    if broken:
+        return f"{where}: it fails when asked to {promise.capability} -- {predicted}."
+    uncited = [entry for entry in passed if not entry.get("positive_control")]
+    if uncited:
+        return (
+            f"{where}: it passed, but no positive control passed "
+            f"{_where(uncited, varying)}, so that is an observation rather than a guarantee."
+        )
+    return f"{where}: you can {promise.capability}."
 
 
 def _evidence(surface_id: str, cell: dict, coverage: CellCoverage) -> "list[str]":
@@ -1189,6 +1417,9 @@ def promise_mismatch(matrix: dict) -> "list[str]":
         module = CHECKOUT_ROOT / surface.contract.split("::")[0]
         source = module.read_text(encoding="utf-8")
         for branch in voice.branches:
+            declaration = _declaration_problem(surface.id, branch)
+            if declaration:
+                problems.append(declaration)
             if branch.marker not in source:
                 problems.append(
                     f"surface {surface.id!r}: it tells an observable arm apart by "
@@ -1232,15 +1463,58 @@ def promise_mismatch(matrix: dict) -> "list[str]":
                         f"any, this cell licenses"
                     )
                 continue
-            matched = [branch for branch in voice.branches if branch.marker in observable]
-            if len(matched) != 1:
-                problems.append(
-                    f"{surface.id!r} x {profile_id!r}: its observable matches "
-                    f"{len(matched)} of the {len(voice.branches)} observables VOICE "
-                    f"declares for this surface, not 1 -- the page cannot tell which "
-                    f"promise, if any, this cell licenses"
-                )
+            # PER DRAWN CELL: each one's own observable picks its arm, so each must
+            # pick exactly one. A cell with no drawn cells is asked as a whole.
+            drawn = [
+                (f" on {entry['cell_label']!r}", _watched(cell, entry))
+                for entry in cell.get("observed_cells", [])
+            ] or [("", observable)]
+            for where, watched in drawn:
+                matched = [b for b in voice.branches if watched and b.marker in watched]
+                if len(matched) != 1:
+                    problems.append(
+                        f"{surface.id!r} x {profile_id!r}{where}: its observable matches "
+                        f"{len(matched)} of the {len(voice.branches)} observables VOICE "
+                        f"declares for this surface, not 1 -- the page cannot tell which "
+                        f"promise, if any, this cell licenses"
+                    )
     return problems
+
+
+def _resolve_declaration(name: str) -> object:
+    """Return the object ``module:attr.path`` *name* names; ``None`` if it names nothing."""
+    import importlib
+
+    module_name, _, path = name.partition(":")
+    attributes = path.split(".")
+    if not module_name or not all(attributes):
+        return None  # ":X", "m:", "m:a..b": no module, or an empty attribute.
+    try:
+        target: object = importlib.import_module(module_name)
+    except (ImportError, ValueError, TypeError):
+        # ImportError: no such module; ValueError: an empty module name
+        # ("a..b" -> ""); TypeError: a relative name (".x") with no package.
+        return None
+    for attribute in attributes:
+        target = getattr(target, attribute, None)
+        if target is None:
+            return None
+    return target
+
+
+def _declaration_problem(surface_id: str, branch: Branch) -> "str | None":
+    """Report *branch*'s ``declared_by`` when it names no :class:`Limitation`."""
+    from otto.host.limitation import Limitation
+
+    if not branch.declared_by:
+        return None
+    if isinstance(_resolve_declaration(branch.declared_by), Limitation):
+        return None
+    return (
+        f"surface {surface_id!r}: the arm {branch.marker!r} publishes the declaration "
+        f"{branch.declared_by!r}, which does not resolve to a Limitation -- the page "
+        f"would cite a limitation nothing declares"
+    )
 
 
 def _states_section() -> "list[str]":
@@ -1654,6 +1928,12 @@ def _grid(matrix: dict) -> "list[str]":
         "  refusal and not the capability -- so this is neither a defect nor a blank. The",
         "  section says what you get instead.",
         "",
+        "`varies`",
+        ": the verdict differs between the drawn cells of this device -- one console,",
+        "  transport or way of issuing a command (`run`, `exec`, `exec-shell`) gets one",
+        "  answer and another gets a different one. The device's section gives one line per",
+        "  answer and names where each applies.",
+        "",
         "`not interpreted`",
         ": a run passed, but what it watched matches none of the observables this page",
         "  carries a promise for, so the grid says nothing and the section reproduces the",
@@ -1814,6 +2094,8 @@ def render_families() -> str:
         "credentials for one; a unix box has both. Each row below is what that family's",
         "host class **declares** in its `capabilities` object. What a run **measured**",
         "against real hardware, cell by cell, is in {doc}`../../architecture/support-matrix`.",
+        "What a command's exit code, output and timeout mean on each kind of host is on",
+        "{ref}`the command contract page <command-contract>`.",
         "",
         "A class registered from your own repository must declare one too:",
         "`register_host_class` refuses a class without it.",
@@ -1872,6 +2154,753 @@ def render_families() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+@dataclass(frozen=True)
+class ContractRow:
+    """One command contract: the surface it backs, and the entries it is checked through."""
+
+    surface_id: str
+    capability: str
+    contract: str
+    entries: "list[str]"
+    not_checked: "list[str]"
+    """Where the promise is NOT checked, in a reader's words: the kinds of host
+    outside the contract's domain, and each declared entry's ineligible hosts.
+    Empty only when every host the suite reaches is checked through every entry."""
+
+    not_checked_short: "list[str]" = dataclass_field(default_factory=list)
+    """The same places, one entry per :attr:`not_checked` note, in the table's few words."""
+
+
+#: The kinds of host the conformance suite reaches, as a reader names them. Keyed
+#: by a cell's ``kind`` (``tests/conformance/_cells.py``, ``_bed.py``);
+#: :func:`contract_rows` raises on a kind with no words here, so a new venue kind
+#: cannot reach the page unnamed.
+HOST_KIND_VOICE = {
+    "bed-unix": "a GNU/Linux machine",
+    "bed-busybox": "a BusyBox device",
+    "bed-zephyr": "a Zephyr board",
+    "local": "the local machine",
+    "loopback-ssh": "the local machine logged in to over SSH",
+    "busybox-artifact": "BusyBox's applets run on the local machine",
+}
+
+
+def reader_narrowed(surface_id: str) -> str:
+    """Why *surface_id*'s contract leaves some hosts out, in a first-time user's words."""
+    voice = VOICE[surface_id]
+    return voice.reader_narrowed or voice.narrowed
+
+
+def _host_phrase(kind: str, term: str) -> str:
+    """Name one ``(kind, term)`` for a reader: "a BusyBox device over `telnet`"."""
+    words = HOST_KIND_VOICE.get(kind)
+    if words is None:
+        raise ValueError(f"cell kind {kind!r} has no words in HOST_KIND_VOICE")
+    if term == "local" or kind == "loopback-ssh":
+        return words
+    return f"{words} over `{term}`"
+
+
+def _suite_cells() -> "list[ResolvedCell]":
+    """Every cell the conformance suite can draw: the hermetic venue's and the bed's."""
+    from tests.conformance._bed import bed_space
+    from tests.conformance._cells import hermetic_space
+
+    return [*hermetic_space(), *bed_space()]
+
+
+def _domain_of(contract: str) -> "Callable[[ResolvedCell], bool] | None":
+    """*contract*'s module's ``applicable_cell``: the predicate the suite applies."""
+    import importlib
+
+    module = contract.split("::", maxsplit=1)[0].removesuffix(".py").replace("/", ".")
+    return getattr(importlib.import_module(module), _DOMAIN_PREDICATE, None)
+
+
+@dataclass(frozen=True)
+class NotChecked:
+    """One place a promise is not checked: a table cell's few words, and its note."""
+
+    short: str
+    """The words the promise table's **Not checked** cell carries, beside the note number."""
+
+    text: str
+    """The note's full sentence, with the reason."""
+
+
+def collected_cells(
+    contract: str,
+    cells: "list[ResolvedCell]",
+    *,
+    applies: "Callable[[ResolvedCell], bool] | None",
+) -> "list[ResolvedCell]":
+    """Return the cells *contract* is collected on: crossed with its entries, then its domain."""
+    from tests.conformance._entry import space_for
+
+    return [cell for cell in space_for(contract, cells) if applies is None or applies(cell)]
+
+
+def not_checked(
+    surface_id: str,
+    contract: str,
+    cells: "list[ResolvedCell]",
+    *,
+    applies: "Callable[[ResolvedCell], bool] | None",
+) -> "list[str]":
+    """Say where *contract*'s promise is not checked: :func:`not_checked_notes`' sentences."""
+    return [note.text for note in not_checked_notes(surface_id, contract, cells, applies=applies)]
+
+
+def not_checked_notes(
+    surface_id: str,
+    contract: str,
+    cells: "list[ResolvedCell]",
+    *,
+    applies: "Callable[[ResolvedCell], bool] | None",
+) -> "list[NotChecked]":
+    """Say where *contract*'s promise is not checked, from what the suite collects.
+
+    Read through the suite's own functions: :func:`~tests.conformance._entry.space_for`
+    crosses each cell with the declared entries it admits (``entries_of``), and
+    *applies* is the contract's domain rule, applied to that space as
+    ``tests/conformance/conftest.py``'s ``pytest_generate_tests`` does. A host
+    kind no collected cell reaches is outside the domain, and the clause says
+    why in :func:`reader_narrowed`'s words; an entry that reaches fewer hosts
+    than the domain names where it is, or is not, checked.
+    """
+    from tests.conformance._entry import ENTRY_REASON, project
+
+    declared = entries_declared(contract)
+    universe = project(cells)
+    collected = collected_cells(contract, cells, applies=applies)
+    notes: "list[NotChecked]" = []
+    every = {(cell.kind, cell.cell.term) for cell in universe}
+    domain = {(cell.kind, cell.cell.term) for cell in collected}
+    outside_kinds = sorted(
+        {kind for kind, _ in every} - {kind for kind, _ in domain}, key=list(HOST_KIND_VOICE).index
+    )
+    partly = sorted({pair for pair in every - domain if pair[0] not in outside_kinds})
+    if outside_kinds or partly:
+        names = [HOST_KIND_VOICE[kind] for kind in outside_kinds]
+        names += [_host_phrase(*pair) for pair in partly]
+        notes.append(
+            NotChecked(
+                short=f"not on {_join(names)}",
+                text=(
+                    f"Not checked on {_join(names)}, so not promised there: "
+                    f"{reader_narrowed(surface_id)}."
+                ),
+            )
+        )
+    for entry in declared:
+        checked = {(cell.kind, cell.cell.term) for cell in collected if cell.entry == entry}
+        missing = domain - checked
+        if not missing:
+            continue
+        order = list(HOST_KIND_VOICE)
+        if len(checked) <= len(missing):
+            phrases = [
+                _host_phrase(*pair)
+                for pair in sorted(checked, key=lambda p: (order.index(p[0]), p[1]))
+            ]
+            text = f"`{entry}` is checked only on {_join(phrases)}"
+            short = f"`{entry}` only on {_join(phrases)}"
+        else:
+            phrases = [
+                _host_phrase(*pair)
+                for pair in sorted(missing, key=lambda p: (order.index(p[0]), p[1]))
+            ]
+            text = f"`{entry}` is not checked on {_join(phrases)}"
+            short = f"`{entry}` not on {_join(phrases)}"
+        reason = ENTRY_REASON.get(entry)
+        notes.append(NotChecked(short=short, text=f"{text}{f': {reason}' if reason else ''}."))
+    return notes
+
+
+def contract_rows(cells: "list[ResolvedCell] | None" = None) -> "list[ContractRow]":
+    """Every surface whose contract declares entries, in :data:`SURFACES` order.
+
+    The entries are :func:`~tests.conformance._entry.entries_declared`'s answer,
+    the one reader of the ``entries`` marker; where each is not checked is
+    :func:`not_checked`'s, over *cells* (the suite's own, by default).
+    """
+    cells = _suite_cells() if cells is None else cells
+    return [
+        ContractRow(
+            surface_id=surface.id,
+            capability=VOICE[surface.id].capability,
+            contract=surface.contract,
+            entries=entries,
+            not_checked=[note.text for note in notes],
+            not_checked_short=[note.short for note in notes],
+        )
+        for surface in SURFACES
+        if (entries := entries_declared(surface.contract))
+        for notes in [
+            not_checked_notes(
+                surface.id, surface.contract, cells, applies=_domain_of(surface.contract)
+            )
+        ]
+    ]
+
+
+@dataclass(frozen=True)
+class DeclaredLimitation:
+    """One :class:`~otto.host.limitation.Limitation`, and every place that declares it.
+
+    One object declared in two places (the same line-budget limitation on two
+    routes) is ONE record naming both, so a reader meets it once.
+    """
+
+    frames: "list[str]"
+    """The dialect names of the command frames declaring it as ``exact_output``."""
+
+    routes: "list[str]"
+    """The :class:`~otto.host.exec_route.ExecRoute` values whose record declares it."""
+
+    limitation: "Limitation"
+
+    consoles: "list[str]"
+    """The ``console_options`` settings declaring it, as ``escapes_iac: false``
+    (:attr:`~otto.host.options.ConsoleOptions.declared_limitations`)."""
+
+    @property
+    def where(self) -> str:
+        """Name the declaring frames, routes and console settings for a reader."""
+        parts = []
+        for names, noun in ((self.frames, "command frame"), (self.routes, "route")):
+            if names:
+                plural = "s" if len(names) > 1 else ""
+                parts.append(f"the {_join(_code(names))} {noun}{plural}")
+        if self.consoles:
+            settings = _join(_code([f"console_options.{name}" for name in self.consoles]))
+            parts.append(f"a console whose lab entry sets {settings}")
+        return _join(parts)
+
+
+def _builtin_frames() -> "list[type[CommandFrame]]":
+    """Resolve the frame classes otto ships, read off ``BUILTIN_FRAMES`` alone.
+
+    Never off ``FRAME_CLASSES``: that registry also holds a caller's frames,
+    and a built-in name a caller overwrote would answer with the caller's class.
+    """
+    from otto.host.command_frame import BUILTIN_FRAMES
+
+    return [cast("type[CommandFrame]", frame.ref.resolve()) for frame in BUILTIN_FRAMES]
+
+
+def declared_limitations(
+    *,
+    frames: "list[type[CommandFrame]] | None" = None,
+    routes: "dict[ExecRoute, RouteRecord] | None" = None,
+    consoles: "dict[str, Limitation] | None" = None,
+) -> "list[DeclaredLimitation]":
+    """Every limitation declared on *frames*, *routes* and *consoles*: otto's own by default.
+
+    Grouped by object identity, in first-declared order (frames, then
+    routes, then console settings): a frame's is its ``exact_output``, a
+    route's are its record's ``limitations``, and a console setting's is
+    :attr:`ConsoleOptions.declared_limitations
+    <otto.host.options.ConsoleOptions.declared_limitations>`.
+    """
+    from otto.host.options import ConsoleOptions
+    from otto.host.session import EXEC_ROUTES
+
+    frames = _builtin_frames() if frames is None else frames
+    routes = EXEC_ROUTES if routes is None else routes
+    consoles = ConsoleOptions.declared_limitations if consoles is None else consoles
+    grouped: "dict[int, DeclaredLimitation]" = {}
+
+    def record(limitation: "Limitation") -> DeclaredLimitation:
+        return grouped.setdefault(
+            id(limitation),
+            DeclaredLimitation(frames=[], routes=[], consoles=[], limitation=limitation),
+        )
+
+    for frame in frames:
+        if frame.exact_output is not None:
+            record(frame.exact_output).frames.append(frame.type_name)
+    for route, route_record in routes.items():
+        for limitation in route_record.limitations.values():
+            record(limitation).routes.append(route.value)
+    for name, limitation in consoles.items():
+        value = "true" if ConsoleOptions.declaring_value(name) else "false"
+        record(limitation).consoles.append(f"{name}: {value}")
+    return list(grouped.values())
+
+
+_KIND_VOICE = {
+    "device": "device: the device cannot do it",
+    "library": "library: a library otto builds on behaves this way",
+}
+
+
+def exception_label(item: "DeclaredLimitation") -> str:
+    """Name the page label of *item*'s section, read off its title (what, and where)."""
+    title = exception_title(item).lower()
+    return "-".join(["exception", *"".join(c if c.isalnum() else " " for c in title).split()])
+
+
+def exception_title(item: DeclaredLimitation) -> str:
+    """Title *item*'s section with the promise it affects, and where."""
+    return f"{_capitalise(item.limitation.affects)}, on {item.where}"
+
+
+def _not_checked_cell(row: ContractRow, notes: "list[str]") -> str:
+    """Say in the table where *row* is not checked: each place in words, then its note.
+
+    "`exec-shell` only on ... (note 2); not on a Zephyr board (note 3)", read off
+    the row's :attr:`ContractRow.not_checked_short`, one per note; "--" for none.
+    """
+    if not row.not_checked:
+        return "--"
+    shorts = row.not_checked_short or row.not_checked
+    return "; ".join(
+        f"{short} (note {notes.index(note) + 1})"
+        for short, note in zip(shorts, row.not_checked, strict=True)
+    )
+
+
+def _narrower_promise(
+    surface_id: str, branch: Branch, limitations: "list[DeclaredLimitation]"
+) -> str:
+    """One bullet: the device *branch* applies to, then its promise.
+
+    The device is the declaration's own place (:attr:`DeclaredLimitation.where`)
+    for an arm a declaration stands behind, else its :attr:`Branch.kinds` in
+    :data:`HOST_KIND_VOICE`'s words. The exception's own words stay in its
+    section, reached by link; an arm whose declaration is not among
+    *limitations* (a test's override) keeps them inline instead, through
+    :func:`branch_capability`. On a Zephyr board the bullet also names the
+    exact colour sequences the frame removes
+    (:data:`~otto.host.command_frame.ZEPHYR_LEVEL_SEQUENCES`), which is what
+    otto always does there, not something unmeasured.
+    """
+    from otto.host.command_frame import ZEPHYR_LEVEL_SEQUENCES
+    from otto.host.limitation import Limitation
+
+    declared = _resolve_declaration(branch.declared_by) if branch.declared_by else None
+    item = next((i for i in limitations if i.limitation is declared), None)
+    if isinstance(declared, Limitation) and item is not None:
+        return (
+            f"On {item.where} (`{surface_id}`): you can "
+            f"{_esc(branch.capability.rstrip('.'))}, except for {declared.affects}: "
+            f"see {{ref}}`{_capitalise(declared.affects)} <{exception_label(item)}>`."
+        )
+    where = _join([HOST_KIND_VOICE[kind] for kind in branch.kinds]) or "some devices"
+    bullet = f"On {where} (`{surface_id}`): you can {_esc(branch_capability(branch).rstrip('.'))}."
+    if "bed-zephyr" in branch.kinds:
+        sequences = _join(
+            [f"`{seq.encode('unicode_escape').decode('ascii')}`" for seq in ZEPHYR_LEVEL_SEQUENCES]
+        )
+        bullet += (
+            f" The colour codes removed are exactly {sequences}, wherever they occur in "
+            "the output, so a command that writes one of those sequences itself loses it."
+        )
+    return bullet
+
+
+@dataclass(frozen=True)
+class ZephyrRecorded:
+    """What the recorded Zephyr transcripts show, read off the recordings themselves."""
+
+    releases: "list[str]"
+    """Every Zephyr release a recording was made on."""
+
+    empty_on: "list[str]"
+    """The releases on which some recorded command's ``value`` is empty."""
+
+    leading_spaces: bool
+    """Whether some recorded ``value`` has a line that starts with a space."""
+
+    trailing_spaces: bool
+    """Whether some recorded ``value`` has a line that ends with a space."""
+
+
+def zephyr_recorded() -> ZephyrRecorded:
+    """Read :class:`ZephyrRecorded` off ``tests/unit/host/shell_transcripts/*.json``."""
+    from tests._fixtures.shell_transcripts import recordings
+
+    zephyr = [data for data in recordings().values() if data["release"].startswith("zephyr-")]
+    values = [(data["release"], entry["value"]) for data in zephyr for entry in data["commands"]]
+    lines = [line for _, value in values for line in value.split("\n")]
+    return ZephyrRecorded(
+        releases=sorted({data["release"] for data in zephyr}),
+        empty_on=sorted({release for release, value in values if value == ""}),
+        leading_spaces=any(line.startswith(" ") for line in lines),
+        trailing_spaces=any(line.endswith(" ") for line in lines),
+    )
+
+
+def _release_words(releases: "list[str]") -> str:
+    """``["zephyr-2.7", "zephyr-3.7"]`` as "Zephyr 2.7 and 3.7"."""
+    numbers = [release.removeprefix("zephyr-") for release in releases]
+    return f"Zephyr {_join(numbers)}" if numbers else ""
+
+
+def _zephyr_unrecorded(recorded: "ZephyrRecorded | None" = None) -> str:
+    """Say what output on a Zephyr board is undefined, from what the recordings show.
+
+    The caveats of ``tests/unit/host/shell_transcripts/README.md``, said from the
+    recordings' own data where they are data: on which releases empty output
+    was recorded, and whether a line with spaces at either end ever was.
+    """
+    recorded = zephyr_recorded() if recorded is None else recorded
+    unmeasured = [
+        "a `\\r` the program itself writes",
+        "output that does not end with a newline",
+    ]
+    without_empty = [r for r in recorded.releases if r not in recorded.empty_on]
+    if without_empty:
+        seen = (
+            f" (on {_release_words(recorded.empty_on)} a command with no output was "
+            "recorded, and it arrives as nothing)"
+            if recorded.empty_on
+            else ""
+        )
+        unmeasured.append(f"empty output on {_release_words(without_empty)}{seen}")
+    if not recorded.trailing_spaces:
+        kept = (
+            " (spaces at the start of a line, as `help` writes, are recorded and kept)"
+            if recorded.leading_spaces
+            else ""
+        )
+        unmeasured.append(f"spaces at the end of a line{kept}")
+    if not recorded.leading_spaces:
+        unmeasured.append("spaces at the start of a line")
+    unmeasured += [
+        "an info-level coloured line",
+        "plain output followed by an error line",
+        (
+            "a `\\r\\n` the command writes itself (seen once, not recorded: `log status` "
+            "arrives as `\\r\\r\\n`)"
+        ),
+    ]
+    return (
+        "- On a Zephyr board, output that no recording of a firmware command shows "
+        "(`tests/unit/host/shell_transcripts/README.md`): "
+        + "; ".join(unmeasured)
+        + ". Exact output is promised there only for the firmware's own commands, as above."
+    )
+
+
+def _timeout_checked_over(rows: "list[ContractRow]", cells: "list[ResolvedCell]") -> "list[str]":
+    """Say which terms the timeout promise IS checked over, from the cells it is collected on.
+
+    The **Not checked** column says where it is not; this names, per kind of host
+    it does reach, every term it reaches it by, so a console-served device is
+    visibly in or out.
+    """
+    row = next((row for row in rows if row.surface_id == "timeout"), None)
+    if row is None:
+        return []
+    collected = collected_cells(row.contract, cells, applies=_domain_of(row.contract))
+    order = list(HOST_KIND_VOICE)
+    terms: "dict[str, set[str]]" = {}
+    for cell in collected:
+        if cell.cell.term != "local" and cell.kind != "loopback-ssh":
+            terms.setdefault(cell.kind, set()).add(cell.cell.term)
+    phrases = [
+        f"{HOST_KIND_VOICE[kind]} over {_join(_code(sorted(terms[kind])))}"
+        for kind in sorted(terms, key=order.index)
+    ]
+    if not phrases:
+        return []
+    consoles = any("console" in reached for reached in terms.values())
+    return [
+        "",
+        (
+            "Of the devices otto reaches over a term, the timeout promise is checked on "
+            f"{_join(phrases)}"
+            + (": a device reached over its console is checked too." if consoles else ".")
+        ),
+    ]
+
+
+def render_command_contract(
+    *,
+    rows: "list[ContractRow] | None" = None,
+    limitations: "list[DeclaredLimitation] | None" = None,
+    cells: "list[ResolvedCell] | None" = None,
+) -> str:
+    """Render the command contract page: what otto promises about a command's result.
+
+    DECLARED, like :func:`render_families`: read off the ``entries`` marker on
+    each command contract (:func:`contract_rows`) and the limitations the
+    built-in frames and exec routes declare (:func:`declared_limitations`).
+    *rows*, *limitations* and *cells* (the suite's cells, which *rows* and
+    the proxied-login sentence are read from) replace a source, for a test.
+    """
+    from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+    from otto.host.userland import PTY_TYPED_LINE_MAX
+
+    cells = _suite_cells() if cells is None else cells
+    rows = contract_rows(cells) if rows is None else rows
+    limitations = declared_limitations() if limitations is None else limitations
+    lines = [
+        "<!-- GENERATED FILE -- do not edit by hand.",
+        "     scripts/render_support_matrix.py renders this from the `entries` marker on",
+        "     each command contract and the limitations declared on otto's built-in",
+        "     command frames and exec routes, on every Sphinx build (docs/conf.py,",
+        "     builder-inited). Edits are overwritten. -->",
+        "",
+        "(command-contract)=",
+        "",
+        "# Command contract: what a command's result means",
+        "",
+        "This page is for anyone who runs a command on a host, from the CLI",
+        "(`otto host <id> exec`) or from Python",
+        "({meth}`Host.run <otto.host.host.Host.run>`,",
+        "{meth}`Host.exec <otto.host.host.Host.exec>`).",
+        "It says what otto promises about the result of a command -- its exit code,",
+        "its output, its timeout -- on each kind of host it is checked on, through",
+        "each way of issuing it that is checked there. Where a promise is not",
+        "checked, it is not promised, and the page says so. Where a device's",
+        "firmware or shell, or a library otto is built on (such as telnetlib3),",
+        "makes a promise impossible, the page lists the",
+        "[declared exception](#declared-exceptions) with its measurements.",
+        "",
+        "An **entry** is the way a command is issued: `run` (the host's persistent",
+        "session), `exec` (a one-off command), or `exec-shell` (`exec` on an SSH",
+        "host sent through a shell session instead of a channel of its own, for one",
+        "of the reasons the next section lists).",
+        "A **route** is what carried the command; the next section says which one",
+        "your command takes. A host's **term** is how otto reaches it: `ssh`,",
+        "`telnet` or `console`. Its **lab entry** is the host's entry in the lab's",
+        "host file ({doc}`Host options <configuration/host-options>`).",
+        "",
+        "Every field this page talks about is on the",
+        "{class}`~otto.result.CommandResult` a call hands back, for example",
+        "(the result built here stands for what `await host.exec(...)` returns):",
+        "",
+        "```{doctest}",
+        ">>> from otto.result import CommandResult",
+        ">>> from otto.utils import Status",
+        ">>> result = CommandResult(",
+        '...     status=Status.Success, retcode=0, value="hello", route="ssh-channel"',
+        "... )",
+        ">>> result.route, result.timed_out, result.value",
+        "('ssh-channel', False, 'hello')",
+        "```",
+        "",
+        "## Which route your command takes",
+        "",
+        "otto picks the route for each call from the host's configuration and the",
+        "call's arguments:",
+        "",
+        "- `run` always uses the host's one persistent shell session, the",
+        "  `default-session` route.",
+        "- `exec` on an SSH host gets a bare SSH channel of its own, the `ssh-channel`",
+        "  route, unless one of the cases below applies.",
+        "- `exec` goes through a shell session instead when:",
+        "  - the host's term is `console`. A console serves one client, so `exec`",
+        "    uses the same session as `run` (`default-session`);",
+        "  - the host's term is `telnet` (`pooled-shell`, a shell session kept for",
+        "    `exec` beside the one `run` uses);",
+        "  - the login is **proxied**: the account otto runs as is reached by logging",
+        "    in as another account first and then becoming it, through the login",
+        "    proxy named in its cred (the credentials entry otto logs in with)",
+        (
+            "    ([Credentials and login proxies]"
+            "(configuration/host-sources.md#credentials-and-login-proxies))"
+        ),
+        "    (`pooled-shell`);",
+        "  - the host declares a **session-setup hook**: project code that runs on",
+        "    every shell session otto opens, before the session is used",
+        "    ({ref}`Session setup <per-host-session-setup>`) (`pooled-shell`);",
+        "  - the call needs a shell: it passes `expects`, `sudo=True`, or a `user`",
+        "    otto cannot log in as directly over SSH (`pooled-shell`).",
+        "- On an SSH host, `exec(user=...)` for a user that has SSH credentials of its",
+        "  own, with no `expects` and no `sudo`, logs in as that user on an SSH",
+        "  connection of its own (`ssh-channel`), even when the host's login is",
+        "  proxied or it declares a session-setup hook.",
+        "- On an embedded host, such as a Zephyr board, `run` and `exec` both use",
+        "  its one console session (`default-session`).",
+        "- On the local host, `exec` runs a fresh local process (`local-subprocess`).",
+        "- A docker container's `exec` runs `docker exec` through its parent host.",
+        "",
+        "Every result carries the answer in its `route` field",
+        (
+            "([Which route ran a command]"
+            "(architecture/utilities/results.md#which-route-ran-a-command)):"
+        ),
+        "from Python, read `result.route`. `otto host <id> exec` does not print it.",
+        "",
+        "## What otto promises, and where it is checked",
+        "",
+        "Each promise below has a test, and the conformance suite runs it, once",
+        "through each entry the table lists, on these kinds of host:",
+        "",
+        *[f"- {words}" for words in HOST_KIND_VOICE.values()],
+        "",
+        "Whether a promise held, device by device, is in the",
+        "{doc}`support matrix <architecture/support-matrix>`, which says how the run",
+        "behind it covers the test bed.",
+        "A promise holds where it is checked, through the entries checked there,",
+        "unless a [declared exception](#declared-exceptions) says otherwise. Where it",
+        "is not checked, it is not promised: the **Not checked** column says where,",
+        "and its [notes](#where-a-promise-is-not-checked) say why. The **Promise id**",
+        "is the name the support matrix uses for the promise.",
+        "",
+    ]
+    notes = list(dict.fromkeys(note for row in rows for note in row.not_checked))
+    if rows:
+        lines += [
+            "| You can | Checked through | Not checked | Promise id |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| {_esc(row.capability)} | {', '.join(_code(row.entries))} "
+            f"| {_esc(_not_checked_cell(row, notes))} "
+            f"| `{row.surface_id}` |"
+            for row in rows
+        ]
+        narrower = [
+            (row.surface_id, branch)
+            for row in rows
+            for branch in VOICE[row.surface_id].branches[1:]
+            if branch.capability
+        ]
+        if narrower:
+            lines += [
+                "",
+                "### Where a device gets a narrower promise",
+                "",
+                "On these devices the promise a test can check is narrower than the",
+                "table says, and only the narrower one is promised there:",
+                "",
+            ]
+            lines += [
+                f"- {_narrower_promise(surface_id, branch, limitations)}"
+                for surface_id, branch in narrower
+            ]
+    else:
+        lines.append("No promise is checked per entry yet.")
+    lines += [
+        "",
+        "### What the output and timeout promises mean",
+        "",
+        "What a command's output holds, line by line, is defined in",
+        "{ref}`What a command's value holds <command-output-contract>`.",
+        "",
+        "The time budget is the call's `timeout`, which defaults to",
+        f"{DEFAULT_COMMAND_TIMEOUT:g} seconds",
+        "({data}`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`) for `run` and `exec` alike.",
+        "A command that outlives it does not raise. Its",
+        "{class}`~otto.result.CommandResult` has `timed_out` set to `True`, `status`",
+        "`Status.Error`, `retcode` `-1` (the command never finished, so it has no",
+        "exit code of its own), `exit_code` `255`, and a `value` that starts",
+        "`Command timed out after <timeout>s`; `otto host <id> exec` exits 255",
+        "({ref}`the host exit codes <host-exit-codes>`). `retcode` `-1` also means",
+        "other things, so `timed_out` is the field that tells a timeout apart",
+        "([The Result family](architecture/utilities/results.md#the-result-family)).",
+        *_timeout_checked_over(rows, cells),
+        "",
+        "On a Zephyr board a command's `retcode` is the firmware's own return value,",
+        "in negative-errno style (`-8` for an unknown command), not a POSIX exit",
+        "status, and a failed command's `exit_code` is that same negative value",
+        "([Exit codes](architecture/utilities/results.md#exit-codes) says the one",
+        "value it cannot carry).",
+        "",
+        "## Where a promise is not checked",
+        "",
+    ]
+    lines += [f"{number}. {note}" for number, note in enumerate(notes, start=1)]
+    if not notes:
+        lines.append("Every promise is checked on every kind of host, through every entry.")
+    if not any(cell.proxied_login for cell in cells):
+        lines += [
+            "",
+            "No host the conformance suite reaches has a **proxied** login, so the",
+            "route a proxied login takes is covered by unit tests only, and none of",
+            "the promises above is checked through it.",
+        ]
+    lines += [
+        "",
+        "A docker container's `exec` is designed to follow its parent host's route",
+        "({ref}`What a command's value holds <command-output-contract>`), but commands",
+        "run on the container route are not checked by these tests yet, so nothing on",
+        "this page is promised for them.",
+    ]
+    lines += [
+        "",
+        "## Declared exceptions",
+        "",
+        "Where a device's firmware or shell, or a library otto is built on, makes a",
+        "promise impossible, otto declares the exception in its code, next to what",
+        "it applies to. Each one is listed here",
+        "with the reason and the measurements behind it.",
+        "",
+    ]
+    labels = [exception_label(item) for item in limitations]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"two declared limitations share a section label: {labels}")
+    if limitations:
+        lines += [
+            "| Where | Promise affected | Kind | Why |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| {_capitalise(item.where)} | {_esc(item.limitation.affects)} "
+            f"| {_KIND_VOICE.get(item.limitation.kind, item.limitation.kind)} "
+            f"| {_esc(item.limitation.reason)} |"
+            for item in limitations
+        ]
+        for item in limitations:
+            lines += [
+                "",
+                f"({exception_label(item)})=",
+                "",
+                f"### {exception_title(item)}",
+                "",
+                "Measured:",
+                "",
+            ]
+            lines += [f"- {measurement}" for measurement in item.limitation.measured_on]
+    else:
+        lines.append("None declared.")
+    lines += [
+        "",
+        "## Undefined: never measured, so not promised",
+        "",
+        "These are not declared exceptions, because no device has been measured",
+        "producing them:",
+        "",
+        "- A terminal that maps line endings in a way otto cannot undo exactly. The",
+        "  session reports its mapping as `unknown(...)` (`otto host <id> probe` prints",
+        "  it), returns the output as it arrived, and logs a warning once. What a",
+        "  command's output looks like on such a terminal is not promised.",
+        "- A tab a command writes, on a terminal that expands tabs where `stty tab0`",
+        "  did not take (no `stty`, or one that refuses it). The session reports its",
+        "  mapping with `, tabs expanded` after it, logs a warning once, and the tab",
+        "  arrives as spaces.",
+        "- Output after a command changes its own terminal settings (`stty -onlcr`, or",
+        "  a program that leaves the terminal in raw mode) on a shell session, whether",
+        "  `run` or a shell-routed `exec` reached it. The session measured its terminal",
+        "  when it opened and does not measure again until a new session opens",
+        "  ({ref}`What a command's value holds <command-output-contract>`).",
+        _zephyr_unrecorded(),
+        "- How long a line the Zephyr shell itself accepts. Its command buffer is a",
+        "  firmware build setting (`CONFIG_SHELL_CMD_BUFF_SIZE`) and has never been",
+        "  measured; the line-length measurements above are of BusyBox devices. otto",
+        "  refuses a long line only on an ash shell. Where otto sizes its own lines on",
+        f"  a Zephyr board it uses {PTY_TYPED_LINE_MAX} characters, less what otto adds",
+        "  around the command: that is the Linux terminal's line bound, measured on",
+        "  BusyBox guests, not a measurement of any Zephyr board.",
+    ]
+    if rows:
+        lines += [
+            "",
+            "## For contributors: which test checks each promise",
+            "",
+            "By promise id:",
+            "",
+        ]
+        lines += [f"- `{row.surface_id}`: `{row.contract}`" for row in rows]
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:
     """Render the whole page, refusing a matrix whose axes the tree no longer backs."""
     problems = axes_mismatch(matrix)
@@ -1909,6 +2938,9 @@ def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:
         "on one route and red on another, and why the counts below distinguish *devices*",
         "from *drawn cells*.",
         "",
+        "What each command promise means for a command's result, and the declared",
+        "exceptions to it, are on {ref}`the command contract page <command-contract>`.",
+        "",
     ]
     lines += _currency_section(matrix, rendered_on)
     lines += _states_section()
@@ -1930,10 +2962,11 @@ def main(argv: "list[str]") -> int:
     parser.add_argument("--matrix", type=Path, default=MATRIX_PATH)
     parser.add_argument("--page", type=Path, default=PAGE_PATH)
     parser.add_argument("--families-page", type=Path, default=FAMILIES_PAGE_PATH)
+    parser.add_argument("--contract-page", type=Path, default=COMMAND_CONTRACT_PATH)
     parser.add_argument(
         "--check",
         action="store_true",
-        help="report axis disagreement and a stale families page, and write nothing",
+        help="report axis disagreement and a stale committed page, and write nothing",
     )
     args = parser.parse_args(argv)
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
@@ -1944,20 +2977,26 @@ def main(argv: "list[str]") -> int:
             file=sys.stderr,
         )
         return 1
-    families = render_families()
+    committed = {
+        args.families_page: render_families(),
+        args.contract_page: render_command_contract(),
+    }
     if args.check:
-        # The families page is COMMITTED, so --check can compare it; the matrix
-        # page is git-ignored and regenerated, so there is nothing to compare.
-        stale = (
-            not args.families_page.exists()
-            or args.families_page.read_text(encoding="utf-8") != families
-        )
-        if stale:
+        # The families and contract pages are COMMITTED, so --check can compare
+        # them; the matrix page is git-ignored and regenerated, so there is
+        # nothing to compare.
+        stale = [
+            path
+            for path, text in committed.items()
+            if not path.exists() or path.read_text(encoding="utf-8") != text
+        ]
+        for path in stale:
             print(
-                f"{args.families_page} is not what the tree would generate; "
+                f"{path} is not what the tree would generate; "
                 f"re-run `uv run python -m scripts.render_support_matrix` and commit it",
                 file=sys.stderr,
             )
+        if stale:
             return 1
         print(f"{args.matrix}: axes agree with the tree; wrote nothing (--check)")
         return 0
@@ -1965,9 +3004,10 @@ def main(argv: "list[str]") -> int:
     args.page.write_text(render(matrix), encoding="utf-8")
     cells = sum(len(row) for row in matrix["cells"].values())
     print(f"{args.page}: rendered {cells} cells")
-    args.families_page.parent.mkdir(parents=True, exist_ok=True)
-    args.families_page.write_text(families, encoding="utf-8")
-    print(f"{args.families_page}: rendered the declared host families")
+    for path, text in committed.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"{path}: rendered from the tree's declarations")
     return 0
 
 

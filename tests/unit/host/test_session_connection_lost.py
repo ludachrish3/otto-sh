@@ -66,10 +66,10 @@ async def test_ssh_connection_lost_is_still_reported():
     """``run_cmd`` still turns a dropped SSH transport into a truthful result.
 
     A REAL ``SshSession``, not a stand-in: its transport is
-    ``self._process.stdin.write``/``self._process.stdout.readuntil`` (see
+    ``self._process.stdin.write``/``self._process.stdout.read`` (see
     ``SshSession.write_transport``/``read_transport_until``), so a ``MagicMock``
     connection whose ``create_process()`` returns a process with a scripted
-    ``stdout.readuntil`` — the ready marker once (satisfies the handshake),
+    ``stdout.read`` — the ready marker once (satisfies the handshake),
     then a real ``asyncssh.ConnectionLost`` (satisfies the framed command's
     read) — drives the actual production class. Deleting
     ``SshSession._connection_lost_errors`` turns this test red (proved by
@@ -83,8 +83,11 @@ async def test_ssh_connection_lost_is_still_reported():
     proc = MagicMock()
     conn.create_process = AsyncMock(return_value=proc)
     s = SshSession(conn)
-    proc.stdout.readuntil = AsyncMock(
-        side_effect=[identity_handshake_reply(s._ready_marker), asyncssh.ConnectionLost("gone")]
+    proc.stdout.read = AsyncMock(
+        side_effect=[
+            identity_handshake_reply(s._ready_marker).encode(),
+            asyncssh.ConnectionLost("gone"),
+        ]
     )
 
     result = await s.run_cmd(cmd="echo hi")

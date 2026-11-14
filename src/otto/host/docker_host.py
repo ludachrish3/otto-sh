@@ -49,6 +49,7 @@ from .errors import (
     MountNotFoundError,
     StagingRefusedError,
 )
+from .exec_route import ExecRoute, container_route
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -64,7 +65,13 @@ from .host import (
 from .identity import ROOT_LOGIN
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
-from .session import Expect, SessionManager, ShellSession, _DockerSshSession
+from .session import (
+    ExecPlan,
+    Expect,
+    SessionManager,
+    ShellSession,
+    _DockerSshSession,
+)
 from .shell_quote import path_operand, shell_operand
 from .transfer.registry import connection_protocol
 
@@ -618,7 +625,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             # would open as right now, but record nothing — see
             # :meth:`open_session`.
             named_session_factory=lambda: _make_session(record=False),
-            exec_factory=self._exec_via_parent,
             creds=[],
             host_id=self.id,
         )
@@ -1055,23 +1061,27 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
     @override
-    async def _exec_one(
+    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
+        """Every ``exec`` here is a ``docker exec`` dispatched through the parent."""
+        return ExecPlan(route=ExecRoute.CONTAINER)
+
+    @override
+    async def _run_plan(
         self,
+        plan: ExecPlan,
+        *,
         cmd: str,
         timeout: float,
-        log: LogMode = LogMode.NORMAL,
-        user: "str | None" = None,
-        *,
-        expects: "list[Expect | CredentialExpect] | None" = None,
-        needs_shell: bool = False,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
     ) -> CommandResult:
         """Run a single command in the container via the parent.
 
         Stateless and concurrent-safe — each call spawns a fresh
         ``docker exec``. ``run()`` is the stateful counterpart that
-        preserves shell state across calls. *needs_shell* is accepted here
-        for signature parity — the parent's own ``exec`` decides whether it
-        needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
+        preserves shell state across calls. The parent's own ``exec`` plans
+        whether it needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
         open, so the parent's pooled shell can answer a prompt across it.
         """
         return await self._exec_via_parent(cmd, timeout, log=log, user=user, expects=expects)
@@ -1098,14 +1108,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         dry run must reach neither.
 
         Public ``exec``/``run`` short-circuit above this in ``BaseHost``, so
-        today nothing arrives here under a dry run. This method is also
-        ``SessionManager``'s ``exec_factory``, which is reached by a different
-        route, and a seam that dispatches to a device answers for itself.
-        SessionManager's exec_factory reaches here without a user — the
-        declared default applies, which is the spec's effective-user rule,
-        not an accident. It also reaches here without *expects*: that route
-        already runs on a pooled shell of its own, so the default ``None``
-        is correct there too.
+        today nothing arrives here under a dry run; a seam that dispatches
+        to a device still answers for itself. A call without a *user* takes
+        the declared default, which is the spec's effective-user rule.
 
         *expects* forwards to the parent's own ``exec``, which answers
         prompts on its pooled shell — ``docker exec -i`` (never ``-t``) keeps
@@ -1124,7 +1129,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
         # list so new CommandResult fields are carried through automatically.
-        return replace(result, command=cmd)
+        return replace(result, command=cmd, route=container_route(result.route))
 
     @override
     @contextmanager

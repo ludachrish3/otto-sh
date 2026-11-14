@@ -2093,6 +2093,56 @@ test fixtures, so edit them with the tie in mind:
   committed, and `tests/unit/test_support_matrix.py` fails when it is not
   byte-for-byte what the tree would generate; edit the renderer or the
   declaration, then run `uv run python -m scripts.render_support_matrix`.
+- **`docs/command-contract.md` is generated** by the
+  same script, from the `@pytest.mark.entries(...)` marker on each command
+  contract under `tests/conformance/` and every `Limitation` declared on a
+  built-in command frame (`exact_output`) or exec route (`EXEC_ROUTES`). It is
+  committed and compared byte for byte the same way: declare the limitation
+  next to the code it applies to, then regenerate the page.
+
+### Adding a behaviour promise
+
+A promise about a command's result reaches the
+{ref}`command contract page <command-contract>` through five pieces, each in
+one place:
+
+1. A `Surface` row in `SURFACES` (`tests/_fixtures/support_matrix.py`).
+2. Its `VOICE` entry in `scripts/render_support_matrix.py`: the
+   "You can ..." phrase is the only wording the page uses for the promise.
+3. The contract test under `tests/conformance/`, carrying the
+   `@pytest.mark.entries(...)` marker that names the entries (`run`, `exec`,
+   `exec-shell`) it is checked through; the marker is what puts its row on
+   the page.
+4. Its positive control (`@pytest.mark.positive_control("<surface id>")`),
+   proving the contract can go red on the cell.
+5. A regenerated page.
+
+Why each piece exists, and what the collator and renderer refuse, is in the
+command-execution conformance design
+(`docs/superpowers/specs/2026-11-13-command-execution-conformance-design.md`).
+
+### Declaring a limitation
+
+Where a device or a library makes a promise impossible, declare it on its
+owner, never in the docs:
+
+- **The owner** is the command frame (`exact_output` in its own class body;
+  not inherited) when the dialect causes it, the exec route's record in
+  `EXEC_ROUTES` (`src/otto/host/session.py`) when the route does, or
+  `ConsoleOptions.declared_limitations` (`src/otto/host/options.py`) when a
+  console server does, keyed by the lab-data field that states it.
+- **The record** is a {class}`~otto.host.limitation.Limitation` with `kind`
+  (`"device"` or `"library"`), `affects` (the promise, in a user's words),
+  `reason` and `measured_on`.
+- **The contract** asserts what holds instead in its own arm, with a witness
+  that tells it apart from the ideal.
+- **The voice**: the surface's `VOICE` gains a `Branch` whose `declared_by`
+  names the declaration, so the page prints its reason and measurements.
+
+The rules behind each are in the
+command-execution conformance design
+(`docs/superpowers/specs/2026-11-13-command-execution-conformance-design.md`),
+section "A declared limitation: typed, owned, with provenance".
 
 ### Extend pages
 

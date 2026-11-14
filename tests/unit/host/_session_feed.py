@@ -90,7 +90,7 @@ def identity_handshake_reply(ready: str) -> str:
     the terminal mapping itself, so the session measures ``identity`` and the
     ``unknown`` WARNING only appears in the tests that want it.
     """
-    return f"\nX\r\nY\nZ\rW\n{ready}\n"
+    return f"\nX\r\nY\nZ\rW\tT\n{ready}\n"
 
 
 def zephyr_handshake_reply(ready: str) -> str:
@@ -110,7 +110,7 @@ def handshake_reply(frame: "CommandFrame", ready: str) -> str:
 
 def onlcr_handshake_reply(ready: str) -> str:
     """The bash handshake's reply from a default Linux tty: every LF arrives as CRLF."""
-    return f"\r\nX\r\r\nY\r\nZ\rW\r\n{ready}\r\n"
+    return f"\r\nX\r\r\nY\r\nZ\rW\tT\r\n{ready}\r\n"
 
 
 def writes_handshake(data: str, ready: str) -> bool:

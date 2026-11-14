@@ -2510,6 +2510,7 @@ BED_TARGETS_DIRECT = [
     "repeat",
     "docs-captures",
     "docs-captures-check",
+    "shell-transcripts",
     "vm-health",
     "qemu-restart",
     "console-logout",

@@ -148,3 +148,17 @@ def test_top_level_lazy_exports():
     assert otto.Result is Result
     assert otto.CommandResult is CommandResult
     assert otto.Results is Results
+
+
+def test_route_does_not_take_part_in_equality_or_hash():
+    a = CommandResult(status=Status.Success, value="x", command="c", retcode=0, route="ssh-channel")
+    b = CommandResult(status=Status.Success, value="x", command="c", retcode=0)
+    assert a == b
+    assert hash(a) == hash(b)
+
+
+def test_not_run_result_repr_names_route():
+    from otto.result import NotRunResult
+
+    nr = NotRunResult(status=Status.NotRun, command="c", retcode=-1, host_name="h")
+    assert "route=''" in repr(nr)

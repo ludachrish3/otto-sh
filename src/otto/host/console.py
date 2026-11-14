@@ -255,7 +255,9 @@ class ConsoleClient(_StreamHolder):
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + budget
-        buf = b""
+        # A bytearray grows in place; ``bytes +=`` would copy the whole
+        # buffer on every chunk.
+        buf = bytearray()
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -268,7 +270,7 @@ class ConsoleClient(_StreamHolder):
                 return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
             if chunk == b"":
                 return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), True, bool(buf)
-            buf += chunk
+            buf.extend(chunk)
             self._shell_unheard = False
             # Decoded whole, not through the session's decoder on this same
             # stream: if a session read ever ended mid-character and these
