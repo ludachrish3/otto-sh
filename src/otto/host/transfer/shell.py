@@ -1732,6 +1732,10 @@ class ShellFileTransfer(UnixFileTransfer):
                     f"put (ignored): {e}"
                 )
 
+        # No held=, and both of its effects are already this site's: the
+        # bound is timeout=, armed at the call and tighter than the deadline
+        # held= would arm, and _suppressed_cleanup cannot raise, so nothing
+        # can replace the caller's cancellation.
         await compensate(
             _suppressed_cleanup(),
             timeout=_INTERRUPTED_CLEANUP_TIMEOUT,

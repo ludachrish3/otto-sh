@@ -629,6 +629,10 @@ why = "implementer-facing"
 positional = ["buffer"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:BashFrame.parse_partial_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:BashFrame.recover"]
 positional = ["m"]
 why = "implementer-facing"
@@ -664,6 +668,10 @@ positional = ["data"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.parse_partial_output"]
 positional = ["buffer"]
 why = "implementer-facing"
 
@@ -712,6 +720,10 @@ why = "implementer-facing"
 positional = ["buffer"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:RawFrame.parse_partial_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:RawFrame.recover"]
 positional = ["m"]
 why = "implementer-facing"
@@ -755,6 +767,10 @@ positional = ["region"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:ZephyrFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.parse_partial_output"]
 positional = ["buffer"]
 why = "implementer-facing"
 
@@ -1292,6 +1308,10 @@ why = "implementer-facing"
 positional = ["buffer"]
 why = "implementer-facing"
 
+[symbols."otto.host:BashFrame.parse_partial_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host:BashFrame.recover"]
 positional = ["m"]
 why = "implementer-facing"
@@ -1327,6 +1347,10 @@ positional = ["data"]
 why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.parse_partial_output"]
 positional = ["buffer"]
 why = "implementer-facing"
 
@@ -1967,6 +1991,10 @@ why = "implementer-facing"
 positional = ["buffer"]
 why = "implementer-facing"
 
+[symbols."otto.host:RawFrame.parse_partial_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
 [symbols."otto.host:RawFrame.recover"]
 positional = ["m"]
 why = "implementer-facing"
@@ -2279,6 +2307,10 @@ positional = ["region"]
 why = "implementer-facing"
 
 [symbols."otto.host:ZephyrFrame.parse_output"]
+positional = ["buffer"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.parse_partial_output"]
 positional = ["buffer"]
 why = "implementer-facing"
 

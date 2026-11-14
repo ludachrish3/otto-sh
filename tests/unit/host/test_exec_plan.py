@@ -299,13 +299,14 @@ async def test_the_ssh_channel_primitive_records_its_route():
     from pydantic import SecretStr
 
     from otto.host.session import SessionManager
-    from tests.unit.host.test_session import _FakeSshProcess, _StubExecSession
+    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
+    from tests.unit.host.test_session import _StubExecSession
 
     conn = SimpleNamespace(
         credentials=("alice", SecretStr("pw")), login_target="alice", proxy_hops=[], term="ssh"
     )
     mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
-    channel = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(["out\n"])))
+    channel = FakeConn(FakeChannelProcess(["out\n"]))
     result = await mgr.exec_on(conn=channel, cmd="id", timeout=10.0)
     assert result.route == "ssh-channel"
 

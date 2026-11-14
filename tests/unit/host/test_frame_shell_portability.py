@@ -24,6 +24,7 @@ import pytest
 
 from otto.host.command_frame import AshFrame, BashFrame
 from otto.host.session import SessionMarkers
+from tests.conformance._vocabulary import POSIX
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -49,8 +50,14 @@ _OPTIONAL = [
 SHELLS = _REQUIRED + [p for p in _OPTIONAL if shutil.which(p.values[0][0]) is not None]
 
 
-def _run(argv: "list[str]", frame: BashFrame, *cmds: str) -> "list[tuple[str, int]]":
-    """Type each framed command into one shell; return each one's (output, exit code)."""
+def _run(
+    argv: "list[str]", frame: BashFrame, *cmds: str, new_session: bool = False
+) -> "list[tuple[str, int]]":
+    """Type each framed command into one shell; return each one's (output, exit code).
+
+    *new_session* starts the shell with no controlling terminal, so a runner
+    launched from a terminal does not hand its ``/dev/tty`` to the commands.
+    """
     if shutil.which(argv[0]) is None:
         pytest.fail(f"{argv[0]} is not installed on this machine")
     script = "".join(frame.frame(c, m=M) for c in cmds)
@@ -63,6 +70,7 @@ def _run(argv: "list[str]", frame: BashFrame, *cmds: str) -> "list[tuple[str, in
         timeout=20,
         env={"PATH": "/usr/bin:/bin", "PS1": "PROMPT$ ", "PS2": "MORE> ", "HOME": "/tmp"},
         check=False,
+        start_new_session=new_session,
     )
     out = done.stdout
     results = []
@@ -117,3 +125,21 @@ def test_a_comment_only_command_and_a_trailing_backslash_both_frame(argv, frame)
     assert note == ("", 0)
     assert continued == ("a", 0)
     assert after == ("next", 0)
+
+
+@pytest.mark.parametrize(("argv", "frame"), SHELLS)
+def test_vocabulary_stimuli_behave_as_documented(argv, frame):
+    """The spellings the conformance vocabulary types are measured through the frame."""
+    killed, after = _run(argv, frame, POSIX.signal_kill_command, "printf ok")
+    assert killed[1] == POSIX.signal_exit_code
+    assert after == ("ok", 0)
+
+    (lookalike,) = _run(argv, frame, POSIX.signal_lookalike_command)
+    assert lookalike[1] == POSIX.signal_exit_code
+
+    (state,) = _run(argv, frame, POSIX.state_read_command)
+    assert state[1] == 0
+    assert len(state[0].split("|")) == 6, state
+
+    (terminal,) = _run(argv, frame, POSIX.terminal_read_command, new_session=True)
+    assert terminal == ("unread", 0)

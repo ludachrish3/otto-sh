@@ -107,6 +107,7 @@ from tests.conformance import conftest as conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
+from tests.conformance import test_signal_contract as _signal_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance import test_transfer_contract as _transfer_contract
 from tests.conformance._bed import bed_space
@@ -2545,7 +2546,7 @@ class _FakeHost:
         if command == POSIX.long_running_command and timeout is not None:
             return CommandResult(
                 status=Status.Error,
-                value=f"Command timed out after {timeout}s; partial output discarded",
+                value=f"Command timed out after {timeout}s",
                 command=command,
                 retcode=-1,
                 timed_out=True,
@@ -2554,6 +2555,12 @@ class _FakeHost:
             return CommandResult(status=Status.Failed, value="", command=command, retcode=7)
         if "every-command-fails" in self._twists:
             return CommandResult(status=Status.Failed, value="", command=command, retcode=3)
+        if "every-command-exits-143" in self._twists:
+            return CommandResult(status=Status.Failed, value="", command=command, retcode=143)
+        if command == POSIX.signal_lookalike_command:
+            # The twisted host reads any status above 128 as a signal death.
+            retcode = 15 if "rewrites-a-genuine-143" in self._twists else 143
+            return CommandResult(status=Status.Failed, value="", command=command, retcode=retcode)
         case = next((one for one in POSIX.output_cases if one.command == command), None)
         retcode, value = (case.retcode, case.value) if case else self._honest(command)
         status = Status.Success if retcode == 0 else Status.Failed
@@ -2822,6 +2829,9 @@ CONTROLS = {
     "exec-failure-in-sequence": (
         _exec_contract.test_control_a_succeeding_sequence_is_not_reported_as_failed
     ),
+    "exec-signal-exit": (
+        _signal_contract.test_control_143_is_reported_as_143_and_an_ordinary_command_as_success
+    ),
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -2870,6 +2880,9 @@ HOST_CASES = [
         True,
         False,
     ),
+    ("143 and 0 both reach the caller", "exec-signal-exit", (), True, True),
+    ("every command exits 143", "exec-signal-exit", ("every-command-exits-143",), True, False),
+    ("a genuine 143 is rewritten", "exec-signal-exit", ("rewrites-a-genuine-143",), True, False),
     ("get reads the far side", "transfer-roundtrip", (), True, True),
     (
         "get answers a constant",
@@ -3816,6 +3829,79 @@ def test_two_cells_of_one_element_watching_different_things_both_reach_the_verdi
     assert cell["observed_on"] == ["test1", "test2"]
     assert "the landed mode (on test1)" in cell["observable"], cell["observable"]
     assert "the refusal (on test2)" in cell["observable"], cell["observable"]
+
+
+_SIGNAL = "exec-signal-exit"
+
+
+def _signal_label(element: str, term: str, entry: str) -> str:
+    """A cell of the signal contract, spelled the way the bed draws it."""
+    return _bed_label(element, term, "scp")[:-1] + f":{entry}]"
+
+
+def _signal_records(element: str = "test1") -> "list[dict]":
+    """What the lab left for ``gnu`` x ``exec-signal-exit`` on one element.
+
+    MEASURED 2026-11-14: the contract's domain depends on the ENTRY and the
+    route -- ``run`` is in it on every POSIX cell, ``exec`` only where it takes
+    a process route -- so ``test1`` honestly has observations on its ssh cells
+    and its telnet ``run`` cell, and a domain exclusion on its telnet ``exec``
+    cell.
+    """
+    records = []
+    for term, entry in (("ssh", "run"), ("ssh", "exec"), ("telnet", "run")):
+        label = _signal_label(element, term, entry)
+        records += [
+            _observation(element, surface=_SIGNAL, label=label),
+            _control(element, surface=_SIGNAL, label=label),
+        ]
+    return [
+        *records,
+        _exclusion(element, surface=_SIGNAL, label=_signal_label(element, "telnet", "exec")),
+    ]
+
+
+def test_an_element_in_the_domain_on_some_cells_only_is_observed(committed):
+    """Different cells of one element disagreeing about the domain is no contradiction.
+
+    The contradiction is ONE drawn cell carrying both kinds; an entry-dependent
+    domain makes an element's cells differ honestly. The element is observed --
+    it has observations -- and is not filed as not-observable, because the
+    schema forbids naming one element both ways and the entry-level note
+    already says where ``exec`` is not checked.
+    """
+    result = collate(committed, _signal_records())
+    assert result.refused == [], result.refused
+    cell = result.matrix["cells"][_SIGNAL]["gnu"]
+    assert cell["status"] == "measured-ok"
+    assert cell["observed_on"] == ["test1"]
+    assert cell["not_observable"] == []
+    assert element_accounting_errors(result.matrix) == []
+
+
+def test_one_drawn_cell_with_an_observation_and_an_exclusion_is_still_refused(committed):
+    """The check the per-cell key keeps: the SAME cell evaluated and not evaluated."""
+    label = _signal_label("test1", "telnet", "exec")
+    records = [
+        *_signal_records(),
+        _observation("test1", surface=_SIGNAL, label=label),
+        _control("test1", surface=_SIGNAL, label=label),
+    ]
+    result = collate(committed, records)
+    assert not result.ok
+    assert any("carry BOTH" in why and label in why for why in result.refused), result.refused
+    assert _unchanged(committed, result, (_SIGNAL, "gnu"))
+
+
+def test_an_element_whose_every_record_is_an_exclusion_is_not_observable(committed):
+    """Not-observable is still what an element with no observation at all is."""
+    records = [
+        *_signal_records("test1"),
+        _exclusion("test2", surface=_SIGNAL, label=_signal_label("test2", "telnet", "exec")),
+    ]
+    cell = collate(committed, records).matrix["cells"][_SIGNAL]["gnu"]
+    assert cell["observed_on"] == ["test1"]
+    assert [entry["element"] for entry in cell["not_observable"]] == ["test2"]
 
 
 def test_one_observable_seen_everywhere_carries_no_pointless_attribution(committed):
@@ -6044,6 +6130,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         if rule is not None:
             with_rules[surface.id] = rule
     narrowing = {
+        "exec-signal-exit",
         "transfer-roundtrip",
         "transfer-mode",
         "transfer-progress",
@@ -6492,14 +6579,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: seven of the nine surfaces are unbranched.
+    """The accept-control for all of the above: eight of the eleven surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 7, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 8, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability
@@ -7332,18 +7419,22 @@ def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
     admits no ``exec-shell``; and the converse, a space where every cell admits
     every entry, carries no qualifier at all.
     """
-    from tests.conformance._entry import entries_of
+    from tests.conformance._entry import space_for
 
     cells = _suite_cells()
     for row in contract_rows(cells):
         applies = _domain_of(row.contract)
         text = " ".join(row.not_checked)
         for cell in cells:
-            if applies is not None and not applies(cell):
+            # A domain may read the entry, so it is applied to the cell as each
+            # entry reaches it, the way the suite collects it.
+            reached = space_for(row.contract, [cell])
+            admitted = {one.entry for one in reached if applies is None or applies(one)}
+            if not admitted:
                 assert "Not checked on" in text, (row.surface_id, cell.kind)
                 continue
             for entry in row.entries:
-                if entry not in entries_of(cell):
+                if entry not in admitted:
                     assert f"`{entry}` is" in text, (row.surface_id, entry, cell.kind)
     loopback = next(cell for cell in cells if cell.kind == "loopback-ssh")
     telnet = next(cell for cell in cells if cell.kind == "bed-unix" and cell.cell.term == "telnet")

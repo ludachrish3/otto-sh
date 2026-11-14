@@ -90,6 +90,8 @@ from .model import make_tunnel_id
 from .socat import pick_random_free_port
 
 if TYPE_CHECKING:
+    from asyncio import CancelledError
+
     from ..labs.loader import Lab
 
 PROTOCOLS = ["tcp", "udp"]
@@ -645,7 +647,7 @@ async def _column(run: _Run, protocol: str) -> TunnelCheckColumn:
     """One protocol's whole column; the teardown runs whatever happened before it."""
     # Imported here, not at module scope, as otto.tunnel.manage does: otto.lifecycle
     # is only needed once a teardown runs, and the tunnel CLI imports this module.
-    from ..lifecycle import compensate
+    from ..lifecycle import compensate, held_cancellation
 
     split_dest = run.dest.split_name if run.dest is not None else None
     names = row_order(protocol, [r.hop.host for r in run.echo_hops], split_dest=split_dest)
@@ -662,13 +664,22 @@ async def _column(run: _Run, protocol: str) -> TunnelCheckColumn:
     )
     skipped: str | None = None
     state = _ColumnState()
-    try:
-        skipped = await _probe(run, protocol, tunnel_id, got, state)
-    finally:
-        teardown = await compensate(
+
+    async def tear_down(held: "CancelledError | None") -> _Teardown:
+        # A cancellation of the probe is held, so a failing teardown cannot
+        # replace it; any other probe error keeps its precedence.
+        return await compensate(
             _teardown(run, tunnel_id, state),
             what=f"tunnel check {protocol} teardown",
+            held=held,
         )
+
+    try:
+        skipped = await _probe(run, protocol, tunnel_id, got, state)
+    except BaseException as exc:
+        await tear_down(held_cancellation(exc))
+        raise
+    teardown = await tear_down(None)
     if teardown.unreachable is not None:
         raise teardown.unreachable
     got[TEARDOWN_ROW] = teardown.row

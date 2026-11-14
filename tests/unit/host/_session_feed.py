@@ -31,6 +31,7 @@ from tests._fixtures.fake_shell import probe_marker
 
 if TYPE_CHECKING:
     from otto.host.command_frame import CommandFrame
+    from tests.unit.host.test_session import MockSession
 
 
 class FeedAfterWriteMixin:
@@ -121,3 +122,35 @@ def writes_handshake(data: str, ready: str) -> bool:
     shell would print, through :func:`~tests._fixtures.fake_shell.probe_marker`.
     """
     return probe_marker(data) == ready
+
+
+async def onlcr_session(*, after_interrupt: str = "") -> "MockSession":
+    """An opened bash :class:`MockSession` on a tty: its handshake measured ``onlcr``.
+
+    Its recovery probe is answered with the recover marker, as a shell that
+    took the interrupt does, so a timed-out command's ``_recover_session``
+    confirms; *after_interrupt* is what it prints once the interrupt is
+    written (an echoed ``^C`` and a prompt, say). Its markers are its own,
+    so a test builds its chunks from ``s.markers`` once this returns.
+    """
+    import asyncio
+
+    # Imported here: test_session imports this module.
+    from tests.unit.host.test_session import MockSession
+
+    class _OnlcrSession(MockSession):
+        async def write_transport(self, data: str) -> None:
+            await super().write_transport(data)
+            if data == "\x03" and after_interrupt:
+                self.feed(after_interrupt)
+            if probe_marker(data) == self._recover_marker:
+                self.feed(f"{self._recover_marker}0__\r\n")
+
+    s = _OnlcrSession()
+    await s.open_transport()
+    feed = asyncio.create_task(s.feed_after_write(onlcr_handshake_reply(s.markers.ready)))
+    await s._ensure_initialized()
+    await feed
+    assert s.terminal_mapping == "onlcr"
+    s.written.clear()
+    return s

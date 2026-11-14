@@ -413,9 +413,9 @@ class TestTimedOutFlag:
         above, but reachable from production code via a plain `LocalHost.exec()`
         timeout, not just a badly-chosen test command.
         """
-        import otto.host.local_host as local_host_mod
+        from otto.host import process_stop
 
-        monkeypatch.setattr(local_host_mod, "_EXEC_REAP_TIMEOUT", 0.2)
+        monkeypatch.setattr(process_stop, "_EXEC_REAP_TIMEOUT", 0.2)
 
         real_process_cls = asyncio.subprocess.Process
         spawned: list[asyncio.subprocess.Process] = []

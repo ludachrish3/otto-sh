@@ -320,6 +320,9 @@ class FakeShellSession(ShellSession):
     async def write_transport(self, data):
         raise NotImplementedError
 
+    async def _take_unread(self) -> str:
+        return ""
+
     @override
     async def read_transport_until(self, pattern):
         raise NotImplementedError
@@ -335,12 +338,10 @@ class FakeShellSession(ShellSession):
     @override
     async def _recover_session(self, deadline: float = 5.0):
         self.recovered = True
-        return ""
 
     @override
     async def _confirm_recovered(self, deadline: float = 5.0):
         self.recovered = True
-        return ""
 
 
 class FakeHostSession:

@@ -107,7 +107,8 @@ is the name the support matrix uses for the promise.
 | read a command's output without otto's own prompts, echo and markers mixed into it | `run`, `exec`, `exec-shell` | `exec` not on BusyBox's applets run on the local machine (note 1); `exec-shell` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH (note 2) | `exec-framing` |
 | read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | `run`, `exec`, `exec-shell` | `exec` not on BusyBox's applets run on the local machine (note 1); `exec-shell` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH (note 2) | `exec-output-exact` |
 | trust that a command that failed part-way through a sequence is reported as a failure rather than as success | `run` | -- | `exec-failure-in-sequence` |
-| give a command a time budget and have a breach reported the documented way, with the session still usable afterwards | `run`, `exec`, `exec-shell` | not on a Zephyr board (note 3); `exec` not on BusyBox's applets run on the local machine (note 1); `exec-shell` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH (note 2) | `timeout` |
+| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | `run`, `exec` | not on a Zephyr board (note 3); `exec` not on BusyBox's applets run on the local machine (note 1); `exec` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh`, the local machine and the local machine logged in to over SSH (note 4) | `exec-signal-exit` |
+| give a command a time budget and have a breach reported the documented way, with the session still usable afterwards | `run`, `exec`, `exec-shell` | not on a Zephyr board (note 5); `exec` not on BusyBox's applets run on the local machine (note 1); `exec-shell` only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH (note 2) | `timeout` |
 
 ### Where a device gets a narrower promise
 
@@ -146,7 +147,9 @@ value it cannot carry).
 
 1. `exec` is not checked on BusyBox's applets run on the local machine: there the applets are put on the `PATH` of the `run` session only, which a one-off `exec` process never sees.
 2. `exec-shell` is checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH: only there does `exec` otherwise get an SSH channel of its own, which `exec-shell` sends through a shell session instead.
-3. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering.
+3. Not checked on a Zephyr board, so not promised there: the Zephyr shell runs each command on its own thread rather than as a process, so there is no command a signal can kill there.
+4. `exec` is checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh`, the local machine and the local machine logged in to over SSH: on every other host `exec` types the command into otto's own shell session, and a killed command would take that session down with it, so otto does not check it there yet.
+5. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering.
 
 No host the conformance suite reaches has a **proxied** login, so the
 route a proxied login takes is covered by unit tests only, and none of
@@ -236,4 +239,5 @@ By promise id:
 - `exec-framing`: `tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise`
 - `exec-output-exact`: `tests/conformance/test_output_contract.py::test_a_commands_value_is_its_exact_output`
 - `exec-failure-in-sequence`: `tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success`
+- `exec-signal-exit`: `tests/conformance/test_signal_contract.py::test_a_command_killed_by_a_signal_reports_128_plus_n`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`

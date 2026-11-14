@@ -236,6 +236,65 @@ CLI for free; returning a `bool` exits `0`/`1` for `True`/`False`, and any
 other plain value exits `0` ({ref}`cli-return-values`). See
 {doc}`../subsystems/hosts` for how verbs become CLI commands.
 
+(command-ends-abnormally)=
+
+## A command killed, timed out or interrupted
+
+The process routes are the ones that run a command as a process of its own:
+the ssh exec channel (`ssh-channel`) and local `exec` (`local-subprocess`).
+Below, the *leader* is the process otto started for the command, and its
+*process group* is that process together with the children it started that
+did not move to a group of their own.
+
+**Killed by a signal.** A command killed by signal `N` reports `retcode`
+`128 + N` on every process route, the number a shell reports for the same
+death, so `kill -TERM` of the command reads `143` whichever route ran it. That
+holds for every signal number the platform has, the real-time signals
+included. A process that ends with no return code at all (an ssh channel that
+closed with neither an exit status nor a signal, or with a signal name the ssh
+library does not know) gives one named error result instead: `status`
+`Error`, `retcode` `-1` and the `value` `Process did not provide a return
+code`. The rule is `otto.host.exit_status.exit_status_of`. A shell route (`run`,
+and an `exec` that otto types into a shell session) reports what the shell
+itself reports for its command, which is the same `128 + N` on a POSIX shell.
+
+(timed-out-command-result)=
+**Timed out.** A command that is still running when its budget expires gives
+the timed-out result on every route; its fields are defined with the timeout
+promise ([what the output and timeout promises
+mean](../../command-contract.md#what-the-output-and-timeout-promises-mean)). The budget bounds the command,
+not only its output: a command that closes its output and keeps running times
+out too. The `value`'s first line is `Command timed out after <N>s`; then, on
+the next line, comes what the command had written when the budget expired, by
+the same rule as a finished command's value ({ref}`command-output-contract`):
+one final newline removed and nothing else, an unfinished last line included. On a
+shell route nothing the shell printed after otto interrupted the command (the
+echoed `^C`, the next prompt) is in it, and the line is the whole `value` when
+the command had printed nothing. It is built in one place,
+{func}`otto.host.session.timed_out_result`; on a shell route the frame says
+what of the unfinished buffer is the command's
+({meth}`~otto.host.command_frame.CommandFrame.parse_partial_output`).
+
+**How long the stop takes.** After a timeout or an interrupt, a process route
+stops its command. The first signal is `TERM` on a timeout and `HUP` on an
+interrupt; a command that obeys it ends the sequence there, and `KILL` follows
+only when the command has not exited 5 seconds after it, so the stop takes at
+most 10 seconds (`EXEC_CANCEL_REAP_BOUND` in `otto.host.host`). An interrupted
+stop is also cut by the teardown deadline ({doc}`../lifecycle`), counted from
+the interrupt, so a deadline under 5 seconds ends it before `KILL` is sent. A
+further cancellation while the stop runs is held until it ends, on both
+routes. A stop that fails (the channel already gone) is logged, and the exec
+still returns the timed-out result or re-raises what interrupted it.
+
+**What survives a stop.** Only the command's own exit is waited for, never its
+output: a member that still holds the output once the command has exited does
+not hold the stop. What else is left running depends on the route:
+
+| A process the command started | Local `exec` | ssh channel |
+| --- | --- | --- |
+| Signalled | the signal goes to the command's process group (it runs in a new session), so the command and its members all get it; `KILL` goes to the group too when the leader has not exited in the bound | the signal goes to the server, which decides whether it reaches the command's descendants; that is the server's, and otto does not measure it |
+| Left running | a member that outlives the leader is left alone: once the leader has exited nothing signals the group again, so a member that ignored the first signal keeps running; when the leader had already exited at the timeout (a member still holding its output), nothing is signalled at all | whatever the server did not signal |
+
 ## The convention, and its two gates
 
 Public otto API says what happened in exactly one of three ways:

@@ -83,6 +83,9 @@ class _StubSession(ShellSession):
     async def open_transport(self) -> None: ...
     async def write_transport(self, data: str) -> None: ...
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern):  # pragma: no cover - never reads
         raise AssertionError("stub does not read")
 

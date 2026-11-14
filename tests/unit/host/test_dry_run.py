@@ -1750,6 +1750,9 @@ class _RecordingShellSession(ShellSession):
     async def write_transport(self, data: str) -> None:
         raise AssertionError(f"a HostSession reached the raw transport write: {data!r}")
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         raise AssertionError(f"a HostSession reached the raw transport read: {pattern!r}")
 

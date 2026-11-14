@@ -361,6 +361,9 @@ def _open_counting_transport(events: list[str]) -> type:
 
         async def write_transport(self, data: str) -> None: ...
 
+        async def _take_unread(self) -> str:
+            return ""
+
         async def read_transport_until(self, pattern):
             raise AssertionError("a dry run must not reach a handshake")
 
@@ -545,6 +548,9 @@ def _recording_transport(built: list) -> type:
         async def open_transport(self) -> None: ...
 
         async def write_transport(self, data: str) -> None: ...
+
+        async def _take_unread(self) -> str:
+            return ""
 
         async def read_transport_until(self, pattern):
             raise AssertionError("the build-site test must not reach a handshake")

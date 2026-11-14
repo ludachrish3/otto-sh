@@ -29,6 +29,9 @@ class FrameMockSession(FeedAfterWriteMixin, ShellSession):
     async def write_transport(self, data: str) -> None:
         self.written.append(data)
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""

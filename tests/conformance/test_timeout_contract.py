@@ -169,8 +169,9 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
     assert timed_out.exit_code == 255, (
         f"{cell}: retcode -1 maps to ssh's 255, got {timed_out.exit_code}"
     )
-    assert timed_out.value.startswith(f"Command timed out after {_BUDGET_S}s"), (
-        f"{cell}: the diagnostic must name the budget it blew, got {timed_out.value!r}"
+    assert timed_out.value == f"Command timed out after {_BUDGET_S}s", (
+        f"{cell}: the diagnostic names the budget it blew and nothing else for a "
+        f"command that printed nothing, got {timed_out.value!r}"
     )
 
     assert afterwards.is_ok, (

@@ -120,8 +120,9 @@ class Surface:
 
 #: nodeid -> (row id, human title). Order is the rendered row order, and it is
 #: a real declaration rather than a sort: the four exec contracts (exact
-#: output beside framing), then the five transfer ones, then timeout -- the
-#: order the contract modules and the spec's §4 list both use.
+#: output beside framing) and the signal exit, then the five transfer ones,
+#: then timeout -- the order the contract modules and the spec's §4 list both
+#: use.
 SURFACES: "tuple[Surface, ...]" = (
     Surface(
         id="exec-exit-code",
@@ -150,6 +151,14 @@ SURFACES: "tuple[Surface, ...]" = (
         contract=(
             "tests/conformance/test_exec_contract.py"
             "::test_a_failing_command_is_not_reported_as_success"
+        ),
+    ),
+    Surface(
+        id="exec-signal-exit",
+        title="exec: a command killed by a signal reports 128+N",
+        contract=(
+            "tests/conformance/test_signal_contract.py"
+            "::test_a_command_killed_by_a_signal_reports_128_plus_n"
         ),
     ),
     Surface(

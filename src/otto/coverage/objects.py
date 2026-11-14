@@ -420,7 +420,13 @@ class ObjectListCache:
         self, product: "Product", host: "Host", container: str
     ) -> list[str] | Unavailable:
         """Return the stems of every file in the running *container* that holds a coverage path."""
+        from ..lifecycle import held_cancellation
+
         res = _ScanResources(_scan_token())
+        # The body returns from inside the ``try``, so the cleanup stays in the
+        # ``finally``; a cancellation of the scan is recorded first and held, so
+        # a failing cleanup cannot replace it.
+        held: "asyncio.CancelledError | None" = None
         try:
             finished = False
             try:
@@ -442,8 +448,11 @@ class ObjectListCache:
             if not got.paths:
                 return []
             return await self._fetch(product, host, container, got.paths, res=res)
+        except BaseException as exc:
+            held = held_cancellation(exc)
+            raise
         finally:
-            await self._cleanup_once(product, host, res)
+            await self._cleanup_once(product, host, res, held=held)
 
     def _interpret_scan(
         self, product: "Product", scan: "CommandResult", where: str
@@ -518,6 +527,9 @@ class ObjectListCache:
             except (asyncio.TimeoutError, TimeoutError) as e:
                 return self._timed_out(product, host, f"a step of the scan of {what}", e)
 
+        from ..lifecycle import held_cancellation
+
+        held: "asyncio.CancelledError | None" = None
         try:
             listed = await asyncio.wait_for(sequence(), SCAN_TOTAL_BUDGET)
         except (asyncio.TimeoutError, TimeoutError):
@@ -526,8 +538,12 @@ class ObjectListCache:
                 f"the scan of {what} outran its {int(SCAN_TOTAL_BUDGET)}-second budget",
                 kind="unreadable",
             )
+        except BaseException as exc:
+            # Held, so a failing cleanup cannot replace the scan's cancellation.
+            held = held_cancellation(exc)
+            raise
         finally:
-            await self._cleanup_once(product, host, res)
+            await self._cleanup_once(product, host, res, held=held)
         return listed
 
     async def _snapshot_sequence(
@@ -653,80 +669,125 @@ class ObjectListCache:
             kind="unreadable",
         )
 
-    async def _cleanup_once(self, product: "Product", host: "Host", res: "_ScanResources") -> None:
+    async def _cleanup_once(
+        self,
+        product: "Product",
+        host: "Host",
+        res: "_ScanResources",
+        *,
+        held: "asyncio.CancelledError | None" = None,
+    ) -> None:
         """Run the scan's one cleanup, shielded from a caller's cancellation, once.
 
         Its timeout is a backstop a correct cleanup never reaches (each step is
-        bounded inside one shared budget); when it fires, whatever is left
-        carries its expiry label and the next sweep removes it.
+        bounded inside one shared budget). *held* is the scan's own
+        cancellation, already caught: it is the one that leaves, whatever the
+        cleanup does, and it arms the run's teardown deadline at entry (see
+        :func:`~otto.lifecycle.compensate`). Whichever bound fires first, no
+        cleanup step starts after it; whatever the cleanup did not remove
+        carries its expiry label, the next sweep removes it, and the warning
+        names exactly that.
         """
         from ..lifecycle import compensate  # function-local, as otto.host.transfer.shell does
 
-        done = await compensate(
-            self._scan_cleanup(product, host, res),
-            timeout=SCAN_TEARDOWN_BUDGET + 3 * SCAN_REAP_BOUND,
-            what=f"{product.name}: scan cleanup {res.token} on {host.id}",
-        )
-        if done is None and (res.container or res.snapshot):
-            logger.warning(
-                "%s: the scan cleanup on %s outran its budget; %s and %s are left for the "
-                "expiry sweep",
-                product.name,
-                host.id,
-                res.container_name,
-                res.snapshot_tag,
-            )
+        finished = False
 
-    async def _scan_cleanup(self, product: "Product", host: "Host", res: "_ScanResources") -> bool:
+        async def cleanup() -> None:
+            nonlocal finished
+            await self._scan_cleanup(product, host, res)
+            finished = True
+
+        try:
+            await compensate(
+                cleanup(),
+                timeout=SCAN_TEARDOWN_BUDGET + 3 * SCAN_REAP_BOUND,
+                what=f"{product.name}: scan cleanup {res.token} on {host.id}",
+                held=held,
+            )
+        finally:
+            # A bound cut the cleanup: what is still recorded was not removed
+            # (each removal that succeeds clears its flag). A cleanup that ran
+            # to its end said what each step left itself, and a held
+            # cancellation re-raised after it is no abandonment.
+            if not finished and (res.container or res.snapshot):
+                self._warn_left(product, host, res)
+
+    @staticmethod
+    def _warn_left(product: "Product", host: "Host", res: "_ScanResources") -> None:
+        """Name the scan container and snapshot a cleanup cut by its bound did not remove."""
+        left = [
+            name
+            for name, there in (
+                (res.container_name, res.container),
+                (res.snapshot_tag, res.snapshot),
+            )
+            if there
+        ]
+        logger.warning(
+            "%s: the scan cleanup on %s was cut by its bound before removing %s; "
+            "left for the expiry sweep",
+            product.name,
+            host.id,
+            " and ".join(left),
+        )
+
+    async def _scan_cleanup(self, product: "Product", host: "Host", res: "_ScanResources") -> None:
         """Remove what one scan created: its temp dir, then its container, then its snapshot.
 
-        Each step runs whatever the one before it did (nested ``finally``), under
-        one budget: each gets at most :data:`_TEARDOWN_STEP_CAP` of what is left
-        of :data:`SCAN_TEARDOWN_BUDGET`, bounding the whole await (connection
-        and channel included), and a step with nothing left is skipped: a scan
+        Each step runs whatever the one before it did, under one budget: each
+        gets at most :data:`_TEARDOWN_STEP_CAP` of what is left of
+        :data:`SCAN_TEARDOWN_BUDGET`, bounding the whole await (connection and
+        channel included), and a step with nothing left is skipped: a scan
         container or snapshot it leaves carries its expiry label, so the next
-        sweep removes it. A missing resource is quiet; any other failure is logged.
+        sweep removes it. A missing resource is quiet; any other failure is
+        logged. Each removal that succeeds clears its flag on *res*, so *res*
+        says what is left.
+
+        A cancellation reaching this task is a bound of :meth:`_cleanup_once`
+        firing (every other cancellation is held outside it): the step it
+        lands in ends, no later step starts, and it is re-raised.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + SCAN_TEARDOWN_BUDGET
-        try:
-            if res.staging:
-                where = res.staging_dir
-                await self._cleanup_step(
-                    product,
-                    host,
-                    deadline,
+        steps = []
+        if res.staging:
+            where = res.staging_dir
+            steps.append(
+                _CleanupStep(
+                    "staging",
                     f"remove {where}",
                     f'rm -rf "{where}"',
                     None,
-                    left=f"{where} is left behind",
+                    f"{where} is left behind",
                 )
-        finally:
-            try:
-                if res.container:
-                    name = res.container_name
-                    await self._cleanup_step(
-                        product,
-                        host,
-                        deadline,
-                        f"remove scan container {name}",
-                        rm_container_command(name, force=True),
-                        "container",
-                        left=f"{name} is left for the expiry sweep",
-                    )
-            finally:
-                if res.snapshot:
-                    tag = res.snapshot_tag
-                    await self._cleanup_step(
-                        product,
-                        host,
-                        deadline,
-                        f"remove scan snapshot {tag}",
-                        image_rm_command([tag]),
-                        "image",
-                        left=f"{tag} is left for the expiry sweep",
-                    )
-        return True
+            )
+        if res.container:
+            name = res.container_name
+            steps.append(
+                _CleanupStep(
+                    "container",
+                    f"remove scan container {name}",
+                    rm_container_command(name, force=True),
+                    "container",
+                    f"{name} is left for the expiry sweep",
+                )
+            )
+        if res.snapshot:
+            tag = res.snapshot_tag
+            steps.append(
+                _CleanupStep(
+                    "snapshot",
+                    f"remove scan snapshot {tag}",
+                    image_rm_command([tag]),
+                    "image",
+                    f"{tag} is left for the expiry sweep",
+                )
+            )
+        for step in steps:
+            if await self._cleanup_step(
+                product, host, deadline, step.what, step.cmd, step.resource, left=step.left
+            ):
+                setattr(res, step.flag, False)
 
     async def _cleanup_step(
         self,
@@ -738,8 +799,12 @@ class ObjectListCache:
         resource: "DockerResource | None",
         *,
         left: str,
-    ) -> None:
-        """Run one cleanup step with its share of the budget; *left* says what a miss leaves."""
+    ) -> bool:
+        """Run one cleanup step with its share of the budget; return whether it removed it.
+
+        *left* says what a miss leaves. Gone already, or nothing to remove (a
+        dry run), counts as removed.
+        """
         from ..host.connections import teardown_step
         from ..utils import Status
 
@@ -752,7 +817,7 @@ class ObjectListCache:
                 host.id,
                 left,
             )
-            return
+            return False
         with teardown_step(product.name, f"{what} on {host.id}"):
             try:
                 # wait_for bounds the whole await (connection and channel included);
@@ -763,12 +828,13 @@ class ObjectListCache:
                     f"no answer in {grant:g}s ({str(e) or 'timed out'}); {left}"
                 ) from None
             if result.status is Status.NotRun or result.status.is_ok:
-                return
+                return True
             if resource is not None and missing(result, resource):
-                return
+                return True
             logger.warning(
                 "%s: %s on %s teardown failed: %s", product.name, what, host.id, said(result)
             )
+        return False
 
     async def _reap(self, product: "Product", host: "Host", container: str, token: str) -> None:
         """Kill every process the scan carrying *token* left in *container*; best effort."""
@@ -1124,7 +1190,8 @@ class _ScanResources:
     """What one scan may have created on its parent; one token names all three.
 
     A flag is set immediately before the command that may create the resource,
-    so a creation whose reply is lost is still removed.
+    so a creation whose reply is lost is still removed, and cleared once the
+    cleanup has removed it, so after a cleanup the flags say what is left.
     """
 
     token: str
@@ -1143,6 +1210,18 @@ class _ScanResources:
     @property
     def snapshot_tag(self) -> str:
         return f"{_SCAN_IMAGE}:{self.token}"
+
+
+@dataclass(frozen=True)
+class _CleanupStep:
+    """One removal of :meth:`ObjectListCache._scan_cleanup`, and the flag it clears."""
+
+    flag: str
+    """The :class:`_ScanResources` field a successful removal clears."""
+    what: str
+    cmd: str
+    resource: "DockerResource | None"
+    left: str
 
 
 class _CleanupStepTimeoutError(Exception):

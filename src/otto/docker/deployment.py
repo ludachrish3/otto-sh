@@ -14,6 +14,7 @@ they keep the same sharing contract (tear down only what this call brought
 up, unless ``own=True``).
 """
 
+import asyncio
 import logging
 import os
 import shlex
@@ -820,11 +821,11 @@ async def deploy(
             stack.by_host[host_id] = hosts
             stack.hosts.update(hosts)
             stack.env = plan.env
-    except BaseException:
+    except BaseException as exc:
         # Only what THIS call brought up, through the one rollback both start
         # paths share. A stack that was already running belongs to someone
         # else and is left alone.
-        await roll_back(resolution.lab, brought_up)
+        await roll_back(resolution.lab, brought_up, unwinding=exc)
         raise
     if dry:
         raise CommandNotRunError(
@@ -1079,18 +1080,27 @@ async def deployed(
     deploy_kw = {k: v for k, v in kw.items() if k != "stop_timeout"}
     stack = await deploy(use_case, **deploy_kw)
     body_failed = False
+    held: "asyncio.CancelledError | None" = None
+    # Imported here, not at module scope — otto.lifecycle is only needed once
+    # a stack is up (import-budget guard).
+    from ..lifecycle import compensate, held_cancellation
+
     try:
         yield stack
-    except BaseException:
+    except BaseException as exc:
         body_failed = True
+        held = held_cancellation(exc)
         raise
     finally:
         if own or not was_up:
             # Teardown is a compensating action: an interrupt landing while it
-            # runs must not strand a half-torn deployment (chaos spec).
-            # Imported here, not at module scope — otto.lifecycle is only
-            # needed once a compensating action actually runs.
-            from ..lifecycle import compensate
+            # runs must not strand a half-torn deployment (chaos spec). A
+            # cancelled body is passed in as held=, as composed() does: the
+            # teardown deadline is armed at entry, so an interrupted teardown
+            # is bounded alike from both entry points, and the cancellation
+            # is the one re-raised. A failing teardown never masks any body
+            # error here (it is logged below), so that half of held= is
+            # already this site's rule.
 
             teardown_kw = {
                 k: v
@@ -1103,6 +1113,7 @@ async def deployed(
                 report = await compensate(
                     teardown(use_case, **teardown_kw),
                     what=f"docker use-case teardown {use_case}",
+                    held=held,
                 )
             except Exception as e:  # noqa: BLE001 — held, then re-raised unless the body failed
                 # It refused (the staged files could not be read back) or

@@ -18,6 +18,7 @@ import fcntl
 import importlib
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2435,9 +2436,11 @@ class _ScriptedHost:
             if self._lie == "never_times_out":
                 return CommandResult(status=Status.Success, value="", command=command, retcode=0)
             self._timed_out = True
+            # The one timed-out shape (otto.host.session.timed_out_result) for
+            # a command that printed nothing.
             return CommandResult(
                 status=Status.Error,
-                value=f"Command timed out after {timeout}s; partial output discarded",
+                value=f"Command timed out after {timeout}s",
                 command=command,
                 retcode=-1,
                 timed_out=True,
@@ -3218,3 +3221,64 @@ def test_the_timeout_contract_covers_every_cell_with_a_long_running_stimulus() -
             f"{cell_label(resolved)} is a POSIX shell with `sleep`; the timeout "
             f"contract must not have narrowed the hermetic venue"
         )
+
+
+NEW_STIMULUS_FIELDS = [
+    "run_state_set_command",
+    "exec_state_set_command",
+    "state_read_command",
+    "terminal_change_command",
+    "terminal_read_command",
+    "terminal_baseline_answer",
+    "exit_session_command",
+    "distinct_answer_template",
+    "signal_kill_command",
+    "exec_signal_kill_command",
+    "signal_exit_code",
+    "signal_lookalike_command",
+    "stdin_eof_command",
+    "pid_long_running_template",
+    "process_alive_template",
+    "detached_long_running_command",
+]
+
+
+def test_every_new_stimulus_field_is_a_scalar_or_none():
+    for words in [POSIX, *ZEPHYR_SHELLS.values()]:
+        for name in NEW_STIMULUS_FIELDS:
+            assert isinstance(getattr(words, name), (str, int, type(None))), name
+
+
+def test_the_signal_lookalike_reports_the_same_code_without_a_signal():
+    assert POSIX.signal_exit_code == 128 + signal.SIGTERM
+    assert "kill" not in POSIX.signal_lookalike_command
+    assert str(POSIX.signal_exit_code) in POSIX.signal_lookalike_command
+
+
+def test_run_and_exec_set_different_state_in_every_dimension():
+    assert POSIX.run_state_set_command != POSIX.exec_state_set_command
+    for word in ["cd ", "export ", "set -"]:
+        assert word in POSIX.run_state_set_command
+        assert word in POSIX.exec_state_set_command
+
+
+def test_the_terminal_change_moves_away_from_the_handshake_baseline():
+    assert "echo" in POSIX.terminal_change_command.split()
+    assert "-icanon" in POSIX.terminal_change_command
+    assert POSIX.terminal_baseline_answer == "noecho icanon"
+
+
+def test_zephyr_declares_no_blocking_signal_stdin_state_or_terminal_stimulus():
+    for words in ZEPHYR_SHELLS.values():
+        for name in [
+            "pid_long_running_template",
+            "signal_kill_command",
+            "exec_signal_kill_command",
+            "stdin_eof_command",
+            "run_state_set_command",
+            "terminal_change_command",
+            "process_alive_template",
+            "detached_long_running_command",
+        ]:
+            assert getattr(words, name) is None, name
+        assert "{token}" in words.distinct_answer_template

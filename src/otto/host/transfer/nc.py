@@ -1671,7 +1671,7 @@ class NcFileTransfer(UnixFileTransfer):
                         ),
                     )
                 return Result(status=Status.Success, value=dst)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the ConnectionError / timeout / success
                 # branches above). Cancel it and reap the remote `nc -l`: the
@@ -1689,8 +1689,9 @@ class NcFileTransfer(UnixFileTransfer):
                 # the reap and strands the listener after all — and bounds the
                 # reap itself at `_INTERRUPTED_REAP_TIMEOUT`, armed at the
                 # call, so a reap that cannot finish cannot become the very
-                # teardown overrun it exists to prevent. The handler still
-                # re-raises either way.
+                # teardown overrun it exists to prevent. The caught cancellation
+                # is passed as held=, so a reap that fails cannot replace it:
+                # the handler re-raises the cancellation either way.
                 if listen_task is not None and not listen_task.done():
                     # Imported here, not at module scope: otto.lifecycle is
                     # only needed once a compensating action actually runs,
@@ -1702,6 +1703,7 @@ class NcFileTransfer(UnixFileTransfer):
                         self._cancel_and_reap(listen_task, port),
                         timeout=_INTERRUPTED_REAP_TIMEOUT,
                         what=f"{self._name}: nc get listener reap (port {port})",
+                        held=exc,
                     )
                 raise
             finally:
@@ -1988,7 +1990,7 @@ class NcFileTransfer(UnixFileTransfer):
                 verify_error = await self._verify_nc_dest_size(dst, total)
                 if verify_error is not None:
                     return verify_error
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the success / ConnectionError / timeout
                 # branches below the create_task). Cancel it and reap the
@@ -2007,7 +2009,9 @@ class NcFileTransfer(UnixFileTransfer):
                 # strands the listener after all — and bounds the reap itself
                 # at `_INTERRUPTED_REAP_TIMEOUT`, armed at the call, so a reap
                 # that cannot finish cannot become the very teardown overrun
-                # it exists to prevent. The handler still re-raises either way.
+                # it exists to prevent. The caught cancellation is passed as
+                # held=, so a reap that fails cannot replace it: the handler
+                # re-raises the cancellation either way.
                 if listen_task is not None and not listen_task.done():
                     # Imported here, not at module scope: otto.lifecycle is only
                     # needed once a compensating action actually runs, and a
@@ -2019,6 +2023,7 @@ class NcFileTransfer(UnixFileTransfer):
                         self._cancel_and_reap(listen_task, port),
                         timeout=_INTERRUPTED_REAP_TIMEOUT,
                         what=f"{self._name}: nc listener reap (port {port})",
+                        held=exc,
                     )
                 raise
             else:

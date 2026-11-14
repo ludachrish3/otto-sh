@@ -7,13 +7,13 @@ to in-memory asyncio streams, avoiding any real SSH or telnet connections.
 """
 
 import asyncio
-import codecs
 import inspect
 import os
 import re
 import signal
 import subprocess
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
@@ -39,6 +39,7 @@ from otto.host.session import (
     SessionManager,
     ShellSession,
     SshSession,
+    _PatternReaderTransport,
     resolve_init_timeout,
 )
 from otto.testing import EXACT_OUTPUT_CASES, OutputCase
@@ -47,6 +48,7 @@ from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures.clock import stepped_loop_clock
 from tests._fixtures.fake_shell import ShellModel, probe_marker
 from tests._fixtures.line_reader import lf_lines
+from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
 from tests.unit.host._session_feed import (
     FeedAfterWriteMixin,
     handshake_reply,
@@ -55,7 +57,7 @@ from tests.unit.host._session_feed import (
 )
 
 
-class MockSession(FeedAfterWriteMixin, ShellSession):
+class MockSession(FeedAfterWriteMixin, _PatternReaderTransport, ShellSession):
     """Concrete ShellSession backed by in-memory asyncio streams for testing."""
 
     def __init__(
@@ -1738,6 +1740,9 @@ class _ImmediateSession(ShellSession):
         self.writes.append(data)
         self.model.wrote(data)
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.model.reply()
         if reply is None:
@@ -2048,6 +2053,9 @@ class _StubExecSession(ShellSession):
         self.writes.append(data)
         self.model.wrote(data)
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.model.reply()
         if reply is None:
@@ -2166,26 +2174,6 @@ class TestHostSessionRunTimeout:
             await session.run("echo hi", timeout=-5)
 
 
-class _FakeSshProcess:
-    """Minimal asyncssh process stand-in for the SSH_CHANNEL exec arm."""
-
-    def __init__(self, lines: list[str], exit_status: int = 0) -> None:
-        self.stdout = _async_lines(lines)
-        self._exit_status = exit_status
-
-    async def wait(self):
-        return SimpleNamespace(exit_status=self._exit_status)
-
-    def terminate(self) -> None: ...
-
-    def kill(self) -> None: ...
-
-
-async def _async_lines(lines: list[str]):
-    for line in lines:
-        yield line
-
-
 class TestExecLogsCommandExactlyOnce:
     """`exec()` used to log the command BEFORE its route match; the SSH arm
     now lives in `exec_on`, which logs itself. The command must still reach
@@ -2205,9 +2193,7 @@ class TestExecLogsCommandExactlyOnce:
     @pytest.mark.asyncio
     async def test_ssh_channel_route_logs_once(self):
         logged: list[tuple[str, LogMode]] = []
-        ssh_conn = SimpleNamespace(
-            create_process=AsyncMock(return_value=_FakeSshProcess(["out\n"]))
-        )
+        ssh_conn = FakeConn(FakeChannelProcess(["out\n"]))
         conn = SimpleNamespace(
             credentials=("alice", SecretStr("pw")),
             login_target="alice",
@@ -2244,9 +2230,7 @@ class TestExecLogsCommandExactlyOnce:
         """`exec_on` is entered directly by per-user exec — it owns its log."""
         logged: list[tuple[str, LogMode]] = []
         mgr = self._mgr(SimpleNamespace(), logged)
-        other_conn = SimpleNamespace(
-            create_process=AsyncMock(return_value=_FakeSshProcess(["uid=70\n"]))
-        )
+        other_conn = FakeConn(FakeChannelProcess(["uid=70\n"]))
 
         result = await mgr.exec_on(conn=other_conn, cmd="id")
 
@@ -2257,7 +2241,7 @@ class TestExecLogsCommandExactlyOnce:
     async def test_exec_on_never_mode_logs_nothing(self):
         logged: list[tuple[str, LogMode]] = []
         mgr = self._mgr(SimpleNamespace(), logged)
-        other_conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess([])))
+        other_conn = FakeConn(FakeChannelProcess([]))
 
         await mgr.exec_on(conn=other_conn, cmd="id", log=LogMode.NEVER)
 
@@ -2306,7 +2290,7 @@ class TestExecOnDropsTheEofPartial:
             log_output=lambda line, _mode: logged.append(line),
             host_id="h",
         )
-        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw)))
+        conn = FakeConn(FakeChannelProcess(raw))
 
         result = await mgr.exec_on(conn=conn, cmd="cmd")
 
@@ -2348,7 +2332,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
             log_output=lambda *_: None,
             host_id="h",
         )
-        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw_lines)))
+        conn = FakeConn(FakeChannelProcess(raw_lines))
 
         result = await mgr.exec_on(conn=conn, cmd="cmd")
 
@@ -2384,7 +2368,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
             log_output=lambda *_: None,
             host_id="h",
         )
-        conn = SimpleNamespace(create_process=_decoding_create_process(b"\xff\n"))
+        conn = _DecodingConn(b"\xff\n")
 
         result = await mgr.exec_on(conn=conn, cmd="printf '\\377\\n'")
 
@@ -2401,7 +2385,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
         async def read(_n: int) -> bytes:
             return chunks.pop(0) if chunks else b""
 
-        process = _FakeSshProcess([])
+        process = FakeChannelProcess([])
         process.stdout = SimpleNamespace(read=read)
         conn = SimpleNamespace(create_process=AsyncMock(return_value=process))
         session = SshSession(conn)
@@ -2412,29 +2396,22 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
         assert await session.read_transport_until(pattern=re.compile("\n")) == "�\n"
 
 
-class _HangupableSshProcess(_FakeSshProcess):
-    """A fake exec process whose interrupted-teardown reap (``send_signal``) is a no-op."""
+class _DecodingConn(FakeConn):
+    """A connection whose channel decodes *raw* with the ``encoding`` and ``errors`` it is given.
 
-    def send_signal(self, _signal: str) -> None: ...
+    asyncssh's own defaults (``utf-8``, ``strict``) apply when the product passes
+    neither, so a channel opened without ``errors="replace"`` raises here.
+    """
 
+    def __init__(self, raw: bytes) -> None:
+        super().__init__(None)
+        self._raw = raw
 
-def _decoding_create_process(raw: bytes):
-    """A ``create_process`` that hands back *raw* decoded as an asyncssh channel decodes it."""
-
-    async def create_process(_cmd: str, *, encoding: str = "utf-8", errors: str = "strict", **_kw):
-        async def lines():
-            try:
-                text = codecs.getincrementaldecoder(encoding)(errors).decode(raw, final=True)
-            except UnicodeDecodeError as exc:
-                raise asyncssh.ProtocolError(str(exc)) from None
-            for line in re.findall(r"[^\n]*\n|[^\n]+", text):
-                yield line
-
-        process = _HangupableSshProcess([])
-        process.stdout = lines()
-        return process
-
-    return create_process
+    async def create_process(
+        self, _cmd: str, *, encoding: str = "utf-8", errors: str = "strict", **kw: Any
+    ) -> FakeChannelProcess:
+        self.kwargs = {"encoding": encoding, "errors": errors, **kw}
+        return FakeChannelProcess([self._raw.decode(encoding, errors)])
 
 
 # ---------------------------------------------------------------------------

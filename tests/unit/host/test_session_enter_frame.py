@@ -260,6 +260,6 @@ async def test_confirm_recovered_in_a_raw_landing_marks_the_session_dead_and_wri
     s = MockSession(command_frame=RawFrame())
     await s.open_transport()
     await s._ensure_initialized()
-    assert await s._confirm_recovered() == ""
+    await s._confirm_recovered()
     assert not s.alive
     assert s.written == []

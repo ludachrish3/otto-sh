@@ -466,3 +466,34 @@ async def test_a_failed_login_claims_no_terminal_mapping(monkeypatch):
     monkeypatch.setattr("otto.host.connections.ssh_connect", deny)
     out = await attempt_term_login(_host(), "ssh", 2222, login=None, timeout=5.0)
     assert out.terminal_mapping is None
+
+
+@pytest.mark.asyncio
+async def test_a_close_after_the_outer_budget_cancelled_the_attempt_is_bounded(monkeypatch):
+    """The caught cancellation arms the teardown deadline at entry (held=), so a
+    close that never returns is abandoned at it, not held until a further
+    cancellation (before: the attempt hung on the close)."""
+    from otto.invocation import RunPolicy, install_policy, reset_binding
+
+    entered = asyncio.Event()
+
+    async def close_forever(self):
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def hang(*_a, **_k):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(UnixHost, "close", close_forever)
+    monkeypatch.setattr("otto.host.connections.ConnectionManager.ftp", hang)
+    binding = install_policy(RunPolicy(teardown_deadline=0))
+    try:
+        task = asyncio.ensure_future(attempt_ftp_login(_host(), 2121, login=None, timeout=60.0))
+        await asyncio.sleep(0)
+        task.cancel()  # the outer budget, as engine._bounded's wait_for does
+        await entered.wait()
+        with pytest.raises(asyncio.CancelledError):
+            # A bound that only turns a hang into a failure, never a pass.
+            await asyncio.wait_for(task, 5)
+    finally:
+        reset_binding(binding)

@@ -148,6 +148,9 @@ class ElevationSession(ShellSession):
         if reply:
             self._stream.feed_data(reply.encode())
 
+    async def _take_unread(self) -> str:
+        return ""
+
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         buf = ""
         while True:

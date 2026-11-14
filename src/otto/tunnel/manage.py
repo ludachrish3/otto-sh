@@ -1093,21 +1093,23 @@ async def add_tunnel(
                     resolved, missing, tunnel, carrier_fwd, carrier_rev
                 )
                 _raise_verify_failure(tunnel, missing, unreachable, diagnosis)
-        except BaseException:
+        except BaseException as exc:
             if launched:
                 # Shielded: a Ctrl+C landing during the rollback itself must
                 # not tear it — the reap runs to completion (bounded by the
                 # teardown deadline) before the cancellation continues
-                # (chaos spec: shielded compensating actions).
+                # (chaos spec: shielded compensating actions). The caught
+                # cancellation is held, so a failing reap cannot replace it.
                 # Imported here, not at module scope: otto.lifecycle is only
                 # needed once a compensating action actually runs, and a
                 # top-level import drags it onto every CLI --help path
                 # (import-budget guard).
-                from ..lifecycle import compensate
+                from ..lifecycle import compensate, held_cancellation
 
                 await compensate(
                     _kill_tunnel_on([r.host for r in resolved], tunnel.id),
                     what=f"tunnel {tunnel.id} rollback",
+                    held=held_cancellation(exc),
                 )
             raise
     return AddedTunnel(tunnel=tunnel, carrier_fwd=carrier_fwd, carrier_rev=carrier_rev)
